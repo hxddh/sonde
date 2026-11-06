@@ -60,7 +60,7 @@ The test opens Browse › demo-large, switches to flat listing, loads all
 
 The DataTable is virtual: only the visible rows exist as views, and rows are
 fetched from the Rust `Listing` by index range (`rows(start, count)`), so the
-JS heap holds ~40 rows regardless of the listing size. The 153-item commit is
+JS holds one 400-row window regardless of the listing size. The 153-item commit is
 the first frame after *Load all* (the header, the footer and the first page of
 rows); every scroll commit after it touches ~16 items.
 
