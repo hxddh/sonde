@@ -217,6 +217,8 @@ impl Source for ImdsSource {
         let token = c
             .put(format!("{base}/latest/api/token"))
             .header("x-aws-ec2-metadata-token-ttl-seconds", "21600")
+            // an empty PUT without a length is refused (411) by some metadata servers
+            .header(reqwest::header::CONTENT_LENGTH, "0")
             .send()
             .await
             .map_err(|e| format!("IMDSv2 token: {e}"))?;
