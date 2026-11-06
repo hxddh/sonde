@@ -4,3 +4,4 @@
 /dist
 *.nshpkg
 /tests/integration/.data
+/tools/gen-slatedb/target

@@ -3,6 +3,7 @@
 pub mod browse;
 pub mod du;
 pub mod exec;
+pub mod layout;
 pub mod mpu;
 pub mod versions;
 

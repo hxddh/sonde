@@ -1,4 +1,35 @@
 [package]
 name = "sonde-cli"
+description = "sonde: diagnose S3 and S3-compatible object storage. Headless subcommands for scripts and CI, and the terminal UI."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sonde"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# The terminal UI (`sonde tui`): links Native Shell's terminal backend.
+tui = ["dep:sonde-nsh"]
+
+[dependencies]
+sonde-core.workspace = true
+probes.workspace = true
+decoders.workspace = true
+s3raw.workspace = true
+reqlog.workspace = true
+sonde-nsh = { workspace = true, optional = true }
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tokio = { workspace = true, features = ["full"] }
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

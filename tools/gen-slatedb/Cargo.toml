@@ -1,0 +1,15 @@
+# Writes a real SlateDB database (with the SlateDB crate) for the decoder
+# tests and the integration scenario. Its own workspace: SlateDB's
+# dependencies stay out of sonde's build.
+[package]
+name = "gen-slatedb"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+slatedb = "=0.18.0"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
