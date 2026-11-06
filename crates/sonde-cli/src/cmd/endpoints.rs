@@ -3,8 +3,8 @@ use std::sync::Arc;
 use clap::{Args, Subcommand};
 use sonde_core::Sonde;
 
-use crate::output::{self, Format};
 use crate::Cli;
+use crate::output::{self, Format};
 
 #[derive(Args)]
 pub struct EndpointArgs {
@@ -33,7 +33,22 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &EndpointArgs) -> anyhow::Result
             let e = s.endpoints();
             match a.format {
                 Format::Json => println!("{}", output::json(&e)),
-                _ => println!("{}", output::table(&["id", "name", "vendor", "url", "region", "credentials"], &e.iter().map(|e| vec![e.id.clone(), e.name.clone(), e.vendor_label.clone(), e.url.clone(), e.region.clone(), e.credentials.clone()]).collect::<Vec<_>>())),
+                _ => println!(
+                    "{}",
+                    output::table(
+                        &["id", "name", "vendor", "url", "region", "credentials"],
+                        &e.iter()
+                            .map(|e| vec![
+                                e.id.clone(),
+                                e.name.clone(),
+                                e.vendor_label.clone(),
+                                e.url.clone(),
+                                e.region.clone(),
+                                e.credentials.clone()
+                            ])
+                            .collect::<Vec<_>>()
+                    )
+                ),
             }
             Ok(0)
         }
@@ -43,7 +58,12 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &EndpointArgs) -> anyhow::Result
             match a.format {
                 Format::Json => println!("{}", output::json(&r)),
                 _ => {
-                    println!("{}: {} in {:.0} ms", r.endpoint, if r.ok { "reachable" } else { "FAILED" }, r.latency_ms);
+                    println!(
+                        "{}: {} in {:.0} ms",
+                        r.endpoint,
+                        if r.ok { "reachable" } else { "FAILED" },
+                        r.latency_ms
+                    );
                     if let Some(c) = &r.credentials_source {
                         println!("  credentials: {c}");
                     }
@@ -57,7 +77,11 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &EndpointArgs) -> anyhow::Result
                         println!("  server: {srv}");
                     }
                     if let Some(i) = &r.identity {
-                        println!("  identity: {} (account {})", i.arn.clone().unwrap_or_default(), i.account.clone().unwrap_or_default());
+                        println!(
+                            "  identity: {} (account {})",
+                            i.arn.clone().unwrap_or_default(),
+                            i.account.clone().unwrap_or_default()
+                        );
                     }
                     if let Some(n) = &r.identity_note {
                         println!("  identity: {n}");

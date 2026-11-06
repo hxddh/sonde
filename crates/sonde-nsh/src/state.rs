@@ -1,0 +1,60 @@
+use std::sync::{Arc, OnceLock};
+
+use serde::Serialize;
+use serde_json::{Value, json};
+use sonde_core::{Paths, S3Error, Sonde};
+
+static SONDE: OnceLock<Arc<Sonde>> = OnceLock::new();
+
+/// The process's sonde: opened from the platform's paths on first use
+/// (`SONDE_CONFIG_DIR` / `SONDE_DATA_DIR` override them).
+pub fn sonde() -> Arc<Sonde> {
+    SONDE
+        .get_or_init(|| {
+            Sonde::open(Paths::from_env()).unwrap_or_else(|e| {
+                eprintln!("sonde: configuration: {e}; starting with an empty one");
+                Sonde::with_config(Paths::from_env(), Default::default())
+            })
+        })
+        .clone()
+}
+
+/// Uses `s` as the process's sonde (hosts and tests that open it themselves).
+pub fn install(s: Arc<Sonde>) -> bool {
+    SONDE.set(s).is_ok()
+}
+
+/// An error as TSX reads it: JSON in the message.
+pub fn err(e: S3Error) -> String {
+    json!({
+        "sonde": true,
+        "kind": e.kind,
+        "message": e.to_string(),
+        "code": e.code,
+        "status": e.status,
+        "requestId": e.request_id,
+        "recordId": e.record_id,
+    })
+    .to_string()
+}
+
+pub fn err_msg(m: impl std::fmt::Display) -> String {
+    json!({ "sonde": true, "kind": "config", "message": m.to_string() }).to_string()
+}
+
+pub fn to_json<T: Serialize>(v: T) -> Value {
+    serde_json::to_value(v).unwrap_or(Value::Null)
+}
+
+/// Runs `f` on the runtime's threads; its value as JSON.
+pub async fn run<F, T>(f: F) -> Result<Value, String>
+where
+    F: std::future::Future<Output = Result<T, S3Error>> + Send + 'static,
+    T: Serialize + Send + 'static,
+{
+    match nsh_core::prelude::background(f).await {
+        Ok(Ok(v)) => Ok(to_json(v)),
+        Ok(Err(e)) => Err(err(e)),
+        Err(e) => Err(err_msg(format!("task failed: {e}"))),
+    }
+}

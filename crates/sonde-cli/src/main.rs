@@ -77,7 +77,10 @@ fn main() -> ExitCode {
     if let Command::Tui(args) = &cli.command {
         return cmd::tui::run(&cli, args);
     }
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
     let code = rt.block_on(async {
         let sonde = match cmd::open(&cli) {
             Ok(s) => s,
@@ -103,9 +106,20 @@ fn main() -> ExitCode {
                     if let Some(id) = s3.record_id
                         && let Some(r) = sonde.log().get(id)
                     {
-                        eprintln!("  {} {} → {}", r.method, r.url, r.status.map(|s| s.to_string()).unwrap_or_else(|| "no response".into()));
+                        eprintln!(
+                            "  {} {} → {}",
+                            r.method,
+                            r.url,
+                            r.status
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "no response".into())
+                        );
                     }
-                    if s3.kind == s3raw::ErrorKind::Refused { 77 } else { 70 }
+                    if s3.kind == s3raw::ErrorKind::Refused {
+                        77
+                    } else {
+                        70
+                    }
                 } else {
                     70
                 }
@@ -113,8 +127,14 @@ fn main() -> ExitCode {
         };
         if let Some(path) = &cli.log_out {
             let records = sonde.log().snapshot();
-            let doc = if path.extension().is_some_and(|e| e == "har") { reqlog::export::to_har(&records) } else { reqlog::export::to_json(&records) };
-            if let Err(e) = std::fs::write(path, serde_json::to_vec_pretty(&doc).unwrap_or_default()) {
+            let doc = if path.extension().is_some_and(|e| e == "har") {
+                reqlog::export::to_har(&records)
+            } else {
+                reqlog::export::to_json(&records)
+            };
+            if let Err(e) =
+                std::fs::write(path, serde_json::to_vec_pretty(&doc).unwrap_or_default())
+            {
                 eprintln!("sonde: --log-out {}: {e}", path.display());
             }
         }

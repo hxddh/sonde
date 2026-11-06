@@ -52,7 +52,9 @@ pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
 pub fn endpoint(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
     if let Some(e) = given {
         if s.endpoint_config(e).is_none() {
-            anyhow::bail!("no endpoint {e:?}: `sonde endpoints list` shows the configured ones, --url adds one for this run");
+            anyhow::bail!(
+                "no endpoint {e:?}: `sonde endpoints list` shows the configured ones, --url adds one for this run"
+            );
         }
         return Ok(e.to_string());
     }
@@ -62,8 +64,17 @@ pub fn endpoint(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
     let all = s.endpoints();
     match all.len() {
         1 => Ok(all[0].id.clone()),
-        0 => anyhow::bail!("no endpoint configured: pass --url, or add one to {}", s.paths().config_file().display()),
-        _ => anyhow::bail!("several endpoints configured: pass --endpoint ({})", all.iter().map(|e| e.id.as_str()).collect::<Vec<_>>().join(", ")),
+        0 => anyhow::bail!(
+            "no endpoint configured: pass --url, or add one to {}",
+            s.paths().config_file().display()
+        ),
+        _ => anyhow::bail!(
+            "several endpoints configured: pass --endpoint ({})",
+            all.iter()
+                .map(|e| e.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 

@@ -91,3 +91,10 @@ nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08
 lto = "thin"
 codegen-units = 4
 strip = "symbols"
+
+# Keep debug builds small: dependencies (Native Shell, QuickJS) carry no debug info.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

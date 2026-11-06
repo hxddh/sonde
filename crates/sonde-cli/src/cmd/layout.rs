@@ -4,8 +4,8 @@ use clap::{Args, Subcommand};
 use decoders::{Format as Lf, Layout, Severity};
 use sonde_core::Sonde;
 
-use crate::output::{self, Format};
 use crate::Cli;
+use crate::output::{self, Format};
 
 #[derive(Args)]
 pub struct LayoutArgs {
@@ -38,11 +38,28 @@ enum LayoutAction {
 }
 
 fn print(l: &Layout, at: Option<chrono::DateTime<chrono::Utc>>) {
-    println!("{} at {:?}{}\n{}\n", l.format.label(), l.root, l.format_version.as_ref().map(|v| format!(" ({v})")).unwrap_or_default(), l.headline);
+    println!(
+        "{} at {:?}{}\n{}\n",
+        l.format.label(),
+        l.root,
+        l.format_version
+            .as_ref()
+            .map(|v| format!(" ({v})"))
+            .unwrap_or_default(),
+        l.headline
+    );
     if !l.decoded {
         println!("(not decoded)\n");
     }
-    println!("{}", output::kv(&l.facts.iter().map(|f| (f.label.clone(), f.value.clone())).collect::<Vec<_>>()));
+    println!(
+        "{}",
+        output::kv(
+            &l.facts
+                .iter()
+                .map(|f| (f.label.clone(), f.value.clone()))
+                .collect::<Vec<_>>()
+        )
+    );
     if !l.issues.is_empty() {
         println!();
         for i in &l.issues {
@@ -60,7 +77,10 @@ fn print(l: &Layout, at: Option<chrono::DateTime<chrono::Utc>>) {
         }
         println!("\n{}", t.title);
         let h: Vec<&str> = t.columns.iter().map(String::as_str).collect();
-        println!("{}", output::table(&h, &t.rows.iter().take(50).cloned().collect::<Vec<_>>()));
+        println!(
+            "{}",
+            output::table(&h, &t.rows.iter().take(50).cloned().collect::<Vec<_>>())
+        );
         if t.rows.len() > 50 {
             println!("… {} more", t.rows.len() - 50);
         }
@@ -69,7 +89,15 @@ fn print(l: &Layout, at: Option<chrono::DateTime<chrono::Utc>>) {
         match l.state_at(t) {
             Some(s) => {
                 println!("\nState at {t}: {}", s.label);
-                println!("{}", output::kv(&s.facts.iter().map(|f| (f.label.clone(), f.value.clone())).collect::<Vec<_>>()));
+                println!(
+                    "{}",
+                    output::kv(
+                        &s.facts
+                            .iter()
+                            .map(|f| (f.label.clone(), f.value.clone()))
+                            .collect::<Vec<_>>()
+                    )
+                );
             }
             None => println!("\nNo state recorded at or before {t}"),
         }
@@ -77,14 +105,33 @@ fn print(l: &Layout, at: Option<chrono::DateTime<chrono::Utc>>) {
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i32> {
-    let LayoutAction::Inspect { endpoint, bucket, prefix, dir, kind, at, format } = &a.action;
-    let at = at.as_deref().map(|t| chrono::DateTime::parse_from_rfc3339(t).map(|d| d.with_timezone(&chrono::Utc))).transpose().map_err(|e| anyhow::anyhow!("--at: {e}"))?;
-    let kind = kind.as_deref().map(|k| Lf::from_id(k).ok_or_else(|| anyhow::anyhow!("--kind {k}: unknown"))).transpose()?;
+    let LayoutAction::Inspect {
+        endpoint,
+        bucket,
+        prefix,
+        dir,
+        kind,
+        at,
+        format,
+    } = &a.action;
+    let at = at
+        .as_deref()
+        .map(|t| chrono::DateTime::parse_from_rfc3339(t).map(|d| d.with_timezone(&chrono::Utc)))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("--at: {e}"))?;
+    let kind = kind
+        .as_deref()
+        .map(|k| Lf::from_id(k).ok_or_else(|| anyhow::anyhow!("--kind {k}: unknown")))
+        .transpose()?;
     let layouts: Vec<Layout> = if let Some(d) = dir {
         let src = decoders::DirSource::new(d);
         let targets = match kind {
             Some(k) => vec![(k, prefix.clone())],
-            None => decoders::detect(&src, prefix).await?.into_iter().map(|d| (d.format, d.root)).collect(),
+            None => decoders::detect(&src, prefix)
+                .await?
+                .into_iter()
+                .map(|d| (d.format, d.root))
+                .collect(),
         };
         let mut v = vec![];
         for (k, r) in targets {
@@ -93,22 +140,41 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i
         v
     } else {
         let ep = super::endpoint(s, endpoint.as_deref())?;
-        let b = bucket.clone().ok_or_else(|| anyhow::anyhow!("--bucket (or --dir)"))?;
+        let b = bucket
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("--bucket (or --dir)"))?;
         let targets: Vec<(Lf, String)> = match kind {
             Some(k) => vec![(k, prefix.clone())],
             None => {
-                let v = super::wait(s, &sonde_core::services::layout::detect(s, &ep, &b, prefix), false).await?;
-                serde_json::from_value::<Vec<decoders::Detection>>(v)?.into_iter().map(|d| (d.format, d.root)).collect()
+                let v = super::wait(
+                    s,
+                    &sonde_core::services::layout::detect(s, &ep, &b, prefix),
+                    false,
+                )
+                .await?;
+                serde_json::from_value::<Vec<decoders::Detection>>(v)?
+                    .into_iter()
+                    .map(|d| (d.format, d.root))
+                    .collect()
             }
         };
         let mut v = vec![];
         for (k, r) in targets {
-            v.push(serde_json::from_value(super::wait(s, &sonde_core::services::layout::analyze(s, &ep, &b, k, &r), false).await?)?);
+            v.push(serde_json::from_value(
+                super::wait(
+                    s,
+                    &sonde_core::services::layout::analyze(s, &ep, &b, k, &r),
+                    false,
+                )
+                .await?,
+            )?);
         }
         v
     };
     if layouts.is_empty() {
-        eprintln!("no known layout under {prefix:?}; --kind generic shows the write cadence of any prefix");
+        eprintln!(
+            "no known layout under {prefix:?}; --kind generic shows the write cadence of any prefix"
+        );
         return Ok(4);
     }
     match format {
@@ -122,5 +188,14 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i
             }
         }
     }
-    Ok(if layouts.iter().any(|l| l.has_errors()) { 1 } else if layouts.iter().any(|l| l.issues.iter().any(|i| i.severity == Severity::Warning)) { 4 } else { 0 })
+    Ok(if layouts.iter().any(|l| l.has_errors()) {
+        1
+    } else if layouts
+        .iter()
+        .any(|l| l.issues.iter().any(|i| i.severity == Severity::Warning))
+    {
+        4
+    } else {
+        0
+    })
 }

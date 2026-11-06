@@ -5,8 +5,8 @@ use probes::runner::RunOptions;
 use probes::{Run, Verdict};
 use sonde_core::Sonde;
 
-use crate::output::{self, Format};
 use crate::Cli;
+use crate::output::{self, Format};
 
 #[derive(Args)]
 pub struct ProbeArgs {
@@ -45,7 +45,9 @@ enum ProbeAction {
 }
 
 fn load(s: &Sonde, spec: &str) -> anyhow::Result<Run> {
-    let (id, ep) = spec.split_once(':').ok_or_else(|| anyhow::anyhow!("a run is <run-id>:<endpoint> (see `sonde probe runs`)"))?;
+    let (id, ep) = spec
+        .split_once(':')
+        .ok_or_else(|| anyhow::anyhow!("a run is <run-id>:<endpoint> (see `sonde probe runs`)"))?;
     probes::store::load(s.paths(), id, ep).ok_or_else(|| anyhow::anyhow!("no saved run {spec}"))
 }
 
@@ -55,7 +57,15 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             let c = probes::catalog();
             match a.format {
                 Format::Json => println!("{}", output::json(&c)),
-                _ => println!("{}", output::table(&["id", "category", "title"], &c.iter().map(|m| vec![m.id.clone(), m.category.label().into(), m.title.clone()]).collect::<Vec<_>>())),
+                _ => println!(
+                    "{}",
+                    output::table(
+                        &["id", "category", "title"],
+                        &c.iter()
+                            .map(|m| vec![m.id.clone(), m.category.label().into(), m.title.clone()])
+                            .collect::<Vec<_>>()
+                    )
+                ),
             }
             return Ok(0);
         }
@@ -63,7 +73,24 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             let r = probes::store::list(s.paths());
             match a.format {
                 Format::Json => println!("{}", output::json(&r)),
-                _ => println!("{}", output::table(&["run", "endpoint", "vendor", "started", "✓", "✗", "≠", "∅"], &r.iter().map(|x| vec![format!("{}:{}", x.id, x.endpoint), x.endpoint_name.clone(), x.vendor.clone(), x.started.clone(), x.pass.to_string(), x.fail.to_string(), x.differs.to_string(), x.unsupported.to_string()]).collect::<Vec<_>>())),
+                _ => println!(
+                    "{}",
+                    output::table(
+                        &["run", "endpoint", "vendor", "started", "✓", "✗", "≠", "∅"],
+                        &r.iter()
+                            .map(|x| vec![
+                                format!("{}:{}", x.id, x.endpoint),
+                                x.endpoint_name.clone(),
+                                x.vendor.clone(),
+                                x.started.clone(),
+                                x.pass.to_string(),
+                                x.fail.to_string(),
+                                x.differs.to_string(),
+                                x.unsupported.to_string()
+                            ])
+                            .collect::<Vec<_>>()
+                    )
+                ),
             }
             return Ok(0);
         }
@@ -73,15 +100,44 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             match a.format {
                 Format::Json => println!("{}", output::json(&d)),
                 _ if d.is_empty() => println!("no change"),
-                _ => println!("{}", output::table(&["probe", "before", "after", "now"], &d.iter().map(|c| vec![c.probe.clone(), c.before.map(|v| v.label()).unwrap_or("—").into(), c.after.map(|v| v.label()).unwrap_or("—").into(), c.after_summary.clone().unwrap_or_default()]).collect::<Vec<_>>())),
+                _ => println!(
+                    "{}",
+                    output::table(
+                        &["probe", "before", "after", "now"],
+                        &d.iter()
+                            .map(|c| vec![
+                                c.probe.clone(),
+                                c.before.map(|v| v.label()).unwrap_or("—").into(),
+                                c.after.map(|v| v.label()).unwrap_or("—").into(),
+                                c.after_summary.clone().unwrap_or_default()
+                            ])
+                            .collect::<Vec<_>>()
+                    )
+                ),
             }
             return Ok(if d.is_empty() { 0 } else { 4 });
         }
         None => {}
     }
-    let endpoints = if a.endpoints.is_empty() { vec![super::endpoint(s, None)?] } else { a.endpoints.iter().map(|e| super::endpoint(s, Some(e))).collect::<anyhow::Result<Vec<_>>>()? };
-    let bucket = a.bucket.clone().ok_or_else(|| anyhow::anyhow!("--bucket: a scratch bucket the probes may write to"))?;
-    let opts = RunOptions { bucket, allow_temp_buckets: a.temp_buckets, include_slow: !a.no_slow, only: a.only.clone(), ..Default::default() };
+    let endpoints = if a.endpoints.is_empty() {
+        vec![super::endpoint(s, None)?]
+    } else {
+        a.endpoints
+            .iter()
+            .map(|e| super::endpoint(s, Some(e)))
+            .collect::<anyhow::Result<Vec<_>>>()?
+    };
+    let bucket = a
+        .bucket
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("--bucket: a scratch bucket the probes may write to"))?;
+    let opts = RunOptions {
+        bucket,
+        allow_temp_buckets: a.temp_buckets,
+        include_slow: !a.no_slow,
+        only: a.only.clone(),
+        ..Default::default()
+    };
     let jobs = probes::runner::spawn(s, &endpoints, opts);
     let mut runs = vec![];
     for (j, ep) in jobs.iter().zip(&endpoints) {
@@ -100,7 +156,13 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             let mut o = String::from("probe,endpoint,verdict,summary\n");
             for r in &runs {
                 for x in &r.results {
-                    o.push_str(&format!("{},{},{},\"{}\"\n", x.id, r.endpoint, x.verdict.label(), x.summary.replace('"', "\"\"")));
+                    o.push_str(&format!(
+                        "{},{},{},\"{}\"\n",
+                        x.id,
+                        r.endpoint,
+                        x.verdict.label(),
+                        x.summary.replace('"', "\"\"")
+                    ));
                 }
             }
             o
@@ -109,10 +171,31 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             let m = probes::report::matrix(&runs);
             let mut headers = vec!["probe"];
             headers.extend(m.columns.iter().map(|c| c.name.as_str()));
-            let rows: Vec<Vec<String>> = m.rows.iter().map(|r| std::iter::once(r.probe.id.clone()).chain(r.cells.iter().map(|c| c.as_ref().map(|c| format!("{} {}", c.verdict.symbol(), c.verdict.label())).unwrap_or_default())).collect()).collect();
+            let rows: Vec<Vec<String>> = m
+                .rows
+                .iter()
+                .map(|r| {
+                    std::iter::once(r.probe.id.clone())
+                        .chain(r.cells.iter().map(|c| {
+                            c.as_ref()
+                                .map(|c| format!("{} {}", c.verdict.symbol(), c.verdict.label()))
+                                .unwrap_or_default()
+                        }))
+                        .collect()
+                })
+                .collect();
             let mut t = output::table(&headers, &rows);
             for r in &runs {
-                t.push_str(&format!("\n\n{}: {} pass, {} fail, {} differ, {} unsupported — saved as {}:{}", r.endpoint_name, r.count(Verdict::Pass), r.count(Verdict::Fail), r.count(Verdict::Differs), r.count(Verdict::Unsupported), r.id, r.endpoint));
+                t.push_str(&format!(
+                    "\n\n{}: {} pass, {} fail, {} differ, {} unsupported — saved as {}:{}",
+                    r.endpoint_name,
+                    r.count(Verdict::Pass),
+                    r.count(Verdict::Fail),
+                    r.count(Verdict::Differs),
+                    r.count(Verdict::Unsupported),
+                    r.id,
+                    r.endpoint
+                ));
             }
             t
         }

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use clap::{Args, Subcommand};
-use sonde_core::services::{exec, mpu};
 use sonde_core::Sonde;
+use sonde_core::services::{exec, mpu};
 
-use crate::output::{self, Format};
 use crate::Cli;
+use crate::output::{self, Format};
 
 #[derive(Args)]
 pub struct MpuArgs {
@@ -59,40 +59,113 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &MpuArgs) -> anyhow::Result<i32>
     match &a.action {
         MpuAction::Scan(t) => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;
-            let r: mpu::MpuReport = serde_json::from_value(super::wait(s, &mpu::scan(s, &ep, &t.bucket, &t.prefix), false).await?)?;
+            let r: mpu::MpuReport = serde_json::from_value(
+                super::wait(s, &mpu::scan(s, &ep, &t.bucket, &t.prefix), false).await?,
+            )?;
             match t.format {
                 Format::Json => println!("{}", output::json(&r)),
                 Format::Csv => {
                     println!("key,upload_id,initiated,age_days,parts,bytes,cost_per_month,stale");
                     for u in &r.uploads {
-                        println!("{},{},{},{:.2},{},{},{:.4},{}", u.key, u.upload_id, u.initiated.clone().unwrap_or_default(), u.age_days.unwrap_or(0.0), u.parts, u.bytes, u.cost_per_month, u.stale);
+                        println!(
+                            "{},{},{},{:.2},{},{},{:.4},{}",
+                            u.key,
+                            u.upload_id,
+                            u.initiated.clone().unwrap_or_default(),
+                            u.age_days.unwrap_or(0.0),
+                            u.parts,
+                            u.bytes,
+                            u.cost_per_month,
+                            u.stale
+                        );
                     }
                 }
                 _ => {
-                    let rows: Vec<Vec<String>> = r.uploads.iter().map(|u| vec![if u.stale { "!".into() } else { String::new() }, u.key.clone(), u.upload_id.chars().take(16).collect(), format!("{:.1} d", u.age_days.unwrap_or(0.0)), u.parts.to_string(), human(u.bytes), format!("{:.2}", u.cost_per_month)]).collect();
-                    println!("{}", output::table(&["", "key", "upload id", "age", "parts", "bytes", &format!("{}/month", r.currency)], &rows));
-                    println!("\n{} uploads, {} stale (> {} days): {} ({} stale), {:.2} {}/month", r.total_uploads, r.stale_uploads, r.threshold_days, human(r.total_bytes), human(r.stale_bytes), r.cost_per_month, r.currency);
+                    let rows: Vec<Vec<String>> = r
+                        .uploads
+                        .iter()
+                        .map(|u| {
+                            vec![
+                                if u.stale { "!".into() } else { String::new() },
+                                u.key.clone(),
+                                u.upload_id.chars().take(16).collect(),
+                                format!("{:.1} d", u.age_days.unwrap_or(0.0)),
+                                u.parts.to_string(),
+                                human(u.bytes),
+                                format!("{:.2}", u.cost_per_month),
+                            ]
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        output::table(
+                            &[
+                                "",
+                                "key",
+                                "upload id",
+                                "age",
+                                "parts",
+                                "bytes",
+                                &format!("{}/month", r.currency)
+                            ],
+                            &rows
+                        )
+                    );
+                    println!(
+                        "\n{} uploads, {} stale (> {} days): {} ({} stale), {:.2} {}/month",
+                        r.total_uploads,
+                        r.stale_uploads,
+                        r.threshold_days,
+                        human(r.total_bytes),
+                        human(r.stale_bytes),
+                        r.cost_per_month,
+                        r.currency
+                    );
                     println!("Lifecycle: {}", r.lifecycle.message);
                 }
             }
-            Ok(if r.stale_uploads > 0 || r.lifecycle.status != mpu::LifecycleStatus::Covered { 4 } else { 0 })
+            Ok(
+                if r.stale_uploads > 0 || r.lifecycle.status != mpu::LifecycleStatus::Covered {
+                    4
+                } else {
+                    0
+                },
+            )
         }
-        MpuAction::Abort { target: t, older_than_days, confirm } => {
+        MpuAction::Abort {
+            target: t,
+            older_than_days,
+            confirm,
+        } => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;
-            let r: mpu::MpuReport = serde_json::from_value(super::wait(s, &mpu::scan(s, &ep, &t.bucket, &t.prefix), true).await?)?;
+            let r: mpu::MpuReport = serde_json::from_value(
+                super::wait(s, &mpu::scan(s, &ep, &t.bucket, &t.prefix), true).await?,
+            )?;
             let min = older_than_days.unwrap_or(r.threshold_days as f64);
-            let chosen: Vec<mpu::UploadRow> = r.uploads.into_iter().filter(|u| u.age_days.unwrap_or(0.0) > min).collect();
+            let chosen: Vec<mpu::UploadRow> = r
+                .uploads
+                .into_iter()
+                .filter(|u| u.age_days.unwrap_or(0.0) > min)
+                .collect();
             if chosen.is_empty() {
                 println!("no upload older than {min} days");
                 return Ok(0);
             }
             let plan = mpu::plan_abort(s, &ep, &t.bucket, &chosen);
             for i in &plan.items {
-                println!("  abort {}  {}  {}", i.key, i.id.clone().unwrap_or_default(), i.detail);
+                println!(
+                    "  abort {}  {}  {}",
+                    i.key,
+                    i.id.clone().unwrap_or_default(),
+                    i.detail
+                );
             }
             println!("{}", plan.summary);
             let Some(c) = confirm else {
-                println!("dry run: to abort, run again with --confirm {} (and read-only mode off)", plan.confirm);
+                println!(
+                    "dry run: to abort, run again with --confirm {} (and read-only mode off)",
+                    plan.confirm
+                );
                 return Ok(4);
             };
             let o = exec::execute(s, &plan.id, c).await?;
@@ -102,12 +175,25 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &MpuArgs) -> anyhow::Result<i32>
             }
             Ok(if o.failed > 0 { 70 } else { 0 })
         }
-        MpuAction::Lifecycle { target: t, days, confirm } => {
+        MpuAction::Lifecycle {
+            target: t,
+            days,
+            confirm,
+        } => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;
             let plan = mpu::plan_lifecycle_rule(s, &ep, &t.bucket, &t.prefix, *days).await?;
-            println!("current:\n{}\n\nnew:\n{}", plan.previous_document.clone().unwrap_or_else(|| "(none)".into()), plan.document.clone().unwrap_or_default());
+            println!(
+                "current:\n{}\n\nnew:\n{}",
+                plan.previous_document
+                    .clone()
+                    .unwrap_or_else(|| "(none)".into()),
+                plan.document.clone().unwrap_or_default()
+            );
             let Some(c) = confirm else {
-                println!("\ndry run: to apply, run again with --confirm {} (and read-only mode off)", plan.confirm);
+                println!(
+                    "\ndry run: to apply, run again with --confirm {} (and read-only mode off)",
+                    plan.confirm
+                );
                 return Ok(4);
             };
             let o = exec::execute(s, &plan.id, c).await?;
