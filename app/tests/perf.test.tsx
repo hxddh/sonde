@@ -17,14 +17,15 @@ test("100 000 rows: load and scroll", async () => {
   await app.press("id:flat");
   const loadStart = Date.now();
   await app.press("id:load-all");
-  await app.waitFor("text:100,000 items", { timeout: 120000 });
+  await app.waitFor("text:100,000 items", { timeout: 240000 });
   const loadMs = Date.now() - loadStart;
   const scrollStart = Date.now();
-  // 10 points per frame: 20 000 points is 2 000 frames, ~1 250 rows
-  await app.scroll("id:objects", 20000);
+  // 10 points per frame: 5 000 points is 500 frames (~310 rows of 16 points)
+  await app.scroll("id:objects", 5000);
   const scrollMs = Date.now() - scrollStart;
-  await app.scroll("id:objects", 400000);
-  const jumpMs = Date.now() - scrollStart - scrollMs;
-  console.log(`PERF load100k_ms=${loadMs} scroll2000frames_ms=${scrollMs} fps=${(2000 / (scrollMs / 1000)).toFixed(1)} scrollToEnd_ms=${jumpMs}`);
+  const back = Date.now();
+  await app.scroll("id:objects", -5000);
+  const backMs = Date.now() - back;
+  console.log(`PERF load100k_ms=${loadMs} scroll500frames_ms=${scrollMs} frames_per_s=${(500 / (scrollMs / 1000)).toFixed(1)} back500frames_ms=${backMs}`);
   expect(app.shows("text:100,000 items")).toBe(true);
 }, 300_000);

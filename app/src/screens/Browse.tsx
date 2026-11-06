@@ -258,10 +258,13 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     const l = listing();
     if (!l) return;
     loadingAll.set(true);
-    while (!l.done && listing() === l) {
-      await load(l);
+    try {
+      await l.loadAll(1_000_000);
+    } catch (e) {
+      report(e);
     }
     loadingAll.set(false);
+    version.update((v) => v + 1);
   };
 
   const open = (index: number) => {

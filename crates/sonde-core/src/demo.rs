@@ -55,8 +55,9 @@ struct State {
 fn synthetic_key(i: usize) -> String {
     format!(
         "logs/2026/{:02}/{:02}/events-{i:06}.json.gz",
-        1 + (i / 10_000) % 12,
-        1 + (i / 400) % 28
+        // keys sort as their index does: continuation tokens are positions
+        1 + i / 10_000,
+        1 + (i % 10_000) / 400
     )
 }
 
@@ -852,5 +853,22 @@ mod tests {
         .await
         .unwrap();
         assert!(found.len() >= 4, "{found:?}");
+    }
+}
+
+#[cfg(test)]
+mod paging {
+    #[tokio::test]
+    async fn lists_every_synthetic_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = crate::Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        super::install(&s).await.unwrap();
+        let all = s
+            .client("demo")
+            .unwrap()
+            .list_all("demo-large", "", 1_000_000)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), super::LARGE_KEYS);
     }
 }

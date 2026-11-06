@@ -101,6 +101,62 @@ impl Listing {
         }
     }
 
+    /// Loads every remaining page (at most `max_rows` rows in all), off the
+    /// engine thread; resolves with `{ count, done, pages }`.
+    pub async fn load_all(this: Instance<Self>, max_rows: u32) -> Result<JsonValue, String> {
+        if this.is_disposed() {
+            return Err(err_msg("the listing was closed"));
+        }
+        let (ep, b, p, d, state) = this.with(|l| {
+            (
+                l.endpoint.clone(),
+                l.bucket.clone(),
+                l.prefix.clone(),
+                l.delimiter.clone(),
+                l.state.clone(),
+            )
+        });
+        let st = state.clone();
+        let r = background(async move {
+            loop {
+                let token = {
+                    let mut s = st.lock();
+                    if s.done || s.loading || s.rows.len() >= max_rows as usize {
+                        return Ok::<(), sonde_core::S3Error>(());
+                    }
+                    s.loading = true;
+                    s.token.clone()
+                };
+                let page =
+                    browse::list_page(&sonde(), &ep, &b, &p, d.as_deref(), token, None).await;
+                let mut s = st.lock();
+                s.loading = false;
+                let page = page?;
+                s.pages += 1;
+                s.done = !page.is_truncated || page.next_token.is_none();
+                s.token = page.next_token;
+                s.rows.extend(page.entries);
+                // the listing was dropped: stop
+                if Arc::strong_count(&st) == 1 {
+                    return Ok(());
+                }
+            }
+        })
+        .await;
+        let mut s = state.lock();
+        if !s.filter.is_empty() {
+            let f = s.filter.clone();
+            refilter(&mut s, &f);
+        }
+        match r {
+            Ok(Ok(())) => {
+                Ok(serde_json::json!({ "count": count(&s), "done": s.done, "pages": s.pages }))
+            }
+            Ok(Err(e)) => Err(err(e)),
+            Err(e) => Err(err_msg(e)),
+        }
+    }
+
     /// Rows `start .. start + count` of what is shown (after the filter).
     pub fn rows(&self, start: u32, count: u32) -> JsonValue {
         let s = self.state.lock();
