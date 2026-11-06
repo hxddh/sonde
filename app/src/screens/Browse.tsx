@@ -92,7 +92,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
     <View class="flex-1 gap-3" testID="object-detail">
       <View class="flex-row items-center gap-2">
         <If when={props.onBack}>
-          <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={() => props.onBack?.()} />
+          <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={() => props.onBack?.()} testID="detail-back" />
         </If>
         <Text class="flex-1 text-base font-semibold text-foreground line-clamp-2">
           {props.entry.name}

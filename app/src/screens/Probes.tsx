@@ -168,7 +168,7 @@ export function Probes() {
             </View>
             <View class="flex-row flex-wrap items-end gap-3">
               <Field class="w-56" label={t("probes.scratch")} value={scratch()} onChange={(v) => scratch.set(v)} mono testID="probe-bucket" />
-              <Field class="w-72" label={t("probes.only")} value={only()} onChange={(v) => only.set(v)} placeholder="checksum., range." mono />
+              <Field class="w-72" label={t("probes.only")} value={only()} onChange={(v) => only.set(v)} placeholder="checksum., range." mono testID="probe-only" />
               <Toggle label={t("probes.tempBuckets")} checked={temp()} onChange={(v) => temp.set(v)} />
               <Toggle label={t("probes.slow")} checked={slow()} onChange={(v) => slow.set(v)} />
               <Button variant="primary" label={t("common.run")} onPress={run} disabled={!scratch() || Object.keys(running()).length > 0} testID="probe-run" />
