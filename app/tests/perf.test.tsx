@@ -1,6 +1,7 @@
 // Performance: 100 000 rows in the object table, scrolled end to end.
-// Not part of the regular suites; run with scripts/perf.sh (it adds --trace
-// and --target tui), which writes the numbers into docs/performance.md.
+// Not part of the regular suites. From app/:
+//   nsh test tests/perf.test.tsx --target tui --trace
+// The numbers are recorded in docs/performance.md.
 
 import { expect, open, test } from "nsh/test";
 

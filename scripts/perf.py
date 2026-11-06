@@ -60,28 +60,30 @@ send(fd, "2"); until(fd, stream, screen, "Choose a bucket", 10)
 for k in ["\t", "\t", "\t", "\r"]: send(fd, k); pump(fd, stream, 0.4)
 send(fd, "\x1b[B"); pump(fd, stream, 0.3); send(fd, "\r")
 until(fd, stream, screen, "logs/", 10)
-for k in ["\t", "\t", "\t"]: send(fd, k); pump(fd, stream, 0.3)
+for k in ["\t", "\t"]: send(fd, k); pump(fd, stream, 0.3)
 send(fd, " ")  # the Flat switch
 pump(fd, stream, 1.5)
 send(fd, "\t"); pump(fd, stream, 0.3); send(fd, "\r")  # Load all
 load = until(fd, stream, screen, "100,000 items", 180)
 loaded = rss(pid)
 # page through the table: focus it, Page Down repeatedly, read the fps line
-for _ in range(6): send(fd, "\t"); pump(fd, stream, 0.2)
+for _ in range(5): send(fd, "\t"); pump(fd, stream, 0.2)
 fps_lines = []
 t0 = time.time()
 pages = 0
 while time.time() - t0 < 10:
     send(fd, "\x1b[6~"); pages += 1
     pump(fd, stream, 0.05)
-    top = screen.display[0]
-    m = re.search(r"(\d+(?:\.\d+)?)\s*fps", top)
-    if m: fps_lines.append(top.strip())
+    for line in screen.display[:3]:
+        m = re.search(r"\S*fps\s.*p95.*|idle\s.*p95.*", line)
+        if m: fps_lines.append(m.group(0).strip())
 paged = rss(pid)
+last = next((l.strip() for l in screen.display if "events-" in l), "")
 os.kill(pid, 9)
 print(f"| CLI start (`sonde --version`) | {cli:.1f} ms |")
 print(f"| TUI start to first frame (`sonde tui --demo`), 3 runs | {', '.join(f'{s:.0f}' for s in samples)} ms |")
 print(f"| Load 100 000 rows (100 ListObjectsV2 pages from the demo server) | {load:.2f} s |")
 print(f"| Memory (VmRSS): idle / 100 000 rows / after paging | {idle} / {loaded} / {paged} MiB |")
 print(f"| Page Down presses in 10 s | {pages} |")
+print(f"| First row after paging | `{last.split()[0] if last else '?'}` |")
 print("| --fps line samples | " + (" · ".join(fps_lines[-3:]) if fps_lines else "(none read)") + " |")
