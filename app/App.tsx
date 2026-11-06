@@ -115,6 +115,14 @@ function TermHeader(props: { title: string }) {
 }
 
 function Home() {
+  // 1–9 open a section from the home list (not while typing, not under another page)
+  const digits: Record<string, () => void> = {};
+  SECTIONS.slice(0, 9).forEach((s, i) => {
+    digits[String(i + 1)] = () => {
+      if (nav.routes().length === 1) open(s);
+    };
+  });
+  keymap.bind(digits, { when: "notEditing" });
   return (
     <NavPage title="sonde" header={<TermHeader title="sonde" />}>
       <View class="flex-1 gap-1 p-1">
