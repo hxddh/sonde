@@ -1,0 +1,445 @@
+// The shapes sonde/native returns (serde JSON of sonde-core, probes and decoders).
+
+export interface EndpointView {
+  id: string;
+  name: string;
+  url: string;
+  region: string;
+  pathStyle: boolean;
+  vendor: string;
+  vendorLabel: string;
+  hasCa: boolean;
+  credentials: string;
+  buckets: string[];
+}
+
+export interface VendorInfo {
+  id: string;
+  label: string;
+  urlTemplate: string;
+  region: string;
+  pathStyle: boolean;
+  stsIdentity: boolean;
+}
+
+export interface Prices {
+  "default-per-gib-month": number;
+  "by-class": Record<string, number>;
+  currency: string;
+}
+
+export interface Settings {
+  "read-only": boolean;
+  concurrency: number;
+  "rate-limit": number | null;
+  prices: Prices;
+  "reqlog-capacity": number;
+  "reqlog-persist": boolean;
+  theme: string;
+  language: string;
+  "stale-upload-days": number;
+  "exports-dir": string | null;
+  "downloads-dir": string | null;
+}
+
+export interface SondeError {
+  sonde?: boolean;
+  kind: string;
+  message: string;
+  code?: string | null;
+  status?: number | null;
+  requestId?: string | null;
+  recordId?: number | null;
+}
+
+export interface ConnectivityReport {
+  endpoint: string;
+  ok: boolean;
+  latencyMs: number;
+  credentialsSource: string | null;
+  bucketCount: number | null;
+  owner: string | null;
+  identity: { arn?: string; userId?: string; account?: string } | null;
+  identityNote: string | null;
+  error: SondeError | null;
+  server: string | null;
+}
+
+export interface BucketEntry {
+  name: string;
+  created: string | null;
+  region: string | null;
+}
+
+export interface Entry {
+  key: string;
+  name: string;
+  isPrefix: boolean;
+  size: number;
+  lastModified: string | null;
+  etag: string | null;
+  storageClass: string | null;
+  parts: number | null;
+}
+
+export interface EtagInfo {
+  value: string;
+  weak: boolean;
+  kind: { kind: "md5"; md5: string } | { kind: "multipart"; digest: string; parts: number } | { kind: "opaque" };
+}
+
+export interface StoredChecksum {
+  algorithm: string;
+  value: string;
+  kind: "fullObject" | "composite";
+  parts: number | null;
+  kindFromHeader: boolean;
+}
+
+export interface ObjectDetail {
+  bucket: string;
+  key: string;
+  size: number | null;
+  contentType: string | null;
+  lastModified: string | null;
+  versionId: string | null;
+  storageClass: string;
+  etag: EtagInfo | null;
+  partSizeGuesses: number[];
+  checksums: StoredChecksum[];
+  sse: { algorithm?: string | null; kmsKeyId?: string | null; bucketKeyEnabled?: boolean | null; customerAlgorithm?: string | null; customerKeyMd5?: string | null };
+  metadata: [string, string][];
+  headers: [string, string][];
+  restore: string | null;
+  objectLock: string | null;
+  recordId: number;
+}
+
+export interface Progress {
+  done: number;
+  total: number | null;
+  bytes: number;
+  message: string;
+}
+
+export interface JobInfo {
+  id: string;
+  kind: string;
+  title: string;
+  state: "running" | "finished" | "failed" | "cancelled";
+  progress: Progress;
+  started: string;
+  ended: string | null;
+  concurrency: number;
+  rateLimit: number | null;
+  error: SondeError | null;
+}
+
+export type JobEvent =
+  | { type: "Progress"; job: string; progress: Progress }
+  | { type: "Partial"; job: string; data: unknown };
+
+export interface Header {
+  name: string;
+  value: string;
+}
+
+export interface RecordSummary {
+  id: number;
+  time: string;
+  endpoint: string;
+  operation: string;
+  method: string;
+  target: string;
+  status: number | null;
+  latencyMs: number;
+  retries: number;
+  requestId: string | null;
+}
+
+export interface RequestRecord extends RecordSummary {
+  url: string;
+  bucket: string | null;
+  key: string | null;
+  query: [string, string][];
+  hostId: string | null;
+  requestHeaders: Header[];
+  responseHeaders: Header[];
+  requestBytes: number | null;
+  responseBytes: number | null;
+  errorBody: string | null;
+  transportError: string | null;
+  region: string | null;
+  job: string | null;
+}
+
+export interface RequestFilter {
+  status?: { kind: "exact" | "class"; value: number } | { kind: "errors" } | { kind: "transport" } | null;
+  operation?: string | null;
+  endpoint?: string | null;
+  text?: string | null;
+  retried?: boolean;
+}
+
+export interface UploadRow {
+  key: string;
+  uploadId: string;
+  initiated: string | null;
+  ageDays: number | null;
+  parts: number;
+  bytes: number;
+  storageClass: string | null;
+  costSoFar: number;
+  costPerMonth: number;
+  stale: boolean;
+  partsError: string | null;
+}
+
+export interface MpuReport {
+  endpoint: string;
+  bucket: string;
+  prefix: string;
+  thresholdDays: number;
+  uploads: UploadRow[];
+  totalUploads: number;
+  staleUploads: number;
+  totalBytes: number;
+  staleBytes: number;
+  costPerMonth: number;
+  costSoFar: number;
+  currency: string;
+  lifecycle: {
+    status: "covered" | "partial" | "missing" | "unknown";
+    rules: { id: string | null; prefix: string | null; days: number; enabled: boolean }[];
+    message: string;
+    suggestedRule: string;
+    error: SondeError | null;
+  };
+  scannedAt: string;
+}
+
+export interface PlanItem {
+  key: string;
+  id: string | null;
+  bytes: number | null;
+  detail: string;
+}
+
+export interface Plan {
+  id: string;
+  action: "abortUploads" | "deleteVersions" | "restoreObject" | "deleteObjects" | "putLifecycle";
+  endpoint: string;
+  bucket: string;
+  items: PlanItem[];
+  document: string | null;
+  previousDocument: string | null;
+  summary: string;
+  confirm: string;
+  confirmHint: string;
+  created: string;
+}
+
+export interface Outcome {
+  succeeded: number;
+  failed: number;
+  errors: SondeError[];
+}
+
+export interface VersionEntry {
+  versionId: string;
+  isLatest: boolean;
+  isDeleteMarker: boolean;
+  lastModified: string | null;
+  size: number;
+  etag: string | null;
+  storageClass: string | null;
+}
+
+export interface Timeline {
+  bucket: string;
+  key: string;
+  versions: VersionEntry[];
+  deleted: boolean;
+  noncurrentBytes: number;
+}
+
+export interface VersioningStatus {
+  status: string;
+  mfaDelete: string | null;
+  objectLock: string | null;
+}
+
+export interface Agg {
+  objects: number;
+  bytes: number;
+}
+
+export interface Slice {
+  name: string;
+  current: Agg;
+  noncurrent: Agg;
+  deleteMarkers: number;
+}
+
+export interface DuReport {
+  endpoint: string;
+  bucket: string;
+  prefix: string;
+  source: string;
+  current: Agg;
+  noncurrent: Agg;
+  deleteMarkers: number;
+  multipart: Agg;
+  totalBytes: number;
+  byClass: Slice[];
+  byPrefix: Slice[];
+  bySize: { label: string; min: number; max: number | null; objects: number; bytes: number }[];
+  findings: string[];
+  costPerMonth: number;
+  currency: string;
+  scannedAt: string;
+  requests: number;
+}
+
+export type Verdict = "pass" | "fail" | "differs" | "unsupported" | "error" | "skipped";
+
+export interface ProbeMeta {
+  id: string;
+  category: string;
+  title: string;
+  description: string;
+  awsBehavior: string;
+  needs: string[];
+}
+
+export interface Step {
+  label: string;
+  status: number | null;
+  code: string | null;
+  headers: [string, string][];
+  body: string;
+  recordId: number | null;
+}
+
+export interface ProbeResult {
+  id: string;
+  category: string;
+  verdict: Verdict;
+  summary: string;
+  observations: string[];
+  steps: Step[];
+  exchanges: RequestRecord[];
+  durationMs: number;
+}
+
+export interface ProbeRun {
+  id: string;
+  endpoint: string;
+  endpointName: string;
+  vendor: string;
+  server: string | null;
+  started: string;
+  finished: string;
+  sondeVersion: string;
+  results: ProbeResult[];
+}
+
+export interface RunSummary {
+  id: string;
+  endpoint: string;
+  endpointName: string;
+  vendor: string;
+  started: string;
+  pass: number;
+  fail: number;
+  differs: number;
+  unsupported: number;
+  other: number;
+}
+
+export interface Matrix {
+  columns: { endpoint: string; name: string; vendor: string; server: string | null; run: string; started: string }[];
+  rows: { probe: ProbeMeta; cells: ({ verdict: Verdict; summary: string; run: string } | null)[] }[];
+}
+
+export interface Change {
+  probe: string;
+  before: Verdict | null;
+  after: Verdict | null;
+  beforeSummary: string | null;
+  afterSummary: string | null;
+  stepsChanged: boolean;
+}
+
+export interface Detection {
+  format: string;
+  root: string;
+  evidence: string;
+}
+
+export interface Fact {
+  label: string;
+  value: string;
+}
+
+export interface Table {
+  title: string;
+  columns: string[];
+  rows: string[][];
+}
+
+export interface Snapshot {
+  time: string | null;
+  label: string;
+  facts: Fact[];
+  tables: Table[];
+}
+
+export interface Layout {
+  format: string;
+  root: string;
+  formatVersion: string | null;
+  decoded: boolean;
+  headline: string;
+  facts: Fact[];
+  issues: { severity: "info" | "warning" | "error"; message: string }[];
+  timeline: { time: string | null; kind: string; label: string; detail: string; key: string | null; bytes: number | null }[];
+  tables: Table[];
+  snapshots: Snapshot[];
+  objects: number;
+  bytes: number;
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  build: number;
+  sha256: string;
+  keyId: string;
+  enabled: boolean;
+  revoked: boolean;
+  installed: string;
+  hostCalls: string[];
+}
+
+export interface TrustRoot {
+  id: string;
+  label: string;
+  key: string;
+  added: string;
+}
+
+export interface AuditEntry {
+  time: string;
+  plan: string;
+  action: string;
+  endpoint: string;
+  bucket: string;
+  items: number;
+  succeeded: number;
+  failed: number;
+  errors: string[];
+  requestIds: string[];
+  targets: string[];
+}

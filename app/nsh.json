@@ -1,0 +1,19 @@
+{
+  "name": "sonde",
+  "id": "dev.sonde.app",
+  "version": "0.1.0",
+  "build": 1,
+  "icon": "assets/icon.png",
+  "rust": "../crates/sonde-nsh",
+  "theme": "theme.json",
+  "capabilities": {
+    "clipboard": true
+  },
+  "macos": {
+    "infoPlist": {
+      "LSApplicationCategoryType": "public.app-category.developer-tools",
+      "NSHumanReadableCopyright": "Apache-2.0"
+    }
+  },
+  "tui": { "pointsPerCell": "8x16" }
+}

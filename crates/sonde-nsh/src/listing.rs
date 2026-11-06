@@ -54,6 +54,9 @@ impl Listing {
 
     /// Loads the next page; resolves with `{ count, done, pages, recordId }`.
     pub async fn load_more(this: Instance<Self>) -> Result<JsonValue, String> {
+        if this.is_disposed() {
+            return Err(err_msg("the listing was closed"));
+        }
         let (ep, b, p, d, state) = this.with(|l| {
             (
                 l.endpoint.clone(),
