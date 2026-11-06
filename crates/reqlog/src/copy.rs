@@ -8,7 +8,8 @@ use crate::Record;
 
 fn shell_quote(s: &str) -> String {
     if !s.is_empty()
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:=@,+%".contains(c))
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:=@,+%".contains(c))
     {
         s.to_string()
     } else {
@@ -21,7 +22,8 @@ fn kebab(op: &str) -> String {
     let chars: Vec<char> = op.chars().collect();
     for (i, c) in chars.iter().enumerate() {
         if c.is_ascii_uppercase() {
-            let prev_lower = i > 0 && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit());
+            let prev_lower =
+                i > 0 && (chars[i - 1].is_ascii_lowercase() || chars[i - 1].is_ascii_digit());
             let next_lower = chars.get(i + 1).is_some_and(|n| n.is_ascii_lowercase());
             let prev_upper = i > 0 && chars[i - 1].is_ascii_uppercase();
             if i > 0 && (prev_lower || (prev_upper && next_lower)) {
@@ -46,11 +48,17 @@ fn endpoint_url(url: &str) -> Option<String> {
 }
 
 fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.query.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+    r.query
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
 }
 
 fn req_header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
-    r.request_headers.iter().find(|h| h.name.eq_ignore_ascii_case(name)).map(|h| h.value.as_str())
+    r.request_headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_str())
 }
 
 /// An `aws s3api` command doing what the record did.
@@ -88,7 +96,9 @@ pub fn as_aws_cli(r: &Record) -> String {
     ];
     for (q, flag) in map {
         if let Some(v) = query(r, q) {
-            let decoded = percent_encoding::percent_decode_str(v).decode_utf8_lossy().to_string();
+            let decoded = percent_encoding::percent_decode_str(v)
+                .decode_utf8_lossy()
+                .to_string();
             parts.push(flag.into());
             parts.push(shell_quote(&decoded));
         }
@@ -125,7 +135,10 @@ pub fn as_aws_cli(r: &Record) -> String {
 }
 
 fn region_arg(r: &Record) -> String {
-    r.region.as_ref().map(|reg| format!(" --region {reg}")).unwrap_or_default()
+    r.region
+        .as_ref()
+        .map(|reg| format!(" --region {reg}"))
+        .unwrap_or_default()
 }
 
 /// A curl command with the record's method, URL and headers, minus every
@@ -170,13 +183,15 @@ pub fn as_curl(r: &Record) -> String {
         if skip.contains(&h.name.to_ascii_lowercase().as_str()) {
             continue;
         }
-        lines.push(format!("  -H {}", shell_quote(&format!("{}: {}", h.name, h.value))));
+        lines.push(format!(
+            "  -H {}",
+            shell_quote(&format!("{}: {}", h.name, h.value))
+        ));
     }
     if r.method == "HEAD" {
         lines[2] = format!("curl -sS -I {}", shell_quote(&url));
     }
-    lines.join(" \\\n")
-        .replacen(" \\\n", "\n", 2)
+    lines.join(" \\\n").replacen(" \\\n", "\n", 2)
 }
 
 #[cfg(test)]
@@ -197,7 +212,10 @@ mod tests {
             ],
             region: Some("us-east-1".into()),
             request_headers: vec![
-                Header::new("Authorization", "AWS4-HMAC-SHA256 Credential=AKIAX/s, SignedHeaders=host, Signature=zzz"),
+                Header::new(
+                    "Authorization",
+                    "AWS4-HMAC-SHA256 Credential=AKIAX/s, SignedHeaders=host, Signature=zzz",
+                ),
                 Header::new("x-amz-date", "20240101T000000Z"),
                 Header::new("x-amz-security-token", "TOKEN"),
                 Header::new("x-amz-request-payer", "requester"),
@@ -210,7 +228,10 @@ mod tests {
     #[test]
     fn kebab_case() {
         assert_eq!(kebab("HeadObject"), "head-object");
-        assert_eq!(kebab("GetBucketLifecycleConfiguration"), "get-bucket-lifecycle-configuration");
+        assert_eq!(
+            kebab("GetBucketLifecycleConfiguration"),
+            "get-bucket-lifecycle-configuration"
+        );
         assert_eq!(kebab("ListMultipartUploads"), "list-multipart-uploads");
         assert_eq!(kebab("UploadPartCopy"), "upload-part-copy");
     }
@@ -218,7 +239,10 @@ mod tests {
     #[test]
     fn aws_cli() {
         let cmd = as_aws_cli(&rec());
-        assert_eq!(cmd, "aws s3api list-objects-v2 --bucket bucket --prefix logs/ --delimiter / --endpoint-url http://127.0.0.1:9000 --region us-east-1");
+        assert_eq!(
+            cmd,
+            "aws s3api list-objects-v2 --bucket bucket --prefix logs/ --delimiter / --endpoint-url http://127.0.0.1:9000 --region us-east-1"
+        );
     }
 
     #[test]

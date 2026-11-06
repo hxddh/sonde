@@ -110,7 +110,9 @@ impl Default for RequestLog {
 
 impl std::fmt::Debug for RequestLog {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RequestLog").field("len", &self.len()).finish()
+        f.debug_struct("RequestLog")
+            .field("len", &self.len())
+            .finish()
     }
 }
 
@@ -219,8 +221,13 @@ impl RequestLog {
 
     /// Distinct operation names in the log, for filter menus.
     pub fn operations(&self) -> Vec<String> {
-        let mut ops: Vec<String> =
-            self.inner.read().records.iter().map(|r| r.operation.clone()).collect();
+        let mut ops: Vec<String> = self
+            .inner
+            .read()
+            .records
+            .iter()
+            .map(|r| r.operation.clone())
+            .collect();
         ops.sort();
         ops.dedup();
         ops
@@ -240,7 +247,10 @@ mod tests {
             bucket: Some("b".into()),
             key: Some("k".into()),
             status,
-            request_headers: vec![Header::new("Authorization", "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/x, SignedHeaders=host, Signature=abc")],
+            request_headers: vec![Header::new(
+                "Authorization",
+                "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/x, SignedHeaders=host, Signature=abc",
+            )],
             ..Default::default()
         }
     }
@@ -276,14 +286,23 @@ mod tests {
         log.push(rec("GetObject", Some(404)));
         log.push(rec("PutObject", Some(503)));
         log.push(rec("PutObject", None));
-        let f = |s| Filter { status: Some(s), ..Default::default() };
+        let f = |s| Filter {
+            status: Some(s),
+            ..Default::default()
+        };
         assert_eq!(log.list(&f(StatusFilter::Errors), 10).len(), 3);
         assert_eq!(log.list(&f(StatusFilter::Class(5)), 10).len(), 1);
         assert_eq!(log.list(&f(StatusFilter::Exact(404)), 10).len(), 1);
         assert_eq!(log.list(&f(StatusFilter::Transport), 10).len(), 1);
-        let op = Filter { operation: Some("putobject".into()), ..Default::default() };
+        let op = Filter {
+            operation: Some("putobject".into()),
+            ..Default::default()
+        };
         assert_eq!(log.list(&op, 10).len(), 2);
-        let ep = Filter { endpoint: Some("other".into()), ..Default::default() };
+        let ep = Filter {
+            endpoint: Some("other".into()),
+            ..Default::default()
+        };
         assert!(log.list(&ep, 10).is_empty());
         // newest first
         assert_eq!(log.list(&Filter::default(), 1)[0].id, 4);

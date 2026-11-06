@@ -9,11 +9,11 @@
 
 pub mod copy;
 pub mod export;
-pub mod redact;
 mod record;
+pub mod redact;
 mod ring;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
 pub use record::{Header, Record, RecordSummary};
-pub use ring::{Filter, RequestLog, StatusFilter, DEFAULT_CAPACITY};
+pub use ring::{DEFAULT_CAPACITY, Filter, RequestLog, StatusFilter};

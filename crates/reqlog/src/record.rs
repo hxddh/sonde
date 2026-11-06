@@ -11,7 +11,10 @@ pub struct Header {
 
 impl Header {
     pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
-        Header { name: name.into(), value: value.into() }
+        Header {
+            name: name.into(),
+            value: value.into(),
+        }
     }
 }
 
@@ -83,7 +86,11 @@ impl Record {
         for (k, v) in &mut self.query {
             *v = crate::redact::redact_query_value(k, v);
         }
-        for h in self.request_headers.iter_mut().chain(self.response_headers.iter_mut()) {
+        for h in self
+            .request_headers
+            .iter_mut()
+            .chain(self.response_headers.iter_mut())
+        {
             h.value = crate::redact::redact_header(&h.name, &h.value);
         }
         if let Some(body) = &mut self.error_body {

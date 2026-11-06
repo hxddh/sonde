@@ -1,4 +1,41 @@
 [package]
 name = "s3raw"
+description = "A raw S3 client for diagnosis: SigV4, path- and virtual-hosted-style, every header, status and error body kept."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+reqlog.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+bytes.workspace = true
+reqwest.workspace = true
+http.workspace = true
+url.workspace = true
+percent-encoding.workspace = true
+quick-xml = { workspace = true, features = ["serialize", "overlapped-lists"] }
+hmac.workspace = true
+sha2.workspace = true
+sha1.workspace = true
+md-5.workspace = true
+hex.workspace = true
+base64.workspace = true
+crc32fast.workspace = true
+crc32c.workspace = true
+crc64fast-nvme.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

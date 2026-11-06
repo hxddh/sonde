@@ -30,6 +30,9 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 dbg_macro = "warn"
+# Errors carry request ids, the raw body and the record id on purpose.
+result_large_err = "allow"
+too_many_arguments = "allow"
 
 [workspace.dependencies]
 reqlog = { path = "crates/reqlog" }

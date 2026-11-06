@@ -91,7 +91,12 @@ mod tests {
         assert!(!text.contains("secret") && !text.contains("\"tok\""));
         assert_eq!(har["log"]["version"], "1.2");
         assert_eq!(har["log"]["entries"][0]["response"]["status"], 403);
-        assert!(har["log"]["entries"][0]["response"]["content"]["text"].as_str().unwrap().contains("AccessDenied"));
+        assert!(
+            har["log"]["entries"][0]["response"]["content"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("AccessDenied")
+        );
         let j = to_json(&log.snapshot());
         assert_eq!(j["records"].as_array().unwrap().len(), 1);
     }

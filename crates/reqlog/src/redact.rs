@@ -143,7 +143,13 @@ pub fn redact_url(raw: &str) -> String {
 /// returns the string to sign, the signature provided and the key id).
 pub fn redact_text(text: &str) -> String {
     let mut out = text.to_string();
-    for tag in ["SignatureProvided", "StringToSignBytes", "Signature", "SecurityToken", "Token"] {
+    for tag in [
+        "SignatureProvided",
+        "StringToSignBytes",
+        "Signature",
+        "SecurityToken",
+        "Token",
+    ] {
         out = replace_element(&out, tag, |_| MASK.to_string());
     }
     out = replace_element(&out, "AWSAccessKeyId", mask_key_id);
@@ -207,18 +213,38 @@ mod tests {
 
     #[test]
     fn sigv2_and_unknown_schemes() {
-        assert_eq!(redact_header("Authorization", "AWS AKIAIOSFODNN7EXAMPLE:frJIUN8DYpKDtOLCwo//yllqDzg="), format!("AWS AKIA…LE:{MASK}"));
-        assert_eq!(redact_header("authorization", "Bearer abc.def"), format!("Bearer {MASK}"));
+        assert_eq!(
+            redact_header(
+                "Authorization",
+                "AWS AKIAIOSFODNN7EXAMPLE:frJIUN8DYpKDtOLCwo//yllqDzg="
+            ),
+            format!("AWS AKIA…LE:{MASK}")
+        );
+        assert_eq!(
+            redact_header("authorization", "Bearer abc.def"),
+            format!("Bearer {MASK}")
+        );
         assert_eq!(redact_header("authorization", "garbage"), MASK);
     }
 
     #[test]
     fn secret_headers() {
-        for h in ["x-amz-security-token", "X-Amz-Security-Token", "x-amz-server-side-encryption-customer-key", "Cookie"] {
+        for h in [
+            "x-amz-security-token",
+            "X-Amz-Security-Token",
+            "x-amz-server-side-encryption-customer-key",
+            "Cookie",
+        ] {
             assert_eq!(redact_header(h, "secretvalue"), MASK, "{h}");
         }
-        assert_eq!(redact_header("x-amz-server-side-encryption-customer-key-MD5", "md5"), "md5");
-        assert_eq!(redact_header("x-amz-date", "20130524T000000Z"), "20130524T000000Z");
+        assert_eq!(
+            redact_header("x-amz-server-side-encryption-customer-key-MD5", "md5"),
+            "md5"
+        );
+        assert_eq!(
+            redact_header("x-amz-date", "20130524T000000Z"),
+            "20130524T000000Z"
+        );
     }
 
     #[test]
@@ -232,8 +258,13 @@ mod tests {
         assert!(r.contains("X-Amz-Date=20130524T000000Z"));
         assert_eq!(redact_url(&r), r, "idempotent");
         assert_eq!(redact_url("https://h/b/k"), "https://h/b/k");
-        let v2 = redact_url("https://h/b/k?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE&Expires=1&Signature=abc%2B");
-        assert!(!v2.contains("abc%2B") && !v2.contains("AKIAIOSFODNN7EXAMPLE"), "{v2}");
+        let v2 = redact_url(
+            "https://h/b/k?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE&Expires=1&Signature=abc%2B",
+        );
+        assert!(
+            !v2.contains("abc%2B") && !v2.contains("AKIAIOSFODNN7EXAMPLE"),
+            "{v2}"
+        );
     }
 
     #[test]
