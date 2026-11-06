@@ -2,6 +2,8 @@ pub mod du;
 pub mod endpoints;
 pub mod layout;
 pub mod mpu;
+#[cfg(feature = "tui")]
+pub mod plugin;
 pub mod probe;
 #[cfg(feature = "tui")]
 pub mod tui;

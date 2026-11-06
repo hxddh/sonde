@@ -1,0 +1,2 @@
+{"add": {"path": "part-00001.parquet", "size": 800, "dataChange": true}}
+{"commitInfo": {"timestamp": 1793900600000, "operation": "WRITE"}}

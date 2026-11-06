@@ -7,6 +7,7 @@ import { api } from "../native";
 import { bucket, endpoint, notify, prefix, report } from "../store";
 import type { PluginInfo, TrustRoot } from "../types";
 import { Badge, Button, Card, Empty, Field, Heading, KeyValue, Mono, Muted, Page, Title, Toggle } from "../ui/kit";
+import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 export function Plugins() {
   const list = signal<PluginInfo[]>(api.plugins());
@@ -36,6 +37,11 @@ export function Plugins() {
       <If when={!hostAvailable}>
         <Badge tone="info" label={t("plugins.noHost")} />
       </If>
+      <View class="flex-row flex-wrap items-end gap-2">
+        <EndpointPicker />
+        <BucketPicker />
+        <Field class="w-64" label={t("common.prefix")} value={prefix()} onChange={(v) => prefix.set(v)} mono testID="plugin-prefix" />
+      </View>
       <Card>
         <Heading>{t("plugins.install")}</Heading>
         <View class="flex-row items-end gap-2">
@@ -54,7 +60,7 @@ export function Plugins() {
                   <Badge tone="fail" label={t("plugins.revoked")} />
                 </If>
                 <View class="flex-1" />
-                <Button small label={t("plugins.open")} disabled={!p().enabled || !hostAvailable || !endpoint() || !bucket()} onPress={() => act(() => api.openPlugin(p().id, { endpoint: endpoint()!, bucket: bucket()!, prefix: prefix() }))} />
+                <Button small testID={`open-${p().id}`} label={t("plugins.open")} disabled={!p().enabled || !hostAvailable || !endpoint() || !bucket()} onPress={() => act(() => api.openPlugin(p().id, { endpoint: endpoint()!, bucket: bucket()!, prefix: prefix() }))} />
                 <Button small variant="ghost" label={t("common.remove")} onPress={() => act(() => api.uninstallPlugin(p().id))} />
               </View>
               <Toggle label={t("plugins.enabled")} checked={p().enabled} disabled={p().revoked} onChange={(v) => act(() => api.enablePlugin(p().id, v))} />

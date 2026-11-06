@@ -1,0 +1,3 @@
+{"remove": {"path": "part-00000.parquet", "dataChange": true}}
+{"add": {"path": "part-00002.parquet", "size": 950, "dataChange": true}}
+{"commitInfo": {"timestamp": 1793901200000, "operation": "OPTIMIZE"}}

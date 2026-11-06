@@ -69,9 +69,26 @@ enum Command {
     /// The terminal UI.
     #[cfg(feature = "tui")]
     Tui(cmd::tui::TuiArgs),
+    /// Signed plugin packages.
+    #[cfg(feature = "tui")]
+    Plugin(cmd::plugin::PluginArgs),
 }
 
 fn main() -> ExitCode {
+    // `sonde … | head`: a closed pipe ends the output quietly
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        if msg.contains("Broken pipe") {
+            std::process::exit(0);
+        }
+        previous(info);
+    }));
     let cli = Cli::parse();
     #[cfg(feature = "tui")]
     if let Command::Tui(args) = &cli.command {
@@ -97,6 +114,8 @@ fn main() -> ExitCode {
             Command::Endpoints(a) => cmd::endpoints::run(&sonde, &cli, a).await,
             #[cfg(feature = "tui")]
             Command::Tui(_) => unreachable!(),
+            #[cfg(feature = "tui")]
+            Command::Plugin(a) => cmd::plugin::run(&sonde, &cli, a).await,
         };
         let code = match code {
             Ok(c) => c,

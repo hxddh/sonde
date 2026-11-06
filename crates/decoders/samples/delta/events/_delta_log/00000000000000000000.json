@@ -1,0 +1,4 @@
+{"protocol": {"minReaderVersion": 1, "minWriterVersion": 2}}
+{"metaData": {"id": "5f1c", "format": {"provider": "parquet"}, "schemaString": "{\"type\":\"struct\",\"fields\":[]}", "partitionColumns": []}}
+{"add": {"path": "part-00000.parquet", "size": 1200, "dataChange": true}}
+{"commitInfo": {"timestamp": 1793900000000, "operation": "CREATE TABLE"}}

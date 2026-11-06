@@ -270,9 +270,10 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
             {
                 Ok(v) => {
                     let backend = CrosstermBackend::new(io::BufWriter::new(io::stdout()));
-                    let mut t = Terminal::new(v.measure_backend(backend))?;
-                    t.clear()?;
-                    plugin_term = Some(t);
+                    // a cleared screen and a fresh terminal: its first frame paints every Cell
+                    // (ratatui's clear() asks for the cursor position, which not every terminal answers)
+                    execute!(io::stdout(), terminal::Clear(terminal::ClearType::All))?;
+                    plugin_term = Some(Terminal::new(v.measure_backend(backend))?);
                     plugin = Some(v);
                     redraw = true;
                 }
@@ -285,7 +286,11 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
                 redraw = false;
             }
             if v.exit_requested() {
-                close_plugin(&mut plugin, &mut plugin_term, &mut term)?;
+                close_plugin(&mut plugin, &mut plugin_term);
+                execute!(io::stdout(), terminal::Clear(terminal::ClearType::All))?;
+                term = Terminal::new(
+                    main.measure_backend(CrosstermBackend::new(io::BufWriter::new(io::stdout()))),
+                )?;
                 redraw = true;
                 continue;
             }
@@ -313,7 +318,11 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
                 && k.code == KeyCode::F(12)
                 && plugin.is_some()
             {
-                close_plugin(&mut plugin, &mut plugin_term, &mut term)?;
+                close_plugin(&mut plugin, &mut plugin_term);
+                execute!(io::stdout(), terminal::Clear(terminal::ClearType::All))?;
+                term = Terminal::new(
+                    main.measure_backend(CrosstermBackend::new(io::BufWriter::new(io::stdout()))),
+                )?;
                 redraw = true;
                 continue;
             }
@@ -342,14 +351,11 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
 fn close_plugin<B: ratatui_core::backend::Backend>(
     plugin: &mut Option<AppView>,
     plugin_term: &mut Option<Terminal<B>>,
-    term: &mut Terminal<impl ratatui_core::backend::Backend>,
-) -> io::Result<()> {
+) {
     if let Some(mut v) = plugin.take() {
         v.stop();
     }
     *plugin_term = None;
-    term.clear().map_err(|e| io::Error::other(e.to_string()))?;
-    Ok(())
 }
 
 fn log_line(msg: &str) {

@@ -272,6 +272,7 @@ pub fn check_capabilities(caps: Option<&Value>) -> Result<Vec<String>, String> {
                     calls.push(n.to_string());
                 }
             }
+            _ if grants_nothing(v) => {}
             other => {
                 return Err(format!(
                     "capability `{other}` is not allowed in a plugin (no network, files, processes, clipboard or web views)"
@@ -280,6 +281,17 @@ pub fn check_capabilities(caps: Option<&Value>) -> Result<Vec<String>, String> {
         }
     }
     Ok(calls)
+}
+
+/// `false`, `null`, empty lists, and objects of those: a key that grants nothing
+/// (`nsh publish` writes every key of the declaration).
+fn grants_nothing(v: &Value) -> bool {
+    match v {
+        Value::Null | Value::Bool(false) => true,
+        Value::Array(a) => a.is_empty(),
+        Value::Object(o) => o.values().all(grants_nothing),
+        _ => false,
+    }
 }
 
 // --- the host side ---------------------------------------------------------
@@ -427,6 +439,18 @@ mod tests {
         );
         assert!(check_capabilities(Some(&json!({"fs": {"read": ["/"]}}))).is_err());
         assert!(check_capabilities(Some(&json!({"clipboard": true}))).is_err());
+        // what `nsh publish` writes for a plugin that asks only for host calls
+        let published = json!({"network": {"hosts": [], "http": []}, "process": {"execute": [], "exit": false, "env": []}, "fs": {"read": [], "write": []}, "statusBar": false, "clipboard": false, "picker": false, "openUrl": false, "host": ["sonde.read.list"]});
+        assert_eq!(
+            check_capabilities(Some(&published)).unwrap(),
+            vec!["sonde.read.list"]
+        );
+        assert!(
+            check_capabilities(Some(
+                &json!({"network": {"hosts": ["evil.example"]}, "host": []})
+            ))
+            .is_err()
+        );
     }
 
     #[test]
