@@ -7,6 +7,7 @@
 
 pub mod config;
 pub mod credentials;
+pub mod demo;
 pub mod guard;
 pub mod jobs;
 pub mod paths;

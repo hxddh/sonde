@@ -71,6 +71,7 @@ pub struct Sonde {
     jobs: JobManager,
     guard: Guard,
     clients: RwLock<HashMap<String, S3Client>>,
+    transient: RwLock<std::collections::HashSet<String>>,
 }
 
 impl Sonde {
@@ -90,6 +91,7 @@ impl Sonde {
             jobs: JobManager::new(),
             guard,
             clients: RwLock::new(HashMap::new()),
+            transient: RwLock::new(Default::default()),
         });
         s.apply_log_settings();
         s
@@ -133,7 +135,10 @@ impl Sonde {
     }
 
     fn save(&self) -> Result<(), String> {
-        self.config.read().save(&self.paths.config_file())
+        let mut c = self.config.read().clone();
+        let transient = self.transient.read();
+        c.endpoints.retain(|e| !transient.contains(&e.id));
+        c.save(&self.paths.config_file())
     }
 
     pub fn set_settings(&self, settings: Settings) -> Result<(), String> {
@@ -173,6 +178,19 @@ impl Sonde {
         }
         self.clients.write().remove(&e.id);
         self.save()?;
+        Ok(EndpointView::from(&e))
+    }
+
+    /// Adds an endpoint for this process only (not saved): the demo server.
+    pub fn add_transient_endpoint(&self, e: EndpointConfig) -> Result<EndpointView, String> {
+        e.validate()?;
+        {
+            let mut c = self.config.write();
+            c.endpoints.retain(|x| x.id != e.id);
+            c.endpoints.push(e.clone());
+        }
+        self.transient.write().insert(e.id.clone());
+        self.clients.write().remove(&e.id);
         Ok(EndpointView::from(&e))
     }
 
