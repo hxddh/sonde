@@ -3,6 +3,13 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # releasing without pushing a tag: the release step creates the tag at the
+  # dispatched commit
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the v (it must have a CHANGELOG.md section)"
+        required: true
 
 permissions:
   contents: write
@@ -16,22 +23,33 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+      - name: Version
+        run: |
+          v="${VERSION#v}"
+          grep -q "^version = \"$v\"" Cargo.toml || { echo "::error::Cargo.toml is not at $v"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with: { path: dist, merge-multiple: true }
       - name: Checksums
         run: cd dist && cat *.sha256 > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
-        run: scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" > notes.md
+        run: scripts/changelog-section.sh "$VERSION" > notes.md
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: sonde ${{ env.VERSION }}
           body_path: notes.md
           files: |
             dist/*.tar.gz
             dist/*.dmg
+            dist/*.sha256
             dist/SHA256SUMS
       - name: Update the Homebrew tap (skipped without HOMEBREW_TAP_TOKEN)
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: scripts/update-tap.sh "${GITHUB_REF_NAME#v}" dist/SHA256SUMS
+        run: scripts/update-tap.sh "$VERSION" dist/SHA256SUMS

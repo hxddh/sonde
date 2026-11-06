@@ -32,8 +32,9 @@ with `ldd` and runs `sonde --version` in `debian:bookworm-slim`.
 
 1. Update `CHANGELOG.md` (a `## [x.y.z] - date` section) and the versions (`Cargo.toml` `workspace.package.version`,
    `app/nsh.json` `version` and `build`).
-2. Tag `vx.y.z` and push: `release.yml` builds everything, publishes the GitHub release with the changelog section
-   and `SHA256SUMS`, and (with `HOMEBREW_TAP_TOKEN`) writes `Formula/sonde.rb` and `Casks/sonde-app.rb` into
+2. Tag `vx.y.z` and push, or run the Release workflow by hand (Actions › Release › Run workflow, version
+   `x.y.z`), which creates the tag at the chosen commit: `release.yml` builds everything, publishes the GitHub release with the changelog section
+   `SHA256SUMS` and one `.sha256` per file (what `install.sh` checks), and (with `HOMEBREW_TAP_TOKEN`) writes `Formula/sonde.rb` and `Casks/sonde-app.rb` into
    `hxddh/homebrew-sonde` from `packaging/homebrew/*.rb.in`.
 
 `install.sh` downloads the binary for the machine, checks its `.sha256` and installs it in `~/.local/bin`
