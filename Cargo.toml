@@ -1,0 +1,89 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/reqlog",
+    "crates/s3raw",
+    "crates/sonde-core",
+    "crates/probes",
+    "crates/decoders",
+    "crates/sonde-nsh",
+    "crates/sonde-cli",
+]
+default-members = [
+    "crates/reqlog",
+    "crates/s3raw",
+    "crates/sonde-core",
+    "crates/probes",
+    "crates/decoders",
+    "crates/sonde-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/hxddh/sonde"
+rust-version = "1.90"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+
+[workspace.dependencies]
+reqlog = { path = "crates/reqlog" }
+s3raw = { path = "crates/s3raw" }
+sonde-core = { path = "crates/sonde-core" }
+probes = { path = "crates/probes" }
+decoders = { path = "crates/decoders" }
+sonde-nsh = { path = "crates/sonde-nsh" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
+tokio-util = "0.7"
+futures = "0.3"
+bytes = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "stream", "http2"] }
+http = "1"
+url = "2"
+percent-encoding = "2"
+quick-xml = { version = "0.37", features = ["serialize"] }
+hmac = "0.12"
+sha2 = "0.10"
+sha1 = "0.10"
+md-5 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+crc32fast = "1"
+crc32c = "0.6"
+crc64fast-nvme = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+dirs = "6"
+parking_lot = "0.12"
+tracing = "0.1"
+clap = { version = "4", features = ["derive", "env"] }
+uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
+apache-avro = { version = "0.17", default-features = false }
+flatbuffers = "24"
+async-trait = "0.1"
+tempfile = "3"
+
+# Native Shell, pinned to one commit of longbridge/nsh (see docs/decisions.md D-002).
+nsh-core = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
+nsh-base = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
+nsh-package = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
+nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
+nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "symbols"

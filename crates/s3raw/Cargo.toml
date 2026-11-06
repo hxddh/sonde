@@ -1,0 +1,4 @@
+[package]
+name = "s3raw"
+version.workspace = true
+edition.workspace = true

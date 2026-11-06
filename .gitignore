@@ -1,0 +1,6 @@
+/target
+.nsh/
+**/.nsh/
+/dist
+*.nshpkg
+/tests/integration/.data

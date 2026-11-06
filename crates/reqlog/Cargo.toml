@@ -1,0 +1,26 @@
+[package]
+name = "reqlog"
+description = "Request records for sonde: a ring buffer, redaction, optional SQLite persistence, JSON / HAR export, aws-cli and curl renderings."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true
+rusqlite = { workspace = true, optional = true }
+url.workspace = true
+percent-encoding.workspace = true
+tokio = { workspace = true }
+
+[features]
+default = ["sqlite"]
+sqlite = ["dep:rusqlite"]
+
+[dev-dependencies]
+tempfile.workspace = true

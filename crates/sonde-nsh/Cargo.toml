@@ -1,0 +1,4 @@
+[package]
+name = "sonde-nsh"
+version.workspace = true
+edition.workspace = true

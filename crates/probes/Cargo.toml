@@ -1,0 +1,4 @@
+[package]
+name = "probes"
+version.workspace = true
+edition.workspace = true
