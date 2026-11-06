@@ -1,0 +1,19 @@
+name: Native Shell CLI
+description: Installs the nsh CLI at a pinned commit (cached), and the TypeScript compiler nsh check uses.
+inputs:
+  rev:
+    description: longbridge/nsh commit
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      id: cache
+      with:
+        path: ~/.cargo/bin/nsh
+        key: nsh-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rev }}
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: cargo install --locked --git https://github.com/longbridge/nsh --rev ${{ inputs.rev }} nsh-cli
+    - shell: bash
+      run: nsh --version

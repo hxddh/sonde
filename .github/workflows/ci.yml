@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Native Shell, pinned (docs/decisions.md D-002)
+  NSH_REV: 9d12096878bb08bce28e2e72d0356c75e11244ed
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy -p sonde-cli --features tui --all-targets -- -D warnings
+      - run: cd app && nsh check
+      - run: cd plugins/delta-lens && nsh check
+      - name: nsh build reports no warnings
+        run: |
+          cd app && nsh build App.tsx 2>&1 | tee build.log
+          ! grep -E "^warn" build.log
+
+  unit:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: ". -> target\ntools/gen-slatedb -> target" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install "pyiceberg[sql-sqlite,pyarrow]==0.9.1"
+      - run: scripts/integration.sh minio ceph rustfs
+      - if: failure()
+        run: docker compose -f tests/integration/docker-compose.yml logs --tail 200
+
+  ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - run: scripts/ui-tests.sh
+
+  plugin-e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - run: pip install pyte
+      - run: cd app && nsh build App.tsx
+      - run: cargo build -p sonde-cli --features tui
+      - run: scripts/plugin-e2e.sh target/debug/sonde
+
+  build:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit

@@ -1,0 +1,40 @@
+# S3 implementations for sonde's integration tests (scripts/integration.sh).
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --address :9000
+    environment:
+      MINIO_ROOT_USER: sondeminio
+      MINIO_ROOT_PASSWORD: sondeminio-secret
+    ports: ["9000:9000"]
+    profiles: ["minio", "all"]
+  ceph:
+    image: ceph/daemon:latest
+    command: demo
+    environment:
+      MON_IP: 172.31.0.10
+      CEPH_PUBLIC_NETWORK: 172.31.0.0/24
+      CEPH_DEMO_UID: sonde
+      CEPH_DEMO_ACCESS_KEY: sondeaccess
+      CEPH_DEMO_SECRET_KEY: sondesecret
+      RGW_FRONTEND_PORT: "7480"
+      DEMO_DAEMONS: mon,mgr,osd,rgw
+    networks:
+      s3:
+        ipv4_address: 172.31.0.10
+    ports: ["7480:7480"]
+    profiles: ["ceph", "all"]
+  rustfs:
+    image: rustfs/rustfs:latest
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_ADDRESS: ":9100"
+    ports: ["9100:9100"]
+    profiles: ["rustfs", "all"]
+
+networks:
+  s3:
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24

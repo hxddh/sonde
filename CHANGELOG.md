@@ -1,0 +1,24 @@
+# Changelog
+
+All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
+
+## [Unreleased]
+
+## [0.1.0] - 2026-11-06
+
+### Added
+
+- Endpoints: configuration (`config.toml`), import from AWS profiles, connectivity test with STS identity.
+- Credentials: environment, profiles (static, `credential_process`, SSO, `role_arn`, web identity), IRSA,
+  container credentials, IMDSv2; never exposed to the UI.
+- `s3raw`: SigV4 (AWS test vectors), path- and virtual-hosted-style, custom CAs, retries with backoff, throttles.
+- Request inspector: ring buffer and SQLite, redaction, filters, copy as aws cli / curl, JSON and HAR export.
+- Browse: buckets, prefixes, 100 000+ objects, HEAD details (ETag and checksum analysis, SSE), downloads,
+  presigned URLs, search.
+- Multipart health, versions and delete markers, capacity breakdown.
+- 40 compatibility probes, a vendor × probe matrix, saved runs and diffs, JSON and Markdown reports.
+- Layout lens: SlateDB, Apache Iceberg, lakeFS, Milvus Woodpecker; cadence for turbopuffer and WarpStream; replay.
+- Signed, sandboxed plugins; the Delta Lake lens example.
+- Read-only by default; dry runs, typed confirmations and an audit log for destructive operations.
+- The macOS app and the terminal UI from one TSX codebase; English and Chinese.
+- `sonde` CLI: `probe`, `mpu`, `du`, `layout`, `endpoints`, `plugin`, `tui`.

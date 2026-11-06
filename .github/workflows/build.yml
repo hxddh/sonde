@@ -1,0 +1,86 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  NSH_REV: 9d12096878bb08bce28e2e72d0356c75e11244ed
+
+jobs:
+  terminal:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: linux-x86_64 }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, name: linux-aarch64 }
+          - { os: macos-14, target: aarch64-apple-darwin, name: macos-aarch64 }
+          - { os: macos-13, target: x86_64-apple-darwin, name: macos-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.target }}" }
+      - uses: Swatinem/rust-cache@v2
+        with: { key: "${{ matrix.target }}" }
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - name: Bundle the app
+        run: cd app && nsh build App.tsx --release
+      - name: Build sonde (CLI + TUI)
+        run: cargo build --release --locked -p sonde-cli --features tui --target ${{ matrix.target }}
+      - name: Check the binary needs no GUI libraries
+        if: runner.os == 'Linux'
+        run: |
+          ldd target/${{ matrix.target }}/release/sonde | tee ldd.txt
+          ! grep -Ei "gtk|gdk|glib|cairo|pango|webkit|x11|wayland" ldd.txt
+          docker run --rm -v "$PWD/target/${{ matrix.target }}/release/sonde:/sonde:ro" debian:bookworm-slim /sonde --version
+      - name: Check the binary on macOS
+        if: runner.os == 'macOS'
+        run: otool -L target/${{ matrix.target }}/release/sonde
+      - name: Package
+        run: |
+          mkdir -p dist
+          name=sonde-${{ matrix.name }}
+          cp target/${{ matrix.target }}/release/sonde dist/sonde
+          tar -C dist -czf dist/$name.tar.gz sonde
+          (cd dist && shasum -a 256 $name.tar.gz > $name.tar.gz.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonde-${{ matrix.name }}
+          path: dist/sonde-${{ matrix.name }}.tar.gz*
+
+  macos-app:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - name: Package the .app
+        run: nsh package app/App.tsx --target macos --out dist
+      - name: Sign with Developer ID (skipped without the certificate)
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: scripts/macos-sign.sh dist/sonde.app
+      - name: Make the .dmg
+        run: scripts/macos-dmg.sh dist/sonde.app dist/sonde-macos.dmg
+      - name: Notarize (skipped without credentials)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: scripts/macos-notarize.sh dist/sonde-macos.dmg
+      - run: cd dist && shasum -a 256 sonde-macos.dmg > sonde-macos.dmg.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonde-macos-app
+          path: dist/sonde-macos.dmg*

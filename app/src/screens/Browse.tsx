@@ -8,7 +8,7 @@ import { t } from "../i18n";
 import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
-import { Badge, Bar, Button, Card, Choice, Empty, Field, Heading, KeyValue, Mono, Muted, SimpleTable, terminal } from "../ui/kit";
+import { Badge, Bar, Button, Card, Choice, Empty, Field, Heading, KeyValue, Mono, Muted, SimpleTable, terminal, Toggle } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const WINDOW = 400;
@@ -196,6 +196,8 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   const searchText = signal("");
   const searchHits = signal<Entry[] | null>(null);
   const searchState = signal<string | null>(null);
+  const flat = signal(false);
+  const loadingAll = signal(false);
   let searchJob: string | null = null;
 
   effect(() => {
@@ -203,7 +205,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     const b = bucket();
     const p = prefix();
     if (!ep || !b) return;
-    const l = new Listing(ep, b, p, "/");
+    const l = new Listing(ep, b, p, flat() ? null : "/");
     batch(() => {
       listing.set(l);
       start.set(0);
@@ -252,6 +254,16 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       parts: e.parts ? String(e.parts) : "",
     }));
 
+  const loadAll = async () => {
+    const l = listing();
+    if (!l) return;
+    loadingAll.set(true);
+    while (!l.done && listing() === l) {
+      await load(l);
+    }
+    loadingAll.set(false);
+  };
+
   const open = (index: number) => {
     const e = listing()?.row(index) as Entry | null;
     if (!e) return;
@@ -290,6 +302,8 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           {t("browse.objects", { n: count(total()) })}
           {done() ? "" : ` · ${t("browse.more")}`}
         </Text>
+        <Toggle label={t("browse.flat")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
+        <Button small label={loadingAll() ? t("common.loading") : t("browse.loadAll")} onPress={loadAll} disabled={done() || loadingAll()} testID="load-all" />
         <Button small label={t("common.refresh")} onPress={() => prefix.set(prefix())} />
       </View>
       <View class="flex-row gap-2">
