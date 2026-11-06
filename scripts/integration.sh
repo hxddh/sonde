@@ -1,7 +1,10 @@
 #!/usr/bin/env sh
 # Integration tests against real S3 implementations.
 #
-#   scripts/integration.sh [minio ceph rustfs]     (default: all three)
+#   scripts/integration.sh [ceph rustfs minio]     (default: ceph rustfs)
+#
+# MinIO no longer publishes public images (Docker Hub and Quay refuse anonymous
+# pulls): `minio` runs only with MINIO_IMAGE set to an image you can pull.
 #
 # Starts them with docker compose, waits until they answer, writes the
 # scenarios (incomplete uploads, versions, delete markers, a real SlateDB
@@ -10,7 +13,7 @@
 # suite, with cleanup) and the layout lens through S3.
 set -eu
 cd "$(dirname "$0")/.."
-services="${*:-minio ceph rustfs}"
+services="${*:-ceph rustfs}"
 compose="docker compose -f tests/integration/docker-compose.yml"
 for s in $services; do $compose --profile "$s" up -d "$s"; done
 targets=""

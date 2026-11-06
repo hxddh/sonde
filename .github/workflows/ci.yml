@@ -33,7 +33,7 @@ jobs:
   unit:
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-14]
+        os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install "pyiceberg[sql-sqlite,pyarrow]==0.9.1"
-      - run: scripts/integration.sh minio ceph rustfs
+      - run: scripts/integration.sh ceph rustfs
       - if: failure()
         run: docker compose -f tests/integration/docker-compose.yml logs --tail 200
 

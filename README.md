@@ -101,7 +101,7 @@ Screenshots are produced by CI on macOS (`nsh test --target macos`); see [docs/p
 
 ```sh
 cargo test --workspace                       # unit tests (SigV4 vectors, redaction, parsers, judges, decoders)
-scripts/integration.sh                       # MinIO, Ceph RGW and RustFS in docker compose
+scripts/integration.sh                       # Ceph RGW and RustFS in docker compose (MinIO with MINIO_IMAGE)
 scripts/ui-tests.sh                          # nsh test, desktop and terminal forms, headless
 cd app && nsh run --target tui               # the TSX app with hot reload
 cargo run -p sonde-cli --features tui -- tui --demo
