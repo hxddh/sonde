@@ -1,0 +1,139 @@
+{
+  "probe": "list.start-after",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put-a",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"f1290186a5d0b1ceab27f4e77c0c5d68\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-b",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"f1290186a5d0b1ceab27f4e77c0c5d68\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-c",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"f1290186a5d0b1ceab27f4e77c0c5d68\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-d",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"f1290186a5d0b1ceab27f4e77c0c5d68\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "existing",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>sonde-it-probe-a673bd5c</Name><Prefix>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/</Prefix><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/c</Key><LastModified>2026-11-06T15:13:05.125Z</LastModified><ETag>&quot;f1290186a5d0b1ceab27f4e77c0c5d68&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/d</Key><LastModified>2026-11-06T15:13:05.130Z</LastModified><ETag>&quot;f1290186a5d0b1ceab27f4e77c0c5d68&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><KeyCount>2</KeyCount><StartAfter>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/b</StartAfter></ListBucketResult>",
+      "recordId": null
+    },
+    {
+      "label": "existing-keys",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "c,d",
+      "recordId": null
+    },
+    {
+      "label": "between",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>sonde-it-probe-a673bd5c</Name><Prefix>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/</Prefix><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/c</Key><LastModified>2026-11-06T15:13:05.125Z</LastModified><ETag>&quot;f1290186a5d0b1ceab27f4e77c0c5d68&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/d</Key><LastModified>2026-11-06T15:13:05.130Z</LastModified><ETag>&quot;f1290186a5d0b1ceab27f4e77c0c5d68&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><KeyCount>2</KeyCount><StartAfter>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/bb</StartAfter></ListBucketResult>",
+      "recordId": null
+    },
+    {
+      "label": "between-keys",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "c,d",
+      "recordId": null
+    },
+    {
+      "label": "before-prefix",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>sonde-it-probe-a673bd5c</Name><Prefix>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/</Prefix><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/a</Key><LastModified>2026-11-06T15:13:05.115Z</LastModified><ETag>&quot;f1290186a5d0b1ceab27f4e77c0c5d68&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/b</Key><LastModified>2026-11-06T15:13:05.120Z</LastModified><ETag>&quot;f1290186a5d0b1ceab27f4e77c0c5d68&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/c</Key><LastModified>2026-11-06T15:13:05.125Z</LastModified><ETag>&quot;f1290186a5d0b1ceab27f4e77c0c5d68&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/list.start-after/sa/d</Key><LastModified>2026-11-06T15:13:05.130Z</LastModified><ETag>&quot;f1290186a5d0b1ceab27f4e77c0c5d68&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><KeyCount>4</KeyCount><StartAfter>sonde-probe/20261106T151252Z-8a604b/list.start-after/</StartAfter></ListBucketResult>",
+      "recordId": null
+    },
+    {
+      "label": "before-prefix-keys",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "a,b,c,d",
+      "recordId": null
+    }
+  ]
+}

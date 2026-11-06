@@ -1,0 +1,50 @@
+{
+  "probe": "range.multi",
+  "vendor": "ceph-rgw",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "2"
+        ],
+        [
+          "content-range",
+          "bytes 0-1/10"
+        ],
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "01",
+      "recordId": null
+    }
+  ]
+}

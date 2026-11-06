@@ -1,0 +1,118 @@
+{
+  "probe": "mpu.out-of-order",
+  "vendor": "ceph-rgw",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "310"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a673bd5c</Bucket><Key>sonde-probe/20261106T151252Z-8a604b/mpu.out-of-order/ooo</Key><UploadId>2~b3vOafp0nGnde_Xq0O72mTByn0VoOQa</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part-2-first",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"5289492cf082446ca4a6eec9f72f1ec3\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-1-second",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"67cc350851a12f52064f4c1bb1a1b85e\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete-descending",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "417"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Location>1f1e19ddbf97/sonde-it-probe-a673bd5c/sonde-probe/20261106T151252Z-8a604b/mpu.out-of-order/ooo</Location><Bucket>sonde-it-probe-a673bd5c</Bucket><Key>sonde-probe/20261106T151252Z-8a604b/mpu.out-of-order/ooo</Key><ETag>e946dd08fb0409bcfdbbc1322cebde9c-2</ETag></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "complete-ascending",
+      "status": 500,
+      "code": "InternalError",
+      "headers": [
+        [
+          "content-length",
+          "301"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InternalError</Code><Message>This multipart completion is already in progress</Message><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000508-006aedee7c-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "tail",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "5"
+        ],
+        [
+          "content-range",
+          "bytes 5242880-5242884/5242885"
+        ],
+        [
+          "etag",
+          "\"e946dd08fb0409bcfdbbc1322cebde9c-2\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "WORLD",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "probe": "checksum.trailing",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-crc32",
+          "WWY3fw=="
+        ],
+        [
+          "etag",
+          "\"20deb8a1a8ea788002c79adc32fabc72\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-crc32",
+          "WWY3fw=="
+        ],
+        [
+          "content-length",
+          "3000"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"20deb8a1a8ea788002c79adc32fabc72\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "WWY3fw==",
+      "recordId": null
+    }
+  ]
+}

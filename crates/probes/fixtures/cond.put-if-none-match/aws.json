@@ -1,0 +1,32 @@
+{
+  "probe": "cond.put-if-none-match",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "first",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "second",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "read",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "V \ufffd\ufffdp\ufffd\ufffdE\ufffdB\ufffdc\ufffdC\ufffd",
+      "recordId": null
+    }
+  ]
+}

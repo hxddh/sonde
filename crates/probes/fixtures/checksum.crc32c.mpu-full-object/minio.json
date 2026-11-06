@@ -1,0 +1,113 @@
+{
+  "probe": "checksum.crc32c.mpu-full-object",
+  "vendor": "minio",
+  "expect": "error",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "x-amz-checksum-algorithm",
+          "CRC32C"
+        ],
+        [
+          "x-amz-checksum-type",
+          "FULL_OBJECT"
+        ],
+        [
+          "content-length",
+          "431"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><Key>sonde-probe/20261106T151311Z-534132/checksum.crc32c.mpu-full-object/mpu-ck-crc32c-true</Key><UploadId>ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLjlkMzg4ODc5LTU3MDMtNGJmYi1iYTI3LWMzOWExNzkxOWZiYXgxNzkzOTc3OTkzNjU0NjQ2NDg5</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-crc32c",
+          "M8YZSg=="
+        ],
+        [
+          "etag",
+          "\"67cc350851a12f52064f4c1bb1a1b85e\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-crc32c",
+          "caYslA=="
+        ],
+        [
+          "etag",
+          "\"d36bb53847fbe3fce38a08155054ecb3\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete",
+      "status": 500,
+      "code": "InternalError",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "149"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InternalError</Code><Message>We encountered an internal error, please try again.</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 404,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "VzdzLA==",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "probe": "checksum.trailing",
+  "vendor": "ceph-rgw",
+  "expect": "unsupported",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 400,
+      "code": "XAmzContentSHA256Mismatch",
+      "headers": [
+        [
+          "content-length",
+          "246"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>XAmzContentSHA256Mismatch</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx0000000000000000004f9-006aedee7c-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 404,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "230"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "WWY3fw==",
+      "recordId": null
+    }
+  ]
+}

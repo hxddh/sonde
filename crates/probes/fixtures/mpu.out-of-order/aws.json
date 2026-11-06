@@ -1,0 +1,56 @@
+{
+  "probe": "mpu.out-of-order",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-2-first",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-1-second",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete-descending",
+      "status": 400,
+      "code": "InvalidPartOrder",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete-ascending",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "tail",
+      "status": 206,
+      "code": null,
+      "headers": [],
+      "body": "WORLD",
+      "recordId": null
+    }
+  ]
+}

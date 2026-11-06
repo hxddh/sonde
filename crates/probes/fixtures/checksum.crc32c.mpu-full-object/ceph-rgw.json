@@ -1,0 +1,105 @@
+{
+  "probe": "checksum.crc32c.mpu-full-object",
+  "vendor": "ceph-rgw",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "340"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a673bd5c</Bucket><Key>sonde-probe/20261106T151252Z-8a604b/checksum.crc32c.mpu-full-object/mpu-ck-crc32c-true</Key><UploadId>2~XgBsR2fXvXIjTqA9SMkgm4iBU31wgwV</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"67cc350851a12f52064f4c1bb1a1b85e\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"d36bb53847fbe3fce38a08155054ecb3\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "477"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Location>1f1e19ddbf97/sonde-it-probe-a673bd5c/sonde-probe/20261106T151252Z-8a604b/checksum.crc32c.mpu-full-object/mpu-ck-crc32c-true</Location><Bucket>sonde-it-probe-a673bd5c</Bucket><Key>sonde-probe/20261106T151252Z-8a604b/checksum.crc32c.mpu-full-object/mpu-ck-crc32c-true</Key><ETag>e38d371f4931e98ec04e8f8055ab259e-2</ETag></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "5243904"
+        ],
+        [
+          "etag",
+          "\"e38d371f4931e98ec04e8f8055ab259e-2\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "VzdzLA==",
+      "recordId": null
+    }
+  ]
+}

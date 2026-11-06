@@ -1,0 +1,150 @@
+{
+  "probe": "range.bounds",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "first",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "1"
+        ],
+        [
+          "content-range",
+          "bytes 0-0/10"
+        ],
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "0",
+      "recordId": null
+    },
+    {
+      "label": "last",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "1"
+        ],
+        [
+          "content-range",
+          "bytes 9-9/10"
+        ],
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "9",
+      "recordId": null
+    },
+    {
+      "label": "suffix",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "3"
+        ],
+        [
+          "content-range",
+          "bytes 7-9/10"
+        ],
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "789",
+      "recordId": null
+    },
+    {
+      "label": "open",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "3"
+        ],
+        [
+          "content-range",
+          "bytes 7-9/10"
+        ],
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "789",
+      "recordId": null
+    },
+    {
+      "label": "past-end",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "5"
+        ],
+        [
+          "content-range",
+          "bytes 5-9/10"
+        ],
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "56789",
+      "recordId": null
+    }
+  ]
+}

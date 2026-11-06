@@ -1,0 +1,198 @@
+{
+  "probe": "consistency.read-after-overwrite",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"025e75b7406025c50b3fbf1701a57828\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "9"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"025e75b7406025c50b3fbf1701a57828\""
+        ]
+      ],
+      "body": "version-0",
+      "recordId": null
+    },
+    {
+      "label": "put-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"e8444fc50e000a592c6f49872490349e\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "9"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"e8444fc50e000a592c6f49872490349e\""
+        ]
+      ],
+      "body": "version-1",
+      "recordId": null
+    },
+    {
+      "label": "put-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"acd931c40266024f87f3cc3e8a9013b6\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "9"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"acd931c40266024f87f3cc3e8a9013b6\""
+        ]
+      ],
+      "body": "version-2",
+      "recordId": null
+    },
+    {
+      "label": "put-3",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"8310377a04581615a1df1bcd2531f07c\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-3",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "9"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"8310377a04581615a1df1bcd2531f07c\""
+        ]
+      ],
+      "body": "version-3",
+      "recordId": null
+    },
+    {
+      "label": "put-4",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"88a96a147fda3d2ba6067c16673c2616\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-4",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "9"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"88a96a147fda3d2ba6067c16673c2616\""
+        ]
+      ],
+      "body": "version-4",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "probe": "mpu.upload-part-copy",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "source",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"e24c2bb4a9f630764f5a9794371d73df\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "409"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><Key>sonde-probe/20261106T151311Z-534132/mpu.upload-part-copy/upc-dst</Key><UploadId>ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLmI4OWZhNWM0LTZiMDEtNDE5OS1iMDcxLWY1NTk4Y2M2M2EwOXgxNzkzOTc3OTk2NTQ5NDc4ODAx</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "copy-part",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "171"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CopyPartResult><ETag>\"0520aeac36ec1f583614176bb348ac17\"</ETag><LastModified>2026-11-06T15:13:16.604Z</LastModified></CopyPartResult>",
+      "recordId": null
+    },
+    {
+      "label": "part-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"b1a326c06d88bf042f73d70f50197905\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "444"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><ETag>\"c0ae927db7dc2978df97fb83d55275bd-2\"</ETag><Key>sonde-probe/20261106T151311Z-534132/mpu.upload-part-copy/upc-dst</Key><Location>http://127.0.0.1:9100/sonde-it-probe-a4b064c0/sonde-probe/20261106T151311Z-534132/mpu.upload-part-copy/upc-dst</Location></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "5242883"
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ],
+        [
+          "etag",
+          "\"c0ae927db7dc2978df97fb83d55275bd-2\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

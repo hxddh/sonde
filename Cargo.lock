@@ -938,6 +938,25 @@ dependencies = [
 [[package]]
 name = "probes"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "futures",
+ "http",
+ "md-5",
+ "parking_lot",
+ "reqlog",
+ "s3raw",
+ "serde",
+ "serde_json",
+ "sonde-core",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "proc-macro2"

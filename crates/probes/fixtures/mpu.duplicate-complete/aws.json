@@ -1,0 +1,48 @@
+{
+  "probe": "mpu.duplicate-complete",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "first",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "<CompleteMultipartUploadResult><ETag>&quot;abc-1&quot;</ETag></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "second",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "<CompleteMultipartUploadResult><ETag>&quot;abc-1&quot;</ETag></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "list-parts",
+      "status": 404,
+      "code": "NoSuchUpload",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

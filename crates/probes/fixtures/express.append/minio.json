@@ -1,0 +1,80 @@
+{
+  "probe": "express.append",
+  "vendor": "minio",
+  "expect": "unsupported",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"84354c3d4a1a7ea36e7a772f78da5c9b\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "append",
+      "status": 501,
+      "code": "NotImplemented",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "166"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NotImplemented</Code><Message>A header you provided implies functionality that is not implemented</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "wrong-offset",
+      "status": 501,
+      "code": "NotImplemented",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "166"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NotImplemented</Code><Message>A header you provided implies functionality that is not implemented</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "5"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"84354c3d4a1a7ea36e7a772f78da5c9b\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

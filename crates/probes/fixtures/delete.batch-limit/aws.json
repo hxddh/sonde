@@ -1,0 +1,32 @@
+{
+  "probe": "delete.batch-limit",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "batch-1000",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "batch-1000-deleted",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "1000",
+      "recordId": null
+    },
+    {
+      "label": "batch-1001",
+      "status": 400,
+      "code": "MalformedXML",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

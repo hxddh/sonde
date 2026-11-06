@@ -1,0 +1,24 @@
+{
+  "probe": "range.multi",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "0123456789",
+      "recordId": null
+    }
+  ]
+}

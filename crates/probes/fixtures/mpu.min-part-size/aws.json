@@ -1,0 +1,40 @@
+{
+  "probe": "mpu.min-part-size",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "small-part",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "last-part",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete-small",
+      "status": 400,
+      "code": "EntityTooSmall",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

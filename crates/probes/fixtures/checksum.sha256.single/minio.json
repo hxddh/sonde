@@ -1,0 +1,79 @@
+{
+  "probe": "checksum.sha256.single",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "good",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-sha256",
+          "HLIgkZF21xdYlxtWGIPJUfHrVGku2suLV3r5XsuUMBg="
+        ],
+        [
+          "etag",
+          "\"cdda79e96f9085b1e7784bf1c6cd8d92\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-sha256",
+          "HLIgkZF21xdYlxtWGIPJUfHrVGku2suLV3r5XsuUMBg="
+        ],
+        [
+          "content-length",
+          "1000"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"cdda79e96f9085b1e7784bf1c6cd8d92\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "bad",
+      "status": 400,
+      "code": "BadDigest",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "155"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>BadDigest</Code><Message>The Content-Md5 you specified did not match what we received.</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "HLIgkZF21xdYlxtWGIPJUfHrVGku2suLV3r5XsuUMBg=",
+      "recordId": null
+    }
+  ]
+}

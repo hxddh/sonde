@@ -1,0 +1,63 @@
+{
+  "probe": "cond.put-if-none-match",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "first",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"d79c29c4d9016e5736a82e1391536ab8\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "second",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "164"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><Message>At least one of the pre-conditions you specified did not hold</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "read",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "16"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"d79c29c4d9016e5736a82e1391536ab8\""
+        ]
+      ],
+      "body": "V ��p��E�B�c�C�",
+      "recordId": null
+    }
+  ]
+}

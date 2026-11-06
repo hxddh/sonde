@@ -1,0 +1,48 @@
+{
+  "probe": "sse-c",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "https",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "true",
+      "recordId": null
+    },
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "no-key",
+      "status": 400,
+      "code": "InvalidRequest",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "wrong-key",
+      "status": 403,
+      "code": "AccessDenied",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "right-key",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "secret",
+      "recordId": null
+    }
+  ]
+}

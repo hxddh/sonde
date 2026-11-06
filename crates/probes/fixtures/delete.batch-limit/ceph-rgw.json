@@ -1,0 +1,50 @@
+{
+  "probe": "delete.batch-limit",
+  "vendor": "ceph-rgw",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "batch-1000",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><DeleteResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0000</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0001</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0002</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0003</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0004</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0005</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0006</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0007</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0008</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0009</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0010</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0011</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0012</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0013</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0014</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0015</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0016</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0017</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0018</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0019</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0020</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0021</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0022</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0023</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0024</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0025</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0026</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0027</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0028</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0029</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0030</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0031</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0032</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0033</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0034</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0035</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0036</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0037</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0038</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0039</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0040</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604b/delete.batch-limit/nope-0041</Key></Deleted><Deleted><Key>sonde-probe/20261106T151252Z-8a604",
+      "recordId": null
+    },
+    {
+      "label": "batch-1000-deleted",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "1000",
+      "recordId": null
+    },
+    {
+      "label": "batch-1001",
+      "status": 400,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "batch-1001-deleted",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "0",
+      "recordId": null
+    }
+  ]
+}

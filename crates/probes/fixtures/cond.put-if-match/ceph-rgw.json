@@ -1,0 +1,76 @@
+{
+  "probe": "cond.put-if-match",
+  "vendor": "ceph-rgw",
+  "expect": "fail",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"1e0328230da586f3ec025a989b751377\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "stale",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [
+        [
+          "content-length",
+          "239"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000427-006aedee74-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "current",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [
+        [
+          "content-length",
+          "239"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000428-006aedee74-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "missing",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [
+        [
+          "content-length",
+          "239"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000429-006aedee74-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    }
+  ]
+}

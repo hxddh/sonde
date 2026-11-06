@@ -1,0 +1,42 @@
+{
+  "probe": "range.multi",
+  "vendor": "minio",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get",
+      "status": 400,
+      "code": "InvalidArgument",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "148"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidArgument</Code><Message>invalid header: range: &quot;bytes=0-1,4-5&quot;</Message></Error>",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "probe": "range.bounds",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "first",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-range",
+          "bytes 0-0/10"
+        ]
+      ],
+      "body": "0",
+      "recordId": null
+    },
+    {
+      "label": "last",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-range",
+          "bytes 9-9/10"
+        ]
+      ],
+      "body": "9",
+      "recordId": null
+    },
+    {
+      "label": "suffix",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-range",
+          "bytes 7-9/10"
+        ]
+      ],
+      "body": "789",
+      "recordId": null
+    },
+    {
+      "label": "open",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-range",
+          "bytes 7-9/10"
+        ]
+      ],
+      "body": "789",
+      "recordId": null
+    },
+    {
+      "label": "past-end",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-range",
+          "bytes 5-9/10"
+        ]
+      ],
+      "body": "56789",
+      "recordId": null
+    }
+  ]
+}

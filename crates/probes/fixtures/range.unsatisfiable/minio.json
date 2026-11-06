@@ -1,0 +1,76 @@
+{
+  "probe": "range.unsatisfiable",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "past",
+      "status": 416,
+      "code": "InvalidRange",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "135"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidRange</Code><Message>The requested range is not satisfiable</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "put-empty",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"d41d8cd98f00b204e9800998ecf8427e\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "empty",
+      "status": 416,
+      "code": "InvalidRange",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "135"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidRange</Code><Message>The requested range is not satisfiable</Message></Error>",
+      "recordId": null
+    }
+  ]
+}

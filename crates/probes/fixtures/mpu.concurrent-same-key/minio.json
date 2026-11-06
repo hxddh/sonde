@@ -1,0 +1,139 @@
+{
+  "probe": "mpu.concurrent-same-key",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create-a",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "415"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><Key>sonde-probe/20261106T151311Z-534132/mpu.concurrent-same-key/concurrent</Key><UploadId>ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLmI4ODRhZDVmLTk3YzEtNDVjNi04ZjRiLTNkYzhlZDZlNTQ0MHgxNzkzOTc3OTk2MTczOTI2OTQ1</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "create-b",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "415"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><Key>sonde-probe/20261106T151311Z-534132/mpu.concurrent-same-key/concurrent</Key><UploadId>ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLjBlZDU0NzM0LWQ5MTUtNGZkMi1hY2I2LWVkMjQ2ZTdmYmZmZngxNzkzOTc3OTk2MTc3ODI0NDc4</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "ids",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLmI4ODRhZDVmLTk3YzEtNDVjNi04ZjRiLTNkYzhlZDZlNTQ0MHgxNzkzOTc3OTk2MTczOTI2OTQ1 ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLjBlZDU0NzM0LWQ5MTUtNGZkMi1hY2I2LWVkMjQ2ZTdmYmZmZngxNzkzOTc3OTk2MTc3ODI0NDc4",
+      "recordId": null
+    },
+    {
+      "label": "part-a",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"098890dde069e9abad63f19a0d9e1f32\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-b",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"f50881ced34c7d9e6bce100bf33dec60\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete-a",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "456"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><ETag>\"e5c0442336da4b88d1bb70f1c00a8d81-1\"</ETag><Key>sonde-probe/20261106T151311Z-534132/mpu.concurrent-same-key/concurrent</Key><Location>http://127.0.0.1:9100/sonde-it-probe-a4b064c0/sonde-probe/20261106T151311Z-534132/mpu.concurrent-same-key/concurrent</Location></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "complete-b",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "456"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><ETag>\"3cecc8551807c23ab68ae2b1a3d677d8-1\"</ETag><Key>sonde-probe/20261106T151311Z-534132/mpu.concurrent-same-key/concurrent</Key><Location>http://127.0.0.1:9100/sonde-it-probe-a4b064c0/sonde-probe/20261106T151311Z-534132/mpu.concurrent-same-key/concurrent</Location></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "read",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "4"
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ],
+        [
+          "etag",
+          "\"3cecc8551807c23ab68ae2b1a3d677d8-1\""
+        ]
+      ],
+      "body": "BBBB",
+      "recordId": null
+    }
+  ]
+}

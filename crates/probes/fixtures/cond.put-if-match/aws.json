@@ -1,0 +1,40 @@
+{
+  "probe": "cond.put-if-match",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "stale",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "current",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "missing",
+      "status": 404,
+      "code": "NoSuchKey",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

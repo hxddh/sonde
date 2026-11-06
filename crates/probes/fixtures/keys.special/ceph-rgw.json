@@ -1,0 +1,553 @@
+{
+  "probe": "keys.special",
+  "vendor": "ceph-rgw",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "put-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"0ff85a33ee8c8aa4f59a843d5199909f\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "etag",
+          "\"0ff85a33ee8c8aa4f59a843d5199909f\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-0",
+      "recordId": null
+    },
+    {
+      "label": "put-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"49783eb0095375c17655cdc1ff329874\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "etag",
+          "\"49783eb0095375c17655cdc1ff329874\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-1",
+      "recordId": null
+    },
+    {
+      "label": "put-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"c9ee9a33be57c4125ee742ee67f68cff\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "etag",
+          "\"c9ee9a33be57c4125ee742ee67f68cff\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-2",
+      "recordId": null
+    },
+    {
+      "label": "put-3",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"fcd833cf4fa23db062ea04a99de1f6f1\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-3",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "etag",
+          "\"fcd833cf4fa23db062ea04a99de1f6f1\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-3",
+      "recordId": null
+    },
+    {
+      "label": "put-4",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"302e1e011fcde596282923682a4f74ca\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-4",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "etag",
+          "\"302e1e011fcde596282923682a4f74ca\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-4",
+      "recordId": null
+    },
+    {
+      "label": "put-5",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"7dd8c5bccd64ae6e1c58ade2c929ac41\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-5",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "etag",
+          "\"7dd8c5bccd64ae6e1c58ade2c929ac41\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-5",
+      "recordId": null
+    },
+    {
+      "label": "put-6",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"34b3025ffca5e08743b49f6ce3b6abf8\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-6",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "etag",
+          "\"34b3025ffca5e08743b49f6ce3b6abf8\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-6",
+      "recordId": null
+    },
+    {
+      "label": "put-7",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"92df202c08c24d635f0154095848657a\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-7",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "etag",
+          "\"92df202c08c24d635f0154095848657a\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-7",
+      "recordId": null
+    },
+    {
+      "label": "put-8",
+      "status": 403,
+      "code": "SignatureDoesNotMatch",
+      "headers": [
+        [
+          "content-length",
+          "194"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><RequestId>tx000000000000000000558-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "get-8",
+      "status": 403,
+      "code": "SignatureDoesNotMatch",
+      "headers": [
+        [
+          "content-length",
+          "194"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><RequestId>tx000000000000000000559-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "put-9",
+      "status": 403,
+      "code": "SignatureDoesNotMatch",
+      "headers": [
+        [
+          "content-length",
+          "194"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><RequestId>tx00000000000000000055a-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "get-9",
+      "status": 403,
+      "code": "SignatureDoesNotMatch",
+      "headers": [
+        [
+          "content-length",
+          "194"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><RequestId>tx00000000000000000055b-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "put-10",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"1f85408ee383baa76345e77f16a08293\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-10",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "7"
+        ],
+        [
+          "etag",
+          "\"1f85408ee383baa76345e77f16a08293\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-10",
+      "recordId": null
+    },
+    {
+      "label": "put-11",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"6befdc0280d0eb9b00864f3b10fd6e9f\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-11",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "7"
+        ],
+        [
+          "etag",
+          "\"6befdc0280d0eb9b00864f3b10fd6e9f\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-11",
+      "recordId": null
+    },
+    {
+      "label": "put-12",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"7fe849ed9d3bc1057fb8e7d05d42d50a\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-12",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "7"
+        ],
+        [
+          "etag",
+          "\"7fe849ed9d3bc1057fb8e7d05d42d50a\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-12",
+      "recordId": null
+    },
+    {
+      "label": "put-13",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"fc1361b74ef50e9a8f1637e1fca4d838\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-13",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "7"
+        ],
+        [
+          "etag",
+          "\"fc1361b74ef50e9a8f1637e1fca4d838\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "body-13",
+      "recordId": null
+    },
+    {
+      "label": "list",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><EncodingType>url</EncodingType><Name>sonde-it-probe-a673bd5c</Name><Prefix>sonde-probe/20261106T151252Z-8a604b/keys.special/special/</Prefix><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2F%23hash%3Fq</Key><LastModified>2026-11-06T15:13:04.201Z</LastModified><ETag>&quot;fc1361b74ef50e9a8f1637e1fca4d838&quot;</ETag><Size>7</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2Fa%20b</Key><LastModified>2026-11-06T15:13:03.459Z</LastModified><ETag>&quot;0ff85a33ee8c8aa4f59a843d5199909f&quot;</ETag><Size>6</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2Famp%26eq%3Dsemi%3B</Key><LastModified>2026-11-06T15:13:03.609Z</LastModified><ETag>&quot;fcd833cf4fa23db062ea04a99de1f6f1&quot;</ETag><Size>6</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2Fdouble%2F%2Fslash</Key><LastModified>2026-11-06T15:13:03.817Z</LastModified><ETag>&quot;92df202c08c24d635f0154095848657a&quot;</ETag><Size>6</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2Femoji-%F0%9F%A6%80</Key><LastModified>2026-11-06T15:13:03.713Z</LastModified><ETag>&quot;7dd8c5bccd64ae6e1c58ade2c929ac41&quot;</ETag><Size>6</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2Fpercent%2520</Key><LastModified>2026-11-06T15:13:03.561Z</LastModified><ETag>&quot;c9ee9a33be57c4125ee742ee67f68cff&quot;</ETag><Size>6</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2Fplus%2Bsign</Key><LastModified>2026-11-06T15:13:03.509Z</LastModified><ETag>&quot;49783eb0095375c17655cdc1ff329874&quot;</ETag><Size>6</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2Fquote&apos;%22</Key><LastModified>2026-11-06T15:13:04.149Z</LastModified><ETag>&quot;7fe849ed9d3bc1057fb8e7d05d42d50a&quot;</ETag><Size>7</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2Ftilde~star*</Key><LastModified>2026-11-06T15:13:04.097Z</LastModified><ETag>&quot;6befdc0280d0eb9b00864f3b10fd6e9f&quot;</ETag><Size>7</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2Ftrailing%20</Key><LastModified>2026-11-06T15:13:04.045Z</LastModified><ETag>&quot;1f85408ee383baa76345e77f16a08293&quot;</ETag><Size>7</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2F%C3%BCmlaut-%C3%A9</Key><LastModified>2026-11-06T15:13:03.766Z</LastModified><ETag>&quot;34b3025ffca5e08743b49f6ce3b6abf8&quot;</ETag><Size>6</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe%2F20261106T151252Z-8a604b%2Fkeys.special%2Fspecial%2F%E6%97%A5%E6%9C%AC%E8%AA%9E%2F%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB</Key><LastModified>2026-11-06T15:13:03.661Z</LastModified><ETag>&quot;302e1e011fcde596282923682a4f74ca&quot;</ETag><Size>6</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><KeyCount>12</KeyCount></ListBucketResult>",
+      "recordId": null
+    },
+    {
+      "label": "listed",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "[\"#hash?q\",\"a b\",\"amp&eq=semi;\",\"double//slash\",\"emoji-🦀\",\"percent%20\",\"plus+sign\",\"quote'\\\"\",\"tilde~star*\",\"trailing \",\"ümlaut-é\",\"日本語/ファイル\"]",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "probe": "cond.copy-if-match",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "source",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"18e3f5f428c7109015d4214ab2f0df86\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "wrong-source",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "164"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><Message>At least one of the preconditions you specified did not hold.</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "right-source",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "175"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CopyObjectResult><ETag>\"18e3f5f428c7109015d4214ab2f0df86\"</ETag><LastModified>2026-11-06T15:13:12.063Z</LastModified></CopyObjectResult>",
+      "recordId": null
+    },
+    {
+      "label": "dest-exists",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "164"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><Message>At least one of the pre-conditions you specified did not hold</Message></Error>",
+      "recordId": null
+    }
+  ]
+}

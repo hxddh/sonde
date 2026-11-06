@@ -1,0 +1,54 @@
+{
+  "probe": "checksum.crc32.single",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "good",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-crc32",
+          "vK2X+Q=="
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-crc32",
+          "vK2X+Q=="
+        ],
+        [
+          "x-amz-checksum-type",
+          "FULL_OBJECT"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "bad",
+      "status": 400,
+      "code": "BadDigest",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "vK2X+Q==",
+      "recordId": null
+    }
+  ]
+}

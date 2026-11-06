@@ -1,0 +1,553 @@
+{
+  "probe": "keys.special",
+  "vendor": "minio",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "put-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"0ff85a33ee8c8aa4f59a843d5199909f\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"0ff85a33ee8c8aa4f59a843d5199909f\""
+        ]
+      ],
+      "body": "body-0",
+      "recordId": null
+    },
+    {
+      "label": "put-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"49783eb0095375c17655cdc1ff329874\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"49783eb0095375c17655cdc1ff329874\""
+        ]
+      ],
+      "body": "body-1",
+      "recordId": null
+    },
+    {
+      "label": "put-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"c9ee9a33be57c4125ee742ee67f68cff\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"c9ee9a33be57c4125ee742ee67f68cff\""
+        ]
+      ],
+      "body": "body-2",
+      "recordId": null
+    },
+    {
+      "label": "put-3",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"fcd833cf4fa23db062ea04a99de1f6f1\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-3",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"fcd833cf4fa23db062ea04a99de1f6f1\""
+        ]
+      ],
+      "body": "body-3",
+      "recordId": null
+    },
+    {
+      "label": "put-4",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"302e1e011fcde596282923682a4f74ca\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-4",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"302e1e011fcde596282923682a4f74ca\""
+        ]
+      ],
+      "body": "body-4",
+      "recordId": null
+    },
+    {
+      "label": "put-5",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"7dd8c5bccd64ae6e1c58ade2c929ac41\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-5",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"7dd8c5bccd64ae6e1c58ade2c929ac41\""
+        ]
+      ],
+      "body": "body-5",
+      "recordId": null
+    },
+    {
+      "label": "put-6",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"34b3025ffca5e08743b49f6ce3b6abf8\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-6",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"34b3025ffca5e08743b49f6ce3b6abf8\""
+        ]
+      ],
+      "body": "body-6",
+      "recordId": null
+    },
+    {
+      "label": "put-7",
+      "status": 400,
+      "code": "InvalidArgument",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "118"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidArgument</Code><Message>Invalid object key</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "get-7",
+      "status": 400,
+      "code": "InvalidArgument",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "118"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidArgument</Code><Message>Invalid object key</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "put-8",
+      "status": 403,
+      "code": "SignatureDoesNotMatch",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "320"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your AWS secret access key and signing method. For more information, see REST Authentication and SOAP Authentication for details.</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "get-8",
+      "status": 403,
+      "code": "SignatureDoesNotMatch",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "320"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your AWS secret access key and signing method. For more information, see REST Authentication and SOAP Authentication for details.</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "put-9",
+      "status": 403,
+      "code": "SignatureDoesNotMatch",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "320"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your AWS secret access key and signing method. For more information, see REST Authentication and SOAP Authentication for details.</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "get-9",
+      "status": 403,
+      "code": "SignatureDoesNotMatch",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "320"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your AWS secret access key and signing method. For more information, see REST Authentication and SOAP Authentication for details.</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "put-10",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"1f85408ee383baa76345e77f16a08293\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-10",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "7"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"1f85408ee383baa76345e77f16a08293\""
+        ]
+      ],
+      "body": "body-10",
+      "recordId": null
+    },
+    {
+      "label": "put-11",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"6befdc0280d0eb9b00864f3b10fd6e9f\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-11",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "7"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"6befdc0280d0eb9b00864f3b10fd6e9f\""
+        ]
+      ],
+      "body": "body-11",
+      "recordId": null
+    },
+    {
+      "label": "put-12",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"7fe849ed9d3bc1057fb8e7d05d42d50a\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-12",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "7"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"7fe849ed9d3bc1057fb8e7d05d42d50a\""
+        ]
+      ],
+      "body": "body-12",
+      "recordId": null
+    },
+    {
+      "label": "put-13",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"fc1361b74ef50e9a8f1637e1fca4d838\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-13",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "7"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"fc1361b74ef50e9a8f1637e1fca4d838\""
+        ]
+      ],
+      "body": "body-13",
+      "recordId": null
+    },
+    {
+      "label": "list",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "3175"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>sonde-it-probe-a4b064c0</Name><Prefix>sonde-probe/20261106T151311Z-534132/keys.special/special/</Prefix><MaxKeys>1000</MaxKeys><KeyCount>11</KeyCount><IsTruncated>false</IsTruncated><Contents><ETag>\"fc1361b74ef50e9a8f1637e1fca4d838\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/%23hash%3Fq</Key><LastModified>2026-11-06T15:13:16.884Z</LastModified><Size>7</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"0ff85a33ee8c8aa4f59a843d5199909f\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/a%20b</Key><LastModified>2026-11-06T15:13:16.800Z</LastModified><Size>6</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"fcd833cf4fa23db062ea04a99de1f6f1\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/amp%26eq%3Dsemi%3B</Key><LastModified>2026-11-06T15:13:16.823Z</LastModified><Size>6</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"7dd8c5bccd64ae6e1c58ade2c929ac41\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/emoji-%F0%9F%A6%80</Key><LastModified>2026-11-06T15:13:16.838Z</LastModified><Size>6</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"c9ee9a33be57c4125ee742ee67f68cff\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/percent%2520</Key><LastModified>2026-11-06T15:13:16.816Z</LastModified><Size>6</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"49783eb0095375c17655cdc1ff329874\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/plus%2Bsign</Key><LastModified>2026-11-06T15:13:16.810Z</LastModified><Size>6</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"7fe849ed9d3bc1057fb8e7d05d42d50a\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/quote%27%22</Key><LastModified>2026-11-06T15:13:16.878Z</LastModified><Size>7</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"6befdc0280d0eb9b00864f3b10fd6e9f\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/tilde~star%2A</Key><LastModified>2026-11-06T15:13:16.870Z</LastModified><Size>7</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"1f85408ee383baa76345e77f16a08293\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/trailing%20</Key><LastModified>2026-11-06T15:13:16.862Z</LastModified><Size>7</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"34b3025ffca5e08743b49f6ce3b6abf8\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/%C3%BCmlaut-%C3%A9</Key><LastModified>2026-11-06T15:13:16.846Z</LastModified><Size>6</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"302e1e011fcde596282923682a4f74ca\"</ETag><Key>sonde-probe/20261106T151311Z-534132/keys.special/special/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB</Key><LastModified>2026-11-06T15:13:16.831Z</LastModified><Size>6</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>",
+      "recordId": null
+    },
+    {
+      "label": "listed",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "[\"#hash?q\",\"a b\",\"amp&eq=semi;\",\"emoji-🦀\",\"percent%20\",\"plus+sign\",\"quote'\\\"\",\"tilde~star*\",\"trailing \",\"ümlaut-é\",\"日本語/ファイル\"]",
+      "recordId": null
+    }
+  ]
+}

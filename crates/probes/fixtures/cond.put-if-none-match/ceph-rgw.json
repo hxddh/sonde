@@ -1,0 +1,63 @@
+{
+  "probe": "cond.put-if-none-match",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "first",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"d79c29c4d9016e5736a82e1391536ab8\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "second",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [
+        [
+          "content-length",
+          "239"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000420-006aedee74-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "read",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "16"
+        ],
+        [
+          "etag",
+          "\"d79c29c4d9016e5736a82e1391536ab8\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "V ��p��E�B�c�C�",
+      "recordId": null
+    }
+  ]
+}

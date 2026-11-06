@@ -1,0 +1,88 @@
+{
+  "probe": "sse-c",
+  "vendor": "minio",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "https",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "false",
+      "recordId": null
+    },
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"f639ac4541d68491e2fe767c226d00bb\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "no-key",
+      "status": 400,
+      "code": "InvalidRequest",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "224"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidRequest</Code><Message>The object was stored using a form of Server Side Encryption. The correct parameters must be provided to retrieve the object.</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "wrong-key",
+      "status": 400,
+      "code": "InvalidRequest",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "195"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidRequest</Code><Message>The provided encryption parameters did not match the ones used originally to encrypt the object.</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "right-key",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "6"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"f639ac4541d68491e2fe767c226d00bb\""
+        ]
+      ],
+      "body": "secret",
+      "recordId": null
+    }
+  ]
+}

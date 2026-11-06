@@ -1,0 +1,76 @@
+{
+  "probe": "range.unsatisfiable",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"781e5e245d69b566979b86e28d23f2c7\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "past",
+      "status": 416,
+      "code": "InvalidRange",
+      "headers": [
+        [
+          "content-length",
+          "233"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidRange</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000540-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "put-empty",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"d41d8cd98f00b204e9800998ecf8427e\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "empty",
+      "status": 416,
+      "code": "InvalidRange",
+      "headers": [
+        [
+          "content-length",
+          "233"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidRange</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000542-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    }
+  ]
+}

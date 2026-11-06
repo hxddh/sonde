@@ -1,0 +1,373 @@
+{
+  "probe": "consistency.list-after-write",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"51e3a185854c3f8dca45599ecc08287a\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"9065f30fb52f6f13489b41028ba2c635\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"25c7ac5943214c5c7544c7947fd02529\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-3",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"f7c88c59d082766f24e5b433a95f73fd\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-4",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"2383f9f092d33150fda52766a99a63e7\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-5",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"20ba9f4d08391df90be6b698d6803727\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-6",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"ee18f6b17c766ca599da8ae6dba261e0\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-7",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"32c0bc5e342fcdd130b6f5086729ddb9\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-8",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"5b522a9998fcff582044f933183251ee\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-9",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"6ba4472646c2368d50f9b41f0cf8d401\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-10",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"b481599154b709c506f6be166f3e7233\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-11",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"44ddc06c4c5d9b3344132b0490207d47\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-12",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"df72f6ae681aeb74bd6796f853cd4140\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-13",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"6fad0b2c5196847185ff3ed7c596b344\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-14",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"67cf2c7c93322c53802258945aa2b5da\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-15",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"fe1820016a606d898a006e21a597d811\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-16",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"6fccc01a9ec76c44e2b9131c2f36d469\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-17",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"5918c40dc65e5bbc2f31abc9dc0e3083\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-18",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"44ae0b10a391ebe0e10f2637d75ac982\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-19",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"dc71685690eb65dfd13c1fb8e2d18fda\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "list",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "5403"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>sonde-it-probe-a4b064c0</Name><Prefix>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/</Prefix><MaxKeys>1000</MaxKeys><KeyCount>20</KeyCount><IsTruncated>false</IsTruncated><Contents><ETag>\"51e3a185854c3f8dca45599ecc08287a\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/00</Key><LastModified>2026-11-06T15:13:12.172Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"9065f30fb52f6f13489b41028ba2c635\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/01</Key><LastModified>2026-11-06T15:13:12.178Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"25c7ac5943214c5c7544c7947fd02529\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/02</Key><LastModified>2026-11-06T15:13:12.183Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"f7c88c59d082766f24e5b433a95f73fd\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/03</Key><LastModified>2026-11-06T15:13:12.189Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"2383f9f092d33150fda52766a99a63e7\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/04</Key><LastModified>2026-11-06T15:13:12.194Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"20ba9f4d08391df90be6b698d6803727\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/05</Key><LastModified>2026-11-06T15:13:12.198Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"ee18f6b17c766ca599da8ae6dba261e0\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/06</Key><LastModified>2026-11-06T15:13:12.204Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"32c0bc5e342fcdd130b6f5086729ddb9\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/07</Key><LastModified>2026-11-06T15:13:12.209Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"5b522a9998fcff582044f933183251ee\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/08</Key><LastModified>2026-11-06T15:13:12.216Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"6ba4472646c2368d50f9b41f0cf8d401\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/09</Key><LastModified>2026-11-06T15:13:12.222Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"b481599154b709c506f6be166f3e7233\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/10</Key><LastModified>2026-11-06T15:13:12.227Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"44ddc06c4c5d9b3344132b0490207d47\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/11</Key><LastModified>2026-11-06T15:13:12.232Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"df72f6ae681aeb74bd6796f853cd4140\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/12</Key><LastModified>2026-11-06T15:13:12.238Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"6fad0b2c5196847185ff3ed7c596b344\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/13</Key><LastModified>2026-11-06T15:13:12.243Z</LastModified><Size>4</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"67cf2c7c93322c53802258945aa2b5da\"</ETag><Key>sonde-probe/20261106T151311Z-534132/consistency.list-after-write/law/14</Key><LastModified>2026-11-06T15:13:12.248Z</LastModified><Size>4</Size><StorageClass>STANDARD</Storag",
+      "recordId": null
+    },
+    {
+      "label": "listed",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "20",
+      "recordId": null
+    }
+  ]
+}

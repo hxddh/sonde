@@ -406,9 +406,67 @@ impl S3Client {
         c
     }
 
-    /// Shifts the signing clock by `secs` (only for clock-skew probes).
-    pub fn set_clock_skew(&self, secs: i64) {
-        self.skew.store(secs, Ordering::Relaxed);
+    /// A clone whose signing clock is shifted by `secs` (clock-skew probes).
+    pub fn with_clock_skew(&self, secs: i64) -> Self {
+        let mut c = self.clone();
+        c.skew = Arc::new(AtomicI64::new(secs));
+        c
+    }
+
+    /// GETs (or HEADs) a URL as is, unsigned: presigned URLs. Logged like
+    /// every request.
+    pub async fn send_url(
+        &self,
+        operation: &str,
+        method: http::Method,
+        url: &str,
+    ) -> Result<S3Response, S3Error> {
+        let parsed = url::Url::parse(url).map_err(|e| S3Error::config(format!("URL: {e}")))?;
+        let req = S3Request::new(operation, method.clone());
+        let start = Instant::now();
+        let sent = self.http.request(method, parsed).send().await;
+        let latency = start.elapsed();
+        let mut record = self.record(&req, url, &[], 0, latency);
+        record.query = url::Url::parse(url)
+            .map(|u| {
+                u.query_pairs()
+                    .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        match sent {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let headers = header_pairs(resp.headers());
+                let body = resp.bytes().await.unwrap_or_default();
+                record.status = Some(status);
+                record.response_bytes = Some(body.len() as u64);
+                fill_ids(&mut record, &headers);
+                record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+                if !(200..300).contains(&status) && !body.is_empty() {
+                    record.error_body = Some(String::from_utf8_lossy(&body).to_string());
+                }
+                let (request_id, host_id) = (record.request_id.clone(), record.host_id.clone());
+                let record_id = self.log.push(record);
+                Ok(S3Response {
+                    status,
+                    headers,
+                    body,
+                    record_id,
+                    request_id,
+                    host_id,
+                    latency,
+                    retries: 0,
+                })
+            }
+            Err(e) => {
+                record.transport_error = Some(e.to_string());
+                let id = self.log.push(record);
+                let mut err = S3Error::new(ErrorKind::Transport, e.to_string());
+                err.record_id = Some(id);
+                Err(err)
+            }
+        }
     }
 
     pub async fn credentials(&self) -> Result<Option<Credentials>, S3Error> {
@@ -804,6 +862,11 @@ impl S3Client {
                 continue;
             }
             rb = rb.header(k.as_str(), v.as_str());
+        }
+        if body_bytes.is_empty() && matches!(req.method, http::Method::PUT | http::Method::POST) {
+            // hyper sends no Content-Length for an empty body; S3 wants one
+            rb = rb.header("content-length", "0");
+            headers.push(("content-length".into(), "0".into()));
         }
         if !body_bytes.is_empty() || matches!(req.method, http::Method::PUT | http::Method::POST) {
             rb = rb.body(body_bytes);

@@ -1,0 +1,67 @@
+{
+  "probe": "consistency.read-after-delete",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"6ba4472646c2368d50f9b41f0cf8d401\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "delete",
+      "status": 204,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get",
+      "status": 404,
+      "code": "NoSuchKey",
+      "headers": [
+        [
+          "content-length",
+          "230"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NoSuchKey</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx00000000000000000047d-006aedee76-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 404,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "230"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

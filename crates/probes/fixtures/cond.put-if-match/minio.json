@@ -1,0 +1,76 @@
+{
+  "probe": "cond.put-if-match",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"1e0328230da586f3ec025a989b751377\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "stale",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "164"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><Message>At least one of the pre-conditions you specified did not hold</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "current",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"f36436cdac2cc15f227c6af0179f1788\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "missing",
+      "status": 404,
+      "code": "NoSuchKey",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "127"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>",
+      "recordId": null
+    }
+  ]
+}

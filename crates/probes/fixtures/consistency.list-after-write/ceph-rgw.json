@@ -1,0 +1,369 @@
+{
+  "probe": "consistency.list-after-write",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"51e3a185854c3f8dca45599ecc08287a\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"9065f30fb52f6f13489b41028ba2c635\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"25c7ac5943214c5c7544c7947fd02529\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-3",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"f7c88c59d082766f24e5b433a95f73fd\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-4",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"2383f9f092d33150fda52766a99a63e7\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-5",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"20ba9f4d08391df90be6b698d6803727\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-6",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"ee18f6b17c766ca599da8ae6dba261e0\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-7",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"32c0bc5e342fcdd130b6f5086729ddb9\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-8",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"5b522a9998fcff582044f933183251ee\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-9",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"6ba4472646c2368d50f9b41f0cf8d401\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-10",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"b481599154b709c506f6be166f3e7233\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-11",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"44ddc06c4c5d9b3344132b0490207d47\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-12",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"df72f6ae681aeb74bd6796f853cd4140\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-13",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"6fad0b2c5196847185ff3ed7c596b344\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-14",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"67cf2c7c93322c53802258945aa2b5da\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-15",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"fe1820016a606d898a006e21a597d811\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-16",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"6fccc01a9ec76c44e2b9131c2f36d469\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-17",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"5918c40dc65e5bbc2f31abc9dc0e3083\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-18",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"44ae0b10a391ebe0e10f2637d75ac982\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-19",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"dc71685690eb65dfd13c1fb8e2d18fda\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "list",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>sonde-it-probe-a673bd5c</Name><Prefix>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/</Prefix><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/00</Key><LastModified>2026-11-06T15:12:53.390Z</LastModified><ETag>&quot;51e3a185854c3f8dca45599ecc08287a&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/01</Key><LastModified>2026-11-06T15:12:53.396Z</LastModified><ETag>&quot;9065f30fb52f6f13489b41028ba2c635&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/02</Key><LastModified>2026-11-06T15:12:53.401Z</LastModified><ETag>&quot;25c7ac5943214c5c7544c7947fd02529&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/03</Key><LastModified>2026-11-06T15:12:53.406Z</LastModified><ETag>&quot;f7c88c59d082766f24e5b433a95f73fd&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/04</Key><LastModified>2026-11-06T15:12:53.411Z</LastModified><ETag>&quot;2383f9f092d33150fda52766a99a63e7&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/05</Key><LastModified>2026-11-06T15:12:53.415Z</LastModified><ETag>&quot;20ba9f4d08391df90be6b698d6803727&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/06</Key><LastModified>2026-11-06T15:12:53.420Z</LastModified><ETag>&quot;ee18f6b17c766ca599da8ae6dba261e0&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/07</Key><LastModified>2026-11-06T15:12:53.424Z</LastModified><ETag>&quot;32c0bc5e342fcdd130b6f5086729ddb9&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/08</Key><LastModified>2026-11-06T15:12:53.428Z</LastModified><ETag>&quot;5b522a9998fcff582044f933183251ee&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/09</Key><LastModified>2026-11-06T15:12:53.433Z</LastModified><ETag>&quot;6ba4472646c2368d50f9b41f0cf8d401&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/10</Key><LastModified>2026-11-06T15:12:53.437Z</LastModified><ETag>&quot;b481599154b709c506f6be166f3e7233&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/11</Key><LastModified>2026-11-06T15:12:53.441Z</LastModified><ETag>&quot;44ddc06c4c5d9b3344132b0490207d47&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/12</Key><LastModified>2026-11-06T15:12:53.446Z</LastModified><ETag>&quot;df72f6ae681aeb74bd6796f853cd4140&quot;</ETag><Size>4</Size><StorageClass>STANDARD</StorageClass><Type>Normal</Type></Contents><Contents><Key>sonde-probe/20261106T151252Z-8a604b/consistency.list-after-write/law/13</Key><LastModified>2026-11-06T15:12:53.450Z</Last",
+      "recordId": null
+    },
+    {
+      "label": "listed",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "20",
+      "recordId": null
+    }
+  ]
+}

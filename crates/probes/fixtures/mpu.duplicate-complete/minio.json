@@ -1,0 +1,93 @@
+{
+  "probe": "mpu.duplicate-complete",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "407"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><Key>sonde-probe/20261106T151311Z-534132/mpu.duplicate-complete/dup</Key><UploadId>ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLjcxOGM5ZDZiLTg2NTgtNDc1NS04ZmU0LTYxZTNiZTRmZGJmZXgxNzkzOTc3OTk2MTIwNTQyMjE2</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"fa0458bbc4359c20c969ae838f4669d4\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "first",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "440"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><ETag>\"c3b1878eb742c6c1f6204b64a4bea666-1\"</ETag><Key>sonde-probe/20261106T151311Z-534132/mpu.duplicate-complete/dup</Key><Location>http://127.0.0.1:9100/sonde-it-probe-a4b064c0/sonde-probe/20261106T151311Z-534132/mpu.duplicate-complete/dup</Location></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "second",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "440"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><ETag>\"c3b1878eb742c6c1f6204b64a4bea666-1\"</ETag><Key>sonde-probe/20261106T151311Z-534132/mpu.duplicate-complete/dup</Key><Location>http://127.0.0.1:9100/sonde-it-probe-a4b064c0/sonde-probe/20261106T151311Z-534132/mpu.duplicate-complete/dup</Location></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "list-parts",
+      "status": 404,
+      "code": "NoSuchUpload",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "223"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NoSuchUpload</Code><Message>The specified multipart upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.</Message></Error>",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "probe": "lock.retention",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create-bucket",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-locked",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"4cef2f30ac7d33419d00c1d93a090095\""
+        ],
+        [
+          "x-amz-version-id",
+          "z.Zc.YTSxvvuk1H7c8QfZ8csjpURNkS"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-retention",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "149"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Retention><Mode>GOVERNANCE</Mode><RetainUntilDate>2026-11-07T15:13:10.000000000Z</RetainUntilDate></Retention>",
+      "recordId": null
+    },
+    {
+      "label": "delete-version",
+      "status": 403,
+      "code": "AccessDenied",
+      "headers": [
+        [
+          "content-length",
+          "239"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>AccessDenied</Code><BucketName>sonde-probe-20261106-20fb9251</BucketName><RequestId>tx0000000000000000005f6-006aedee86-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "version",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "z.Zc.YTSxvvuk1H7c8QfZ8csjpURNkS",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "probe": "version.id-format",
+  "vendor": "minio",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "create-bucket",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "enable",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"cfcd208495d565ef66e7dff9f98764da\""
+        ],
+        [
+          "x-amz-version-id",
+          "20cba8e0-5b69-4623-af77-050259b1272a"
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"c4ca4238a0b923820dcc509a6f75849b\""
+        ],
+        [
+          "x-amz-version-id",
+          "466a5b40-3679-4e98-891c-6f0cd77ef87e"
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "ids",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "20cba8e0-5b69-4623-af77-050259b1272a 466a5b40-3679-4e98-891c-6f0cd77ef87e",
+      "recordId": null
+    }
+  ]
+}

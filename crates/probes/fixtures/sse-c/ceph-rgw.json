@@ -1,0 +1,84 @@
+{
+  "probe": "sse-c",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "https",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "false",
+      "recordId": null
+    },
+    {
+      "label": "put",
+      "status": 400,
+      "code": "InvalidRequest",
+      "headers": [
+        [
+          "content-length",
+          "235"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidRequest</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx0000000000000000005fe-006aedee87-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "no-key",
+      "status": 404,
+      "code": "NoSuchKey",
+      "headers": [
+        [
+          "content-length",
+          "230"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NoSuchKey</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx0000000000000000005ff-006aedee87-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "wrong-key",
+      "status": 404,
+      "code": "NoSuchKey",
+      "headers": [
+        [
+          "content-length",
+          "230"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NoSuchKey</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000600-006aedee87-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "right-key",
+      "status": 404,
+      "code": "NoSuchKey",
+      "headers": [
+        [
+          "content-length",
+          "230"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NoSuchKey</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000601-006aedee87-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    }
+  ]
+}

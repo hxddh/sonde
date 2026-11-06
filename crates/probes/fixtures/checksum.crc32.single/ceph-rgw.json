@@ -1,0 +1,71 @@
+{
+  "probe": "checksum.crc32.single",
+  "vendor": "ceph-rgw",
+  "expect": "fail",
+  "note": "",
+  "steps": [
+    {
+      "label": "good",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"cdda79e96f9085b1e7784bf1c6cd8d92\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "1000"
+        ],
+        [
+          "etag",
+          "\"cdda79e96f9085b1e7784bf1c6cd8d92\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "bad",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"cdda79e96f9085b1e7784bf1c6cd8d92\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "vK2X+Q==",
+      "recordId": null
+    }
+  ]
+}

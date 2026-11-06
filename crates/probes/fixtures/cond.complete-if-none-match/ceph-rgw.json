@@ -1,0 +1,97 @@
+{
+  "probe": "cond.complete-if-none-match",
+  "vendor": "ceph-rgw",
+  "expect": "fail",
+  "note": "",
+  "steps": [
+    {
+      "label": "create-upload",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "322"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a673bd5c</Bucket><Key>sonde-probe/20261106T151252Z-8a604b/cond.complete-if-none-match/cinm</Key><UploadId>2~67_MLqLWq14Q_BGBPBnmEEiSehf8egw</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"fa0458bbc4359c20c969ae838f4669d4\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "racing-put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"1e0328230da586f3ec025a989b751377\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "441"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Location>1f1e19ddbf97/sonde-it-probe-a673bd5c/sonde-probe/20261106T151252Z-8a604b/cond.complete-if-none-match/cinm</Location><Bucket>sonde-it-probe-a673bd5c</Bucket><Key>sonde-probe/20261106T151252Z-8a604b/cond.complete-if-none-match/cinm</Key><ETag>c3b1878eb742c6c1f6204b64a4bea666-1</ETag></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "1024"
+        ],
+        [
+          "etag",
+          "\"c3b1878eb742c6c1f6204b64a4bea666-1\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

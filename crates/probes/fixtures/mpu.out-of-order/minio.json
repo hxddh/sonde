@@ -1,0 +1,118 @@
+{
+  "probe": "mpu.out-of-order",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "401"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><Key>sonde-probe/20261106T151311Z-534132/mpu.out-of-order/ooo</Key><UploadId>ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLmM4NWM1ZTM5LTJhMGMtNDJhNS1iNjExLWVmMjgwMDRkYjE2ZngxNzkzOTc3OTk1ODI0NDUzODg1</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part-2-first",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"5289492cf082446ca4a6eec9f72f1ec3\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-1-second",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"67cc350851a12f52064f4c1bb1a1b85e\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete-descending",
+      "status": 400,
+      "code": "InvalidPartOrder",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "141"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidPartOrder</Code><Message>Part numbers must be strictly increasing</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "complete-ascending",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "428"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><ETag>\"e946dd08fb0409bcfdbbc1322cebde9c-2\"</ETag><Key>sonde-probe/20261106T151311Z-534132/mpu.out-of-order/ooo</Key><Location>http://127.0.0.1:9100/sonde-it-probe-a4b064c0/sonde-probe/20261106T151311Z-534132/mpu.out-of-order/ooo</Location></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "tail",
+      "status": 206,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "5"
+        ],
+        [
+          "content-range",
+          "bytes 5242880-5242884/5242885"
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ],
+        [
+          "etag",
+          "\"e946dd08fb0409bcfdbbc1322cebde9c-2\""
+        ]
+      ],
+      "body": "WORLD",
+      "recordId": null
+    }
+  ]
+}

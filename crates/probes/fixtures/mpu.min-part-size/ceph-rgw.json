@@ -1,0 +1,76 @@
+{
+  "probe": "mpu.min-part-size",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "315"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a673bd5c</Bucket><Key>sonde-probe/20261106T151252Z-8a604b/mpu.min-part-size/minpart</Key><UploadId>2~GDtVBZ1xAGhWu8hPLQsBbejXpRFZHB4</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "small-part",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"2b12927d9af7ded61520a7df02e213c4\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "last-part",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"97d680ee3c2e6c935d2106e0224791a8\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete-small",
+      "status": 400,
+      "code": "EntityTooSmall",
+      "headers": [
+        [
+          "content-length",
+          "235"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>EntityTooSmall</Code><BucketName>sonde-it-probe-a673bd5c</BucketName><RequestId>tx000000000000000000500-006aedee7c-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    }
+  ]
+}

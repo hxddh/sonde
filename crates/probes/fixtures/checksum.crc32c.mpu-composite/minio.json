@@ -1,0 +1,129 @@
+{
+  "probe": "checksum.crc32c.mpu-composite",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "x-amz-checksum-algorithm",
+          "CRC32C"
+        ],
+        [
+          "x-amz-checksum-type",
+          "COMPOSITE"
+        ],
+        [
+          "content-length",
+          "430"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><Key>sonde-probe/20261106T151311Z-534132/checksum.crc32c.mpu-composite/mpu-ck-crc32c-false</Key><UploadId>ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLmNkY2JjNzY5LThiMGEtNGQ3NC1hN2QxLWJjMjkxNWQ1MWE5MHgxNzkzOTc3OTkzMzU4MTY3MDky</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-crc32c",
+          "M8YZSg=="
+        ],
+        [
+          "etag",
+          "\"67cc350851a12f52064f4c1bb1a1b85e\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "part-2",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-crc32c",
+          "caYslA=="
+        ],
+        [
+          "etag",
+          "\"d36bb53847fbe3fce38a08155054ecb3\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "567"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><ChecksumCRC32C>41wxmQ==-2</ChecksumCRC32C><ChecksumType>COMPOSITE</ChecksumType><ETag>\"e38d371f4931e98ec04e8f8055ab259e-2\"</ETag><Key>sonde-probe/20261106T151311Z-534132/checksum.crc32c.mpu-composite/mpu-ck-crc32c-false</Key><Location>http://127.0.0.1:9100/sonde-it-probe-a4b064c0/sonde-probe/20261106T151311Z-534132/checksum.crc32c.mpu-composite/mpu-ck-crc32c-false</Location></CompleteMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "x-amz-checksum-crc32c",
+          "41wxmQ==-2"
+        ],
+        [
+          "x-amz-checksum-type",
+          "COMPOSITE"
+        ],
+        [
+          "content-length",
+          "5243904"
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ],
+        [
+          "etag",
+          "\"e38d371f4931e98ec04e8f8055ab259e-2\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "expected",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "41wxmQ==-2",
+      "recordId": null
+    }
+  ]
+}

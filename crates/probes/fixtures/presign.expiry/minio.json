@@ -1,0 +1,80 @@
+{
+  "probe": "presign.expiry",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"03885a82b9f4be3c4d5e8e4e2c412759\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "fresh",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "9"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"03885a82b9f4be3c4d5e8e4e2c412759\""
+        ]
+      ],
+      "body": "presigned",
+      "recordId": null
+    },
+    {
+      "label": "expired",
+      "status": 403,
+      "code": "AccessDenied",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "116"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "too-long",
+      "status": 400,
+      "code": "AuthorizationQueryParametersError",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "185"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>AuthorizationQueryParametersError</Code><Message>The authorization query parameters that you provided are not valid.</Message></Error>",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "probe": "cond.copy-if-match",
+  "vendor": "ceph-rgw",
+  "expect": "fail",
+  "note": "",
+  "steps": [
+    {
+      "label": "source",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"18e3f5f428c7109015d4214ab2f0df86\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "wrong-source",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CopyObjectResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LastModified>2026-11-06T15:12:52.796Z</LastModified><ETag>18e3f5f428c7109015d4214ab2f0df86</ETag></CopyObjectResult>",
+      "recordId": null
+    },
+    {
+      "label": "right-source",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CopyObjectResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LastModified>2026-11-06T15:12:52.846Z</LastModified><ETag>18e3f5f428c7109015d4214ab2f0df86</ETag></CopyObjectResult>",
+      "recordId": null
+    },
+    {
+      "label": "dest-exists",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CopyObjectResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LastModified>2026-11-06T15:12:52.893Z</LastModified><ETag>18e3f5f428c7109015d4214ab2f0df86</ETag></CopyObjectResult>",
+      "recordId": null
+    }
+  ]
+}

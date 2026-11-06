@@ -1,0 +1,80 @@
+{
+  "probe": "express.append",
+  "vendor": "ceph-rgw",
+  "expect": "fail",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"84354c3d4a1a7ea36e7a772f78da5c9b\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "append",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"d8029d70ea5c9ae595bb71163d8ec014\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "wrong-offset",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"d8029d70ea5c9ae595bb71163d8ec014\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "3"
+        ],
+        [
+          "etag",
+          "\"d8029d70ea5c9ae595bb71163d8ec014\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

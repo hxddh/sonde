@@ -1,0 +1,40 @@
+{
+  "probe": "consistency.read-after-delete",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "delete",
+      "status": 204,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get",
+      "status": 404,
+      "code": "NoSuchKey",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 404,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

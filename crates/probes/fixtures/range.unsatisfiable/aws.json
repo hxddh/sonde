@@ -1,0 +1,45 @@
+{
+  "probe": "range.unsatisfiable",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "past",
+      "status": 416,
+      "code": "InvalidRange",
+      "headers": [
+        [
+          "content-range",
+          "bytes */10"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-empty",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "empty",
+      "status": 416,
+      "code": "InvalidRange",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

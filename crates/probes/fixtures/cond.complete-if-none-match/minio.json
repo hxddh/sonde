@@ -1,0 +1,97 @@
+{
+  "probe": "cond.complete-if-none-match",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create-upload",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "413"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><Key>sonde-probe/20261106T151311Z-534132/cond.complete-if-none-match/cinm</Key><UploadId>ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLjkzN2JiM2M4LTQyZjgtNGM3Zi1iM2NlLTFjZTAwMzhlZTNmM3gxNzkzOTc3OTkyMTIyNDQ1MjI1</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "part",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"fa0458bbc4359c20c969ae838f4669d4\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "racing-put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"1e0328230da586f3ec025a989b751377\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "164"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><Message>At least one of the pre-conditions you specified did not hold</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "head",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "8"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"1e0328230da586f3ec025a989b751377\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "probe": "presign.expiry",
+  "vendor": "ceph-rgw",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"03885a82b9f4be3c4d5e8e4e2c412759\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "fresh",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "9"
+        ],
+        [
+          "etag",
+          "\"03885a82b9f4be3c4d5e8e4e2c412759\""
+        ],
+        [
+          "content-type",
+          "binary/octet-stream"
+        ]
+      ],
+      "body": "presigned",
+      "recordId": null
+    },
+    {
+      "label": "expired",
+      "status": 403,
+      "code": "AccessDenied",
+      "headers": [
+        [
+          "content-length",
+          "185"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>AccessDenied</Code><RequestId>tx0000000000000000005d0-006aedee86-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    },
+    {
+      "label": "too-long",
+      "status": 403,
+      "code": "AccessDenied",
+      "headers": [
+        [
+          "content-length",
+          "185"
+        ],
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>AccessDenied</Code><RequestId>tx0000000000000000005d1-006aedee86-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "recordId": null
+    }
+  ]
+}

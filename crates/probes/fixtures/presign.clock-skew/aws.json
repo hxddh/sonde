@@ -1,0 +1,48 @@
+{
+  "probe": "presign.clock-skew",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "ahead-5m",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "ahead-20m",
+      "status": 403,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "behind-20m",
+      "status": 403,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "ahead-20m-get",
+      "status": 403,
+      "code": "RequestTimeTooSkewed",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

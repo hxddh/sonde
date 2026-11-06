@@ -1,0 +1,84 @@
+{
+  "probe": "lock.retention",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create-bucket",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-locked",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"4cef2f30ac7d33419d00c1d93a090095\""
+        ],
+        [
+          "x-amz-version-id",
+          "2c41e8ce-5f10-4ad6-8ec0-0861a684e204"
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "get-retention",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "143"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Retention><Mode>GOVERNANCE</Mode><RetainUntilDate>2026-11-07T15:13:22.000Z</RetainUntilDate></Retention>",
+      "recordId": null
+    },
+    {
+      "label": "delete-version",
+      "status": 403,
+      "code": "AccessDenied",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "193"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>AccessDenied</Code><Message>Object is under GOVERNANCE retention and cannot be deleted until 2026-11-07 15:13:22.0 +00:00:00</Message></Error>",
+      "recordId": null
+    },
+    {
+      "label": "version",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "2c41e8ce-5f10-4ad6-8ec0-0861a684e204",
+      "recordId": null
+    }
+  ]
+}

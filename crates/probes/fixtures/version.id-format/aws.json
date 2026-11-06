@@ -1,0 +1,48 @@
+{
+  "probe": "version.id-format",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "create-bucket",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "enable",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-0",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-1",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "ids",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrH 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrZ",
+      "recordId": null
+    }
+  ]
+}

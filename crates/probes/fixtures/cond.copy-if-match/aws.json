@@ -1,0 +1,40 @@
+{
+  "probe": "cond.copy-if-match",
+  "vendor": "aws",
+  "expect": "pass",
+  "note": "written from AWS's documented behavior",
+  "steps": [
+    {
+      "label": "source",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "wrong-source",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "right-source",
+      "status": 200,
+      "code": null,
+      "headers": [],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "dest-exists",
+      "status": 412,
+      "code": "PreconditionFailed",
+      "headers": [],
+      "body": "",
+      "recordId": null
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "probe": "presign.clock-skew",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "put",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"9dd4e461268c8034f5c8564e155c67a6\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "ahead-5m",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "etag",
+          "\"9dd4e461268c8034f5c8564e155c67a6\""
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "ahead-20m",
+      "status": 403,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "behind-20m",
+      "status": 403,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "ahead-20m-get",
+      "status": 403,
+      "code": "RequestTimeTooSkewed",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "145"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>RequestTimeTooSkewed</Code><Message>request time is too far from server time</Message></Error>",
+      "recordId": null
+    }
+  ]
+}

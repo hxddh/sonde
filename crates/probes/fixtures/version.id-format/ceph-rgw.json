@@ -1,0 +1,88 @@
+{
+  "probe": "version.id-format",
+  "vendor": "ceph-rgw",
+  "expect": "differs",
+  "note": "",
+  "steps": [
+    {
+      "label": "create-bucket",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "enable",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-0",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"cfcd208495d565ef66e7dff9f98764da\""
+        ],
+        [
+          "x-amz-version-id",
+          "0vr60aWdzMPXM.fNKnti.gjaehzIzCb"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "put-1",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "etag",
+          "\"c4ca4238a0b923820dcc509a6f75849b\""
+        ],
+        [
+          "x-amz-version-id",
+          ".XW6NzpenG4uIkDd6ChZ5ra4frgrtMz"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "ids",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "0vr60aWdzMPXM.fNKnti.gjaehzIzCb .XW6NzpenG4uIkDd6ChZ5ra4frgrtMz",
+      "recordId": null
+    }
+  ]
+}

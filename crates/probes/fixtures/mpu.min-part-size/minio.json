@@ -1,0 +1,76 @@
+{
+  "probe": "mpu.min-part-size",
+  "vendor": "minio",
+  "expect": "pass",
+  "note": "",
+  "steps": [
+    {
+      "label": "create",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "406"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>sonde-it-probe-a4b064c0</Bucket><Key>sonde-probe/20261106T151311Z-534132/mpu.min-part-size/minpart</Key><UploadId>ZGZlOTM3MDQtNjJlYy00MWU0LTkwOGUtZDA1YWYwMmU2YWJkLjBjZTBmNDFmLWU5ZGItNGI2MS05M2ExLWIzODk2YzhlZjk1OHgxNzkzOTc3OTk1NzQ5Mjg2MDg2</UploadId></InitiateMultipartUploadResult>",
+      "recordId": null
+    },
+    {
+      "label": "small-part",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"2b12927d9af7ded61520a7df02e213c4\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "last-part",
+      "status": 200,
+      "code": null,
+      "headers": [
+        [
+          "etag",
+          "\"97d680ee3c2e6c935d2106e0224791a8\""
+        ],
+        [
+          "content-length",
+          "0"
+        ]
+      ],
+      "body": "",
+      "recordId": null
+    },
+    {
+      "label": "complete-small",
+      "status": 400,
+      "code": "EntityTooSmall",
+      "headers": [
+        [
+          "content-type",
+          "application/xml"
+        ],
+        [
+          "content-length",
+          "168"
+        ]
+      ],
+      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>EntityTooSmall</Code><Message>Your proposed upload is smaller than the minimum allowed object size.</Message></Error>",
+      "recordId": null
+    }
+  ]
+}
