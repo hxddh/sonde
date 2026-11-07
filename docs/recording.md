@@ -80,6 +80,45 @@ directory's `sessions/`.
 `sonde show` prints the timeline and a summary; `--format json` gives the
 header, the summary and every record.
 
+## Operations, not requests
+
+`sonde show` groups a session's requests into operations; `--requests` prints
+one line per request instead.
+
+```
+01:09:10.149  Iceberg  commit: table metadata v2 · 3 files (7.6 KiB)   20 reqs · 112 ms
+01:09:10.597  Iceberg  1 file written, no commit followed (72 B)         3 reqs · 18 ms
+00:22:25.074  SlateDB  looked for the newest WAL: probed ids 1…128        8 reqs · 5 ms
+00:22:25.085  SlateDB  WAL 1 written empty (fencing marker)              2 reqs · 9 ms
+```
+
+| Operation | Made of |
+|---|---|
+| multipart upload | CreateMultipartUpload, its parts, Complete or Abort (by upload id) |
+| retried request | the same request repeated after a 5xx, 429, SlowDown or no response |
+| lookups that found nothing | a burst of GET/HEAD answered 404 |
+| listing in N pages | ListObjects calls continuing one another |
+| format step | a commit point and what led to it (below) |
+
+**Storage formats** are recognized from keys. Some writes are *commit points*:
+a SlateDB manifest, WAL, SST or compaction-state file; an Iceberg
+`*.metadata.json`; a Delta `_delta_log/<n>.json`. The format's other requests —
+reads, listings, data files, Iceberg manifests — are folded into the next
+commit point (a completed multipart upload counts as one write). Lookups
+across several numbered files, like SlateDB searching for its newest WAL, are
+a step of their own. Files with no commit within two seconds are reported as
+written without one.
+
+After the operations come **observations**: uploads never completed, files
+written without a commit, retries, conditional writes that lost a race (412),
+keys read again and again, prefixes listed again and again, small files sent as
+multipart uploads, and notes true of nearly every step of a format (said once
+rather than on every line).
+
+Checked on real runs: SlateDB 0.18 (172 requests → 34 operations), pyiceberg
+0.9.1 (116 → 6), delta-rs 1.6 (49 → 5), boto3 and the Java SDK — the sessions
+are in `crates/proxy/tests/fixtures`.
+
 ## Reading a summary
 
 ```

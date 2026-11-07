@@ -10,7 +10,9 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   credentials, forwards it and records it; `--live` prints requests as they happen.
 - `sonde proxy`: the same endpoint, standing, for an application started elsewhere.
 - `--no-delete` and `--read-only` for both: refused operations never leave the machine.
-- Session files (`.sonde`, redacted JSON lines) and `sonde show` (timeline, summary, `--errors`, JSON).
+- Session files (`.sonde`, redacted JSON lines) and `sonde show`: requests grouped into operations — multipart
+  uploads, retries, bursts of lookups, paged listings, and SlateDB, Iceberg and Delta steps (a commit with the reads
+  and files that led to it) — followed by observations; `--requests` for one line per request, JSON with all of it.
 - `sonde-proxy` crate; SDK smoke tests (boto3, JS v3, Go v2, Java v2) run through `sonde run` in CI.
 
 ### Fixed
