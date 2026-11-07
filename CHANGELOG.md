@@ -13,6 +13,10 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 - Session files (`.sonde`, redacted JSON lines) and `sonde show`: requests grouped into operations — multipart
   uploads, retries, bursts of lookups, paged listings, and SlateDB, Iceberg and Delta steps (a commit with the reads
   and files that led to it) — followed by observations; `--requests` for one line per request, JSON with all of it.
+- `sonde replay <session> -e <endpoint>`: re-enacts a session on another endpoint under a fresh key prefix (upload
+  ids, ETags and continuation tokens mapped; payloads synthetic; bucket changes left out), cleans up, and compares
+  every answer — exit 2 when anything differs. `sonde diff` compares two session files.
+- Records keep control documents (DeleteObjects, tagging, lifecycle XML), for replay.
 - `sonde-proxy` crate; SDK smoke tests (boto3, JS v3, Go v2, Java v2) run through `sonde run` in CI.
 
 ### Fixed

@@ -119,6 +119,55 @@ Checked on real runs: SlateDB 0.18 (172 requests → 34 operations), pyiceberg
 0.9.1 (116 → 6), delta-rs 1.6 (49 → 5), boto3 and the Java SDK — the sessions
 are in `crates/proxy/tests/fixtures`.
 
+## Replay on another endpoint
+
+```sh
+sonde replay session.sonde -e ceph          # plan, confirm, replay, clean up, compare
+sonde replay session.sonde -e r2 --bucket data=scratch --yes
+sonde diff session.sonde replay.sonde       # compare two files again later
+```
+
+```
+Replay 116 requests from iceberg.sonde on ceph, under replay-20261107-015056/ in lake.
+  63 writes and 0 deletes, all under that prefix: nothing outside it is touched.
+116 compared: 116 the same
+```
+
+A session keeps no object data, and upload ids, ETags and continuation tokens
+differ from one endpoint to another, so a replay re-enacts each request:
+
+- payloads are deterministic bytes of the recorded length;
+- control documents (DeleteObjects, tagging, …) are the recorded ones — sonde
+  keeps them on records — with their keys moved under the replay prefix;
+- upload ids, part ETags, ETags in `If-Match` / `If-None-Match` and
+  continuation tokens are mapped to what the replay endpoint returned, and
+  `CompleteMultipartUpload` is rebuilt from the replayed parts;
+- every key and listing prefix is moved under `replay-<time>/` (or
+  `--prefix`), so nothing that exists is touched; bucket-level changes
+  (lifecycle, policy, deleting the bucket) are left out; requests naming a
+  version id of the original endpoint are left out;
+- requests go one at a time, in recorded order, without retries.
+
+It asks before sending anything (`--yes` in scripts) and deletes what it wrote
+afterwards (`--keep` keeps it). `--in-place` replays keys as recorded, bucket
+changes included — on a scratch bucket only.
+
+Requests are compared by status and S3 error code; lookups that found nothing
+on both sides are the same. A `CreateBucket` answered "already owned by you" is
+counted apart (the bucket was there before). Differences are grouped, with the
+conditions the original request carried:
+
+```
+✗ PutObject   recorded 412 PreconditionFailed → replay 200   ×1   e.g. data/log/0001.json  (if-none-match: *)
+```
+
+That line is a store ignoring conditional creates — two writers could both
+believe they won. The exit status is 2 when anything differs, 0 otherwise.
+
+Checked on real recordings: the SlateDB, pyiceberg, delta-rs and boto3
+sessions recorded on RustFS replay with no difference on RustFS and on Ceph RGW
+16.2.5.
+
 ## Reading a summary
 
 ```
@@ -135,4 +184,5 @@ failures, and requests sonde refused.
 - HTTP/1.1 between the application and sonde; plain HTTP on the loopback
   interface (no TLS listener yet).
 - One target endpoint per proxy.
+- Replay is sequential: concurrency and timing of the original are not reproduced.
 - Signed `aws-chunked` bodies are decoded in memory, up to 1 GiB each.
