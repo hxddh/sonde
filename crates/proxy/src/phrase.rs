@@ -95,10 +95,26 @@ fn template(key: &str) -> &'static str {
 impl Phrase {
     /// The phrase in English.
     pub fn en(&self) -> String {
-        let mut out = template(self.key).to_string();
-        for (k, v) in &self.args {
-            out = out.replace(&format!("{{{k}}}"), v);
+        // one pass over the template: an argument's own text (a key named
+        // "{n}.json") is never read as a placeholder
+        let tpl = template(self.key);
+        let mut out = String::with_capacity(tpl.len());
+        let mut rest = tpl;
+        while let Some(open) = rest.find('{') {
+            out.push_str(&rest[..open]);
+            let after = &rest[open + 1..];
+            match after.find('}') {
+                Some(close) if self.args.contains_key(&after[..close]) => {
+                    out.push_str(&self.args[&after[..close]]);
+                    rest = &after[close + 1..];
+                }
+                _ => {
+                    out.push('{');
+                    rest = after;
+                }
+            }
         }
+        out.push_str(rest);
         out
     }
 }
@@ -111,6 +127,20 @@ pub fn en(text: &[Phrase]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_argument_is_never_read_as_a_placeholder() {
+        let x = p(
+            "mpu",
+            &[
+                ("key", "b/{n}{s}.bin".into()),
+                ("n", "2".into()),
+                ("s", plural(2)),
+                ("size", "200 B".into()),
+            ],
+        );
+        assert_eq!(x.en(), "multipart upload b/{n}{s}.bin · 2 parts · 200 B");
+    }
 
     #[test]
     fn every_key_has_an_english_template() {
