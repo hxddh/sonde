@@ -7,9 +7,15 @@
 import { type App, open, test } from "nsh/test";
 
 const dir = (globalThis as any).process?.env?.SONDE_SHOTS ?? "shots";
-const windows = (globalThis as any).process?.platform === "win32";
-const COMMAND = "for k in README.md config/app.yaml images/logo.png; do curl -s $AWS_ENDPOINT_URL/demo/$k -o /dev/null; echo fetched $k; done; curl -s $AWS_ENDPOINT_URL/demo/missing.txt -o /dev/null; echo done";
-const WIN_COMMAND = "(for %k in (README.md config/app.yaml images/logo.png) do @curl -s %AWS_ENDPOINT_URL%/demo/%k -o NUL & @echo fetched %k) & curl -s %AWS_ENDPOINT_URL%/demo/missing.txt -o NUL & echo done";
+
+/** The tour's program in the shell Run starts it in: sh, or cmd.exe on
+ * Windows. The recording endpoint is in AWS_ENDPOINT_URL either way. */
+function command(cmd: boolean) {
+  const url = cmd ? "%AWS_ENDPOINT_URL%" : "$AWS_ENDPOINT_URL";
+  const sink = cmd ? "NUL" : "/dev/null";
+  const get = (k: string) => `curl -s -o ${sink} ${url}/demo/${k} && echo fetched ${k}`;
+  return [...["README.md", "config/app.yaml", "images/logo.png"].map(get), `curl -s -o ${sink} ${url}/demo/missing.txt`, "echo done"].join(" && ");
+}
 
 interface Variant {
   name: string;
@@ -58,8 +64,13 @@ for (const v of variants) {
       await app.window("settings").pressClose();
     }
     await shot("02-run");
-    // Run's program runs in the platform's shell: cmd.exe on Windows
-    await app.type("id:run-command", windows ? WIN_COMMAND : COMMAND);
+    // which shell Run uses: only cmd.exe expands %OS%
+    await app.type("id:run-command", "echo %OS%");
+    await app.press("id:run-start");
+    await app.waitFor("id:run-ended", { timeout: 20000 });
+    const cmd = app.texts().some((t) => t.includes("Windows_NT"));
+    await app.clear("id:run-command");
+    await app.type("id:run-command", command(cmd));
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });
     await shot("02b-ran");
