@@ -87,6 +87,13 @@ fn slatedb_run_reads_as_slatedb_steps() {
     assert!(manifest.notes.iter().any(|n| n.contains("If-None-Match")));
     assert!(manifest.notes.iter().any(|n| n.starts_with("after ")));
     assert!(eps.iter().all(|e| e.outcome == Outcome::Ok));
+    // steps carry what is particular to them; the shared note is said once
+    let obs = observations(&s.records, &eps);
+    assert!(
+        obs.iter()
+            .any(|o| o.text.starts_with("27 SlateDB writes: conditional create")),
+        "{obs:?}"
+    );
 
     let obs = observations(&s.records, &eps);
     assert!(
@@ -113,4 +120,65 @@ fn sdk_runs_show_one_multipart_upload() {
         assert_eq!(eps.len(), s.records.len() - 4, "{name}");
         assert!(observations(&s.records, &eps).is_empty(), "{name}");
     }
+}
+
+#[test]
+fn pyiceberg_run_reads_as_table_commits() {
+    let s = load("iceberg.sonde");
+    let eps = episodes(&s.records);
+    let titles: Vec<&str> = eps.iter().map(|e| e.title.as_str()).collect();
+    // create, append, append, overwrite, delete — then a file nothing commits
+    assert_eq!(eps.len(), 6, "{titles:#?}");
+    assert!(titles[0].starts_with("commit: table metadata v0"));
+    for (i, t) in titles[1..5].iter().enumerate() {
+        assert!(
+            t.starts_with(&format!("commit: table metadata v{} · ", i + 1)),
+            "{t}"
+        );
+    }
+    assert_eq!(titles[5], "1 file written, no commit followed (72 B)");
+    assert!(eps.iter().all(|e| e.format == Some(Format::Iceberg)));
+    let obs = observations(&s.records, &eps);
+    assert!(
+        obs.iter()
+            .any(|o| o.level == "warn" && o.text.starts_with("files were written with no commit"))
+    );
+    // pyarrow uploads every file in parts
+    assert!(
+        obs.iter().any(|o| o
+            .text
+            .starts_with("21 files under 5 MiB were uploaded as multipart uploads")),
+        "{obs:?}"
+    );
+}
+
+#[test]
+fn delta_rs_run_reads_as_commits() {
+    let s = load("delta.sonde");
+    let eps = episodes(&s.records);
+    let titles: Vec<&str> = eps.iter().map(|e| e.title.as_str()).collect();
+    assert_eq!(
+        &titles[..4],
+        [
+            "commit 0 · 1 file (1.2 KiB)",
+            "commit 1 · 1 file (1004 B)",
+            "commit 2 · 1 file (883 B)",
+            "commit 3 · 1 file (904 B)"
+        ]
+    );
+    assert!(
+        eps[..4]
+            .iter()
+            .all(|e| e.format == Some(Format::Delta) && e.outcome == Outcome::Ok)
+    );
+    let obs = observations(&s.records, &eps);
+    assert!(
+        obs.iter()
+            .any(|o| o.text == "4 Delta writes: conditional create (If-None-Match: *)"),
+        "{obs:?}"
+    );
+    assert!(
+        obs.iter()
+            .any(|o| o.text.ends_with("_delta_log/ was listed 15 times"))
+    );
 }

@@ -151,7 +151,12 @@ pub fn part_of(key: &str) -> Option<Part> {
 /// The format a listing belongs to, from its prefix (`…/manifest/`,
 /// `…/_delta_log/`, …), with the directory's name.
 pub fn listed_format(prefix: &str) -> Option<(Format, &str)> {
-    let dir = prefix.trim_end_matches('/').rsplit('/').next()?;
+    let trimmed = prefix.trim_end_matches('/');
+    if let Some(p) = part_of(trimmed) {
+        // a listing of a file path: a client asking whether it is a directory
+        return Some((p.format(), parent(trimmed).rsplit('/').next().unwrap_or("")));
+    }
+    let dir = trimmed.rsplit('/').next()?;
     let f = match dir {
         "manifest" | "wal" | "compacted" | "compactions" | "checkpoints" => Format::SlateDB,
         "_delta_log" => Format::Delta,
@@ -287,6 +292,34 @@ fn human(b: u64) -> String {
     }
 }
 
+/// Payload bytes a request uploads (not the XML of Create / Complete).
+fn data_bytes(r: &Record) -> u64 {
+    match r.operation.as_str() {
+        "PutObject" | "UploadPart" => r.request_bytes.unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Files written by requests (keys, once each, in order) and their bytes.
+fn written<'a>(rs: &[&'a Record], except: Option<&str>) -> (Vec<&'a str>, u64) {
+    let mut keys: Vec<&str> = Vec::new();
+    let mut bytes = 0;
+    for r in rs
+        .iter()
+        .filter(|r| matches!(r.method.as_str(), "PUT" | "POST"))
+    {
+        let Some(k) = r.key.as_deref() else { continue };
+        if Some(k) == except {
+            continue;
+        }
+        bytes += data_bytes(r);
+        if !keys.contains(&k) {
+            keys.push(k);
+        }
+    }
+    (keys, bytes)
+}
+
 fn file_name(key: &str) -> &str {
     key.rsplit('/').next().unwrap_or(key)
 }
@@ -336,17 +369,26 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     let mut used = vec![false; sorted.len()];
     let mut out = Vec::new();
 
-    multipart(&sorted, &mut used, &mut out);
+    // a completed multipart upload of a format's file is one write of it
+    let units = multipart(&sorted, &mut used, &mut out);
     retries(&sorted, &mut used, &mut out);
 
     // what is left, in order: format steps, bursts of lookups, listings, single requests
+    let mut items: Vec<Vec<&Record>> = units;
+    items.extend(
+        sorted
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !used[*i])
+            .map(|(_, r)| vec![*r]),
+    );
+    items.sort_by_key(|u| (u[0].time, u[0].id));
     let mut buffers: Vec<(Format, Vec<&Record>)> = Vec::new();
     let mut probe: Vec<&Record> = Vec::new();
     let mut listing: Vec<&Record> = Vec::new();
-    for (i, r) in sorted.iter().enumerate() {
-        if used[i] {
-            continue;
-        }
+    for unit in items {
+        // a unit's last record stands for it: the Complete of an upload
+        let r = *unit.last().expect("units are not empty");
         // idle buffers flush before anything newer is placed
         flush_idle(&mut buffers, r.time, &mut out);
         if !probe.is_empty() && (r.time - probe.last().unwrap().time).num_milliseconds() > BURST {
@@ -361,7 +403,7 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
                     buffers.len() - 1
                 }
             };
-            buffers[pos].1.push(r);
+            buffers[pos].1.extend(unit);
             if is_write(r) && part.as_ref().is_some_and(Part::commits) {
                 let (_, rs) = buffers.remove(pos);
                 out.extend(step(f, rs));
@@ -491,7 +533,14 @@ fn flush_listing(rs: Vec<&Record>) -> Episode {
 }
 
 /// CreateMultipartUpload, its parts and Complete or Abort, by upload id.
-fn multipart(sorted: &[&Record], used: &mut [bool], out: &mut Vec<Episode>) {
+/// Completed uploads of a format's files are returned as units (they become
+/// writes of a step); every other upload is an episode.
+fn multipart<'a>(
+    sorted: &[&'a Record],
+    used: &mut [bool],
+    out: &mut Vec<Episode>,
+) -> Vec<Vec<&'a Record>> {
+    let mut units = Vec::new();
     use std::collections::HashMap;
     // upload id → record indexes; creates wait for the first upload id seen on their key
     let mut groups: Vec<(Option<String>, String, Vec<usize>)> = Vec::new();
@@ -553,6 +602,13 @@ fn multipart(sorted: &[&Record], used: &mut [bool], out: &mut Vec<Episode>) {
             .iter()
             .any(|r| r.operation == "CompleteMultipartUpload" && !r.is_error());
         let aborted = rs.iter().any(|r| r.operation == "AbortMultipartUpload");
+        let formatted = rs[0].key.as_deref().and_then(part_of).is_some();
+        if completed && formatted {
+            let mut unit = rs;
+            unit.sort_by_key(|r| (r.operation == "CompleteMultipartUpload", r.time, r.id));
+            units.push(unit);
+            continue;
+        }
         let state = if completed {
             ""
         } else if aborted {
@@ -576,6 +632,7 @@ fn multipart(sorted: &[&Record], used: &mut [bool], out: &mut Vec<Episode>) {
         }
         out.push(e);
     }
+    units
 }
 
 fn retryable(r: &Record) -> bool {
@@ -701,8 +758,19 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         .as_deref()
         .and_then(part_of)
         .expect("a commit has a part");
-    let before: Vec<&Record> = rs.iter().copied().filter(|r| r.id != commit.id).collect();
-    let size = commit.request_bytes.unwrap_or(0);
+    let commit_key = commit.key.as_deref();
+    // the commit file and how it was written (one PUT, or an upload's parts)
+    let size: u64 = rs
+        .iter()
+        .filter(|r| r.key.as_deref() == commit_key)
+        .map(|r| data_bytes(r))
+        .sum();
+    let before: Vec<&Record> = rs
+        .iter()
+        .copied()
+        .filter(|r| r.key.as_deref() != commit_key || !is_write(r))
+        .filter(|r| r.id != commit.id)
+        .collect();
     let deleted = commit.method == "DELETE";
     let mut title = match (&part, deleted) {
         (_, true) => format!("deleted {}", file_name(commit.key.as_deref().unwrap_or(""))),
@@ -725,14 +793,13 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         ),
     };
     // files written on the way to the commit (data files, manifests)
-    let files: Vec<&&Record> = before.iter().filter(|r| is_write(r)).collect();
+    let (files, bytes) = written(&before, commit_key);
     let listed = before
         .iter()
         .filter(|r| r.key.is_none())
         .filter_map(|r| listed_format(query(r, "prefix").unwrap_or("")).map(|(_, d)| d))
         .next();
     if !files.is_empty() {
-        let bytes: u64 = files.iter().map(|r| r.request_bytes.unwrap_or(0)).sum();
         title.push_str(&format!(
             " · {} file{} ({})",
             files.len(),
@@ -763,10 +830,9 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
 
 /// A format's requests with no commit point: reads, or files left uncommitted.
 fn loose(f: Format, rs: Vec<&Record>) -> Episode {
-    let writes: Vec<&&Record> = rs.iter().filter(|r| is_write(r)).collect();
+    let (writes, bytes) = written(&rs, None);
     if !writes.is_empty() {
-        let bytes: u64 = writes.iter().map(|r| r.request_bytes.unwrap_or(0)).sum();
-        let mut e = build(
+        return build(
             Kind::Step,
             Some(f),
             format!(
@@ -777,9 +843,6 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
             ),
             rs,
         );
-        e.notes
-            .push("files without a commit are orphans unless a later commit adds them".into());
-        return e;
     }
     let misses = rs.iter().filter(|r| is_miss(r)).count();
     let n = rs.len();
@@ -894,10 +957,14 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .filter(|e| e.title.contains("no commit followed"))
         .count();
     if orphans > 0 {
-        out.push(warn(format!(
-            "{orphans} time{} files were written with no commit after them",
-            if orphans == 1 { "" } else { "s" }
-        )));
+        out.push(warn(if orphans == 1 {
+            "files were written with no commit after them: orphans unless a later commit adds them"
+                .to_string()
+        } else {
+            format!(
+                "{orphans} times files were written with no commit after them: orphans unless a later commit adds them"
+            )
+        }));
     }
     let retried: usize = episodes
         .iter()
@@ -908,6 +975,27 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         out.push(warn(format!(
             "{retried} request{} repeated after a retryable failure",
             if retried == 1 { "" } else { "s" }
+        )));
+    }
+    // small files uploaded in parts: 3 requests where 1 PUT would do
+    let mut uploads: HashMap<&str, (usize, u64, bool)> = HashMap::new();
+    for r in records {
+        if let Some(id) = query(r, "uploadId") {
+            let u = uploads.entry(id).or_default();
+            if r.operation == "UploadPart" {
+                u.0 += 1;
+                u.1 += r.request_bytes.unwrap_or(0);
+            }
+            u.2 |= r.operation == "CompleteMultipartUpload" && !r.is_error();
+        }
+    }
+    let small = uploads
+        .values()
+        .filter(|(parts, bytes, done)| *done && *parts == 1 && *bytes < 5 * 1024 * 1024)
+        .count();
+    if small >= 3 {
+        out.push(info(format!(
+            "{small} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do"
         )));
     }
     let races = records.iter().filter(|r| r.status == Some(412)).count();
@@ -963,6 +1051,201 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqlog::Header;
+
+    fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u16) -> Record {
+        Record {
+            id,
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
+            method: method.into(),
+            operation: op.into(),
+            bucket: Some("b".into()),
+            key: key.map(Into::into),
+            status: Some(status),
+            latency_ms: 5.0,
+            request_bytes: Some(if method == "PUT" { 100 } else { 0 }),
+            response_bytes: Some(10),
+            ..Default::default()
+        }
+    }
+
+    fn with_query(mut r: Record, q: &[(&str, &str)]) -> Record {
+        r.query = q
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        r
+    }
+
+    #[test]
+    fn retries_chain_until_success() {
+        let mut slow = rec(1, 0, "GET", "GetObject", Some("k"), 503);
+        slow.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+        let mut slow2 = slow.clone();
+        slow2.id = 2;
+        slow2.time += Duration::milliseconds(200);
+        let ok = rec(3, 700, "GET", "GetObject", Some("k"), 200);
+        let other = rec(4, 100, "GET", "GetObject", Some("other"), 200);
+        let eps = episodes(&[slow, slow2, ok, other]);
+        assert_eq!(eps.len(), 2);
+        let retry = eps.iter().find(|e| e.kind == Kind::Retry).unwrap();
+        assert_eq!(retry.records, vec![1, 2, 3]);
+        assert_eq!(retry.title, "GetObject k retried 2× after 503 SlowDown");
+        assert_eq!(retry.outcome, Outcome::Ok);
+        let obs = observations(&[], &eps);
+        assert!(
+            obs.iter()
+                .any(|o| o.text == "2 requests repeated after a retryable failure")
+        );
+    }
+
+    #[test]
+    fn unfinished_multipart_and_aborts() {
+        let create = rec(1, 0, "POST", "CreateMultipartUpload", Some("big"), 200);
+        let p1 = with_query(
+            rec(2, 10, "PUT", "UploadPart", Some("big"), 200),
+            &[("partNumber", "1"), ("uploadId", "u1")],
+        );
+        let p2 = with_query(
+            rec(3, 20, "PUT", "UploadPart", Some("big"), 200),
+            &[("partNumber", "2"), ("uploadId", "u1")],
+        );
+        let create2 = rec(4, 30, "POST", "CreateMultipartUpload", Some("other"), 200);
+        let abort = with_query(
+            rec(5, 40, "DELETE", "AbortMultipartUpload", Some("other"), 204),
+            &[("uploadId", "u2")],
+        );
+        let eps = episodes(&[create, p1, p2, create2, abort]);
+        assert_eq!(eps.len(), 2);
+        assert_eq!(
+            eps[0].title,
+            "multipart upload b/big · 2 parts · 200 B (not completed)"
+        );
+        assert_eq!(eps[0].records, vec![1, 2, 3]);
+        assert_eq!(
+            eps[1].title,
+            "multipart upload b/other · 0 parts · 0 B (aborted)"
+        );
+        let obs = observations(&[], &eps);
+        assert!(
+            obs.iter()
+                .any(|o| o.level == "warn"
+                    && o.text.starts_with("1 multipart upload never completed"))
+        );
+    }
+
+    #[test]
+    fn iceberg_commit_gathers_files_and_orphans_are_reported() {
+        let data = rec(
+            1,
+            0,
+            "PUT",
+            "PutObject",
+            Some("t/data/00000-0-a.parquet"),
+            200,
+        );
+        let manifest = rec(2, 10, "PUT", "PutObject", Some("t/metadata/a-m0.avro"), 200);
+        let list = rec(
+            3,
+            20,
+            "PUT",
+            "PutObject",
+            Some("t/metadata/snap-1-0-a.avro"),
+            200,
+        );
+        let meta = rec(
+            4,
+            30,
+            "PUT",
+            "PutObject",
+            Some("t/metadata/00001-x.metadata.json"),
+            200,
+        );
+        // later: files written and never committed
+        let orphan = rec(
+            5,
+            10_000,
+            "PUT",
+            "PutObject",
+            Some("t/data/00001-0-b.parquet"),
+            200,
+        );
+        let unrelated = rec(6, 20_000, "GET", "GetObject", Some("readme"), 200);
+        let eps = episodes(&[data, manifest, list, meta, orphan, unrelated]);
+        assert_eq!(eps.len(), 3, "{eps:#?}");
+        assert_eq!(eps[0].format, Some(Format::Iceberg));
+        assert_eq!(eps[0].title, "commit: table metadata v1 · 3 files (300 B)");
+        assert_eq!(eps[1].title, "1 file written, no commit followed (100 B)");
+        assert!(
+            observations(&[], &eps)
+                .iter()
+                .any(|o| o.text.contains("no commit after them"))
+        );
+    }
+
+    #[test]
+    fn delta_commits_races_and_refusals() {
+        let mut won = rec(
+            1,
+            0,
+            "PUT",
+            "PutObject",
+            Some("t/_delta_log/00000000000000000007.json"),
+            200,
+        );
+        won.request_headers = vec![Header::new("If-None-Match", "*")];
+        let mut lost = rec(
+            2,
+            50,
+            "PUT",
+            "PutObject",
+            Some("t/_delta_log/00000000000000000008.json"),
+            412,
+        );
+        lost.request_headers = vec![Header::new("If-None-Match", "*")];
+        lost.error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
+        let mut refused = rec(3, 100, "DELETE", "DeleteObject", Some("x"), 403);
+        refused.response_headers = vec![Header::new("x-sonde-proxy", "refused")];
+        let records = [won, lost, refused];
+        let eps = episodes(&records);
+        assert_eq!(eps[0].title, "commit 7");
+        assert_eq!(eps[0].notes, vec!["conditional create (If-None-Match: *)"]);
+        assert_eq!(
+            eps[1].outcome,
+            Outcome::Failed("412 PreconditionFailed".into())
+        );
+        assert!(eps[1].notes.iter().any(|n| n.starts_with("lost a race")));
+        assert_eq!(eps[2].outcome, Outcome::Refused);
+        assert!(
+            observations(&records, &eps)
+                .iter()
+                .any(|o| o.text.starts_with("1 conditional write lost a race"))
+        );
+    }
+
+    #[test]
+    fn pages_of_one_listing() {
+        let first = with_query(
+            rec(1, 0, "GET", "ListObjectsV2", None, 200),
+            &[("list-type", "2"), ("prefix", "logs/")],
+        );
+        let next = with_query(
+            rec(2, 10, "GET", "ListObjectsV2", None, 200),
+            &[
+                ("list-type", "2"),
+                ("prefix", "logs/"),
+                ("continuation-token", "t"),
+            ],
+        );
+        let again = with_query(
+            rec(3, 20, "GET", "ListObjectsV2", None, 200),
+            &[("list-type", "2"), ("prefix", "logs/")],
+        );
+        let eps = episodes(&[first, next, again]);
+        assert_eq!(eps.len(), 2);
+        assert_eq!(eps[0].title, "listed b/logs/ in 2 pages");
+        assert_eq!(eps[1].title, "ListObjectsV2 b/logs/");
+    }
 
     #[test]
     fn parts() {
