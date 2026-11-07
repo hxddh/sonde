@@ -9,6 +9,7 @@
 
 pub mod chunked;
 pub mod episode;
+pub mod logs;
 pub mod op;
 pub mod replay;
 pub mod session;

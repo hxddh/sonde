@@ -43,6 +43,21 @@ impl SessionHeader {
     }
 }
 
+/// A chunk of the recorded program's output (terminal text, escape codes
+/// included), when it arrived.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogChunk {
+    pub time: DateTime<Utc>,
+    pub text: String,
+}
+
+/// A log line in a session file: `{"log": {"time", "text"}}`, beside the
+/// records.
+#[derive(Serialize, Deserialize)]
+struct LogLine {
+    log: LogChunk,
+}
+
 /// Appends records to a session file.
 pub struct SessionWriter {
     out: Mutex<BufWriter<File>>,
@@ -57,6 +72,21 @@ impl SessionWriter {
         Ok(SessionWriter {
             out: Mutex::new(out),
         })
+    }
+
+    /// Appends a chunk of the program's output.
+    pub fn write_log(&self, text: &str) {
+        let mut out = self.out.lock();
+        let line = LogLine {
+            log: LogChunk {
+                time: Utc::now(),
+                text: text.to_string(),
+            },
+        };
+        if serde_json::to_writer(&mut *out, &line).is_ok() {
+            let _ = out.write_all(b"\n");
+            let _ = out.flush();
+        }
     }
 
     pub fn flush(&self) -> std::io::Result<()> {
@@ -79,6 +109,8 @@ impl Sink for SessionWriter {
 pub struct Session {
     pub header: SessionHeader,
     pub records: Vec<Record>,
+    /// The recorded program's output, when sonde ran it in a terminal.
+    pub logs: Vec<LogChunk>,
 }
 
 impl Session {
@@ -104,8 +136,17 @@ impl Session {
         }
         let lines: Vec<String> = lines.collect::<Result<_, _>>().map_err(|e| e.to_string())?;
         let mut records = Vec::with_capacity(lines.len());
+        let mut logs = Vec::new();
         for (i, l) in lines.iter().enumerate() {
             if l.trim().is_empty() {
+                continue;
+            }
+            if l.starts_with("{\"log\":") {
+                match serde_json::from_str::<LogLine>(l) {
+                    Ok(x) => logs.push(x.log),
+                    Err(_) if i + 1 == lines.len() => break,
+                    Err(e) => return Err(format!("line {}: {e}", i + 2)),
+                }
                 continue;
             }
             match serde_json::from_str::<Record>(l) {
@@ -114,7 +155,11 @@ impl Session {
                 Err(e) => return Err(format!("line {}: {e}", i + 2)),
             }
         }
-        Ok(Session { header, records })
+        Ok(Session {
+            header,
+            records,
+            logs,
+        })
     }
 }
 
@@ -138,6 +183,7 @@ mod tests {
                 ..Default::default()
             });
         }
+        w.write_log("hello\r\n");
         w.flush().unwrap();
         let mut f = std::fs::OpenOptions::new()
             .append(true)
@@ -148,5 +194,7 @@ mod tests {
         assert_eq!(s.header.endpoint, "r2");
         assert_eq!(s.records.len(), 3);
         assert_eq!(s.records[2].id, 2);
+        assert_eq!(s.logs.len(), 1);
+        assert_eq!(s.logs[0].text, "hello\r\n");
     }
 }
