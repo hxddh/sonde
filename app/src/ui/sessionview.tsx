@@ -6,7 +6,7 @@
 
 import { type ContextMenuEvent, type JSX, List, platform, Scroll, signal, Text, View } from "nsh";
 import { Button as BaseButton, DataTable, type DataTableRef } from "nsh/base";
-import { bytes, date, ms } from "../format";
+import { bytes, date, day, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
 import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
@@ -478,7 +478,7 @@ function dayLabel(iso: string): string {
   const diff = Math.floor((today.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / DAY);
   if (diff <= 0) return t("time.today");
   if (diff === 1) return t("time.yesterday");
-  return date(iso).slice(0, 10);
+  return day(iso);
 }
 
 /** The sessions, newest first, by day: the program (or the endpoint), its time and requests. */

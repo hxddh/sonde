@@ -5,6 +5,7 @@
 import { type JSX, platform, reduceMotion, signal, Storage, Text, View, windowSize } from "nsh";
 import { Button as BaseButton, Combobox } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, titleBar } from "nsh/desktop";
+import { date } from "../format";
 import { t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
@@ -52,7 +53,7 @@ function recentMenu(): MenuItem[] {
   }
   if (!list.length) return [{ label: t("timeline.empty"), disabled: true }];
   return list.map((s) => ({
-    label: `${sessionName(s)} — ${s.created.slice(5, 10)} ${s.created.slice(11, 16)}`,
+    label: `${sessionName(s)} — ${date(s.created)}`,
     onSelect: () => {
       openSession.set(s.path);
       go("sessions");

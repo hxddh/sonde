@@ -12,19 +12,39 @@ function locale(): string {
 }
 
 const formats = new Map<string, Intl.DateTimeFormat>();
-function dateFormat(): Intl.DateTimeFormat | null {
+function dateFormat(parts: "full" | "day" | "time" = "full"): Intl.DateTimeFormat | null {
   const { hourCycle, timeZone } = localeSettings();
-  const key = `${locale()}|${hourCycle}|${timeZone}`;
+  const key = `${parts}|${locale()}|${hourCycle}|${timeZone}`;
   let f = formats.get(key);
   if (!f) {
+    const day = { year: "numeric", month: "short", day: "numeric" } as const;
+    const time = { hour: "numeric", minute: "2-digit", hourCycle } as const;
     try {
-      f = new Intl.DateTimeFormat(locale(), { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle, timeZone });
+      f = new Intl.DateTimeFormat(locale(), { ...(parts !== "time" ? day : {}), ...(parts !== "day" ? time : {}), timeZone });
     } catch {
       return null;
     }
     formats.set(key, f);
   }
   return f;
+}
+
+const p2 = (x: number) => String(x).padStart(2, "0");
+
+/** A day as the reader writes it: "7 Nov 2026". */
+export function day(s: string | null | undefined): string {
+  if (!s) return "—";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  return dateFormat("day")?.format(d) ?? `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+}
+
+/** A time of day as the reader's clock writes it: "14:05" or "2:05 PM". */
+export function hm(s: string | null | undefined): string {
+  if (!s) return "—";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  return dateFormat("time")?.format(d) ?? `${p2(d.getHours())}:${p2(d.getMinutes())}`;
 }
 
 export function bytes(n: number | null | undefined): string {

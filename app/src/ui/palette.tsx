@@ -4,6 +4,7 @@
 
 import { resource, setColorScheme, signal, Text, View } from "nsh";
 import { Command, Dialog } from "nsh/base";
+import { date } from "../format";
 import { language, t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
@@ -66,7 +67,7 @@ function actions(buckets: BucketEntry[]): Action[] {
       label: s.command ?? s.name,
       group: t("palette.sessions"),
       icon: "list-clock",
-      hint: `${s.created.slice(0, 16).replace("T", " ")} · ${s.requests}`,
+      hint: `${date(s.created)} · ${s.requests}`,
       run: () => {
         openSession.set(s.path);
         go("sessions");

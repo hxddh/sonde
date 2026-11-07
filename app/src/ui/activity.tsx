@@ -6,7 +6,7 @@
 import { batch, cleanup, effect, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { Button as BaseButton, DataTable, Input } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
-import { ago, date, ms } from "../format";
+import { ago, date, hm, ms } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { RecordDetail } from "../screens/Requests";
@@ -113,7 +113,7 @@ function Requests() {
           { key: "latency", title: t("requests.latency"), width: 76, align: "end" as const },
           { key: "time", title: t("column.time"), width: 70 },
         ]}
-        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: r.target, latency: ms(r.latencyMs), time: date(r.time).slice(11, 16) }))}
+        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: r.target, latency: ms(r.latencyMs), time: hm(r.time) }))}
         fontSize={TYPE.body}
         rowHeight={rowHeight(28)}
         classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-2", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}

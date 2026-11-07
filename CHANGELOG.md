@@ -57,6 +57,8 @@ acting on them would save, sessions you can look after and share from the app, a
 - Request ids could be assigned out of order under concurrent requests.
 - An argument of a phrase holding `{n}` (a key named so) was substituted again in the English text.
 - Versioning reads "On" / "Suspended" (已开启 / 已暂停) instead of S3's `Enabled`.
+- A shared page's server refuses paths that are not plain names inside the site (on Windows a drive prefix such as
+  `/C:/…` would have replaced the site's folder).
 
 ## [4.0.0] - 2026-11-07
 

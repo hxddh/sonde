@@ -10,6 +10,7 @@
 import { cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, type ViewRef, windowSize } from "nsh";
 import { Button as BaseButton, Input, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
+import { hm } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
@@ -154,7 +155,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     if (!isAvailable) return;
     void Menu.popup(
       others.length
-        ? others.slice(0, 20).map((s) => ({ label: `${program(s.command) ?? s.endpoint} · ${s.created.slice(11, 16)} · ${s.requests}`, onSelect: () => compareWith.set(s.path) }))
+        ? others.slice(0, 20).map((s) => ({ label: `${program(s.command) ?? s.endpoint} · ${hm(s.created)} · ${s.requests}`, onSelect: () => compareWith.set(s.path) }))
         : [{ label: t("compare.none"), disabled: true }],
     );
   };

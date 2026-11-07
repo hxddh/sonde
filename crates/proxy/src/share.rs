@@ -88,6 +88,17 @@ fn content_type(path: &str) -> &'static str {
     }
 }
 
+/// Whether a request's path names a file inside the site: plain names only
+/// (no `..`, no root, and no drive or UNC prefix, which on Windows would
+/// replace the site's folder when joined).
+fn inside(path: &str) -> bool {
+    !path.contains('\\')
+        && !path.contains(':')
+        && Path::new(path)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
 /// Serves the files under `dir` (and nothing outside it) on `listener`,
 /// for as long as the future runs.
 pub async fn serve(listener: tokio::net::TcpListener, dir: PathBuf) {
@@ -108,7 +119,7 @@ pub async fn serve(listener: tokio::net::TcpListener, dir: PathBuf) {
                         path.to_string()
                     };
                     // the site's own files only
-                    let resp = if path.split('/').any(|s| s == ".." || s.contains('\\')) {
+                    let resp = if !inside(&path) {
                         Response::builder()
                             .status(404)
                             .body(Full::new(Bytes::new()))
@@ -129,5 +140,27 @@ pub async fn serve(listener: tokio::net::TcpListener, dir: PathBuf) {
                 .serve_connection(TokioIo::new(stream), svc)
                 .await;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inside;
+
+    #[test]
+    fn only_the_sites_own_files_are_served() {
+        assert!(inside("index.html"));
+        assert!(inside("assets/app.js"));
+        for bad in [
+            "../x",
+            "a/../../x",
+            "/etc/passwd",
+            "C:/Windows/win.ini",
+            "C:x",
+            "a\\b",
+            "//server/share",
+        ] {
+            assert!(!inside(bad), "{bad}");
+        }
     }
 }
