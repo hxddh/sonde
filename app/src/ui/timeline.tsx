@@ -6,6 +6,7 @@
 
 import { Canvas, type CanvasRenderingContext2D, Scroll, signal, Text, token, View } from "nsh";
 import { bytes, ms } from "../format";
+import { episodeTitle } from "../phrases";
 import { t } from "../i18n";
 import type { Episode, SessionView } from "../types";
 import { Button } from "./kit";
@@ -97,7 +98,7 @@ export function Timeline(props: { view: SessionView; rows?: number[]; selected: 
       const tone = episodeTone(e);
       cx.font = "12px system-ui";
       cx.fillStyle = e.outcome.kind === "ok" ? color("foreground") : color(TONE_TOKEN[tone]);
-      cx.fillText(fit(cx, e.title, LABEL - 20), 10, y + ROW / 2);
+      cx.fillText(fit(cx, episodeTitle(e), LABEL - 20), 10, y + ROW / 2);
       const a = Math.max(LABEL, x(time(e.start)));
       const b = Math.min(w - 4, x(time(e.end)));
       if (b < LABEL || a > w - 4) return;
@@ -181,7 +182,7 @@ export function Timeline(props: { view: SessionView; rows?: number[]; selected: 
                 style={{ position: "absolute", left: Math.min(Math.max(LABEL, c().h.x + 14), width() - 280), top: AXIS + (c().h.row + 1) * ROW + 4, pointerEvents: "none" }}
                 class="w-[264px] gap-1 rounded-(--radius) border border-border bg-popover px-3 py-2 shadow-lg"
               >
-                <Text class="text-xs font-semibold text-popover-foreground line-clamp-2">{c().e.title}</Text>
+                <Text class="text-xs font-semibold text-popover-foreground line-clamp-2">{episodeTitle(c().e)}</Text>
                 <Text class="font-mono text-[11px] text-muted-foreground">{`${clock(c().e.start)} · +${offset(time(c().e.start) - full()[0])}`}</Text>
                 <Text class="font-mono text-[11px] text-muted-foreground">{`${ms(duration(c().e))} · ${t("sessions.requestsN", { n: c().e.records.length })} · ↑${bytes(c().e.bytesUp)} ↓${bytes(c().e.bytesDown)}`}</Text>
               </View>

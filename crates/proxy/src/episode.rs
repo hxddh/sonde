@@ -14,6 +14,7 @@ use chrono::{DateTime, Duration, Utc};
 use reqlog::Record;
 use serde::Serialize;
 
+use crate::phrase::{Phrase, p, plural};
 use crate::summary::is_miss;
 
 /// A storage format sonde recognizes from keys.
@@ -219,9 +220,18 @@ pub struct Episode {
     pub notes: Vec<String>,
     /// Its lookups (GET, HEAD) answered 404: not errors, and worth telling apart.
     pub not_found: usize,
+    /// The title and the notes as phrases, for saying them in other languages.
+    pub title_text: Vec<Phrase>,
+    pub notes_text: Vec<Phrase>,
 }
 
 impl Episode {
+    /// Adds a note, in English and as a phrase.
+    fn note(&mut self, phrase: Phrase) {
+        self.notes.push(phrase.en());
+        self.notes_text.push(phrase);
+    }
+
     pub fn requests(&self) -> usize {
         self.records.len()
     }
@@ -331,7 +341,7 @@ fn parent(key: &str) -> &str {
 }
 
 /// Builds an episode from records (any order).
-fn build(kind: Kind, format: Option<Format>, title: String, mut rs: Vec<&Record>) -> Episode {
+fn build(kind: Kind, format: Option<Format>, title: Vec<Phrase>, mut rs: Vec<&Record>) -> Episode {
     rs.sort_by_key(|r| (r.time, r.id));
     let start = rs.first().map(|r| r.time).unwrap_or_default();
     let end = rs.iter().map(|r| end_of(r)).max().unwrap_or(start);
@@ -344,7 +354,8 @@ fn build(kind: Kind, format: Option<Format>, title: String, mut rs: Vec<&Record>
     Episode {
         kind,
         format,
-        title,
+        title: crate::phrase::en(&title),
+        title_text: title,
         start,
         end,
         records: rs.iter().map(|r| r.id).collect(),
@@ -356,6 +367,7 @@ fn build(kind: Kind, format: Option<Format>, title: String, mut rs: Vec<&Record>
             .sum(),
         outcome,
         notes: Vec::new(),
+        notes_text: Vec::new(),
         not_found: rs
             .iter()
             .filter(|r| r.status == Some(404) && (r.method == "GET" || r.method == "HEAD"))
@@ -474,12 +486,15 @@ fn single(r: &Record) -> Episode {
         (Some(b), None) => format!("{b}/"),
         _ => "/".into(),
     };
-    let mut title = format!("{} {target}", r.operation);
-    if let Some(p) = query(r, "prefix").filter(|p| !p.is_empty()) {
-        title.push_str(p);
+    let mut title = vec![p(
+        "request",
+        &[("op", r.operation.clone()), ("target", target)],
+    )];
+    if let Some(x) = query(r, "prefix").filter(|x| !x.is_empty()) {
+        title.push(p("request.prefix", &[("prefix", x.to_string())]));
     }
     if matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.unwrap_or(0) > 0 {
-        title.push_str(&format!(" · {}", human(r.request_bytes.unwrap_or(0))));
+        title.push(p("size", &[("size", human(r.request_bytes.unwrap_or(0)))]));
     }
     let mut e = build(Kind::Request, None, title, vec![r]);
     conditional_note(&mut e, &[r]);
@@ -488,15 +503,15 @@ fn single(r: &Record) -> Episode {
 
 fn conditional_note(e: &mut Episode, rs: &[&Record]) {
     if rs.iter().any(|r| header(r, "if-none-match") == Some("*")) {
-        e.notes.push("conditional create (If-None-Match: *)".into());
+        e.note(p("cond.create", &[]));
     } else if rs
         .iter()
         .any(|r| is_write(r) && header(r, "if-match").is_some())
     {
-        e.notes.push("conditional write (If-Match)".into());
+        e.note(p("cond.write", &[]));
     }
     if rs.iter().any(|r| r.status == Some(412)) {
-        e.notes.push("lost a race: 412 Precondition Failed".into());
+        e.note(p("race", &[]));
     }
 }
 
@@ -518,7 +533,7 @@ fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
     vec![build(
         Kind::Probe,
         None,
-        format!("{n} lookups in {dir}, none found"),
+        vec![p("probe", &[("n", n.to_string()), ("dir", dir)])],
         rs,
     )]
 }
@@ -533,7 +548,14 @@ fn flush_listing(rs: Vec<&Record>) -> Episode {
     build(
         Kind::Listing,
         None,
-        format!("listed {bucket}/{prefix} in {n} pages"),
+        vec![p(
+            "listing",
+            &[
+                ("bucket", bucket),
+                ("prefix", prefix.to_string()),
+                ("n", n.to_string()),
+            ],
+        )],
         rs,
     )
 }
@@ -615,26 +637,23 @@ fn multipart<'a>(
             units.push(unit);
             continue;
         }
-        let state = if completed {
-            ""
-        } else if aborted {
-            " (aborted)"
-        } else {
-            " (not completed)"
-        };
-        let mut e = build(
-            Kind::Multipart,
-            None,
-            format!(
-                "multipart upload {key} · {parts} part{} · {}{state}",
-                if parts == 1 { "" } else { "s" },
-                human(bytes)
-            ),
-            rs,
-        );
+        let mut title = vec![p(
+            "mpu",
+            &[
+                ("key", key),
+                ("n", parts.to_string()),
+                ("s", plural(parts)),
+                ("size", human(bytes)),
+            ],
+        )];
+        if aborted && !completed {
+            title.push(p("mpu.aborted", &[]));
+        } else if !completed {
+            title.push(p("mpu.open", &[]));
+        }
+        let mut e = build(Kind::Multipart, None, title, rs);
         if !completed && !aborted {
-            e.notes
-                .push("the upload was never completed or aborted: its parts are billed".into());
+            e.note(p("mpu.billed", &[]));
         }
         out.push(e);
     }
@@ -684,12 +703,19 @@ fn retries(sorted: &[&Record], used: &mut [bool], out: &mut Vec<Episode>) {
             let mut e = build(
                 Kind::Retry,
                 None,
-                format!("{} {target} retried {n}× after {first}", rs[0].operation),
+                vec![p(
+                    "retry",
+                    &[
+                        ("op", rs[0].operation.clone()),
+                        ("target", target),
+                        ("n", n.to_string()),
+                        ("first", first),
+                    ],
+                )],
                 rs,
             );
             let wait = e.millis();
-            e.notes
-                .push(format!("{wait:.0} ms until it succeeded or gave up"));
+            e.note(p("retry.wait", &[("ms", format!("{wait:.0}"))]));
             out.push(e);
         }
         i += 1;
@@ -778,26 +804,34 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         .filter(|r| r.id != commit.id)
         .collect();
     let deleted = commit.method == "DELETE";
-    let mut title = match (&part, deleted) {
-        (_, true) => format!("deleted {}", file_name(commit.key.as_deref().unwrap_or(""))),
-        (Part::SlateManifest(n), _) => format!("manifest {n} written"),
-        (Part::SlateWal(n), _) if size == 0 => format!("WAL {n} written empty (fencing marker)"),
-        (Part::SlateWal(n), _) => format!("WAL {n} flushed · {}", human(size)),
-        (Part::SlateSst, _) => format!("SST flushed to L0 · {}", human(size)),
-        (Part::SlateCompactions(n), _) => format!("compaction state {n} written"),
-        (Part::IcebergMetadata(Some(v)), _) => format!("commit: table metadata v{v}"),
-        (Part::IcebergMetadata(None), _) | (Part::IcebergVersionHint, _) => {
-            "commit: table metadata".to_string()
-        }
-        (Part::DeltaCommit(n), _) => format!("commit {n}"),
-        (Part::DeltaCheckpoint, _) => "checkpoint written".into(),
-        (Part::DeltaLastCheckpoint, _) => "_last_checkpoint updated".into(),
-        _ => format!(
-            "{} {}",
-            commit.operation,
-            commit.key.as_deref().unwrap_or("")
+    let mut title = vec![match (&part, deleted) {
+        (_, true) => p(
+            "step.deleted",
+            &[(
+                "file",
+                file_name(commit.key.as_deref().unwrap_or("")).to_string(),
+            )],
         ),
-    };
+        (Part::SlateManifest(n), _) => p("slate.manifest", &[("n", n.to_string())]),
+        (Part::SlateWal(n), _) if size == 0 => p("slate.wal.empty", &[("n", n.to_string())]),
+        (Part::SlateWal(n), _) => p("slate.wal", &[("n", n.to_string()), ("size", human(size))]),
+        (Part::SlateSst, _) => p("slate.sst", &[("size", human(size))]),
+        (Part::SlateCompactions(n), _) => p("slate.compactions", &[("n", n.to_string())]),
+        (Part::IcebergMetadata(Some(v)), _) => p("iceberg.metadata.v", &[("v", v.to_string())]),
+        (Part::IcebergMetadata(None), _) | (Part::IcebergVersionHint, _) => {
+            p("iceberg.metadata", &[])
+        }
+        (Part::DeltaCommit(n), _) => p("delta.commit", &[("n", n.to_string())]),
+        (Part::DeltaCheckpoint, _) => p("delta.checkpoint", &[]),
+        (Part::DeltaLastCheckpoint, _) => p("delta.last", &[]),
+        _ => p(
+            "step.other",
+            &[
+                ("op", commit.operation.clone()),
+                ("key", commit.key.clone().unwrap_or_default()),
+            ],
+        ),
+    }];
     // files written on the way to the commit (data files, manifests)
     let (files, bytes) = written(&before, commit_key);
     let listed = before
@@ -806,17 +840,19 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         .filter_map(|r| listed_format(query(r, "prefix").unwrap_or("")).map(|(_, d)| d))
         .next();
     if !files.is_empty() {
-        title.push_str(&format!(
-            " · {} file{} ({})",
-            files.len(),
-            if files.len() == 1 { "" } else { "s" },
-            human(bytes)
+        title.push(p(
+            "step.files",
+            &[
+                ("n", files.len().to_string()),
+                ("s", plural(files.len())),
+                ("size", human(bytes)),
+            ],
         ));
     }
     let mut e = build(Kind::Step, Some(f), title, rs.clone());
     conditional_note(&mut e, &[commit]);
     if let Some(d) = listed {
-        e.notes.push(format!("after listing {d}/"));
+        e.note(p("after.listing", &[("dir", d.to_string())]));
     }
     let lookups = before
         .iter()
@@ -824,11 +860,11 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         .count();
     if lookups > 0 {
         let misses = before.iter().filter(|r| is_miss(r)).count();
-        let s = |n: usize| if n == 1 { "" } else { "s" };
-        e.notes.push(match misses {
-            0 => format!("after {lookups} read{}", s(lookups)),
-            m if m == lookups => format!("after {lookups} lookup{} that found nothing", s(lookups)),
-            m => format!("after {lookups} reads ({m} found nothing)"),
+        let n = lookups.to_string();
+        e.note(match misses {
+            0 => p("after.reads", &[("n", n), ("s", plural(lookups))]),
+            m if m == lookups => p("after.misses", &[("n", n), ("s", plural(lookups))]),
+            m => p("after.mixed", &[("n", n), ("m", m.to_string())]),
         });
     }
     e
@@ -841,12 +877,14 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
         return build(
             Kind::Step,
             Some(f),
-            format!(
-                "{} file{} written, no commit followed ({})",
-                writes.len(),
-                if writes.len() == 1 { "" } else { "s" },
-                human(bytes)
-            ),
+            vec![p(
+                "loose.uncommitted",
+                &[
+                    ("n", writes.len().to_string()),
+                    ("s", plural(writes.len())),
+                    ("size", human(bytes)),
+                ],
+            )],
             rs,
         );
     }
@@ -868,33 +906,39 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
     let title = if wal_probe.len() >= 3 {
         let lo = wal_probe.iter().min().unwrap();
         let hi = wal_probe.iter().max().unwrap();
-        format!("looked for the newest WAL: probed ids {lo}…{hi}")
+        vec![p(
+            "slate.walprobe",
+            &[("lo", lo.to_string()), ("hi", hi.to_string())],
+        )]
     } else if let Some(r) = rs
         .iter()
         .rev()
         .find(|r| !r.is_error() && r.method == "GET" && r.key.is_some())
     {
         let what = match r.key.as_deref().and_then(part_of) {
-            Some(Part::SlateManifest(m)) => format!("read manifest {m}"),
-            Some(Part::SlateCompactions(c)) => format!("read compaction state {c}"),
-            Some(Part::IcebergMetadata(Some(v))) => format!("read table metadata v{v}"),
-            Some(Part::DeltaCommit(c)) => format!("read commit {c}"),
-            _ => format!("read {}", file_name(r.key.as_deref().unwrap_or(""))),
+            Some(Part::SlateManifest(m)) => p("read.manifest", &[("n", m.to_string())]),
+            Some(Part::SlateCompactions(c)) => p("read.compactions", &[("n", c.to_string())]),
+            Some(Part::IcebergMetadata(Some(v))) => p("read.metadata", &[("v", v.to_string())]),
+            Some(Part::DeltaCommit(c)) => p("read.commit", &[("n", c.to_string())]),
+            _ => p(
+                "read.file",
+                &[(
+                    "file",
+                    file_name(r.key.as_deref().unwrap_or("")).to_string(),
+                )],
+            ),
         };
         if n > 1 {
-            format!("{what} ({n} requests)")
+            vec![what, p("read.count", &[("n", n.to_string())])]
         } else {
-            what
+            vec![what]
         }
     } else if !lists.is_empty() && lists.len() == n {
-        format!("listed {}/", lists[0])
+        vec![p("loose.listed", &[("dir", lists[0].to_string())])]
     } else if misses == n {
-        format!(
-            "{n} lookup{} that found nothing",
-            if n == 1 { "" } else { "s" }
-        )
+        vec![p("loose.misses", &[("n", n.to_string()), ("s", plural(n))])]
     } else {
-        format!("{n} reads")
+        vec![p("loose.reads", &[("n", n.to_string())])]
     };
     build(Kind::Step, Some(f), title, rs)
 }
@@ -906,6 +950,8 @@ pub struct Observation {
     /// `warn` (likely a problem) or `info`.
     pub level: &'static str,
     pub text: String,
+    /// The text as phrases, for saying it in other languages.
+    pub phrases: Vec<Phrase>,
     /// The episodes it is about (indexes, ascending), for showing them.
     pub episodes: Vec<usize>,
 }
@@ -957,20 +1003,35 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     };
     let mut out = Vec::new();
     for (f, note, with, _) in shared_notes(episodes) {
+        // the note as a phrase: from an episode that has it
+        let note_phrase = episodes.iter().find_map(|e| {
+            e.notes
+                .iter()
+                .position(|n| *n == note)
+                .and_then(|i| e.notes_text.get(i).cloned())
+        });
+        let mut phrases = vec![p(
+            "obs.shared",
+            &[("n", with.to_string()), ("format", f.name().to_string())],
+        )];
+        phrases.extend(note_phrase);
         out.push(Observation {
             level: "info",
             text: format!("{with} {} writes: {note}", f.name()),
+            phrases,
             episodes: of_episodes(&|e| e.format == Some(f) && e.notes.contains(&note)),
         });
     }
-    let warn = |t: String, episodes: Vec<usize>| Observation {
+    let warn = |t: Phrase, episodes: Vec<usize>| Observation {
         level: "warn",
-        text: t,
+        text: t.en(),
+        phrases: vec![t],
         episodes,
     };
-    let info = |t: String, episodes: Vec<usize>| Observation {
+    let info = |t: Phrase, episodes: Vec<usize>| Observation {
         level: "info",
-        text: t,
+        text: t.en(),
+        phrases: vec![t],
         episodes,
     };
     let unfinished =
@@ -978,10 +1039,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     if !unfinished.is_empty() {
         let n = unfinished.len();
         out.push(warn(
-            format!(
-                "{n} multipart upload{} never completed or aborted: the parts stay billed until a lifecycle rule removes them",
-                if n == 1 { "" } else { "s" }
-            ),
+            p("obs.unfinished", &[("n", n.to_string()), ("s", plural(n))]),
             unfinished,
         ));
     }
@@ -990,12 +1048,9 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         let n = orphans.len();
         out.push(warn(
             if n == 1 {
-                "files were written with no commit after them: orphans unless a later commit adds them"
-                    .to_string()
+                p("obs.orphans.one", &[])
             } else {
-                format!(
-                    "{n} times files were written with no commit after them: orphans unless a later commit adds them"
-                )
+                p("obs.orphans", &[("n", n.to_string())])
             },
             orphans,
         ));
@@ -1004,9 +1059,9 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     let retried: usize = retries.iter().map(|&i| episodes[i].requests() - 1).sum();
     if retried > 0 {
         out.push(warn(
-            format!(
-                "{retried} request{} repeated after a retryable failure",
-                if retried == 1 { "" } else { "s" }
+            p(
+                "obs.retried",
+                &[("n", retried.to_string()), ("s", plural(retried))],
             ),
             retries,
         ));
@@ -1030,10 +1085,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .collect();
     if small.len() >= 3 {
         out.push(info(
-            format!(
-                "{} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do",
-                small.len()
-            ),
+            p("obs.small", &[("n", small.len().to_string())]),
             of_records(&mut small.iter().flat_map(|u| u.3.iter().copied())),
         ));
     }
@@ -1044,10 +1096,9 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .collect();
     if !races.is_empty() {
         out.push(info(
-            format!(
-                "{} conditional write{} lost a race (412): another writer got there first",
-                races.len(),
-                if races.len() == 1 { "" } else { "s" }
+            p(
+                "obs.races",
+                &[("n", races.len().to_string()), ("s", plural(races.len()))],
             ),
             of_records(&mut races.iter().copied()),
         ));
@@ -1070,10 +1121,13 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     for (k, ids) in hot.into_iter().take(3) {
         out.push(info(
-            format!(
-                "{k} was read {} times ({}% of all requests)",
-                ids.len(),
-                ids.len() * 100 / total
+            p(
+                "obs.hot",
+                &[
+                    ("key", k),
+                    ("n", ids.len().to_string()),
+                    ("pct", (ids.len() * 100 / total).to_string()),
+                ],
             ),
             of_records(&mut ids.into_iter()),
         ));
@@ -1097,9 +1151,12 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .filter(|(_, ids)| ids.len() >= 5)
         .collect();
     repeated.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
-    for (p, ids) in repeated.into_iter().take(3) {
+    for (prefix_name, ids) in repeated.into_iter().take(3) {
         out.push(info(
-            format!("{p} was listed {} times", ids.len()),
+            p(
+                "obs.listed",
+                &[("prefix", prefix_name), ("n", ids.len().to_string())],
+            ),
             of_records(&mut ids.into_iter()),
         ));
     }

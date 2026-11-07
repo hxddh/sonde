@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
-# Screenshots of the app on a real window: tests/shots.test.tsx on the
-# Linux (GTK) target, under a virtual display when there is none. Fresh
-# config and data; PNGs in app/shots (or $SONDE_SHOTS).
+# Screenshots of the app on a real window: tests/shots.test.tsx on this
+# machine's desktop target (GTK on Linux, under a virtual display when there
+# is none; AppKit on macOS; Win32 on Windows). Fresh config and data; PNGs in
+# app/shots (or $SONDE_SHOTS).
 set -eu
 cd "$(dirname "$0")/../app"
 tmp="$(mktemp -d)"
@@ -17,7 +18,12 @@ export AWS_ACCESS_KEY_ID=AKIDSONDEUITEST AWS_SECRET_ACCESS_KEY=sonde-ui-test-sec
   AWS_CONFIG_FILE="$tmp/aws-config" AWS_SHARED_CREDENTIALS_FILE="$tmp/aws-credentials" \
   AWS_EC2_METADATA_DISABLED=true
 export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}" CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
-if [ -z "${DISPLAY:-}" ]; then
+case "$(uname -s)" in
+  Darwin) target=macos ;;
+  MINGW* | MSYS* | CYGWIN*) target=windows ;;
+  *) target=linux ;;
+esac
+if [ "$target" = linux ] && [ -z "${DISPLAY:-}" ]; then
   export DISPLAY=:99
   Xvfb "$DISPLAY" -screen 0 1600x1000x24 >/dev/null 2>&1 &
   xvfb=$!
@@ -27,5 +33,5 @@ if [ -z "${DISPLAY:-}" ]; then
   sleep 1
 fi
 mkdir -p "${SONDE_SHOTS:-shots}"
-nsh test tests/shots.test.tsx --target linux
+nsh test tests/shots.test.tsx --target "$target"
 ls "${SONDE_SHOTS:-shots}"

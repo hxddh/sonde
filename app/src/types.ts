@@ -436,6 +436,12 @@ export interface SessionInfo {
   live: boolean;
 }
 
+/** A phrase of what sonde says: a key and its arguments (crates/proxy/src/phrase.rs). */
+export interface Phrase {
+  key: string;
+  args: Record<string, string>;
+}
+
 export interface Episode {
   kind: "request" | "multipart" | "retry" | "probe" | "listing" | "step";
   format: "SlateDB" | "Iceberg" | "Delta" | null;
@@ -449,11 +455,15 @@ export interface Episode {
   notes: string[];
   /** Its lookups answered 404. */
   notFound?: number;
+  /** The title and the notes as phrases. */
+  titleText?: Phrase[];
+  notesText?: Phrase[];
 }
 
 export interface Observation {
   level: "warn" | "info";
   text: string;
+  phrases?: Phrase[];
   /** The episodes it is about, by index. */
   episodes: number[];
 }

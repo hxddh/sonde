@@ -18,6 +18,7 @@ import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
 import { Button, Empty, IconButton, Segmented, terminal } from "../ui/kit";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
+import { episodeTitle } from "../phrases";
 import { programOf } from "../ui/sessionview";
 import { Timeline } from "../ui/timeline";
 import { RecordDetail } from "./Requests";
@@ -140,7 +141,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       }
     };
     void Menu.popup([
-      { label: t("sessions.copyTitle"), icon: iconSvg("copy"), onSelect: () => copy(e.title) },
+      { label: t("sessions.copyTitle"), icon: iconSvg("copy"), onSelect: () => copy(episodeTitle(e)) },
       { label: t("sessions.copyKeys"), icon: iconSvg("file"), onSelect: () => copy([...new Set(targets())].join("\n")) },
       ...(lines().length ? ([{ type: "separator" }, { label: t("sessions.showOutput"), icon: iconSvg("scroll-text"), onSelect: () => pane.set("aligned") }] as MenuItem[]) : []),
     ]);

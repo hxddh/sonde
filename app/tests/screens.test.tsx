@@ -128,6 +128,12 @@ test("language: Chinese strings", async () => {
   await app.press("label:Language");
   await app.press("text:中文");
   await app.waitFor("text:设置");
+  // what sonde says about a session is said in Chinese too
+  await app.press("id:nav-sessions");
+  await app.press("id:open-example");
+  await app.waitFor("text:查找最新的 WAL：探测了编号 1…128", { timeout: 10000 });
+  expect(app.shows("text:/27 次 SlateDB 写入都是：条件创建/")).toBe(true);
+  await app.press("id:nav-settings");
   await app.press("label:语言");
   await app.press("text:English");
   await app.waitFor("text:Settings");

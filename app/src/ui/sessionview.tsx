@@ -8,6 +8,7 @@ import { type JSX, platform, Scroll, Text, View } from "nsh";
 import { Button as BaseButton, DataTable, type DataTableRef } from "nsh/base";
 import { bytes, date, ms } from "../format";
 import { t } from "../i18n";
+import { episodeNotes, episodeTitle, observationText } from "../phrases";
 import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
 import { Dot, Empty, terminal } from "./kit";
@@ -167,7 +168,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
             {(o) => (
               <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
                 {o().level === "warn" ? "! " : "· "}
-                {o().text}
+                {observationText(o())}
               </Text>
             )}
           </Each>
@@ -182,14 +183,14 @@ export function Observations(props: { view: SessionView; filter?: number | null;
           {(o: () => Observation, i) => (
             <BaseButton
               testID={`observation-${i()}`}
-              accessibilityLabel={o().text}
+              accessibilityLabel={observationText(o())}
               selected={props.filter === i()}
               disabled={!props.onFilter || !o().episodes?.length}
               onPress={() => press(i())}
               class={`max-w-full flex-row items-center gap-1.5 rounded-full border px-2.5 py-1 ${o().level === "warn" ? "border-warn/40 bg-warn/10 hover:bg-warn/15 selected:bg-warn/25" : "border-border bg-card hover:bg-muted selected:border-primary/50 selected:bg-selection"}`}
             >
               <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={13} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
-              <Text class="min-w-0 shrink text-xs text-foreground line-clamp-1">{o().text}</Text>
+              <Text class="min-w-0 shrink text-xs text-foreground line-clamp-1">{observationText(o())}</Text>
               <If when={props.filter === i()}>
                 <Icon name="x" size={12} />
               </If>
@@ -224,7 +225,7 @@ export function OperationsTable(props: {
   highlight?: number[];
   compact?: boolean;
 }) {
-  const notes = (e: Episode) => e.notes.filter((n) => !props.view.sharedNotes.includes(n)).join(" · ");
+  const notes = (e: Episode) => episodeNotes(e, props.view.sharedNotes).join(" · ");
   const shown = () => props.rows ?? props.view.episodes.map((_, i) => i);
   const formats = () => props.view.episodes.some((e) => family(e).label);
   const range = () => span(props.view);
@@ -246,7 +247,7 @@ export function OperationsTable(props: {
         status: episodeTone(e),
         time: clock(e.start),
         format: family(e).label,
-        title: terminal() && e.outcome.kind !== "ok" ? `${e.title} ✗` : e.title,
+        title: terminal() && e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e),
         requests: String(e.records.length),
         duration: ms(duration(e)),
         bar: "",
@@ -370,7 +371,7 @@ export function operationsAt(episodes: Episode[], line: LogLine): number[] {
 /** An operation in the inspector: what it is, its notes, its requests; `onRecord` opens one. */
 export function OperationView(props: { episode: Episode; shared: string[]; rows: RecordSummary[]; onRecord: (id: number) => void; onBack?: () => void; back?: JSX.Element }) {
   const e = () => props.episode;
-  const notes = () => e().notes.filter((n) => !props.shared.includes(n));
+  const notes = () => episodeNotes(e(), props.shared);
   const fam = () => family(e());
   return (
     <View class="gap-4" testID="operation-detail">
@@ -389,7 +390,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
           </If>
         </View>
         <Text class="text-[15px] font-semibold leading-5 text-foreground">
-          {e().title}
+          {episodeTitle(e())}
         </Text>
         <Text class="font-mono text-[11px] text-muted-foreground">{`${clock(e().start)} · ${ms(duration(e()))} · ↑${bytes(e().bytesUp)} ↓${bytes(e().bytesDown)}`}</Text>
       </View>

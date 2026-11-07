@@ -182,3 +182,39 @@ fn delta_rs_run_reads_as_commits() {
             .any(|o| o.text.ends_with("_delta_log/ was listed 15 times"))
     );
 }
+
+/// Every title, note and observation of the recorded sessions is said by
+/// phrases with an English template, and those phrases say exactly the
+/// English text (the app says them in Chinese from the same keys).
+#[test]
+fn every_text_is_phrases() {
+    use sonde_proxy::phrase::en;
+    for name in [
+        "slatedb.sonde",
+        "iceberg.sonde",
+        "delta.sonde",
+        "sdk-python.sonde",
+        "sdk-java.sonde",
+    ] {
+        let s = load(name);
+        let eps = episodes(&s.records);
+        for e in &eps {
+            assert!(!e.title_text.is_empty(), "{name}: {}", e.title);
+            assert_eq!(en(&e.title_text), e.title, "{name}");
+            assert_eq!(e.notes_text.len(), e.notes.len(), "{name}: {}", e.title);
+            for (n, t) in e.notes.iter().zip(&e.notes_text) {
+                assert_eq!(&t.en(), n, "{name}");
+            }
+            for t in e.title_text.iter().chain(&e.notes_text) {
+                assert!(
+                    !t.en().is_empty() || t.args.is_empty(),
+                    "{name}: no template for {}",
+                    t.key
+                );
+            }
+        }
+        for o in observations(&s.records, &eps) {
+            assert_eq!(en(&o.phrases), o.text, "{name}");
+        }
+    }
+}
