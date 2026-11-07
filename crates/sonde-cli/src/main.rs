@@ -66,6 +66,8 @@ enum Command {
     Replay(cmd::record::ReplayArgs),
     /// Compare a session with its replay.
     Diff(cmd::record::DiffArgs),
+    /// A session as a web page anyone opens in a browser.
+    Share(cmd::share::ShareArgs),
     /// Compatibility probes.
     Probe(cmd::probe::ProbeArgs),
     /// Incomplete multipart uploads.
@@ -119,6 +121,7 @@ fn main() -> ExitCode {
             Command::Show(a) => cmd::record::show(&sonde, a).await,
             Command::Replay(a) => cmd::record::replay(&sonde, &cli, a).await,
             Command::Diff(a) => cmd::record::diff(a).await,
+            Command::Share(a) => cmd::share::run(&sonde, a).await,
             Command::Probe(a) => cmd::probe::run(&sonde, &cli, a).await,
             Command::Mpu(a) => cmd::mpu::run(&sonde, &cli, a).await,
             Command::Du(a) => cmd::du::run(&sonde, &cli, a).await,

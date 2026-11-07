@@ -465,7 +465,7 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
 }
 
 /// The newest session file in the data directory.
-fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
+pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
     let dir = s.paths().sessions();
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
     for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {

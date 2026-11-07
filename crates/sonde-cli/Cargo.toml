@@ -24,6 +24,10 @@ decoders.workspace = true
 s3raw.workspace = true
 reqlog.workspace = true
 sonde-proxy.workspace = true
+bytes.workspace = true
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 sonde-nsh = { workspace = true, optional = true }
 clap.workspace = true
 serde.workspace = true
