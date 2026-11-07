@@ -2,58 +2,37 @@
 // buckets), a list and a detail pane; a terminal gets one column with a
 // navigation stack, the F10 menu bar and keyboard shortcuts.
 
+// sonde: one app, three forms. Four places — Run, Sessions, Store and
+// Settings — and a command palette over everything. Desktop windows get a
+// sidebar and the place beside it; a terminal gets a home list and a
+// navigation stack, the F10 menu bar and `:` for the palette.
+
 import { effect, keymap, mount, platform, setColorScheme, Storage, Text, View } from "nsh";
 import { createNavStack, NavPage, NavStack } from "nsh/base";
 import { isAvailable, Menu, Window, windowState } from "nsh/desktop";
 import { t } from "./src/i18n";
-import { Audit } from "./src/screens/Audit";
-import { Browse } from "./src/screens/Browse";
-import { Capacity } from "./src/screens/Capacity";
-import { Endpoints } from "./src/screens/Endpoints";
-import { Jobs } from "./src/screens/Jobs";
-import { Layouts } from "./src/screens/Layouts";
-import { Multipart } from "./src/screens/Multipart";
-import { Plugins } from "./src/screens/Plugins";
-import { Probes } from "./src/screens/Probes";
-import { Requests } from "./src/screens/Requests";
-import { SettingsScreen } from "./src/screens/Settings";
-import { Timeline } from "./src/screens/Timeline";
-import { Versions } from "./src/screens/Versions";
-import { bucket, endpoint, endpoints, go, init, readOnly, type Section, SECTIONS, section, settings } from "./src/store";
+import { areaLabel } from "./src/labels";
+import { running } from "./src/run";
+import { Run } from "./src/screens/Run";
+import { Sessions } from "./src/screens/Sessions";
+import { SettingsArea } from "./src/screens/SettingsArea";
+import { StoreArea } from "./src/screens/StoreArea";
+import { type Area, area, AREAS, bucket, endpoint, endpoints, go, init, readOnly, settings } from "./src/store";
 import { Badge, ErrorBanner, NoticeLine, terminal } from "./src/ui/kit";
+import { Palette, paletteOpen } from "./src/ui/palette";
 import { Sidebar } from "./src/ui/sidebar";
 
-import { sectionLabel } from "./src/labels";
-
-/** The view of a section: a plain function, called in a binding, so the view follows `section()`. */
-function screen(s: Section) {
-  switch (s) {
-    case "timeline":
-      return <Timeline />;
-    case "endpoints":
-      return <Endpoints />;
-    case "browse":
-      return <Browse />;
-    case "requests":
-      return <Requests />;
-    case "multipart":
-      return <Multipart />;
-    case "versions":
-      return <Versions />;
-    case "capacity":
-      return <Capacity />;
-    case "probes":
-      return <Probes />;
-    case "layouts":
-      return <Layouts />;
-    case "plugins":
-      return <Plugins />;
-    case "jobs":
-      return <Jobs />;
-    case "audit":
-      return <Audit />;
+/** The view of an area: a plain function, called in a binding, so the view follows `area()`. */
+function screen(a: Area) {
+  switch (a) {
+    case "run":
+      return <Run />;
+    case "sessions":
+      return <Sessions />;
+    case "store":
+      return <StoreArea />;
     case "settings":
-      return <SettingsScreen />;
+      return <SettingsArea />;
   }
 }
 
@@ -65,7 +44,7 @@ function Context() {
   const ep = () => endpoints().find((e) => e.id === endpoint());
   return (
     <Text class="text-xs text-muted-foreground line-clamp-1">
-      {ep() ? `${ep()!.name}${bucket() ? ` › ${bucket()}` : ""}` : t("common.chooseEndpoint")}
+      {ep() ? `${ep()!.name}${area() === "store" && bucket() ? ` › ${bucket()}` : ""}` : t("common.chooseEndpoint")}
     </Text>
   );
 }
@@ -78,7 +57,7 @@ function DesktopShell() {
       <Sidebar />
       <View class="flex-1">
         <View class="h-11 flex-row items-center gap-3 border-b border-border px-4">
-          <Text class="text-sm font-semibold text-foreground">{sectionLabel(section())}</Text>
+          <Text class="text-sm font-semibold text-foreground">{areaLabel(area())}</Text>
           <View class="flex-1">
             <Context />
           </View>
@@ -86,18 +65,19 @@ function DesktopShell() {
         </View>
         <ErrorBanner />
         <View class="flex-1">
-          {/* rebuilt per section: screens own their jobs, cancelled when they go */}
-          {screen(section())}
+          {/* rebuilt per area: screens own their jobs, cancelled when they go */}
+          {screen(area())}
         </View>
         <NoticeLine />
       </View>
+      <Palette />
     </View>
   );
 }
 
 // --- terminal ------------------------------------------------------------
 
-type Route = { name: "home" } | { name: "section"; section: Section };
+type Route = { name: "home" } | { name: "area"; area: Area };
 const nav = createNavStack<Route>([{ name: "home" }]);
 
 function TermHeader(props: { title: string }) {
@@ -118,23 +98,26 @@ function TermHeader(props: { title: string }) {
 }
 
 function Home() {
-  // 1–9 open a section from the home list (not while typing, not under another page)
+  // 1–4 open a place from the home list (not while typing, not under another page)
   const digits: Record<string, () => void> = {};
-  SECTIONS.slice(0, 9).forEach((s, i) => {
+  AREAS.forEach((a, i) => {
     digits[String(i + 1)] = () => {
-      if (nav.routes().length === 1) open(s);
+      if (nav.routes().length === 1) open(a);
     };
   });
   keymap.bind(digits, { when: "notEditing" });
   return (
     <NavPage title="sonde" header={<TermHeader title="sonde" />}>
       <View class="flex-1 gap-1 p-1">
-        <Text class="text-muted-foreground">{t("app.tagline")} — F10: menu · Tab: next · Esc: back</Text>
-        <Each of={SECTIONS}>
-          {(s, i) => (
-            <View role="button" testID={`nav-${s()}`} onPress={() => open(s())} class="flex-row gap-2 px-1 hover:bg-muted">
-              <Text class="w-4 text-muted-foreground">{i() < 9 ? String(i() + 1) : " "}</Text>
-              <Text class="text-foreground">{sectionLabel(s())}</Text>
+        <Text class="text-muted-foreground">{t("app.tagline")} — : search · F10: menu · Tab: next · Esc: back</Text>
+        <Each of={AREAS}>
+          {(a, i) => (
+            <View role="button" testID={`nav-${a()}`} onPress={() => open(a())} class="flex-row gap-2 px-1 hover:bg-muted">
+              <Text class="w-4 text-muted-foreground">{String(i() + 1)}</Text>
+              <Text class="flex-1 text-foreground">{areaLabel(a())}</Text>
+              <If when={a() === "run" && running()}>
+                <Text class="text-primary">● {running()!.command}</Text>
+              </If>
             </View>
           )}
         </Each>
@@ -143,16 +126,23 @@ function Home() {
   );
 }
 
-function open(s: Section) {
-  go(s);
+/** Goes to a place; in a terminal, as a page over the home list. */
+function open(a: Area) {
+  go(a);
   if (terminal()) {
     const top = nav.routes()[nav.routes().length - 1];
-    if (top.name === "section") nav.replace({ name: "section", section: s });
-    else nav.push({ name: "section", section: s });
+    if (top.name === "area") nav.replace({ name: "area", area: a });
+    else nav.push({ name: "area", area: a });
   }
 }
 
 function TerminalShell() {
+  // a place chosen elsewhere (the palette, a button) becomes the page on top
+  effect(() => {
+    const a = area();
+    const top = nav.routes()[nav.routes().length - 1];
+    if (top.name === "area" && top.area !== a) nav.replace({ name: "area", area: a });
+  });
   return (
     <View class="flex-1 bg-background">
       <NavStack state={nav} class="flex-1">
@@ -160,16 +150,17 @@ function TerminalShell() {
           route.name === "home" ? (
             <Home />
           ) : (
-            <NavPage title={sectionLabel(route.section)} header={<TermHeader title={sectionLabel(route.section)} />}>
+            <NavPage title={areaLabel(route.area)} header={<TermHeader title={areaLabel(route.area)} />}>
               <View class="flex-1">
                 <ErrorBanner />
-                {screen(section())}
+                {screen(area())}
                 <NoticeLine />
               </View>
             </NavPage>
           )
         }
       </NavStack>
+      <Palette />
     </View>
   );
 }
@@ -178,20 +169,23 @@ function TerminalShell() {
 
 function installMenus() {
   effect(() => {
-    const items = SECTIONS.map((s, i) => ({ label: sectionLabel(s), shortcut: i < 9 ? `mod+${i + 1}` : undefined, checked: section() === s, onSelect: () => open(s) }));
+    const items = AREAS.map((a, i) => ({ label: areaLabel(a), shortcut: a === "settings" ? "mod+," : `mod+${i + 1}`, checked: area() === a, onSelect: () => open(a) }));
     Menu.setApplicationMenu([
       { label: "sonde", submenu: [{ role: "about" }, { type: "separator" }, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" }, { role: "quit" }] },
-      { label: "File", submenu: [{ label: t("endpoints.add"), shortcut: "mod+n", onSelect: () => open("endpoints") }, { label: t("endpoints.demo"), onSelect: () => open("endpoints") }] },
+      { label: "File", submenu: [{ label: t("run.start"), shortcut: "mod+r", onSelect: () => open("run") }, { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(true) }] },
       { label: "Edit", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
       { label: "View", submenu: items },
       { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "toggleFullScreen" }] },
     ]);
   });
   keymap.bind({
+    "mod+1": () => open("run"),
+    "mod+2": () => open("sessions"),
+    "mod+3": () => open("store"),
     "mod+,": () => open("settings"),
-    "mod+i": () => open("requests"),
-    "mod+j": () => open("jobs"),
+    "mod+k": () => paletteOpen.set(!paletteOpen()),
   });
+  if (terminal()) keymap.bind({ "shift+;": () => paletteOpen.set(true) }, { when: "notEditing" });
 }
 
 const WINDOW_KEY = "window.placement";

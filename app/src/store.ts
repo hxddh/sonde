@@ -7,29 +7,36 @@ import { api, asError } from "./native";
 import { language } from "./i18n";
 import type { EndpointView, Settings, SondeError } from "./types";
 
-export type Section =
-  | "timeline"
-  | "endpoints"
-  | "browse"
-  | "requests"
-  | "multipart"
-  | "versions"
-  | "capacity"
-  | "probes"
-  | "layouts"
-  | "plugins"
-  | "jobs"
-  | "audit"
-  | "settings";
+/** The four places of the app. */
+export type Area = "run" | "sessions" | "store" | "settings";
+/** The tabs of Store: what is in a bucket. */
+export type StoreTab = "browse" | "multipart" | "versions" | "capacity" | "layouts" | "probes";
+/** The tabs of Settings. */
+export type SettingsTab = "settings" | "endpoints" | "requests" | "jobs" | "audit";
+/** Where to go: an area, or a tab of one. */
+export type Section = "run" | "sessions" | StoreTab | SettingsTab;
 
-export const SECTIONS: Section[] = ["timeline", "endpoints", "browse", "requests", "multipart", "versions", "capacity", "probes", "layouts", "plugins", "jobs", "audit", "settings"];
+export const AREAS: Area[] = ["run", "sessions", "store", "settings"];
+export const STORE_TABS: StoreTab[] = ["browse", "multipart", "versions", "capacity", "layouts", "probes"];
+export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints", "requests", "jobs", "audit"];
+
+export function areaOf(s: Section): Area {
+  if (s === "run" || s === "sessions") return s;
+  return (STORE_TABS as string[]).includes(s) ? "store" : "settings";
+}
 
 export const endpoints = signal<EndpointView[]>([]);
 export const settings = signal<Settings | null>(null);
 export const endpoint = signal<string | null>(null);
 export const bucket = signal<string | null>(null);
 export const prefix = signal<string>("");
-export const section = signal<Section>("timeline");
+export const section = signal<Section>("run");
+export const storeTab = signal<StoreTab>("browse");
+export const settingsTab = signal<SettingsTab>("settings");
+/** The area on screen. */
+export const area = () => areaOf(section());
+/** The session the Sessions area shows (set by Run when a run ends, by the palette, …). */
+export const openSession = signal<string | null>(null);
 /** The request record the inspector should show. */
 export const focusRecord = signal<number | null>(null);
 /** The key the versions screen shows. */
@@ -79,12 +86,21 @@ export function showRequest(id: number | null | undefined) {
   if (id === null || id === undefined) return;
   batch(() => {
     focusRecord.set(id);
+    settingsTab.set("requests");
     section.set("requests");
   });
 }
 
-export function go(s: Section) {
-  section.set(s);
+/** Goes to an area (the tab it had) or to a tab of one. */
+export function go(s: Section | Area) {
+  batch(() => {
+    if (s === "store") s = storeTab();
+    else if (s === "settings" && section() !== "settings" && areaOf(section()) !== "settings") s = settingsTab();
+    const target = s as Section;
+    if ((STORE_TABS as string[]).includes(target)) storeTab.set(target as StoreTab);
+    else if ((SETTINGS_TABS as string[]).includes(target)) settingsTab.set(target as SettingsTab);
+    section.set(target);
+  });
 }
 
 export function chooseBucket(b: string | null) {

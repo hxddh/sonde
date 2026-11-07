@@ -1,24 +1,32 @@
 import { type Key, t } from "./i18n";
-import type { Section } from "./store";
+import type { Area, Section } from "./store";
 import type { Verdict } from "./types";
 import type { Tone } from "./ui/kit";
 
 const LABEL: Record<Section, Key> = {
-  timeline: "nav.timeline",
-  endpoints: "nav.endpoints",
+  run: "nav.run",
+  sessions: "nav.sessions",
   browse: "nav.browse",
-  requests: "nav.requests",
   multipart: "nav.multipart",
   versions: "nav.versions",
   capacity: "nav.capacity",
-  probes: "nav.probes",
   layouts: "nav.layouts",
-  plugins: "nav.plugins",
+  probes: "nav.probes",
+  settings: "nav.general",
+  endpoints: "nav.endpoints",
+  requests: "nav.requests",
   jobs: "nav.jobs",
   audit: "nav.audit",
+};
+
+const AREA: Record<Area, Key> = {
+  run: "nav.run",
+  sessions: "nav.sessions",
+  store: "nav.store",
   settings: "nav.settings",
 };
 
+export const areaLabel = (a: Area) => t(AREA[a]);
 export const sectionLabel = (s: Section) => t(LABEL[s]);
 
 export const verdictTone = (v: Verdict): Tone => (v === "pass" ? "pass" : v === "fail" ? "fail" : v === "differs" ? "differs" : v === "unsupported" ? "unsupported" : v === "error" ? "warn" : "neutral");
