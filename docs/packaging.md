@@ -3,8 +3,12 @@
 | Artifact | Built by | How |
 |---|---|---|
 | `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz` | `build.yml` on Ubuntu 22.04 (x86_64 and arm64 runners) | `nsh build App.tsx --release` (the bundle), then `cargo build --release -p sonde-cli --features tui` — one binary: CLI and terminal UI, the bundle embedded. |
-| `sonde-macos-aarch64.tar.gz`, `sonde-macos-x86_64.tar.gz` | `build.yml` on macOS 14 and 13 | The same. |
-| `sonde-macos.dmg` | `build.yml` on macOS 14 | `nsh package app/App.tsx --target macos` (`sonde.app`, AppKit runner with sonde's crate), `scripts/macos-sign.sh` (Developer ID, hardened runtime), `scripts/macos-dmg.sh`, `scripts/macos-notarize.sh` (notarytool, stapled). |
+| `sonde-macos-aarch64.tar.gz`, `sonde-macos-x86_64.tar.gz` | `build.yml` on macOS 15 (arm64) and macOS 15 Intel | The same. |
+| `sonde-macos.dmg` | `build.yml` on macOS 15 | `nsh package app/App.tsx --target macos` (`sonde.app`, AppKit runner with sonde's crate), `scripts/macos-sign.sh` (Developer ID, hardened runtime), `scripts/macos-dmg.sh`, `scripts/macos-notarize.sh` (notarytool, stapled). |
+| `sonde-<version>-macos-<arch>.tar.gz` | `build.yml` on macOS 15 | The `.app` archived for the updater. |
+| `sonde-<version>-linux-x86_64.tar.gz` | `build.yml` on Ubuntu 24.04 | `nsh package app/App.tsx --target linux`: the desktop app on GTK 4 and WebKitGTK 6 (needs `libgtk-4-1`, `libwebkitgtk-6.0-4`, GStreamer). |
+| `sonde-<version>-windows-x86_64.zip` | `build.yml` on Windows | `nsh package app/App.tsx --target windows`. Unsigned. |
+| `latest.json` | `release.yml` | `nsh update-manifest` over the desktop archives: what the app's updater reads (version, notes, URL and SHA-256 per platform). |
 | `SHA256SUMS` | `release.yml` | Every artifact's SHA-256; each also ships as `<artifact>.sha256`. |
 
 ## Signing and notarization
@@ -36,6 +40,9 @@ with `ldd` and runs `sonde --version` in `debian:bookworm-slim`.
    `x.y.z`), which creates the tag at the chosen commit: `release.yml` builds everything, publishes the GitHub release with the changelog section
    `SHA256SUMS` and one `.sha256` per file (what `install.sh` checks), and (with `HOMEBREW_TAP_TOKEN`) writes `Formula/sonde.rb` and `Casks/sonde-app.rb` into
    `hxddh/homebrew-sonde` from `packaging/homebrew/*.rb.in`.
+
+The web viewer (`viewer/`) is built first (`nsh package App.tsx --target web`) and embedded in every terminal
+binary for `sonde share`.
 
 `install.sh` downloads the binary for the machine, checks its `.sha256` and installs it in `~/.local/bin`
 (`SONDE_INSTALL_DIR`, `SONDE_VERSION`).

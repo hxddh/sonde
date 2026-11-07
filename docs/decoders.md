@@ -14,5 +14,4 @@ not decoded — sonde never guesses.
 | **turbopuffer**, **WarpStream** | Name patterns (`tpuf/`, `turbopuffer/`, `warpstream/`, `…/_segments/`) | **Not decoded: the formats are not published.** Prefix statistics and write cadence from the listing only. | — |
 | **Generic** | Any prefix (on request) | Objects and bytes by sub-prefix, writes per interval, median and p99 intervals, longest pause. | — |
 
-Plugins add lenses in TSX (see [plugins.md](plugins.md)); the example `plugins/delta-lens` reads Delta Lake's
-`_delta_log`.
+Delta Lake has no lens; its `_delta_log` commits are recognized in recorded sessions (docs/recording.md).

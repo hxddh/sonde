@@ -16,8 +16,9 @@
 
 - Every request is made by Rust (`reqwest` with rustls); the app's `nsh.json` declares no network capability, so
   the TSX VM cannot open a connection (`capabilities.json` in the bundle: `"network": {"hosts": [], "http": []}`).
-- sonde has no telemetry, no update check and no background request: each request answers a user action
-  (or a scheduled job the user started).
+- sonde has no telemetry and no background request: each request answers a user action (or a job the user
+  started). The desktop app looks for an update only when asked (Settings › Updates): Native Shell's updater reads
+  the project's `latest.json` on GitHub Releases and checks the archive's SHA-256 before installing it.
 - Custom CAs are added per endpoint (`ca-file`); TLS verification is never disabled.
 
 ## Files
@@ -36,9 +37,15 @@ delete markers, deleting objects, replacing a lifecycle configuration — are pl
 4. plans expire after 10 minutes and run once;
 5. every run is appended to `<data>/audit.jsonl` (time, action, targets, outcome, request ids, errors).
 
-## Plugin sandbox
+## Run
 
-Plugins are signed packages verified against roots the user trusts, with revocation lists and rollback
-protection. A plugin declaring any capability with a grant other than `sonde.read.*` host calls is refused at
-install. It runs in its own engine (no shared VM, no access to sonde's state); the host registers handlers only
-for the read-only calls, confined to the bucket and prefix the user chose; credentials stay in Rust.
+Run starts the command the user typed, through their shell, with the user's rights — as a terminal would. The
+command receives a local endpoint and throwaway keys, never sonde's credentials (`AWS_SESSION_TOKEN`, `AWS_PROFILE`
+and the like are removed from its environment). Its output is kept in the session file as printed, so a command
+that prints secrets puts them there; records stay redacted. Only the app process can start commands: there is no
+listening socket for it, and the TSX VM reaches it through `sonde/native` only.
+
+## Shared sessions
+
+`sonde share` writes a static site: the viewer and the session's computed document. It holds what the session file
+holds and nothing more; `--serve` listens on 127.0.0.1 only and serves the site's own files.

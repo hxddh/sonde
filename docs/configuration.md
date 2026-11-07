@@ -5,7 +5,7 @@ sonde reads `config.toml` from its configuration directory:
 | | Linux | macOS |
 |---|---|---|
 | Configuration | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/.config/sonde` | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/Library/Application Support/sonde` |
-| Data (request log, scans, probe runs, audit log, plugins) | `$SONDE_DATA_DIR`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` |
+| Data (request log, scans, probe runs, audit log, sessions) | `$SONDE_DATA_DIR`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` |
 | Exports | `<data>/exports` unless `exports-dir` | same |
 | Downloads | `~/Downloads/sonde` unless `downloads-dir` | same |
 

@@ -12,6 +12,7 @@
 | `sonde show [FILE] [--requests] [--errors] [--summary] [-f json]` | A session (default: the newest) as operations (or requests) and observations. |
 | `sonde replay FILE -e E [--bucket A=B] [--prefix P\|--in-place] [--keep] [--yes] [-o FILE]` | Re-enacts a session on another endpoint, cleans up, compares every answer. |
 | `sonde diff ORIGINAL REPLAY` | Compares a session with its replay. |
+| `sonde share [FILE] [-o DIR] [--serve [--port N]] [--json]` | A session (default: the newest) as a static web page: sonde's viewer and the computed `session.json`; `--serve` on 127.0.0.1 until Ctrl-C. |
 | `sonde probe -e A -e B -b BUCKET [--only checksum.] [--temp-buckets] [--no-slow] [-f json\|markdown\|csv] [-o FILE]` | Runs the probes on each endpoint in parallel; saves the runs. |
 | `sonde probe list` / `sonde probe runs` / `sonde probe diff RUN:EP RUN:EP` | The catalog, saved runs, changes between two runs. |
 | `sonde mpu scan -e E -b B [-p PREFIX]` | Incomplete uploads, their bytes, age, cost; the lifecycle verdict. |
@@ -21,7 +22,6 @@
 | `sonde layout inspect -e E -b B [-p PREFIX] [--kind slatedb] [--at RFC3339]` / `--dir PATH` | Detects and decodes layouts; `--at` replays the state at a time. |
 | `sonde endpoints list` / `test [ID]` / `import [PROFILES…]` | Endpoints. |
 | `sonde tui [--demo] [--fps] [--no-mouse] [--bundle FILE]` | The terminal UI. |
-| `sonde plugin list` / `trust LABEL root.pub` / `untrust ID` / `install PKG` / `enable` / `disable` / `remove` / `revoke LIST` | Plugins. |
 
 ## Exit codes
 

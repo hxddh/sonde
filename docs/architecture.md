@@ -2,9 +2,9 @@
 
 ```
 app/                      TSX screens (Native Shell), theme, nsh.json        ─┐ presentation only
+viewer/                   the web viewer for `sonde share` (TSX, web target)  ─┤
 crates/sonde-nsh          `sonde/native`: #[module] Sonde, Sessions,          ─┤ type conversion
-                          #[class] Listing                                    │
-                          plugins (nsh-package verification, host calls)      │
+                          #[class] Listing; Run's PTY (portable-pty)          │
 crates/sonde-cli          `sonde`: headless subcommands; `sonde tui` host     ─┘
 crates/proxy (sonde-proxy) the recording endpoint, sessions, episodes,     ─┐
                           observations, replay and comparison                │
@@ -43,10 +43,26 @@ ListObjectsV2 page when the table nears its end (`onLoadMore`). 100 000 keys nev
 ## The terminal host
 
 `sonde tui` runs the embedded bundle on `nsh-platform-tui` with its own event loop (crossterm events through
-`nsh-tui-host::convert`), an OSC 52 clipboard and a second `AppView` for plugin views.
+`nsh-tui-host::convert`) and an OSC 52 clipboard.
+
+## Run
+
+`Sessions.run` starts a recording endpoint, then the command through the user's shell in a pseudo-terminal
+(`portable-pty`: openpty on Unix, ConPTY on Windows) with the endpoint's variables set. A reader thread sends the
+output to the engine as it comes (a `Callback`: `{started}`, then `{data}`, decoded across UTF-8 boundaries) and
+appends it to the session as `{"log": {time, text}}` lines; Native Shell's `Terminal` draws it and sends keys and
+resizes back (`Sessions.input`, `Sessions.resize`). The run resolves with the exit status and the session's path.
+`sonde-proxy::logs` turns the chunks into timed lines, which the UI lines up with operations by time.
+
+## The web viewer
+
+`viewer/` is a second Native Shell project built with `--target web`: the same pure views as the app
+(`app/src/ui/sessionview.tsx`, `record.tsx`) reading a `session.json` that `sonde share` computes in Rust. No Rust
+runs in the browser. `crates/sonde-cli/build.rs` embeds the built site (from `$SONDE_VIEWER_DIR` or
+`viewer/.nsh/out/sonde-viewer`); a build without it says so when `sonde share` needs it.
 
 ## The two forms
 
-`App.tsx` branches on `platform.idiom === "terminal"`: windows get the sidebar / list / detail layout and a
-Canvas for charts; terminals get a navigation stack, the F10 menu bar, keyboard shortcuts, tables and sentences
+`App.tsx` branches on `platform.idiom === "terminal"`: windows get a sidebar with four places (Run,
+Sessions, Store, Settings), the command palette and Plot charts; terminals get a navigation stack, the F10 menu bar, keyboard shortcuts, tables and sentences
 instead of charts. The same screens serve both, adapting density (`terminal()` in `ui/kit.tsx`).

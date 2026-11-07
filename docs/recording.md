@@ -1,4 +1,4 @@
-# Recording: `sonde run`, `sonde proxy`, `sonde show`
+# Recording: Run, `sonde run`, `sonde proxy`, `sonde show`, `sonde share`
 
 sonde can sit between an application and its object store and record every S3
 request the application makes. The application talks to a local endpoint with
@@ -16,7 +16,24 @@ The endpoint is chosen as for every command: `-e <id>`, `--url <url>`, or the
 only one configured. Credentials are resolved as usual (profiles, SSO, IMDS,
 IRSA, …) and stay in sonde; the application never receives them.
 
-## What `sonde run` sets for the command
+## Run, in the app
+
+The app's home does what `sonde run` does, with the program in a terminal:
+type a command (and a working directory if it is not your home), choose the
+endpoint and a policy (no deletes, read-only), press Return. The command runs
+through your shell in a pseudo-terminal (ConPTY on Windows) — colours,
+progress bars and prompts work, and you can type into it. Its requests appear
+beside it as operations while it runs; Stop ends it. When it ends, a
+notification says how, and the session opens.
+
+The session keeps the program's output with the time each piece arrived
+(`{"log": …}` lines in the file), so Sessions can line output and requests up:
+choose an operation and the lines printed while it ran are highlighted; choose
+a line and the operations running then are. Escape codes are removed and a
+line redrawn with a carriage return keeps its last state. Output is in the
+session as printed — do not run commands that print secrets.
+
+
 
 | Variable | Value |
 |---|---|
@@ -168,7 +185,30 @@ Checked on real recordings: the SlateDB, pyiceberg, delta-rs and boto3
 sessions recorded on RustFS replay with no difference on RustFS and on Ceph RGW
 16.2.5.
 
-## Reading a summary
+In the app, Replay on a session shows the same plan in a dialog (refused while
+sonde is read-only), runs it, and opens the comparison: the differences
+grouped, and both sessions as transcripts side by side (`Op bucket/key
+[conditions] → outcome`, the replay prefix taken off). Compare does the same
+for any two sessions.
+
+## Share a session
+
+```sh
+sonde share                              # the newest session → ./<session>-share/
+sonde share run.sonde -o /tmp/site       # a session, to a folder
+sonde share --serve                      # on http://127.0.0.1:<port>/ until Ctrl-C
+sonde share --json -o session.json       # only the computed document
+```
+
+A shared session is a static web site: sonde's viewer (Native Shell's web
+target, embedded in the binary) and a `session.json` with everything already
+computed — header, summary, operations, observations, every record and the
+output lines. Anyone with a browser reads it with the app's views; nothing
+runs on a server, and nothing is installed. It holds what the session file
+holds (redacted records, the program's output), so share it as you would the
+file.
+
+
 
 ```
 172 requests to rustfs in 0.5 s · 116 not found · ↑36.5 KiB ↓22.7 KiB
