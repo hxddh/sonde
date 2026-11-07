@@ -176,6 +176,38 @@ export function init() {
 }
 
 /** Asks for a `.sonde` file (one recorded elsewhere, or shared) and opens it in Sessions. */
+/** A local path from a `file:` URL (a file manager's drop). */
+export function pathOf(uri: string): string {
+  const p = decodeURIComponent(uri.replace(/^file:\/\/(localhost)?/, ""));
+  // file:///C:/x on Windows
+  return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;
+}
+
+/** Opens session files dropped on the window; anything else is said to be no session. */
+export function openDropped(uris: string[]) {
+  let last: string | null = null;
+  for (const uri of uris) {
+    const path = pathOf(uri);
+    const name = path.split(/[\\/]/).pop() ?? path;
+    if (!uri.startsWith("file:") || !name.endsWith(".sonde")) {
+      notify(t("sessions.notSession", { name }), { kind: "warning" });
+      continue;
+    }
+    try {
+      last = api.sessions.importPath(path);
+    } catch (e) {
+      report(e);
+    }
+  }
+  if (!last) return;
+  const opened = last;
+  batch(() => {
+    openSession.set(opened);
+    sessionsChanged();
+    go("sessions");
+  });
+}
+
 export async function openSessionFile() {
   try {
     const [picked] = await Picker.pickFiles({ filters: [{ name: t("sessions.fileType"), extensions: ["sonde"] }] });

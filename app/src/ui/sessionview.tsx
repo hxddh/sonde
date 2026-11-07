@@ -4,7 +4,7 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type JSX, platform, Scroll, signal, Text, View } from "nsh";
+import { type ContextMenuEvent, type JSX, List, platform, Scroll, signal, Text, View } from "nsh";
 import { Button as BaseButton, DataTable, type DataTableRef } from "nsh/base";
 import { bytes, date, ms } from "../format";
 import { t } from "../i18n";
@@ -482,49 +482,65 @@ function dayLabel(iso: string): string {
 }
 
 /** The sessions, newest first, by day: the program (or the endpoint), its time and requests. */
-export function SessionList(props: { sessions: SessionInfo[]; selected: string | null; onSelect: (p: string) => void; onContextMenu?: (p: string) => void }) {
-  const groups = () => {
-    const out: { day: string; items: { s: SessionInfo; i: number }[] }[] = [];
+export function SessionList(props: { sessions: SessionInfo[]; selected: string | null; onSelect: (p: string) => void; onContextMenu?: (s: SessionInfo, at?: { x: number; y: number }) => void }) {
+  // one list, the days as headers that stay in view while their sessions scroll
+  type Row = { day: string } | { s: SessionInfo; i: number };
+  const rows = (): Row[] => {
+    const out: Row[] = [];
+    let last = "";
     props.sessions.forEach((s, i) => {
       const day = dayLabel(s.created);
-      if (!out.length || out[out.length - 1].day !== day) out.push({ day, items: [] });
-      out[out.length - 1].items.push({ s, i });
+      if (day !== last) out.push({ day: (last = day) });
+      out.push({ s, i });
     });
     return out;
   };
-  const program = (s: SessionInfo) => programOf(s.command) ?? s.endpoint;
-  const args = (s: SessionInfo) => (s.command && programOf(s.command) !== s.command.trim() && !programOf(s.command)!.endsWith("…") ? s.command.trim().split(/\s+/).slice(1).join(" ") : "");
-  return (
-    <View class="gap-3">
-      <Each of={groups()} key={(g) => g.day}>
-        {(g) => (
-          <View class="gap-0.5">
-            <Text role="header" class="px-2 pb-1 text-caption font-medium text-muted-foreground">
-              {g().day}
-            </Text>
-            <Each of={g().items} key={(x) => x.s.path}>
-              {(x) => (
-                <BaseButton
-                  testID={`session-${x().i}`}
-                  accessibilityLabel={x().s.command ?? x().s.name}
-                  selected={props.selected === x().s.path}
-                  onPress={() => props.onSelect(x().s.path)}
-                  class="gap-0.5 rounded-(--radius) px-2 py-1.5 hover:bg-row-hover selected:bg-selection"
-                >
-                  <View class="flex-row items-center gap-2">
-                    <If when={x().s.live}>
-                      <Dot tone="live" label={t("timeline.live")} />
-                    </If>
-                    <Text class="min-w-0 shrink text-body font-medium text-foreground line-clamp-1">{program(x().s)}</Text>
-                    <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{args(x().s)}</Text>
-                  </View>
-                  <Text class="text-caption text-muted-foreground line-clamp-1">{`${clock(x().s.created).slice(0, 5)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
-                </BaseButton>
-              )}
-            </Each>
-          </View>
-        )}
-      </Each>
+  const dayOf = (r: Row) => ("day" in r ? r.day : null);
+  const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
+  const name = (s: SessionInfo) => s.title || programOf(s.command) || s.endpoint;
+  const args = (s: SessionInfo) => (!s.title && s.command && programOf(s.command) !== s.command.trim() && !programOf(s.command)!.endsWith("…") ? s.command.trim().split(/\s+/).slice(1).join(" ") : "");
+  const row = (x: () => { s: SessionInfo; i: number }) => (
+    <View onContextMenu={props.onContextMenu ? (e: ContextMenuEvent) => props.onContextMenu!(x().s, e.pagePosition) : undefined}>
+    <BaseButton
+      testID={`session-${x().i}`}
+      accessibilityLabel={x().s.title ?? x().s.command ?? x().s.name}
+      selected={props.selected === x().s.path}
+      onPress={() => props.onSelect(x().s.path)}
+      class="mb-0.5 gap-0.5 rounded-(--radius) px-2 py-1.5 hover:bg-row-hover selected:bg-selection"
+    >
+      <View class="flex-row items-center gap-2">
+        <If when={x().s.live}>
+          <Dot tone="live" label={t("timeline.live")} />
+        </If>
+        <Text class="min-w-0 shrink text-body font-medium text-foreground line-clamp-1">{name(x().s)}</Text>
+        <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{args(x().s)}</Text>
+      </View>
+      <Text class="text-caption text-muted-foreground line-clamp-1">{`${clock(x().s.created).slice(0, 5)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
+    </BaseButton>
     </View>
+  );
+  return (
+    <List
+      testID="session-list"
+      class="flex-1"
+      each={rows()}
+      stickyHeaderIndices={headers()}
+      estimatedItemSize={46}
+      keyExtractor={(r) => ("day" in r ? `day:${r.day}` : r.s.path)}
+      scrollbar={false}
+    >
+      {(r) => (
+        // a recycled cell: what it shows follows the item it is given
+        <If when={dayOf(r())} else={row(() => r() as { s: SessionInfo; i: number })}>
+          {(day) => (
+            <View class="bg-background px-2 pb-1 pt-2">
+              <Text role="header" class="text-caption font-medium text-muted-foreground">
+                {day()}
+              </Text>
+            </View>
+          )}
+        </If>
+      )}
+    </List>
   );
 }

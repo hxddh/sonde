@@ -14,6 +14,7 @@ pub mod op;
 pub mod phrase;
 pub mod replay;
 pub mod session;
+pub mod share;
 pub mod summary;
 
 use std::convert::Infallible;

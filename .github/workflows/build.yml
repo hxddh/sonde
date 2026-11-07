@@ -88,6 +88,7 @@ jobs:
 
   desktop:
     # the app on Linux (GTK 4) and Windows (Win32), as Native Shell packages it
+    needs: viewer
     strategy:
       fail-fast: false
       matrix:
@@ -106,6 +107,9 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
+      # the app's Share writes the session as the viewer's web page
+      - uses: actions/download-artifact@v4
+        with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Package the app
         run: cd app && nsh package App.tsx --target ${{ matrix.target }}
       - name: Collect the archive (sonde-<version>-<platform>, as the updater names it)
@@ -121,6 +125,7 @@ jobs:
           path: dist/sonde-[0-9]*
 
   macos-app:
+    needs: viewer
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +133,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
+      - uses: actions/download-artifact@v4
+        with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Package the .app
         run: nsh package app/App.tsx --target macos --out dist
       - name: Sign with Developer ID (skipped without the certificate)

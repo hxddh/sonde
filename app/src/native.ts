@@ -82,6 +82,10 @@ export const api = {
     stop: () => Sessions.stop() as string | null,
     example: () => Sessions.example() as string,
     import: (name: string, text: string) => Sessions.import(name, text) as string,
+    importPath: (path: string) => Sessions.importPath(path) as string,
+    rename: (path: string, title: string) => Sessions.rename(path, title) as boolean,
+    remove: (path: string) => Sessions.remove(path) as boolean,
+    share: async (path: string) => (await Sessions.share(path)) as { dir: string; url: string },
     run: (command: string, cwd: string | null, endpoint: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.RunEvent) => void) =>
       Sessions.run(command, cwd, endpoint, policy, cols, rows, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,
     input: (data: string) => Sessions.input(data),

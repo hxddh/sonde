@@ -199,15 +199,56 @@ fn view_of(path: &str) -> Result<Arc<JsonValue>, String> {
     Ok(view)
 }
 
+/// path → (bytes counted up to the last complete line, records in them)
+static COUNTS: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, (u64, usize)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// Forgets what was read of a session file (it was removed or replaced).
+fn forget(path: &Path) {
+    CACHE.lock().remove(path);
+    COUNTS.lock().remove(path);
+}
+
+/// The titles given to sessions, by file name: `titles.json` beside them.
+fn titles() -> std::collections::BTreeMap<String, String> {
+    std::fs::read(sonde().paths().sessions().join("titles.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn save_titles(t: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
+    let dir = sonde().paths().sessions();
+    let tmp = dir.join("titles.json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(t).map_err(err_msg)?).map_err(err_msg)?;
+    std::fs::rename(&tmp, dir.join("titles.json")).map_err(err_msg)
+}
+
+/// A session of the sessions directory, by path: what may be renamed or
+/// removed (not a file elsewhere on the disk).
+fn own_session(path: &str) -> Result<(PathBuf, String), String> {
+    let p = Path::new(path);
+    let dir = sonde().paths().sessions();
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let inside = p.parent().and_then(|d| d.canonicalize().ok()) == dir.canonicalize().ok();
+    if !inside || !name.ends_with(".sonde") || !p.is_file() {
+        return Err(format!("{path} is not one of sonde's sessions"));
+    }
+    Ok((p.to_path_buf(), name))
+}
+
+/// The sites shared from the app, each served on its own local port.
+static SHARED: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
 /// The requests in a session file: its record lines (not the header, not the
 /// program's output). Counted once and then only over what was appended, so
 /// listing sessions does not read every file whole each time.
 fn count_records(path: &Path) -> usize {
-    use std::collections::HashMap;
     use std::io::{Read, Seek, SeekFrom};
-    // path → (bytes counted up to the last complete line, records in them)
-    static COUNTS: std::sync::LazyLock<Mutex<HashMap<PathBuf, (u64, usize)>>> =
-        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
     let Ok(len) = std::fs::metadata(path).map(|m| m.len()) else {
         return 0;
     };
@@ -266,6 +307,7 @@ impl Sessions {
         let dir = sonde().paths().sessions();
         let live = RECORDING.lock().as_ref().map(|r| r.path.clone());
         let mut out: Vec<(String, JsonValue)> = Vec::new();
+        let titles = titles();
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for e in entries.flatten() {
                 let p = e.path();
@@ -279,6 +321,7 @@ impl Sessions {
                     json!({
                         "path": p.to_string_lossy(),
                         "name": p.file_name().map(|n| n.to_string_lossy().into_owned()),
+                        "title": p.file_name().and_then(|n| titles.get(&*n.to_string_lossy())),
                         "created": created,
                         "endpoint": h.endpoint,
                         "command": h.command,
@@ -589,6 +632,97 @@ impl Sessions {
             return Err(format!("{name} is not a sonde session: {e}"));
         }
         Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// Adds a session file at `path` (dropped on the window) to the sessions
+    /// directory, as [`Sessions::import`]; one already there is opened as it is.
+    pub fn import_path(path: String) -> Result<String, String> {
+        if own_session(&path).is_ok() {
+            return Ok(path);
+        }
+        let p = Path::new(&path);
+        let text = std::fs::read_to_string(p).map_err(|e| format!("{path}: {e}"))?;
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Self::import(name, text)
+    }
+
+    /// Gives a session a title of the user's (an empty one takes it away).
+    pub fn rename(path: String, title: String) -> Result<bool, String> {
+        let (_, name) = own_session(&path)?;
+        let mut t = titles();
+        let title = title.trim();
+        if title.is_empty() {
+            t.remove(&name);
+        } else {
+            t.insert(name, title.chars().take(200).collect());
+        }
+        save_titles(&t)?;
+        Ok(true)
+    }
+
+    /// Removes a session file (not the one being recorded).
+    pub fn remove(path: String) -> Result<bool, String> {
+        let (p, name) = own_session(&path)?;
+        if RECORDING.lock().as_ref().is_some_and(|r| r.path == p) {
+            return Err(err_msg("this session is being recorded: stop it first"));
+        }
+        std::fs::remove_file(&p).map_err(err_msg)?;
+        forget(&p);
+        let mut t = titles();
+        if t.remove(&name).is_some() {
+            save_titles(&t)?;
+        }
+        Ok(true)
+    }
+
+    /// Writes a session as a web page (`sonde share`'s site) under the data
+    /// directory and serves it on 127.0.0.1: `{ dir, url }`. The page is
+    /// the same views as the app, read-only, for anyone it is sent to.
+    pub async fn share(path: String) -> Result<JsonValue, String> {
+        if !sonde_proxy::share::has_viewer() {
+            return Err(err_msg(
+                "this build has no web viewer: `sonde share` makes the page",
+            ));
+        }
+        let session = open_session(&path)?;
+        let stem = Path::new(&path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "session".into());
+        let dir = sonde().paths().shared().join(&stem);
+        let doc =
+            serde_json::to_vec(&sonde_proxy::share::session_json(&session)).map_err(err_msg)?;
+        let site = dir.clone();
+        tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&site)?;
+            sonde_proxy::share::write_site(&site, &doc)
+        })
+        .await
+        .map_err(err_msg)?
+        .map_err(err_msg)?;
+        let served = SHARED.lock().get(&dir).cloned();
+        let url = match served {
+            Some(u) => u,
+            None => {
+                let root = dir.clone();
+                let addr = background(async move {
+                    let l = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+                    let addr = l.local_addr()?;
+                    tokio::spawn(sonde_proxy::share::serve(l, root));
+                    Ok::<_, std::io::Error>(addr)
+                })
+                .await
+                .map_err(err_msg)?
+                .map_err(err_msg)?;
+                let u = format!("http://{addr}/");
+                SHARED.lock().insert(dir.clone(), u.clone());
+                u
+            }
+        };
+        Ok(json!({ "dir": dir.to_string_lossy(), "url": url }))
     }
 
     /// Stops recording; the session file's path.

@@ -61,6 +61,10 @@ impl Paths {
     pub fn sessions(&self) -> PathBuf {
         self.data_dir.join("sessions")
     }
+    /// Sessions shared as web pages from the app.
+    pub fn shared(&self) -> PathBuf {
+        self.data_dir.join("shared")
+    }
     pub fn default_exports(&self) -> PathBuf {
         self.data_dir.join("exports")
     }

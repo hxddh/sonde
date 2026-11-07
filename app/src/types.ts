@@ -434,6 +434,8 @@ export interface SessionInfo {
   command: string | null;
   requests: number;
   live: boolean;
+  /** A title the user gave it. */
+  title?: string | null;
 }
 
 /** A phrase of what sonde says: a key and its arguments (crates/proxy/src/phrase.rs). */

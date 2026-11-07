@@ -96,3 +96,43 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   expect(app.shows("text:2 requests compared: 2 the same")).toBe(true);
   expect(app.shows("id:compare-diff")).toBe(true);
 });
+
+test("sessions are looked after: renamed, searched, deleted, dropped on the window", async () => {
+  const app = await open("../App.tsx", desktop);
+  await place(app, "sessions");
+  // five sessions or more by now (the tests before): enough for a search field
+  await app.waitFor("id:session-search");
+  // a title of the user's, from the row's context menu
+  await app.rightClick("id:session-0");
+  expect(app.menu()!.map((m) => m.label)).toEqual(["Open in a window", "Share as a web page…", "Copy file path", "Rename…", "Delete…"]);
+  await app.chooseMenuItem("Rename…");
+  await app.waitFor("id:rename-dialog");
+  await app.clear("id:rename-input");
+  await app.type("id:rename-input", "Nightly compaction");
+  await app.press("id:rename-save");
+  await app.waitFor("text:Nightly compaction");
+  // search narrows the list
+  await app.type("id:session-search", "nightly");
+  await app.waitFor("id:session-0");
+  expect(app.count("label:/^Nightly compaction$/")).toBe(1);
+  expect(app.shows("id:session-1")).toBe(false);
+  await app.clear("id:session-search");
+  await app.waitFor("id:session-1");
+  // its path, for dropping it back on the window
+  await app.rightClick("id:session-0");
+  await app.chooseMenuItem("Copy file path");
+  const path = app.clipboard()!;
+  expect(path.endsWith(".sonde")).toBe(true);
+  // deleted, after asking
+  const asked: string[] = [];
+  app.onDialog((d) => (asked.push(d.title ?? ""), "Delete"));
+  await app.rightClick("id:session-1");
+  await app.chooseMenuItem("Delete…");
+  await app.waitFor("text:/^Deleted “/");
+  expect(asked[0]).toMatch(/^Delete “/);
+  // a file dropped on the window opens; anything else is said not to be a session
+  await app.dropFiles("id:shell", [`file://${path}`]);
+  await app.waitFor("id:session-summary");
+  await app.dropFiles("id:shell", ["file:///tmp/notes.txt"]);
+  await app.waitFor("text:notes.txt is not a session file");
+});

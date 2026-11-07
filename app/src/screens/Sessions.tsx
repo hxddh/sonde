@@ -8,7 +8,7 @@
 // session, and opens in a window of its own. In a terminal the levels stack.
 
 import { cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, windowSize } from "nsh";
-import { Button as BaseButton, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
+import { Button as BaseButton, Input, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
@@ -18,6 +18,7 @@ import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
 import { Button, Empty, IconButton, Segmented, SessionSkeleton, SidePanel, terminal } from "../ui/kit";
+import { removeSession, rename, RenameDialog, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
@@ -157,12 +158,15 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         : [{ label: t("compare.none"), disabled: true }],
     );
   };
+  const info = () => props.others().find((s) => s.path === props.path) ?? null;
   const moreMenu = () => {
     if (!isAvailable) return;
+    const me = info();
     void Menu.popup([
       { label: t("sessions.window"), icon: iconSvg("app-window"), onSelect: openWindow, disabled: props.inWindow },
-      { label: t("sessions.copyShare"), icon: iconSvg("share-2"), onSelect: () => copy(`sonde share --serve ${props.path}`) },
+      { label: t("sessions.share"), icon: iconSvg("share-2"), onSelect: () => void shareSession(props.path) },
       { label: t("sessions.copyPath"), icon: iconSvg("copy"), onSelect: () => copy(props.path) },
+      ...(me ? ([{ type: "separator" }, { label: t("sessions.rename"), icon: iconSvg("pencil"), onSelect: () => rename(me) }, { label: t("sessions.removeMenu"), icon: iconSvg("trash"), disabled: me.live, onSelect: () => void removeSession(me) }] as MenuItem[]) : []),
     ]);
   };
 
@@ -376,8 +380,45 @@ export function Sessions() {
       report(e);
     }
   };
+  const query = signal("");
+  const shown = () => {
+    const q = query().trim().toLowerCase();
+    if (!q) return sessions();
+    return sessions().filter((s) => [s.title, s.command, s.endpoint, s.name].some((f) => f?.toLowerCase().includes(q)));
+  };
+  const openInWindow = (path: string) =>
+    Window.open(() => <SessionWindow path={path} />, {
+      id: `session-${path.split("/").pop()}`,
+      title: path.split("/").pop() ?? "sonde",
+      defaultSize: { width: 1100, height: 720 },
+      restoreBounds: true,
+      representedFile: path,
+      tabGroup: "sessions",
+    });
+  const remove = async (s: SessionInfo) => {
+    const list = shown();
+    const at = list.findIndex((x) => x.path === s.path);
+    if (!(await removeSession(s))) return;
+    sessions.set(api.sessions.list());
+    // the one after it takes its place
+    if (selected() === s.path) selected.set(list[at + 1]?.path ?? list[at - 1]?.path ?? null);
+  };
+  const rowMenu = (s: SessionInfo, at?: { x: number; y: number }) => {
+    if (!isAvailable) return;
+    void Menu.popup(
+      [
+        { label: t("sessions.window"), icon: iconSvg("app-window"), onSelect: () => openInWindow(s.path) },
+        { label: t("sessions.share"), icon: iconSvg("share-2"), onSelect: () => void shareSession(s.path) },
+        { label: t("sessions.copyPath"), icon: iconSvg("copy"), onSelect: () => void Clipboard.writeText(s.path).then(() => notify(t("common.copied")), report) },
+        { type: "separator" },
+        { label: t("sessions.rename"), icon: iconSvg("pencil"), onSelect: () => rename(s) },
+        { label: t("sessions.removeMenu"), icon: iconSvg("trash"), disabled: s.live, onSelect: () => void remove(s) },
+      ],
+      at,
+    );
+  };
   const list = () => (
-    <View class={terminal() ? "gap-1" : "gap-3"}>
+    <View class={terminal() ? "flex-1 gap-1" : "flex-1 gap-3"}>
       <View class="flex-row items-center gap-2 px-2">
         <Text role="header" class="flex-1 text-body font-semibold text-foreground">
           {t("timeline.sessions")}
@@ -387,8 +428,23 @@ export function Sessions() {
         </If>
         <IconButton icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
       </View>
+      <If when={!terminal() && sessions().length > 4}>
+        <View class="px-1">
+          <Input
+            testID="session-search"
+            value={query()}
+            placeholder={t("sessions.search")}
+            accessibilityLabel={t("sessions.search")}
+            autoCorrect={false}
+            onChange={({ value }) => query.set(value)}
+            class="h-7 rounded-(--radius) border border-input bg-background px-2 text-body text-foreground focus:border-ring"
+          />
+        </View>
+      </If>
       <If when={sessions().length > 0} else={<Text class="px-2 text-small text-muted-foreground">{t("timeline.empty")}</Text>}>
-        <SessionList sessions={sessions()} selected={selected()} onSelect={(p) => selected.set(p)} />
+        <If when={shown().length > 0} else={<Text class="px-2 text-small text-muted-foreground">{t("sessions.noMatch")}</Text>}>
+          <SessionList sessions={shown()} selected={selected()} onSelect={(p) => selected.set(p)} onContextMenu={isAvailable && !terminal() ? rowMenu : undefined} />
+        </If>
       </If>
     </View>
   );
@@ -422,16 +478,21 @@ export function Sessions() {
     </Empty>
   );
 
+  // a session removed elsewhere (its own pane's menu): leave it
+  effect(() => {
+    const p = selected();
+    if (p && !sessions().some((s) => s.path === p)) untracked(() => selected.set(sessions()[0]?.path ?? null));
+  });
+
   return (
     <View class="flex-1" testID="screen-sessions">
+      <RenameDialog />
       <If
         when={terminal()}
         else={
           <If when={sessions().length > 0} else={nothing()}>
             <View class="flex-1 flex-row">
-              <Scroll class={shellWidth() < 1100 ? "w-56 border-r border-border" : "w-64 border-r border-border"} contentClass="px-2 py-4">
-                {list()}
-              </Scroll>
+              <View class={`${shellWidth() < 1100 ? "w-56" : "w-64"} border-r border-border px-2 pt-4`}>{list()}</View>
               <View class="min-w-0 flex-1">
                 <If when={selected()} else={<Empty icon="list-clock" text={t("timeline.pick")} />}>
                   {keyed()}
@@ -443,7 +504,7 @@ export function Sessions() {
       >
         {/* one level at a time: sessions › session › operation › request */}
         <View class="flex-1 p-1">
-          <If when={selected()} else={<Scroll class="flex-1">{list()}</Scroll>}>
+          <If when={selected()} else={list()}>
             {keyed()}
           </If>
         </View>

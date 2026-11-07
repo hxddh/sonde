@@ -15,6 +15,7 @@ import { Icon, type IconName } from "./icon";
 import { programOf } from "./sessionview";
 import { fill, glass, IconButton, Kbd, POPUP, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
+import { sessionName } from "./manage";
 import { paletteOpen } from "./palette";
 
 const mac = platform.os === "macos";
@@ -40,6 +41,25 @@ export function toggleSidebar() {
 export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", sessions: "list-clock", store: "database", activity: "activity", settings: "settings" };
 export const AREA_KEY: Record<Area, string> = { run: "mod+1", sessions: "mod+2", store: "mod+3", activity: "mod+shift+a", settings: "mod+," };
 
+/** File › Open Recent: the newest sessions, by the name the list gives them. */
+function recentMenu(): MenuItem[] {
+  sessionsTick();
+  let list: SessionInfo[] = [];
+  try {
+    list = api.sessions.list().slice(0, 10);
+  } catch {
+    // no sessions directory yet
+  }
+  if (!list.length) return [{ label: t("timeline.empty"), disabled: true }];
+  return list.map((s) => ({
+    label: `${sessionName(s)} — ${s.created.slice(5, 10)} ${s.created.slice(11, 16)}`,
+    onSelect: () => {
+      openSession.set(s.path);
+      go("sessions");
+    },
+  }));
+}
+
 /** The application's menus: macOS's menu bar; the toolbar's menu button elsewhere. */
 export function appMenus(open: (a: Area) => void): { label: string; submenu: MenuItem[] }[] {
   const places: MenuItem[] = (["run", "sessions", "store"] as Area[]).map((a) => ({ label: areaLabel(a), shortcut: AREA_KEY[a], checked: area() === a, onSelect: () => open(a) }));
@@ -49,6 +69,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
       submenu: [
         { label: t("run.start"), shortcut: "mod+r", onSelect: () => open("run") },
         { label: t("sessions.openFile"), shortcut: "mod+o", onSelect: () => void openSessionFile() },
+        { label: t("sessions.openRecent"), submenu: recentMenu() },
         { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(true) },
         ...(mac ? [] : [{ type: "separator" } as const, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" } as const, { role: "quit", label: t("menu.quit") } as const]),
       ],
