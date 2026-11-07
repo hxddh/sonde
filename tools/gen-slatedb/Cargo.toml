@@ -10,6 +10,6 @@ publish = false
 [workspace]
 
 [dependencies]
-slatedb = "=0.18.0"
+slatedb = { version = "=0.18.0", features = ["aws"] }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
