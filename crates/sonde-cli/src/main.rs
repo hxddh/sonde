@@ -56,6 +56,12 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run a command with its S3 requests recorded: sonde run -- <command>.
+    Run(cmd::record::RunArgs),
+    /// A local S3 endpoint that records what talks to it.
+    Proxy(cmd::record::ProxyArgs),
+    /// Print a recorded session.
+    Show(cmd::record::ShowArgs),
     /// Compatibility probes.
     Probe(cmd::probe::ProbeArgs),
     /// Incomplete multipart uploads.
@@ -107,6 +113,9 @@ fn main() -> ExitCode {
             }
         };
         let code = match &cli.command {
+            Command::Run(a) => cmd::record::run(&sonde, &cli, a).await,
+            Command::Proxy(a) => cmd::record::proxy(&sonde, &cli, a).await,
+            Command::Show(a) => cmd::record::show(a).await,
             Command::Probe(a) => cmd::probe::run(&sonde, &cli, a).await,
             Command::Mpu(a) => cmd::mpu::run(&sonde, &cli, a).await,
             Command::Du(a) => cmd::du::run(&sonde, &cli, a).await,

@@ -23,6 +23,7 @@ probes.workspace = true
 decoders.workspace = true
 s3raw.workspace = true
 reqlog.workspace = true
+sonde-proxy.workspace = true
 sonde-nsh = { workspace = true, optional = true }
 clap.workspace = true
 serde.workspace = true

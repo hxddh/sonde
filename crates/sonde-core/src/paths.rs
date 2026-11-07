@@ -57,6 +57,10 @@ impl Paths {
     pub fn probe_runs(&self) -> PathBuf {
         self.data_dir.join("probe-runs")
     }
+    /// Recorded sessions (`sonde run`, `sonde proxy`).
+    pub fn sessions(&self) -> PathBuf {
+        self.data_dir.join("sessions")
+    }
     pub fn plugins(&self) -> PathBuf {
         self.data_dir.join("plugins")
     }
