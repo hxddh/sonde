@@ -1,0 +1,31 @@
+[package]
+name = "sonde-proxy"
+description = "A local S3 endpoint that records every request an application makes, re-signs it with sonde's credentials and forwards it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+s3raw.workspace = true
+reqlog.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tokio = { workspace = true, features = ["net"] }
+futures.workspace = true
+bytes.workspace = true
+reqwest.workspace = true
+http.workspace = true
+percent-encoding.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+tempfile.workspace = true

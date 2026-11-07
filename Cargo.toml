@@ -7,6 +7,7 @@ members = [
     "crates/probes",
     "crates/decoders",
     "crates/sonde-nsh",
+    "crates/proxy",
     "crates/sonde-cli",
 ]
 default-members = [
@@ -15,6 +16,7 @@ default-members = [
     "crates/sonde-core",
     "crates/probes",
     "crates/decoders",
+    "crates/proxy",
     "crates/sonde-cli",
 ]
 
@@ -42,6 +44,7 @@ sonde-core = { path = "crates/sonde-core" }
 probes = { path = "crates/probes" }
 decoders = { path = "crates/decoders" }
 sonde-nsh = { path = "crates/sonde-nsh" }
+sonde-proxy = { path = "crates/proxy" }
 
 anyhow = "1"
 thiserror = "2"

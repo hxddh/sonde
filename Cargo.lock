@@ -1791,6 +1791,7 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -4158,6 +4159,7 @@ dependencies = [
  "serde_json",
  "sonde-core",
  "sonde-nsh",
+ "sonde-proxy",
  "tempfile",
  "tokio",
 ]
@@ -4211,6 +4213,29 @@ dependencies = [
  "sonde-core",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "sonde-proxy"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "chrono",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "parking_lot",
+ "percent-encoding",
+ "reqlog",
+ "reqwest",
+ "s3raw",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
