@@ -6,7 +6,7 @@ import { api } from "../native";
 import { bucket, chooseBucket, endpoint, endpoints, report } from "../store";
 import { Choice } from "./kit";
 
-export function EndpointPicker(props: { testID?: string }) {
+export function EndpointPicker(props: { testID?: string; class?: string }) {
   return (
     <Choice
       testID={props.testID ?? "endpoint-picker"}
@@ -17,7 +17,7 @@ export function EndpointPicker(props: { testID?: string }) {
         endpoint.set(v);
         chooseBucket(null);
       }}
-      class="w-56"
+      class={props.class ?? "w-56"}
     />
   );
 }

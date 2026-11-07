@@ -42,7 +42,7 @@ export function Sidebar() {
       <Item area="store" shortcut="⌘3" />
       <View class="flex-1" />
       <View class="gap-2 px-1">
-        <EndpointPicker />
+        <EndpointPicker class="w-full" />
       </View>
       <Item area="settings" shortcut="⌘," />
       <BaseButton testID="palette" accessibilityLabel={t("palette.open")} onPress={() => paletteOpen.set(true)} class="flex-row items-center gap-2.5 rounded-(--radius) px-2 py-1.5 hover:bg-sidebar-accent/60">

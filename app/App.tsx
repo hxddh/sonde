@@ -196,7 +196,11 @@ async function rememberWindow() {
   if (!isAvailable || terminal()) return;
   try {
     const saved = await Storage.getItem(WINDOW_KEY);
-    if (saved) Window.get("main")?.setPlacement(JSON.parse(saved));
+    const main = Window.get("main");
+    if (saved) main?.setPlacement(JSON.parse(saved));
+    // a first launch: a window room enough for Run's two panes (not every
+    // platform applies nsh.json's defaultSize)
+    else if ((main?.state()?.bounds.size.width ?? 0) < 900) main?.setBounds({ size: { width: 1280, height: 820 } });
   } catch {
     // a bad record is dropped
   }
