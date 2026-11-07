@@ -16,6 +16,7 @@ import type { SessionView } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, Dot, Empty, IconButton, Segmented, terminal } from "../ui/kit";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
+import { rememberedSize } from "../ui/sizes";
 import { seconds } from "../ui/sessionview";
 
 const POLICIES = (): { value: Policy; title: string; icon: "shield-check" | "ban" | "lock" }[] => [
@@ -209,7 +210,7 @@ function LiveOperations() {
       <If when={view() && view()!.episodes.length > 0} else={<Empty icon="activity" text={t("run.waiting")} />}>
         <View class="min-h-0 flex-1 gap-2.5">
           <If when={lastRun() && view()}>
-            <Observations view={view()!} oneLine />
+            <Observations view={view()!} compact max={3} />
           </If>
           <OperationsTable view={view()!} onSelect={() => lastRun() && openLastRun(go)} compact />
         </View>
@@ -266,6 +267,8 @@ function Intro() {
   );
 }
 
+const opsWidth = rememberedSize("run.operations", 560);
+
 export function Run() {
   const active = () => running() !== null || lastRun() !== null;
   return (
@@ -281,7 +284,7 @@ export function Run() {
                   <ProgramTerminal />
                 </View>
               </ResizablePanel>
-              <ResizablePanel minSize={340}>
+              <ResizablePanel size={opsWidth.size()} onResize={opsWidth.onResize} minSize={340}>
                 <View class="flex-1 pl-2">
                   <LiveOperations />
                 </View>

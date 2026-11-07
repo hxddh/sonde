@@ -456,7 +456,7 @@ const en = {
   "why.obs.races": "A conditional write (If-None-Match: * or If-Match) answered 412 Precondition Failed: two writers raced for the same key and the store kept the first. Expected where writers are fenced; worth a look where they should not meet.",
   "why.obs.hot": "One key read again and again. Each read is a request and a round trip; a cache in front of it would remove most of them.",
   "why.obs.listed": "Listing the same prefix again and again is slow (a page per 1000 keys) and billed per request; a manifest, or a listing kept between calls, avoids it.",
-  "obs.showOps": "Press to show its operations",
+  "obs.title": "What stands out",
 };
 
 type Key = keyof typeof en;
@@ -910,7 +910,7 @@ const zh: Partial<Record<Key, string>> = {
   "why.obs.races": "条件写入（If-None-Match: * 或 If-Match）返回了 412 Precondition Failed：两个写入者争用同一个键，存储保留了先到的那个。对有 fencing 的写入者这是预期行为；如果它们本不该相遇，值得查看。",
   "why.obs.hot": "同一个键被反复读取。每次读取都是一次请求和一次往返；在它前面加一层缓存可以省掉大部分。",
   "why.obs.listed": "反复列举同一个前缀很慢（每 1000 个键一页），而且按请求计费；使用清单文件，或在调用之间保留列举结果，可以避免。",
-  "obs.showOps": "点击显示相关操作",
+  "obs.title": "值得注意",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

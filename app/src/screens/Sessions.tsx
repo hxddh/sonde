@@ -17,6 +17,7 @@ import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
 import { Button, Empty, IconButton, Segmented, SidePanel, terminal } from "../ui/kit";
+import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
 import { programOf } from "../ui/sessionview";
@@ -26,6 +27,9 @@ import { RecordDetail } from "./Requests";
 type Pane = "operations" | "aligned" | "timeline";
 
 const program = programOf;
+
+/** The inspector's width, as the user leaves it. */
+const inspectorWidth = rememberedSize("sessions.inspector", 420);
 
 /** One session: its figures, its operations (and output), the inspector, and what can be done with it. */
 export function SessionPane(props: { path: string; others: () => SessionInfo[]; tick: () => number; onBack?: () => void; onOpen?: (p: string) => void; inWindow?: boolean }) {
@@ -230,7 +234,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           <Button small variant="ghost" icon="chevron-left" label={t("timeline.sessions")} onPress={() => props.onBack?.()} testID="sessions-back" class="self-start" />
         </If>
         <SessionHeader view={v} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || (props.inWindow ? windowSize().width : shellWidth()) < 1180} />
-        <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} oneLine={!roomy()} />
+        <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} />
         <If when={terminal()}>{actions()}</If>
       </View>
       <View class={terminal() ? "flex-row items-center gap-2" : "flex-row items-center gap-3 px-5 py-2.5"}>
@@ -289,7 +293,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
                   <ResizablePanelGroup axis="horizontal" class="flex-1">
                     <ResizablePanel minSize={460}>{main(v())}</ResizablePanel>
                     <If when={inspecting()}>
-                      <ResizablePanel size={420} minSize={320} maxSize={680}>
+                      <ResizablePanel size={inspectorWidth.size()} onResize={inspectorWidth.onResize} minSize={320} maxSize={680}>
                         {inspector()}
                       </ResizablePanel>
                     </If>

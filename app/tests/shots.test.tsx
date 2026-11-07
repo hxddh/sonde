@@ -73,9 +73,6 @@ for (const v of variants) {
     await app.press("id:inspector-close");
     await app.press("id:observation-1");
     await shot("03d-filtered");
-    // the pointer leaves the chip, and its card closes
-    await app.hover("id:session-pane-mode-timeline");
-    await app.wait(700);
     await app.press("id:session-pane-mode-timeline");
     await app.waitFor("id:timeline");
     await shot("03e-timeline");

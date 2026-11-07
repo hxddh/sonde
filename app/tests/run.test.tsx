@@ -62,9 +62,7 @@ test("an example session reads as operations, each opening on its requests", asy
   expect(app.shows("text:if-none-match")).toBe(true);
   // what stands out narrows the operations to those it is about
   await app.press("id:inspector-close");
-  // resting on one says why it matters
-  await app.hover("id:observation-0");
-  await app.waitFor("id:observation-card-0", { timeout: 3000 });
+  // each says why it matters, in place
   expect(app.texts().some((t) => t.startsWith("Every operation of this kind made the same requests"))).toBe(true);
   await app.press("id:observation-1");
   await app.waitFor("text:28 of 34 operations");

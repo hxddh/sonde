@@ -4,14 +4,14 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type JSX, platform, Scroll, Text, View } from "nsh";
-import { Button as BaseButton, DataTable, type DataTableRef, HoverCard } from "nsh/base";
+import { type JSX, platform, Scroll, signal, Text, View } from "nsh";
+import { Button as BaseButton, DataTable, type DataTableRef } from "nsh/base";
 import { bytes, date, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationText, observationWhy } from "../phrases";
 import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Dot, Empty, fill, glass, terminal, TYPE } from "./kit";
+import { Dot, Empty, terminal, TYPE } from "./kit";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
 
@@ -157,14 +157,20 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
   );
 }
 
-/** What stands out, as chips: a warning or a fact, each showing the operations it is about. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; oneLine?: boolean }) {
+/** Whether a session's findings are folded away (kept while the app runs). */
+const findingsOpen = signal(true);
+
+/** What stands out in a session — its core result. Each finding says what
+ * happened and why it matters, and narrows the operations to those it is
+ * about. `compact` (beside a run's live operations): the sentences only. */
+export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; max?: number }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
+  const list = () => props.view.observations.slice(0, props.max ?? props.view.observations.length);
   if (terminal()) {
     return (
       <If when={props.view.observations.length > 0}>
         <View testID="observations">
-          <Each of={props.view.observations}>
+          <Each of={list()}>
             {(o) => (
               <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
                 {o().level === "warn" ? "! " : "· "}
@@ -176,50 +182,45 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       </If>
     );
   }
+  const row = (o: () => Observation, i: () => number) => (
+    <BaseButton
+      testID={`observation-${i()}`}
+      accessibilityLabel={observationText(o())}
+      selected={props.filter === i()}
+      disabled={!props.onFilter || !o().episodes?.length}
+      onPress={() => press(i())}
+      class={`group flex-row items-start gap-2.5 px-3 ${props.compact ? "py-1.5" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${i() > 0 ? "border-t border-border" : ""}`}
+    >
+      <View class="h-5 w-4 items-center justify-center">
+        <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={14} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
+      </View>
+      <View class="min-w-0 flex-1 gap-0.5">
+        <Text class={`text-body text-foreground ${props.compact ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
+        <If when={!props.compact && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
+      </View>
+      <If when={props.onFilter && o().episodes?.length}>
+        <View class="h-5 flex-row items-center gap-1">
+          <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: o().episodes.length })}</Text>
+          <Icon name={props.filter === i() ? "x" : "chevron-right"} size={12} />
+        </View>
+      </If>
+    </BaseButton>
+  );
   return (
     <If when={props.view.observations.length > 0}>
-      <Scroll horizontal={props.oneLine} scrollable={!!props.oneLine} scrollbar={false} testID="observations" contentClass={props.oneLine ? "flex-row gap-1.5" : "flex-row flex-wrap gap-1.5"}>
-        <Each of={props.view.observations}>
-          {(o: () => Observation, i) => (
-            <HoverCard
-              openDelay={450}
-              placement="top"
-              align="start"
-              popupClass={`w-[340px] gap-2 rounded-(--radius-card) border border-border ${fill("bg-popover/85", "bg-popover")} p-3.5 shadow-xl`}
-              popupStyle={glass}
-              popupStartingClass="opacity-0 -translate-y-1"
-              popupEndingClass="opacity-0"
-              trigger={
-                <BaseButton
-                  testID={`observation-${i()}`}
-                  accessibilityLabel={observationText(o())}
-                  selected={props.filter === i()}
-                  disabled={!props.onFilter || !o().episodes?.length}
-                  onPress={() => press(i())}
-                  class={`max-w-full flex-row items-center gap-1.5 rounded-full border px-2.5 py-1 ${o().level === "warn" ? "border-warn/40 bg-warn/10 hover:bg-warn/15 selected:bg-warn/25" : "border-border bg-card hover:bg-muted selected:border-primary/50 selected:bg-selection"}`}
-                >
-                  <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={13} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
-                  <Text class="min-w-0 shrink text-small text-foreground line-clamp-1">{observationText(o())}</Text>
-                  <If when={props.filter === i()}>
-                    <Icon name="x" size={12} />
-                  </If>
-                </BaseButton>
-              }
-            >
-              <View testID={`observation-card-${i()}`} class="gap-2">
-                <View class="flex-row gap-2">
-                  <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={14} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
-                  <Text class="min-w-0 flex-1 text-body font-medium text-popover-foreground">{observationText(o())}</Text>
-                </View>
-                <If when={observationWhy(o())}>{(w) => <Text class="text-small leading-5 text-muted-foreground">{w()}</Text>}</If>
-                <If when={props.onFilter && o().episodes?.length}>
-                  <Text class="text-caption text-primary">{`${t("obs.showOps")} (${o().episodes.length})`}</Text>
-                </If>
-              </View>
-            </HoverCard>
-          )}
-        </Each>
-      </Scroll>
+      <View testID="observations" class="gap-1.5">
+        <If when={!props.compact}>
+          <BaseButton testID="observations-toggle" accessibilityLabel={t("obs.title")} selected={findingsOpen()} onPress={() => findingsOpen.set(!findingsOpen())} class="flex-row items-center gap-1 self-start rounded-(--radius-sm) px-1 hover:bg-muted">
+            <Icon name={findingsOpen() ? "chevron-down" : "chevron-right"} size={12} />
+            <Text role="header" class="text-caption font-medium text-muted-foreground">{`${t("obs.title")} · ${props.view.observations.length}`}</Text>
+          </BaseButton>
+        </If>
+        <If when={props.compact || findingsOpen()}>
+          <View class="overflow-hidden rounded-(--radius-card) border border-border bg-card">
+            <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
+          </View>
+        </If>
+      </View>
     </If>
   );
 }
@@ -308,7 +309,7 @@ export function OperationsTable(props: {
       case "notes":
         return <Text class="px-2 text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
       default:
-        return <Text class={`px-2 text-body text-foreground ${c.key === "time" || c.key === "requests" || c.key === "duration" ? "tabular-nums text-small" : ""}`}>{c.text}</Text>;
+        return <Text class={`px-2 text-foreground line-clamp-1 ${c.key === "time" || c.key === "requests" || c.key === "duration" ? "tabular-nums text-small" : "text-body"}`}>{c.text}</Text>;
     }
   };
   return (
