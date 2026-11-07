@@ -52,6 +52,10 @@ pub struct Record {
     pub response_bytes: Option<u64>,
     /// The raw error body (XML usually), kept verbatim up to 64 KiB.
     pub error_body: Option<String>,
+    /// A control request's body (the XML of DeleteObjects, a lifecycle rule,
+    /// …), kept so the request can be replayed; never object data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_body: Option<String>,
     /// A transport error (DNS, TLS, timeout), when there was no response.
     pub transport_error: Option<String>,
     /// The region used for signing, for "copy as aws cli".
@@ -76,8 +80,28 @@ pub struct RecordSummary {
     pub request_id: Option<String>,
 }
 
+/// Operations whose body is a small control document (XML or JSON) rather
+/// than object data: their bodies are kept on records, for replay.
+pub fn is_control_operation(op: &str) -> bool {
+    matches!(
+        op,
+        "DeleteObjects"
+            | "CompleteMultipartUpload"
+            | "CreateBucket"
+            | "PutObjectTagging"
+            | "PutObjectAcl"
+            | "PutObjectRetention"
+            | "PutObjectLegalHold"
+            | "RestoreObject"
+    ) || (op.starts_with("PutBucket")
+        || op.starts_with("PutObjectLock")
+        || op == "PutPublicAccessBlock")
+}
+
 /// Largest error body kept on a record.
 pub const MAX_ERROR_BODY: usize = 64 * 1024;
+/// Largest control body kept on a record.
+pub const MAX_REQUEST_BODY: usize = 256 * 1024;
 
 impl Record {
     /// Redacts every field that can carry a secret. Idempotent.
@@ -101,6 +125,16 @@ impl Record {
                 }
                 body.truncate(cut);
                 body.push_str("\n… (truncated)");
+            }
+            *body = crate::redact::redact_text(body);
+        }
+        if let Some(body) = &mut self.request_body {
+            if body.len() > MAX_REQUEST_BODY {
+                let mut cut = MAX_REQUEST_BODY;
+                while !body.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                body.truncate(cut);
             }
             *body = crate::redact::redact_text(body);
         }

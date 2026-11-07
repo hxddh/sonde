@@ -394,6 +394,13 @@ impl S3Client {
         c
     }
 
+    /// A clone that records into another log.
+    pub fn with_log(&self, log: RequestLog) -> Self {
+        let mut c = self.clone();
+        c.log = log;
+        c
+    }
+
     /// A clone with another retry policy.
     pub fn with_retry(&self, retry: RetryPolicy) -> Self {
         let mut cfg = (*self.cfg).clone();
@@ -740,6 +747,12 @@ impl S3Client {
             request_bytes: Some(req.body.len()),
             response_bytes: None,
             error_body: None,
+            request_body: match &req.body {
+                Body::Bytes(b) if reqlog::is_control_operation(&req.operation) => {
+                    Some(String::from_utf8_lossy(b).into_owned())
+                }
+                _ => None,
+            },
             transport_error: None,
             region: Some(self.cfg.region.clone()),
             job: self.job.clone(),
