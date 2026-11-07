@@ -9,6 +9,7 @@ import { api } from "./native";
 import { go, openSession, report, sessionsChanged } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
+import { programOf } from "./ui/sessionview";
 import type { Policy } from "./ui/session";
 import { toast } from "./ui/toast";
 
@@ -90,18 +91,18 @@ async function tellTheUser(r: RunResult, cmd: string) {
   try {
     const v = api.sessions.open(r.path);
     const warnings = v.observations.filter((o) => o.level === "warn").length;
-    const body = `${v.summary.requests} requests · ${v.episodes.length} operations${warnings ? ` · ${warnings} to look at` : ""}`;
+    const body = [t("run.bandRequests", { n: v.summary.requests }), t("figure.operationsN", { n: v.episodes.length }), ...(warnings ? [t("run.toLook", { n: warnings })] : [])].join(" · ");
     toast({
       id: "run-ended",
       kind: r.exit === 0 && !warnings ? "success" : "warning",
-      title: killed ? t("run.toastStopped", { command: cmd.split(" ")[0] }) : t("run.toastEnded", { command: cmd.split(" ")[0], code: String(r.exit ?? "?") }),
+      title: killed ? t("run.toastStopped", { command: programOf(cmd) ?? cmd }) : t("run.toastEnded", { command: programOf(cmd) ?? cmd, code: String(r.exit ?? "?") }),
       description: body,
       action: t("run.toastOpen"),
       onAction: () => openLastRun(go),
       duration: 8000,
     });
     if ((await Notifications.requestPermission()) !== "granted") return;
-    await Notifications.show({ id: "sonde-run", title: t("run.notifyTitle", { command: cmd.split(" ")[0] }), body });
+    await Notifications.show({ id: "sonde-run", title: t("run.notifyTitle", { command: programOf(cmd) ?? cmd }), body });
   } catch {
     // no notifications here (a terminal, an unbundled app): the screen says it
   }

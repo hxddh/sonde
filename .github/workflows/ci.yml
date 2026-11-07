@@ -99,6 +99,28 @@ jobs:
         with: { rev: "${{ env.NSH_REV }}" }
       - run: scripts/ui-tests.sh
 
+  shots:
+    # the app on a real window (GTK 4 under Xvfb): every place, wide and at
+    # the least size, light and dark, English and Chinese — kept as an
+    # artifact, the visual record of each build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { key: shots, workspaces: "app/.nsh/rust -> ../../target" }
+      - run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang xvfb openbox fonts-noto-cjk
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - name: Screenshots
+        run: scripts/shots.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sonde-shots
+          path: app/shots/*.png
+          if-no-files-found: warn
+
   build:
     uses: ./.github/workflows/build.yml
     secrets: inherit

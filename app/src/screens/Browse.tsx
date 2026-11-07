@@ -458,7 +458,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           if (want < start() || range.end > start() + WINDOW - 50) start.set(want);
         }}
         onRowPress={({ row }) => open(row)}
-        classes={terminal() ? { header: "bg-muted", rowSelected: "bg-accent" } : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1", cell: "px-0", rowOdd: "bg-muted/30", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
+        classes={terminal() ? { header: "bg-muted", rowSelected: "bg-accent" } : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-xs font-medium text-muted-foreground", cell: "px-0", rowOdd: "bg-muted/30", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
         empty={<Empty icon="folder" text={loading() ? t("common.loading") : t("common.empty")} />}
       />
     </View>

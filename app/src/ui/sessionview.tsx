@@ -12,6 +12,16 @@ import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, Session
 import { Icon } from "./icon";
 import { Dot, Empty, terminal } from "./kit";
 
+const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
+
+/** What a command runs, for lists: its program's name, or the command itself when it starts with the shell's own words. */
+export function programOf(command: string | null | undefined): string | null {
+  if (!command) return null;
+  const first = command.trim().split(/\s+/)[0] ?? "";
+  if (SHELL.has(first) || first.includes("=")) return command.trim().length > 40 ? `${command.trim().slice(0, 40)}…` : command.trim();
+  return first.split("/").pop() || command;
+}
+
 export const seconds = (s: number) => (s < 10 ? s.toFixed(1) : s.toFixed(0));
 
 /** Local time with milliseconds: 14:02:11.204 */
@@ -193,7 +203,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
 
 const tableClasses = {
   header: "bg-card border-b border-border",
-  headerCell: "pl-2 pr-1",
+  headerCell: "pl-2 pr-1 text-xs font-medium text-muted-foreground",
   cell: "px-2",
   rowOdd: "bg-muted/30",
   rowHover: "bg-row-hover",
@@ -446,8 +456,8 @@ export function SessionList(props: { sessions: SessionInfo[]; selected: string |
     });
     return out;
   };
-  const program = (s: SessionInfo) => (s.command ? (s.command.split(" ")[0].split("/").pop() ?? s.command) : s.endpoint);
-  const args = (s: SessionInfo) => (s.command ? s.command.split(" ").slice(1).join(" ") : "");
+  const program = (s: SessionInfo) => programOf(s.command) ?? s.endpoint;
+  const args = (s: SessionInfo) => (s.command && programOf(s.command) !== s.command.trim() && !programOf(s.command)!.endsWith("…") ? s.command.trim().split(/\s+/).slice(1).join(" ") : "");
   return (
     <View class="gap-3">
       <Each of={groups()} key={(g) => g.day}>

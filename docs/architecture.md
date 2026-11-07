@@ -61,6 +61,14 @@ resizes back (`Sessions.input`, `Sessions.resize`). The run resolves with the ex
 runs in the browser. `crates/sonde-cli/build.rs` embeds the built site (from `$SONDE_VIEWER_DIR` or
 `viewer/.nsh/out/sonde-viewer`); a build without it says so when `sonde share` needs it.
 
+## The app's UI layer
+
+`app/src/ui/` is the styled layer over `nsh/base`: theme tokens (`app/theme.json`, read by the viewer too), icons
+(`icon.tsx` draws Lucide data from `lucide.ts`, written by `scripts/lucide.py`), shortcuts as each platform writes
+them (`keys.ts`), controls (`kit.tsx`), toasts (`toast.tsx`), the window's toolbar and sidebar (`shell.tsx`), the
+palette, and the session views shared with the web viewer (`sessionview.tsx`, `record.tsx`, `timeline.tsx`). Pages
+compose these; they do not style base components of their own.
+
 ## The two forms
 
 `App.tsx` branches on `platform.idiom === "terminal"`: windows get a sidebar with four places (Run,

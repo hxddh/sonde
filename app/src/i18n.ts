@@ -424,6 +424,7 @@ const en = {
   "palette.choose": "choose",
   "palette.close": "close",
   "settings.themeLabel": "Theme",
+  "figure.operationsN": "{n} operations",
 };
 
 type Key = keyof typeof en;
@@ -845,6 +846,7 @@ const zh: Partial<Record<Key, string>> = {
   "palette.choose": "选择",
   "palette.close": "关闭",
   "settings.themeLabel": "主题",
+  "figure.operationsN": "{n} 个操作",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

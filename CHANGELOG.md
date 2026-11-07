@@ -4,6 +4,43 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-07
+
+The desktop app, made with care: a design system before the pages, Native Shell's components used to the full, and
+every place checked on a real window, light and dark, English and Chinese, wide and at the least size.
+
+### Added
+
+- A first launch welcomes: the built-in demo, the AWS profiles it finds, or an endpoint by hand, and an example
+  session, instead of a Run page with nothing to run against.
+- A title bar of the app's own: where you are, the program running, a searchable endpoint switcher, the read-only
+  lock, search; the menus behind a button on Linux and Windows.
+- Sessions: the figures at the top; what stands out as chips that narrow the operations to those it is about; the
+  operations with an outcome dot, family colors and a bar of their place in time; an inspector from an operation to
+  its requests to one request (headers and error bodies that fold, the XML highlighted); native context menus.
+- A timeline drawn on a Canvas: a time axis, outcome colors, a card on hover, drag to zoom.
+- Run: one command bar with recent commands, the working folder and the policy; a band of live figures; a toast when
+  it ends; the program in the tray while it runs.
+- Store: buckets and their prefixes as a tree; one field that filters and searches; an object's details as an
+  inspector with sections that fold; context menus.
+- Settings saved as they change, with Undo; endpoints edited in a side sheet, removed after a confirmation.
+- The palette: icons, platform shortcuts, recent commands and sessions, endpoints and buckets.
+- Icons (Lucide) throughout; toasts for notices and errors; tooltips with shortcuts.
+- `scripts/shots.sh` and CI's `shots` job: screenshots of every place as a build artifact.
+
+### Changed
+
+- Shortcuts read as the platform writes them (Ctrl+K on Linux and Windows).
+- A narrow window folds the sidebar away and shows the inspector over the content.
+- Observations name the operations they are about; operations count their lookups that found nothing.
+- The example session is named as a user would have run it.
+- The web viewer draws the new session views.
+
+### Fixed
+
+- A remembered window smaller than the least size (a phone-sized first window on Linux) is no longer restored.
+- The palette's highlighted row shows.
+
 ## [2.0.0] - 2026-11-07
 
 sonde is now one gesture: type a command and watch what it does to your object store. Run is the home, the app has

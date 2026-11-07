@@ -18,12 +18,13 @@ import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
 import { Button, Empty, IconButton, Segmented, terminal } from "../ui/kit";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
+import { programOf } from "../ui/sessionview";
 import { Timeline } from "../ui/timeline";
 import { RecordDetail } from "./Requests";
 
 type Pane = "operations" | "aligned" | "timeline";
 
-const program = (command: string | null | undefined) => (command ? (command.split(" ")[0].split("/").pop() ?? command) : null);
+const program = programOf;
 
 /** One session: its figures, its operations (and output), the inspector, and what can be done with it. */
 export function SessionPane(props: { path: string; others: () => SessionInfo[]; tick: () => number; onBack?: () => void; onOpen?: (p: string) => void; inWindow?: boolean }) {

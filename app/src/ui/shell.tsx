@@ -12,6 +12,7 @@ import { running } from "../run";
 import { type Area, area, bucket, chooseBucket, crumb, endpoint, endpoints, go, openSession, readOnly, section, sessionsTick, storeTab } from "../store";
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
+import { programOf } from "./sessionview";
 import { IconButton, Kbd, Tip } from "./kit";
 import { paletteOpen } from "./palette";
 
@@ -251,7 +252,7 @@ function Recent(props: { open: (a: Area) => void }) {
               class="flex-row items-center gap-2 rounded-(--radius) px-2 py-1 hover:bg-sidebar-accent/50"
             >
               <View class={`size-1.5 rounded-full ${s().live ? "bg-primary" : "bg-transparent"}`} />
-              <Text class="min-w-0 flex-1 text-xs text-sidebar-foreground line-clamp-1">{s().command ? (s().command!.split(" ")[0].split("/").pop() ?? s().name) : s().name}</Text>
+              <Text class="min-w-0 flex-1 text-xs text-sidebar-foreground line-clamp-1">{programOf(s().command) ?? s().name}</Text>
               <Text class="text-[11px] text-muted-foreground">{ago(s().created)}</Text>
             </BaseButton>
           )}

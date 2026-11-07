@@ -15,6 +15,9 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | 6 | Text | `numberOfLines` is a style key and `selectable` a `View` prop; the TSX types say so, but both read like `Text` props from other frameworks. | `line-clamp-N` classes; selection on views where wanted. |
 | 7 | Generated workspace | The runner workspace `nsh test` writes (`.nsh/rust`) keeps its own Cargo profiles, so the app workspace's `[profile.dev] debug` does not shrink it: debug runners and hosts took 16 GB. | `CARGO_PROFILE_DEV_DEBUG=0` in `scripts/ui-tests.sh` and CI. |
 
+| 8 | Components | A `Tree` item is a folder only while it has children, so a folder whose children load when it opens shows no chevron until they do. | Each unloaded folder carries one disabled placeholder child ("Loading…"), replaced by its prefixes once `onExpand` has fetched them. |
+| 9 | Desktop (Linux) | The tray needs a D-Bus session bus (StatusNotifierItem); without one (a bare X server, CI) `Tray.set` warns and shows nothing. | Nothing to do: the tray is a convenience; the toolbar's running pill and the toast say the same. |
+
 ## By design
 
 - No styled components: every control (buttons, fields, switches, selects, segmented control, badges) is sonde's own

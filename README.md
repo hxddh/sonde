@@ -4,6 +4,8 @@
 operations — a SlateDB manifest write, an Iceberg commit, a multipart upload — then replay the same traffic on
 another endpoint and see where the two disagree.
 
+![Run: a program in its terminal, its S3 requests as operations beside it](docs/images/run.png)
+
 ```sh
 sonde run -- ./my-app                    # record every S3 request my-app makes
 sonde show                               # … as operations, with what stands out
@@ -35,7 +37,7 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 **Run** is the app's home: type a command and press Return. The program runs in a real terminal on the left; its
 requests appear on the right as operations while it works, and when it ends — with a notification — the session
 holds both, lined up in time: choose an operation and the lines it printed light up, choose a line and the operations
-running then do. **Sessions** keep every run: as operations or as a waterfall, replayed on another endpoint,
+running then do. **Sessions** keep every run: as operations or as a timeline, replayed on another endpoint,
 compared with another session side by side, opened in a window of their own, or shared as a web page with
 `sonde share`. **Store** keeps sonde's tools for buckets: browse 100 000+ objects, multipart health, versions,
 capacity, 40 compatibility probes, and lenses that decode SlateDB, Iceberg, lakeFS and Woodpecker layouts.
@@ -52,7 +54,7 @@ default, no telemetry.
 |---|---|
 | **Run** | A command run in the app's terminal (a real PTY: colours, progress bars, input) with its S3 traffic recorded; the output and the operations lined up in time; a notification when it ends. |
 | **Recording** | `sonde run -- <command>` or `sonde proxy`, or a recording endpoint started in the app: a local S3 endpoint that re-signs, forwards and records every request; signed aws-chunked bodies, presigned URLs and multipart uploads handled; policies `--no-delete`, `--read-only`. Sessions are redacted JSON lines ([docs/recording.md](docs/recording.md)). |
-| **Operations** | Sessions read as operations (multipart uploads, retries, lookups, listings; SlateDB, Iceberg and Delta steps) with observations; `sonde show`, or Sessions — as a table or a waterfall. |
+| **Operations** | Sessions read as operations (multipart uploads, retries, lookups, listings; SlateDB, Iceberg and Delta steps) with observations; `sonde show`, or Sessions — a table with each operation's outcome and place in time, narrowed by what stands out, an inspector down to each request, or a timeline. |
 | **Replay** | `sonde replay <session> -e <endpoint>`: the traffic re-enacted on another store under a fresh prefix and compared request by request; `sonde diff` for two files. In the app: Replay from a session, then the differences grouped and both sessions as transcripts side by side. |
 | **Share** | `sonde share`: a session as a static web page (operations, observations, output, every request) for anyone with a browser — write it to a folder, host it anywhere (S3 static website hosting works), or `--serve` it. |
 | **Endpoints** | Many endpoints, from AWS profiles or by hand (URL, region, path-style, CA file, vendor: AWS, R2, MinIO, Ceph RGW, Alibaba OSS, Tigris, Backblaze B2, Wasabi, GCS XML, other). Connectivity test with STS `GetCallerIdentity` where the vendor has it. |
@@ -119,10 +121,19 @@ controls, Esc goes back, Ctrl+C copies a selection (OSC 52, over SSH too) or qui
 
 ### The desktop app
 
-It opens on Run. A sidebar with the endpoint and the places (⌘1 Run, ⌘2 Sessions, ⌘3 Store, ⌘, Settings), the
-command palette (⌘K), the menu bar, light and dark appearance, the window's size and place remembered, and updates
-checked only when you ask (Settings › Updates).
-Screenshots are produced by CI on macOS (`nsh test --target macos`); see [docs/packaging.md](docs/packaging.md).
+A first launch offers the built-in demo, the AWS profiles it finds, or an endpoint by hand. Then it opens on Run.
+The toolbar is the window's title bar: where you are, the program running, the endpoint (searchable), the read-only
+lock and search (⌘K / Ctrl+K). The sidebar holds the places and recent sessions (⌘1 Run, ⌘2 Sessions, ⌘3 Store,
+⌘, Settings; ⌘B hides it). Light and dark, English and 中文, the window's size and place remembered, updates checked
+only when you ask.
+
+| | |
+|---|---|
+| ![A session: its figures, what stands out as filters, operations with outcome and time, the inspector](docs/images/session.png) | ![The timeline, dark](docs/images/timeline-dark.png) |
+| ![Store: buckets and prefixes as a tree, objects, an object's details](docs/images/store.png) | ![The command palette](docs/images/palette.png) |
+
+Every place is screenshotted on a real window in CI (`scripts/shots.sh`: wide and at the least size, light and
+dark, English and Chinese); the images are the build's `sonde-shots` artifact.
 
 ## Documentation
 

@@ -41,6 +41,9 @@ with `ldd` and runs `sonde --version` in `debian:bookworm-slim`.
    `SHA256SUMS` and one `.sha256` per file (what `install.sh` checks), and (with `HOMEBREW_TAP_TOKEN`) writes `Formula/sonde.rb` and `Casks/sonde-app.rb` into
    `hxddh/homebrew-sonde` from `packaging/homebrew/*.rb.in`.
 
+`scripts/shots.sh` (CI's `shots` job) screenshots every place on a real Linux window under Xvfb — wide and at the
+least size, light and dark, English and Chinese — into the `sonde-shots` artifact.
+
 The web viewer (`viewer/`) is built first (`nsh package App.tsx --target web`) and embedded in every terminal
 binary for `sonde share`.
 
