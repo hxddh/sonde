@@ -1,6 +1,7 @@
 # Performance
 
-All numbers below were measured on the development machine for v0.1.0:
+All numbers below were measured on the development machine (the UI numbers for v0.1.0, the recording
+proxy for v1.0.0):
 a Linux x86_64 VM, 4 vCPU (Xeon @ 2.10 GHz), no GPU, in a 120×40
 pseudo-terminal. They are a baseline, not a benchmark suite: rerun the
 commands below on your machine to compare.

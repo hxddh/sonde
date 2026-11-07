@@ -2,10 +2,13 @@
 
 ```
 app/                      TSX screens (Native Shell), theme, nsh.json        ─┐ presentation only
-crates/sonde-nsh          `sonde/native`: #[module] Sonde, #[class] Listing   ─┤ type conversion
+crates/sonde-nsh          `sonde/native`: #[module] Sonde, Sessions,          ─┤ type conversion
+                          #[class] Listing                                    │
                           plugins (nsh-package verification, host calls)      │
 crates/sonde-cli          `sonde`: headless subcommands; `sonde tui` host     ─┘
-crates/sonde-core         config, vendors, credentials, jobs, guard + audit,  ─┐
+crates/proxy (sonde-proxy) the recording endpoint, sessions, episodes,     ─┐
+                          observations, replay and comparison                │
+crates/sonde-core         config, vendors, credentials, jobs, guard + audit,  │
                           services: browse, mpu, versions, du, layout, exec;  │ no UI framework
                           demo S3 server                                      │ (≈ 80 % of the code)
 crates/probes             40 probes, runner, run store, diff, matrix, reports │
@@ -14,7 +17,7 @@ crates/s3raw              SigV4, addressing, retries, throttle, XML, ops      �
 crates/reqlog             records, redaction, ring buffer, SQLite, HAR        ─┘
 ```
 
-Dependencies point down: `reqlog ← s3raw ← sonde-core ← probes`, `decoders ← sonde-core`, and only `sonde-nsh` and
+Dependencies point down: `reqlog ← s3raw ← sonde-core ← probes`, `reqlog ← s3raw ← sonde-proxy`, `decoders ← sonde-core`, and only `sonde-nsh` and
 `sonde-cli` (feature `tui`) depend on Native Shell. Replacing the UI framework keeps every crate but `sonde-nsh` and
 `app/`.
 

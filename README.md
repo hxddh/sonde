@@ -1,40 +1,53 @@
 # sonde
 
-**Diagnose S3 and S3-compatible object storage.** sonde is not another file browser: it shows what the S3 API
-actually did — every request with its headers, status, request id and raw error body; what multipart uploads,
-versions and delete markers are costing you; why a bucket is as big as it is; how a vendor differs from AWS,
-probe by probe; and what a SlateDB, Iceberg, lakeFS or Woodpecker layout on the bucket says about itself.
-
-One codebase, two forms:
-
-- a **macOS app** — a sidebar of endpoints and buckets, a list, a detail pane; light and dark; menus and shortcuts;
-- a **terminal UI** in one static-libc binary, for the bastion host next to your data (SSH, IMDS and IRSA
-  credentials work as they do for the AWS CLI) — and the same binary is a **headless CLI** for scripts and CI.
-
-The UI is [Native Shell](https://github.com/longbridge/nsh) (TSX screens on QuickJS); everything else is Rust.
-
-## New: see what your software does to S3
+**See what your software does to S3.** Run an application through sonde and read its object-storage traffic as
+operations — a SlateDB manifest write, an Iceberg commit, a multipart upload — then replay the same traffic on
+another endpoint and see where the two disagree.
 
 ```sh
-sonde run -- ./my-app          # every S3 request my-app makes, re-signed by sonde and recorded
+sonde run -- ./my-app                    # record every S3 request my-app makes
+sonde show                               # … as operations, with what stands out
+sonde replay session.sonde -e ceph       # the same traffic on another store: what differs?
 ```
 
 ```
-00:22:25.053  200    16 ms   ↑130 B  PutObject      slate/db/manifest/00000000000000000001.manifest  if-none-match: *
-00:22:25.074  404     4 ms           HeadObject     slate/db/wal/00000000000000000001.sst
-00:22:25.112  200     2 ms   ↓250 B  ListObjectsV2  slate/  prefix=db/compactions/
+00:22:25.074  SlateDB  looked for the newest WAL: probed ids 1…128        8 reqs · 5 ms
+00:22:25.085  SlateDB  WAL 1 written empty (fencing marker)              2 reqs · 9 ms  · after 1 lookup that found nothing
+01:09:10.149  Iceberg  commit: table metadata v2 · 3 files (7.6 KiB)    20 reqs · 112 ms
+01:09:10.597  Iceberg  1 file written, no commit followed (72 B)          3 reqs · 18 ms
 
-172 requests to rustfs in 0.5 s · 116 not found · ↑36.5 KiB ↓22.7 KiB
+116 requests (6 operations) to rustfs in 0.7 s · ↑58.1 KiB ↓62.6 KiB
+! files were written with no commit after them: orphans unless a later commit adds them
+· 21 files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do
 ```
 
-The application gets a local endpoint and throwaway keys; sonde holds the real credentials. `--no-delete` and
-`--read-only` refuse what you do not want the application to do. Sessions are redacted files you can attach to a bug
-report. This is the base of sonde 1.0 — [docs/recording.md](docs/recording.md).
+- **Record.** The application talks to a local endpoint with throwaway keys; sonde signs each request with the real
+  credentials (profiles, SSO, IMDS, IRSA — they never reach the application), forwards it, and writes a redacted
+  session file. `--no-delete` and `--read-only` refuse what you do not want it to do. Checked with boto3, the AWS SDKs
+  for JavaScript, Go and Java, and object_store; +0.2 ms per request.
+- **Understand.** Requests become operations: multipart uploads, retries, bursts of lookups, paged listings, and the
+  steps of SlateDB, Apache Iceberg and Delta Lake, each with the reads and files that led to it. Observations name
+  what deserves a look: unfinished uploads, files no commit references, retries, lost conditional races, hot keys.
+- **Replay.** The session re-enacted on another endpoint under a fresh prefix — upload ids, ETags and tokens mapped,
+  payloads synthetic, cleaned up afterwards — and every answer compared. A store that ignores `If-None-Match`
+  shows up as `PutObject recorded 412 → replay 200`.
+
+The **Timeline** is the app's home, on macOS and in a terminal: sessions, their operations, each operation's
+requests, each request in full — and a Record button. Around it stay sonde's tools for buckets: browse 100 000+
+objects, multipart health, versions, capacity, 40 compatibility probes, and lenses that decode SlateDB, Iceberg,
+lakeFS and Woodpecker layouts.
+
+One codebase, three forms: a **macOS app**, a **terminal UI** in one static-libc binary for the host next to your
+data, and a **headless CLI** for scripts and CI. The UI is [Native Shell](https://github.com/longbridge/nsh) (TSX on
+QuickJS); everything else is Rust. Read-only by default, no telemetry.
 
 ## Features
 
 | | |
 |---|---|
+| **Recording** | `sonde run -- <command>` or `sonde proxy`, or Record in the Timeline: a local S3 endpoint that re-signs, forwards and records every request; signed aws-chunked bodies, presigned URLs and multipart uploads handled; policies `--no-delete`, `--read-only`. Sessions are redacted JSON lines ([docs/recording.md](docs/recording.md)). |
+| **Operations** | Sessions read as operations (multipart uploads, retries, lookups, listings; SlateDB, Iceberg and Delta steps) with observations; `sonde show`, or the Timeline. |
+| **Replay** | `sonde replay <session> -e <endpoint>`: the traffic re-enacted on another store under a fresh prefix and compared request by request; `sonde diff` for two files. |
 | **Endpoints** | Many endpoints, from AWS profiles or by hand (URL, region, path-style, CA file, vendor: AWS, R2, MinIO, Ceph RGW, Alibaba OSS, Tigris, Backblaze B2, Wasabi, GCS XML, other). Connectivity test with STS `GetCallerIdentity` where the vendor has it. |
 | **Browse** | Buckets, prefixes and objects (`ListObjectsV2`, paged, 100 000+ rows kept in Rust and scrolled smoothly), HEAD details: every header, user metadata, ETag analysis (`-N` = N parts, consistent part sizes), full-object vs composite checksums, storage class, SSE. Download (streamed, cancellable), presigned URLs, filter and search. |
 | **Request inspector** | Every request (ring buffer, 5000 by default, optional SQLite): time, operation, target, status, latency, retries, `x-amz-request-id` / `x-amz-id-2`, redacted headers, raw error body. Filters by status, operation, endpoint. Copy as `aws s3api` or as (unsigned) curl; export JSON or HAR. |
@@ -62,6 +75,8 @@ Or download a release: `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz`
 ## Quick start
 
 ```sh
+sonde run -- python etl.py            # record an application's S3 traffic (endpoint from --url or the config)
+sonde show                            # the newest session, as operations
 sonde tui --demo                      # the terminal UI on a built-in demo server (no account needed)
 sonde endpoints import                # endpoints for your ~/.aws/config profiles
 sonde endpoints test prod             # reachability, credentials source, STS identity
@@ -89,12 +104,13 @@ demo-large                                                         100,000 items
 ▸ logs/
 ```
 
-F10 opens the menu bar, Tab and the arrows move between controls, Esc goes back, `1`–`9` open sections from the
-home list, Ctrl+C copies a selection (OSC 52, over SSH too) or quits, F12 closes a plugin view.
+The home list starts with the Timeline. F10 opens the menu bar, Tab and the arrows move between controls, Esc goes
+back, `1`–`9` open sections from the home list, Ctrl+C copies a selection (OSC 52, over SSH too) or quits, F12 closes a plugin view.
 
 ### The macOS app
 
-A sidebar (endpoint, buckets, sections), the section's list and a detail pane; the menu bar (⌘1–⌘9 sections, ⌘,
+It opens on the Timeline: sessions and the recording panel, the session's operations, and the selected operation's
+requests. A sidebar (endpoint, buckets, sections), the section's list and a detail pane; the menu bar (⌘1–⌘9 sections, ⌘,
 settings, ⌘I requests, ⌘J jobs), light and dark appearance, and the window's size and place remembered.
 Screenshots are produced by CI on macOS (`nsh test --target macos`); see [docs/packaging.md](docs/packaging.md).
 

@@ -7,6 +7,11 @@
 
 | Command | Does |
 |---|---|
+| `sonde run [--no-delete\|--read-only] [--live] [-o FILE] -- COMMAND…` | Runs a command against a local endpoint that re-signs and records its S3 requests; prints the session's summary; exits with the command's status. |
+| `sonde proxy [--listen ADDR] [--no-delete\|--read-only] [-o FILE]` | The same endpoint, standing: prints the variables to set, then every request. |
+| `sonde show [FILE] [--requests] [--errors] [--summary] [-f json]` | A session (default: the newest) as operations (or requests) and observations. |
+| `sonde replay FILE -e E [--bucket A=B] [--prefix P\|--in-place] [--keep] [--yes] [-o FILE]` | Re-enacts a session on another endpoint, cleans up, compares every answer. |
+| `sonde diff ORIGINAL REPLAY` | Compares a session with its replay. |
 | `sonde probe -e A -e B -b BUCKET [--only checksum.] [--temp-buckets] [--no-slow] [-f json\|markdown\|csv] [-o FILE]` | Runs the probes on each endpoint in parallel; saves the runs. |
 | `sonde probe list` / `sonde probe runs` / `sonde probe diff RUN:EP RUN:EP` | The catalog, saved runs, changes between two runs. |
 | `sonde mpu scan -e E -b B [-p PREFIX]` | Incomplete uploads, their bytes, age, cost; the lifecycle verdict. |
@@ -24,11 +29,11 @@
 |---|---|
 | 0 | Done; nothing to report |
 | 1 | A probe failed (a guarantee broke), or a layout has errors |
-| 2 | Probes behaved differently from AWS (and none failed) |
+| 2 | Probes behaved differently from AWS (and none failed); a replay answered differently |
 | 3 | Probes could not run (errors only) |
 | 4 | Findings worth attention: stale uploads or no abort rule, layout warnings, a changed probe diff, a dry run |
 | 64 | Usage or configuration error |
 | 70 | The operation failed (connection, credentials, permission) |
-| 77 | Refused: read-only mode, or the confirmation did not match |
+| 77 | Refused: read-only mode, the confirmation did not match, or a replay without `--yes` and no terminal to ask |
 
 A failed request prints its readable error, its request id and the request line from the log.
