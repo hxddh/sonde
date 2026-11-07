@@ -4211,6 +4211,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sonde-core",
+ "sonde-proxy",
  "tempfile",
  "tokio",
 ]
