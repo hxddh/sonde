@@ -1,8 +1,8 @@
 {
   "name": "sonde",
   "id": "dev.sonde.app",
-  "version": "4.0.0",
-  "build": 6,
+  "version": "5.0.0",
+  "build": 7,
   "icon": "assets/icon.png",
   "rust": "../crates/sonde-nsh",
   "theme": "theme.json",

@@ -28,8 +28,10 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
   session file. `--no-delete` and `--read-only` refuse what you do not want it to do. Checked with boto3, the AWS SDKs
   for JavaScript, Go and Java, and object_store; +0.2 ms per request.
 - **Understand.** Requests become operations: multipart uploads, retries, bursts of lookups, paged listings, and the
-  steps of SlateDB, Apache Iceberg and Delta Lake, each with the reads and files that led to it. Observations name
-  what deserves a look: unfinished uploads, files no commit references, retries, lost conditional races, hot keys.
+  steps of SlateDB, Apache Iceberg and Delta Lake, each with the reads and files that led to it. Findings name
+  what deserves a look — unfinished uploads, files no commit references, retries, throttling and how many requests
+  were in flight, lost conditional races, hot keys, HEAD before GET, requests far slower than the rest — ranked by
+  the requests they bear on, with what acting on them would save.
 - **Replay.** The session re-enacted on another endpoint under a fresh prefix — upload ids, ETags and tokens mapped,
   payloads synthetic, cleaned up afterwards — and every answer compared. A store that ignores `If-None-Match`
   shows up as `PutObject recorded 412 → replay 200`.
@@ -37,9 +39,9 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 The app has three places. **Run** is its home: type a command and press Return. The program runs in a real terminal
 on the left; its requests appear on the right as operations while it works, and when it ends the session holds both,
 lined up in time: choose an operation and the lines it printed light up, choose a line and the operations running
-then do. **Sessions** keep every run — and any `.sonde` file you open (⌘O): as operations or as a timeline, what
-stands out explained on hover, replayed on another endpoint, compared with another session side by side, opened in a
-window of their own, or shared as a web page with `sonde share`. **Buckets** browse 100 000+ objects under an
+then do. **Sessions** keep every run — and any `.sonde` file you open (⌘O) or drop on the window: as operations or
+as a timeline, what stands out first and why, replayed on another endpoint, compared with another session side by
+side, opened in a window of their own, renamed, searched, or shared as a web page from the app (or `sonde share`). **Buckets** browse 100 000+ objects under an
 overview of what sonde noticed — incomplete uploads and their cost, versioning, the SlateDB, Iceberg, lakeFS or
 Woodpecker layout it recognises, the size once measured — each a sheet of detail away. Settings open in a window of
 their own, with the endpoints and their compatibility (40 probes); sonde's own requests, jobs and changes are in
@@ -139,7 +141,7 @@ are in [app/DESIGN.md](app/DESIGN.md).
 
 Every place is screenshotted on a real window in CI on Linux, macOS and Windows (`scripts/shots.sh`: wide and at
 the least size, light and dark, English and Chinese); the images are the build's `sonde-shots-<platform>` artifacts.
-[What changed from 2.1 to 3.0](docs/compare-3.0.md) and [from 3.0 to 4.0](docs/compare-4.0.md), side by side.
+[What changed from 2.1 to 3.0](docs/compare-3.0.md), [from 3.0 to 4.0](docs/compare-4.0.md) and [from 4.0 to 5.0](docs/compare-5.0.md), side by side.
 
 ## Documentation
 

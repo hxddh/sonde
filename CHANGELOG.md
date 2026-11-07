@@ -4,6 +4,60 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-11-07
+
+What a session finds, made more correct, faster and more useful: findings ranked by what they cost with the requests
+acting on them would save, sessions you can look after and share from the app, and the bugs a review of 4.0 found.
+
+### Added
+
+- Three findings: objects checked with HEAD and then read with GET (the GET alone answers both); requests the store
+  throttled (503 SlowDown, 429), with how many were in flight and a limit under which it likely would not have; and
+  requests far slower than the session's median, the slowest named.
+- Findings are ranked: warnings first, then by the requests they bear on; where it can be counted, each says what
+  acting on it would save ("45 fewer requests (26% of the session)").
+- Sessions can be renamed (a title of your own), deleted after asking, searched, and shared as a web page from the
+  app: Share writes `sonde share`'s page, serves it on 127.0.0.1 and opens it in the browser. All from a session's
+  context menu or its ⋯ menu.
+- Drop a `.sonde` file on the window to open it; File › Open Recent lists the newest sessions.
+- A 50,000-request session is a test (`crates/proxy/tests/perf.rs`): about 170 ms to read and analyse in a release
+  build.
+
+### Changed
+
+- A session is read and analysed off the interface's thread, once per version of its file; a live one again only
+  after the last reading has ended. Run and Sessions show the session's outline while it is read.
+- The session list is a virtual list whose days stay in view while their sessions scroll.
+- Dates follow the app's language and the user's 12- or 24-hour clock.
+- Recent sessions in the sidebar have a second line — their arguments, else their endpoint — so two runs of one
+  program can be told apart.
+- Overview cards split their row into equal columns.
+- Polls (a live session, Activity, the jobs badge) rest while the window is out of sight; a closed side panel
+  returns the screen reader to what opened it.
+- The viewer `sonde share` writes is embedded once, in `sonde-proxy`, for the CLI and the app alike.
+
+### Fixed
+
+- A replay refused nothing and cleaned up everything: its cleanup removed every object under the prefix it was
+  given, including objects it had not written, and two replays in the same second shared a default prefix. Default
+  prefixes now carry a random suffix, a prefix that already holds objects is refused, and a prefix is always a
+  folder of its own (`taken` no longer matches `taken-not/`).
+- A commit retried after a 503 was reported as "files written, no commit followed": the retried write is now kept
+  with the step it retried.
+- A CreateMultipartUpload retried after a failure left a false "multipart upload never completed".
+- A session cut off in the middle of a character (a recorder killed mid-write) failed to open; it opens with the
+  torn line skipped, as a torn line always was.
+- A replay's root listing was compared with its prefix left on the keys, so every key differed.
+- The overview kept saying "…" for a scan that was cancelled or failed; a failure now says so with its reason, and
+  is tried again when the bucket reopens.
+- A session's request count included the program's output lines; it counts requests only, and reads only what was
+  appended since.
+- Two recordings, replays or imports in the same second overwrote each other's file.
+- Two recordings started at once could both start.
+- Request ids could be assigned out of order under concurrent requests.
+- An argument of a phrase holding `{n}` (a key named so) was substituted again in the English text.
+- Versioning reads "On" / "Suspended" (已开启 / 已暂停) instead of S3's `Enabled`.
+
 ## [4.0.0] - 2026-11-07
 
 The same app, made with the rigor of Native Shell's design guides: one design system that every page follows,

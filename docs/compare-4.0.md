@@ -12,9 +12,9 @@ scroll inside a quarter of its height, so the operations keep theirs.
 
 | 3.0 | 4.0 |
 |---|---|
-| ![A session in 3.0](images/3.0/session.png) | ![A session in 4.0](images/session.png) |
-| ![A session in 3.0, in Chinese](images/3.0/session-zh.png) | ![A session in 4.0, in Chinese](images/session-zh.png) |
-| | ![A session at the least window size](images/session-min.png) |
+| ![A session in 3.0](images/3.0/session.png) | ![A session in 4.0](images/4.0/session.png) |
+| ![A session in 3.0, in Chinese](images/3.0/session-zh.png) | ![A session in 4.0, in Chinese](images/4.0/session-zh.png) |
+| | ![A session at the least window size](images/4.0/session-min.png) |
 
 ## Run, Buckets, Settings
 
@@ -23,11 +23,11 @@ commits; commands that open more end with "…".
 
 | 3.0 | 4.0 |
 |---|---|
-| ![Run in 3.0](images/3.0/run.png) | ![Run in 4.0](images/run.png) |
-| ![Buckets in 3.0](images/3.0/store.png) | ![Buckets in 4.0](images/store.png) |
-| ![Incomplete uploads in 3.0](images/3.0/uploads.png) | ![Incomplete uploads in 4.0](images/uploads.png) |
-| ![Endpoints in 3.0](images/3.0/endpoints.png) | ![Endpoints in 4.0](images/endpoints.png) |
-| | ![Activity in 4.0, a side panel with its own header](images/activity.png) |
+| ![Run in 3.0](images/3.0/run.png) | ![Run in 4.0](images/4.0/run.png) |
+| ![Buckets in 3.0](images/3.0/store.png) | ![Buckets in 4.0](images/4.0/store.png) |
+| ![Incomplete uploads in 3.0](images/3.0/uploads.png) | ![Incomplete uploads in 4.0](images/4.0/uploads.png) |
+| ![Endpoints in 3.0](images/3.0/endpoints.png) | ![Endpoints in 4.0](images/4.0/endpoints.png) |
+| | ![Activity in 4.0, a side panel with its own header](images/4.0/activity.png) |
 
 ## What a screenshot does not show
 
