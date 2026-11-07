@@ -7,15 +7,17 @@ import { DataTable } from "nsh/base";
 import { bytes, count, date, days, money } from "../format";
 import { t } from "../i18n";
 import { api, watch } from "../native";
-import { bucket, endpoint, report, settings } from "../store";
+import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan } from "../types";
 import { Badge, Bar, Button, Card, Empty, Field, KeyValue, Mono, Muted, Page, terminal, Title } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
+import { here, remember } from "../ui/overview";
 
 export function Multipart() {
-  const pfx = signal("");
-  const report_ = signal<MpuReport | null>(null);
+  // a window looks at the prefix the objects show; a terminal asks for one
+  const pfx = terminal() ? signal("") : prefix;
+  const report_ = signal<MpuReport | null>(terminal() ? null : (here().mpu ?? null));
   const progress = signal<string | null>(null);
   const plan = signal<Plan | null>(null);
   const days_ = signal(String(settings()?.["stale-upload-days"] ?? 7));
@@ -32,6 +34,7 @@ export function Multipart() {
       progress.set(t("common.loading"));
       const r = await watch<MpuReport>(job, (e) => e.type === "Progress" && progress.set(e.progress.message));
       report_.set(r);
+      remember(r.endpoint, r.bucket, r.prefix, { mpu: r });
     } catch (e) {
       report(e);
     }
@@ -58,6 +61,7 @@ export function Multipart() {
     }
   };
   const tone = (s: string) => (s === "covered" ? "pass" : s === "missing" ? "fail" : "warn");
+  if (!terminal() && !report_()) void scan();
   return (
     <Page testID="screen-multipart">
       <View class="flex-row flex-wrap items-end gap-2">
@@ -65,8 +69,10 @@ export function Multipart() {
           <EndpointPicker />
           <BucketPicker />
         </If>
-        <Field class="w-56" label={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} mono />
-        <Button variant="primary" label={t("common.scan")} onPress={scan} disabled={!bucket() || !!progress()} testID="mpu-scan" />
+        <If when={terminal()}>
+          <Field class="w-56" label={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} mono />
+        </If>
+        <Button variant={terminal() ? "primary" : "outline"} label={terminal() ? t("common.scan") : t("overview.rescan")} onPress={scan} disabled={!bucket() || !!progress()} testID="mpu-scan" />
         <If when={progress()}>
           <Button label={t("common.cancel")} onPress={cancel} testID="mpu-cancel" />
         </If>

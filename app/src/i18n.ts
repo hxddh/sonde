@@ -432,6 +432,20 @@ const en = {
   "activity.search": "Key, bucket, operation, request ID",
   "activity.target": "Target",
   "activity.noRequests": "sonde's own requests show here: listings, scans, downloads, probes.",
+  "overview.size": "Size",
+  "overview.measure": "Measure",
+  "overview.measureHint": "Lists every object and version once",
+  "overview.month": "month",
+  "overview.uploads": "Incomplete uploads",
+  "overview.noUploads": "None",
+  "overview.noRule": "No lifecycle rule aborts them",
+  "overview.versioning": "Versioning",
+  "overview.versionsHint": "A key's history opens from its object",
+  "overview.layouts": "Recognised layouts",
+  "overview.rescan": "Scan again",
+  "compat.title": "Compatibility",
+  "compat.hint": "Probe how each endpoint differs from AWS: checksums, ranges, conditional writes, listing, multipart",
+  "compat.open": "Check compatibility",
 };
 
 type Key = keyof typeof en;
@@ -861,6 +875,20 @@ const zh: Partial<Record<Key, string>> = {
   "activity.search": "键、桶、操作、请求 ID",
   "activity.target": "目标",
   "activity.noRequests": "sonde 自己发出的请求会显示在这里：列举、扫描、下载、探测。",
+  "overview.size": "大小",
+  "overview.measure": "测量",
+  "overview.measureHint": "逐个列出所有对象和版本一次",
+  "overview.month": "月",
+  "overview.uploads": "未完成的上传",
+  "overview.noUploads": "没有",
+  "overview.noRule": "没有生命周期规则会中止它们",
+  "overview.versioning": "版本控制",
+  "overview.versionsHint": "键的历史从对象详情打开",
+  "overview.layouts": "识别出的布局",
+  "overview.rescan": "重新扫描",
+  "compat.title": "兼容性",
+  "compat.hint": "探测每个端点与 AWS 的差异：校验和、范围读取、条件写入、列举、分段上传",
+  "compat.open": "检查兼容性",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

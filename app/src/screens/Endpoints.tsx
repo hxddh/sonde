@@ -7,6 +7,7 @@ import { api } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Icon } from "../ui/icon";
+import { openCompatWindow } from "./CompatWindow";
 import { Badge, Button, Card, Check, Choice, Dot, Empty, Field, IconButton, KeyValue, Muted, Page, Section, terminal, Title, Toggle } from "../ui/kit";
 import { ms as fmtMs } from "../format";
 
@@ -253,6 +254,16 @@ export function Endpoints() {
           <Button variant="outline" icon="key-round" label={t("endpoints.import")} onPress={() => mode.set("import")} />
           <Button variant="outline" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
         </View>
+        <If when={!terminal() && endpoints().length > 0}>
+          <View class="flex-row items-center gap-3 rounded-(--radius-card) border border-border bg-card px-4 py-3">
+            <Icon name="flask-conical" size={16} tint="muted-foreground" />
+            <View class="min-w-0 flex-1 gap-0.5">
+              <Text class="text-[13px] font-medium text-foreground">{t("compat.title")}</Text>
+              <Text class="text-xs text-muted-foreground">{t("compat.hint")}</Text>
+            </View>
+            <Button variant="outline" label={t("compat.open")} onPress={() => openCompatWindow()} testID="open-compat" />
+          </View>
+        </If>
         <If when={terminal() && form()}>{(f) => <Card>{f()}</Card>}</If>
         <If when={endpoints().length > 0} else={<Empty icon="server" text={t("endpoints.noneYet")} />}>
           <View class="overflow-hidden rounded-(--radius-card) border border-border bg-card">

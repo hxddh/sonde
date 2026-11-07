@@ -12,6 +12,7 @@ import type { Entry, ObjectDetail } from "../types";
 import { Icon, iconSvg } from "../ui/icon";
 import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, Muted, terminal, Toggle } from "../ui/kit";
 import { Fold, Pairs } from "../ui/record";
+import { Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const WINDOW = 400;
@@ -485,7 +486,8 @@ export function Browse() {
           when={terminal()}
           else={
             <View class="flex-1 flex-row">
-              <View class="min-w-0 flex-1 px-5 py-4">
+              <View class="min-w-0 flex-1 gap-3 px-5 py-4">
+                <Overview />
                 <Objects onSelect={(e) => selected.set(e)} selected={selected()?.key ?? null} />
               </View>
               <If when={selected()}>

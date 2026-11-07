@@ -5,14 +5,15 @@ import { cleanup, signal, Text, View } from "nsh";
 import { bytes, count, money } from "../format";
 import { t } from "../i18n";
 import { api, watch } from "../native";
-import { bucket, endpoint, notify, report } from "../store";
+import { bucket, endpoint, notify, prefix, report } from "../store";
+import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
 import { Bar, Button, Card, Empty, Field, Heading, KeyValue, Muted, Page, terminal, Title, Toggle } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, StackBar } from "../ui/charts";
 
 export function Capacity() {
-  const pfx = signal("");
+  const pfx = terminal() ? signal("") : prefix;
   const mpu = signal(true);
   const result = signal<DuReport | null>(null);
   const progress = signal<string | null>(null);
@@ -33,13 +34,17 @@ export function Capacity() {
     try {
       job = await api.duScan(ep, b, pfx(), mpu());
       progress.set(t("common.loading"));
-      result.set(await watch<DuReport>(job, (e) => e.type === "Progress" && progress.set(`${e.progress.message} · ${bytes(e.progress.bytes)}`)));
+      const r = await watch<DuReport>(job, (e) => e.type === "Progress" && progress.set(`${e.progress.message} · ${bytes(e.progress.bytes)}`));
+      result.set(r);
+      remember(ep, b, pfx(), { size: r });
     } catch (e) {
       report(e);
     }
     job = null;
     progress.set(null);
   };
+  // asked for from a window: measured now, unless it was already
+  if (!terminal() && !result()) void scan();
   const exportAs = (f: "json" | "csv") => {
     try {
       notify(t("common.exportedTo", { path: api.duExport(endpoint()!, bucket()!, pfx(), f) }));
@@ -54,9 +59,11 @@ export function Capacity() {
           <EndpointPicker />
           <BucketPicker />
         </If>
-        <Field class="w-56" label={t("common.prefix")} value={pfx()} onChange={(v) => (pfx.set(v), load())} mono />
+        <If when={terminal()}>
+          <Field class="w-56" label={t("common.prefix")} value={pfx()} onChange={(v) => (pfx.set(v), load())} mono />
+        </If>
         <Toggle label={t("du.includeMultipart")} checked={mpu()} onChange={(v) => mpu.set(v)} />
-        <Button variant="primary" label={t("common.scan")} onPress={scan} disabled={!bucket() || !!progress()} testID="du-scan" />
+        <Button variant={terminal() ? "primary" : "outline"} label={terminal() || !result() ? t("common.scan") : t("overview.rescan")} onPress={scan} disabled={!bucket() || !!progress()} testID="du-scan" />
         <If when={progress()}>
           <Button label={t("common.cancel")} onPress={() => job && api.cancelJob(job)} />
         </If>

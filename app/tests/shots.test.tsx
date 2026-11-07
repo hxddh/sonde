@@ -78,11 +78,17 @@ for (const v of variants) {
     await shot("04-store");
     await app.press("id:bucket-demo");
     await app.waitFor("text:README.md", { timeout: 10000 });
+    // the cards fill in as their scans finish
+    await app.wait(2500);
     await shot("04b-objects");
     await app.press("text:README.md");
     await app.waitFor("id:object-detail");
     await app.wait(600);
     await shot("04c-object");
+    await app.press("id:overview-multipart");
+    await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
+    await shot("04d-uploads");
+    await app.press("id:sheet-close");
 
     await app.press("id:activity-open");
     await app.waitFor("id:requests");
@@ -100,6 +106,11 @@ for (const v of variants) {
     await settings("05b-settings");
     await app.press("id:tab-endpoints");
     await settings("05c-endpoints");
+    await app.press("id:open-compat");
+    await app.waitFor("id:screen-probes");
+    await app.wait(450);
+    await app.window("compat").screenshot(`${dir}/${v.name}-05e-compat.png`);
+    await app.window("compat").pressClose();
     await app.press("id:add-endpoint");
     await app.waitFor("id:endpoint-form");
     await settings("05d-endpoint-form");

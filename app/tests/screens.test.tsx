@@ -21,9 +21,10 @@ test("request inspector: records, details, copy as curl without a signature", as
 
 test("multipart: scan, lifecycle verdict, the guard refuses while read-only", async () => {
   const app = await withDemo("demo");
+  // the bucket's card says it before the detail opens
+  await app.waitFor("text:3 · 172 MiB", { timeout: 10000 });
   await place(app, "multipart");
-  await app.press("id:mpu-scan");
-  await app.waitFor("text:3 incomplete uploads", { timeout: 10000 });
+  await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   expect(app.shows("text:2 older than 7 days")).toBe(true);
   expect(app.shows("text:missing")).toBe(true);
   await app.press("id:plan-abort");
@@ -48,7 +49,6 @@ test("versions: the timeline of a deleted key", async () => {
 test("capacity: why the bucket is this big", async () => {
   const app = await withDemo("demo");
   await place(app, "capacity");
-  await app.press("id:du-scan");
   await app.waitFor("id:du-findings", { timeout: 15000 });
   expect(app.texts().some((t) => t.startsWith("• Incomplete multipart uploads"))).toBe(true);
   expect(app.shows("id:du-stack")).toBe(true);
@@ -56,8 +56,8 @@ test("capacity: why the bucket is this big", async () => {
 
 test("layouts: detects and decodes the real SlateDB sample, with replay", async () => {
   const app = await withDemo("demo-layouts");
+  await app.waitFor("id:overview-layouts", { timeout: 15000 });
   await place(app, "layouts");
-  await app.press("id:layout-detect");
   await app.waitFor("id:analyze-slatedb", { timeout: 15000 });
   expect(app.shows("id:analyze-iceberg")).toBe(true);
   expect(app.shows("id:analyze-lakefs")).toBe(true);
@@ -85,9 +85,6 @@ test("compatibility: runs probes on the demo and fills the matrix", async () => 
 
 test("errors are readable and lead to their request", async () => {
   const app = await withDemo();
-  await place(app, "versions");
-  await app.type("id:version-key", "x");
-  // no bucket chosen: pick one that does not exist through the inspector path
   await place(app, "endpoints");
   await app.press("id:add-endpoint");
   await app.type("id:ep-name", "Broken");
@@ -107,8 +104,7 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   await app.press("id:read-only");
   await app.waitFor("label:Writes enabled");
   await place(app, "multipart");
-  await app.press("id:mpu-scan");
-  await app.waitFor("text:3 incomplete uploads", { timeout: 10000 });
+  await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
   expect(app.enabled("id:confirm-run")).toBe(false);

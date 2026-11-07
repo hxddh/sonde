@@ -7,7 +7,8 @@ import { Slider } from "nsh/base";
 import { bytes, date } from "../format";
 import { t } from "../i18n";
 import { api, watch } from "../native";
-import { bucket, endpoint, report } from "../store";
+import { bucket, endpoint, prefix, report } from "../store";
+import { here, remember } from "../ui/overview";
 import type { Detection, Layout, Snapshot } from "../types";
 import { Badge, Bar, Button, Card, Empty, Field, Heading, KeyValue, Muted, Page, SimpleTable, terminal, Title } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
@@ -64,8 +65,8 @@ function Replay(props: { job: string; layout: Layout }) {
 }
 
 export function Layouts() {
-  const pfx = signal("");
-  const found = signal<Detection[] | null>(null);
+  const pfx = terminal() ? signal("") : prefix;
+  const found = signal<Detection[] | null>(terminal() ? null : (here().layouts ?? null));
   const layout = signal<{ job: string; layout: Layout } | null>(null);
   const progress = signal<string | null>(null);
   let job: string | null = null;
@@ -84,7 +85,11 @@ export function Layouts() {
   };
   const detect = async () => {
     try {
-      found.set(await follow<Detection[]>(await api.detectLayouts(endpoint()!, bucket()!, pfx())));
+      const ep = endpoint()!;
+      const b = bucket()!;
+      const f = await follow<Detection[]>(await api.detectLayouts(ep, b, pfx()));
+      found.set(f);
+      remember(ep, b, pfx(), { layouts: f });
     } catch (e) {
       report(e);
     }
@@ -98,6 +103,7 @@ export function Layouts() {
     }
   };
   const tone = (s: string) => (s === "error" ? "fail" : s === "warning" ? "warn" : "info");
+  if (!terminal() && !found()) void detect();
   return (
     <Page testID="screen-layouts">
       <View class="flex-row flex-wrap items-end gap-2">
@@ -105,8 +111,10 @@ export function Layouts() {
           <EndpointPicker />
           <BucketPicker />
         </If>
-        <Field class="w-64" label={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} mono testID="layout-prefix" />
-        <Button variant="primary" label={t("layouts.detect")} onPress={detect} disabled={!bucket() || !!progress()} testID="layout-detect" />
+        <If when={terminal()}>
+          <Field class="w-64" label={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} mono testID="layout-prefix" />
+        </If>
+        <Button variant={terminal() ? "primary" : "outline"} label={t("layouts.detect")} onPress={detect} disabled={!bucket() || !!progress()} testID="layout-detect" />
         <Button label={t("layouts.generic")} onPress={() => analyze("generic", pfx())} disabled={!bucket() || !!progress()} />
         <If when={progress()}>
           <Button label={t("common.cancel")} onPress={() => job && api.cancelJob(job)} />

@@ -43,6 +43,8 @@ export const bucket = signal<string | null>(null);
 export const prefix = signal<string>("");
 export const section = signal<Section>("run");
 export const storeTab = signal<StoreTab>("browse");
+/** The detail of a bucket a window shows in a sheet over its objects. */
+export const storeSheet = signal<StoreTab | null>(null);
 export const settingsTab = signal<SettingsTab>("settings");
 export const activityTab = signal<ActivityTab>("requests");
 /** The area on screen. */

@@ -9,7 +9,8 @@ const SETTINGS = ["settings", "endpoints"];
 const ACTIVITY = ["requests", "jobs", "audit"];
 
 /** Goes to a place, or to a tab of one. A window opens Settings in a window
- * of their own (⌘,) and Activity from its toolbar; a terminal lists every
+ * of their own (⌘,), Activity from its toolbar, a bucket's details from its
+ * cards and compatibility from the endpoints; a terminal lists every
  * place on its home list. */
 export async function place(app: App, where: string) {
   const area = STORE.includes(where) ? "store" : SETTINGS.includes(where) ? "settings" : ACTIVITY.includes(where) ? "activity" : where;
@@ -18,6 +19,22 @@ export async function place(app: App, where: string) {
     await app.keyboard.press("mod+,");
     await app.waitFor("id:screen-settings-area");
     await app.press(`id:tab-${where}`);
+    return;
+  }
+  if (window && where === "probes") {
+    await place(app, "endpoints");
+    await app.press("id:open-compat");
+    await app.waitFor("id:screen-probes");
+    return;
+  }
+  // a bucket's details open in a sheet over its objects, from its cards
+  if (window && area === "store") {
+    if (app.shows("id:store-sheet")) await app.press("id:sheet-close");
+    await app.press("id:nav-store");
+    if (where !== "browse") {
+      await app.press(`id:overview-${where}`);
+      await app.waitFor(`id:screen-${where}`);
+    }
     return;
   }
   if (window && area === "activity") {

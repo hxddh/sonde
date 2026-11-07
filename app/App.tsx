@@ -13,8 +13,9 @@ import { running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, readOnly, report, setOverlay, settings, shellWidth } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, readOnly, report, section, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
+import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityOpen } from "./src/ui/activity";
 import { Badge, terminal } from "./src/ui/kit";
 import { Palette, paletteOpen } from "./src/ui/palette";
@@ -68,6 +69,22 @@ function DesktopShell() {
     }
     if (a === "activity") {
       activityOpen.set(true);
+      return true;
+    }
+    // compatibility is a window of its own, opened from the endpoints
+    if (s === "probes") {
+      try {
+        openCompatWindow();
+      } catch (e) {
+        report(e);
+      }
+      return true;
+    }
+    // a bucket's details open over its objects
+    if (a === "store") {
+      storeTab.set("browse");
+      storeSheet.set(s === "browse" ? null : (s as StoreTab));
+      section.set("browse");
       return true;
     }
     return false;
