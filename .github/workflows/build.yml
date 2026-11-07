@@ -114,7 +114,7 @@ jobs:
           mkdir -p dist
           ls -la app/.nsh/out
           cp app/.nsh/out/sonde-[0-9]*-*.* dist/
-          (cd dist && for f in sonde-[0-9]*; do shasum -a 256 "$f" > "$f.sha256"; done)
+          (cd dist && for f in sonde-[0-9]*; do sha256sum "$f" > "$f.sha256"; done)
       - uses: actions/upload-artifact@v4
         with:
           name: sonde-desktop-${{ matrix.name }}
