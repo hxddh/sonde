@@ -5,3 +5,5 @@
 *.nshpkg
 /tests/integration/.data
 /tools/gen-slatedb/target
+/tools/sdk-smoke/node/node_modules
+/tools/sdk-smoke/java/target
