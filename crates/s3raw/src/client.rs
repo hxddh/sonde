@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::credentials::{Credentials, CredentialsProvider};
 use crate::error::{ErrorKind, S3Error};
-use crate::sigv4::{self, SignInput};
+use crate::sigv4;
 use crate::throttle::Throttle;
 
 /// How buckets appear in URLs.
@@ -374,6 +374,12 @@ impl S3Client {
 
     pub fn log(&self) -> &RequestLog {
         &self.log
+    }
+
+    /// The HTTP client (its pool, CA roots and timeouts), for callers that
+    /// stream bodies themselves.
+    pub fn http(&self) -> &reqwest::Client {
+        &self.http
     }
 
     pub fn credentials_provider(&self) -> &Arc<dyn CredentialsProvider> {
@@ -813,47 +819,22 @@ impl S3Client {
         headers.append(&mut extra);
         headers.push(("host".into(), host.clone()));
         if let Some(c) = &creds {
-            headers.push((
-                "x-amz-date".into(),
-                time.format("%Y%m%dT%H%M%SZ").to_string(),
-            ));
-            headers.push(("x-amz-content-sha256".into(), payload_hash.clone()));
-            if let Some(t) = &c.session_token {
-                headers.push(("x-amz-security-token".into(), t.expose().to_string()));
-            }
-            let signed: Vec<(String, String)> = headers
-                .iter()
-                .filter(|(k, _)| {
-                    let k = k.to_ascii_lowercase();
-                    k == "host"
-                        || k.starts_with("x-amz-")
-                        || k == "content-md5"
-                        || k == "content-type"
-                        || k == "range"
-                        || k.starts_with("if-")
-                        || k == "content-encoding"
-                })
-                .cloned()
-                .collect();
             let region = if req.service == "sts" && self.cfg.region.is_empty() {
                 "us-east-1"
             } else {
                 &self.cfg.region
             };
-            let sig = sigv4::sign(
-                &SignInput {
-                    method: req.method.as_str(),
-                    canonical_uri: &path,
-                    query: &req.query,
-                    headers: &signed,
-                    payload_hash: &payload_hash,
-                    region,
-                    service: &req.service,
-                    time,
-                },
+            sigv4::sign_headers(
+                &mut headers,
+                req.method.as_str(),
+                &path,
+                &req.query,
+                &payload_hash,
+                region,
+                &req.service,
+                time,
                 c,
             );
-            headers.push(("authorization".into(), sig.authorization(&c.access_key_id)));
         }
 
         let mut rb = self.http.request(req.method.clone(), &url);
@@ -898,7 +879,8 @@ fn is_retryable_status(r: &S3Response) -> bool {
         || (r.status == 400 && r.text().contains("<Code>RequestTimeout</Code>"))
 }
 
-fn header_pairs(map: &http::HeaderMap) -> Vec<(String, String)> {
+/// Header (name, value) pairs of a map, values read lossily.
+pub fn header_pairs(map: &http::HeaderMap) -> Vec<(String, String)> {
     map.iter()
         .map(|(k, v)| {
             (
@@ -909,7 +891,8 @@ fn header_pairs(map: &http::HeaderMap) -> Vec<(String, String)> {
         .collect()
 }
 
-fn fill_ids(record: &mut Record, headers: &[(String, String)]) {
+/// Fills a record's request id and host id from response headers.
+pub fn fill_ids(record: &mut Record, headers: &[(String, String)]) {
     for name in REQUEST_ID_HEADERS {
         if let Some((_, v)) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
             record.request_id = Some(v.clone());

@@ -166,6 +166,67 @@ pub fn sign(input: &SignInput<'_>, creds: &Credentials) -> Signature {
     }
 }
 
+/// Whether a header is signed: `host`, every `x-amz-*`, and the headers
+/// whose change would change the request's meaning.
+pub fn is_signed_header(name: &str) -> bool {
+    let k = name.to_ascii_lowercase();
+    k == "host"
+        || k.starts_with("x-amz-")
+        || k == "content-md5"
+        || k == "content-type"
+        || k == "range"
+        || k.starts_with("if-")
+        || k == "content-encoding"
+}
+
+/// Signs a request in place: adds `x-amz-date`, `x-amz-content-sha256`,
+/// `x-amz-security-token` (with a session token) and `authorization` to
+/// `headers`, which must hold `host`.
+#[allow(clippy::too_many_arguments)]
+pub fn sign_headers(
+    headers: &mut Vec<(String, String)>,
+    method: &str,
+    canonical_uri: &str,
+    query: &[(String, String)],
+    payload_hash: &str,
+    region: &str,
+    service: &str,
+    time: DateTime<Utc>,
+    creds: &Credentials,
+) -> Signature {
+    headers.push((
+        "x-amz-date".into(),
+        time.format("%Y%m%dT%H%M%SZ").to_string(),
+    ));
+    headers.push(("x-amz-content-sha256".into(), payload_hash.to_string()));
+    if let Some(t) = &creds.session_token {
+        headers.push(("x-amz-security-token".into(), t.expose().to_string()));
+    }
+    let signed: Vec<(String, String)> = headers
+        .iter()
+        .filter(|(k, _)| is_signed_header(k))
+        .cloned()
+        .collect();
+    let sig = sign(
+        &SignInput {
+            method,
+            canonical_uri,
+            query,
+            headers: &signed,
+            payload_hash,
+            region,
+            service,
+            time,
+        },
+        creds,
+    );
+    headers.push((
+        "authorization".into(),
+        sig.authorization(&creds.access_key_id),
+    ));
+    sig
+}
+
 /// Presigns: returns the query to append (already including the signature).
 /// `extra_query` holds the operation's own parameters.
 #[allow(clippy::too_many_arguments)]

@@ -16,4 +16,4 @@ mod ring;
 pub mod sqlite;
 
 pub use record::{Header, Record, RecordSummary};
-pub use ring::{DEFAULT_CAPACITY, Filter, RequestLog, StatusFilter};
+pub use ring::{DEFAULT_CAPACITY, Filter, RequestLog, Sink, StatusFilter};
