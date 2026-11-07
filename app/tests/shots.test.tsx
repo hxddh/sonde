@@ -30,11 +30,14 @@ for (const v of variants) {
       await app.wait(450);
       await app.screenshot(`${dir}/${v.name}-${name}.png`);
     };
-    // a narrow window folds the sidebar away: bring it back to go somewhere
+    // The title bar's buttons are reached by their shortcuts: on macOS a
+    // test's press in the hidden title bar's area does not reach the view
+    // (FINDINGS 12). A narrow window folds the sidebar away: bring it back
+    // to go somewhere.
     const go = async (area: string) => {
-      if (!app.shows(`id:nav-${area}`)) await app.press("id:toggle-sidebar");
+      if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
-      if (v.name === "min") await app.press("id:toggle-sidebar");
+      if (v.name === "min") await app.keyboard.press("mod+b");
     };
 
     await shot("01-welcome");
@@ -93,7 +96,7 @@ for (const v of variants) {
     await shot("04d-uploads");
     await app.press("id:sheet-close");
 
-    await app.press("id:activity-open");
+    await app.keyboard.press("mod+shift+a");
     await app.waitFor("id:requests");
     await shot("05-activity");
     await app.press("id:activity-close");
@@ -119,7 +122,7 @@ for (const v of variants) {
     await settings("05d-endpoint-form");
     await app.keyboard.press("Escape");
     await app.window("settings").pressClose();
-    await app.press("id:palette");
+    await app.keyboard.press("mod+k");
     await app.waitFor("id:palette-command");
     await shot("06-palette");
     await app.type("id:palette-command", "ver");

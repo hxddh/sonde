@@ -19,6 +19,7 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | 9 | Desktop (Linux) | The tray needs a D-Bus session bus (StatusNotifierItem); without one (a bare X server, CI) `Tray.set` warns and shows nothing. | Nothing to do: the tray is a convenience; the toolbar's running pill and the toast say the same. |
 | 10 | Desktop | `windowSize()` follows the window with the focus: with a second window (Settings) focused, the main window's layout read the second one's width and folded its sidebar. | The main window's shell measures itself (`onLayout`) and its layout reads that (`shellWidth`). |
 | 11 | Capabilities | A capability missing from `nsh.json` (`picker`) is caught only when the call is made, as a rejected promise (`ERR_ACCESS_DENIED`); `nsh check` and `nsh build` say nothing. | A test picks a file (`app.onPick`), so a missing grant fails CI rather than a user. |
+| 12 | Testing (macOS) | Under `nsh test --target macos`, a press on a button in a hidden title bar's area (the app's toolbar) never reaches it, though nsh's own picking (`window_drag` in `nsh-platform-macos`) leaves views with press handlers clickable; the same presses work on GTK and Win32. Whether a real click is affected is not verified on hardware here. | The screenshot tour reaches the toolbar's commands by their shortcuts (⌘B, ⌘⇧A, ⌘K), which every one of them has. |
 
 ## By design
 
