@@ -10,6 +10,7 @@
 pub mod chunked;
 pub mod episode;
 pub mod op;
+pub mod replay;
 pub mod session;
 pub mod summary;
 
@@ -348,6 +349,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         request_bytes: None,
         response_bytes: None,
         error_body: None,
+        request_body: None,
         transport_error: None,
         region: Some(cfg.region.clone()),
         job: shared.cfg.tag.clone(),
@@ -424,6 +426,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
             let hash = sigv4::sha256_hex(&decoded.payload);
             let n = decoded.payload.len() as u64;
+            if reqlog::is_control_operation(&operation) {
+                record.request_body = Some(String::from_utf8_lossy(&decoded.payload).into_owned());
+            }
             (hash, reqwest::Body::from(decoded.payload), Some(n))
         } else if !has_body {
             let hash = if content_sha.is_empty() {
@@ -439,6 +444,23 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 content_sha.clone()
             };
             match length {
+                // a control document (DeleteObjects, a lifecycle rule): small,
+                // kept on the record so the request can be replayed
+                Some(n) if n <= 1 << 20 && reqlog::is_control_operation(&operation) => {
+                    match Limited::new(body, 1 << 20).collect().await {
+                        Ok(c) => {
+                            let raw = c.to_bytes();
+                            record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
+                            (hash, reqwest::Body::from(raw), Some(n))
+                        }
+                        Err(e) => {
+                            let msg = format!("sonde could not read the request body: {e}");
+                            record.transport_error = Some(msg.clone());
+                            shared.log.push(record);
+                            return Ok(xml_error(400, "IncompleteBody", &msg));
+                        }
+                    }
+                }
                 Some(n) => {
                     let stream = body.into_data_stream();
                     (hash, reqwest::Body::wrap_stream(stream), Some(n))
