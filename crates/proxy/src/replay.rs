@@ -641,9 +641,52 @@ pub fn buckets_of(records: &[Record], opts: &ReplayOptions) -> Vec<String> {
     b
 }
 
-/// The prefix a replay starting now writes under.
+/// The prefix a replay starting now writes under: the time, and four hex
+/// digits so two replays in the same second do not share it.
 pub fn default_prefix() -> String {
-    format!("replay-{}/", chrono::Local::now().format("%Y%m%d-%H%M%S"))
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let salt = (nanos ^ (std::process::id().wrapping_mul(2_654_435_761))) & 0xffff;
+    format!(
+        "replay-{}-{salt:04x}/",
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    )
+}
+
+/// A replay's prefix as it is written under: without a leading `/`, ending in
+/// `/`, so it names a folder of its own and not every key that begins with
+/// the same letters. An empty prefix is refused: replaying in place is asked
+/// for explicitly (`ReplayOptions { prefix: "" }` from `--in-place`).
+pub fn normalize_prefix(p: &str) -> Result<String, String> {
+    let p = p.trim().trim_start_matches('/');
+    if p.is_empty() {
+        return Err(
+            "a replay needs a prefix of its own to write under (or an explicit in-place replay)"
+                .into(),
+        );
+    }
+    Ok(if p.ends_with('/') {
+        p.to_string()
+    } else {
+        format!("{p}/")
+    })
+}
+
+/// The replay prefix a key or listing prefix starts with, if any:
+/// `replay-<date>-<time>/` or `replay-<date>-<time>-<salt>/`.
+fn replay_prefix_len(k: &str) -> Option<usize> {
+    let rest = k.strip_prefix("replay-")?;
+    let end = rest.find('/')?;
+    let id = &rest[..end];
+    let ok = id.len() >= 15
+        && id.as_bytes()[..8].iter().all(u8::is_ascii_digit)
+        && id.as_bytes()[8] == b'-'
+        && id.as_bytes()[9..15].iter().all(u8::is_ascii_digit)
+        && (id.len() == 15
+            || (id.as_bytes()[15] == b'-' && id[16..].bytes().all(|c| c.is_ascii_hexdigit())));
+    ok.then_some("replay-".len() + end + 1)
 }
 
 /// A replay done: its session file, what it was, and how it compares.
@@ -684,6 +727,20 @@ pub async fn replay_to_file(
     );
     let writer =
         Arc::new(crate::session::SessionWriter::create(out, &header).map_err(|e| e.to_string())?);
+    // cleanup deletes everything under the prefix: it must hold nothing before
+    if !opts.prefix.is_empty() && !keep {
+        for b in buckets_of(&original.records, opts) {
+            if let Ok(found) = base.list_all(&b, &opts.prefix, 1).await
+                && !found.is_empty()
+            {
+                let _ = std::fs::remove_file(out);
+                return Err(format!(
+                    "{b}/{} already holds objects: a replay writes under a prefix of its own and deletes what is there afterwards; choose another prefix",
+                    opts.prefix
+                ));
+            }
+        }
+    }
     let log = reqlog::RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
     let client = base.with_log(log).with_retry(s3raw::RetryPolicy::none());
@@ -727,17 +784,11 @@ pub async fn replay_to_file(
 pub fn transcript(records: &[Record]) -> String {
     let mut sorted: Vec<&Record> = records.iter().collect();
     sorted.sort_by_key(|r| (r.time, r.id));
+    // a replay's own prefix taken off, a root listing's too (its prefix is the replay prefix alone)
     let strip = |k: &str| -> String {
-        // replay-YYYYMMDD-HHMMSS/
-        let b = k.as_bytes();
-        if k.starts_with("replay-")
-            && b.len() > 23
-            && b[22] == b'/'
-            && b[7..15].iter().all(u8::is_ascii_digit)
-        {
-            k[23..].to_string()
-        } else {
-            k.to_string()
+        match replay_prefix_len(k) {
+            Some(n) => k[n..].to_string(),
+            None => k.to_string(),
         }
     };
     let mut out = String::new();
@@ -775,6 +826,34 @@ pub fn transcript(records: &[Record]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_prefix_is_a_folder_of_its_own() {
+        // "test" would have made cleanup delete testing/… and tests.csv
+        assert_eq!(normalize_prefix("test").unwrap(), "test/");
+        assert_eq!(normalize_prefix(" /test/ ").unwrap(), "test/");
+        assert!(normalize_prefix("").is_err());
+        assert!(normalize_prefix("  /").is_err());
+        let d = default_prefix();
+        assert!(
+            d.ends_with('/') && replay_prefix_len(&d) == Some(d.len()),
+            "{d}"
+        );
+        assert_ne!(default_prefix(), "replay-");
+    }
+
+    #[test]
+    fn replay_prefixes_come_off_root_listings_too() {
+        // old prefixes (exactly 23 bytes for a root listing) and new ones
+        assert_eq!(replay_prefix_len("replay-20261107-015048/"), Some(23));
+        assert_eq!(replay_prefix_len("replay-20261107-015048/db/x"), Some(23));
+        assert_eq!(
+            replay_prefix_len("replay-20261107-015048-0a1f/db/x"),
+            Some(28)
+        );
+        assert_eq!(replay_prefix_len("replay-notes/x"), None);
+        assert_eq!(replay_prefix_len("db/replay-20261107-015048/x"), None);
+    }
 
     #[test]
     fn helpers() {

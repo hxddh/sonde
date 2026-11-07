@@ -388,8 +388,9 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     let mut out = Vec::new();
 
     // a completed multipart upload of a format's file is one write of it
-    let units = multipart(&sorted, &mut used, &mut out);
-    retries(&sorted, &mut used, &mut out);
+    let mut units = multipart(&sorted, &mut used, &mut out);
+    // a format's write retried is still that write: its attempts go with it to the step
+    units.extend(retries(&sorted, &mut used, &mut out));
 
     // what is left, in order: format steps, bursts of lookups, listings, single requests
     let mut items: Vec<Vec<&Record>> = units;
@@ -580,7 +581,16 @@ fn multipart<'a>(
             r.key.as_deref().unwrap_or("")
         );
         match r.operation.as_str() {
-            "CreateMultipartUpload" => groups.push((None, key, vec![i])),
+            // a Create that failed and was tried again is part of the upload that followed
+            "CreateMultipartUpload" => {
+                let retried = groups.iter().rposition(|(gid, k, idx)| {
+                    gid.is_none() && *k == key && idx.iter().all(|&j| sorted[j].is_error())
+                });
+                match retried {
+                    Some(g) => groups[g].2.push(i),
+                    _ => groups.push((None, key, vec![i])),
+                }
+            }
             "UploadPart"
             | "UploadPartCopy"
             | "CompleteMultipartUpload"
@@ -592,9 +602,10 @@ fn multipart<'a>(
                 let g = match by_id.get(&id) {
                     Some(&g) => g,
                     None => {
-                        let pending = groups
-                            .iter()
-                            .position(|(gid, k, _)| gid.is_none() && *k == key);
+                        // the upload a successful Create began
+                        let pending = groups.iter().position(|(gid, k, idx)| {
+                            gid.is_none() && *k == key && idx.iter().any(|&j| !sorted[j].is_error())
+                        });
                         let g = match pending {
                             Some(g) => g,
                             None => {
@@ -613,6 +624,13 @@ fn multipart<'a>(
         }
     }
     for (_, key, idx) in groups {
+        // Creates that failed and were never tried again began nothing: single requests
+        if idx
+            .iter()
+            .all(|&i| sorted[i].is_error() && sorted[i].operation == "CreateMultipartUpload")
+        {
+            continue;
+        }
         for &i in &idx {
             used[i] = true;
         }
@@ -666,8 +684,15 @@ fn retryable(r: &Record) -> bool {
         || s3_code(r).is_some_and(|c| c == "SlowDown" || c == "RequestTimeout")
 }
 
-/// A request repeated after a retryable failure.
-fn retries(sorted: &[&Record], used: &mut [bool], out: &mut Vec<Episode>) {
+/// A request repeated after a retryable failure. A retried write of a
+/// format's file (a commit, a manifest) is returned as a unit, so the step it
+/// belongs to keeps it, attempts and all.
+fn retries<'a>(
+    sorted: &[&'a Record],
+    used: &mut [bool],
+    out: &mut Vec<Episode>,
+) -> Vec<Vec<&'a Record>> {
+    let mut units = Vec::new();
     let same = |a: &Record, b: &Record| {
         a.method == b.method && a.bucket == b.bucket && a.key == b.key && a.query == b.query
     };
@@ -697,6 +722,12 @@ fn retries(sorted: &[&Record], used: &mut [bool], out: &mut Vec<Episode>) {
                 used[c] = true;
             }
             let rs: Vec<&Record> = chain.iter().map(|&c| sorted[c]).collect();
+            let last = *rs.last().expect("a chain has records");
+            if format_of(last).is_some() && is_write(last) && !retryable(last) {
+                units.push(rs);
+                i += 1;
+                continue;
+            }
             let first = failure(rs[0]).unwrap_or_default();
             let n = rs.len() - 1;
             let target = rs[0].key.clone().unwrap_or_default();
@@ -720,6 +751,7 @@ fn retries(sorted: &[&Record], used: &mut [bool], out: &mut Vec<Episode>) {
         }
         i += 1;
     }
+    units
 }
 
 /// The directory of a request: its key's parent, or a listing's prefix.

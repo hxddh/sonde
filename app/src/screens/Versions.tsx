@@ -10,6 +10,7 @@ import type { Plan, Timeline } from "../types";
 import { Badge, Button, Card, Empty, Field, KeyValue, Mono, Muted, Page, terminal } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
+import { versioningLabel } from "../ui/overview";
 
 export function Versions() {
   const keyDraft = signal(versionKey());
@@ -67,7 +68,7 @@ export function Versions() {
           <Card>
             <KeyValue
               rows={[
-                [t("versions.status"), s().status],
+                [t("versions.status"), versioningLabel(s().status)],
                 [t("versions.mfa"), s().mfaDelete ?? "—"],
                 [t("versions.lock"), s().objectLock ?? "—"],
               ]}

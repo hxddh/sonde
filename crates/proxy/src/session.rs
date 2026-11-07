@@ -63,6 +63,19 @@ pub struct SessionWriter {
     out: Mutex<BufWriter<File>>,
 }
 
+/// A path for a new session file in `dir` named `<stem>.sonde`, or
+/// `<stem>-2.sonde`, `<stem>-3.sonde`… when that one exists: two sessions
+/// started in the same second do not share a file.
+pub fn fresh_path(dir: &Path, stem: &str) -> std::path::PathBuf {
+    let mut path = dir.join(format!("{stem}.sonde"));
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!("{stem}-{n}.sonde"));
+        n += 1;
+    }
+    path
+}
+
 impl SessionWriter {
     pub fn create(path: &Path, header: &SessionHeader) -> std::io::Result<SessionWriter> {
         let mut out = BufWriter::new(File::create(path)?);
@@ -118,7 +131,14 @@ impl Session {
     /// skipped; any other bad line is an error.
     pub fn open(path: &Path) -> Result<Session, String> {
         let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut lines = BufReader::new(file).lines();
+        // bytes, not text: a line torn mid-character is still a torn line
+        let mut lines = BufReader::new(file).split(b'\n').map(|l| {
+            l.map(|b| {
+                String::from_utf8_lossy(&b)
+                    .trim_end_matches('\r')
+                    .to_string()
+            })
+        });
         let first = lines
             .next()
             .ok_or("empty session file")?

@@ -150,17 +150,20 @@ impl RequestLog {
     /// Redacts `record`, gives it an id and stores it. Returns the id.
     pub fn push(&self, record: Record) -> u64 {
         let mut record = record.redacted();
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
-        record.id = id;
-        if let Some(sink) = self.sink.read().as_ref() {
-            sink.write(&record);
-        }
-        {
+        // the id is taken under the lock, so the ring stays in id order for
+        // `get`'s binary search when requests finish concurrently
+        let id = {
             let mut inner = self.inner.write();
+            let id = self.next.fetch_add(1, Ordering::Relaxed);
+            record.id = id;
             if inner.records.len() >= inner.capacity {
                 inner.records.pop_front();
             }
-            inner.records.push_back(record);
+            inner.records.push_back(record.clone());
+            id
+        };
+        if let Some(sink) = self.sink.read().as_ref() {
+            sink.write(&record);
         }
         let _ = self.tx.send(id);
         id
@@ -317,5 +320,27 @@ mod tests {
         let id = log.push(r);
         assert_eq!(log.find_request_id("REQ123").unwrap().id, id);
         assert!(log.find_request_id("nope").is_none());
+    }
+}
+
+#[cfg(test)]
+mod concurrency {
+    use super::*;
+
+    #[test]
+    fn ids_stay_in_order_when_pushed_from_many_threads() {
+        let log = RequestLog::new(100_000);
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for _ in 0..2_000 {
+                        log.push(Record::default());
+                    }
+                });
+            }
+        });
+        let ids: Vec<u64> = log.inner.read().records.iter().map(|r| r.id).collect();
+        assert!(ids.windows(2).all(|w| w[0] < w[1]));
+        assert!(log.get(ids[ids.len() / 2]).is_some());
     }
 }

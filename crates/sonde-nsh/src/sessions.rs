@@ -35,9 +35,19 @@ async fn begin(
     policy: String,
     command: Option<String>,
 ) -> Result<JsonValue, String> {
-    if RECORDING.lock().is_some() {
+    // a recording starting counts as running: two starts at once would both
+    // pass the check below before either set RECORDING
+    static STARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    struct Starting;
+    impl Drop for Starting {
+        fn drop(&mut self) {
+            STARTING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    if RECORDING.lock().is_some() || STARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err(err_msg("a recording is running: stop it first"));
     }
+    let _starting = Starting;
     let s = sonde();
     let client = s.client(&endpoint).map_err(crate::state::err)?;
     let policy = match policy.as_str() {
@@ -56,10 +66,10 @@ async fn begin(
                 .map(|f| f.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| "recording".into());
-    let path = dir.join(format!(
-        "{}-{name}.sonde",
-        chrono::Local::now().format("%Y%m%d-%H%M%S")
-    ));
+    let path = sonde_proxy::session::fresh_path(
+        &dir,
+        &format!("{}-{name}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+    );
     let cfg = client.config();
     let header = SessionHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
     let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
@@ -104,11 +114,41 @@ fn open_session(path: &str) -> Result<Session, String> {
     Session::open(Path::new(path)).map_err(err_msg)
 }
 
-/// Lines in a file: the header plus one per record.
+/// The requests in a session file: its record lines (not the header, not the
+/// program's output). Counted once and then only over what was appended, so
+/// listing sessions does not read every file whole each time.
 fn count_records(path: &Path) -> usize {
-    std::fs::read(path)
-        .map(|b| b.iter().filter(|c| **c == b'\n').count().saturating_sub(1))
-        .unwrap_or(0)
+    use std::collections::HashMap;
+    use std::io::{Read, Seek, SeekFrom};
+    // path → (bytes counted up to the last complete line, records in them)
+    static COUNTS: std::sync::LazyLock<Mutex<HashMap<PathBuf, (u64, usize)>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    let Ok(len) = std::fs::metadata(path).map(|m| m.len()) else {
+        return 0;
+    };
+    let (mut from, mut n) = COUNTS.lock().get(path).copied().unwrap_or((0, 0));
+    if len < from {
+        // rewritten: count again
+        (from, n) = (0, 0);
+    }
+    if len > from {
+        let Ok(mut f) = std::fs::File::open(path) else {
+            return n;
+        };
+        let mut buf = Vec::with_capacity((len - from) as usize);
+        if f.seek(SeekFrom::Start(from)).is_err() || f.read_to_end(&mut buf).is_err() {
+            return n;
+        }
+        // complete lines only: the last may still be being written
+        let end = buf.iter().rposition(|c| *c == b'\n').map_or(0, |i| i + 1);
+        n += buf[..end]
+            .split(|c| *c == b'\n')
+            .filter(|l| l.starts_with(b"{\"id\""))
+            .count();
+        from += end as u64;
+        COUNTS.lock().insert(path.to_path_buf(), (from, n));
+    }
+    n
 }
 
 fn header_of(path: &Path) -> Option<SessionHeader> {
@@ -370,10 +410,11 @@ impl Sessions {
         }
         let original = open_session(&path)?;
         let base = s.client(&endpoint).map_err(crate::state::err)?;
-        let out = s.paths().sessions().join(format!(
-            "{}-replay.sonde",
-            chrono::Local::now().format("%Y%m%d-%H%M%S")
-        ));
+        let out = sonde_proxy::session::fresh_path(
+            &s.paths().sessions(),
+            &format!("{}-replay", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+        );
+        let prefix = replay::normalize_prefix(&prefix)?;
         let opts = ReplayOptions {
             prefix,
             buckets: Vec::new(),
@@ -462,12 +503,7 @@ impl Sessions {
         } else {
             stem
         };
-        let mut path = dir.join(format!("{stem}.sonde"));
-        let mut n = 2;
-        while path.exists() {
-            path = dir.join(format!("{stem}-{n}.sonde"));
-            n += 1;
-        }
+        let path = sonde_proxy::session::fresh_path(&dir, &stem);
         std::fs::write(&path, text).map_err(err_msg)?;
         if let Err(e) = Session::open(&path) {
             let _ = std::fs::remove_file(&path);
@@ -483,5 +519,29 @@ impl Sessions {
         let path = r.path.to_string_lossy().into_owned();
         drop(r.proxy);
         Some(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn counts_requests_not_output_and_follows_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sonde");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "{{\"format\":\"sonde-session\"}}").unwrap();
+        writeln!(f, "{{\"id\":1}}").unwrap();
+        writeln!(f, "{{\"log\":{{\"text\":\"hello\"}}}}").unwrap();
+        writeln!(f, "{{\"id\":2}}").unwrap();
+        write!(f, "{{\"id\":3").unwrap(); // still being written
+        f.flush().unwrap();
+        assert_eq!(count_records(&path), 2);
+        writeln!(f, "}}").unwrap();
+        writeln!(f, "{{\"log\":{{\"text\":\"bye\"}}}}").unwrap();
+        f.flush().unwrap();
+        assert_eq!(count_records(&path), 3);
     }
 }

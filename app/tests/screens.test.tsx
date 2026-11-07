@@ -43,7 +43,7 @@ test("versions: the timeline of a deleted key", async () => {
   await app.waitFor("id:timeline", { timeout: 10000 });
   expect(app.shows("text:The key reads as deleted")).toBe(true);
   expect(app.count("text:Delete marker")).toBeGreaterThanOrEqual(1);
-  expect(app.shows("text:Enabled")).toBe(true);
+  expect(app.shows("text:On")).toBe(true);
 });
 
 test("capacity: why the bucket is this big", async () => {

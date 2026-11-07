@@ -19,7 +19,11 @@ interface Known {
   versioning?: VersioningStatus | null;
   layouts?: Detection[] | null;
   size?: DuReport | null;
+  /** Why a fact could not be found out (a scan failed, access was denied). */
+  failed?: Partial<Record<"mpu" | "versioning" | "layouts", string>>;
 }
+
+const reason = (e: unknown) => (e instanceof Error ? e.message : typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e));
 
 /** What is known of each endpoint/bucket/prefix, shared by the cards and their sheets. */
 export const known = signal<Record<string, Known>>({});
@@ -37,7 +41,10 @@ export const here = (): Known => {
 /** Fills in what is known of the bucket and prefix shown: the cheap facts, as it opens. */
 function useFacts() {
   let jobs: string[] = [];
+  // each opening of a bucket or prefix: an answer for an earlier one is dropped
+  let opening = 0;
   const stop = () => {
+    opening++;
     jobs.forEach((j) => api.cancelJob(j));
     jobs = [];
   };
@@ -49,23 +56,32 @@ function useFacts() {
     untracked(() => {
       stop();
       if (!ep || !b) return;
+      const mine = opening;
       const have = known()[knownKey(ep, b, p)] ?? {};
+      const failed = (what: "mpu" | "versioning" | "layouts", e: unknown) => {
+        if (mine !== opening) return; // cancelled, not failed: nothing learned
+        const k = known()[knownKey(ep, b, p)] ?? {};
+        remember(ep, b, p, { failed: { ...k.failed, [what]: reason(e) } });
+      };
       if (have.size === undefined) remember(ep, b, p, { size: api.duCached(ep, b, p) });
-      const job = async <R,>(start: Promise<string>, put: (r: R | null) => void) => {
+      const job = async <R,>(what: "mpu" | "layouts", start: Promise<string>, put: (r: R) => void) => {
         try {
           const id = await start;
+          if (mine !== opening) return void api.cancelJob(id);
           jobs.push(id);
-          put(await watch<R>(id, () => {}));
-        } catch {
-          put(null);
+          const r = await watch<R>(id, () => {});
+          if (mine === opening) put(r);
+        } catch (e) {
+          failed(what, e);
         }
       };
-      if (have.mpu === undefined) void job<MpuReport>(api.mpuScan(ep, b, p), (r) => remember(ep, b, p, { mpu: r }));
-      if (have.layouts === undefined) void job<Detection[]>(api.detectLayouts(ep, b, p), (r) => remember(ep, b, p, { layouts: r }));
-      if (have.versioning === undefined)
+      const retry = (what: "mpu" | "versioning" | "layouts") => have[what] === undefined || have.failed?.[what] !== undefined;
+      if (retry("mpu")) void job<MpuReport>("mpu", api.mpuScan(ep, b, p), (r) => remember(ep, b, p, { mpu: r, failed: { ...known()[knownKey(ep, b, p)]?.failed, mpu: undefined } }));
+      if (retry("layouts")) void job<Detection[]>("layouts", api.detectLayouts(ep, b, p), (r) => remember(ep, b, p, { layouts: r, failed: { ...known()[knownKey(ep, b, p)]?.failed, layouts: undefined } }));
+      if (retry("versioning"))
         api.versioning(ep, b).then(
-          (v) => remember(ep, b, p, { versioning: v }),
-          () => remember(ep, b, p, { versioning: null }),
+          (v) => mine === opening && remember(ep, b, p, { versioning: v, failed: { ...known()[knownKey(ep, b, p)]?.failed, versioning: undefined } }),
+          (e) => failed("versioning", e),
         );
     });
   });
@@ -100,6 +116,9 @@ function Tile(props: { id: StoreTab; icon: IconName; title: string; value: strin
   );
 }
 
+/** S3's versioning status in the reader's language. */
+export const versioningLabel = (s: string) => (s === "Enabled" ? t("versions.enabled") : s === "Suspended" ? t("versions.suspended") : s);
+
 /** The cards over a bucket's objects. */
 export function Overview() {
   useFacts();
@@ -108,6 +127,8 @@ export function Overview() {
   const layouts = () => k().layouts;
   const v = () => k().versioning;
   const size = () => k().size;
+  const fail = (what: "mpu" | "versioning" | "layouts") => k().failed?.[what];
+  const pending = (what: "mpu" | "versioning" | "layouts") => k()[what] === undefined && !fail(what);
   return (
     <View testID="overview" class="flex-row flex-wrap gap-2.5">
       <Tile
@@ -117,26 +138,29 @@ export function Overview() {
         value={size() ? bytes(size()!.totalBytes) : t("overview.measure")}
         detail={size() ? `${money(size()!.costPerMonth, size()!.currency)}/${t("overview.month")} · ${size()!.scannedAt.slice(0, 10)}` : t("overview.measureHint")}
       />
-      <If when={mpu() === undefined || (mpu() && (mpu()!.totalUploads > 0 || mpu()!.lifecycle.status !== "covered"))}>
+      <If when={fail("mpu")}>{(e) => <Tile id="multipart" icon="layers" title={t("overview.uploads")} tone="warn" value={t("overview.failed")} detail={e()} />}</If>
+      <If when={!fail("mpu") && (pending("mpu") || (mpu() && (mpu()!.totalUploads > 0 || mpu()!.lifecycle.status !== "covered")))}>
         <Tile
           id="multipart"
           icon="layers"
           title={t("overview.uploads")}
-          pending={mpu() === undefined}
+          pending={pending("mpu")}
           tone={mpu() && mpu()!.staleUploads > 0 ? "warn" : "plain"}
           value={mpu() ? (mpu()!.totalUploads > 0 ? `${mpu()!.totalUploads} · ${bytes(mpu()!.totalBytes)}` : t("overview.noUploads")) : ""}
           detail={mpu() ? (mpu()!.totalUploads > 0 ? `${t("mpu.stale", { n: mpu()!.staleUploads, days: mpu()!.thresholdDays })} · ${money(mpu()!.costPerMonth, mpu()!.currency)}/${t("overview.month")}` : t("overview.noRule")) : ""}
         />
       </If>
-      <If when={v() === undefined || (v() && v()!.status !== "Unversioned" && v()!.status !== "")}>
-        <Tile id="versions" icon="file-clock" title={t("overview.versioning")} pending={v() === undefined} value={v()?.status ?? ""} detail={v() ? (v()!.objectLock ? `${t("versions.lock")}: ${v()!.objectLock}` : t("overview.versionsHint")) : ""} />
+      <If when={fail("versioning")}>{(e) => <Tile id="versions" icon="file-clock" title={t("overview.versioning")} tone="warn" value={t("overview.failed")} detail={e()} />}</If>
+      <If when={!fail("versioning") && (pending("versioning") || (v() && v()!.status !== "Unversioned" && v()!.status !== ""))}>
+        <Tile id="versions" icon="file-clock" title={t("overview.versioning")} pending={pending("versioning")} value={v() ? versioningLabel(v()!.status) : ""} detail={v() ? (v()!.objectLock ? `${t("versions.lock")}: ${v()!.objectLock}` : t("overview.versionsHint")) : ""} />
       </If>
-      <If when={layouts() === undefined || (layouts() && layouts()!.length > 0)}>
+      <If when={fail("layouts")}>{(e) => <Tile id="layouts" icon="boxes" title={t("overview.layouts")} tone="warn" value={t("overview.failed")} detail={e()} />}</If>
+      <If when={!fail("layouts") && (pending("layouts") || (layouts() && layouts()!.length > 0))}>
         <Tile
           id="layouts"
           icon="boxes"
           title={t("overview.layouts")}
-          pending={layouts() === undefined}
+          pending={pending("layouts")}
           value={layouts() ? [...new Set(layouts()!.map((d) => LAYOUT_LABEL[d.format] ?? d.format))].join(", ") : ""}
           detail={layouts() ? layouts()!.map((d) => d.root || "/").join(" · ") : ""}
         />

@@ -103,10 +103,10 @@ async fn start(
                 })
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| "proxy".into());
-            dir.join(format!(
-                "{}-{name}.sonde",
-                chrono::Local::now().format("%Y%m%d-%H%M%S")
-            ))
+            sonde_proxy::session::fresh_path(
+                &dir,
+                &format!("{}-{name}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+            )
         }
     };
     let header = SessionHeader::new(&ep, cfg.endpoint.as_str(), &cfg.region, command);
@@ -649,7 +649,10 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
     let prefix = if a.in_place {
         String::new()
     } else {
-        a.prefix.clone().unwrap_or_else(rp::default_prefix)
+        match &a.prefix {
+            Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
+            None => rp::default_prefix(),
+        }
     };
     let opts = ReplayOptions {
         prefix: prefix.clone(),
@@ -713,10 +716,10 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
         None => {
             let dir = s.paths().sessions();
             std::fs::create_dir_all(&dir)?;
-            dir.join(format!(
-                "{}-replay.sonde",
-                chrono::Local::now().format("%Y%m%d-%H%M%S")
-            ))
+            sonde_proxy::session::fresh_path(
+                &dir,
+                &format!("{}-replay", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+            )
         }
     };
     let show = color;

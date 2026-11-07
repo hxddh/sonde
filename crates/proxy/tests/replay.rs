@@ -218,3 +218,80 @@ async fn replay_finds_a_store_that_ignores_conditional_writes() {
     assert_eq!(d.conditions, ["if-none-match: *"]);
     assert_eq!(d.example, "data/log/0001.json");
 }
+
+#[tokio::test]
+async fn a_replay_never_cleans_up_what_it_did_not_write() {
+    // record the workload
+    let original = MiniS3::start(true).await;
+    let recorded = RequestLog::new(1000);
+    let proxy = Proxy::start(
+        client(&original.url, RequestLog::default()),
+        recorded.clone(),
+        ProxyConfig::default(),
+    )
+    .await
+    .unwrap();
+    workload(&client(&proxy.url(), RequestLog::default())).await;
+    let mut records = recorded.list(&Filter::default(), 1000);
+    records.reverse();
+    let session = sonde_proxy::session::Session {
+        header: sonde_proxy::session::SessionHeader::new("t", &original.url, "us-east-1", None),
+        records,
+        logs: Vec::new(),
+    };
+    // a store where the prefix is taken, and a neighbour that only starts with the same letters
+    let store = MiniS3::start(true).await;
+    let app = client(&store.url, RequestLog::default());
+    app.send_raw(S3Request::new("CreateBucket", http::Method::PUT).bucket("data"))
+        .await
+        .unwrap();
+    for k in ["taken/mine.txt", "taken-not/keep.txt"] {
+        app.send_raw(
+            S3Request::new("PutObject", http::Method::PUT)
+                .bucket("data")
+                .key(k)
+                .body(Body::from("x")),
+        )
+        .await
+        .unwrap();
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let opts = ReplayOptions {
+        prefix: "taken/".into(),
+        buckets: vec![],
+    };
+    let refused = sonde_proxy::replay::replay_to_file(
+        &app,
+        &session,
+        &opts,
+        &dir.path().join("r.sonde"),
+        false,
+        |_, _| {},
+    )
+    .await;
+    assert!(refused.is_err(), "a prefix holding objects is refused");
+    assert!(!dir.path().join("r.sonde").exists());
+    assert_eq!(store.keys("data"), ["taken-not/keep.txt", "taken/mine.txt"]);
+
+    // "taken" names the folder taken/, never taken-not/
+    let opts = ReplayOptions {
+        prefix: sonde_proxy::replay::normalize_prefix("fresh").unwrap(),
+        buckets: vec![],
+    };
+    let run = sonde_proxy::replay::replay_to_file(
+        &app,
+        &session,
+        &opts,
+        &dir.path().join("r2.sonde"),
+        false,
+        |_, _| {},
+    )
+    .await
+    .unwrap();
+    assert!(run.removed > 0);
+    assert_eq!(
+        store.keys("data"),
+        ["taken-not/keep.txt", "taken/mine.txt"],
+        "only the replay's own writes went"
+    );
+}

@@ -459,6 +459,9 @@ const en = {
   "obs.title": "What stands out",
   "error.placeTitle": "This view stopped",
   "error.retry": "Try again",
+  "overview.failed": "Couldn't find out",
+  "versions.enabled": "On",
+  "versions.suspended": "Suspended",
 };
 
 type Key = keyof typeof en;
@@ -915,6 +918,9 @@ const zh: Partial<Record<Key, string>> = {
   "obs.title": "值得注意",
   "error.placeTitle": "这个视图出错了",
   "error.retry": "重试",
+  "overview.failed": "未能获取",
+  "versions.enabled": "已开启",
+  "versions.suspended": "已暂停",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");
