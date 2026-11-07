@@ -7,13 +7,13 @@
 // shows as a timeline, replays on another endpoint, compares with another
 // session, and opens in a window of its own. In a terminal the levels stack.
 
-import { cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, windowSize } from "nsh";
+import { cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, type ViewRef, windowSize } from "nsh";
 import { Button as BaseButton, Input, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
-import { crumb, go, notify, openSession, openSessionFile, report, sessionsChanged, sessionsTick, shellHeight, shellWidth } from "../store";
+import { away, crumb, go, notify, openSession, openSessionFile, report, sessionsChanged, sessionsTick, shellHeight, shellWidth } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
@@ -183,8 +183,11 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     </If>
   );
 
+  let opsAnchor: ViewRef | undefined;
   const operations = (v: SessionView) => (
+    <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
     <OperationsTable view={v} rows={rows()} onSelect={chooseOperation} onContextMenu={isAvailable && !terminal() ? operationMenu : undefined} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || (inspecting() && roomy())} />
+    </View>
   );
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
 
@@ -286,7 +289,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
                   else={
                     <View class="flex-1">
                       {main(v())}
-                      <SidePanel open={inspecting()} onClose={closeInspector} size="narrow">
+                      <SidePanel open={inspecting()} onClose={closeInspector} size="narrow" returnFocus={() => opsAnchor}>
                         {inspector()}
                       </SidePanel>
                     </View>
@@ -363,7 +366,7 @@ export function Sessions() {
   });
   // a live session grows: follow it
   const timer = setInterval(() => {
-    if (sessions().some((s) => s.live)) {
+    if (!away() && sessions().some((s) => s.live)) {
       sessions.set(api.sessions.list());
       tick.set(tick() + 1);
     }

@@ -2,7 +2,7 @@
 // errors, and navigation between sections. Rust owns the data; these
 // signals mirror it and are refreshed after each change.
 
-import { batch, Picker, signal } from "nsh";
+import { batch, lifecycle, Picker, signal } from "nsh";
 import { api, asError } from "./native";
 import { language, t } from "./i18n";
 import { toast, type ToastKind } from "./ui/toast";
@@ -58,6 +58,9 @@ export const versionKey = signal<string>("");
 /** What the current place shows, for the toolbar's breadcrumb (a session's command). */
 export const crumb = signal<string | null>(null);
 /** Bumped when the list of sessions changes (a run ended, an example opened, a replay). */
+/** The window is out of sight (minimized, hidden, another space): polls rest until it is back. */
+export const away = () => lifecycle() === "background";
+
 export const sessionsTick = signal(0);
 export const sessionsChanged = () => sessionsTick.set(sessionsTick() + 1);
 /** Settings › Endpoints opens on its form when set (the welcome's "Add an endpoint"). */

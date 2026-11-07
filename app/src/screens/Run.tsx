@@ -12,7 +12,7 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, running, start, startedAt, stop } from "../run";
-import { endpoint, endpoints, go, openSession, report, sessionsChanged } from "../store";
+import { away, endpoint, endpoints, go, openSession, report, sessionsChanged } from "../store";
 import type { SessionView } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, Dot, Empty, IconButton, Segmented, terminal } from "../ui/kit";
@@ -185,6 +185,7 @@ function LiveOperations() {
   const tick = signal(0);
   const now = signal(Date.now());
   const timer = setInterval(() => {
+    if (away()) return;
     now.set(Date.now());
     if (running()) {
       // operations arriving slide in rather than jump

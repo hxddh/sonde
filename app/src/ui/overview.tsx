@@ -89,11 +89,17 @@ function useFacts() {
 
 type Tone = "plain" | "warn" | "ok";
 
+/** The cards' width: the row split into equal columns of 176 points or more,
+ * so a second row lines up with the first instead of stretching. */
+const tileWidth = signal<number | null>(null);
+const GAP = 10;
+const MIN = 176;
+
 function Tile(props: { id: StoreTab; icon: IconName; title: string; value: string; detail?: string; tone?: Tone; pending?: boolean }) {
   // a card rises into place as it appears (not with reduced motion)
   const motion = createMotion({ enter: "fadeInUp", duration: 220 });
   return (
-    <View class="min-w-44 flex-1" style={motion.style}>
+    <View class={tileWidth() ? "" : "min-w-44 flex-1"} style={[motion.style, tileWidth() ? { width: tileWidth()! } : {}]}>
       <BaseButton
         testID={`overview-${props.id}`}
         accessibilityLabel={`${props.title}: ${props.value}`}
@@ -130,7 +136,15 @@ export function Overview() {
   const fail = (what: "mpu" | "versioning" | "layouts") => k().failed?.[what];
   const pending = (what: "mpu" | "versioning" | "layouts") => k()[what] === undefined && !fail(what);
   return (
-    <View testID="overview" class="flex-row flex-wrap gap-2.5">
+    <View
+      testID="overview"
+      class="flex-row flex-wrap gap-2.5"
+      onLayout={(e) => {
+        const w = e.bounds.size.width;
+        const cols = Math.max(1, Math.floor((w + GAP) / (MIN + GAP)));
+        tileWidth.set(Math.floor((w - GAP * (cols - 1)) / cols));
+      }}
+    >
       <Tile
         id="capacity"
         icon="chart-pie"

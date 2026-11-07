@@ -1,6 +1,6 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { ErrorBoundary, fontScale, type JSX, platform, reduceMotion, Scroll, split, Text, View } from "nsh";
+import { ErrorBoundary, fontScale, type JSX, platform, reduceMotion, Scroll, setAccessibilityFocus, split, Text, View, type ViewRef } from "nsh";
 import { Button as BaseButton, Checkbox as BaseCheckbox, Input, Progress, Select, Sheet, Switch, Tab, Tabs, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
@@ -41,12 +41,17 @@ const PANEL = { narrow: "w-[420px] max-w-[90%]", default: "w-[600px] max-w-[94%]
  * beside what it is about (Activity, a bucket's detail, a form). One width
  * per size, one surface, one header; Escape, the scrim and the close button
  * dismiss it. */
-export function SidePanel(props: { open: boolean; onClose: () => void; size?: keyof typeof PANEL; children: JSX.Element }) {
+export function SidePanel(props: { open: boolean; onClose: () => void; size?: keyof typeof PANEL; children: JSX.Element; returnFocus?: () => ViewRef | undefined }) {
   return (
     <Sheet
       open={props.open}
       side="right"
       onOpenChange={(e) => !e.open && props.onClose()}
+      // a screen reader goes back to what opened it, not to the window's start
+      onClose={() => {
+        const r = props.returnFocus?.();
+        if (r) setAccessibilityFocus(r);
+      }}
       popupClass={`${PANEL[props.size ?? "default"]} border-l border-t border-border ${fill("bg-background/90", "bg-background")} shadow-xl`}
       popupStyle={{ marginTop: TITLE_BAR, ...glass }}
       backdropClass={SCRIM}

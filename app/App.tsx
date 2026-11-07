@@ -16,7 +16,7 @@ import { StoreArea } from "./src/screens/StoreArea";
 import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
-import { Activity, activityOpen, runningJobs } from "./src/ui/activity";
+import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
 import { Badge, material, Recoverable, SidePanel, terminal } from "./src/ui/kit";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, toggleSidebar, Toolbar } from "./src/ui/shell";
@@ -118,7 +118,7 @@ function DesktopShell() {
           </Each>
         </View>
       </View>
-      <SidePanel open={activityOpen()} onClose={() => activityOpen.set(false)}>
+      <SidePanel open={activityOpen()} onClose={() => activityOpen.set(false)} returnFocus={() => activityAnchor}>
         <Activity onClose={() => activityOpen.set(false)} />
       </SidePanel>
       <Palette />

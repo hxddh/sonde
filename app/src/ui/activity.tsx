@@ -3,14 +3,14 @@
 // do": a sheet from the window's edge, opened from the toolbar; a place of
 // its own in a terminal.
 
-import { batch, cleanup, effect, Scroll, signal, Text, View } from "nsh";
+import { batch, cleanup, effect, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { Button as BaseButton, DataTable, Input } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { ago, date, ms } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { RecordDetail } from "../screens/Requests";
-import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, notify, report } from "../store";
+import { ACTIVITY_TABS, type ActivityTab, activityTab, away, focusRecord, notify, report } from "../store";
 import type { JobInfo, RecordSummary, RequestFilter } from "../types";
 import { Icon, iconSvg } from "./icon";
 import { Bar, Button, Dot, Empty, IconButton, PanelHeader, rowHeight, Segmented, terminal, Tip, TYPE } from "./kit";
@@ -23,6 +23,7 @@ export const runningJobs = signal(0);
 let poll: ReturnType<typeof setInterval> | undefined;
 export function watchJobs() {
   poll ??= setInterval(() => {
+    if (away()) return;
     try {
       const n = api.jobs().filter((j) => j.state === "running").length;
       if (n !== runningJobs()) runningJobs.set(n);
@@ -44,6 +45,7 @@ function Requests() {
     if (f !== null) batch(() => (selected.set(f), focusRecord.set(null)));
   });
   const timer = setInterval(() => {
+    if (away()) return;
     const l = api.latestRequest();
     if (l !== latest()) latest.set(l);
   }, 700);
@@ -149,7 +151,7 @@ function Requests() {
 
 function Jobs() {
   const jobs = signal<JobInfo[]>(api.jobs());
-  const timer = setInterval(() => jobs.set(api.jobs()), 500);
+  const timer = setInterval(() => !away() && jobs.set(api.jobs()), 500);
   cleanup(() => clearInterval(timer));
   const tone = (s: string) => (s === "finished" ? "ok" : s === "failed" ? "server" : s === "cancelled" ? "miss" : "live") as "ok" | "server" | "miss" | "live";
   return (
@@ -241,9 +243,13 @@ export function Activity(props: { onClose?: () => void }) {
 }
 
 /** The toolbar's way in: jobs running show as a count. */
+/** The toolbar's Activity button: where the focus goes back to as the panel closes. */
+export let activityAnchor: ViewRef | undefined;
+
 export function ActivityButton(props: { onPress: () => void }) {
   watchJobs();
   return (
+    <View ref={(r: ViewRef) => (activityAnchor = r)}>
     <BaseButton
       testID="activity-open"
       accessibilityLabel={t("nav.activity")}
@@ -257,5 +263,6 @@ export function ActivityButton(props: { onPress: () => void }) {
         <Text class="tabular-nums text-caption font-semibold text-primary">{String(runningJobs())}</Text>
       </If>
     </BaseButton>
+    </View>
   );
 }

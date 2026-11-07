@@ -252,6 +252,14 @@ function ago(iso: string): string {
   return t("time.days", { n: Math.floor(s / 86400) });
 }
 
+/** A recent session's second line: its arguments, else its endpoint and size. */
+function detail(s: SessionInfo): string {
+  const cmd = s.command?.trim() ?? "";
+  const program = programOf(cmd);
+  const args = cmd && program && !program.endsWith("…") && program !== cmd ? cmd.split(/\s+/).slice(1).join(" ") : "";
+  return !s.title && args ? args : `${s.endpoint} · ${t("sessions.requestsN", { n: s.requests })}`;
+}
+
 /** The newest sessions, a press away. */
 function Recent(props: { open: (a: Area) => void }) {
   const list = () => {
@@ -269,16 +277,23 @@ function Recent(props: { open: (a: Area) => void }) {
         <Each of={list()} key={(s) => s.path}>
           {(s) => (
             <BaseButton
-              accessibilityLabel={s().command ?? s().name}
+              testID="recent-session"
+              accessibilityLabel={`${sessionName(s())}, ${detail(s())}`}
               onPress={() => {
                 openSession.set(s().path);
                 props.open("sessions");
               }}
-              class="flex-row items-center gap-2 rounded-(--radius) px-2 py-1 hover:bg-sidebar-accent/50"
+              class="flex-row items-start gap-2 rounded-(--radius) px-2 py-1 hover:bg-sidebar-accent/50"
             >
-              <View class={`size-1.5 rounded-full ${s().live ? "bg-primary" : "bg-transparent"}`} />
-              <Text class="min-w-0 flex-1 text-small text-sidebar-foreground line-clamp-1">{programOf(s().command) ?? s().name}</Text>
-              <Text class="text-caption text-muted-foreground">{ago(s().created)}</Text>
+              <View class={`mt-1.5 size-1.5 rounded-full ${s().live ? "bg-primary" : "bg-transparent"}`} />
+              <View class="min-w-0 flex-1">
+                <View class="flex-row items-center gap-2">
+                  <Text class="min-w-0 flex-1 text-small text-sidebar-foreground line-clamp-1">{sessionName(s())}</Text>
+                  <Text class="text-caption text-muted-foreground">{ago(s().created)}</Text>
+                </View>
+                {/* what tells two runs of one program apart: their arguments, else where they went */}
+                <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{detail(s())}</Text>
+              </View>
             </BaseButton>
           )}
         </Each>

@@ -124,7 +124,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               rows={[
                 [t("browse.size"), `${bytes(d().size)} (${count(d().size ?? 0)} B)`],
                 ["Content-Type", d().contentType ?? "—"],
-                [t("browse.modified"), d().lastModified ?? "—"],
+                [t("browse.modified"), date(d().lastModified)],
                 ["Version", d().versionId ?? "null"],
                 [t("browse.storageClass"), d().storageClass],
               ]}
