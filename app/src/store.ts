@@ -8,6 +8,7 @@ import { language } from "./i18n";
 import type { EndpointView, Settings, SondeError } from "./types";
 
 export type Section =
+  | "timeline"
   | "endpoints"
   | "browse"
   | "requests"
@@ -21,14 +22,14 @@ export type Section =
   | "audit"
   | "settings";
 
-export const SECTIONS: Section[] = ["endpoints", "browse", "requests", "multipart", "versions", "capacity", "probes", "layouts", "plugins", "jobs", "audit", "settings"];
+export const SECTIONS: Section[] = ["timeline", "endpoints", "browse", "requests", "multipart", "versions", "capacity", "probes", "layouts", "plugins", "jobs", "audit", "settings"];
 
 export const endpoints = signal<EndpointView[]>([]);
 export const settings = signal<Settings | null>(null);
 export const endpoint = signal<string | null>(null);
 export const bucket = signal<string | null>(null);
 export const prefix = signal<string>("");
-export const section = signal<Section>("endpoints");
+export const section = signal<Section>("timeline");
 /** The request record the inspector should show. */
 export const focusRecord = signal<number | null>(null);
 /** The key the versions screen shows. */

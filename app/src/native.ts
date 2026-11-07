@@ -1,9 +1,9 @@
 // Typed access to sonde/native, and error parsing.
 
-import { Listing, Sonde } from "sonde/native";
+import { Listing, Sessions, Sonde } from "sonde/native";
 import type * as T from "./types";
 
-export { Listing, Sonde };
+export { Listing, Sessions, Sonde };
 
 /** The structured error sonde/native rejects or throws with. */
 export function asError(e: unknown): T.SondeError {
@@ -80,6 +80,17 @@ export const api = {
   applyRevocations: (path: string) => Sonde.applyRevocations(path) as { sequence: number; revoked: string[] },
   pluginHostAvailable: () => Sonde.pluginHostAvailable(),
   openPlugin: (id: string, ctx: { endpoint: string; bucket: string; prefix: string }) => Sonde.openPlugin(id, ctx),
+  sessions: {
+    list: () => Sessions.list() as T.SessionInfo[],
+    open: (path: string) => Sessions.open(path) as T.SessionView,
+    records: (path: string, ids: number[]) => Sessions.records(path, ids) as T.RecordSummary[],
+    record: (path: string, id: number) => Sessions.record(path, id) as T.RequestRecord | null,
+    copy: (path: string, id: number, kind: "cli" | "curl") => Sessions.copy(path, id, kind) as string | null,
+    start: async (endpoint: string, policy: "allow" | "no-delete" | "read-only") => (await Sessions.start(endpoint, policy)) as T.RecordingView,
+    current: () => Sessions.current() as T.RecordingView | null,
+    stop: () => Sessions.stop() as string | null,
+    example: () => Sessions.example() as string,
+  },
 };
 
 /**

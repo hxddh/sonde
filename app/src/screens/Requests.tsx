@@ -17,7 +17,7 @@ function statusTone(s: number | null) {
   return "pass" as const;
 }
 
-function RecordDetail(props: { record: RequestRecord; onBack?: () => void }) {
+export function RecordDetail(props: { record: RequestRecord; onBack?: () => void; copyAs?: (kind: "cli" | "curl") => string | null }) {
   const r = () => props.record;
   const copy = (text: string | null) => {
     if (!text) return;
@@ -27,7 +27,7 @@ function RecordDetail(props: { record: RequestRecord; onBack?: () => void }) {
     <View class="gap-3" testID="record-detail">
       <View class="flex-row items-center gap-2">
         <If when={props.onBack}>
-          <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={() => props.onBack?.()} />
+          <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={() => props.onBack?.()} testID="record-back" />
         </If>
         <Badge label={r().status === null ? t("requests.transport") : String(r().status)} tone={statusTone(r().status)} />
         <Text class="text-base font-semibold text-foreground">{r().operation}</Text>
@@ -46,8 +46,8 @@ function RecordDetail(props: { record: RequestRecord; onBack?: () => void }) {
         ]}
       />
       <View class="flex-row flex-wrap gap-2">
-        <Button small label={t("requests.copyCli")} onPress={() => copy(api.copyAsAwsCli(r().id))} testID="copy-cli" />
-        <Button small label={t("requests.copyCurl")} onPress={() => copy(api.copyAsCurl(r().id))} testID="copy-curl" />
+        <Button small label={t("requests.copyCli")} onPress={() => copy(props.copyAs ? props.copyAs("cli") : api.copyAsAwsCli(r().id))} testID="copy-cli" />
+        <Button small label={t("requests.copyCurl")} onPress={() => copy(props.copyAs ? props.copyAs("curl") : api.copyAsCurl(r().id))} testID="copy-curl" />
       </View>
       <If when={r().transportError}>
         {(e) => (

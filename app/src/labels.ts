@@ -4,6 +4,7 @@ import type { Verdict } from "./types";
 import type { Tone } from "./ui/kit";
 
 const LABEL: Record<Section, Key> = {
+  timeline: "nav.timeline",
   endpoints: "nav.endpoints",
   browse: "nav.browse",
   requests: "nav.requests",

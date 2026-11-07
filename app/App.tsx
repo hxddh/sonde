@@ -17,6 +17,7 @@ import { Plugins } from "./src/screens/Plugins";
 import { Probes } from "./src/screens/Probes";
 import { Requests } from "./src/screens/Requests";
 import { SettingsScreen } from "./src/screens/Settings";
+import { Timeline } from "./src/screens/Timeline";
 import { Versions } from "./src/screens/Versions";
 import { bucket, endpoint, endpoints, go, init, readOnly, type Section, SECTIONS, section, settings } from "./src/store";
 import { Badge, ErrorBanner, NoticeLine, terminal } from "./src/ui/kit";
@@ -27,6 +28,8 @@ import { sectionLabel } from "./src/labels";
 /** The view of a section: a plain function, called in a binding, so the view follows `section()`. */
 function screen(s: Section) {
   switch (s) {
+    case "timeline":
+      return <Timeline />;
     case "endpoints":
       return <Endpoints />;
     case "browse":

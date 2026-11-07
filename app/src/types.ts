@@ -443,3 +443,60 @@ export interface AuditEntry {
   requestIds: string[];
   targets: string[];
 }
+
+// --- sessions (sonde run, sonde proxy, the Timeline) ---------------------
+
+export interface SessionInfo {
+  path: string;
+  name: string;
+  created: string;
+  endpoint: string;
+  command: string | null;
+  requests: number;
+  live: boolean;
+}
+
+export interface Episode {
+  kind: "request" | "multipart" | "retry" | "probe" | "listing" | "step";
+  format: "SlateDB" | "Iceberg" | "Delta" | null;
+  title: string;
+  start: string;
+  end: string;
+  records: number[];
+  bytesUp: number;
+  bytesDown: number;
+  outcome: { kind: "ok" } | { kind: "failed"; detail: string } | { kind: "refused" };
+  notes: string[];
+}
+
+export interface Observation {
+  level: "warn" | "info";
+  text: string;
+}
+
+export interface SessionSummary {
+  requests: number;
+  errors: number;
+  misses: number;
+  refused: number;
+  seconds: number;
+  bytesUp: number;
+  bytesDown: number;
+}
+
+export interface SessionView {
+  path: string;
+  header: { endpoint: string; url: string; region: string; created: string; command?: string | null };
+  summary: SessionSummary;
+  episodes: Episode[];
+  observations: Observation[];
+  sharedNotes: string[];
+}
+
+export interface RecordingView {
+  url: string;
+  path: string;
+  endpoint: string;
+  requests: number;
+  exports: string;
+}
