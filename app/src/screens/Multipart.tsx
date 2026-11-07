@@ -9,7 +9,7 @@ import { t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan } from "../types";
-import { Badge, Bar, Button, Card, Empty, Field, KeyValue, Mono, Muted, Page, terminal, Title, TYPE } from "../ui/kit";
+import { Badge, Bar, Button, Card, Empty, Field, KeyValue, Mono, Muted, Page, rowHeight, terminal, Title, TYPE } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { here, remember } from "../ui/overview";
@@ -128,7 +128,7 @@ export function Multipart() {
                 data={r().uploads.map((u) => ({ flag: u.stale ? "!" : "", key: u.key, uploadId: u.uploadId, initiated: date(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
                 rowClasses={r().uploads.map((u) => (u.stale ? "text-warn" : "text-foreground"))}
                 fontSize={TYPE.body}
-                rowHeight={terminal() ? undefined : 30}
+                rowHeight={rowHeight(30)}
                 classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
                 sort={{ key: "age", direction: "descending" }}
               />

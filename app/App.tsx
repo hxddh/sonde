@@ -6,7 +6,7 @@
 import "./src/ui/fonts";
 import { effect, keymap, mount, platform, setColorScheme, Storage, Text, View } from "nsh";
 import { createNavStack, NavPage, NavStack } from "nsh/base";
-import { isAvailable, Menu, Window, windowState } from "nsh/desktop";
+import { currentWindow, isAvailable, Menu, Window, windowState } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
 import { areaLabel } from "./src/labels";
@@ -17,14 +17,18 @@ import { StoreArea } from "./src/screens/StoreArea";
 import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openSessionFile, readOnly, report, section, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
-import { Activity, activityOpen } from "./src/ui/activity";
-import { Badge, material, SidePanel, terminal } from "./src/ui/kit";
+import { Activity, activityOpen, runningJobs } from "./src/ui/activity";
+import { Badge, material, Recoverable, SidePanel, terminal } from "./src/ui/kit";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, toggleSidebar, Toolbar } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
 
 /** The view of an area: a plain function, called in a binding, so the view follows `area()`.
  * Until there is an endpoint, Run and Store open on the welcome. */
+/** What the window shows: the area, and whether it welcomes instead. A
+ * place is drawn afresh when it changes, inside a boundary of its own. */
+const view = () => `${area()}|${endpoints().length === 0}`;
+
 function screen(a: Area) {
   if ((a === "run" || a === "store") && endpoints().length === 0) return <Welcome />;
   switch (a) {
@@ -57,6 +61,12 @@ function Context() {
 // --- desktop -------------------------------------------------------------
 
 function DesktopShell() {
+  // a program or a job at work shows on the Dock's icon and the taskbar button
+  const win = currentWindow();
+  effect(() => {
+    const busy = running() !== null || runningJobs() > 0;
+    win.set({ progress: busy ? { state: "indeterminate" } : null });
+  });
   // Settings open in a window of their own, Activity from the edge: neither is a place here
   setOverlay((s) => {
     const a = areaOf(s);
@@ -98,7 +108,9 @@ function DesktopShell() {
         <Sidebar open={open} />
         <View class="min-w-0 flex-1 bg-background">
           {/* rebuilt per area: screens own their jobs, cancelled when they go */}
-          {screen(area())}
+          <Each of={[view()]} key={(x) => x}>
+            {(x) => <Recoverable>{screen(x().split("|")[0] as Area)}</Recoverable>}
+          </Each>
         </View>
       </View>
       <SidePanel open={activityOpen()} onClose={() => activityOpen.set(false)}>
@@ -186,7 +198,11 @@ function TerminalShell() {
             <Home />
           ) : (
             <NavPage title={areaLabel(route.area)} header={<TermHeader title={areaLabel(route.area)} />}>
-              <View class="flex-1">{screen(area())}</View>
+              <View class="flex-1">
+                <Each of={[view()]} key={(x) => x}>
+                  {(x) => <Recoverable>{screen(x().split("|")[0] as Area)}</Recoverable>}
+                </Each>
+              </View>
             </NavPage>
           )
         }

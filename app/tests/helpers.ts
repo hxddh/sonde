@@ -51,7 +51,7 @@ export async function place(app: App, where: string) {
 }
 
 /** Opens the app, starts the demo, and goes to Store (selecting `bucket`). */
-export async function withDemo(bucket?: string, options = desktop): Promise<App> {
+export async function withDemo(bucket?: string, options: Parameters<typeof open>[1] = desktop): Promise<App> {
   const app = await open("../App.tsx", options);
   await place(app, "endpoints");
   await app.press("id:open-demo");

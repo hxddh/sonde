@@ -1,6 +1,6 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { type JSX, platform, reduceMotion, Scroll, split, Text, View } from "nsh";
+import { ErrorBoundary, fontScale, type JSX, platform, reduceMotion, Scroll, split, Text, View } from "nsh";
 import { Button as BaseButton, Checkbox as BaseCheckbox, Input, Progress, Select, Sheet, Switch, Tab, Tabs, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
@@ -12,6 +12,10 @@ export const terminal = () => platform.idiom === "terminal";
  * (nsh.json's `tailwind.fontSize`), for the props that take a number
  * (DataTable's `fontSize`). A desktop app's scale around a 13 pt body. */
 export const TYPE = { caption: 11, small: 12, body: 13, heading: 15, title: 20 } as const;
+
+/** A table row's height for the user's text size: rows grow with their
+ * text instead of clipping it; a terminal's rows are one cell. */
+export const rowHeight = (points: number) => (terminal() ? undefined : Math.round(points * Math.max(1, fontScale())));
 
 /** Floating surfaces (the palette, sheets, cards on hover, menus): on macOS a
  * material over what is behind them (Liquid Glass on macOS 26, a blur
@@ -446,5 +450,21 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
         <Text class="px-2 py-1 text-small text-muted-foreground">… {props.rows.length - (props.max ?? 200)} more</Text>
       </If>
     </View>
+  );
+}
+
+/** A place that failed to draw says so, and can try again, instead of
+ * leaving the window blank; the rest of the app keeps working. */
+export function Recoverable(props: { children: JSX.Element }) {
+  return (
+    <ErrorBoundary
+      fallback={(error, reset) => (
+        <Empty icon="triangle-alert" title={t("error.placeTitle")} text={error instanceof Error ? error.message : String(error)} testID="place-error">
+          <Button variant="outline" icon="refresh-cw" label={t("error.retry")} onPress={reset} />
+        </Empty>
+      )}
+    >
+      {props.children}
+    </ErrorBoundary>
   );
 }

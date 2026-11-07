@@ -11,7 +11,7 @@ import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationText, observationWhy } from "../phrases";
 import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Dot, Empty, terminal, TYPE } from "./kit";
+import { Dot, Empty, rowHeight, terminal, TYPE } from "./kit";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
 
@@ -321,7 +321,7 @@ export function OperationsTable(props: {
       columns={columns()}
       data={data()}
       fontSize={TYPE.body}
-      rowHeight={terminal() ? undefined : 30}
+      rowHeight={rowHeight(30)}
       resizableColumns={!terminal()}
       classes={terminal() ? undefined : tableClasses}
       rowClasses={shown().map((i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
@@ -349,7 +349,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
       fontSize={TYPE.small}
       fontFamily={platform.idiom === "terminal" ? undefined : "monospace"}
-      rowHeight={terminal() ? undefined : 24}
+      rowHeight={rowHeight(24)}
       classes={terminal() ? undefined : tableClasses}
       rowClasses={props.lines.map((_, i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
       rowSelectable

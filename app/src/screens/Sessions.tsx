@@ -127,6 +127,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       title: v?.header.command ?? props.path.split("/").pop() ?? "sonde",
       defaultSize: { width: 1100, height: 720 },
       restoreBounds: true,
+      // macOS: the file in the title bar, and session windows as tabs of one window
+      representedFile: props.path,
+      tabGroup: "sessions",
     });
   };
   const copy = (text: string) => void Clipboard.writeText(text).then(() => notify(t("common.copied")), report);

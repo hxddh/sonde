@@ -1,7 +1,7 @@
 // The key path of each screen, in the desktop form, on the built-in demo.
 
 import { expect, test } from "nsh/test";
-import { place, withDemo } from "./helpers";
+import { desktop, place, withDemo } from "./helpers";
 
 test("request inspector: records, details, copy as curl without a signature", async () => {
   const app = await withDemo("demo");
@@ -133,4 +133,11 @@ test("language: Chinese strings", async () => {
   await app.press("label:语言");
   await app.press("text:English");
   await app.waitFor("text:General");
+});
+
+test("reduced motion: the overview's cards are there at once, still", async () => {
+  const app = await withDemo("demo", { ...desktop, reducedMotion: true });
+  await app.waitFor("id:overview-versions", { timeout: 10000 });
+  expect(app.shows("id:overview-multipart")).toBe(true);
+  expect(app.shows("id:overview-capacity")).toBe(true);
 });

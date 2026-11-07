@@ -10,7 +10,7 @@ import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, iconSvg } from "../ui/icon";
-import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, Muted, terminal, Toggle, TYPE } from "../ui/kit";
+import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, Muted, rowHeight, terminal, Toggle, TYPE } from "../ui/kit";
 import { Fold, Pairs } from "../ui/record";
 import { Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
@@ -430,7 +430,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         stripe
         resizableColumns
         fontSize={TYPE.body}
-        rowHeight={terminal() ? undefined : 30}
+        rowHeight={rowHeight(30)}
         renderCell={
           terminal()
             ? undefined

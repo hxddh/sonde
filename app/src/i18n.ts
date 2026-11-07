@@ -457,6 +457,8 @@ const en = {
   "why.obs.hot": "One key read again and again. Each read is a request and a round trip; a cache in front of it would remove most of them.",
   "why.obs.listed": "Listing the same prefix again and again is slow (a page per 1000 keys) and billed per request; a manifest, or a listing kept between calls, avoids it.",
   "obs.title": "What stands out",
+  "error.placeTitle": "This view stopped",
+  "error.retry": "Try again",
 };
 
 type Key = keyof typeof en;
@@ -911,6 +913,8 @@ const zh: Partial<Record<Key, string>> = {
   "why.obs.hot": "同一个键被反复读取。每次读取都是一次请求和一次往返；在它前面加一层缓存可以省掉大部分。",
   "why.obs.listed": "反复列举同一个前缀很慢（每 1000 个键一页），而且按请求计费；使用清单文件，或在调用之间保留列举结果，可以避免。",
   "obs.title": "值得注意",
+  "error.placeTitle": "这个视图出错了",
+  "error.retry": "重试",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

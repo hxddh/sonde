@@ -13,7 +13,7 @@ import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, notify, report } from "../store";
 import type { JobInfo, RecordSummary, RequestFilter } from "../types";
 import { Icon, iconSvg } from "./icon";
-import { Bar, Button, Dot, Empty, IconButton, PanelHeader, Segmented, terminal, Tip, TYPE } from "./kit";
+import { Bar, Button, Dot, Empty, IconButton, PanelHeader, rowHeight, Segmented, terminal, Tip, TYPE } from "./kit";
 import { statusTone, toneText } from "./sessionview";
 
 export const activityOpen = signal(false);
@@ -113,7 +113,7 @@ function Requests() {
         ]}
         data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: r.target, latency: ms(r.latencyMs), time: date(r.time).slice(11, 16) }))}
         fontSize={TYPE.body}
-        rowHeight={terminal() ? undefined : 28}
+        rowHeight={rowHeight(28)}
         classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-2", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
         renderCell={
           terminal()
