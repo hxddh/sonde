@@ -124,14 +124,14 @@ function Item(props: { entry: ToastEntry }) {
         )}
       </If>
       <View class="min-w-0 flex-1 gap-0.5">
-        <Text class="text-[13px] font-medium text-popover-foreground">{content().title}</Text>
+        <Text class="text-body font-medium text-popover-foreground">{content().title}</Text>
         <If when={content().description}>
-          <Text class="text-xs text-muted-foreground line-clamp-3">{content().description}</Text>
+          <Text class="text-small text-muted-foreground line-clamp-3">{content().description}</Text>
         </If>
       </View>
       <If when={content().action}>
         <View role="button" testID="toast-action" accessibilityLabel={content().action} onPress={act} class="-my-0.5 rounded-(--radius-sm) px-2 py-1 hover:bg-muted active:bg-accent">
-          <Text class="text-xs font-semibold text-primary">{content().action}</Text>
+          <Text class="text-small font-semibold text-primary">{content().action}</Text>
         </View>
       </If>
     </Toast>

@@ -11,7 +11,7 @@ import { command, history, lastRun, openLastRun, running, stop } from "../run";
 import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { fill, glass, Kbd, terminal } from "./kit";
+import { fill, glass, Kbd, SCRIM, terminal } from "./kit";
 import { keyLabel } from "./keys";
 
 export const paletteOpen = signal(false);
@@ -193,7 +193,7 @@ export function Palette() {
       open={paletteOpen()}
       onOpenChange={({ open }) => paletteOpen.set(open)}
       animation="fade"
-      backdropClass={terminal() ? undefined : "bg-black/25"}
+      backdropClass={terminal() ? undefined : SCRIM}
       style={terminal() ? undefined : { marginTop: 96, ...glass }}
       class={terminal() ? "w-full" : `w-[600px] max-w-[92%] self-center overflow-hidden rounded-(--radius-card) border border-border ${fill("bg-popover/85", "bg-popover")} shadow-2xl`}
       testID="palette-dialog"
@@ -212,10 +212,10 @@ export function Palette() {
         onCancel={close}
         searchPrefix={terminal() ? undefined : <Icon name="search" size={16} />}
         searchBarClass={terminal() ? undefined : "h-12 flex-row items-center gap-2.5 border-b border-border px-4"}
-        searchClass={terminal() ? "text-foreground" : "flex-1 text-[15px] text-foreground placeholder:text-muted-foreground"}
+        searchClass={terminal() ? "text-foreground" : "flex-1 text-heading text-foreground placeholder:text-muted-foreground"}
         listClass={terminal() ? "max-h-[360px]" : "max-h-[400px] p-1.5"}
         itemClass={terminal() ? "px-1 text-foreground focus:bg-accent checked:font-semibold" : "group h-9 rounded-(--radius) px-2.5 focus:bg-selection"}
-        groupClass={terminal() ? "px-1 text-muted-foreground" : "px-2.5 pb-1 pt-2.5 text-[11px] font-medium text-muted-foreground"}
+        groupClass={terminal() ? "px-1 text-muted-foreground" : "px-2.5 pb-1 pt-2.5 text-caption font-medium text-muted-foreground"}
         separatorClass="my-1 h-px bg-border"
         renderItem={
           terminal()
@@ -225,9 +225,9 @@ export function Palette() {
                 return (
                   <View class="h-9 flex-row items-center gap-2.5">
                     <Icon name={a?.icon ?? "chevron-right"} size={15} tint={a?.checked ? "primary" : "muted-foreground"} />
-                    <Text class={`min-w-0 shrink text-[13px] line-clamp-1 ${a?.id.startsWith("cmd:") ? "font-mono text-xs" : ""} ${a?.checked ? "font-medium text-primary" : "text-popover-foreground"}`}>{entry.label}</Text>
+                    <Text class={`min-w-0 shrink text-body line-clamp-1 ${a?.id.startsWith("cmd:") ? "font-mono text-small" : ""} ${a?.checked ? "font-medium text-primary" : "text-popover-foreground"}`}>{entry.label}</Text>
                     <If when={a?.hint}>
-                      <Text class="min-w-0 flex-1 font-mono text-[11px] text-muted-foreground line-clamp-1">{a!.hint!}</Text>
+                      <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{a!.hint!}</Text>
                     </If>
                     <If when={!a?.hint}>
                       <View class="flex-1" />
@@ -242,13 +242,13 @@ export function Palette() {
                 );
               }
         }
-        empty={<Text class="px-4 py-6 text-center text-[13px] text-muted-foreground">{t("palette.nothing")}</Text>}
+        empty={<Text class="px-4 py-6 text-center text-body text-muted-foreground">{t("palette.nothing")}</Text>}
         footer={
           terminal() ? undefined : (
             <View class="h-9 flex-row items-center gap-4 border-t border-border px-4">
-              <Text class="text-[11px] text-muted-foreground">{`↑↓ ${t("palette.move")}`}</Text>
-              <Text class="text-[11px] text-muted-foreground">{`${keyLabel("enter")} ${t("palette.choose")}`}</Text>
-              <Text class="text-[11px] text-muted-foreground">{`${keyLabel("escape")} ${t("palette.close")}`}</Text>
+              <Text class="text-caption text-muted-foreground">{`↑↓ ${t("palette.move")}`}</Text>
+              <Text class="text-caption text-muted-foreground">{`${keyLabel("enter")} ${t("palette.choose")}`}</Text>
+              <Text class="text-caption text-muted-foreground">{`${keyLabel("escape")} ${t("palette.close")}`}</Text>
             </View>
           )
         }

@@ -9,7 +9,7 @@ import { t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan } from "../types";
-import { Badge, Bar, Button, Card, Empty, Field, KeyValue, Mono, Muted, Page, terminal, Title } from "../ui/kit";
+import { Badge, Bar, Button, Card, Empty, Field, KeyValue, Mono, Muted, Page, terminal, Title, TYPE } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { here, remember } from "../ui/overview";
@@ -85,7 +85,7 @@ export function Multipart() {
               <Card class="min-w-48 flex-1">
                 <Muted>{t("mpu.uploads", { n: r().totalUploads })}</Muted>
                 <Title>{bytes(r().totalBytes)}</Title>
-                <Text class={r().staleUploads ? "text-sm text-warn" : "text-sm text-muted-foreground"}>{t("mpu.stale", { n: r().staleUploads, days: r().thresholdDays })}</Text>
+                <Text class={r().staleUploads ? "text-body text-warn" : "text-body text-muted-foreground"}>{t("mpu.stale", { n: r().staleUploads, days: r().thresholdDays })}</Text>
               </Card>
               <Card class="min-w-48 flex-1">
                 <Muted>{t("mpu.costMonth")}</Muted>
@@ -94,10 +94,10 @@ export function Multipart() {
               </Card>
               <Card class="min-w-64 flex-[2]" testID="lifecycle-verdict">
                 <View class="flex-row items-center gap-2">
-                  <Text class="text-sm font-semibold text-foreground">{t("mpu.lifecycle")}</Text>
+                  <Text class="text-body font-semibold text-foreground">{t("mpu.lifecycle")}</Text>
                   <Badge label={r().lifecycle.status} tone={tone(r().lifecycle.status)} />
                 </View>
-                <Text class="text-sm text-foreground">{r().lifecycle.message}</Text>
+                <Text class="text-body text-foreground">{r().lifecycle.message}</Text>
                 <If when={r().lifecycle.status !== "covered"}>
                   <View class="flex-row items-end gap-2">
                     <Field class="w-24" label="days" value={days_()} onChange={(v) => days_.set(v)} />
@@ -109,7 +109,7 @@ export function Multipart() {
             </View>
             <If when={r().uploads.length > 0} else={<Empty text={t("mpu.noneFound")} />}>
               <View class="flex-row items-center gap-2">
-                <Text class="flex-1 text-sm text-muted-foreground">{`${count(r().totalUploads)} · ${r().bucket}/${r().prefix}`}</Text>
+                <Text class="flex-1 text-body text-muted-foreground">{`${count(r().totalUploads)} · ${r().bucket}/${r().prefix}`}</Text>
                 <Button variant="destructive" small label={t("mpu.abortSelected")} onPress={planAbort} disabled={r().staleUploads === 0} testID="plan-abort" />
               </View>
               <DataTable
@@ -127,9 +127,9 @@ export function Multipart() {
                 ]}
                 data={r().uploads.map((u) => ({ flag: u.stale ? "!" : "", key: u.key, uploadId: u.uploadId, initiated: date(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
                 rowClasses={r().uploads.map((u) => (u.stale ? "text-warn" : "text-foreground"))}
-                fontSize={13}
+                fontSize={TYPE.body}
                 rowHeight={terminal() ? undefined : 30}
-                classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-xs font-medium text-muted-foreground", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
+                classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
                 sort={{ key: "age", direction: "descending" }}
               />
               <KeyValue rows={[["Scanned", r().scannedAt], [t("common.endpoint"), r().endpoint]]} />

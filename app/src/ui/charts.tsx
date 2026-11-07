@@ -16,7 +16,7 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
       else={
         <View class="gap-1">
           <SimpleTable columns={["", "value", "share"]} rows={props.items.map((i) => [i.label, fmt(i.value), pct(i.value, total())])} />
-          <Text class="text-xs text-muted-foreground">
+          <Text class="text-small text-muted-foreground">
             {props.items.length > 0 ? `${props.items[0].label}: ${pct(props.items[0].value, total())} of ${fmt(total())}` : ""}
           </Text>
         </View>
@@ -75,7 +75,7 @@ export function StackBar(props: { parts: { label: string; value: number }[]; tes
           {(p, i) => (
             <View class="flex-row items-center gap-1.5">
               <View class={`h-2.5 w-2.5 rounded-sm bg-${PALETTE[i() % PALETTE.length]}`} />
-              <Text class="text-xs text-muted-foreground">{`${p().label} ${bytes(p().value)} (${pct(p().value, total())})`}</Text>
+              <Text class="text-small text-muted-foreground">{`${p().label} ${bytes(p().value)} (${pct(p().value, total())})`}</Text>
             </View>
           )}
         </Each>

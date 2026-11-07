@@ -86,14 +86,14 @@ function Tile(props: { id: StoreTab; icon: IconName; title: string; value: strin
       >
         <View class="flex-row items-center gap-1.5">
           <Icon name={props.icon} size={13} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
-          <Text class="flex-1 text-[11px] font-medium text-muted-foreground line-clamp-1">{props.title}</Text>
+          <Text class="flex-1 text-caption font-medium text-muted-foreground line-clamp-1">{props.title}</Text>
           <Icon name="chevron-right" size={12} />
         </View>
         <If when={!props.pending} else={<View class="my-1 h-4 w-24 rounded-(--radius-sm) bg-muted" />}>
-          <Text class={`text-[15px] font-semibold line-clamp-1 ${props.tone === "warn" ? "text-warn" : "text-foreground"}`}>{props.value}</Text>
+          <Text class={`text-heading font-semibold tabular-nums line-clamp-1 ${props.tone === "warn" ? "text-warn" : "text-foreground"}`}>{props.value}</Text>
         </If>
         <If when={!props.pending} else={<View class="h-3 w-32 rounded-(--radius-sm) bg-muted/70" />}>
-          <Text class="text-[11px] text-muted-foreground line-clamp-1">{props.detail ?? ""}</Text>
+          <Text class="text-caption text-muted-foreground line-clamp-1">{props.detail ?? ""}</Text>
         </If>
       </BaseButton>
     </View>

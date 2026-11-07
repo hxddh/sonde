@@ -8,7 +8,7 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { go, notify, readOnly, report } from "../store";
 import type { Outcome, Plan } from "../types";
-import { Button, Field, Heading, Mono, Muted, SimpleTable } from "./kit";
+import { Button, Field, Heading, Mono, Muted, SCRIM, SimpleTable } from "./kit";
 
 export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outcome | null) => void }) {
   const typed = signal("");
@@ -42,14 +42,14 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
         if (!e.open) close(null);
       }}
       class="m-auto w-[560px] max-w-[95%] gap-3 rounded-(--radius-card) border border-border bg-popover p-5"
-      backdropClass="bg-black/40"
+      backdropClass={SCRIM}
     >
       <If when={props.plan}>
         {(p) => (
           <View class="gap-3" testID="confirm-dialog">
-            <Text class="text-base font-semibold text-popover-foreground">{t("confirm.title")}</Text>
+            <Text class="text-heading font-semibold text-popover-foreground">{t("confirm.title")}</Text>
             <Heading>{t("confirm.dryRun")}</Heading>
-            <Text class="text-sm text-popover-foreground">{p().summary}</Text>
+            <Text class="text-body text-popover-foreground">{p().summary}</Text>
             <If when={p().items.length > 0}>
               <SimpleTable max={12} columns={["key", "id", "bytes", ""]} rows={p().items.map((i) => [i.key, i.id ?? "", i.bytes === null ? "" : bytes(i.bytes), i.detail])} />
             </If>
@@ -65,7 +65,7 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
               when={!readOnly()}
               else={
                 <View class="gap-2 rounded-(--radius) bg-muted p-3">
-                  <Text class="text-sm text-foreground">{t("confirm.readOnly")}</Text>
+                  <Text class="text-body text-foreground">{t("confirm.readOnly")}</Text>
                   <Button small label={t("nav.settings")} onPress={() => (close(null), go("settings"))} />
                 </View>
               }

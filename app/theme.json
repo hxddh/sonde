@@ -4,7 +4,7 @@
     "theme": {
       "radius": "8px",
       "radius-card": "10px",
-      "font-mono": "SF Mono, Menlo, Cascadia Mono, JetBrains Mono, DejaVu Sans Mono, monospace",
+      "font-mono": "JetBrains Mono, SF Mono, Menlo, Cascadia Mono, DejaVu Sans Mono, monospace",
       "radius-sm": "5px"
     },
     "light": {
@@ -58,7 +58,8 @@
       "fmt-mpu": "oklch(0.66 0.15 75)",
       "fmt-other": "oklch(0.65 0.02 255)",
       "bar": "oklch(0.7 0.1 256)",
-      "bar-track": "oklch(0.93 0.005 250)"
+      "bar-track": "oklch(0.93 0.005 250)",
+      "scrim": "oklch(0.2 0.01 255 / 18%)"
     },
     "dark": {
       "background": "oklch(0.18 0.006 255)",
@@ -111,7 +112,8 @@
       "fmt-mpu": "oklch(0.8 0.14 80)",
       "fmt-other": "oklch(0.6 0.01 255)",
       "bar": "oklch(0.62 0.12 256)",
-      "bar-track": "oklch(0.26 0.008 255)"
+      "bar-track": "oklch(0.26 0.008 255)",
+      "scrim": "oklch(0 0 0 / 45%)"
     }
   }
 }

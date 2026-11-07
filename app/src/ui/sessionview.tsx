@@ -11,7 +11,7 @@ import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationText, observationWhy } from "../phrases";
 import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Dot, Empty, fill, glass, terminal } from "./kit";
+import { Dot, Empty, fill, glass, terminal, TYPE } from "./kit";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
 
@@ -100,8 +100,8 @@ export function span(v: SessionView): [number, number] {
 function Figure(props: { value: string; label: string; tone?: Tone }) {
   return (
     <View class="gap-0.5 pr-5">
-      <Text class={`font-mono text-[15px] font-semibold ${props.tone ? TONE_TEXT[props.tone] : "text-foreground"}`}>{props.value}</Text>
-      <Text class="text-[11px] text-muted-foreground">{props.label}</Text>
+      <Text class={`tabular-nums text-heading font-semibold ${props.tone ? TONE_TEXT[props.tone] : "text-foreground"}`}>{props.value}</Text>
+      <Text class="text-caption text-muted-foreground">{props.label}</Text>
     </View>
   );
 }
@@ -131,10 +131,10 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
     <View class="gap-3">
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
-          <Text class="font-mono text-[13px] font-semibold text-foreground line-clamp-2">
+          <Text class="font-mono text-body font-semibold text-foreground line-clamp-2">
             {command() ? `$ ${command()}` : props.view.header.endpoint}
           </Text>
-          <Text class="text-xs text-muted-foreground line-clamp-1">{`${props.view.header.endpoint} · ${props.view.header.url} · ${date(props.view.header.created)}`}</Text>
+          <Text class="text-small text-muted-foreground line-clamp-1">{`${props.view.header.endpoint} · ${props.view.header.url} · ${date(props.view.header.created)}`}</Text>
         </View>
         {props.actions}
       </View>
@@ -199,7 +199,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
                   class={`max-w-full flex-row items-center gap-1.5 rounded-full border px-2.5 py-1 ${o().level === "warn" ? "border-warn/40 bg-warn/10 hover:bg-warn/15 selected:bg-warn/25" : "border-border bg-card hover:bg-muted selected:border-primary/50 selected:bg-selection"}`}
                 >
                   <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={13} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
-                  <Text class="min-w-0 shrink text-xs text-foreground line-clamp-1">{observationText(o())}</Text>
+                  <Text class="min-w-0 shrink text-small text-foreground line-clamp-1">{observationText(o())}</Text>
                   <If when={props.filter === i()}>
                     <Icon name="x" size={12} />
                   </If>
@@ -209,11 +209,11 @@ export function Observations(props: { view: SessionView; filter?: number | null;
               <View testID={`observation-card-${i()}`} class="gap-2">
                 <View class="flex-row gap-2">
                   <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={14} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
-                  <Text class="min-w-0 flex-1 text-[13px] font-medium text-popover-foreground">{observationText(o())}</Text>
+                  <Text class="min-w-0 flex-1 text-body font-medium text-popover-foreground">{observationText(o())}</Text>
                 </View>
-                <If when={observationWhy(o())}>{(w) => <Text class="text-xs leading-5 text-muted-foreground">{w()}</Text>}</If>
+                <If when={observationWhy(o())}>{(w) => <Text class="text-small leading-5 text-muted-foreground">{w()}</Text>}</If>
                 <If when={props.onFilter && o().episodes?.length}>
-                  <Text class="text-[11px] text-primary">{`${t("obs.showOps")} (${o().episodes.length})`}</Text>
+                  <Text class="text-caption text-primary">{`${t("obs.showOps")} (${o().episodes.length})`}</Text>
                 </If>
               </View>
             </HoverCard>
@@ -226,7 +226,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
 
 const tableClasses = {
   header: "bg-card border-b border-border",
-  headerCell: "pl-2 pr-1 text-xs font-medium text-muted-foreground",
+  headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground",
   cell: "px-2",
   rowOdd: "bg-muted/30",
   rowHover: "bg-row-hover",
@@ -278,7 +278,7 @@ export function OperationsTable(props: {
     });
   const cell = (c: { row: number; key: string; text: string }) => {
     const e = ep(c.row);
-    if (!e) return <Text class="px-2 text-[13px]">{c.text}</Text>;
+    if (!e) return <Text class="px-2 text-body">{c.text}</Text>;
     switch (c.key) {
       case "status":
         return (
@@ -287,9 +287,9 @@ export function OperationsTable(props: {
           </View>
         );
       case "format":
-        return <Text class={`px-2 text-xs font-medium ${family(e).class}`}>{c.text}</Text>;
+        return <Text class={`px-2 text-small font-medium ${family(e).class}`}>{c.text}</Text>;
       case "title":
-        return <Text class={`px-2 text-[13px] line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e)]}`}>{c.text}</Text>;
+        return <Text class={`px-2 text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e)]}`}>{c.text}</Text>;
       case "bar": {
         const [a, b] = range();
         const total = b - a;
@@ -306,9 +306,9 @@ export function OperationsTable(props: {
         );
       }
       case "notes":
-        return <Text class="px-2 text-xs text-muted-foreground line-clamp-1">{c.text}</Text>;
+        return <Text class="px-2 text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
       default:
-        return <Text class={`px-2 text-[13px] text-foreground ${c.key === "time" || c.key === "requests" || c.key === "duration" ? "font-mono text-xs" : ""}`}>{c.text}</Text>;
+        return <Text class={`px-2 text-body text-foreground ${c.key === "time" || c.key === "requests" || c.key === "duration" ? "tabular-nums text-small" : ""}`}>{c.text}</Text>;
     }
   };
   return (
@@ -319,7 +319,7 @@ export function OperationsTable(props: {
       class="min-h-0 flex-1 rounded-(--radius-card) border border-border bg-card"
       columns={columns()}
       data={data()}
-      fontSize={13}
+      fontSize={TYPE.body}
       rowHeight={terminal() ? undefined : 30}
       resizableColumns={!terminal()}
       classes={terminal() ? undefined : tableClasses}
@@ -346,7 +346,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
         { key: "line", title: t("sessions.output"), width: 520, minWidth: 160 },
       ]}
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
-      fontSize={12}
+      fontSize={TYPE.small}
       fontFamily={platform.idiom === "terminal" ? undefined : "monospace"}
       rowHeight={terminal() ? undefined : 24}
       classes={terminal() ? undefined : tableClasses}
@@ -401,20 +401,20 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         <View class="flex-row items-center gap-2">
           {props.back}
           <If when={fam().label}>
-            <Text class={`text-xs font-semibold ${fam().class}`}>{fam().label}</Text>
+            <Text class={`text-small font-semibold ${fam().class}`}>{fam().label}</Text>
           </If>
           <View class="flex-1" />
           <If when={e().outcome.kind !== "ok"}>
             <View class="flex-row items-center gap-1.5">
               <Dot tone={episodeTone(e())} />
-              <Text class={`text-xs font-medium ${TONE_TEXT[episodeTone(e())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
+              <Text class={`text-small font-medium ${TONE_TEXT[episodeTone(e())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
             </View>
           </If>
         </View>
-        <Text class="text-[15px] font-semibold leading-5 text-foreground">
+        <Text class="text-heading font-semibold leading-5 text-foreground">
           {episodeTitle(e())}
         </Text>
-        <Text class="font-mono text-[11px] text-muted-foreground">{`${clock(e().start)} · ${ms(duration(e()))} · ↑${bytes(e().bytesUp)} ↓${bytes(e().bytesDown)}`}</Text>
+        <Text class="tabular-nums text-caption text-muted-foreground">{`${clock(e().start)} · ${ms(duration(e()))} · ↑${bytes(e().bytesUp)} ↓${bytes(e().bytesDown)}`}</Text>
       </View>
       <If when={notes().length > 0}>
         <View class="gap-1.5">
@@ -422,14 +422,14 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
             {(n) => (
               <View class="flex-row gap-2">
                 <View class="mt-[7px] size-1 rounded-full bg-muted-foreground" />
-                <Text class="flex-1 text-[13px] leading-5 text-foreground">{n()}</Text>
+                <Text class="flex-1 text-body leading-5 text-foreground">{n()}</Text>
               </View>
             )}
           </Each>
         </View>
       </If>
       <View class="gap-1">
-        <Text role="header" class="text-xs font-semibold text-muted-foreground">{`${t("timeline.requestsOf")} (${e().records.length})`}</Text>
+        <Text role="header" class="text-small font-semibold text-muted-foreground">{`${t("timeline.requestsOf")} (${e().records.length})`}</Text>
         <View class="overflow-hidden rounded-(--radius) border border-border bg-card">
           <Each of={props.rows} key={(r) => r.id}>
             {(r, i) => (
@@ -439,12 +439,12 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
                 onPress={() => props.onRecord(r().id)}
                 class={`flex-row items-center gap-2 px-2.5 py-1.5 hover:bg-row-hover active:bg-selection ${i() > 0 ? "border-t border-border" : ""}`}
               >
-                <Text class={`w-8 font-mono text-[11px] font-semibold ${TONE_TEXT[statusTone(r().status)]}`}>{r().status === null ? "—" : String(r().status)}</Text>
+                <Text class={`w-8 tabular-nums text-caption font-semibold ${TONE_TEXT[statusTone(r().status)]}`}>{r().status === null ? "—" : String(r().status)}</Text>
                 <View class="min-w-0 flex-1">
-                  <Text class="text-xs font-medium text-foreground line-clamp-1">{r().operation}</Text>
-                  <Text class="font-mono text-[11px] text-muted-foreground line-clamp-1">{r().target}</Text>
+                  <Text class="text-small font-medium text-foreground line-clamp-1">{r().operation}</Text>
+                  <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{r().target}</Text>
                 </View>
-                <Text class="font-mono text-[11px] text-muted-foreground">{ms(r().latencyMs)}</Text>
+                <Text class="tabular-nums text-caption text-muted-foreground">{ms(r().latencyMs)}</Text>
                 <If when={!terminal()}>
                   <Icon name="chevron-right" size={13} />
                 </If>
@@ -486,7 +486,7 @@ export function SessionList(props: { sessions: SessionInfo[]; selected: string |
       <Each of={groups()} key={(g) => g.day}>
         {(g) => (
           <View class="gap-0.5">
-            <Text role="header" class="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+            <Text role="header" class="px-2 pb-1 text-caption font-medium text-muted-foreground">
               {g().day}
             </Text>
             <Each of={g().items} key={(x) => x.s.path}>
@@ -502,10 +502,10 @@ export function SessionList(props: { sessions: SessionInfo[]; selected: string |
                     <If when={x().s.live}>
                       <Dot tone="live" label={t("timeline.live")} />
                     </If>
-                    <Text class="min-w-0 shrink text-[13px] font-medium text-foreground line-clamp-1">{program(x().s)}</Text>
-                    <Text class="min-w-0 flex-1 font-mono text-[11px] text-muted-foreground line-clamp-1">{args(x().s)}</Text>
+                    <Text class="min-w-0 shrink text-body font-medium text-foreground line-clamp-1">{program(x().s)}</Text>
+                    <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{args(x().s)}</Text>
                   </View>
-                  <Text class="text-[11px] text-muted-foreground line-clamp-1">{`${clock(x().s.created).slice(0, 5)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
+                  <Text class="text-caption text-muted-foreground line-clamp-1">{`${clock(x().s.created).slice(0, 5)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
                 </BaseButton>
               )}
             </Each>

@@ -38,7 +38,7 @@ export function Updates() {
   return (
     <Section title={t("updates.title")} testID="updates">
       <View class="flex-row flex-wrap items-center gap-2">
-        <Text class="flex-1 text-[13px] text-foreground">
+        <Text class="flex-1 text-body text-foreground">
           {s().kind === "current"
             ? t("updates.current")
             : s().kind === "checking"
@@ -52,9 +52,9 @@ export function Updates() {
         </If>
       </View>
       <If when={s().kind === "downloading"}>
-        <Muted class="text-xs">{t("updates.downloading", { pct: String(Math.round((s() as { share: number }).share * 100)) })}</Muted>
+        <Muted class="text-small">{t("updates.downloading", { pct: String(Math.round((s() as { share: number }).share * 100)) })}</Muted>
       </If>
-      <If when={s().kind === "found" ? (s() as { update: AppUpdate }).update.notes : null}>{(n) => <Muted class="text-xs">{n()}</Muted>}</If>
+      <If when={s().kind === "found" ? (s() as { update: AppUpdate }).update.notes : null}>{(n) => <Muted class="text-small">{n()}</Muted>}</If>
     </Section>
   );
 }

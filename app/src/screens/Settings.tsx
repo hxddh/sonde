@@ -57,7 +57,7 @@ export function SettingsScreen() {
             <Section title={t("settings.appearance")}>
               <View class="flex-row flex-wrap items-center gap-x-8 gap-y-3">
                 <View class="gap-1.5">
-                  <Text class="text-xs font-medium text-muted-foreground">{t("settings.themeLabel")}</Text>
+                  <Text class="text-small font-medium text-muted-foreground">{t("settings.themeLabel")}</Text>
                   <Segmented
                     testID="theme"
                     value={d().theme}
@@ -122,14 +122,14 @@ export function SettingsScreen() {
                   <Each of={Object.entries(d().prices["by-class"])}>
                     {(e, i) => (
                       <View class={`h-9 flex-row items-center gap-3 px-3 ${i() > 0 ? "border-t border-border" : ""}`}>
-                        <Text class="flex-1 font-mono text-xs text-foreground">{e()[0]}</Text>
+                        <Text class="flex-1 font-mono text-small text-foreground">{e()[0]}</Text>
                         <Input
                           value={String(e()[1])}
                           accessibilityLabel={e()[0]}
                           onChange={({ value }) => change({ ...d(), prices: { ...d().prices, "by-class": { ...d().prices["by-class"], [e()[0]]: num(value, e()[1]) } } })}
-                          class="h-7 w-28 rounded-(--radius-sm) border border-input bg-background px-2 text-right font-mono text-xs text-foreground focus:border-ring"
+                          class="h-7 w-28 rounded-(--radius-sm) border border-input bg-background px-2 text-right font-mono text-small text-foreground focus:border-ring"
                         />
-                        <Text class="w-20 text-xs text-muted-foreground">{`${d().prices.currency} / GiB·mo`}</Text>
+                        <Text class="w-20 text-small text-muted-foreground">{`${d().prices.currency} / GiB·mo`}</Text>
                       </View>
                     )}
                   </Each>

@@ -13,7 +13,7 @@ import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, end
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf } from "./sessionview";
-import { fill, glass, IconButton, Kbd, Tip } from "./kit";
+import { fill, glass, IconButton, Kbd, POPUP, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { paletteOpen } from "./palette";
 
@@ -68,12 +68,12 @@ function Breadcrumb() {
   };
   return (
     <View class="min-w-0 flex-row items-center gap-1.5">
-      <Text class="text-[13px] font-semibold text-foreground">{areaLabel(area())}</Text>
+      <Text class="text-body font-semibold text-foreground">{areaLabel(area())}</Text>
       <If when={detail()}>
         {(d) => (
           <>
             <Icon name="chevron-right" size={13} />
-            <Text class="min-w-0 shrink text-[13px] text-muted-foreground line-clamp-1">{d()}</Text>
+            <Text class="min-w-0 shrink text-body text-muted-foreground line-clamp-1">{d()}</Text>
           </>
         )}
       </If>
@@ -101,29 +101,29 @@ export function EndpointSwitcher(props: { class?: string }) {
       }}
       offset={4}
       class={`h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-input bg-background pl-2 pr-1 hover:border-ring/60 ${props.class ?? "w-52"}`}
-      inputClass="min-w-0 flex-1 text-[13px] text-foreground placeholder:text-foreground"
-      popupClass={`min-w-[260px] rounded-(--radius-card) border border-border ${fill("bg-popover/90", "bg-popover")} p-1 shadow-lg`}
+      inputClass="min-w-0 flex-1 text-body text-foreground placeholder:text-foreground"
+      popupClass={`min-w-[260px] ${POPUP}`}
       popupStyle={glass}
       itemClass="group rounded-(--radius-sm) px-2 py-1.5 focus:bg-accent"
       prefix={<Icon name="server" size={14} />}
       triggerButton={<Icon name="chevrons-up-down" size={13} />}
-      empty={<Text class="px-2 py-2 text-xs text-muted-foreground">{t("endpoints.noneYet")}</Text>}
+      empty={<Text class="px-2 py-2 text-small text-muted-foreground">{t("endpoints.noneYet")}</Text>}
       renderItem={(item) => {
         const e = endpoints().find((x) => x.id === item.value);
         return (
           <View class="flex-row items-center gap-2">
             <View class="min-w-0 flex-1">
-              <Text class="text-[13px] text-popover-foreground line-clamp-1">{item.title}</Text>
-              <Text class="font-mono text-[11px] text-muted-foreground line-clamp-1">{e?.url ?? ""}</Text>
+              <Text class="text-body text-popover-foreground line-clamp-1">{item.title}</Text>
+              <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{e?.url ?? ""}</Text>
             </View>
-            <Text class="text-[11px] text-muted-foreground">{e?.vendorLabel ?? ""}</Text>
+            <Text class="text-caption text-muted-foreground">{e?.vendorLabel ?? ""}</Text>
           </View>
         );
       }}
       footer={
         <BaseButton testID="manage-endpoints" accessibilityLabel={t("endpoints.manage")} onPress={() => go("endpoints")} class="mt-1 flex-row items-center gap-2 rounded-(--radius-sm) border-t border-border px-2 py-1.5 hover:bg-muted">
           <Icon name="settings" size={13} />
-          <Text class="text-xs text-muted-foreground">{t("endpoints.manage")}</Text>
+          <Text class="text-small text-muted-foreground">{t("endpoints.manage")}</Text>
         </BaseButton>
       }
     />
@@ -143,7 +143,7 @@ function RunningPill() {
           class="h-7 max-w-[220px] flex-row items-center gap-2 rounded-full bg-primary/12 px-3 hover:bg-primary/20"
         >
           <View class={`size-1.5 rounded-full bg-primary ${reduceMotion() ? "" : "animate-pulse"}`} />
-          <Text class="text-xs font-medium text-primary line-clamp-1">{r().command.split(" ")[0]}</Text>
+          <Text class="text-small font-medium text-primary line-clamp-1">{r().command.split(" ")[0]}</Text>
         </BaseButton>
       )}
     </If>
@@ -160,7 +160,7 @@ function SearchButton() {
       class="h-7 w-44 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60"
     >
       <Icon name="search" size={14} />
-      <Text class="flex-1 text-[13px] text-muted-foreground">{t("palette.open")}</Text>
+      <Text class="flex-1 text-body text-muted-foreground">{t("palette.open")}</Text>
       <Kbd keys="mod+k" />
     </BaseButton>
   );
@@ -215,7 +215,7 @@ function Place(props: { area: Area; open: (a: Area) => void }) {
       class="h-8 flex-row items-center gap-2.5 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent"
     >
       <Icon name={AREA_ICON[props.area]} size={16} tint={on() ? "sidebar-accent-foreground" : "muted-foreground"} />
-      <Text class={on() ? "flex-1 text-[13px] font-medium text-sidebar-accent-foreground" : "flex-1 text-[13px] text-sidebar-foreground"}>{areaLabel(props.area)}</Text>
+      <Text class={on() ? "flex-1 text-body font-medium text-sidebar-accent-foreground" : "flex-1 text-body text-sidebar-foreground"}>{areaLabel(props.area)}</Text>
       <If when={props.area === "run" && running()}>
         <View class="size-1.5 rounded-full bg-primary" />
       </If>
@@ -244,7 +244,7 @@ function Recent(props: { open: (a: Area) => void }) {
   return (
     <If when={list().length > 0}>
       <View class="gap-0.5">
-        <Text class="px-2 pb-1 pt-4 text-[11px] font-medium text-muted-foreground">{t("sidebar.recent")}</Text>
+        <Text class="px-2 pb-1 pt-4 text-caption font-medium text-muted-foreground">{t("sidebar.recent")}</Text>
         <Each of={list()} key={(s) => s.path}>
           {(s) => (
             <BaseButton
@@ -256,8 +256,8 @@ function Recent(props: { open: (a: Area) => void }) {
               class="flex-row items-center gap-2 rounded-(--radius) px-2 py-1 hover:bg-sidebar-accent/50"
             >
               <View class={`size-1.5 rounded-full ${s().live ? "bg-primary" : "bg-transparent"}`} />
-              <Text class="min-w-0 flex-1 text-xs text-sidebar-foreground line-clamp-1">{programOf(s().command) ?? s().name}</Text>
-              <Text class="text-[11px] text-muted-foreground">{ago(s().created)}</Text>
+              <Text class="min-w-0 flex-1 text-small text-sidebar-foreground line-clamp-1">{programOf(s().command) ?? s().name}</Text>
+              <Text class="text-caption text-muted-foreground">{ago(s().created)}</Text>
             </BaseButton>
           )}
         </Each>
@@ -269,7 +269,7 @@ function Recent(props: { open: (a: Area) => void }) {
 export function Sidebar(props: { open: (a: Area) => void }) {
   return (
     <If when={sidebarOpen()}>
-      <View testID="sidebar" class="w-56 border-r border-sidebar-border bg-sidebar px-2 pb-2 pt-3">
+      <View testID="sidebar" class={`w-56 border-r border-sidebar-border ${fill("bg-sidebar/40", "bg-sidebar")} px-2 pb-2 pt-3`}>
         <View class="gap-0.5">
           <Place area="run" open={props.open} />
           <Place area="sessions" open={props.open} />

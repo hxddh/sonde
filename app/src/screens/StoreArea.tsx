@@ -5,7 +5,7 @@
 // sheet. A terminal keeps them as tabs.
 
 import { batch, Clipboard, effect, resource, signal, Text, untracked, View } from "nsh";
-import { Sheet, Tree, type TreeItem, type TreeRef } from "nsh/base";
+import { Tree, type TreeItem, type TreeRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { t } from "../i18n";
 import { sectionLabel } from "../labels";
@@ -13,7 +13,7 @@ import { api, Listing } from "../native";
 import { bucket, chooseBucket, endpoint, go, notify, prefix, report, STORE_TABS, type StoreTab, storeSheet, storeTab } from "../store";
 import type { BucketEntry, Entry } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { fill, glass, IconButton, terminal } from "../ui/kit";
+import { IconButton, PanelHeader, SidePanel, terminal } from "../ui/kit";
 import { TabBar } from "../ui/tabs";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
@@ -147,16 +147,16 @@ function Buckets() {
   return (
     <View class="w-60 border-r border-border bg-sidebar/40">
       <View class="h-10 flex-row items-center gap-2 px-3">
-        <Text role="header" class="flex-1 text-xs font-semibold text-muted-foreground">
+        <Text role="header" class="flex-1 text-small font-semibold text-muted-foreground">
           {t("browse.buckets")}
         </Text>
         <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={() => buckets.refetch()} />
       </View>
       <If when={buckets.state() === "pending"}>
-        <Text class="px-3 text-xs text-muted-foreground">{t("common.loading")}</Text>
+        <Text class="px-3 text-small text-muted-foreground">{t("common.loading")}</Text>
       </If>
       <If when={buckets.state() !== "pending" && (buckets() ?? []).length === 0}>
-        <Text class="px-3 text-xs text-muted-foreground">{t("store.noBuckets")}</Text>
+        <Text class="px-3 text-small text-muted-foreground">{t("store.noBuckets")}</Text>
       </If>
       <Tree
         ref={(r) => (tree = r)}
@@ -188,7 +188,7 @@ function Buckets() {
                 </If>
               </View>
               <Icon name={isBucket ? "database" : expanded().includes(entry.id) ? "folder-open" : "folder"} size={14} tint={isBucket ? "foreground" : "muted-foreground"} />
-              <Text class={`min-w-0 flex-1 text-[13px] line-clamp-1 ${entry.id.includes("#") ? "text-muted-foreground" : "text-foreground"}`}>{name}</Text>
+              <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${entry.id.includes("#") ? "text-muted-foreground" : "text-foreground"}`}>{name}</Text>
             </View>
           );
         }}
@@ -201,25 +201,11 @@ function Buckets() {
 function DetailSheet() {
   const close = () => storeSheet.set(null);
   return (
-    <Sheet
-      open={storeSheet() !== null}
-      side="right"
-      onOpenChange={(e) => !e.open && close()}
-      popupClass={`w-[760px] max-w-[94%] border-l border-t border-border ${fill("bg-background/90", "bg-background")} shadow-xl`}
-      popupStyle={{ marginTop: 44, ...glass }}
-      backdropClass="bg-black/15"
-    >
+    <SidePanel open={storeSheet() !== null} onClose={close} size="wide">
       <If when={storeSheet()}>
         {(s) => (
           <View class="flex-1" testID="store-sheet">
-            <View class="h-12 flex-row items-center gap-2.5 border-b border-border px-4">
-              <Icon name={TAB_ICON[s()]} size={16} tint="muted-foreground" />
-              <Text role="header" class="text-[15px] font-semibold text-foreground">
-                {sectionLabel(s())}
-              </Text>
-              <Text class="min-w-0 flex-1 font-mono text-[11px] text-muted-foreground line-clamp-1">{`${bucket() ?? ""}/${prefix()}`}</Text>
-              <IconButton icon="x" label={t("common.close")} onPress={close} testID="sheet-close" />
-            </View>
+            <PanelHeader icon={TAB_ICON[s()]} title={sectionLabel(s())} subtitle={`${bucket() ?? ""}/${prefix()}`} onClose={close} closeTestID="sheet-close" />
             {/* rebuilt per detail: each owns its jobs */}
             <Each of={[s()]} key={(x) => x}>
               {(x) => <View class="min-h-0 flex-1">{screen(x())}</View>}
@@ -227,7 +213,7 @@ function DetailSheet() {
           </View>
         )}
       </If>
-    </Sheet>
+    </SidePanel>
   );
 }
 

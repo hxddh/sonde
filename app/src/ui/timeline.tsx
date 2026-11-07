@@ -141,7 +141,7 @@ export function Timeline(props: { view: SessionView; rows?: number[]; selected: 
   return (
     <View testID="timeline" class="min-h-0 flex-1 overflow-hidden rounded-(--radius-card) border border-border bg-card">
       <View class="h-9 flex-row items-center gap-3 border-b border-border px-3">
-        <Text class="flex-1 text-xs text-muted-foreground">
+        <Text class="flex-1 text-small text-muted-foreground">
           {zoom() ? t("timeline.zoomed", { a: offset(range()[0] - full()[0]), b: offset(range()[1] - full()[0]), total: offset(full()[1] - full()[0]) }) : t("timeline.dragToZoom")}
         </Text>
         <If when={zoom()}>
@@ -182,9 +182,9 @@ export function Timeline(props: { view: SessionView; rows?: number[]; selected: 
                 style={{ position: "absolute", left: Math.min(Math.max(LABEL, c().h.x + 14), width() - 280), top: AXIS + (c().h.row + 1) * ROW + 4, pointerEvents: "none" }}
                 class="w-[264px] gap-1 rounded-(--radius) border border-border bg-popover px-3 py-2 shadow-lg"
               >
-                <Text class="text-xs font-semibold text-popover-foreground line-clamp-2">{episodeTitle(c().e)}</Text>
-                <Text class="font-mono text-[11px] text-muted-foreground">{`${clock(c().e.start)} · +${offset(time(c().e.start) - full()[0])}`}</Text>
-                <Text class="font-mono text-[11px] text-muted-foreground">{`${ms(duration(c().e))} · ${t("sessions.requestsN", { n: c().e.records.length })} · ↑${bytes(c().e.bytesUp)} ↓${bytes(c().e.bytesDown)}`}</Text>
+                <Text class="text-small font-semibold text-popover-foreground line-clamp-2">{episodeTitle(c().e)}</Text>
+                <Text class="font-mono text-caption text-muted-foreground">{`${clock(c().e.start)} · +${offset(time(c().e.start) - full()[0])}`}</Text>
+                <Text class="font-mono text-caption text-muted-foreground">{`${ms(duration(c().e))} · ${t("sessions.requestsN", { n: c().e.records.length })} · ↑${bytes(c().e.bytesUp)} ↓${bytes(c().e.bytesDown)}`}</Text>
               </View>
             )}
           </If>

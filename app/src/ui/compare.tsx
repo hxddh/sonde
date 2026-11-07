@@ -6,7 +6,7 @@ import { Dialog, DiffView } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
 import { endpoint, endpoints, go, report } from "../store";
-import { Badge, Button, Choice, Heading, Muted } from "./kit";
+import { Badge, Button, Choice, Heading, Muted, SCRIM } from "./kit";
 
 interface Comparison {
   compared: number;
@@ -32,9 +32,9 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
         <View class="flex-1 gap-2" testID="compare">
           <View class="flex-row items-center gap-2">
             <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={props.onClose} testID="compare-back" />
-            <Text class="flex-1 text-sm font-semibold text-foreground line-clamp-1">{`${name(props.a)} ↔ ${name(props.b)}`}</Text>
+            <Text class="flex-1 text-body font-semibold text-foreground line-clamp-1">{`${name(props.a)} ↔ ${name(props.b)}`}</Text>
           </View>
-          <Text class="text-sm text-foreground" testID="compare-summary">
+          <Text class="text-body text-foreground" testID="compare-summary">
             {t("compare.summary", { n: d().comparison.compared, same: d().comparison.same })}
             {d().comparison.differences.length ? ` · ${t("compare.differ", { n: d().comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
           </Text>
@@ -42,8 +42,8 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
             {(x) => (
               <View class="flex-row flex-wrap items-center gap-2 rounded-(--radius) bg-muted px-2 py-1">
                 <Badge label={`×${x().count}`} tone="fail" />
-                <Text class="text-sm text-foreground">{`${x().operation}  ${x().original} → ${x().replay}`}</Text>
-                <Muted class="text-xs">{`${x().example}${x().conditions.length ? `  (${x().conditions.join(", ")})` : ""}`}</Muted>
+                <Text class="text-body text-foreground">{`${x().operation}  ${x().original} → ${x().replay}`}</Text>
+                <Muted class="text-small">{`${x().example}${x().conditions.length ? `  (${x().conditions.join(", ")})` : ""}`}</Muted>
               </View>
             )}
           </Each>
@@ -93,19 +93,19 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
     }
   };
   return (
-    <Dialog open={props.open} onOpenChange={({ open }) => !open && props.onClose()} class="w-[520px] max-w-full gap-3 self-center rounded-(--radius) border border-border bg-popover p-4 shadow-lg" testID="replay-dialog">
-      <Text class="text-base font-semibold text-foreground">{t("replay.title")}</Text>
-      <Muted class="text-sm">{t("replay.hint")}</Muted>
+    <Dialog open={props.open} onOpenChange={({ open }) => !open && props.onClose()} backdropClass={SCRIM} class="w-[520px] max-w-[95%] gap-3 self-center rounded-(--radius-card) border border-border bg-popover p-5 shadow-xl" testID="replay-dialog">
+      <Text class="text-heading font-semibold text-foreground">{t("replay.title")}</Text>
+      <Muted class="text-body">{t("replay.hint")}</Muted>
       <Choice label={t("common.endpoint")} value={target()} placeholder={t("replay.choose")} items={endpoints().map((e) => ({ value: e.id, title: e.name }))} onChange={(v) => target.set(v)} testID="replay-endpoint" />
       <If when={plan()}>
         {(p) => (
           <View class="gap-1" testID="replay-plan">
-            <Text class="text-sm text-foreground">{t("replay.plan", { n: p().plan.requests, writes: p().plan.writes, deletes: p().plan.deletes, prefix: p().prefix, buckets: p().buckets.join(", ") })}</Text>
-            <Muted class="text-xs">{t("replay.cleanup", { prefix: p().prefix })}</Muted>
-            <Each of={Object.entries(p().plan.skipped)}>{(e) => <Muted class="text-xs">{`${e()[1]} × ${e()[0]}`}</Muted>}</Each>
+            <Text class="text-body text-foreground">{t("replay.plan", { n: p().plan.requests, writes: p().plan.writes, deletes: p().plan.deletes, prefix: p().prefix, buckets: p().buckets.join(", ") })}</Text>
+            <Muted class="text-small">{t("replay.cleanup", { prefix: p().prefix })}</Muted>
+            <Each of={Object.entries(p().plan.skipped)}>{(e) => <Muted class="text-small">{`${e()[1]} × ${e()[0]}`}</Muted>}</Each>
             <If when={p().readOnly}>
               <View class="flex-row items-center gap-2">
-                <Text class="flex-1 text-sm text-warn">{t("replay.readOnly")}</Text>
+                <Text class="flex-1 text-body text-warn">{t("replay.readOnly")}</Text>
                 <Button small label={t("nav.settings")} onPress={() => (props.onClose(), go("settings"))} />
               </View>
             </If>

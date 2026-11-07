@@ -22,8 +22,8 @@ function Way(props: { icon: IconName; title: string; text: string; action: JSX.E
           </View>
         </If>
         <View class="min-w-0 flex-1 gap-0.5">
-          <Text class="text-[13px] font-semibold text-card-foreground">{props.title}</Text>
-          <Text class="text-xs text-muted-foreground">{props.text}</Text>
+          <Text class="text-body font-semibold text-card-foreground">{props.title}</Text>
+          <Text class="text-small text-muted-foreground">{props.text}</Text>
         </View>
         {props.action}
       </View>
@@ -73,8 +73,8 @@ export function Welcome() {
     <View testID="welcome" class="flex-1 items-center justify-center p-8">
       <View class="w-full max-w-[560px] gap-6">
         <View class="gap-2">
-          <Text class="text-[22px] font-semibold text-foreground">{t("welcome.title")}</Text>
-          <Text class="text-[13px] leading-5 text-muted-foreground">{t("welcome.text")}</Text>
+          <Text class="text-title font-semibold text-foreground">{t("welcome.title")}</Text>
+          <Text class="text-body leading-5 text-muted-foreground">{t("welcome.text")}</Text>
         </View>
         <View class="gap-2.5">
           <Way
@@ -120,7 +120,7 @@ export function Welcome() {
         </View>
         <BaseButton accessibilityLabel={t("welcome.example")} onPress={example} testID="open-example" class="flex-row items-center gap-1.5 self-start rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted">
           <Icon name="scroll-text" size={14} />
-          <Text class="text-xs text-muted-foreground">{t("welcome.example")}</Text>
+          <Text class="text-small text-muted-foreground">{t("welcome.example")}</Text>
         </BaseButton>
       </View>
     </View>

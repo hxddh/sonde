@@ -1,22 +1,74 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
 import { type JSX, platform, reduceMotion, Scroll, split, Text, View } from "nsh";
-import { Button as BaseButton, Checkbox as BaseCheckbox, Input, Progress, Select, Switch, Tab, Tabs, Tooltip } from "nsh/base";
+import { Button as BaseButton, Checkbox as BaseCheckbox, Input, Progress, Select, Sheet, Switch, Tab, Tabs, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
 import { keyLabel } from "./keys";
 
 export const terminal = () => platform.idiom === "terminal";
 
+/** The type scale, in points: the `text-caption` … `text-title` classes
+ * (nsh.json's `tailwind.fontSize`), for the props that take a number
+ * (DataTable's `fontSize`). A desktop app's scale around a 13 pt body. */
+export const TYPE = { caption: 11, small: 12, body: 13, heading: 15, title: 20 } as const;
+
 /** Floating surfaces (the palette, sheets, cards on hover, menus): on macOS a
  * material over what is behind them (Liquid Glass on macOS 26, a blur
  * before) on a translucent fill; elsewhere, where a backdrop blur is not
  * drawn everywhere, the fill stays opaque so nothing shows through. */
-const material = platform.os === "macos";
+export const material = platform.os === "macos";
 export const glass = material ? { backdropFilter: "blur(24px) saturate(1.5)", glassEffect: "regular" as const } : {};
 /** The fill of a floating surface: the translucent class where a material
  * is drawn behind it, the opaque one elsewhere. */
 export const fill = (translucent: string, opaque: string) => (material ? translucent : opaque);
+
+/** The one treatment of every anchored popup — menus, selects, the endpoint
+ * switcher, cards on hover — so they do not drift apart. */
+export const POPUP = `rounded-(--radius-card) border border-border ${fill("bg-popover/90", "bg-popover")} p-1 shadow-lg`;
+/** The scrim under a modal layer, from the theme (`scrim`, light and dark). */
+export const SCRIM = "bg-scrim";
+/** The title bar's height: sheets start below it, so it stays a title bar. */
+export const TITLE_BAR = 44;
+
+const PANEL = { narrow: "w-[420px] max-w-[90%]", default: "w-[600px] max-w-[94%]", wide: "w-[760px] max-w-[94%]" } as const;
+
+/** A panel from the window's trailing edge, over a scrim: supplementary work
+ * beside what it is about (Activity, a bucket's detail, a form). One width
+ * per size, one surface, one header; Escape, the scrim and the close button
+ * dismiss it. */
+export function SidePanel(props: { open: boolean; onClose: () => void; size?: keyof typeof PANEL; children: JSX.Element }) {
+  return (
+    <Sheet
+      open={props.open}
+      side="right"
+      onOpenChange={(e) => !e.open && props.onClose()}
+      popupClass={`${PANEL[props.size ?? "default"]} border-l border-t border-border ${fill("bg-background/90", "bg-background")} shadow-xl`}
+      popupStyle={{ marginTop: TITLE_BAR, ...glass }}
+      backdropClass={SCRIM}
+    >
+      {props.children}
+    </Sheet>
+  );
+}
+
+/** A side panel's header: its icon, title and what it is about, the panel's
+ * own controls, and Close. */
+export function PanelHeader(props: { title: string; icon?: IconName; subtitle?: string; children?: JSX.Element; onClose?: () => void; closeTestID?: string }) {
+  return (
+    <View class="h-12 shrink-0 flex-row items-center gap-2 border-b border-border ps-4 pe-3">
+      <If when={props.icon}>{(i) => <Icon name={i()} size={16} tint="muted-foreground" />}</If>
+      <Text role="header" class="text-heading font-semibold text-foreground">
+        {props.title}
+      </Text>
+      <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{props.subtitle ?? ""}</Text>
+      {props.children}
+      <If when={props.onClose}>
+        <IconButton icon="x" label={t("common.close")} onPress={() => props.onClose?.()} testID={props.closeTestID} />
+      </If>
+    </View>
+  );
+}
 
 type Variant = "primary" | "secondary" | "outline" | "ghost" | "destructive";
 
@@ -48,15 +100,15 @@ const iconTint: Record<Variant, Tint> = {
 export function Tip(props: { text: string; shortcut?: string }) {
   return (
     <Tooltip placement="bottom" class="flex-row items-center gap-2 rounded-(--radius-sm) bg-foreground px-2 py-1 shadow-md transition-opacity duration-100" startingClass="opacity-0" endingClass="opacity-0">
-      <Text class="text-xs text-background">{props.text}</Text>
-      <If when={props.shortcut}>{(k) => <Text class="font-mono text-[11px] text-background opacity-70">{keyLabel(k())}</Text>}</If>
+      <Text class="text-small text-background">{props.text}</Text>
+      <If when={props.shortcut}>{(k) => <Text class="font-mono text-caption text-background opacity-70">{keyLabel(k())}</Text>}</If>
     </Tooltip>
   );
 }
 
 /** A shortcut, as the platform writes it (⌘K, Ctrl+K). */
 export function Kbd(props: { keys: string; class?: string }) {
-  return <Text class={`font-mono text-[11px] text-muted-foreground ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
+  return <Text class={`font-mono text-caption text-muted-foreground ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
 }
 
 export function Button(props: {
@@ -85,7 +137,7 @@ export function Button(props: {
       <If when={props.icon && !terminal()}>
         <Icon name={props.icon!} size={props.small ? 14 : 15} tint={iconTint[v()]} />
       </If>
-      <Text class={`${props.small ? "text-xs" : "text-[13px]"} font-medium ${buttonText[v()]}`}>{props.label}</Text>
+      <Text class={`${props.small ? "text-small" : "text-body"} font-medium ${buttonText[v()]}`}>{props.label}</Text>
     </BaseButton>
   );
 }
@@ -109,24 +161,24 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
 }
 
 export function Title(props: { children: JSX.Element; class?: string }) {
-  return <Text class={`text-lg font-semibold text-foreground ${props.class ?? ""}`}>{props.children}</Text>;
+  return <Text class={`text-heading font-semibold text-foreground ${props.class ?? ""}`}>{props.children}</Text>;
 }
 
 export function Heading(props: { children: JSX.Element }) {
   return (
-    <Text role="header" class="text-xs font-semibold text-muted-foreground">
+    <Text role="header" class="text-small font-semibold text-muted-foreground">
       {props.children}
     </Text>
   );
 }
 
 export function Muted(props: { children: JSX.Element; class?: string }) {
-  return <Text class={`text-sm text-muted-foreground ${props.class ?? ""}`}>{props.children}</Text>;
+  return <Text class={`text-body text-muted-foreground ${props.class ?? ""}`}>{props.children}</Text>;
 }
 
 export function Mono(props: { children: JSX.Element; class?: string }) {
   return (
-    <Text class={`font-mono text-xs text-foreground ${props.class ?? ""}`}>
+    <Text class={`font-mono text-small text-foreground ${props.class ?? ""}`}>
       {props.children}
     </Text>
   );
@@ -157,7 +209,7 @@ export function Badge(props: { label: string; tone?: Tone }) {
   const [bg, fg] = toneClass[props.tone ?? "neutral"].split(" ");
   return (
     <View class={`self-start rounded-full px-2 py-0.5 ${bg}`}>
-      <Text class={`text-xs font-medium ${fg}`}>{props.label}</Text>
+      <Text class={`text-small font-medium ${fg}`}>{props.label}</Text>
     </View>
   );
 }
@@ -168,10 +220,10 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean }) {
       <Each of={props.rows}>
         {(row) => (
           <View class="flex-row gap-3">
-            <Text class="w-44 text-sm text-muted-foreground line-clamp-1">
+            <Text class="w-44 text-body text-muted-foreground line-clamp-1">
               {row()[0]}
             </Text>
-            <Text class={`flex-1 text-sm text-foreground ${props.mono ? "font-mono" : ""}`}>
+            <Text class={`flex-1 text-body text-foreground ${props.mono ? "font-mono" : ""}`}>
               {row()[1]}
             </Text>
           </View>
@@ -184,7 +236,7 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean }) {
 export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string }) {
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
-      <Text class="text-xs font-medium text-muted-foreground">{props.label}</Text>
+      <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
       <Input
         testID={props.testID}
         value={props.value}
@@ -194,7 +246,7 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
         onChange={({ value }) => props.onChange(value)}
         onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
         submitBehavior={props.onSubmit ? "submit" : undefined}
-        class={`h-8 rounded-(--radius) border border-input bg-background px-2.5 text-sm text-foreground focus:border-ring ${props.mono ? "font-mono" : ""}`}
+        class={`h-8 rounded-(--radius) border border-input bg-background px-2.5 text-body text-foreground focus:border-ring ${props.mono ? "font-mono" : ""}`}
       />
     </View>
   );
@@ -215,9 +267,9 @@ export function Toggle(props: { label: string; checked: boolean; onChange: (v: b
         thumbClass="h-4 w-4 rounded-full bg-background shadow-sm checked:translate-x-4"
       />
       <View class="flex-1">
-        <Text class="text-sm text-foreground">{props.label}</Text>
+        <Text class="text-body text-foreground">{props.label}</Text>
         <If when={props.hint}>
-          <Text class="text-xs text-muted-foreground">{props.hint}</Text>
+          <Text class="text-small text-muted-foreground">{props.hint}</Text>
         </If>
       </View>
     </View>
@@ -233,9 +285,9 @@ export function Check(props: { label: string; checked: boolean; onChange: (v: bo
       onChange={({ checked }) => props.onChange(checked)}
       class="flex-row items-center gap-2"
       indicatorClass="h-4 w-4 items-center justify-center rounded-sm border border-input checked:bg-primary checked:border-primary"
-      indicator={<Text class="text-xs text-primary-foreground">✓</Text>}
+      indicator={<Text class="text-small text-primary-foreground">✓</Text>}
     >
-      <Text class="text-sm text-foreground">{props.label}</Text>
+      <Text class="text-body text-foreground">{props.label}</Text>
     </BaseCheckbox>
   );
 }
@@ -245,7 +297,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
       <If when={props.label}>
-        <Text class="text-xs font-medium text-muted-foreground">{props.label}</Text>
+        <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
       </If>
       <Select
         testID={props.testID}
@@ -254,14 +306,15 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         placeholder={props.placeholder}
         accessibilityLabel={props.label ?? props.placeholder}
         onChange={({ value }) => value !== null && props.onChange(value)}
-        popupClass="rounded-(--radius) border border-border bg-popover p-1 shadow-lg"
-        itemClass="rounded-sm px-2 py-1.5 text-sm text-popover-foreground focus:bg-accent selected:font-semibold"
+        popupClass={POPUP}
+        popupStyle={glass}
+        itemClass="rounded-sm px-2 py-1.5 text-body text-popover-foreground focus:bg-accent selected:font-semibold"
         trigger={
           <View class="h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2.5 hover:border-ring/60">
-            <Text class="text-sm text-foreground line-clamp-1">
+            <Text class="text-body text-foreground line-clamp-1">
               {title()}
             </Text>
-            {terminal() ? <Text class="text-xs text-muted-foreground">⌄</Text> : <Icon name="chevrons-up-down" size={13} />}
+            {terminal() ? <Text class="text-small text-muted-foreground">⌄</Text> : <Icon name="chevrons-up-down" size={13} />}
           </View>
         }
       />
@@ -285,7 +338,7 @@ export function Segmented(props: { value: string; items: { value: string; title:
             <If when={item().icon && !terminal()}>
               <Icon name={item().icon!} size={13} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
-            <Text class="text-xs text-muted-foreground group-selected:font-medium group-selected:text-foreground">{item().title}</Text>
+            <Text class="text-small text-muted-foreground group-selected:font-medium group-selected:text-foreground">{item().title}</Text>
           </Tab>
         )}
       </Each>
@@ -306,11 +359,11 @@ export function Section(props: { title?: string; description?: string; children:
       <If when={props.title}>
         <View class="flex-row items-end gap-3">
           <View class="flex-1 gap-0.5">
-            <Text role="header" class="text-[13px] font-semibold text-foreground">
+            <Text role="header" class="text-body font-semibold text-foreground">
               {props.title}
             </Text>
             <If when={props.description}>
-              <Text class="text-xs text-muted-foreground">{props.description}</Text>
+              <Text class="text-small text-muted-foreground">{props.description}</Text>
             </If>
           </View>
           {props.action}
@@ -333,7 +386,7 @@ export function Bar(props: { value: number | null; label?: string }) {
         indicatorClass="h-1.5 rounded-full bg-primary"
       />
       <If when={props.label}>
-        <Text class="text-xs text-muted-foreground">{props.label}</Text>
+        <Text class="text-small text-muted-foreground">{props.label}</Text>
       </If>
     </View>
   );
@@ -349,9 +402,9 @@ export function Empty(props: { text: string; title?: string; icon?: IconName; ch
         </View>
       </If>
       <If when={props.title}>
-        <Text class="text-center text-[15px] font-semibold text-foreground">{props.title}</Text>
+        <Text class="text-center text-heading font-semibold text-foreground">{props.title}</Text>
       </If>
-      <Text class="max-w-[380px] text-center text-[13px] text-muted-foreground">{props.text}</Text>
+      <Text class="max-w-[380px] text-center text-body text-muted-foreground">{props.text}</Text>
       <If when={props.children}>
         <View class="mt-1 flex-row items-center gap-2">{props.children}</View>
       </If>
@@ -374,14 +427,14 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
   return (
     <View class="rounded-(--radius) border border-border">
       <View class="flex-row border-b border-border bg-muted px-2 py-1">
-        <Each of={own.columns}>{(c) => <Text class="flex-1 text-xs font-semibold text-muted-foreground">{c()}</Text>}</Each>
+        <Each of={own.columns}>{(c) => <Text class="flex-1 text-small font-semibold text-muted-foreground">{c()}</Text>}</Each>
       </View>
       <Each of={props.rows.slice(0, props.max ?? 200)}>
         {(row) => (
           <View class="flex-row border-b border-border/60 px-2 py-1">
             <Each of={row()}>
               {(cell) => (
-                <Text class={`flex-1 line-clamp-2 text-xs text-foreground ${props.mono ? "font-mono" : ""}`}>
+                <Text class={`flex-1 line-clamp-2 text-small text-foreground ${props.mono ? "font-mono" : ""}`}>
                   {cell()}
                 </Text>
               )}
@@ -390,7 +443,7 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
         )}
       </Each>
       <If when={props.rows.length > (props.max ?? 200)}>
-        <Text class="px-2 py-1 text-xs text-muted-foreground">… {props.rows.length - (props.max ?? 200)} more</Text>
+        <Text class="px-2 py-1 text-small text-muted-foreground">… {props.rows.length - (props.max ?? 200)} more</Text>
       </If>
     </View>
   );

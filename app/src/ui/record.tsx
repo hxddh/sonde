@@ -26,7 +26,7 @@ export function Fold(props: { title: string; count?: number; open?: boolean; chi
         <If when={!terminal()} else={<Text class="text-muted-foreground">{open() ? "▾" : "▸"}</Text>}>
           <Icon name={open() ? "chevron-down" : "chevron-right"} size={13} />
         </If>
-        <Text role="header" class="text-xs font-semibold text-muted-foreground">
+        <Text role="header" class="text-small font-semibold text-muted-foreground">
           {props.count === undefined ? props.title : `${props.title} (${props.count})`}
         </Text>
       </BaseButton>
@@ -41,8 +41,8 @@ export function Pairs(props: { rows: [string, string][]; mono?: boolean }) {
       <Each of={props.rows}>
         {(row, i) => (
           <View class={`flex-row gap-3 px-2.5 py-1 ${i() > 0 ? "border-t border-border" : ""}`}>
-            <Text class="w-[136px] shrink-0 font-mono text-[11px] text-muted-foreground line-clamp-1">{row()[0]}</Text>
-            <Text class={`min-w-0 flex-1 text-[11px] text-foreground ${props.mono === false ? "" : "font-mono"}`}>
+            <Text class="w-[136px] shrink-0 font-mono text-caption text-muted-foreground line-clamp-1">{row()[0]}</Text>
+            <Text class={`min-w-0 flex-1 text-caption text-foreground ${props.mono === false ? "" : "font-mono"}`}>
               {row()[1]}
             </Text>
           </View>
@@ -78,10 +78,10 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
             <Button small variant="ghost" icon="chevron-left" label={t("common.back")} onPress={() => props.onBack?.()} testID="record-back" />
           </If>
           <Dot tone={tone()} />
-          <Text class={`font-mono text-xs font-semibold ${toneText(tone())}`}>{r().status === null ? t("requests.transport") : String(r().status)}</Text>
-          <Text class="text-[15px] font-semibold text-foreground">{r().operation}</Text>
+          <Text class={`font-mono text-small font-semibold ${toneText(tone())}`}>{r().status === null ? t("requests.transport") : String(r().status)}</Text>
+          <Text class="text-heading font-semibold text-foreground">{r().operation}</Text>
         </View>
-        <Text class="font-mono text-[11px] leading-4 text-muted-foreground">{`${r().method} ${r().url}`}</Text>
+        <Text class="font-mono text-caption leading-4 text-muted-foreground">{`${r().method} ${r().url}`}</Text>
       </View>
       <If when={props.actions}>
         <View class="flex-row flex-wrap gap-1.5">{props.actions}</View>
@@ -90,7 +90,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
         {(e) => (
           <View class="flex-row gap-2 rounded-(--radius) border border-destructive/30 bg-destructive/10 px-2.5 py-2">
             <Icon name="circle-x" size={14} tint="destructive" />
-            <Text class="flex-1 text-xs text-destructive">
+            <Text class="flex-1 text-small text-destructive">
               {e()}
             </Text>
           </View>
@@ -104,7 +104,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
                 selectable
                 markdown={"```xml\n" + b().trim() + "\n```"}
                 codeBlockActions={[{ id: "copy" }]}
-                classes={{ codeBlock: "rounded-(--radius) border border-border bg-card", codeBlockCode: "p-2.5 text-[11px]" }}
+                classes={{ codeBlock: "rounded-(--radius) border border-border bg-card", codeBlockCode: "p-2.5 text-caption" }}
               />
             </If>
           </Fold>

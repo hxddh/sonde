@@ -3,8 +3,9 @@
 // sidebar and the place beside it; a terminal gets a home list and a
 // navigation stack, the F10 menu bar and `:` for the palette.
 
+import "./src/ui/fonts";
 import { effect, keymap, mount, platform, setColorScheme, Storage, Text, View } from "nsh";
-import { createNavStack, NavPage, NavStack, Sheet } from "nsh/base";
+import { createNavStack, NavPage, NavStack } from "nsh/base";
 import { isAvailable, Menu, Window, windowState } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
@@ -17,7 +18,7 @@ import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, 
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityOpen } from "./src/ui/activity";
-import { Badge, fill, glass, terminal } from "./src/ui/kit";
+import { Badge, material, SidePanel, terminal } from "./src/ui/kit";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, toggleSidebar, Toolbar } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
@@ -47,7 +48,7 @@ function StatusChip() {
 function Context() {
   const ep = () => endpoints().find((e) => e.id === endpoint());
   return (
-    <Text class="text-xs text-muted-foreground line-clamp-1">
+    <Text class="text-small text-muted-foreground line-clamp-1">
       {ep() ? `${ep()!.name}${area() === "store" && bucket() ? ` › ${bucket()}` : ""}` : t("common.chooseEndpoint")}
     </Text>
   );
@@ -90,18 +91,19 @@ function DesktopShell() {
     return false;
   });
   return (
-    <View class="flex-1 bg-background" onLayout={(e) => shellWidth.set(e.bounds.size.width)}>
+    // on macOS the window's own sidebar material shows through the sidebar
+    <View class={`flex-1 ${material ? "" : "bg-background"}`} onLayout={(e) => shellWidth.set(e.bounds.size.width)}>
       <Toolbar open={open} />
       <View class="min-h-0 flex-1 flex-row">
         <Sidebar open={open} />
-        <View class="min-w-0 flex-1">
+        <View class="min-w-0 flex-1 bg-background">
           {/* rebuilt per area: screens own their jobs, cancelled when they go */}
           {screen(area())}
         </View>
       </View>
-      <Sheet open={activityOpen()} side="right" onOpenChange={(e) => !e.open && activityOpen.set(false)} popupClass={`w-[600px] max-w-[94%] border-l border-t border-border ${fill("bg-background/90", "bg-background")} shadow-xl`} popupStyle={{ marginTop: 44, ...glass }} backdropClass="bg-black/15">
+      <SidePanel open={activityOpen()} onClose={() => activityOpen.set(false)}>
         <Activity onClose={() => activityOpen.set(false)} />
-      </Sheet>
+      </SidePanel>
       <Palette />
       <Toaster />
     </View>

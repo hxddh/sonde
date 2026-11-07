@@ -53,8 +53,8 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
               </View>
             </If>
             <View class="min-w-0 flex-1 gap-0.5">
-              <Text class="text-[13px] font-semibold text-foreground">{t("timeline.recordTitle")}</Text>
-              <Text class="text-xs text-muted-foreground">{t("timeline.recordHint")}</Text>
+              <Text class="text-body font-semibold text-foreground">{t("timeline.recordTitle")}</Text>
+              <Text class="text-small text-muted-foreground">{t("timeline.recordHint")}</Text>
             </View>
             <If when={!open()}>
               <Button variant="outline" label={t("timeline.record")} onPress={() => open.set(true)} testID="record" />
@@ -62,7 +62,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
           </View>
           <If when={open()}>
             <View class="gap-2.5 border-t border-border pt-3">
-              <Text class="text-xs text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
+              <Text class="text-small text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
               <If when={!props.policy}>
                 <Segmented
                   value={policy()}
@@ -87,12 +87,12 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
         <View class={terminal() ? "gap-1" : "gap-3 rounded-(--radius-card) border border-primary/40 bg-card px-4 py-3.5"} testID="recording">
           <View class="flex-row items-center gap-2">
             <Dot tone="live" />
-            <Text class="flex-1 text-[13px] font-semibold text-foreground line-clamp-1">{t("timeline.recording", { url: r().url })}</Text>
+            <Text class="flex-1 text-body font-semibold text-foreground line-clamp-1">{t("timeline.recording", { url: r().url })}</Text>
             <Button small variant="destructive" icon="square" label={t("timeline.stop")} onPress={() => { api.sessions.stop(); props.onChange(); }} testID="record-stop" />
           </View>
-          <Text class="text-xs text-muted-foreground">{t("timeline.pointApp")}</Text>
+          <Text class="text-small text-muted-foreground">{t("timeline.pointApp")}</Text>
           <View selectable class="gap-0 rounded-(--radius) border border-border bg-muted/50 px-3 py-2">
-            <Each of={r().exports.trim().split("\n")}>{(line) => <Text class="font-mono text-[11px] text-foreground">{line()}</Text>}</Each>
+            <Each of={r().exports.trim().split("\n")}>{(line) => <Text class="font-mono text-caption text-foreground">{line()}</Text>}</Each>
           </View>
           <View class="flex-row">
             <Button small variant="outline" icon="copy" label={t("timeline.copyExports")} onPress={() => copy(r().exports)} testID="copy-exports" />

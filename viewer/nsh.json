@@ -3,5 +3,14 @@
   "id": "dev.sonde.viewer",
   "version": "3.0.0",
   "theme": "../app/theme.json",
+  "tailwind": {
+    "fontSize": {
+      "caption": 11,
+      "small": 12,
+      "body": 13,
+      "heading": 15,
+      "title": 20
+    }
+  },
   "capabilities": {}
 }

@@ -100,7 +100,7 @@ export function Capacity() {
             </Card>
             <Card testID="du-findings">
               <Heading>{t("du.why")}</Heading>
-              <Each of={r().findings}>{(f) => <Text class="text-sm text-foreground">{`• ${f()}`}</Text>}</Each>
+              <Each of={r().findings}>{(f) => <Text class="text-body text-foreground">{`• ${f()}`}</Text>}</Each>
             </Card>
             <View class={terminal() ? "gap-4" : "flex-row flex-wrap gap-4"}>
               <Card class="min-w-80 flex-1">

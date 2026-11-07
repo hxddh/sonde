@@ -22,7 +22,7 @@ export function TabBar<T extends string>(props: { tabs: T[]; value: T; label: (t
               <If when={props.icon && !terminal()}>
                 <Icon name={props.icon!(tab())} size={14} tint={props.value === tab() ? "foreground" : "muted-foreground"} />
               </If>
-              <Text class="text-[13px] text-muted-foreground group-selected:font-medium group-selected:text-foreground">{props.label(tab())}</Text>
+              <Text class="text-body text-muted-foreground group-selected:font-medium group-selected:text-foreground">{props.label(tab())}</Text>
             </Tab>
           )}
         </Each>

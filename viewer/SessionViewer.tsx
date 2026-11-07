@@ -87,8 +87,8 @@ export function SessionViewer(props: { data: SharedSession }) {
     <View class="min-h-0 flex-1">
       <View class="gap-3.5 border-b border-border px-5 pb-3.5 pt-4">
         <View class="flex-row items-baseline gap-2">
-          <Text class="text-[15px] font-bold text-foreground">sonde</Text>
-          <Text class="text-xs text-muted-foreground">{t("viewer.shared")}</Text>
+          <Text class="text-heading font-bold text-foreground">sonde</Text>
+          <Text class="text-small text-muted-foreground">{t("viewer.shared")}</Text>
         </View>
         <SessionHeader view={d} compact={!!episode()} />
         <Observations view={d} filter={filter()} onFilter={(f) => filter.set(f)} />
@@ -117,7 +117,7 @@ export function SessionViewer(props: { data: SharedSession }) {
             <ResizablePanel size={440} minSize={320}>
               <View class="flex-1 border-l border-border bg-inspector">
                 <View class="h-10 flex-row items-center border-b border-border px-3">
-                  <Text class="flex-1 text-xs font-semibold text-muted-foreground">{rec() !== null ? t("inspector.request") : t("inspector.operation")}</Text>
+                  <Text class="flex-1 text-small font-semibold text-muted-foreground">{rec() !== null ? t("inspector.request") : t("inspector.operation")}</Text>
                   <IconButton icon="x" label={t("common.close")} onPress={close} />
                 </View>
                 <Scroll class="flex-1" contentClass="p-4">

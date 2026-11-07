@@ -13,7 +13,7 @@ import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, notify, report } from "../store";
 import type { JobInfo, RecordSummary, RequestFilter } from "../types";
 import { Icon, iconSvg } from "./icon";
-import { Bar, Button, Dot, Empty, IconButton, Segmented, terminal, Tip } from "./kit";
+import { Bar, Button, Dot, Empty, IconButton, PanelHeader, Segmented, terminal, Tip, TYPE } from "./kit";
 import { statusTone, toneText } from "./sessionview";
 
 export const activityOpen = signal(false);
@@ -85,7 +85,7 @@ function Requests() {
           <If when={!terminal()}>
             <Icon name="search" size={14} />
           </If>
-          <Input value={text()} placeholder={t("activity.search")} onChange={({ value }) => text.set(value)} accessibilityLabel={t("common.search")} autoCapitalize="none" autoCorrect={false} class="min-w-0 flex-1 text-[13px] text-foreground placeholder:text-muted-foreground" />
+          <Input value={text()} placeholder={t("activity.search")} onChange={({ value }) => text.set(value)} accessibilityLabel={t("common.search")} autoCapitalize="none" autoCorrect={false} class="min-w-0 flex-1 text-body text-foreground placeholder:text-muted-foreground" />
         </View>
         <Segmented
           testID="requests-filter"
@@ -112,9 +112,9 @@ function Requests() {
           { key: "time", title: t("column.time"), width: 70 },
         ]}
         data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: r.target, latency: ms(r.latencyMs), time: date(r.time).slice(11, 16) }))}
-        fontSize={13}
+        fontSize={TYPE.body}
         rowHeight={terminal() ? undefined : 28}
-        classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-xs font-medium text-muted-foreground", cell: "px-2", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
+        classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-2", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
         renderCell={
           terminal()
             ? undefined
@@ -124,10 +124,10 @@ function Requests() {
                   return (
                     <View class="flex-1 flex-row items-center gap-1.5 px-2">
                       <Dot tone={statusTone(r.status)} />
-                      <Text class={`font-mono text-[11px] font-semibold ${toneText(statusTone(r.status))}`}>{c.text}</Text>
+                      <Text class={`tabular-nums text-caption font-semibold ${toneText(statusTone(r.status))}`}>{c.text}</Text>
                     </View>
                   );
-                return <Text class={`px-2 line-clamp-1 ${c.key === "target" ? "font-mono text-[11px] text-muted-foreground" : c.key === "operation" ? "text-[13px] text-foreground" : "font-mono text-[11px] text-muted-foreground"}`}>{c.text}</Text>;
+                return <Text class={`px-2 line-clamp-1 ${c.key === "target" ? "font-mono text-caption text-muted-foreground" : c.key === "operation" ? "text-body text-foreground" : "font-mono text-caption text-muted-foreground"}`}>{c.text}</Text>;
               }
         }
         rowSelectable
@@ -160,8 +160,8 @@ function Jobs() {
             <View class="gap-2 rounded-(--radius-card) border border-border bg-card px-3.5 py-3">
               <View class="flex-row items-center gap-2">
                 <Dot tone={tone(j().state)} label={j().state} />
-                <Text class="min-w-0 flex-1 text-[13px] font-medium text-foreground line-clamp-1">{j().title}</Text>
-                <Text class="text-[11px] text-muted-foreground">{ago(j().started)}</Text>
+                <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{j().title}</Text>
+                <Text class="text-caption text-muted-foreground">{ago(j().started)}</Text>
                 <If when={j().state === "running"}>
                   <Button small variant="outline" label={t("jobs.cancel")} onPress={() => api.cancelJob(j().id)} />
                 </If>
@@ -169,7 +169,7 @@ function Jobs() {
               <If when={j().state === "running"}>
                 <Bar value={j().progress.total ? j().progress.done / Math.max(1, j().progress.total!) : null} label={j().progress.message} />
               </If>
-              <If when={j().error}>{(e) => <Text class="text-xs text-destructive">{e().message}</Text>}</If>
+              <If when={j().error}>{(e) => <Text class="text-small text-destructive">{e().message}</Text>}</If>
             </View>
           )}
         </Each>
@@ -188,15 +188,15 @@ function Changes() {
             <View class="gap-1.5 rounded-(--radius-card) border border-border bg-card px-3.5 py-3">
               <View class="flex-row items-center gap-2">
                 <Dot tone={e().failed ? "client" : "ok"} />
-                <Text class="min-w-0 flex-1 text-[13px] font-medium text-foreground">{`${e().action} · ${e().endpoint}/${e().bucket}`}</Text>
-                <Text class="font-mono text-[11px] text-muted-foreground">{`${e().succeeded}/${e().items}`}</Text>
-                <Text class="text-[11px] text-muted-foreground">{date(e().time)}</Text>
+                <Text class="min-w-0 flex-1 text-body font-medium text-foreground">{`${e().action} · ${e().endpoint}/${e().bucket}`}</Text>
+                <Text class="tabular-nums text-caption text-muted-foreground">{`${e().succeeded}/${e().items}`}</Text>
+                <Text class="text-caption text-muted-foreground">{date(e().time)}</Text>
               </View>
               <View selectable>
-                <Each of={e().targets.slice(0, 6)}>{(x) => <Text class="font-mono text-[11px] text-muted-foreground line-clamp-1">{x()}</Text>}</Each>
+                <Each of={e().targets.slice(0, 6)}>{(x) => <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{x()}</Text>}</Each>
               </View>
               <If when={e().errors.length > 0}>
-                <Text class="text-xs text-destructive">{e().errors.join("; ")}</Text>
+                <Text class="text-small text-destructive">{e().errors.join("; ")}</Text>
               </If>
             </View>
           )}
@@ -206,28 +206,37 @@ function Changes() {
   );
 }
 
-/** Activity's content: its three kinds as a segmented control. */
+/** Activity's content: its three kinds as a segmented control. In a window
+ * it fills a side panel, under the panel's header. */
 export function Activity(props: { onClose?: () => void }) {
   const body = (tab: ActivityTab) => (tab === "requests" ? <Requests /> : tab === "jobs" ? <Jobs /> : <Changes />);
+  const tabs = () => <Segmented testID="activity-tab" value={activityTab()} items={ACTIVITY_TABS.map((x) => ({ value: x, title: TAB_LABEL[x]() }))} onChange={(v) => activityTab.set(v as ActivityTab)} />;
+  // rebuilt per tab: each owns its timers
+  const content = () => (
+    <Each of={[activityTab()]} key={(x) => x}>
+      {(tab) => <View class="min-h-0 flex-1">{body(tab())}</View>}
+    </Each>
+  );
   return (
-    <View testID="activity" class={terminal() ? "flex-1 gap-1 p-1" : "flex-1 gap-3 px-4 pb-0 pt-3"}>
-      <View class="flex-row items-center gap-2">
-        <If when={!terminal()}>
-          <Text role="header" class="text-[15px] font-semibold text-foreground">
-            {t("nav.activity")}
-          </Text>
-        </If>
-        <View class="flex-1" />
-        <Segmented testID="activity-tab" value={activityTab()} items={ACTIVITY_TABS.map((x) => ({ value: x, title: TAB_LABEL[x]() }))} onChange={(v) => activityTab.set(v as ActivityTab)} />
-        <If when={props.onClose}>
-          <IconButton icon="x" label={t("common.close")} onPress={() => props.onClose?.()} testID="activity-close" />
-        </If>
+    <If
+      when={terminal()}
+      else={
+        <View testID="activity" class="flex-1">
+          <PanelHeader icon="activity" title={t("nav.activity")} onClose={props.onClose} closeTestID="activity-close">
+            {tabs()}
+          </PanelHeader>
+          <View class="min-h-0 flex-1 px-4 pt-3">{content()}</View>
+        </View>
+      }
+    >
+      <View testID="activity" class="flex-1 gap-1 p-1">
+        <View class="flex-row items-center gap-2">
+          <View class="flex-1" />
+          {tabs()}
+        </View>
+        {content()}
       </View>
-      {/* rebuilt per tab: each owns its timers */}
-      <Each of={[activityTab()]} key={(x) => x}>
-        {(tab) => <View class="min-h-0 flex-1">{body(tab())}</View>}
-      </Each>
-    </View>
+    </If>
   );
 }
 
@@ -245,7 +254,7 @@ export function ActivityButton(props: { onPress: () => void }) {
     >
       <Icon name="activity" size={16} tint={runningJobs() > 0 ? "primary" : "muted-foreground"} />
       <If when={runningJobs() > 0}>
-        <Text class="font-mono text-[11px] font-semibold text-primary">{String(runningJobs())}</Text>
+        <Text class="tabular-nums text-caption font-semibold text-primary">{String(runningJobs())}</Text>
       </If>
     </BaseButton>
   );

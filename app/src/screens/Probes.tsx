@@ -17,15 +17,15 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
     <View class="gap-3" testID="probe-detail">
       <View class="flex-row items-center gap-2">
         <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={props.onBack} />
-        <Text class="flex-1 text-base font-semibold text-foreground">{`${props.probe.title} — ${props.endpointName}`}</Text>
+        <Text class="flex-1 text-heading font-semibold text-foreground">{`${props.probe.title} — ${props.endpointName}`}</Text>
         <Badge label={verdictLabel(props.result.verdict)} tone={verdictTone(props.result.verdict)} />
       </View>
       <Muted>{props.probe.description}</Muted>
       <Card>
         <Heading>{t("probes.aws")}</Heading>
-        <Text class="text-sm text-foreground">{props.probe.awsBehavior}</Text>
+        <Text class="text-body text-foreground">{props.probe.awsBehavior}</Text>
         <Heading>{t("probes.observed")}</Heading>
-        <Text class="text-sm font-medium text-foreground">{props.result.summary}</Text>
+        <Text class="text-body font-medium text-foreground">{props.result.summary}</Text>
         <Each of={props.result.observations}>{(o) => <Mono>{o()}</Mono>}</Each>
         <Muted>{ms(props.result.durationMs)}</Muted>
       </Card>
@@ -35,7 +35,7 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
           <Card>
             <View class="flex-row items-center gap-2">
               <Badge label={r().status === null ? "—" : String(r().status)} tone={r().status === null || r().status! >= 400 ? "warn" : "pass"} />
-              <Text class="flex-1 text-sm font-medium text-foreground">{r().operation}</Text>
+              <Text class="flex-1 text-body font-medium text-foreground">{r().operation}</Text>
               <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(r().id)} />
             </View>
             <Mono>{`${r().method} ${r().url}`}</Mono>
@@ -54,12 +54,12 @@ function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: num
       <Scroll horizontal class="flex-1">
         <View testID="matrix">
           <View class="flex-row border-b border-border pb-1">
-            <Text class="w-72 text-xs font-semibold text-muted-foreground">probe</Text>
+            <Text class="w-72 text-small font-semibold text-muted-foreground">probe</Text>
             <Each of={props.matrix.columns}>
               {(c) => (
                 <View class="w-36 px-1">
-                  <Text class="line-clamp-1 text-xs font-semibold text-foreground">{c().name}</Text>
-                  <Text class="line-clamp-1 text-xs text-muted-foreground">{c().server ?? c().vendor}</Text>
+                  <Text class="line-clamp-1 text-small font-semibold text-foreground">{c().name}</Text>
+                  <Text class="line-clamp-1 text-small text-muted-foreground">{c().server ?? c().vendor}</Text>
                 </View>
               )}
             </Each>
@@ -68,13 +68,13 @@ function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: num
             {(row) => (
               <View class="flex-row items-center border-b border-border/50 py-0.5">
                 <View class="w-72 pr-2">
-                  <Text class="line-clamp-1 text-xs text-foreground">{row().probe.title}</Text>
-                  <Text class="line-clamp-1 font-mono text-xs text-muted-foreground">{row().probe.id}</Text>
+                  <Text class="line-clamp-1 text-small text-foreground">{row().probe.title}</Text>
+                  <Text class="line-clamp-1 font-mono text-small text-muted-foreground">{row().probe.id}</Text>
                 </View>
                 <Each of={row().cells}>
                   {(cell, i) => (
                     <View class="w-36 px-1">
-                      <If when={cell()} else={<Text class="text-xs text-muted-foreground">—</Text>}>
+                      <If when={cell()} else={<Text class="text-small text-muted-foreground">—</Text>}>
                         {(c) => (
                           <BaseButton testID={`cell-${row().probe.id}-${i()}`} accessibilityLabel={`${row().probe.id} ${props.matrix.columns[i()].name} ${c().verdict}`} onPress={() => props.onOpen(row().probe, i())} class="rounded-sm px-1 py-0.5 hover:bg-muted">
                             <Badge label={`${SYMBOL[c().verdict]} ${verdictLabel(c().verdict)}`} tone={verdictTone(c().verdict)} />

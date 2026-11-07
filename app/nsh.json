@@ -6,6 +6,15 @@
   "icon": "assets/icon.png",
   "rust": "../crates/sonde-nsh",
   "theme": "theme.json",
+  "tailwind": {
+    "fontSize": {
+      "caption": 11,
+      "small": 12,
+      "body": 13,
+      "heading": 15,
+      "title": 20
+    }
+  },
   "capabilities": {
     "clipboard": true,
     "notifications": true,
@@ -35,7 +44,8 @@
     "titleBar": {
       "style": "hidden",
       "height": 44
-    }
+    },
+    "backdrop": "sidebar"
   },
   "updater": {
     "github": "hxddh/sonde"

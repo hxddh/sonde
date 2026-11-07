@@ -91,7 +91,7 @@ export function Versions() {
                   <View class={`h-2.5 w-2.5 rounded-full ${v().isDeleteMarker ? "bg-warn" : v().isLatest ? "bg-primary" : "bg-muted-foreground/40"}`} />
                   <View class="flex-1 gap-0.5">
                     <View class="flex-row items-center gap-2">
-                      <Text class="text-sm text-foreground">{date(v().lastModified)}</Text>
+                      <Text class="text-body text-foreground">{date(v().lastModified)}</Text>
                       <If when={v().isLatest}>
                         <Badge label={t("versions.latest")} tone="primary" />
                       </If>
@@ -101,7 +101,7 @@ export function Versions() {
                     </View>
                     <Mono class="text-muted-foreground">{v().versionId}</Mono>
                   </View>
-                  <Text class="w-20 text-right text-sm text-muted-foreground">{v().isDeleteMarker ? "" : bytes(v().size)}</Text>
+                  <Text class="w-20 text-right text-body text-muted-foreground">{v().isDeleteMarker ? "" : bytes(v().size)}</Text>
                   <Button small variant="ghost" label={t("versions.deleteVersion")} onPress={() => del(v().versionId, v().size)} />
                 </View>
               )}

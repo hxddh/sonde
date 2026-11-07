@@ -42,7 +42,7 @@ export function BucketPicker(props: { testID?: string }) {
         class="w-56"
       />
       <If when={list.state() === "pending"}>
-        <Text class="text-xs text-muted-foreground">{t("common.loading")}</Text>
+        <Text class="text-small text-muted-foreground">{t("common.loading")}</Text>
       </If>
     </View>
   );

@@ -10,7 +10,7 @@ import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, iconSvg } from "../ui/icon";
-import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, Muted, terminal, Toggle } from "../ui/kit";
+import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, Muted, terminal, Toggle, TYPE } from "../ui/kit";
 import { Fold, Pairs } from "../ui/record";
 import { Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
@@ -29,7 +29,7 @@ function Breadcrumbs() {
         <If when={!terminal()}>
           <Icon name="database" size={14} tint="foreground" />
         </If>
-        <Text class="text-[13px] font-semibold text-foreground">{bucket()}</Text>
+        <Text class="text-body font-semibold text-foreground">{bucket()}</Text>
       </BaseButton>
       <Each of={parts()}>
         {(p, i) => (
@@ -38,7 +38,7 @@ function Breadcrumbs() {
               <Icon name="chevron-right" size={12} />
             </If>
             <BaseButton accessibilityLabel={p().name} onPress={() => prefix.set(p().prefix)} class="rounded-(--radius-sm) px-1.5 py-0.5 hover:bg-muted">
-              <Text class={i() === parts().length - 1 ? "text-[13px] font-medium text-foreground" : "text-[13px] text-muted-foreground"}>{p().name}</Text>
+              <Text class={i() === parts().length - 1 ? "text-body font-medium text-foreground" : "text-body text-muted-foreground"}>{p().name}</Text>
             </BaseButton>
           </View>
         )}
@@ -107,15 +107,15 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
           <If when={!terminal()}>
             <Icon name="file" size={16} tint="foreground" />
           </If>
-          <Text class="min-w-0 flex-1 text-[15px] font-semibold text-foreground line-clamp-2">{props.entry.name}</Text>
+          <Text class="min-w-0 flex-1 text-heading font-semibold text-foreground line-clamp-2">{props.entry.name}</Text>
         </View>
-        <Text class="font-mono text-[11px] text-muted-foreground line-clamp-2">{`s3://${b}/${props.entry.key}`}</Text>
+        <Text class="font-mono text-caption text-muted-foreground line-clamp-2">{`s3://${b}/${props.entry.key}`}</Text>
       </View>
       <If when={detail()} else={<Muted>{t("common.loading")}</Muted>}>
         {(d) => (
           <View class="gap-4">
             <View class="flex-row flex-wrap gap-1.5">
-              <Button small variant="primary" icon="download" label={t("browse.download")} onPress={download} disabled={!!progress()} testID="download" />
+              <Button small variant="outline" icon="download" label={t("browse.download")} onPress={download} disabled={!!progress()} testID="download" />
               <Button small variant="outline" icon="file-clock" label={t("browse.versions")} onPress={() => batch(() => (versionKey.set(d().key), go("versions")))} />
               <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(d().recordId)} />
             </View>
@@ -131,29 +131,29 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
             />
             <Fold title={t("browse.etag")}>
               <View class="gap-1.5">
-                <Text class="font-mono text-[11px] text-foreground">{d().etag?.value ?? "—"}</Text>
-                <Text class="text-xs text-muted-foreground">{etagText(d())}</Text>
+                <Text class="font-mono text-caption text-foreground">{d().etag?.value ?? "—"}</Text>
+                <Text class="text-small text-muted-foreground">{etagText(d())}</Text>
                 <If when={d().partSizeGuesses.length > 0}>
-                  <Text class="text-xs text-muted-foreground">
+                  <Text class="text-small text-muted-foreground">
                     {t("browse.partSizes")}: {d().partSizeGuesses.map((s) => bytes(s)).join(", ")}
                   </Text>
                 </If>
               </View>
             </Fold>
             <Fold title={t("browse.checksums")} count={d().checksums.length}>
-              <If when={d().checksums.length > 0} else={<Text class="text-xs text-muted-foreground">{t("browse.noChecksum")}</Text>}>
+              <If when={d().checksums.length > 0} else={<Text class="text-small text-muted-foreground">{t("browse.noChecksum")}</Text>}>
                 <View class="gap-1.5">
                   <Each of={d().checksums}>
                     {(c) => (
                       <View class="gap-0.5 rounded-(--radius) border border-border bg-card px-2.5 py-1.5">
                         <View class="flex-row items-center gap-2">
                           <Badge label={c().algorithm} tone="info" />
-                          <Text class="text-[11px] text-muted-foreground">
+                          <Text class="text-caption text-muted-foreground">
                             {c().kind === "composite" ? t("browse.composite", { n: c().parts ?? "?" }) : t("browse.fullObject")}
                             {c().kindFromHeader ? "" : ` · ${t("browse.inferred")}`}
                           </Text>
                         </View>
-                        <Text class="font-mono text-[11px] text-foreground">{c().value}</Text>
+                        <Text class="font-mono text-caption text-foreground">{c().value}</Text>
                       </View>
                     )}
                   </Each>
@@ -172,7 +172,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               />
             </Fold>
             <Fold title={t("browse.metadata")} count={d().metadata.length} open={d().metadata.length > 0}>
-              <If when={d().metadata.length > 0} else={<Text class="text-xs text-muted-foreground">{t("common.none")}</Text>}>
+              <If when={d().metadata.length > 0} else={<Text class="text-small text-muted-foreground">{t("common.none")}</Text>}>
                 <Pairs rows={d().metadata} />
               </If>
             </Fold>
@@ -196,7 +196,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                 <If when={url()}>
                   {(u) => (
                     <View class="gap-1.5 rounded-(--radius) border border-border bg-card px-2.5 py-2">
-                      <Text class="font-mono text-[11px] text-foreground">{u()}</Text>
+                      <Text class="font-mono text-caption text-foreground">{u()}</Text>
                       <View class="flex-row">
                         <Button small variant="ghost" icon="copy" label={t("common.copy")} onPress={() => Clipboard.writeText(u()).then(() => notify(t("common.copied")), report)} />
                       </View>
@@ -361,7 +361,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       <View class="flex-row flex-wrap items-center gap-2">
         <Breadcrumbs />
         <View class="flex-1" />
-        <Text class="font-mono text-xs text-muted-foreground" testID="listing-count">
+        <Text class="font-mono text-small text-muted-foreground" testID="listing-count">
           {t("browse.objects", { n: count(total()) })}
           {done() ? "" : ` · ${t("browse.more")}`}
         </Text>
@@ -382,7 +382,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             onSubmit={search}
             submitBehavior="submit"
             accessibilityLabel={t("common.filter")}
-            class="min-w-0 flex-1 text-[13px] text-foreground placeholder:text-muted-foreground"
+            class="min-w-0 flex-1 text-body text-foreground placeholder:text-muted-foreground"
           />
           <If when={filter()}>
             <Button small variant="ghost" label={t("browse.searchAll")} onPress={search} testID="search" />
@@ -395,7 +395,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         {(hits) => (
           <Card>
             <View class="flex-row items-center gap-2">
-              <Text class="flex-1 text-[13px] font-medium text-foreground">
+              <Text class="flex-1 text-body font-medium text-foreground">
                 {t("browse.matches", { n: hits().length })} {searchState() ? `· ${searchState()}` : ""}
               </Text>
               <IconButton icon="x" label={t("common.close")} onPress={() => searchHits.set(null)} />
@@ -403,7 +403,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             <Each of={hits().slice(0, 50)} key={(h) => h.key}>
               {(h) => (
                 <BaseButton accessibilityLabel={h().key} onPress={() => props.onSelect(h())} class="flex-row items-center gap-2 rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted">
-                  <Text class="font-mono text-xs text-primary">{h().key}</Text>
+                  <Text class="font-mono text-small text-primary">{h().key}</Text>
                 </BaseButton>
               )}
             </Each>
@@ -429,7 +429,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         rowSelectable
         stripe
         resizableColumns
-        fontSize={13}
+        fontSize={TYPE.body}
         rowHeight={terminal() ? undefined : 30}
         renderCell={
           terminal()
@@ -440,11 +440,11 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                   return (
                     <View class="flex-1 flex-row items-center gap-2 px-2">
                       <Icon name={folder ? "folder" : "file"} size={14} tint={folder ? "foreground" : "muted-foreground"} />
-                      <Text class={`min-w-0 flex-1 text-[13px] line-clamp-1 ${folder ? "font-medium text-foreground" : "text-foreground"}`}>{folder ? c.text.slice(2) : c.text}</Text>
+                      <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${folder ? "font-medium text-foreground" : "text-foreground"}`}>{folder ? c.text.slice(2) : c.text}</Text>
                     </View>
                   );
                 }
-                return <Text class={`px-2 text-xs ${c.key === "size" || c.key === "parts" ? "font-mono text-foreground" : "text-muted-foreground"}`}>{c.text}</Text>;
+                return <Text class={`px-2 text-small ${c.key === "size" || c.key === "parts" ? "font-mono text-foreground" : "text-muted-foreground"}`}>{c.text}</Text>;
               }
         }
         onContextMenu={(e) => {
@@ -459,7 +459,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           if (want < start() || range.end > start() + WINDOW - 50) start.set(want);
         }}
         onRowPress={({ row }) => open(row)}
-        classes={terminal() ? { header: "bg-muted", rowSelected: "bg-accent" } : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-xs font-medium text-muted-foreground", cell: "px-0", rowOdd: "bg-muted/30", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
+        classes={terminal() ? { header: "bg-muted", rowSelected: "bg-accent" } : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-0", rowOdd: "bg-muted/30", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
         empty={<Empty icon="folder" text={loading() ? t("common.loading") : t("common.empty")} />}
       />
     </View>
@@ -494,7 +494,7 @@ export function Browse() {
                 {(e) => (
                   <View class="w-[400px] border-l border-border bg-inspector">
                     <View class="h-10 flex-row items-center border-b border-border px-3">
-                      <Text class="flex-1 text-xs font-semibold text-muted-foreground">{t("browse.detail")}</Text>
+                      <Text class="flex-1 text-small font-semibold text-muted-foreground">{t("browse.detail")}</Text>
                       <IconButton icon="x" label={t("common.close")} onPress={() => selected.set(null)} testID="detail-close" />
                     </View>
                     <Scroll class="flex-1" contentClass="p-4">

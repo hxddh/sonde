@@ -53,7 +53,7 @@ function CommandBar() {
   return (
     <View class="gap-2.5">
       <View class="h-11 flex-row items-center gap-2 rounded-(--radius-card) border border-input bg-card pl-3.5 pr-1.5 shadow-sm focus-within:border-ring">
-        <Text class="font-mono text-[15px] font-semibold text-muted-foreground">$</Text>
+        <Text class="font-mono text-heading font-semibold text-muted-foreground">$</Text>
         <Input
           testID="run-command"
           value={command()}
@@ -64,7 +64,7 @@ function CommandBar() {
           onSubmit={run}
           submitBehavior="submit"
           accessibilityLabel={t("run.command")}
-          class="min-w-0 flex-1 font-mono text-[14px] text-foreground placeholder:text-muted-foreground"
+          class="min-w-0 flex-1 font-mono text-body text-foreground placeholder:text-muted-foreground"
         />
         <If when={history().length > 0 && isAvailable}>
           <IconButton icon="clock" label={t("run.recent")} onPress={recent} testID="run-history" />
@@ -87,12 +87,12 @@ function CommandBar() {
             autoCorrect={false}
             onChange={({ value }) => cwd.set(value)}
             accessibilityLabel={t("run.cwd")}
-            class="min-w-0 flex-1 font-mono text-xs text-foreground placeholder:text-muted-foreground"
+            class="min-w-0 flex-1 font-mono text-small text-foreground placeholder:text-muted-foreground"
           />
         </View>
         <View class="flex-row items-center gap-1.5">
           <Icon name="server" size={14} />
-          <Text class="text-xs text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
+          <Text class="text-small text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
         </View>
         <View class="flex-1" />
         <Segmented testID="run-policy" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
@@ -140,40 +140,40 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
         else={
           <View class="flex-row items-center gap-2">
             <Dot tone="live" label={t("run.running")} />
-            <Text class="font-mono text-[13px] font-semibold text-foreground">{clockOf(props.now() - (startedAt() ?? props.now()))}</Text>
+            <Text class="tabular-nums text-body font-semibold text-foreground">{clockOf(props.now() - (startedAt() ?? props.now()))}</Text>
           </View>
         }
       >
         {(done) => (
           <View class="flex-row items-center gap-2">
             <Dot tone={done().killed ? "refused" : done().exit === 0 ? "ok" : "server"} />
-            <Text class="text-[13px] font-semibold text-foreground">{done().killed ? t("run.killed") : t("run.exited", { code: String(done().exit ?? "?") })}</Text>
+            <Text class="text-body font-semibold text-foreground">{done().killed ? t("run.killed") : t("run.exited", { code: String(done().exit ?? "?") })}</Text>
           </View>
         )}
       </If>
       <If when={s()}>
         {(x) => (
           <View class="flex-row flex-wrap items-center gap-x-4">
-            <Text class="font-mono text-xs text-foreground">{t("run.bandRequests", { n: x().requests })}</Text>
+            <Text class="tabular-nums text-small text-foreground">{t("run.bandRequests", { n: x().requests })}</Text>
             <If when={x().errors > 0}>
-              <Text class="font-mono text-xs text-status-server">{t("run.bandErrors", { n: x().errors })}</Text>
+              <Text class="tabular-nums text-small text-status-server">{t("run.bandErrors", { n: x().errors })}</Text>
             </If>
             <If when={x().misses > 0}>
-              <Text class="font-mono text-xs text-status-miss">{t("run.bandMisses", { n: x().misses })}</Text>
+              <Text class="tabular-nums text-small text-status-miss">{t("run.bandMisses", { n: x().misses })}</Text>
             </If>
-            <Text class="font-mono text-xs text-muted-foreground">{`↑${bytes(x().bytesUp)} ↓${bytes(x().bytesDown)}`}</Text>
+            <Text class="tabular-nums text-small text-muted-foreground">{`↑${bytes(x().bytesUp)} ↓${bytes(x().bytesDown)}`}</Text>
             <If when={r() && warnings() > 0}>
-              <Text class="text-xs text-warn">{t("run.toLook", { n: warnings() })}</Text>
+              <Text class="text-small text-warn">{t("run.toLook", { n: warnings() })}</Text>
             </If>
             <If when={r()}>
-              <Text class="font-mono text-xs text-muted-foreground">{`${seconds(x().seconds)} s`}</Text>
+              <Text class="tabular-nums text-small text-muted-foreground">{`${seconds(x().seconds)} s`}</Text>
             </If>
           </View>
         )}
       </If>
       <View class="flex-1" />
       <If when={r()}>
-        <Button small variant="primary" icon="list-clock" label={t("run.lineUp")} onPress={() => openLastRun(go)} testID="run-open-session" />
+        <Button small variant="outline" icon="list-clock" label={t("run.lineUp")} onPress={() => openLastRun(go)} testID="run-open-session" />
       </If>
     </View>
   );
@@ -234,12 +234,12 @@ function Intro() {
     <View class="flex-1 items-center justify-center p-6" testID="run-intro">
       <View class="w-full max-w-[560px] gap-6">
         <View class="gap-2">
-          <Text class="text-[19px] font-semibold text-foreground">{t("run.title")}</Text>
-          <Text class="text-[13px] leading-5 text-muted-foreground">{t("run.hint")}</Text>
+          <Text class="text-title font-semibold text-foreground">{t("run.title")}</Text>
+          <Text class="text-body leading-5 text-muted-foreground">{t("run.hint")}</Text>
         </View>
         <If when={history().length > 0}>
           <View class="gap-1">
-            <Text role="header" class="px-1 text-xs font-semibold text-muted-foreground">
+            <Text role="header" class="px-1 text-small font-semibold text-muted-foreground">
               {t("run.recent")}
             </Text>
             <Each of={history().slice(0, 5)}>
@@ -248,7 +248,7 @@ function Intro() {
                   <If when={!terminal()}>
                     <Icon name="square-terminal" size={14} />
                   </If>
-                  <Text class="flex-1 font-mono text-xs text-foreground line-clamp-1">{c()}</Text>
+                  <Text class="flex-1 font-mono text-small text-foreground line-clamp-1">{c()}</Text>
                 </BaseButton>
               )}
             </Each>
@@ -259,7 +259,7 @@ function Intro() {
           <If when={!terminal()}>
             <Icon name="scroll-text" size={14} />
           </If>
-          <Text class="text-xs text-muted-foreground">{t("run.example")}</Text>
+          <Text class="text-small text-muted-foreground">{t("run.example")}</Text>
         </BaseButton>
       </View>
     </View>

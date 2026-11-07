@@ -1,14 +1,14 @@
 // Endpoints: add, edit, import from AWS profiles, test connectivity, demo.
 
 import { batch, effect, Scroll, signal, Text, untracked, View } from "nsh";
-import { AlertDialog, Sheet } from "nsh/base";
+import { AlertDialog } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Icon } from "../ui/icon";
 import { openCompatWindow } from "./CompatWindow";
-import { Badge, Button, Card, Check, Choice, Dot, Empty, Field, fill, glass, IconButton, KeyValue, Muted, Page, Section, terminal, Title, Toggle } from "../ui/kit";
+import { Badge, Button, Card, Check, Choice, Dot, Empty, Field, IconButton, KeyValue, Muted, Page, Section, SidePanel, terminal, Title, Toggle } from "../ui/kit";
 import { ms as fmtMs } from "../format";
 
 type Draft = {
@@ -126,7 +126,7 @@ function TestResult(props: { report: ConnectivityReport }) {
       <If when={r().error}>
         {(e) => (
           <View class="flex-row items-center gap-2">
-            <Text class="flex-1 text-sm text-destructive">
+            <Text class="flex-1 text-body text-destructive">
               {e().message}
             </Text>
             <If when={e().recordId !== null && e().recordId !== undefined}>
@@ -227,13 +227,13 @@ export function Endpoints() {
           </If>
           <View class="min-w-0 flex-1 gap-0.5">
             <View class="flex-row items-center gap-2">
-              <Text class="text-[13px] font-semibold text-foreground">{e.name}</Text>
+              <Text class="text-body font-semibold text-foreground">{e.name}</Text>
               <Badge label={e.vendorLabel} />
               <If when={endpoint() === e.id}>
                 <Badge label={t("endpoints.current")} tone="primary" />
               </If>
             </View>
-            <Text class="font-mono text-[11px] text-muted-foreground line-clamp-1">{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
+            <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
           </View>
           <Button small variant="outline" icon="activity" label={r() === "running" ? t("endpoints.testing") : t("endpoints.test")} onPress={() => test(e.id)} disabled={r() === "running"} testID={`test-${e.id}`} />
           <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
@@ -250,7 +250,7 @@ export function Endpoints() {
           <View class="flex-1">
             <Title>{t("endpoints.title")}</Title>
           </View>
-          <Button variant="primary" icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} testID="add-endpoint" />
+          <Button variant="outline" icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} testID="add-endpoint" />
           <Button variant="outline" icon="key-round" label={t("endpoints.import")} onPress={() => mode.set("import")} />
           <Button variant="outline" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
         </View>
@@ -266,20 +266,20 @@ export function Endpoints() {
           <View class="flex-row items-center gap-3 rounded-(--radius-card) border border-border bg-card px-4 py-3">
             <Icon name="flask-conical" size={16} tint="muted-foreground" />
             <View class="min-w-0 flex-1 gap-0.5">
-              <Text class="text-[13px] font-medium text-foreground">{t("compat.title")}</Text>
-              <Text class="text-xs text-muted-foreground">{t("compat.hint")}</Text>
+              <Text class="text-body font-medium text-foreground">{t("compat.title")}</Text>
+              <Text class="text-small text-muted-foreground">{t("compat.hint")}</Text>
             </View>
             <Button variant="outline" label={t("compat.open")} onPress={() => openCompatWindow()} testID="open-compat" />
           </View>
         </If>
-        <Text class="text-xs text-muted-foreground">{t("settings.telemetry")}</Text>
+        <Text class="text-small text-muted-foreground">{t("settings.telemetry")}</Text>
       </View>
       <If when={!terminal()}>
-        <Sheet open={mode() !== "list"} side="right" onOpenChange={(e) => !e.open && mode.set("list")} popupClass={`w-[480px] max-w-[92%] border-l border-border ${fill("bg-background/90", "bg-background")} shadow-xl`} popupStyle={{ marginTop: 44, ...glass }} backdropClass="bg-black/20">
+        <SidePanel open={mode() !== "list"} onClose={() => mode.set("list")}>
           <Scroll class="flex-1" contentClass="p-6">
             {form()}
           </Scroll>
-        </Sheet>
+        </SidePanel>
       </If>
     </Page>
   );

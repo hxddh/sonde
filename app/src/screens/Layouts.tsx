@@ -46,7 +46,7 @@ function Replay(props: { job: string; layout: Layout }) {
         <If when={state()}>
           {(s) => (
             <View class="gap-2">
-              <Text class="text-sm font-medium text-foreground">{t("layouts.stateAt", { time: date(new Date(at()).toISOString()) })} — {s().label}</Text>
+              <Text class="text-body font-medium text-foreground">{t("layouts.stateAt", { time: date(new Date(at()).toISOString()) })} — {s().label}</Text>
               <KeyValue rows={s().facts.map((f) => [f.label, f.value])} />
               <Each of={s().tables}>
                 {(tb) => (
@@ -130,8 +130,8 @@ export function Layouts() {
                 {(d) => (
                   <View class="flex-row items-center gap-2">
                     <Badge label={LABEL[d().format] ?? d().format} tone="primary" />
-                    <Text class="flex-1 font-mono text-xs text-foreground">{d().root || "/"}</Text>
-                    <Text class="text-xs text-muted-foreground">{d().evidence}</Text>
+                    <Text class="flex-1 font-mono text-small text-foreground">{d().root || "/"}</Text>
+                    <Text class="text-small text-muted-foreground">{d().evidence}</Text>
                     <Button small label={t("common.run")} onPress={() => analyze(d().format, d().root)} testID={`analyze-${d().format}`} />
                   </View>
                 )}
@@ -149,7 +149,7 @@ export function Layouts() {
                 <If when={l().layout.formatVersion}>{(v) => <Badge label={v()} />}</If>
                 <Badge label={`${l().layout.objects} objects · ${bytes(l().layout.bytes)}`} />
               </View>
-              <Text class="text-sm text-foreground">{l().layout.headline}</Text>
+              <Text class="text-body text-foreground">{l().layout.headline}</Text>
               <If when={!l().layout.decoded}>
                 <Badge tone="info" label={t("layouts.notDecoded")} />
               </If>
@@ -162,7 +162,7 @@ export function Layouts() {
                   {(i) => (
                     <View class="flex-row gap-2">
                       <Badge label={i().severity} tone={tone(i().severity)} />
-                      <Text class="flex-1 text-sm text-foreground">{i().message}</Text>
+                      <Text class="flex-1 text-body text-foreground">{i().message}</Text>
                     </View>
                   )}
                 </Each>
@@ -182,9 +182,9 @@ export function Layouts() {
               <Each of={l().layout.timeline.slice(-300)}>
                 {(e) => (
                   <View class="flex-row gap-3">
-                    <Text class="w-36 text-xs text-muted-foreground">{date(e().time)}</Text>
+                    <Text class="w-36 text-small text-muted-foreground">{date(e().time)}</Text>
                     <Badge label={e().kind} tone={e().kind === "fence" || e().kind === "gap" ? "warn" : "neutral"} />
-                    <Text class="flex-1 text-xs text-foreground">{`${e().label}${e().detail ? ` — ${e().detail}` : ""}`}</Text>
+                    <Text class="flex-1 text-small text-foreground">{`${e().label}${e().detail ? ` — ${e().detail}` : ""}`}</Text>
                   </View>
                 )}
               </Each>

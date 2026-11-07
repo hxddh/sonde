@@ -8,7 +8,7 @@
 // session, and opens in a window of its own. In a terminal the levels stack.
 
 import { cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, windowSize } from "nsh";
-import { Button as BaseButton, ResizablePanel, ResizablePanelGroup, Sheet, type DataTableRef } from "nsh/base";
+import { Button as BaseButton, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { t } from "../i18n";
 import { api } from "../native";
@@ -16,7 +16,7 @@ import { crumb, go, notify, openSession, openSessionFile, report, sessionsChange
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
-import { Button, Empty, IconButton, Segmented, terminal } from "../ui/kit";
+import { Button, Empty, IconButton, Segmented, SidePanel, terminal } from "../ui/kit";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
 import { programOf } from "../ui/sessionview";
@@ -239,7 +239,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         <If when={filterNote()}>
           {(n) => (
             <BaseButton testID="clear-filter" accessibilityLabel={t("sessions.clearFilter")} onPress={() => filter.set(null)} class="flex-row items-center gap-1.5 rounded-full bg-selection px-2.5 py-1 hover:bg-accent">
-              <Text class="text-xs text-foreground">{n()}</Text>
+              <Text class="text-small text-foreground">{n()}</Text>
               <If when={!terminal()}>
                 <Icon name="x" size={12} />
               </If>
@@ -258,7 +258,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const inspector = () => (
     <View testID="inspector" class="flex-1 border-l border-border bg-inspector">
       <View class="h-10 flex-row items-center gap-2 border-b border-border px-3">
-        <Text class="flex-1 text-xs font-semibold text-muted-foreground">{record() ? t("inspector.request") : t("inspector.operation")}</Text>
+        <Text class="flex-1 text-small font-semibold text-muted-foreground">{record() ? t("inspector.request") : t("inspector.operation")}</Text>
         <IconButton icon="x" label={t("common.close")} onPress={closeInspector} testID="inspector-close" />
       </View>
       <Scroll class="flex-1" contentClass="p-4">
@@ -280,9 +280,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
                   else={
                     <View class="flex-1">
                       {main(v())}
-                      <Sheet open={inspecting()} side="right" onOpenChange={(e) => !e.open && closeInspector()} popupClass="w-[420px] max-w-[90%] border-t border-border shadow-xl" popupStyle={{ marginTop: 44 }} backdropClass="bg-black/20">
+                      <SidePanel open={inspecting()} onClose={closeInspector} size="narrow">
                         {inspector()}
-                      </Sheet>
+                      </SidePanel>
                     </View>
                   }
                 >
@@ -377,7 +377,7 @@ export function Sessions() {
   const list = () => (
     <View class={terminal() ? "gap-1" : "gap-3"}>
       <View class="flex-row items-center gap-2 px-2">
-        <Text role="header" class="flex-1 text-[13px] font-semibold text-foreground">
+        <Text role="header" class="flex-1 text-body font-semibold text-foreground">
           {t("timeline.sessions")}
         </Text>
         <If when={!terminal()}>
@@ -385,7 +385,7 @@ export function Sessions() {
         </If>
         <IconButton icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
       </View>
-      <If when={sessions().length > 0} else={<Text class="px-2 text-xs text-muted-foreground">{t("timeline.empty")}</Text>}>
+      <If when={sessions().length > 0} else={<Text class="px-2 text-small text-muted-foreground">{t("timeline.empty")}</Text>}>
         <SessionList sessions={sessions()} selected={selected()} onSelect={(p) => selected.set(p)} />
       </If>
     </View>
@@ -412,7 +412,7 @@ export function Sessions() {
 
   const nothing = () => (
     <Empty icon="list-clock" title={t("sessions.noneTitle")} text={t("sessions.noneText")} testID="sessions-empty">
-      <Button variant="primary" icon="play" label={t("sessions.runOne")} onPress={() => go("run")} />
+      <Button variant="outline" icon="play" label={t("sessions.runOne")} onPress={() => go("run")} />
       <Button variant="outline" icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
       <If when={!terminal()}>
         <Button variant="ghost" icon="folder-open" label={t("sessions.openFile")} onPress={() => void openSessionFile()} />
