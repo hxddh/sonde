@@ -97,5 +97,6 @@ for (const v of variants) {
     await shot("06-palette");
     await app.type("id:palette-command", "ver");
     await shot("06b-palette-search");
-  });
+    // a whole tour of the app: minutes on a slow runner, not seconds
+  }, 300000);
 }
