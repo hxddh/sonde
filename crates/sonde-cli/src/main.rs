@@ -79,9 +79,6 @@ enum Command {
     /// The terminal UI.
     #[cfg(feature = "tui")]
     Tui(cmd::tui::TuiArgs),
-    /// Signed plugin packages.
-    #[cfg(feature = "tui")]
-    Plugin(cmd::plugin::PluginArgs),
 }
 
 fn main() -> ExitCode {
@@ -129,8 +126,6 @@ fn main() -> ExitCode {
             Command::Endpoints(a) => cmd::endpoints::run(&sonde, &cli, a).await,
             #[cfg(feature = "tui")]
             Command::Tui(_) => unreachable!(),
-            #[cfg(feature = "tui")]
-            Command::Plugin(a) => cmd::plugin::run(&sonde, &cli, a).await,
         };
         let code = match code {
             Ok(c) => c,

@@ -13,7 +13,6 @@
 
 mod api;
 mod listing;
-pub mod plugins;
 mod run;
 mod sessions;
 mod state;

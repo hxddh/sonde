@@ -3,7 +3,7 @@
 //! - configuration: `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`,
 //!   else `~/.config/sonde` on Linux and `~/Library/Application Support/sonde`
 //!   on macOS (`config.toml`);
-//! - data (request log database, scan cache, probe runs, audit log, plugins):
+//! - data (request log database, scan cache, probe runs, audit log, sessions):
 //!   `$SONDE_DATA_DIR`, else the platform's data directory (`~/.local/share/sonde`,
 //!   `~/Library/Application Support/sonde`);
 //! - exports and downloads: `exports/` and `downloads/` under the data
@@ -60,9 +60,6 @@ impl Paths {
     /// Recorded sessions (`sonde run`, `sonde proxy`).
     pub fn sessions(&self) -> PathBuf {
         self.data_dir.join("sessions")
-    }
-    pub fn plugins(&self) -> PathBuf {
-        self.data_dir.join("plugins")
     }
     pub fn default_exports(&self) -> PathBuf {
         self.data_dir.join("exports")

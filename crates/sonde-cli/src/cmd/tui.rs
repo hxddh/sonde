@@ -3,27 +3,23 @@
 //! The app's bundle is embedded at build time; it runs on Native Shell's
 //! terminal backend (`nsh-platform-tui`) with sonde's Rust module linked
 //! in. The host loop is sonde's own (rather than `nsh-tui-host`'s, whose
-//! entry point parses the process's arguments and owns one view): it adds
-//! OSC 52 copying, and shows a plugin's view — a signed package verified
-//! against the trust roots — in a second engine of its own, sandboxed,
-//! answering only its `sonde.read.*` host calls. F12 closes a plugin.
+//! entry point parses the process's arguments): it adds OSC 52 copying.
 
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use clap::Args;
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event;
 use crossterm::{execute, terminal};
 use nsh_platform_tui::{
     AppOptions, AppView, Bundle, ColorDepth, Limits, RunEvent, TerminalCapabilities,
 };
 use ratatui_core::terminal::Terminal;
 use ratatui_crossterm::CrosstermBackend;
-use sonde_nsh::plugins::{self, Context, Plugins};
 
 use crate::Cli;
 
@@ -183,44 +179,6 @@ fn options(clipboard: &Arc<Osc52>, fps: bool) -> AppOptions {
     o
 }
 
-/// The plugin view: a package's bundle in an engine of its own.
-fn plugin_view(
-    id: &str,
-    ctx: Context,
-    clipboard: &Arc<Osc52>,
-    sonde: &Arc<sonde_core::Sonde>,
-    rt: &tokio::runtime::Handle,
-) -> Result<AppView, String> {
-    let p = Plugins::open(sonde);
-    let bytes = p.load(id)?;
-    let trust = p.trust_store()?;
-    let loaded = nsh_engine::verify_package(&trust, &bytes, &p.dir().join("assets"))
-        .map_err(|e| format!("refused: {e}"))?;
-    let mut o = options(clipboard, false);
-    o.ui_sets = vec![nsh_base::registry()];
-    o.limits = Limits::default();
-    o.clipboard = None;
-    o.data_dir = Some(p.dir().join("data").join(id));
-    // Only the read-only calls, each answered on the runtime's threads.
-    for name in plugins::HOST_CALLS {
-        let (s, ctx, rt) = (sonde.clone(), ctx.clone(), rt.clone());
-        o.host.handle(*name, move |call| {
-            let (s, ctx) = (s.clone(), ctx.clone());
-            let name = call.name().to_string();
-            let data = call.data().clone();
-            rt.spawn(async move {
-                match plugins::host_call(&s, &ctx, &name, &data).await {
-                    Ok(v) => call.resolve(v),
-                    Err(e) => call.reject(e),
-                }
-            });
-        });
-    }
-    let mut view = AppView::new(o);
-    view.load(loaded.bundle).map_err(|e| e.to_string())?;
-    Ok(view)
-}
-
 pub fn run(cli: &Cli, args: &TuiArgs) -> ExitCode {
     match run_inner(cli, args) {
         Ok(()) => ExitCode::SUCCESS,
@@ -245,10 +203,6 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
         std::env::temp_dir().join(format!("sonde-tui-{}.log", std::process::id()))
     });
     let clipboard = Arc::new(Osc52::default());
-    let (open_tx, open_rx) = mpsc::channel::<(String, serde_json::Value)>();
-    plugins::set_host(Arc::new(move |id, ctx| {
-        let _ = open_tx.send((id, ctx));
-    }));
     let mut o = options(&clipboard, args.fps);
     o.ui_sets = vec![nsh_base::registry(), sonde_nsh::registry()];
     let mut main = AppView::new(o);
@@ -258,80 +212,28 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
     let mut term = Terminal::new(main.measure_backend(backend))?;
     term.draw(|f| main.render(f, f.area()))?;
     main.load(bundle(&args.bundle)?)?;
-    let mut plugin: Option<AppView> = None;
-    let mut plugin_term: Option<Terminal<_>> = None;
     let mut redraw = true;
     const POLL: Duration = Duration::from_millis(16);
     loop {
-        if let Ok((id, ctx)) = open_rx.try_recv() {
-            match serde_json::from_value::<Context>(ctx)
-                .map_err(|e| e.to_string())
-                .and_then(|c| plugin_view(&id, c, &clipboard, &sonde, rt.handle()))
-            {
-                Ok(v) => {
-                    let backend = CrosstermBackend::new(io::BufWriter::new(io::stdout()));
-                    // a cleared screen and a fresh terminal: its first frame paints every Cell
-                    // (ratatui's clear() asks for the cursor position, which not every terminal answers)
-                    execute!(io::stdout(), terminal::Clear(terminal::ClearType::All))?;
-                    plugin_term = Some(Terminal::new(v.measure_backend(backend))?);
-                    plugin = Some(v);
-                    redraw = true;
-                }
-                Err(e) => log_line(&format!("plugin {id}: {e}")),
-            }
+        if redraw
+            || main
+                .next_frame_deadline()
+                .is_some_and(|d| d <= Instant::now())
+        {
+            main.draw_terminal(&mut term)?;
+            redraw = false;
         }
-        if let (Some(v), Some(t)) = (plugin.as_mut(), plugin_term.as_mut()) {
-            if redraw || v.next_frame_deadline().is_some_and(|d| d <= Instant::now()) {
-                v.draw_terminal(t)?;
-                redraw = false;
-            }
-            if v.exit_requested() {
-                close_plugin(&mut plugin, &mut plugin_term);
-                execute!(io::stdout(), terminal::Clear(terminal::ClearType::All))?;
-                term = Terminal::new(
-                    main.measure_backend(CrosstermBackend::new(io::BufWriter::new(io::stdout()))),
-                )?;
-                redraw = true;
-                continue;
-            }
-        } else {
-            if redraw
-                || main
-                    .next_frame_deadline()
-                    .is_some_and(|d| d <= Instant::now())
-            {
-                main.draw_terminal(&mut term)?;
-                redraw = false;
-            }
-            if main.exit_requested() {
-                break;
-            }
+        if main.exit_requested() {
+            break;
         }
         clipboard.flush(&mut io::stdout())?;
-        let active = plugin.as_ref().unwrap_or(&main);
-        let wait = active.next_frame_deadline().map_or(POLL, |d| {
+        let wait = main.next_frame_deadline().map_or(POLL, |d| {
             d.saturating_duration_since(Instant::now()).min(POLL)
         });
         if event::poll(wait)? {
-            let ev = event::read()?;
-            if let Event::Key(k) = &ev
-                && k.code == KeyCode::F(12)
-                && plugin.is_some()
-            {
-                close_plugin(&mut plugin, &mut plugin_term);
-                execute!(io::stdout(), terminal::Clear(terminal::ClearType::All))?;
-                term = Terminal::new(
-                    main.measure_backend(CrosstermBackend::new(io::BufWriter::new(io::stdout()))),
-                )?;
-                redraw = true;
-                continue;
-            }
-            match nsh_tui_host::convert(ev) {
+            match nsh_tui_host::convert(event::read()?) {
                 RunEvent::Input(input) => {
-                    match plugin.as_mut() {
-                        Some(v) => v.handle(input),
-                        None => main.handle(input),
-                    };
+                    main.handle(input);
                 }
                 RunEvent::Redraw => redraw = true,
                 RunEvent::Exit => break,
@@ -339,32 +241,8 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
             }
         }
     }
-    if let Some(mut v) = plugin.take() {
-        v.stop();
-    }
     main.stop();
     drop(term);
     drop(session);
     Ok(())
-}
-
-fn close_plugin<B: ratatui_core::backend::Backend>(
-    plugin: &mut Option<AppView>,
-    plugin_term: &mut Option<Terminal<B>>,
-) {
-    if let Some(mut v) = plugin.take() {
-        v.stop();
-    }
-    *plugin_term = None;
-}
-
-fn log_line(msg: &str) {
-    let path = std::env::temp_dir().join("sonde-tui-plugins.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = writeln!(f, "{} {msg}", chrono::Utc::now().to_rfc3339());
-    }
 }

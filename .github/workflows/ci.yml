@@ -24,7 +24,6 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy -p sonde-cli --features tui --all-targets -- -D warnings
       - run: cd app && nsh check
-      - run: cd plugins/delta-lens && nsh check
       - name: nsh build reports no warnings
         run: |
           cd app && nsh build App.tsx 2>&1 | tee build.log
@@ -99,19 +98,6 @@ jobs:
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
       - run: scripts/ui-tests.sh
-
-  plugin-e2e:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: ./.github/actions/nsh
-        with: { rev: "${{ env.NSH_REV }}" }
-      - run: pip install pyte
-      - run: cd app && nsh build App.tsx
-      - run: cargo build -p sonde-cli --features tui
-      - run: scripts/plugin-e2e.sh target/debug/sonde
 
   build:
     uses: ./.github/workflows/build.yml

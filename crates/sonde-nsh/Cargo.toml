@@ -16,7 +16,6 @@ reqlog.workspace = true
 s3raw.workspace = true
 sonde-proxy.workspace = true
 nsh-core.workspace = true
-nsh-package.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

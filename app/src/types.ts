@@ -410,26 +410,6 @@ export interface Layout {
   bytes: number;
 }
 
-export interface PluginInfo {
-  id: string;
-  name: string;
-  version: string;
-  build: number;
-  sha256: string;
-  keyId: string;
-  enabled: boolean;
-  revoked: boolean;
-  installed: string;
-  hostCalls: string[];
-}
-
-export interface TrustRoot {
-  id: string;
-  label: string;
-  key: string;
-  added: string;
-}
-
 export interface AuditEntry {
   time: string;
   plan: string;

@@ -20,4 +20,3 @@ nsh test tests/desktop.test.tsx
 nsh test tests/screens.test.tsx
 nsh test tests/run.test.tsx
 nsh test tests/terminal.test.tsx --target tui
-(cd ../plugins/delta-lens && nsh test)

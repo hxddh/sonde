@@ -1,9 +1,0 @@
-{
-  "name": "Delta Lake lens",
-  "id": "dev.sonde.plugins.delta",
-  "version": "1.0.0",
-  "build": 1,
-  "capabilities": {
-    "host": ["sonde.read.context", "sonde.read.list", "sonde.read.get"]
-  }
-}
