@@ -499,7 +499,7 @@ impl Sessions {
             buckets: Vec::new(),
         };
         let run = background(async move {
-            replay::replay_to_file(&base, &*original, &opts, &out, false, |_, _| {}).await
+            replay::replay_to_file(&base, &original, &opts, &out, false, |_, _| {}).await
         })
         .await
         .map_err(err_msg)?
