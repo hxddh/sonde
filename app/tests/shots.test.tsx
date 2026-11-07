@@ -28,6 +28,10 @@ for (const size of sizes) {
     await app.press("id:welcome-demo");
     await app.waitFor("id:screen-run", { timeout: 15000 });
     await shot("02-run");
+    await app.type("id:run-command", "for k in README.md config/app.yaml images/logo.png; do curl -s $AWS_ENDPOINT_URL/demo/$k -o /dev/null; echo fetched $k; done; curl -s $AWS_ENDPOINT_URL/demo/missing.txt -o /dev/null; echo done");
+    await app.press("id:run-start");
+    await app.waitFor("id:run-ended", { timeout: 20000 });
+    await shot("02b-ran");
     await go("sessions");
     await app.press("id:open-example");
     await app.waitFor("id:session-pane", { timeout: 10000 });

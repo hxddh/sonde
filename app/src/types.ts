@@ -447,6 +447,8 @@ export interface Episode {
   bytesDown: number;
   outcome: { kind: "ok" } | { kind: "failed"; detail: string } | { kind: "refused" };
   notes: string[];
+  /** Its lookups answered 404. */
+  notFound?: number;
 }
 
 export interface Observation {

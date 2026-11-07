@@ -7,7 +7,7 @@
 // shows as a timeline, replays on another endpoint, compares with another
 // session, and opens in a window of its own. In a terminal the levels stack.
 
-import { cleanup, Clipboard, computed, effect, Scroll, signal, Text, untracked, View, windowSize } from "nsh";
+import { cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, windowSize } from "nsh";
 import { Button as BaseButton, ResizablePanel, ResizablePanelGroup, Sheet, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { t } from "../i18n";
@@ -80,6 +80,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   };
 
   const chooseOperation = (i: number) => {
+    // the inspector opening moves the table over, smoothly
+    if (op() === null && !reduceMotion()) LayoutAnimation.easeInEaseOut();
     op.set(i);
     rec.set(null);
     opHighlight.set([i]);
@@ -105,6 +107,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     }
   };
   const closeInspector = () => {
+    if (!reduceMotion()) LayoutAnimation.easeInEaseOut();
     op.set(null);
     rec.set(null);
     opHighlight.set([]);

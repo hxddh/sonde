@@ -217,6 +217,8 @@ pub struct Episode {
     pub bytes_down: u64,
     pub outcome: Outcome,
     pub notes: Vec<String>,
+    /// Its lookups (GET, HEAD) answered 404: not errors, and worth telling apart.
+    pub not_found: usize,
 }
 
 impl Episode {
@@ -354,6 +356,10 @@ fn build(kind: Kind, format: Option<Format>, title: String, mut rs: Vec<&Record>
             .sum(),
         outcome,
         notes: Vec::new(),
+        not_found: rs
+            .iter()
+            .filter(|r| r.status == Some(404) && (r.method == "GET" || r.method == "HEAD"))
+            .count(),
     }
 }
 

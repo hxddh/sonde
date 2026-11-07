@@ -31,6 +31,8 @@ export function episodeTone(e: Episode): Tone {
   if (e.outcome.kind === "refused") return "refused";
   if (e.outcome.kind === "failed") return /^4\d\d/.test(e.outcome.detail) ? "client" : "server";
   if (e.kind === "probe" || e.title.includes("found nothing")) return "miss";
+  // every request a lookup that found nothing
+  if (e.notFound && e.notFound === e.records.length) return "miss";
   return "ok";
 }
 

@@ -7,7 +7,8 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { endpoint, endpoints, notify, report } from "../store";
 import type { Episode, RecordingView } from "../types";
-import { Button, Choice, Mono, Muted, Segmented } from "./kit";
+import { Icon } from "./icon";
+import { Button, Dot, Segmented, terminal } from "./kit";
 import { OperationView } from "./sessionview";
 
 export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, operationsAt, seconds, SessionHeader, SessionList, statusTone } from "./sessionview";
@@ -21,15 +22,15 @@ export function copy(text: string | null) {
 }
 
 
-/** Start a recording with no program, or show the one that runs. `policy`:
- * the caller's choice (no switch of its own then). */
+/** Start a recording with no program, or show the one that runs: the
+ * endpoint and keys to point an application at. `policy`: the caller's
+ * choice (no switch of its own then). */
 export function RecordPanel(props: { recording: RecordingView | null; onChange: () => void; policy?: () => Policy }) {
-  const open = signal(false);
   const own = signal<Policy>("allow");
   const policy = () => props.policy?.() ?? own();
-  const target = signal<string | null>(endpoint());
+  const open = signal(false);
   const start = async () => {
-    const ep = target() ?? endpoint();
+    const ep = endpoint();
     if (!ep) return;
     try {
       await api.sessions.start(ep, policy());
@@ -39,65 +40,68 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
       report(e);
     }
   };
+  const ep = () => endpoints().find((e) => e.id === endpoint());
   return (
     <If
       when={props.recording}
       else={
-        <If when={open()} else={<Button label={t("timeline.record")} onPress={() => open.set(true)} testID="record" />}>
-          <View class="gap-2 rounded-(--radius) border border-border p-2" testID="record-form">
-            <Text class="text-sm font-semibold text-foreground">{t("timeline.recordTitle")}</Text>
-            <Muted class="text-xs">{t("timeline.recordHint")}</Muted>
-            <Choice label={t("common.endpoint")} value={target() ?? endpoint()} items={endpoints().map((e) => ({ value: e.id, title: e.name }))} onChange={(v) => target.set(v)} />
-            <If when={!props.policy}>
-            <Text class="text-xs text-muted-foreground">{t("timeline.policy")}</Text>
-            <Segmented
-              value={policy()}
-              items={[
-                { value: "allow", title: t("timeline.allow") },
-                { value: "no-delete", title: t("timeline.noDelete") },
-                { value: "read-only", title: t("timeline.readOnly") },
-              ]}
-              onChange={(v) => own.set(v as Policy)}
-            />
+        <View class={terminal() ? "gap-1" : "gap-3 rounded-(--radius-card) border border-border bg-card px-4 py-3.5"} testID={open() ? "record-form" : undefined}>
+          <View class="flex-row items-center gap-3">
+            <If when={!terminal()}>
+              <View class="size-9 items-center justify-center rounded-(--radius) bg-muted">
+                <Icon name="radio" size={18} tint="foreground" />
+              </View>
             </If>
-            <View class="flex-row gap-2">
-              <Button label={t("timeline.start")} onPress={start} disabled={!(target() ?? endpoint())} testID="record-start" />
-              <Button variant="ghost" label={t("common.cancel")} onPress={() => open.set(false)} />
+            <View class="min-w-0 flex-1 gap-0.5">
+              <Text class="text-[13px] font-semibold text-foreground">{t("timeline.recordTitle")}</Text>
+              <Text class="text-xs text-muted-foreground">{t("timeline.recordHint")}</Text>
             </View>
+            <If when={!open()}>
+              <Button variant="outline" label={t("timeline.record")} onPress={() => open.set(true)} testID="record" />
+            </If>
           </View>
-        </If>
+          <If when={open()}>
+            <View class="gap-2.5 border-t border-border pt-3">
+              <Text class="text-xs text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
+              <If when={!props.policy}>
+                <Segmented
+                  value={policy()}
+                  items={[
+                    { value: "allow", title: t("timeline.allow") },
+                    { value: "no-delete", title: t("timeline.noDelete") },
+                    { value: "read-only", title: t("timeline.readOnly") },
+                  ]}
+                  onChange={(v) => own.set(v as Policy)}
+                />
+              </If>
+              <View class="flex-row gap-2">
+                <Button small variant="primary" icon="radio" label={t("timeline.start")} onPress={start} disabled={!endpoint()} testID="record-start" />
+                <Button small variant="ghost" label={t("common.cancel")} onPress={() => open.set(false)} />
+              </View>
+            </View>
+          </If>
+        </View>
       }
     >
       {(r) => (
-        <View class="gap-2 rounded-(--radius) border border-primary p-2" testID="recording">
+        <View class={terminal() ? "gap-1" : "gap-3 rounded-(--radius-card) border border-primary/40 bg-card px-4 py-3.5"} testID="recording">
           <View class="flex-row items-center gap-2">
-            <Text class="text-primary">●</Text>
-            <Text class="flex-1 text-sm font-semibold text-foreground line-clamp-1">{t("timeline.recording", { url: r().url })}</Text>
+            <Dot tone="live" />
+            <Text class="flex-1 text-[13px] font-semibold text-foreground line-clamp-1">{t("timeline.recording", { url: r().url })}</Text>
+            <Button small variant="destructive" icon="square" label={t("timeline.stop")} onPress={() => { api.sessions.stop(); props.onChange(); }} testID="record-stop" />
           </View>
-          <Muted class="text-xs">{t("timeline.pointApp")}</Muted>
-          <Mono class="rounded-(--radius) bg-muted p-2 text-xs">{r().exports.trim()}</Mono>
-          <View class="flex-row gap-2">
-            <Button small label={t("timeline.copyExports")} onPress={() => copy(r().exports)} testID="copy-exports" />
-            <Button
-              small
-              variant="destructive"
-              label={t("timeline.stop")}
-              onPress={() => {
-                api.sessions.stop();
-                props.onChange();
-              }}
-              testID="record-stop"
-            />
+          <Text class="text-xs text-muted-foreground">{t("timeline.pointApp")}</Text>
+          <View selectable class="gap-0 rounded-(--radius) border border-border bg-muted/50 px-3 py-2">
+            <Each of={r().exports.trim().split("\n")}>{(line) => <Text class="font-mono text-[11px] text-foreground">{line()}</Text>}</Each>
+          </View>
+          <View class="flex-row">
+            <Button small variant="outline" icon="copy" label={t("timeline.copyExports")} onPress={() => copy(r().exports)} testID="copy-exports" />
           </View>
         </View>
       )}
     </If>
   );
 }
-
-
-
-
 
 export function OperationDetail(props: { path: string; episode: Episode; shared: string[]; onRecord: (id: number) => void; onBack?: () => void }) {
   const rows = () => {

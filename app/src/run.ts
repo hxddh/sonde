@@ -2,12 +2,15 @@
 // it. Its output is kept (the last 2 MB) so a terminal mounted later shows
 // it from the start; listeners get what arrives after.
 
-import { batch, Notifications, signal } from "nsh";
+import { batch, effect, Notifications, platform, signal, Storage } from "nsh";
+import { isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { openSession, report } from "./store";
+import { go, openSession, report, sessionsChanged } from "./store";
 import type { RunResult } from "./types";
+import { iconSvg } from "./ui/icon";
 import type { Policy } from "./ui/session";
+import { toast } from "./ui/toast";
 
 export interface Running {
   command: string;
@@ -21,6 +24,44 @@ export const running = signal<Running | null>(null);
 export const lastRun = signal<(RunResult & { command: string; killed: boolean }) | null>(null);
 /** The newest command, for the field. */
 export const command = signal("");
+/** When the running program started (ms since the epoch). */
+export const startedAt = signal<number | null>(null);
+
+/** The commands run before, newest first (kept across launches). */
+export const history = signal<string[]>([]);
+const HISTORY_KEY = "run.history";
+void Storage.getItem(HISTORY_KEY)
+  .then((v) => v && history.set(JSON.parse(v)))
+  .catch(() => {});
+function remember(cmd: string) {
+  const next = [cmd, ...history().filter((c) => c !== cmd)].slice(0, 20);
+  history.set(next);
+  void Storage.setItem(HISTORY_KEY, JSON.stringify(next)).catch(() => {});
+}
+
+// While a program runs, the tray says so: a press brings the window back.
+if (isAvailable && platform.idiom !== "terminal") {
+  effect(() => {
+    const r = running();
+    try {
+      Tray.set(
+        r
+          ? {
+              icon: iconSvg("circle-dot"),
+              tooltip: t("run.trayTip", { command: r.command.split(" ")[0] }),
+              onClick: () => Window.get("main")?.show(),
+              menu: [
+                { label: t("run.trayShow"), onSelect: () => Window.get("main")?.show() },
+                { label: t("run.stop"), onSelect: stop },
+              ],
+            }
+          : null,
+      );
+    } catch {
+      // no tray on this desktop
+    }
+  });
+}
 export const cwd = signal("");
 export const policy = signal<Policy>("allow");
 
@@ -50,6 +91,15 @@ async function tellTheUser(r: RunResult, cmd: string) {
     const v = api.sessions.open(r.path);
     const warnings = v.observations.filter((o) => o.level === "warn").length;
     const body = `${v.summary.requests} requests · ${v.episodes.length} operations${warnings ? ` · ${warnings} to look at` : ""}`;
+    toast({
+      id: "run-ended",
+      kind: r.exit === 0 && !warnings ? "success" : "warning",
+      title: killed ? t("run.toastStopped", { command: cmd.split(" ")[0] }) : t("run.toastEnded", { command: cmd.split(" ")[0], code: String(r.exit ?? "?") }),
+      description: body,
+      action: t("run.toastOpen"),
+      onAction: () => openLastRun(go),
+      duration: 8000,
+    });
     if ((await Notifications.requestPermission()) !== "granted") return;
     await Notifications.show({ id: "sonde-run", title: t("run.notifyTitle", { command: cmd.split(" ")[0] }), body });
   } catch {
@@ -62,8 +112,10 @@ export function start(cmd: string, endpoint: string) {
   if (running() || !cmd.trim()) return;
   buffer = "";
   killed = false;
+  remember(cmd.trim());
   batch(() => {
     lastRun.set(null);
+    startedAt.set(Date.now());
     running.set({ command: cmd, path: null, endpoint });
   });
   api.sessions
@@ -81,6 +133,7 @@ export function start(cmd: string, endpoint: string) {
         running.set(null);
         lastRun.set({ ...r, command: cmd, killed });
       });
+      sessionsChanged();
       void tellTheUser(r, cmd);
     })
     .catch((e) => {
