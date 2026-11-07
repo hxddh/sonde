@@ -17,6 +17,7 @@ sdks=("$@")
 [ ${#sdks[@]} -eq 0 ] && sdks=(python node go java)
 out="${SMOKE_SESSIONS:-$(mktemp -d)}"
 mkdir -p "$out"
+out="$(cd "$out" && pwd)"   # the builds below change directory
 smoke="$root/tools/sdk-smoke"
 fail=0
 for sdk in "${sdks[@]}"; do
