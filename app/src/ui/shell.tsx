@@ -9,11 +9,12 @@ import { t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
-import { type Area, area, bucket, chooseBucket, crumb, endpoint, endpoints, go, openSession, readOnly, section, sessionsTick, storeTab } from "../store";
+import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, endpoints, go, openSession, readOnly, section, sessionsTick, storeTab } from "../store";
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf } from "./sessionview";
 import { IconButton, Kbd, Tip } from "./kit";
+import { ActivityButton, activityOpen } from "./activity";
 import { paletteOpen } from "./palette";
 
 const mac = platform.os === "macos";
@@ -22,7 +23,7 @@ const wanted = signal(true);
 const SIDEBAR_KEY = "sidebar.open";
 void Storage.getItem(SIDEBAR_KEY).then((v) => v === "false" && wanted.set(false)).catch(() => {});
 /** A narrow window folds the sidebar away until it is asked for. */
-const narrow = () => windowSize().width < 1100;
+const narrow = () => shellWidth() < 1100;
 const shownWhileNarrow = signal(false);
 /** Whether the sidebar shows: the user's choice, folded away in a narrow window. */
 export const sidebarOpen = () => wanted() && (!narrow() || shownWhileNarrow());
@@ -36,12 +37,12 @@ export function toggleSidebar() {
   void Storage.setItem(SIDEBAR_KEY, String(wanted())).catch(() => {});
 }
 
-export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", sessions: "list-clock", store: "database", settings: "settings" };
-export const AREA_KEY: Record<Area, string> = { run: "mod+1", sessions: "mod+2", store: "mod+3", settings: "mod+," };
+export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", sessions: "list-clock", store: "database", activity: "activity", settings: "settings" };
+export const AREA_KEY: Record<Area, string> = { run: "mod+1", sessions: "mod+2", store: "mod+3", activity: "mod+shift+a", settings: "mod+," };
 
 /** The application's menus: macOS's menu bar; the toolbar's menu button elsewhere. */
 export function appMenus(open: (a: Area) => void): { label: string; submenu: MenuItem[] }[] {
-  const places: MenuItem[] = (["run", "sessions", "store", "settings"] as Area[]).map((a) => ({ label: areaLabel(a), shortcut: AREA_KEY[a], checked: area() === a, onSelect: () => open(a) }));
+  const places: MenuItem[] = (["run", "sessions", "store"] as Area[]).map((a) => ({ label: areaLabel(a), shortcut: AREA_KEY[a], checked: area() === a, onSelect: () => open(a) }));
   return [
     {
       label: t("menu.file"),
@@ -52,7 +53,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
       ],
     },
     { label: t("menu.edit"), submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
-    { label: t("menu.view"), submenu: [...places, { type: "separator" }, { label: t("menu.sidebar"), shortcut: "mod+b", checked: sidebarOpen(), onSelect: toggleSidebar }, { role: "toggleFullScreen" }] },
+    { label: t("menu.view"), submenu: [...places, { type: "separator" }, { label: t("nav.activity"), shortcut: "mod+shift+a", onSelect: () => open("activity") }, { label: t("menu.sidebar"), shortcut: "mod+b", checked: sidebarOpen(), onSelect: toggleSidebar }, { role: "toggleFullScreen" }] },
     { label: t("menu.window"), submenu: [{ role: "minimize" }, { role: "zoom" }] },
   ];
 }
@@ -179,6 +180,7 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       </View>
       <RunningPill />
       <EndpointSwitcher />
+      <ActivityButton onPress={() => (activityOpen() ? activityOpen.set(false) : go("activity"))} />
       <IconButton
         testID="toolbar-lock"
         icon={readOnly() ? "lock" : "lock-open"}
@@ -273,7 +275,6 @@ export function Sidebar(props: { open: (a: Area) => void }) {
         </View>
         <Recent open={props.open} />
         <View class="flex-1" />
-        <Place area="settings" open={props.open} />
       </View>
     </If>
   );

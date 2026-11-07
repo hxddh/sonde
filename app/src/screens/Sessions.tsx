@@ -12,7 +12,7 @@ import { Button as BaseButton, ResizablePanel, ResizablePanelGroup, Sheet, type 
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { t } from "../i18n";
 import { api } from "../native";
-import { crumb, go, notify, openSession, report, sessionsChanged, sessionsTick } from "../store";
+import { crumb, go, notify, openSession, report, sessionsChanged, sessionsTick, shellWidth } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
@@ -229,7 +229,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         <If when={props.onBack}>
           <Button small variant="ghost" icon="chevron-left" label={t("timeline.sessions")} onPress={() => props.onBack?.()} testID="sessions-back" class="self-start" />
         </If>
-        <SessionHeader view={v} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || windowSize().width < 1180} />
+        <SessionHeader view={v} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || (props.inWindow ? windowSize().width : shellWidth()) < 1180} />
         <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} oneLine={!roomy()} />
         <If when={terminal()}>{actions()}</If>
       </View>
@@ -252,7 +252,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   );
 
   // room for the inspector beside the operations, or it comes in from the edge
-  const roomy = () => windowSize().width >= (props.inWindow ? 980 : 1240);
+  const roomy = () => (props.inWindow ? windowSize().width : shellWidth()) >= (props.inWindow ? 980 : 1240);
   const inspecting = () => !!(episode() || record());
 
   const inspector = () => (
@@ -421,7 +421,7 @@ export function Sessions() {
         else={
           <If when={sessions().length > 0} else={nothing()}>
             <View class="flex-1 flex-row">
-              <Scroll class={windowSize().width < 1100 ? "w-56 border-r border-border" : "w-64 border-r border-border"} contentClass="px-2 py-4">
+              <Scroll class={shellWidth() < 1100 ? "w-56 border-r border-border" : "w-64 border-r border-border"} contentClass="px-2 py-4">
                 {list()}
               </Scroll>
               <View class="min-w-0 flex-1">

@@ -8,22 +8,32 @@ import { language, t } from "./i18n";
 import { toast, type ToastKind } from "./ui/toast";
 import type { EndpointView, Settings, SondeError } from "./types";
 
-/** The four places of the app. */
-export type Area = "run" | "sessions" | "store" | "settings";
+/** The app's places: Run, Sessions and Buckets ("store"); Activity and
+ * Settings, which a window shows over its place (a sheet, a window of their
+ * own) and a terminal as places of their own. */
+export type Area = "run" | "sessions" | "store" | "activity" | "settings";
 /** The tabs of Store: what is in a bucket. */
 export type StoreTab = "browse" | "multipart" | "versions" | "capacity" | "layouts" | "probes";
 /** The tabs of Settings. */
-export type SettingsTab = "settings" | "endpoints" | "requests" | "jobs" | "audit";
+export type SettingsTab = "settings" | "endpoints";
+/** The tabs of Activity: what sonde itself did. */
+export type ActivityTab = "requests" | "jobs" | "audit";
 /** Where to go: an area, or a tab of one. */
-export type Section = "run" | "sessions" | StoreTab | SettingsTab;
+export type Section = "run" | "sessions" | StoreTab | SettingsTab | ActivityTab;
 
-export const AREAS: Area[] = ["run", "sessions", "store", "settings"];
+/** Every place, as a terminal lists them. */
+export const AREAS: Area[] = ["run", "sessions", "store", "activity", "settings"];
+/** The places a window's sidebar holds. */
+export const PLACES: Area[] = ["run", "sessions", "store"];
 export const STORE_TABS: StoreTab[] = ["browse", "multipart", "versions", "capacity", "layouts", "probes"];
-export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints", "requests", "jobs", "audit"];
+export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints"];
+export const ACTIVITY_TABS: ActivityTab[] = ["requests", "jobs", "audit"];
 
 export function areaOf(s: Section): Area {
   if (s === "run" || s === "sessions") return s;
-  return (STORE_TABS as string[]).includes(s) ? "store" : "settings";
+  if ((STORE_TABS as string[]).includes(s)) return "store";
+  if ((ACTIVITY_TABS as string[]).includes(s)) return "activity";
+  return "settings";
 }
 
 export const endpoints = signal<EndpointView[]>([]);
@@ -34,6 +44,7 @@ export const prefix = signal<string>("");
 export const section = signal<Section>("run");
 export const storeTab = signal<StoreTab>("browse");
 export const settingsTab = signal<SettingsTab>("settings");
+export const activityTab = signal<ActivityTab>("requests");
 /** The area on screen. */
 export const area = () => areaOf(section());
 /** The session the Sessions area shows (set by Run when a run ends, by the palette, …). */
@@ -49,6 +60,9 @@ export const sessionsTick = signal(0);
 export const sessionsChanged = () => sessionsTick.set(sessionsTick() + 1);
 /** Settings › Endpoints opens on its form when set (the welcome's "Add an endpoint"). */
 export const endpointsMode = signal<"list" | "add" | "import">("list");
+/** The main window's width, as its shell measures it (windowSize() follows
+ * whichever window has the focus). */
+export const shellWidth = signal(1280);
 /** The newest error, for the banner. */
 export const lastError = signal<SondeError | null>(null);
 /** A short notice (copied, exported). */
@@ -99,24 +113,31 @@ export function notify(text: string, options: { kind?: ToastKind; action?: strin
   toast({ title: text, kind: options.kind ?? "success", action: options.action, onAction: options.onAction });
 }
 
-/** Opens the inspector on a record. */
+/** Opens a request in Activity. */
 export function showRequest(id: number | null | undefined) {
   if (id === null || id === undefined) return;
-  batch(() => {
-    focusRecord.set(id);
-    settingsTab.set("requests");
-    section.set("requests");
-  });
+  focusRecord.set(id);
+  go("requests");
+}
+
+/** Where a window shows Settings and Activity instead of a place: set by the
+ * desktop shell; true when it took `s`. */
+let overlay: ((s: Section) => boolean) | null = null;
+export function setOverlay(f: (s: Section) => boolean) {
+  overlay = f;
 }
 
 /** Goes to an area (the tab it had) or to a tab of one. */
 export function go(s: Section | Area) {
   batch(() => {
     if (s === "store") s = storeTab();
-    else if (s === "settings" && section() !== "settings" && areaOf(section()) !== "settings") s = settingsTab();
+    else if (s === "activity") s = activityTab();
+    else if (s === "settings" && areaOf(section()) !== "settings") s = settingsTab();
     const target = s as Section;
     if ((STORE_TABS as string[]).includes(target)) storeTab.set(target as StoreTab);
     else if ((SETTINGS_TABS as string[]).includes(target)) settingsTab.set(target as SettingsTab);
+    else if ((ACTIVITY_TABS as string[]).includes(target)) activityTab.set(target as ActivityTab);
+    if (overlay?.(target)) return;
     section.set(target);
   });
 }

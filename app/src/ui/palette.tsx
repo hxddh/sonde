@@ -8,7 +8,7 @@ import { language, t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { command, history, lastRun, openLastRun, running, stop } from "../run";
-import { AREAS, chooseBucket, endpoint, endpoints, go, openSession, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS } from "../store";
+import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { Kbd, terminal } from "./kit";
@@ -28,11 +28,11 @@ interface Action {
   run: () => void;
 }
 
-const AREA_ICON = { run: "square-terminal", sessions: "list-clock", store: "database", settings: "settings" } as const;
+const AREA_ICON = { run: "square-terminal", sessions: "list-clock", store: "database", activity: "activity", settings: "settings" } as const;
 
 function actions(buckets: BucketEntry[]): Action[] {
   const list: Action[] = [];
-  AREAS.forEach((a, i) => list.push({ id: `area:${a}`, label: areaLabel(a), group: t("palette.go"), icon: AREA_ICON[a], shortcut: a === "settings" ? "mod+," : `mod+${i + 1}`, run: () => go(a) }));
+  AREAS.forEach((a, i) => list.push({ id: `area:${a}`, label: areaLabel(a), group: t("palette.go"), icon: AREA_ICON[a], shortcut: a === "settings" ? "mod+," : a === "activity" ? "mod+shift+a" : `mod+${i + 1}`, run: () => go(a) }));
   if (running()) list.push({ id: "run:stop", label: t("run.stop"), group: t("palette.actions"), icon: "square", run: stop });
   if (lastRun()) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: lastRun()!.command, run: () => openLastRun(go) });
 
@@ -104,6 +104,7 @@ function actions(buckets: BucketEntry[]): Action[] {
   );
   STORE_TABS.forEach((s) => list.push({ id: `store:${s}`, label: `${areaLabel("store")} › ${s === "browse" ? t("nav.objects") : sectionLabel(s)}`, group: t("palette.store"), icon: "database", run: () => go(s) }));
   SETTINGS_TABS.forEach((s) => list.push({ id: `settings:${s}`, label: `${areaLabel("settings")} › ${sectionLabel(s)}`, group: t("palette.settings"), icon: "settings", run: () => go(s) }));
+  ACTIVITY_TABS.forEach((s) => list.push({ id: `activity:${s}`, label: `${areaLabel("activity")} › ${sectionLabel(s)}`, group: t("palette.go"), icon: "activity", run: () => go(s) }));
   list.push({
     id: "example",
     label: t("timeline.example"),

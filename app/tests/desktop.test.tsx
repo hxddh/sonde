@@ -49,7 +49,7 @@ test("the palette goes anywhere", async () => {
   await app.press("id:palette");
   await app.waitFor("id:palette-command");
   await app.type("id:palette-command", "versions");
-  await app.press("text:Store › Versions");
+  await app.press("text:Buckets › Versions");
   await app.waitFor("id:screen-versions");
   expect(app.shows("id:palette-command")).toBe(false);
 });

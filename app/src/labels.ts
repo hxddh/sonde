@@ -24,6 +24,7 @@ const AREA: Record<Area, Key> = {
   sessions: "nav.sessions",
   store: "nav.store",
   settings: "nav.settings",
+  activity: "nav.activity",
 };
 
 export const areaLabel = (a: Area) => t(AREA[a]);

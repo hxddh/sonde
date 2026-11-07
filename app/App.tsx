@@ -4,7 +4,7 @@
 // navigation stack, the F10 menu bar and `:` for the palette.
 
 import { effect, keymap, mount, platform, setColorScheme, Storage, Text, View } from "nsh";
-import { createNavStack, NavPage, NavStack } from "nsh/base";
+import { createNavStack, NavPage, NavStack, Sheet } from "nsh/base";
 import { isAvailable, Menu, Window, windowState } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
@@ -12,9 +12,10 @@ import { areaLabel } from "./src/labels";
 import { running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
-import { SettingsArea } from "./src/screens/SettingsArea";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, AREAS, bucket, endpoint, endpoints, go, init, readOnly, settings } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, readOnly, report, setOverlay, settings, shellWidth } from "./src/store";
+import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
+import { Activity, activityOpen } from "./src/ui/activity";
 import { Badge, terminal } from "./src/ui/kit";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, toggleSidebar, Toolbar } from "./src/ui/shell";
@@ -32,7 +33,9 @@ function screen(a: Area) {
     case "store":
       return <StoreArea />;
     case "settings":
-      return <SettingsArea />;
+      return <SettingsBody />;
+    case "activity":
+      return <Activity />;
   }
 }
 
@@ -52,8 +55,25 @@ function Context() {
 // --- desktop -------------------------------------------------------------
 
 function DesktopShell() {
+  // Settings open in a window of their own, Activity from the edge: neither is a place here
+  setOverlay((s) => {
+    const a = areaOf(s);
+    if (a === "settings") {
+      try {
+        openSettingsWindow();
+      } catch (e) {
+        report(e);
+      }
+      return true;
+    }
+    if (a === "activity") {
+      activityOpen.set(true);
+      return true;
+    }
+    return false;
+  });
   return (
-    <View class="flex-1 bg-background">
+    <View class="flex-1 bg-background" onLayout={(e) => shellWidth.set(e.bounds.size.width)}>
       <Toolbar open={open} />
       <View class="min-h-0 flex-1 flex-row">
         <Sidebar open={open} />
@@ -62,6 +82,9 @@ function DesktopShell() {
           {screen(area())}
         </View>
       </View>
+      <Sheet open={activityOpen()} side="right" onOpenChange={(e) => !e.open && activityOpen.set(false)} popupClass="w-[600px] max-w-[94%] border-l border-t border-border bg-background shadow-xl" popupStyle={{ marginTop: 44 }} backdropClass="bg-black/15">
+        <Activity onClose={() => activityOpen.set(false)} />
+      </Sheet>
       <Palette />
       <Toaster />
     </View>
@@ -172,6 +195,7 @@ function installMenus() {
     "mod+2": () => open("sessions"),
     "mod+3": () => open("store"),
     "mod+,": () => open("settings"),
+    "mod+shift+a": () => open("activity"),
     "mod+k": () => paletteOpen.set(!paletteOpen()),
     "mod+b": () => !terminal() && toggleSidebar(),
   });

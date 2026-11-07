@@ -7,7 +7,7 @@ const en = {
   "app.tagline": "Object storage, diagnosed",
   "nav.run": "Run",
   "nav.sessions": "Sessions",
-  "nav.store": "Store",
+  "nav.store": "Buckets",
   "nav.general": "General",
   "nav.objects": "Objects",
   "palette.placeholder": "Go to, run, open, switch…",
@@ -425,6 +425,13 @@ const en = {
   "palette.close": "close",
   "settings.themeLabel": "Theme",
   "figure.operationsN": "{n} operations",
+  "nav.activity": "Activity",
+  "activity.requests": "Requests",
+  "activity.jobs": "Jobs",
+  "activity.changes": "Changes",
+  "activity.search": "Key, bucket, operation, request ID",
+  "activity.target": "Target",
+  "activity.noRequests": "sonde's own requests show here: listings, scans, downloads, probes.",
 };
 
 type Key = keyof typeof en;
@@ -433,7 +440,7 @@ const zh: Partial<Record<Key, string>> = {
   "app.tagline": "对象存储诊断",
   "nav.run": "运行",
   "nav.sessions": "会话",
-  "nav.store": "存储",
+  "nav.store": "桶",
   "nav.general": "通用",
   "nav.objects": "对象",
   "palette.placeholder": "前往、运行、打开、切换…",
@@ -583,7 +590,7 @@ const zh: Partial<Record<Key, string>> = {
   "endpoints.cred.anonymous": "匿名",
   "endpoints.cred.keep": "保持已配置的来源",
   "endpoints.cred.note": "密钥从不经过界面：静态密钥只存在于 config.toml。",
-  "browse.buckets": "Bucket",
+  "browse.buckets": "桶",
   "browse.objects": "{n} 项",
   "browse.more": "还有更多",
   "browse.name": "名称",
@@ -847,6 +854,13 @@ const zh: Partial<Record<Key, string>> = {
   "palette.close": "关闭",
   "settings.themeLabel": "主题",
   "figure.operationsN": "{n} 个操作",
+  "nav.activity": "活动",
+  "activity.requests": "请求",
+  "activity.jobs": "任务",
+  "activity.changes": "变更",
+  "activity.search": "键、桶、操作、请求 ID",
+  "activity.target": "目标",
+  "activity.noRequests": "sonde 自己发出的请求会显示在这里：列举、扫描、下载、探测。",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

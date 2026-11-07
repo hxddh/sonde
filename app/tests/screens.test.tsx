@@ -7,7 +7,7 @@ test("request inspector: records, details, copy as curl without a signature", as
   const app = await withDemo("demo");
   await app.waitFor("text:README.md", { timeout: 10000 });
   await place(app, "requests");
-  await app.waitFor("id:screen-requests");
+  await app.waitFor("id:requests");
   await app.waitFor("text:ListObjectsV2", { timeout: 5000 });
   await app.press("text:ListObjectsV2 >> nth=0");
   await app.waitFor("id:record-detail");
@@ -117,6 +117,7 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   await app.waitFor("text:1 incomplete uploads", { timeout: 10000 });
   await place(app, "audit");
   await app.waitFor("text:abortUploads · demo/demo");
+  await app.press("id:activity-close");
   await place(app, "settings");
   await app.press("id:read-only");
   await app.waitFor("label:Read-only");
@@ -127,14 +128,13 @@ test("language: Chinese strings", async () => {
   await place(app, "settings");
   await app.press("label:Language");
   await app.press("text:中文");
-  await app.waitFor("text:设置");
+  await app.waitFor("text:通用");
   // what sonde says about a session is said in Chinese too
   await app.press("id:nav-sessions");
   await app.press("id:open-example");
   await app.waitFor("text:查找最新的 WAL：探测了编号 1…128", { timeout: 10000 });
   expect(app.shows("text:/27 次 SlateDB 写入都是：条件创建/")).toBe(true);
-  await app.press("id:nav-settings");
   await app.press("label:语言");
   await app.press("text:English");
-  await app.waitFor("text:Settings");
+  await app.waitFor("text:General");
 });

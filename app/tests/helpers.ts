@@ -5,15 +5,32 @@ import { type App, open } from "nsh/test";
 export const desktop = { platform: "macos" as const, width: 1280, height: 860 };
 
 const STORE = ["browse", "multipart", "versions", "capacity", "layouts", "probes"];
-const SETTINGS = ["settings", "endpoints", "requests", "jobs", "audit"];
+const SETTINGS = ["settings", "endpoints"];
+const ACTIVITY = ["requests", "jobs", "audit"];
 
-/** Goes to an area, or to a tab of Store or Settings. In a terminal, from wherever it is. */
+/** Goes to a place, or to a tab of one. A window opens Settings in a window
+ * of their own (⌘,) and Activity from its toolbar; a terminal lists every
+ * place on its home list. */
 export async function place(app: App, where: string) {
-  const area = STORE.includes(where) ? "store" : SETTINGS.includes(where) ? "settings" : where;
+  const area = STORE.includes(where) ? "store" : SETTINGS.includes(where) ? "settings" : ACTIVITY.includes(where) ? "activity" : where;
+  const window = app.shows("id:toolbar");
+  if (window && area === "settings") {
+    await app.keyboard.press("mod+,");
+    await app.waitFor("id:screen-settings-area");
+    await app.press(`id:tab-${where}`);
+    return;
+  }
+  if (window && area === "activity") {
+    if (!app.shows("id:activity")) await app.press("id:activity-open");
+    await app.waitFor("id:activity");
+    await app.press(`id:activity-tab-${where}`);
+    return;
+  }
   // a terminal shows the places on its home list only
   if (!app.shows(`id:nav-${area}`)) await app.back();
   await app.press(`id:nav-${area}`);
   if (area === "store" || area === "settings") await app.press(`id:tab-${where}`);
+  if (area === "activity") await app.press(`id:activity-tab-${where}`);
 }
 
 /** Opens the app, starts the demo, and goes to Store (selecting `bucket`). */

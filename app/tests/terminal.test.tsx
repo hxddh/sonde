@@ -20,9 +20,9 @@ async function chooseBucket(app: Awaited<ReturnType<typeof open>>, name: string)
   await app.press(`text:${name}`);
 }
 
-test("home lists the four places; digits open them", async () => {
+test("home lists the places; digits open them", async () => {
   const app = await open("../App.tsx", term);
-  for (const name of ["Run", "Sessions", "Store", "Settings"]) expect(app.shows(`text:${name}`)).toBe(true);
+  for (const name of ["Run", "Sessions", "Buckets", "Activity", "Settings"]) expect(app.shows(`text:${name}`)).toBe(true);
   // with no endpoint yet, Store welcomes, and its demo opens the store
   await app.keyboard.press("3");
   await app.wait(300);
