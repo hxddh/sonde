@@ -4,11 +4,12 @@
 // over a band of live figures. When it ends, a toast and a notification
 // say how, and the session opens lined up with the output.
 
-import { cleanup, computed, LayoutAnimation, reduceMotion, signal, Text, View } from "nsh";
+import { cleanup, LayoutAnimation, reduceMotion, signal, Text, View } from "nsh";
 import { Button as BaseButton, Input, ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { bytes } from "../format";
 import { t } from "../i18n";
+import { analysis } from "../analysis";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, running, start, startedAt, stop } from "../run";
 import { endpoint, endpoints, go, openSession, report, sessionsChanged } from "../store";
@@ -193,17 +194,9 @@ function LiveOperations() {
   }, 500);
   cleanup(() => clearInterval(timer));
   const path = () => running()?.path ?? lastRun()?.path ?? null;
-  const view = computed<SessionView | null>(() => {
-    tick();
-    lastRun();
-    const p = path();
-    if (!p) return null;
-    try {
-      return api.sessions.open(p);
-    } catch {
-      return null;
-    }
-  });
+  // read again as the program's requests arrive, and once more as it ends
+  const view = analysis(path, () => (tick(), lastRun())).view;
+
   return (
     <View class="min-h-0 flex-1 gap-2.5" testID="run-operations">
       <StatusBand view={view()} now={now} />

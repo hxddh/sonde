@@ -89,7 +89,7 @@ export function resize(cols: number, rows: number) {
 
 async function tellTheUser(r: RunResult, cmd: string) {
   try {
-    const v = api.sessions.open(r.path);
+    const v = await api.sessions.analyse(r.path);
     const warnings = v.observations.filter((o) => o.level === "warn").length;
     const body = [t("run.bandRequests", { n: v.summary.requests }), t("figure.operationsN", { n: v.episodes.length }), ...(warnings ? [t("run.toLook", { n: warnings })] : [])].join(" · ");
     const title = killed ? t("run.toastStopped", { command: programOf(cmd) ?? cmd }) : t("run.toastEnded", { command: programOf(cmd) ?? cmd, code: String(r.exit ?? "?") });

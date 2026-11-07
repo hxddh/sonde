@@ -73,6 +73,7 @@ export const api = {
   sessions: {
     list: () => Sessions.list() as T.SessionInfo[],
     open: (path: string) => Sessions.open(path) as T.SessionView,
+    analyse: async (path: string) => (await Sessions.analyse(path)) as T.SessionView,
     records: (path: string, ids: number[]) => Sessions.records(path, ids) as T.RecordSummary[],
     record: (path: string, id: number) => Sessions.record(path, id) as T.RequestRecord | null,
     copy: (path: string, id: number, kind: "cli" | "curl") => Sessions.copy(path, id, kind) as string | null,

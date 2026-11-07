@@ -416,6 +416,32 @@ export function Empty(props: { text: string; title?: string; icon?: IconName; ch
   );
 }
 
+/** Where a session will be while it is read: its header, findings and rows, in outline. */
+export function SessionSkeleton(props: { rows?: number }) {
+  const bar = (w: string, h = "h-3") => <View class={`${h} ${w} rounded-(--radius-sm) bg-muted`} />;
+  return (
+    <View testID="session-reading" accessibilityLabel={t("sessions.reading")} class="flex-1 gap-3.5 px-5 pt-4">
+      <View class="gap-2">
+        {bar("w-56", "h-4")}
+        {bar("w-80")}
+      </View>
+      <View class="h-16 rounded-(--radius-card) bg-muted/60" />
+      <View class="gap-2.5 pt-1">
+        <Each of={Array.from({ length: props.rows ?? 8 }, (_, i) => i)} key={(i) => i}>
+          {(i) => (
+            <View class="flex-row items-center gap-3">
+              {bar("w-16")}
+              {bar(i() % 3 === 0 ? "w-72" : i() % 3 === 1 ? "w-96" : "w-60")}
+              <View class="flex-1" />
+              {bar("w-12")}
+            </View>
+          )}
+        </Each>
+      </View>
+    </View>
+  );
+}
+
 /** A scrolling page body with even padding. */
 export function Page(props: { children: JSX.Element; testID?: string }) {
   return (

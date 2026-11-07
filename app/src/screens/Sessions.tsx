@@ -11,12 +11,13 @@ import { cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Sc
 import { Button as BaseButton, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { t } from "../i18n";
+import { analysis } from "../analysis";
 import { api } from "../native";
 import { crumb, go, notify, openSession, openSessionFile, report, sessionsChanged, sessionsTick, shellHeight, shellWidth } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
-import { Button, Empty, IconButton, Segmented, SidePanel, terminal } from "../ui/kit";
+import { Button, Empty, IconButton, Segmented, SessionSkeleton, SidePanel, terminal } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
@@ -43,15 +44,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   let opsRef: DataTableRef | undefined;
   let outRef: DataTableRef | undefined;
 
-  const view = computed<SessionView | null>(() => {
-    props.tick();
-    try {
-      return api.sessions.open(props.path);
-    } catch (e) {
-      report(e);
-      return null;
-    }
-  });
+  const read = analysis(() => props.path, props.tick);
+  const view = read.view;
+  effect(() => void (read.error() && report(read.error())));
   const lines = computed<LogLine[]>(() => {
     props.tick();
     try {
@@ -276,7 +271,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
 
   return (
     <View class="flex-1" testID="session-pane">
-      <If when={view()} else={<Empty icon="list-clock" text={t("timeline.pick")} />}>
+      <If when={view()} else={read.reading() ? <SessionSkeleton /> : <Empty icon="list-clock" text={t("timeline.pick")} />}>
         {(v) => (
           <If when={compareWith()} else={
             <If

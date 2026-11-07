@@ -110,8 +110,93 @@ async fn begin(
     Ok(view)
 }
 
-fn open_session(path: &str) -> Result<Session, String> {
-    Session::open(Path::new(path)).map_err(err_msg)
+/// A session read and analysed once for as long as its file is unchanged
+/// (same length, same modification time): reopening a session, its
+/// records, its output or a live recording that has not grown costs nothing.
+struct Cached {
+    stamp: (u64, Option<std::time::SystemTime>),
+    used: u64,
+    session: Arc<Session>,
+    view: Option<Arc<JsonValue>>,
+}
+
+/// The sessions kept read: the open ones and a few recent.
+const KEEP: usize = 8;
+static CACHE: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, Cached>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+static USE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn stamp(path: &Path) -> Result<(u64, Option<std::time::SystemTime>), String> {
+    let m = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok((m.len(), m.modified().ok()))
+}
+
+fn open_session(path: &str) -> Result<Arc<Session>, String> {
+    let p = Path::new(path);
+    let now = stamp(p)?;
+    let used = USE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if let Some(c) = CACHE.lock().get_mut(p)
+        && c.stamp == now
+    {
+        c.used = used;
+        return Ok(c.session.clone());
+    }
+    // read outside the lock: another session opens meanwhile
+    let session = Arc::new(Session::open(p).map_err(err_msg)?);
+    let mut cache = CACHE.lock();
+    if cache.len() >= KEEP && !cache.contains_key(p) {
+        let oldest = cache
+            .iter()
+            .min_by_key(|(_, c)| c.used)
+            .map(|(k, _)| k.clone());
+        if let Some(k) = oldest {
+            cache.remove(&k);
+        }
+    }
+    cache.insert(
+        p.to_path_buf(),
+        Cached {
+            stamp: now,
+            used,
+            session: session.clone(),
+            view: None,
+        },
+    );
+    Ok(session)
+}
+
+/// What [`Sessions::open`] returns, built once per version of the file.
+fn view_of(path: &str) -> Result<Arc<JsonValue>, String> {
+    let s = open_session(path)?;
+    let p = Path::new(path);
+    if let Some(v) = CACHE
+        .lock()
+        .get(p)
+        .filter(|c| Arc::ptr_eq(&c.session, &s))
+        .and_then(|c| c.view.clone())
+    {
+        return Ok(v);
+    }
+    let eps = episodes(&s.records);
+    let obs = observations(&s.records, &eps);
+    let shared: Vec<String> = shared_notes(&eps)
+        .into_iter()
+        .map(|(_, n, _, _)| n)
+        .collect();
+    let view = Arc::new(json!({
+        "path": path,
+        "header": s.header,
+        "summary": summarize(&s.records),
+        "episodes": eps,
+        "observations": obs,
+        "sharedNotes": shared,
+    }));
+    if let Some(c) = CACHE.lock().get_mut(p)
+        && Arc::ptr_eq(&c.session, &s)
+    {
+        c.view = Some(view.clone());
+    }
+    Ok(view)
 }
 
 /// The requests in a session file: its record lines (not the header, not the
@@ -210,21 +295,15 @@ impl Sessions {
     /// A session: its header, summary, operations and observations, and the
     /// notes said once instead of on each operation.
     pub fn open(path: String) -> Result<JsonValue, String> {
-        let s = open_session(&path)?;
-        let eps = episodes(&s.records);
-        let obs = observations(&s.records, &eps);
-        let shared: Vec<String> = shared_notes(&eps)
-            .into_iter()
-            .map(|(_, n, _, _)| n)
-            .collect();
-        Ok(json!({
-            "path": path,
-            "header": s.header,
-            "summary": summarize(&s.records),
-            "episodes": eps,
-            "observations": obs,
-            "sharedNotes": shared,
-        }))
+        Ok((*view_of(&path)?).clone())
+    }
+
+    /// [`Sessions::open`] off the interface's thread: what a window waits on
+    /// while a large session is read, or a live one grows.
+    pub async fn analyse(path: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || view_of(&path).map(|v| (*v).clone()))
+            .await
+            .map_err(err_msg)?
     }
 
     /// Short rows for the records with these ids (an operation's requests).
@@ -241,7 +320,7 @@ impl Sessions {
     /// One record of a session, in full.
     pub fn record(path: String, id: f64) -> Result<JsonValue, String> {
         let s = open_session(&path)?;
-        Ok(to_json(s.records.into_iter().find(|r| r.id == id as u64)))
+        Ok(to_json(s.records.iter().find(|r| r.id == id as u64)))
     }
 
     /// A session's record as `aws s3api` (`cli`) or unsigned curl (`curl`).
@@ -420,7 +499,7 @@ impl Sessions {
             buckets: Vec::new(),
         };
         let run = background(async move {
-            replay::replay_to_file(&base, &original, &opts, &out, false, |_, _| {}).await
+            replay::replay_to_file(&base, &*original, &opts, &out, false, |_, _| {}).await
         })
         .await
         .map_err(err_msg)?
@@ -543,5 +622,39 @@ mod tests {
         writeln!(f, "{{\"log\":{{\"text\":\"bye\"}}}}").unwrap();
         f.flush().unwrap();
         assert_eq!(count_records(&path), 3);
+    }
+
+    #[test]
+    fn an_analysis_is_kept_until_the_file_changes() {
+        use reqlog::Sink;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("live.sonde");
+        let w =
+            SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let rec = |id| reqlog::Record {
+            id,
+            time: chrono::Utc::now(),
+            method: "GET".into(),
+            operation: "GetObject".into(),
+            bucket: Some("b".into()),
+            key: Some(format!("k{id}")),
+            status: Some(200),
+            ..Default::default()
+        };
+        w.write(&rec(1));
+        let p = path.to_string_lossy().into_owned();
+        let a = view_of(&p).unwrap();
+        assert!(
+            Arc::ptr_eq(&a, &view_of(&p).unwrap()),
+            "unchanged: the same analysis"
+        );
+        assert_eq!(a["summary"]["requests"], 1);
+        w.write(&rec(2));
+        let b = view_of(&p).unwrap();
+        assert_eq!(b["summary"]["requests"], 2, "grown: analysed again");
+        assert!(Arc::ptr_eq(
+            &open_session(&p).unwrap(),
+            &open_session(&p).unwrap()
+        ));
     }
 }
