@@ -4,6 +4,32 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-11-07
+
+The same app, made with the rigor of Native Shell's design guides: one design system that every page follows,
+what a session found given the room it deserves, and the platform's own materials, progress and windows.
+
+### Added
+
+- A session's findings are its core result: each says what happened, why it matters and how many operations it is
+  about, and narrows the operations when pressed. No more chips with the explanation behind a hover.
+- macOS: the sidebar sits on the window's own sidebar material; session windows name their file in the title bar
+  and gather as tabs.
+- A program or a job at work shows as progress on the Dock's icon and the taskbar button.
+- The Run split and the inspector's width are kept across launches.
+- Each place draws inside an error boundary: a failure says so and offers Try again; the rest of the window keeps
+  working.
+- `app/DESIGN.md`: the app's design standards.
+
+### Changed
+
+- One type scale (caption 11, small 12, body 13, heading 15, title 20) replaces eight sizes written inline; live
+  figures use tabular digits.
+- One popup surface for menus, selects and the endpoint switcher; one side panel (three widths, one header) for
+  Activity, a bucket's detail, the endpoint form and a narrow window's inspector; one scrim, a theme token.
+- Primary buttons only for an area's default commit; commands that open a panel, dialog or window end with "…".
+- Table rows grow with the user's text size.
+
 ## [3.0.0] - 2026-11-07
 
 Fewer places, each doing more by itself. The app has three places — Run, Sessions, Buckets — and says what it

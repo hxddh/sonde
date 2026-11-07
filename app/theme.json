@@ -4,7 +4,7 @@
     "theme": {
       "radius": "8px",
       "radius-card": "10px",
-      "font-mono": "JetBrains Mono, SF Mono, Menlo, Cascadia Mono, DejaVu Sans Mono, monospace",
+      "font-mono": "SF Mono, Menlo, Cascadia Mono, Consolas, DejaVu Sans Mono, monospace",
       "radius-sm": "5px"
     },
     "light": {

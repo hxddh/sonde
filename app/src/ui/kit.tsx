@@ -327,9 +327,9 @@ export function Choice(props: { label?: string; value: string | null; items: { v
 }
 
 /** One of a few views or modes: Tabs, a pill sliding behind the chosen one. */
-export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string }) {
+export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
-    <Tabs testID={props.testID} class="flex-row self-start rounded-(--radius) bg-muted p-0.5" indicatorClass={`inset-y-0.5 rounded-(--radius-sm) bg-background shadow-sm ${reduceMotion() ? "" : "transition-all duration-200"}`}>
+    <Tabs testID={props.testID} class={`flex-row rounded-(--radius) bg-muted p-0.5 ${props.class ?? "self-start"}`} indicatorClass={`inset-y-0.5 rounded-(--radius-sm) bg-background shadow-sm ${reduceMotion() ? "" : "transition-all duration-200"}`}>
       <Each of={props.items}>
         {(item) => (
           <Tab

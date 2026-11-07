@@ -35,9 +35,11 @@ A desktop scale around a 13 pt body (`nsh.json` `tailwind.fontSize`, `TYPE` in
 | `text-heading` | 15 | a panel's or section's title, a figure |
 | `text-title` | 20 | a page's title (welcome, an empty Run) |
 
-The interface is the platform's font. Monospace (JetBrains Mono, shipped in
-`assets/fonts`) is for identifiers, keys, commands, URLs and code; numbers in the
-interface font use `tabular-nums` so columns and live counters do not jitter.
+The interface is the platform's font, and monospace the platform's (SF Mono or Menlo,
+Cascadia Mono or Consolas, DejaVu Sans Mono): for identifiers, keys, commands, URLs,
+code and the columns of times. Figures outside tables use `tabular-nums` so live
+counters do not jitter. (A shipped face was tried and dropped: text in a registered
+font is measured narrower than it is drawn — FINDINGS 15.)
 
 ## Color
 

@@ -12,7 +12,7 @@ import { Button as BaseButton, ResizablePanel, ResizablePanelGroup, type DataTab
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { t } from "../i18n";
 import { api } from "../native";
-import { crumb, go, notify, openSession, openSessionFile, report, sessionsChanged, sessionsTick, shellWidth } from "../store";
+import { crumb, go, notify, openSession, openSessionFile, report, sessionsChanged, sessionsTick, shellHeight, shellWidth } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
@@ -237,7 +237,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           <Button small variant="ghost" icon="chevron-left" label={t("timeline.sessions")} onPress={() => props.onBack?.()} testID="sessions-back" class="self-start" />
         </If>
         <SessionHeader view={v} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || (props.inWindow ? windowSize().width : shellWidth()) < 1180} />
-        <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} />
+        <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(96, Math.round((props.inWindow ? windowSize().height : shellHeight()) * 0.28))} />
         <If when={terminal()}>{actions()}</If>
       </View>
       <View class={terminal() ? "flex-row items-center gap-2" : "flex-row items-center gap-3 px-5 py-2.5"}>

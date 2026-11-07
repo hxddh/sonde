@@ -67,7 +67,9 @@ runs in the browser. `crates/sonde-cli/build.rs` embeds the built site (from `$S
 (`icon.tsx` draws Lucide data from `lucide.ts`, written by `scripts/lucide.py`), shortcuts as each platform writes
 them (`keys.ts`), controls (`kit.tsx`), toasts (`toast.tsx`), the window's toolbar and sidebar (`shell.tsx`), the
 palette, and the session views shared with the web viewer (`sessionview.tsx`, `record.tsx`, `timeline.tsx`). Pages
-compose these; they do not style base components of their own.
+compose these; they do not style base components of their own. The standards they follow — the type scale, surfaces,
+side panels, when a button is primary, motion and words — are in `app/DESIGN.md`, on top of Native Shell's design
+guides.
 
 ## The two forms
 

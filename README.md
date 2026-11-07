@@ -126,18 +126,20 @@ controls, Esc goes back, Ctrl+C copies a selection (OSC 52, over SSH too) or qui
 A first launch offers the built-in demo, the AWS profiles it finds, or an endpoint by hand. Then it opens on Run.
 The toolbar is the window's title bar: where you are, the program running, the endpoint (searchable), Activity
 (⌘⇧A), the read-only lock and search (⌘K / Ctrl+K). The sidebar holds the places and recent sessions (⌘1 Run,
-⌘2 Sessions, ⌘3 Buckets; ⌘B hides it); Settings are a window (⌘,). Light and dark, English and 中文, the window's size and place remembered, updates checked
-only when you ask.
+⌘2 Sessions, ⌘3 Buckets; ⌘B hides it); Settings are a window (⌘,). On macOS the sidebar sits on the window's own
+material and session windows gather as tabs; a run in progress shows on the Dock's icon. Light and dark, English and
+中文, the window's size, place and splits remembered, updates checked only when you ask. The app's design standards
+are in [app/DESIGN.md](app/DESIGN.md).
 
 | | |
 |---|---|
-| ![A session: its figures, what stands out as filters, operations with outcome and time, the inspector](docs/images/session.png) | ![The timeline, dark](docs/images/timeline-dark.png) |
+| ![A session: its figures, what stands out and why, operations with outcome and time](docs/images/session.png) | ![The timeline, dark](docs/images/timeline-dark.png) |
 | ![Buckets: the overview over the objects, an object's details](docs/images/store.png) | ![Incomplete uploads, a sheet from the overview](docs/images/uploads.png) |
 | ![Settings and endpoints in a window of their own](docs/images/endpoints.png) | ![The command palette](docs/images/palette.png) |
 
 Every place is screenshotted on a real window in CI on Linux, macOS and Windows (`scripts/shots.sh`: wide and at
 the least size, light and dark, English and Chinese); the images are the build's `sonde-shots-<platform>` artifacts.
-[What changed from 2.1 to 3.0](docs/compare-3.0.md), side by side.
+[What changed from 2.1 to 3.0](docs/compare-3.0.md) and [from 3.0 to 4.0](docs/compare-4.0.md), side by side.
 
 ## Documentation
 

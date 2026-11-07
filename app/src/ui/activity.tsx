@@ -108,7 +108,7 @@ function Requests() {
           ...(terminal() ? [] : [{ key: "status", title: "", width: 52, resizable: false }]),
           { key: "operation", title: t("requests.operation"), width: 190 },
           { key: "target", title: t("activity.target"), width: 200, minWidth: 120 },
-          { key: "latency", title: t("requests.latency"), width: 70, align: "end" as const },
+          { key: "latency", title: t("requests.latency"), width: 76, align: "end" as const },
           { key: "time", title: t("column.time"), width: 70 },
         ]}
         data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: r.target, latency: ms(r.latencyMs), time: date(r.time).slice(11, 16) }))}
@@ -124,7 +124,7 @@ function Requests() {
                   return (
                     <View class="flex-1 flex-row items-center gap-1.5 px-2">
                       <Dot tone={statusTone(r.status)} />
-                      <Text class={`tabular-nums text-caption font-semibold ${toneText(statusTone(r.status))}`}>{c.text}</Text>
+                      <Text class={`font-mono text-caption font-semibold ${toneText(statusTone(r.status))}`}>{c.text}</Text>
                     </View>
                   );
                 return <Text class={`px-2 line-clamp-1 ${c.key === "target" ? "font-mono text-caption text-muted-foreground" : c.key === "operation" ? "text-body text-foreground" : "font-mono text-caption text-muted-foreground"}`}>{c.text}</Text>;
@@ -210,7 +210,7 @@ function Changes() {
  * it fills a side panel, under the panel's header. */
 export function Activity(props: { onClose?: () => void }) {
   const body = (tab: ActivityTab) => (tab === "requests" ? <Requests /> : tab === "jobs" ? <Jobs /> : <Changes />);
-  const tabs = () => <Segmented testID="activity-tab" value={activityTab()} items={ACTIVITY_TABS.map((x) => ({ value: x, title: TAB_LABEL[x]() }))} onChange={(v) => activityTab.set(v as ActivityTab)} />;
+  const tabs = () => <Segmented class="self-center" testID="activity-tab" value={activityTab()} items={ACTIVITY_TABS.map((x) => ({ value: x, title: TAB_LABEL[x]() }))} onChange={(v) => activityTab.set(v as ActivityTab)} />;
   // rebuilt per tab: each owns its timers
   const content = () => (
     <Each of={[activityTab()]} key={(x) => x}>

@@ -1,6 +1,5 @@
 // The page `sonde share` publishes: reads the session beside it.
 
-import "../app/src/ui/fonts";
 import { mount, resource } from "nsh";
 import { Loading, type SharedSession, SessionViewer } from "./SessionViewer";
 

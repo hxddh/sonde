@@ -65,6 +65,8 @@ export const endpointsMode = signal<"list" | "add" | "import">("list");
 /** The main window's width, as its shell measures it (windowSize() follows
  * whichever window has the focus). */
 export const shellWidth = signal(1280);
+/** And its height. */
+export const shellHeight = signal(820);
 /** The newest error, for the banner. */
 export const lastError = signal<SondeError | null>(null);
 /** A short notice (copied, exported). */

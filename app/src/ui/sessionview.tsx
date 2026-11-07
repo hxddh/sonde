@@ -163,7 +163,7 @@ const findingsOpen = signal(true);
 /** What stands out in a session — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; max?: number }) {
+export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; max?: number; maxHeight?: number }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   const list = () => props.view.observations.slice(0, props.max ?? props.view.observations.length);
   if (terminal()) {
@@ -216,9 +216,10 @@ export function Observations(props: { view: SessionView; filter?: number | null;
           </BaseButton>
         </If>
         <If when={props.compact || findingsOpen()}>
-          <View class="overflow-hidden rounded-(--radius-card) border border-border bg-card">
+          {/* a short window keeps room for the operations: the findings scroll */}
+          <Scroll class="overflow-hidden rounded-(--radius-card) border border-border bg-card" style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
             <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
-          </View>
+          </Scroll>
         </If>
       </View>
     </If>
@@ -308,8 +309,11 @@ export function OperationsTable(props: {
       }
       case "notes":
         return <Text class="px-2 text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
+      case "time":
+        // from the episode, not the cell's text: DataTable fits that to the column with its own font
+        return <Text class="px-2 font-mono text-caption text-foreground">{clock(e.start)}</Text>;
       default:
-        return <Text class={`px-2 text-foreground line-clamp-1 ${c.key === "time" || c.key === "requests" || c.key === "duration" ? "tabular-nums text-small" : "text-body"}`}>{c.text}</Text>;
+        return <Text class={`px-2 text-foreground ${c.key === "time" || c.key === "requests" || c.key === "duration" ? "font-mono text-caption" : "text-body line-clamp-1"}`}>{c.text}</Text>;
     }
   };
   return (
@@ -440,12 +444,12 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
                 onPress={() => props.onRecord(r().id)}
                 class={`flex-row items-center gap-2 px-2.5 py-1.5 hover:bg-row-hover active:bg-selection ${i() > 0 ? "border-t border-border" : ""}`}
               >
-                <Text class={`w-8 tabular-nums text-caption font-semibold ${TONE_TEXT[statusTone(r().status)]}`}>{r().status === null ? "—" : String(r().status)}</Text>
+                <Text class={`w-8 font-mono text-caption font-semibold ${TONE_TEXT[statusTone(r().status)]}`}>{r().status === null ? "—" : String(r().status)}</Text>
                 <View class="min-w-0 flex-1">
                   <Text class="text-small font-medium text-foreground line-clamp-1">{r().operation}</Text>
                   <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{r().target}</Text>
                 </View>
-                <Text class="tabular-nums text-caption text-muted-foreground">{ms(r().latencyMs)}</Text>
+                <Text class="font-mono text-caption text-muted-foreground">{ms(r().latencyMs)}</Text>
                 <If when={!terminal()}>
                   <Icon name="chevron-right" size={13} />
                 </If>

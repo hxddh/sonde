@@ -3,8 +3,7 @@
 // sidebar and the place beside it; a terminal gets a home list and a
 // navigation stack, the F10 menu bar and `:` for the palette.
 
-import "./src/ui/fonts";
-import { effect, keymap, mount, platform, setColorScheme, Storage, Text, View } from "nsh";
+import { batch, effect, keymap, mount, platform, setColorScheme, Storage, Text, View } from "nsh";
 import { createNavStack, NavPage, NavStack } from "nsh/base";
 import { currentWindow, isAvailable, Menu, Window, windowState } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
@@ -14,7 +13,7 @@ import { running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openSessionFile, readOnly, report, section, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityOpen, runningJobs } from "./src/ui/activity";
@@ -102,7 +101,7 @@ function DesktopShell() {
   });
   return (
     // on macOS the window's own sidebar material shows through the sidebar
-    <View class={`flex-1 ${material ? "" : "bg-background"}`} onLayout={(e) => shellWidth.set(e.bounds.size.width)}>
+    <View class={`flex-1 ${material ? "" : "bg-background"}`} onLayout={(e) => batch(() => (shellWidth.set(e.bounds.size.width), shellHeight.set(e.bounds.size.height)))}>
       <Toolbar open={open} />
       <View class="min-h-0 flex-1 flex-row">
         <Sidebar open={open} />
