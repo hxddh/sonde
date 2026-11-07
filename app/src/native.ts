@@ -90,6 +90,12 @@ export const api = {
     current: () => Sessions.current() as T.RecordingView | null,
     stop: () => Sessions.stop() as string | null,
     example: () => Sessions.example() as string,
+    run: (command: string, cwd: string | null, endpoint: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.RunEvent) => void) =>
+      Sessions.run(command, cwd, endpoint, policy, cols, rows, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,
+    input: (data: string) => Sessions.input(data),
+    resize: (cols: number, rows: number) => Sessions.resize(cols, rows),
+    kill: () => Sessions.kill(),
+    logLines: (path: string) => Sessions.logLines(path) as T.LogLine[],
   },
 };
 

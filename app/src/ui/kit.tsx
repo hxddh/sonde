@@ -106,7 +106,7 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean }) {
   );
 }
 
-export function Field(props: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; testID?: string; mono?: boolean; class?: string }) {
+export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string }) {
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
       <Text class="text-xs font-medium text-muted-foreground">{props.label}</Text>
@@ -117,6 +117,8 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
         autoCapitalize="none"
         autoCorrect={false}
         onChange={({ value }) => props.onChange(value)}
+        onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
+        submitBehavior={props.onSubmit ? "submit" : undefined}
         class={`h-8 rounded-(--radius) border border-input bg-background px-2.5 text-sm text-foreground focus:border-ring ${props.mono ? "font-mono" : ""}`}
       />
     </View>

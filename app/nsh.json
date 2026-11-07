@@ -7,7 +7,8 @@
   "rust": "../crates/sonde-nsh",
   "theme": "theme.json",
   "capabilities": {
-    "clipboard": true
+    "clipboard": true,
+    "notifications": true
   },
   "macos": {
     "infoPlist": {
@@ -15,5 +16,7 @@
       "NSHumanReadableCopyright": "Apache-2.0"
     }
   },
-  "tui": { "pointsPerCell": "8x16" }
+  "tui": {
+    "pointsPerCell": "8x16"
+  }
 }

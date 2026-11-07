@@ -500,3 +500,15 @@ export interface RecordingView {
   requests: number;
   exports: string;
 }
+
+export interface LogLine {
+  time: string;
+  text: string;
+}
+
+export type RunEvent = { started: RecordingView } | { data: string };
+
+export interface RunResult {
+  exit: number | null;
+  path: string;
+}
