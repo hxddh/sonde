@@ -3,16 +3,30 @@
 import { expect, open, test } from "nsh/test";
 import { desktop, place } from "./helpers";
 
-test("starts on Run; the demo opens from Settings › Endpoints", async () => {
+test("a first launch welcomes; its demo makes Run ready; the sidebar hides and comes back", async () => {
   const app = await open("../App.tsx", desktop);
-  expect(app.shows("id:screen-run")).toBe(true);
-  expect(app.shows("id:run-intro")).toBe(true);
+  expect(app.shows("id:welcome")).toBe(true);
+  await app.press("id:welcome-demo");
+  await app.waitFor("id:screen-run", { timeout: 10000 });
+  await app.waitFor("text:The demo endpoint is ready");
+  expect(app.shows("id:sidebar")).toBe(true);
+  await app.press("id:toggle-sidebar");
+  expect(app.shows("id:sidebar")).toBe(false);
+  await app.press("id:toggle-sidebar");
+  expect(app.shows("id:sidebar")).toBe(true);
+});
+
+test("the demo opens from Settings › Endpoints too", async () => {
+  const app = await open("../App.tsx", desktop);
   await place(app, "endpoints");
   await app.press("id:open-demo");
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await app.press("id:test-demo");
   await app.waitFor("id:test-result", { timeout: 10000 });
   expect(app.texts().some((t) => t.startsWith("Reachable in"))).toBe(true);
+  // with an endpoint, Run is Run
+  await app.press("id:nav-run");
+  await app.waitFor("id:screen-run");
 });
 
 test("Store: browse the demo bucket and show object details", async () => {

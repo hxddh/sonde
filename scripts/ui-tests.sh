@@ -16,6 +16,7 @@ export AWS_ACCESS_KEY_ID=AKIDSONDEUITEST AWS_SECRET_ACCESS_KEY=sonde-ui-test-sec
   AWS_EC2_METADATA_DISABLED=true
 # the generated runner workspace keeps its own profiles: no debug info keeps it small
 export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 nsh test tests/desktop.test.tsx
 nsh test tests/screens.test.tsx
 nsh test tests/run.test.tsx

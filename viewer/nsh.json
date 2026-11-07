@@ -2,6 +2,6 @@
   "name": "sonde-viewer",
   "id": "dev.sonde.viewer",
   "version": "2.0.0",
-  "theme": "theme.json",
+  "theme": "../app/theme.json",
   "capabilities": {}
 }

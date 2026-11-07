@@ -1,37 +1,99 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { type JSX, platform, Scroll, split, Text, View } from "nsh";
-import { Button as BaseButton, Checkbox as BaseCheckbox, Input, Progress, Select, Switch } from "nsh/base";
+import { type JSX, platform, reduceMotion, Scroll, split, Text, View } from "nsh";
+import { Button as BaseButton, Checkbox as BaseCheckbox, Input, Progress, Select, Switch, Tab, Tabs, Tooltip } from "nsh/base";
 import { t } from "../i18n";
+import { Icon, type IconName, type Tint } from "./icon";
+import { keyLabel } from "./keys";
 
 export const terminal = () => platform.idiom === "terminal";
 
-type Variant = "primary" | "secondary" | "ghost" | "destructive";
+type Variant = "primary" | "secondary" | "outline" | "ghost" | "destructive";
 
 const buttonClass: Record<Variant, string> = {
-  primary: "bg-primary active:bg-primary/85 disabled:opacity-50",
-  secondary: "bg-secondary border border-border active:bg-muted disabled:opacity-50",
-  ghost: "active:bg-muted hover:bg-muted disabled:opacity-50",
-  destructive: "bg-destructive active:bg-destructive/85 disabled:opacity-50",
+  primary: "bg-primary hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50",
+  secondary: "bg-secondary border border-border hover:bg-muted active:bg-accent disabled:opacity-50",
+  outline: "border border-input bg-background hover:bg-muted active:bg-accent disabled:opacity-50",
+  ghost: "hover:bg-muted active:bg-accent disabled:opacity-50",
+  destructive: "bg-destructive hover:bg-destructive/90 active:bg-destructive/80 disabled:opacity-50",
 };
 
 const buttonText: Record<Variant, string> = {
   primary: "text-primary-foreground",
   secondary: "text-secondary-foreground",
+  outline: "text-foreground",
   ghost: "text-foreground",
   destructive: "text-destructive-foreground",
 };
 
-export function Button(props: { label: string; onPress?: () => void; variant?: Variant; disabled?: boolean; small?: boolean; testID?: string; class?: string }) {
+const iconTint: Record<Variant, Tint> = {
+  primary: "primary-foreground",
+  secondary: "foreground",
+  outline: "foreground",
+  ghost: "muted-foreground",
+  destructive: "primary-foreground",
+};
+
+/** The app's tooltip: a short hint, and the shortcut when there is one. */
+export function Tip(props: { text: string; shortcut?: string }) {
+  return (
+    <Tooltip placement="bottom" class="flex-row items-center gap-2 rounded-(--radius-sm) bg-foreground px-2 py-1 shadow-md transition-opacity duration-100" startingClass="opacity-0" endingClass="opacity-0">
+      <Text class="text-xs text-background">{props.text}</Text>
+      <If when={props.shortcut}>{(k) => <Text class="font-mono text-[11px] text-background opacity-70">{keyLabel(k())}</Text>}</If>
+    </Tooltip>
+  );
+}
+
+/** A shortcut, as the platform writes it (⌘K, Ctrl+K). */
+export function Kbd(props: { keys: string; class?: string }) {
+  return <Text class={`font-mono text-[11px] text-muted-foreground ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
+}
+
+export function Button(props: {
+  label: string;
+  onPress?: () => void;
+  variant?: Variant;
+  disabled?: boolean;
+  small?: boolean;
+  icon?: IconName;
+  /** A hint on hover, with `shortcut`. */
+  tip?: string;
+  shortcut?: string;
+  testID?: string;
+  class?: string;
+}) {
+  const v = () => props.variant ?? "secondary";
   return (
     <BaseButton
       testID={props.testID}
       onPress={props.onPress}
       disabled={props.disabled}
       accessibilityLabel={props.label}
-      class={`flex-row items-center justify-center rounded-(--radius) ${props.small ? "h-7 px-2.5" : "h-8 px-3.5"} ${buttonClass[props.variant ?? "secondary"]} ${props.class ?? ""}`}
+      tooltip={props.tip || props.shortcut ? <Tip text={props.tip ?? props.label} shortcut={props.shortcut} /> : undefined}
+      class={`flex-row items-center justify-center gap-1.5 rounded-(--radius) ${props.small ? "h-7 px-2.5" : "h-8 px-3"} ${buttonClass[v()]} ${props.class ?? ""}`}
     >
-      <Text class={`${props.small ? "text-xs" : "text-sm"} font-medium ${buttonText[props.variant ?? "secondary"]}`}>{props.label}</Text>
+      <If when={props.icon && !terminal()}>
+        <Icon name={props.icon!} size={props.small ? 14 : 15} tint={iconTint[v()]} />
+      </If>
+      <Text class={`${props.small ? "text-xs" : "text-[13px]"} font-medium ${buttonText[v()]}`}>{props.label}</Text>
+    </BaseButton>
+  );
+}
+
+/** A button that shows only its icon (its label in a terminal), named for screen readers, explained by its tooltip. */
+export function IconButton(props: { icon: IconName; label: string; onPress?: () => void; shortcut?: string; disabled?: boolean; selected?: boolean; tint?: Tint; testID?: string; class?: string }) {
+  if (terminal()) return <Button small variant="ghost" label={props.label} onPress={props.onPress} disabled={props.disabled} testID={props.testID} />;
+  return (
+    <BaseButton
+      testID={props.testID}
+      onPress={props.onPress}
+      disabled={props.disabled}
+      selected={props.selected}
+      accessibilityLabel={props.label}
+      tooltip={<Tip text={props.label} shortcut={props.shortcut} />}
+      class={`size-7 items-center justify-center rounded-(--radius) hover:bg-muted active:bg-accent selected:bg-accent disabled:opacity-40 ${props.class ?? ""}`}
+    >
+      <Icon name={props.icon} size={16} tint={props.tint ?? (props.selected ? "foreground" : "muted-foreground")} />
     </BaseButton>
   );
 }
@@ -41,7 +103,11 @@ export function Title(props: { children: JSX.Element; class?: string }) {
 }
 
 export function Heading(props: { children: JSX.Element }) {
-  return <Text class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{props.children}</Text>;
+  return (
+    <Text role="header" class="text-xs font-semibold text-muted-foreground">
+      {props.children}
+    </Text>
+  );
 }
 
 export function Muted(props: { children: JSX.Element; class?: string }) {
@@ -181,11 +247,11 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         popupClass="rounded-(--radius) border border-border bg-popover p-1 shadow-lg"
         itemClass="rounded-sm px-2 py-1.5 text-sm text-popover-foreground focus:bg-accent selected:font-semibold"
         trigger={
-          <View class="h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2.5">
+          <View class="h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2.5 hover:border-ring/60">
             <Text class="text-sm text-foreground line-clamp-1">
               {title()}
             </Text>
-            <Text class="text-xs text-muted-foreground">⌄</Text>
+            {terminal() ? <Text class="text-xs text-muted-foreground">⌄</Text> : <Icon name="chevrons-up-down" size={13} />}
           </View>
         }
       />
@@ -193,21 +259,54 @@ export function Choice(props: { label?: string; value: string | null; items: { v
   );
 }
 
-export function Segmented(props: { value: string; items: { value: string; title: string }[]; onChange: (v: string) => void }) {
+/** One of a few views or modes: Tabs, a pill sliding behind the chosen one. */
+export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string }) {
   return (
-    <View class="flex-row self-start rounded-(--radius) bg-muted p-0.5">
+    <Tabs testID={props.testID} class="flex-row self-start rounded-(--radius) bg-muted p-0.5" indicatorClass={`inset-y-0.5 rounded-(--radius-sm) bg-background shadow-sm ${reduceMotion() ? "" : "transition-all duration-200"}`}>
       <Each of={props.items}>
         {(item) => (
-          <BaseButton
+          <Tab
+            testID={props.testID ? `${props.testID}-${item().value}` : undefined}
             accessibilityLabel={item().title}
-            onPress={() => props.onChange(item().value)}
             selected={props.value === item().value}
-            class="rounded-sm px-2.5 py-1 selected:bg-background selected:shadow-sm"
+            onPress={() => props.onChange(item().value)}
+            class="group flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5 py-1"
           >
-            <Text class={props.value === item().value ? "text-xs font-semibold text-foreground" : "text-xs text-muted-foreground"}>{item().title}</Text>
-          </BaseButton>
+            <If when={item().icon && !terminal()}>
+              <Icon name={item().icon!} size={13} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
+            </If>
+            <Text class="text-xs text-muted-foreground group-selected:font-medium group-selected:text-foreground">{item().title}</Text>
+          </Tab>
         )}
       </Each>
+    </Tabs>
+  );
+}
+
+/** A status mark: a small dot in a status color, with its meaning for screen readers. */
+export function Dot(props: { tone: "ok" | "miss" | "client" | "server" | "refused" | "live"; label?: string }) {
+  const bg = { ok: "bg-status-ok", miss: "bg-status-miss", client: "bg-status-client", server: "bg-status-server", refused: "bg-status-refused", live: "bg-primary" }[props.tone];
+  return <View accessibilityLabel={props.label} class={`size-2 rounded-full ${bg}`} />;
+}
+
+/** A titled group of settings or facts: a hairline-bounded surface. */
+export function Section(props: { title?: string; description?: string; children: JSX.Element; testID?: string; action?: JSX.Element }) {
+  return (
+    <View testID={props.testID} class="gap-3">
+      <If when={props.title}>
+        <View class="flex-row items-end gap-3">
+          <View class="flex-1 gap-0.5">
+            <Text role="header" class="text-[13px] font-semibold text-foreground">
+              {props.title}
+            </Text>
+            <If when={props.description}>
+              <Text class="text-xs text-muted-foreground">{props.description}</Text>
+            </If>
+          </View>
+          {props.action}
+        </View>
+      </If>
+      <View class="gap-3 rounded-(--radius-card) border border-border bg-card p-4">{props.children}</View>
     </View>
   );
 }
@@ -230,11 +329,22 @@ export function Bar(props: { value: number | null; label?: string }) {
   );
 }
 
-export function Empty(props: { text: string; children?: JSX.Element }) {
+/** An empty place: what is missing, and the next step. */
+export function Empty(props: { text: string; title?: string; icon?: IconName; children?: JSX.Element; testID?: string }) {
   return (
-    <View class="flex-1 items-center justify-center gap-3 p-8">
-      <Text class="text-center text-sm text-muted-foreground">{props.text}</Text>
-      {props.children}
+    <View testID={props.testID} class="flex-1 items-center justify-center gap-3 p-8">
+      <If when={props.icon && !terminal()}>
+        <View class="mb-1 size-11 items-center justify-center rounded-full bg-muted">
+          <Icon name={props.icon!} size={20} />
+        </View>
+      </If>
+      <If when={props.title}>
+        <Text class="text-center text-[15px] font-semibold text-foreground">{props.title}</Text>
+      </If>
+      <Text class="max-w-[380px] text-center text-[13px] text-muted-foreground">{props.text}</Text>
+      <If when={props.children}>
+        <View class="mt-1 flex-row items-center gap-2">{props.children}</View>
+      </If>
     </View>
   );
 }
@@ -247,9 +357,6 @@ export function Page(props: { children: JSX.Element; testID?: string }) {
     </Scroll>
   );
 }
-
-/** The global error: readable, with the request id and a way to the record. */
-
 
 /** A small table of strings (layout tables, headers). Large data uses DataTable. */
 export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number }) {

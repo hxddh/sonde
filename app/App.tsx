@@ -1,7 +1,3 @@
-// sonde: one app, two forms. Desktop windows get a sidebar (endpoints and
-// buckets), a list and a detail pane; a terminal gets one column with a
-// navigation stack, the F10 menu bar and keyboard shortcuts.
-
 // sonde: one app, three forms. Four places — Run, Sessions, Store and
 // Settings — and a command palette over everything. Desktop windows get a
 // sidebar and the place beside it; a terminal gets a home list and a
@@ -10,6 +6,7 @@
 import { effect, keymap, mount, platform, setColorScheme, Storage, Text, View } from "nsh";
 import { createNavStack, NavPage, NavStack } from "nsh/base";
 import { isAvailable, Menu, Window, windowState } from "nsh/desktop";
+import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
 import { areaLabel } from "./src/labels";
 import { running } from "./src/run";
@@ -18,13 +15,15 @@ import { Sessions } from "./src/screens/Sessions";
 import { SettingsArea } from "./src/screens/SettingsArea";
 import { StoreArea } from "./src/screens/StoreArea";
 import { type Area, area, AREAS, bucket, endpoint, endpoints, go, init, readOnly, settings } from "./src/store";
-import { ErrorBanner, NoticeLine } from "./src/ui/banner";
 import { Badge, terminal } from "./src/ui/kit";
 import { Palette, paletteOpen } from "./src/ui/palette";
-import { Sidebar } from "./src/ui/sidebar";
+import { appMenus, Sidebar, toggleSidebar, Toolbar } from "./src/ui/shell";
+import { Toaster } from "./src/ui/toast";
 
-/** The view of an area: a plain function, called in a binding, so the view follows `area()`. */
+/** The view of an area: a plain function, called in a binding, so the view follows `area()`.
+ * Until there is an endpoint, Run and Store open on the welcome. */
 function screen(a: Area) {
+  if ((a === "run" || a === "store") && endpoints().length === 0) return <Welcome />;
   switch (a) {
     case "run":
       return <Run />;
@@ -54,24 +53,17 @@ function Context() {
 
 function DesktopShell() {
   return (
-    <View class="flex-1 flex-row bg-background">
-      <Sidebar />
-      <View class="flex-1">
-        <View class="h-11 flex-row items-center gap-3 border-b border-border px-4">
-          <Text class="text-sm font-semibold text-foreground">{areaLabel(area())}</Text>
-          <View class="flex-1">
-            <Context />
-          </View>
-          <StatusChip />
-        </View>
-        <ErrorBanner />
-        <View class="flex-1">
+    <View class="flex-1 bg-background">
+      <Toolbar open={open} />
+      <View class="min-h-0 flex-1 flex-row">
+        <Sidebar open={open} />
+        <View class="min-w-0 flex-1">
           {/* rebuilt per area: screens own their jobs, cancelled when they go */}
           {screen(area())}
         </View>
-        <NoticeLine />
       </View>
       <Palette />
+      <Toaster />
     </View>
   );
 }
@@ -152,16 +144,13 @@ function TerminalShell() {
             <Home />
           ) : (
             <NavPage title={areaLabel(route.area)} header={<TermHeader title={areaLabel(route.area)} />}>
-              <View class="flex-1">
-                <ErrorBanner />
-                {screen(area())}
-                <NoticeLine />
-              </View>
+              <View class="flex-1">{screen(area())}</View>
             </NavPage>
           )
         }
       </NavStack>
       <Palette />
+      <Toaster />
     </View>
   );
 }
@@ -170,13 +159,12 @@ function TerminalShell() {
 
 function installMenus() {
   effect(() => {
-    const items = AREAS.map((a, i) => ({ label: areaLabel(a), shortcut: a === "settings" ? "mod+," : `mod+${i + 1}`, checked: area() === a, onSelect: () => open(a) }));
     Menu.setApplicationMenu([
-      { label: "sonde", submenu: [{ role: "about" }, { type: "separator" }, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" }, { role: "quit" }] },
-      { label: "File", submenu: [{ label: t("run.start"), shortcut: "mod+r", onSelect: () => open("run") }, { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(true) }] },
-      { label: "Edit", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
-      { label: "View", submenu: items },
-      { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "toggleFullScreen" }] },
+      platform.os === "macos" && {
+        label: "sonde",
+        submenu: [{ role: "about" }, { type: "separator" }, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "showAll" }, { type: "separator" }, { role: "quit" }],
+      },
+      ...appMenus(open),
     ]);
   });
   keymap.bind({
@@ -185,6 +173,7 @@ function installMenus() {
     "mod+3": () => open("store"),
     "mod+,": () => open("settings"),
     "mod+k": () => paletteOpen.set(!paletteOpen()),
+    "mod+b": () => !terminal() && toggleSidebar(),
   });
   if (terminal()) keymap.bind({ "shift+;": () => paletteOpen.set(true) }, { when: "notEditing" });
 }
@@ -197,9 +186,11 @@ async function rememberWindow() {
   try {
     const saved = await Storage.getItem(WINDOW_KEY);
     const main = Window.get("main");
-    if (saved) main?.setPlacement(JSON.parse(saved));
-    // a first launch: a window room enough for Run's two panes (not every
-    // platform applies nsh.json's defaultSize)
+    const placement = saved ? JSON.parse(saved) : null;
+    // a placement smaller than the window's least size (a phone-sized window
+    // some platforms open before applying nsh.json) is not restored
+    const size = placement?.bounds?.size ?? placement?.normal?.size;
+    if (placement && (!size || (size.width >= 900 && size.height >= 560))) main?.setPlacement(placement);
     else if ((main?.state()?.bounds.size.width ?? 0) < 900) main?.setBounds({ size: { width: 1280, height: 820 } });
   } catch {
     // a bad record is dropped

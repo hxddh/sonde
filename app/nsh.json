@@ -9,7 +9,8 @@
   "capabilities": {
     "clipboard": true,
     "notifications": true,
-    "windows": true
+    "windows": true,
+    "statusBar": true
   },
   "macos": {
     "infoPlist": {
@@ -29,6 +30,10 @@
     "minSize": {
       "width": 900,
       "height": 560
+    },
+    "titleBar": {
+      "style": "hidden",
+      "height": 44
     }
   },
   "updater": {

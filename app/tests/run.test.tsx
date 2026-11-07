@@ -67,7 +67,7 @@ test("a session as a waterfall, replayed from the app, and the answers compared"
   // a replay writes: sonde must not be read-only
   await place(app, "settings");
   await app.press("id:read-only");
-  await app.waitFor("text:Writes enabled");
+  await app.waitFor("label:Writes enabled");
   await place(app, "run");
   await app.type("id:run-command", "curl -s -X PUT --data hello $AWS_ENDPOINT_URL/demo/t.txt -o /dev/null; curl -s $AWS_ENDPOINT_URL/demo/t.txt");
   await app.press("id:run-start");

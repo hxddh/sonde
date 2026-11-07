@@ -105,7 +105,7 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   const app = await withDemo("demo");
   await place(app, "settings");
   await app.press("id:read-only");
-  await app.waitFor("text:Writes enabled");
+  await app.waitFor("label:Writes enabled");
   await place(app, "multipart");
   await app.press("id:mpu-scan");
   await app.waitFor("text:3 incomplete uploads", { timeout: 10000 });
@@ -119,7 +119,7 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   await app.waitFor("text:abortUploads · demo/demo");
   await place(app, "settings");
   await app.press("id:read-only");
-  await app.waitFor("text:Read-only");
+  await app.waitFor("label:Read-only");
 });
 
 test("language: Chinese strings", async () => {

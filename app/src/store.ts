@@ -4,7 +4,8 @@
 
 import { batch, signal } from "nsh";
 import { api, asError } from "./native";
-import { language } from "./i18n";
+import { language, t } from "./i18n";
+import { toast, type ToastKind } from "./ui/toast";
 import type { EndpointView, Settings, SondeError } from "./types";
 
 /** The four places of the app. */
@@ -41,6 +42,13 @@ export const openSession = signal<string | null>(null);
 export const focusRecord = signal<number | null>(null);
 /** The key the versions screen shows. */
 export const versionKey = signal<string>("");
+/** What the current place shows, for the toolbar's breadcrumb (a session's command). */
+export const crumb = signal<string | null>(null);
+/** Bumped when the list of sessions changes (a run ended, an example opened, a replay). */
+export const sessionsTick = signal(0);
+export const sessionsChanged = () => sessionsTick.set(sessionsTick() + 1);
+/** Settings › Endpoints opens on its form when set (the welcome's "Add an endpoint"). */
+export const endpointsMode = signal<"list" | "add" | "import">("list");
 /** The newest error, for the banner. */
 export const lastError = signal<SondeError | null>(null);
 /** A short notice (copied, exported). */
@@ -67,18 +75,28 @@ export function readOnly(): boolean {
   return settings()?.["read-only"] ?? true;
 }
 
-/** Shows `e` in the banner; returns it. */
+/** Shows `e` as an error toast (its request id, and the request when there is one); returns it. */
 export function report(e: unknown): SondeError {
   const err = asError(e);
-  if (err.kind !== "cancelled") lastError.set(err);
+  if (err.kind !== "cancelled") {
+    lastError.set(err);
+    const record = err.recordId;
+    toast({
+      id: "error",
+      kind: "error",
+      title: err.message,
+      description: err.requestId ? `${t("common.requestId")}: ${err.requestId}` : undefined,
+      action: record !== null && record !== undefined ? t("common.showRequest") : undefined,
+      onAction: () => showRequest(record),
+    });
+  }
   return err;
 }
 
-let noticeTimer: ReturnType<typeof setTimeout> | undefined;
-export function notify(text: string) {
+/** A short notice (copied, exported, saved), as a toast. */
+export function notify(text: string, options: { kind?: ToastKind; action?: string; onAction?: () => void } = {}) {
   notice.set(text);
-  if (noticeTimer) clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => notice.set(null), 3500);
+  toast({ title: text, kind: options.kind ?? "success", action: options.action, onAction: options.onAction });
 }
 
 /** Opens the inspector on a record. */
@@ -108,6 +126,19 @@ export function chooseBucket(b: string | null) {
     bucket.set(b);
     prefix.set("");
   });
+}
+
+/** Starts the built-in demo server and makes it the endpoint. */
+export async function startDemo(): Promise<boolean> {
+  try {
+    const e = await api.startDemo();
+    refreshEndpoints();
+    endpoint.set(e.id);
+    return true;
+  } catch (e) {
+    report(e);
+    return false;
+  }
 }
 
 export function init() {
