@@ -630,6 +630,148 @@ pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) ->
     c
 }
 
+/// The buckets a replay writes to (after renames), each once.
+pub fn buckets_of(records: &[Record], opts: &ReplayOptions) -> Vec<String> {
+    let mut b: Vec<String> = records
+        .iter()
+        .filter_map(|r| r.bucket.as_deref().map(|x| opts.bucket(x)))
+        .collect();
+    b.sort();
+    b.dedup();
+    b
+}
+
+/// The prefix a replay starting now writes under.
+pub fn default_prefix() -> String {
+    format!("replay-{}/", chrono::Local::now().format("%Y%m%d-%H%M%S"))
+}
+
+/// A replay done: its session file, what it was, and how it compares.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayRun {
+    pub path: std::path::PathBuf,
+    pub plan: Plan,
+    pub comparison: Comparison,
+    /// Objects deleted afterwards (under the prefix).
+    pub removed: usize,
+}
+
+/// Replays `original` with `base`'s endpoint into a new session file at
+/// `out`, deletes what it wrote under the prefix (unless `keep`, or when it
+/// replays in place), and compares the answers.
+pub async fn replay_to_file(
+    base: &S3Client,
+    original: &crate::session::Session,
+    opts: &ReplayOptions,
+    out: &std::path::Path,
+    keep: bool,
+    progress: impl FnMut(usize, usize),
+) -> Result<ReplayRun, String> {
+    use std::sync::Arc;
+    let plan = plan(&original.records, opts);
+    let cfg = base.config();
+    let name = original
+        .header
+        .command
+        .clone()
+        .unwrap_or_else(|| original.header.endpoint.clone());
+    let header = crate::session::SessionHeader::new(
+        &cfg.endpoint_id,
+        cfg.endpoint.as_str(),
+        &cfg.region,
+        Some(format!("replay of {name}")),
+    );
+    let writer =
+        Arc::new(crate::session::SessionWriter::create(out, &header).map_err(|e| e.to_string())?);
+    let log = reqlog::RequestLog::new(4096);
+    log.set_sink(Some(writer.clone()));
+    let client = base.with_log(log).with_retry(s3raw::RetryPolicy::none());
+    let done = replay(&client, &original.records, opts, progress).await;
+    writer.flush().map_err(|e| e.to_string())?;
+    let mut removed = 0usize;
+    if !opts.prefix.is_empty() && !keep {
+        for b in buckets_of(&original.records, opts) {
+            if let Ok(objects) = base.list_all(&b, &opts.prefix, usize::MAX).await {
+                for chunk in objects.chunks(1000) {
+                    let keys: Vec<(String, Option<String>)> =
+                        chunk.iter().map(|o| (o.key.clone(), None)).collect();
+                    if base.delete_objects(&b, &keys, true).await.is_ok() {
+                        removed += keys.len();
+                    }
+                }
+            }
+            if let Ok(up) = base
+                .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
+                .await
+            {
+                for u in up.upload {
+                    let _ = base.abort_multipart_upload(&b, &u.key, &u.upload_id).await;
+                }
+            }
+        }
+    }
+    let replayed = crate::session::Session::open(out)?;
+    let comparison = compare(&original.records, &replayed.records, &done);
+    Ok(ReplayRun {
+        path: out.to_path_buf(),
+        plan,
+        comparison,
+        removed,
+    })
+}
+
+/// A session as text to compare with another: one line per request, in
+/// order — operation, target (a replay's prefix taken off), the conditions
+/// it carried, and its outcome.
+pub fn transcript(records: &[Record]) -> String {
+    let mut sorted: Vec<&Record> = records.iter().collect();
+    sorted.sort_by_key(|r| (r.time, r.id));
+    let strip = |k: &str| -> String {
+        // replay-YYYYMMDD-HHMMSS/
+        let b = k.as_bytes();
+        if k.starts_with("replay-")
+            && b.len() > 23
+            && b[22] == b'/'
+            && b[7..15].iter().all(u8::is_ascii_digit)
+        {
+            k[23..].to_string()
+        } else {
+            k.to_string()
+        }
+    };
+    let mut out = String::new();
+    for r in sorted {
+        let target = match (&r.bucket, &r.key) {
+            (Some(b), Some(k)) => format!("{b}/{}", strip(k)),
+            (Some(b), None) => {
+                let p = r
+                    .query
+                    .iter()
+                    .find(|(k, _)| k == "prefix")
+                    .map(|(_, v)| strip(v))
+                    .unwrap_or_default();
+                format!("{b}/{p}")
+            }
+            _ => "/".into(),
+        };
+        let conds = conditions(r);
+        let outcome = if crate::summary::is_miss(r) {
+            "404".to_string()
+        } else {
+            outcome(r)
+        };
+        out.push_str(&r.operation);
+        out.push(' ');
+        out.push_str(&target);
+        if !conds.is_empty() {
+            out.push_str(&format!(" [{}]", conds.join(", ")));
+        }
+        out.push_str(&format!(" → {outcome}\n"));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,5 +800,31 @@ mod tests {
         assert!(changes_bucket("PutBucketLifecycleConfiguration"));
         assert!(changes_bucket("DeleteBucket"));
         assert!(!changes_bucket("PutObject"));
+    }
+
+    #[test]
+    fn transcripts_take_the_replay_prefix_off() {
+        let mut a = Record {
+            id: 1,
+            method: "PUT".into(),
+            operation: "PutObject".into(),
+            bucket: Some("b".into()),
+            key: Some("db/x".into()),
+            status: Some(200),
+            ..Default::default()
+        };
+        a.request_headers = vec![reqlog::Header::new("If-None-Match", "*")];
+        let mut b = a.clone();
+        b.key = Some("replay-20261107-015048/db/x".into());
+        b.status = Some(412);
+        b.error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
+        assert_eq!(
+            transcript(&[a]),
+            "PutObject b/db/x [if-none-match: *] → 200\n"
+        );
+        assert_eq!(
+            transcript(&[b]),
+            "PutObject b/db/x [if-none-match: *] → 412 PreconditionFailed\n"
+        );
     }
 }

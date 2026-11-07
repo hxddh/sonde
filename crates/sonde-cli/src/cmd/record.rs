@@ -649,9 +649,7 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
     let prefix = if a.in_place {
         String::new()
     } else {
-        a.prefix
-            .clone()
-            .unwrap_or_else(|| format!("replay-{}/", chrono::Local::now().format("%Y%m%d-%H%M%S")))
+        a.prefix.clone().unwrap_or_else(rp::default_prefix)
     };
     let opts = ReplayOptions {
         prefix: prefix.clone(),
@@ -721,53 +719,21 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
             ))
         }
     };
-    let cfg = base.config();
-    let header = SessionHeader::new(
-        &ep,
-        cfg.endpoint.as_str(),
-        &cfg.region,
-        Some(format!("sonde replay {}", a.file.display())),
-    );
-    let writer = Arc::new(SessionWriter::create(&path, &header)?);
-    let log = RequestLog::new(4096);
-    log.set_sink(Some(writer.clone()));
-    let client = base.with_log(log).with_retry(s3raw::RetryPolicy::none());
     let show = color;
-    let done = rp::replay(&client, &original.records, &opts, |i, n| {
+    let run = rp::replay_to_file(&base, &original, &opts, &path, a.keep, |i, n| {
         if show {
             eprint!("\r\x1b[2K{i}/{n}");
         }
     })
-    .await;
+    .await
+    .map_err(|e| anyhow::anyhow!(e))?;
     if show {
         eprint!("\r\x1b[2K");
     }
-    writer.flush()?;
     if !prefix.is_empty() && !a.keep {
-        let mut removed = 0usize;
-        for b in &buckets {
-            if let Ok(objects) = base.list_all(b, &prefix, usize::MAX).await {
-                for chunk in objects.chunks(1000) {
-                    let keys: Vec<(String, Option<String>)> =
-                        chunk.iter().map(|o| (o.key.clone(), None)).collect();
-                    if base.delete_objects(b, &keys, true).await.is_ok() {
-                        removed += keys.len();
-                    }
-                }
-            }
-            if let Ok(up) = base
-                .list_multipart_uploads(b, Some(&prefix), None, None)
-                .await
-            {
-                for u in up.upload {
-                    let _ = base.abort_multipart_upload(b, &u.key, &u.upload_id).await;
-                }
-            }
-        }
-        eprintln!("Removed {removed} objects under {prefix}.");
+        eprintln!("Removed {} objects under {prefix}.", run.removed);
     }
-    let replayed = Session::open(&path).map_err(|e| anyhow::anyhow!(e))?;
-    let c = rp::compare(&original.records, &replayed.records, &done);
+    let c = run.comparison;
     match a.format {
         Format::Json => println!(
             "{}",
