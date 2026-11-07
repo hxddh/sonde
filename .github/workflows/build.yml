@@ -77,6 +77,40 @@ jobs:
           name: sonde-${{ matrix.name }}
           path: dist/sonde-${{ matrix.name }}.tar.gz*
 
+  desktop:
+    # the app on Linux (GTK 4) and Windows (Win32), as Native Shell packages it
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux, name: linux-x86_64 }
+          - { os: windows-latest, target: windows, name: windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run: { shell: bash }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { key: "desktop-${{ matrix.target }}" }
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - name: Package the app
+        run: cd app && nsh package App.tsx --target ${{ matrix.target }}
+      - name: Collect the archive (sonde-<version>-<platform>, as the updater names it)
+        run: |
+          shopt -s nullglob
+          mkdir -p dist
+          ls -la app/.nsh/out
+          cp app/.nsh/out/sonde-[0-9]*-*.* dist/
+          (cd dist && for f in sonde-[0-9]*; do shasum -a 256 "$f" > "$f.sha256"; done)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonde-desktop-${{ matrix.name }}
+          path: dist/sonde-[0-9]*
+
   macos-app:
     runs-on: macos-15
     steps:
@@ -101,8 +135,14 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: scripts/macos-notarize.sh dist/sonde-macos.dmg
-      - run: cd dist && shasum -a 256 sonde-macos.dmg > sonde-macos.dmg.sha256
+      - name: Checksums (the .dmg, and the archive the updater installs)
+        run: |
+          shopt -s nullglob
+          ls -la dist
+          cd dist && for f in sonde-macos.dmg sonde-[0-9]*-macos-*.tar.gz; do shasum -a 256 "$f" > "$f.sha256"; done
       - uses: actions/upload-artifact@v4
         with:
           name: sonde-macos-app
-          path: dist/sonde-macos.dmg*
+          path: |
+            dist/sonde-macos.dmg*
+            dist/sonde-[0-9]*-macos-*

@@ -34,11 +34,23 @@ jobs:
           echo "VERSION=$v" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         # the binaries and the app (not the viewer's site, which is inside them)
-        with: { path: dist, pattern: "sonde-[lm]*", merge-multiple: true }
+        with: { path: dist, pattern: "sonde-[lmd]*", merge-multiple: true }
       - name: Checksums
         run: cd dist && cat *.sha256 > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
         run: scripts/changelog-section.sh "$VERSION" > notes.md
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/nsh
+        with: { rev: beeb9fc7707e0d4a195a4f7274f77b30e134c500 }
+      - name: The manifest the app's updater reads (latest.json)
+        run: |
+          shopt -s nullglob
+          cd app
+          nsh update-manifest ../dist/sonde-[0-9]*.tar.gz ../dist/sonde-[0-9]*.zip \
+            --notes ../notes.md \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/v$VERSION" \
+            -o ../dist
+          cat ../dist/latest.json
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
@@ -47,7 +59,9 @@ jobs:
           body_path: notes.md
           files: |
             dist/*.tar.gz
+            dist/*.zip
             dist/*.dmg
+            dist/latest.json
             dist/*.sha256
             dist/SHA256SUMS
       - name: Update the Homebrew tap (skipped without HOMEBREW_TAP_TOKEN)
