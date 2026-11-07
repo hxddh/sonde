@@ -11,7 +11,7 @@ run is said once, in the band above the operations.
 
 | 2.1 | 3.0 |
 |---|---|
-| ![Run in 2.1](images/2.1/run.png) | ![Run in 3.0](images/run.png) |
+| ![Run in 2.1](images/2.1/run.png) | ![Run in 3.0](images/3.0/run.png) |
 
 ## A session
 
@@ -20,9 +20,9 @@ Chinese; resting on an observation explains it.
 
 | 2.1 | 3.0 |
 |---|---|
-| ![A session in 2.1](images/2.1/session.png) | ![A session in 3.0](images/session.png) |
-| ![The timeline in 2.1, dark](images/2.1/timeline-dark.png) | ![The timeline in 3.0, dark](images/timeline-dark.png) |
-| | ![A session in 3.0, in Chinese](images/session-zh.png) |
+| ![A session in 2.1](images/2.1/session.png) | ![A session in 3.0](images/3.0/session.png) |
+| ![The timeline in 2.1, dark](images/2.1/timeline-dark.png) | ![The timeline in 3.0, dark](images/3.0/timeline-dark.png) |
+| | ![A session in 3.0, in Chinese](images/3.0/session-zh.png) |
 
 ## Buckets
 
@@ -31,12 +31,12 @@ sonde found as the bucket opens, and each card opens its detail in a sheet.
 
 | 2.1 | 3.0 |
 |---|---|
-| ![Store in 2.1](images/2.1/store.png) | ![Buckets in 3.0](images/store.png) |
-| | ![Incomplete uploads, from the overview](images/uploads.png) |
+| ![Store in 2.1](images/2.1/store.png) | ![Buckets in 3.0](images/3.0/store.png) |
+| | ![Incomplete uploads, from the overview](images/3.0/uploads.png) |
 
 ## Settings, compatibility, the palette
 
 | 2.1 | 3.0 |
 |---|---|
-| ![The palette in 2.1](images/2.1/palette.png) | ![The palette in 3.0](images/palette.png) |
-| | ![Settings › Endpoints, a window of their own](images/endpoints.png) |
+| ![The palette in 2.1](images/2.1/palette.png) | ![The palette in 3.0](images/3.0/palette.png) |
+| | ![Settings › Endpoints, a window of their own](images/3.0/endpoints.png) |

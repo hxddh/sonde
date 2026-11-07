@@ -1,7 +1,7 @@
 {
   "name": "sonde-viewer",
   "id": "dev.sonde.viewer",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "theme": "../app/theme.json",
   "tailwind": {
     "fontSize": {
