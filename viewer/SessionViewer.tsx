@@ -1,16 +1,17 @@
 // A shared session: what `sonde share` publishes, read in a browser. The
-// app's own views — header, observations, operations or waterfall, the
-// program's output lined up, an operation's requests, a request in full —
+// app's own views — the figures, what stands out (each a filter), the
+// operations or their timeline, the program's output lined up, and an
+// inspector from an operation to its requests to one request in full —
 // over the session's precomputed `session.json`.
 
 import { computed, Scroll, signal, Text, View } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { t } from "../app/src/i18n";
 import type { Episode, LogLine, RecordSummary, RequestRecord, SessionView } from "../app/src/types";
-import { Empty, Muted, Segmented } from "../app/src/ui/kit";
+import { Empty, IconButton, Segmented } from "../app/src/ui/kit";
 import { RecordView } from "../app/src/ui/record";
 import { linesOf, Observations, OperationsTable, OperationView, OutputTable, operationsAt, SessionHeader } from "../app/src/ui/sessionview";
-import { Waterfall } from "../app/src/ui/waterfall";
+import { Timeline } from "../app/src/ui/timeline";
 
 /** What `sonde share` writes. */
 export interface SharedSession extends SessionView {
@@ -20,6 +21,8 @@ export interface SharedSession extends SessionView {
   lines: LogLine[];
 }
 
+type Pane = "operations" | "aligned" | "timeline";
+
 export function SessionViewer(props: { data: SharedSession }) {
   const d = props.data;
   const byId = new Map(d.records.map((r) => [r.id, r]));
@@ -27,7 +30,8 @@ export function SessionViewer(props: { data: SharedSession }) {
   const rec = signal<number | null>(null);
   const opHighlight = signal<number[]>([]);
   const outHighlight = signal<number[]>([]);
-  const pane = signal<"operations" | "waterfall">("operations");
+  const filter = signal<number | null>(null);
+  const pane = signal<Pane>(d.lines.length ? "aligned" : "operations");
   let opsRef: DataTableRef | undefined;
   let outRef: DataTableRef | undefined;
 
@@ -35,6 +39,7 @@ export function SessionViewer(props: { data: SharedSession }) {
     const i = op();
     return i === null ? null : (d.episodes[i] ?? null);
   });
+  const shown = () => (filter() === null ? undefined : d.observations[filter()!]?.episodes);
   const rows = (e: Episode): RecordSummary[] => e.records.map((id) => byId.get(id)).filter((r): r is RequestRecord => !!r);
   const chooseOperation = (i: number) => {
     op.set(i);
@@ -51,59 +56,84 @@ export function SessionViewer(props: { data: SharedSession }) {
     if (ops.length) {
       op.set(ops[0]);
       rec.set(null);
-      opsRef?.select({ row: ops[0] });
+      const at = shown() ? shown()!.indexOf(ops[0]) : ops[0];
+      if (at >= 0) opsRef?.select({ row: at });
     }
   };
+  const close = () => {
+    op.set(null);
+    rec.set(null);
+    opHighlight.set([]);
+  };
 
-  const operations = () => <OperationsTable view={d} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} />;
+  const operations = () => <OperationsTable view={d} rows={shown()} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || !!episode()} />;
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
   const body = () => {
-    if (pane() === "waterfall") return <Waterfall view={d} onSelect={chooseOperation} />;
-    if (!d.lines.length) return operations();
+    if (pane() === "timeline") return <Timeline view={d} rows={shown()} selected={op()} onSelect={chooseOperation} />;
+    if (pane() === "operations" || !d.lines.length) return operations();
     return (
-      <ResizablePanelGroup axis="horizontal" class="flex-1">
+      <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1">
         <ResizablePanel minSize={240}>
-          <View class="flex-1 pr-1">{output()}</View>
+          <View class="flex-1 pr-1.5">{output()}</View>
         </ResizablePanel>
-        <ResizablePanel minSize={280}>
-          <View class="flex-1 pl-1">{operations()}</View>
+        <ResizablePanel minSize={320}>
+          <View class="flex-1 pl-1.5">{operations()}</View>
         </ResizablePanel>
       </ResizablePanelGroup>
     );
   };
 
-  return (
-    <View class="flex-1 flex-row gap-3 bg-background p-4" testID="viewer">
-      <View class="flex-1 gap-2">
+  const main = () => (
+    <View class="min-h-0 flex-1">
+      <View class="gap-3.5 border-b border-border px-5 pb-3.5 pt-4">
         <View class="flex-row items-baseline gap-2">
-          <Text class="text-base font-bold text-foreground">sonde</Text>
-          <Muted class="text-xs">{t("viewer.shared")}</Muted>
+          <Text class="text-[15px] font-bold text-foreground">sonde</Text>
+          <Text class="text-xs text-muted-foreground">{t("viewer.shared")}</Text>
         </View>
-        <SessionHeader view={d} />
-        <Observations view={d} />
+        <SessionHeader view={d} compact={!!episode()} />
+        <Observations view={d} filter={filter()} onFilter={(f) => filter.set(f)} />
+      </View>
+      <View class="flex-row items-center px-5 py-2.5">
         <Segmented
           value={pane()}
           items={[
-            { value: "operations", title: t("sessions.operations") },
-            { value: "waterfall", title: t("sessions.waterfall") },
+            { value: "operations", title: t("sessions.operations"), icon: "list-filter" },
+            ...(d.lines.length ? [{ value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const }] : []),
+            { value: "timeline", title: t("sessions.timeline"), icon: "chart-gantt" },
           ]}
-          onChange={(p) => pane.set(p as "operations" | "waterfall")}
+          onChange={(p) => pane.set(p as Pane)}
         />
-        {body()}
       </View>
-      <If when={episode()}>
-        {(e) => (
-          <Scroll class="w-[420px] border-l border-border pl-3">
-            <If when={rec() !== null ? byId.get(rec()!) : null} else={<OperationView episode={e()} shared={d.sharedNotes} rows={rows(e())} onRecord={(id) => rec.set(id)} />}>
-              {(r) => <RecordView record={r()} onBack={() => rec.set(null)} />}
-            </If>
-          </Scroll>
-        )}
-      </If>
+      <View class="min-h-0 flex-1 px-5 pb-4">{body()}</View>
+    </View>
+  );
+
+  return (
+    <View class="flex-1 bg-background" testID="viewer">
+      <ResizablePanelGroup axis="horizontal" class="flex-1">
+        <ResizablePanel minSize={460}>{main()}</ResizablePanel>
+        <If when={episode()}>
+          {(e) => (
+            <ResizablePanel size={440} minSize={320}>
+              <View class="flex-1 border-l border-border bg-inspector">
+                <View class="h-10 flex-row items-center border-b border-border px-3">
+                  <Text class="flex-1 text-xs font-semibold text-muted-foreground">{rec() !== null ? t("inspector.request") : t("inspector.operation")}</Text>
+                  <IconButton icon="x" label={t("common.close")} onPress={close} />
+                </View>
+                <Scroll class="flex-1" contentClass="p-4">
+                  <If when={rec() !== null ? byId.get(rec()!) : null} else={<OperationView episode={e()} shared={d.sharedNotes} rows={rows(e())} onRecord={(id) => rec.set(id)} />}>
+                    {(r) => <RecordView record={r()} onBack={() => rec.set(null)} />}
+                  </If>
+                </Scroll>
+              </View>
+            </ResizablePanel>
+          )}
+        </If>
+      </ResizablePanelGroup>
     </View>
   );
 }
 
 export function Loading(props: { error?: string | null }) {
-  return <Empty text={props.error ?? t("common.loading")} />;
+  return <Empty icon="scroll-text" text={props.error ?? t("common.loading")} />;
 }

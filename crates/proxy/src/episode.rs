@@ -900,6 +900,8 @@ pub struct Observation {
     /// `warn` (likely a problem) or `info`.
     pub level: &'static str,
     pub text: String,
+    /// The episodes it is about (indexes, ascending), for showing them.
+    pub episodes: Vec<usize>,
 }
 
 /// Notes that hold for (nearly) every step of a format: said once for the
@@ -926,59 +928,85 @@ pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)>
 
 /// What stands out across a session's requests and episodes.
 pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
+    // which episode each record belongs to
+    let owner: HashMap<u64, usize> = episodes
+        .iter()
+        .enumerate()
+        .flat_map(|(i, e)| e.records.iter().map(move |r| (*r, i)))
+        .collect();
+    let of_records = |ids: &mut dyn Iterator<Item = u64>| -> Vec<usize> {
+        ids.filter_map(|id| owner.get(&id).copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    };
+    let of_episodes = |f: &dyn Fn(&Episode) -> bool| -> Vec<usize> {
+        episodes
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| f(e))
+            .map(|(i, _)| i)
+            .collect()
+    };
     let mut out = Vec::new();
     for (f, note, with, _) in shared_notes(episodes) {
         out.push(Observation {
             level: "info",
             text: format!("{with} {} writes: {note}", f.name()),
+            episodes: of_episodes(&|e| e.format == Some(f) && e.notes.contains(&note)),
         });
     }
-    let warn = |t: String| Observation {
+    let warn = |t: String, episodes: Vec<usize>| Observation {
         level: "warn",
         text: t,
+        episodes,
     };
-    let info = |t: String| Observation {
+    let info = |t: String, episodes: Vec<usize>| Observation {
         level: "info",
         text: t,
+        episodes,
     };
-    let unfinished = episodes
-        .iter()
-        .filter(|e| e.kind == Kind::Multipart && e.title.ends_with("(not completed)"))
-        .count();
-    if unfinished > 0 {
-        out.push(warn(format!(
-            "{unfinished} multipart upload{} never completed or aborted: the parts stay billed until a lifecycle rule removes them",
-            if unfinished == 1 { "" } else { "s" }
-        )));
-    }
-    let orphans = episodes
-        .iter()
-        .filter(|e| e.title.contains("no commit followed"))
-        .count();
-    if orphans > 0 {
-        out.push(warn(if orphans == 1 {
-            "files were written with no commit after them: orphans unless a later commit adds them"
-                .to_string()
-        } else {
+    let unfinished =
+        of_episodes(&|e| e.kind == Kind::Multipart && e.title.ends_with("(not completed)"));
+    if !unfinished.is_empty() {
+        let n = unfinished.len();
+        out.push(warn(
             format!(
-                "{orphans} times files were written with no commit after them: orphans unless a later commit adds them"
-            )
-        }));
+                "{n} multipart upload{} never completed or aborted: the parts stay billed until a lifecycle rule removes them",
+                if n == 1 { "" } else { "s" }
+            ),
+            unfinished,
+        ));
     }
-    let retried: usize = episodes
-        .iter()
-        .filter(|e| e.kind == Kind::Retry)
-        .map(|e| e.requests() - 1)
-        .sum();
+    let orphans = of_episodes(&|e| e.title.contains("no commit followed"));
+    if !orphans.is_empty() {
+        let n = orphans.len();
+        out.push(warn(
+            if n == 1 {
+                "files were written with no commit after them: orphans unless a later commit adds them"
+                    .to_string()
+            } else {
+                format!(
+                    "{n} times files were written with no commit after them: orphans unless a later commit adds them"
+                )
+            },
+            orphans,
+        ));
+    }
+    let retries = of_episodes(&|e| e.kind == Kind::Retry);
+    let retried: usize = retries.iter().map(|&i| episodes[i].requests() - 1).sum();
     if retried > 0 {
-        out.push(warn(format!(
-            "{retried} request{} repeated after a retryable failure",
-            if retried == 1 { "" } else { "s" }
-        )));
+        out.push(warn(
+            format!(
+                "{retried} request{} repeated after a retryable failure",
+                if retried == 1 { "" } else { "s" }
+            ),
+            retries,
+        ));
     }
     // small files uploaded in parts: 3 requests where 1 PUT would do
-    let mut uploads: HashMap<&str, (usize, u64, bool)> = HashMap::new();
+    let mut uploads: HashMap<&str, (usize, u64, bool, Vec<u64>)> = HashMap::new();
     for r in records {
         if let Some(id) = query(r, "uploadId") {
             let u = uploads.entry(id).or_default();
@@ -987,63 +1015,87 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 u.1 += r.request_bytes.unwrap_or(0);
             }
             u.2 |= r.operation == "CompleteMultipartUpload" && !r.is_error();
+            u.3.push(r.id);
         }
     }
-    let small = uploads
+    let small: Vec<&(usize, u64, bool, Vec<u64>)> = uploads
         .values()
-        .filter(|(parts, bytes, done)| *done && *parts == 1 && *bytes < 5 * 1024 * 1024)
-        .count();
-    if small >= 3 {
-        out.push(info(format!(
-            "{small} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do"
-        )));
+        .filter(|(parts, bytes, done, _)| *done && *parts == 1 && *bytes < 5 * 1024 * 1024)
+        .collect();
+    if small.len() >= 3 {
+        out.push(info(
+            format!(
+                "{} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do",
+                small.len()
+            ),
+            of_records(&mut small.iter().flat_map(|u| u.3.iter().copied())),
+        ));
     }
-    let races = records.iter().filter(|r| r.status == Some(412)).count();
-    if races > 0 {
-        out.push(info(format!(
-            "{races} conditional write{} lost a race (412): another writer got there first",
-            if races == 1 { "" } else { "s" }
-        )));
+    let races: Vec<u64> = records
+        .iter()
+        .filter(|r| r.status == Some(412))
+        .map(|r| r.id)
+        .collect();
+    if !races.is_empty() {
+        out.push(info(
+            format!(
+                "{} conditional write{} lost a race (412): another writer got there first",
+                races.len(),
+                if races.len() == 1 { "" } else { "s" }
+            ),
+            of_records(&mut races.iter().copied()),
+        ));
     }
     // the same key read again and again
-    let mut reads: HashMap<String, usize> = HashMap::new();
+    let mut reads: HashMap<String, Vec<u64>> = HashMap::new();
     for r in records
         .iter()
         .filter(|r| r.method == "GET" || r.method == "HEAD")
     {
         if let (Some(b), Some(k)) = (&r.bucket, &r.key) {
-            *reads.entry(format!("{b}/{k}")).or_default() += 1;
+            reads.entry(format!("{b}/{k}")).or_default().push(r.id);
         }
     }
     let total = records.len().max(1);
-    let mut hot: Vec<(String, usize)> = reads
+    let mut hot: Vec<(String, Vec<u64>)> = reads
         .into_iter()
-        .filter(|(_, n)| *n >= 10 && *n * 10 >= total)
+        .filter(|(_, ids)| ids.len() >= 10 && ids.len() * 10 >= total)
         .collect();
-    hot.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    for (k, n) in hot.into_iter().take(3) {
-        out.push(info(format!(
-            "{k} was read {n} times ({}% of all requests)",
-            n * 100 / total
-        )));
+    hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+    for (k, ids) in hot.into_iter().take(3) {
+        out.push(info(
+            format!(
+                "{k} was read {} times ({}% of all requests)",
+                ids.len(),
+                ids.len() * 100 / total
+            ),
+            of_records(&mut ids.into_iter()),
+        ));
     }
     // the same prefix listed again and again
-    let mut lists: HashMap<String, usize> = HashMap::new();
+    let mut lists: HashMap<String, Vec<u64>> = HashMap::new();
     for r in records.iter().filter(|r| {
         r.operation.starts_with("ListObjects") && query(r, "continuation-token").is_none()
     }) {
-        *lists
+        lists
             .entry(format!(
                 "{}/{}",
                 r.bucket.as_deref().unwrap_or(""),
                 query(r, "prefix").unwrap_or("")
             ))
-            .or_default() += 1;
+            .or_default()
+            .push(r.id);
     }
-    let mut repeated: Vec<(String, usize)> = lists.into_iter().filter(|(_, n)| *n >= 5).collect();
-    repeated.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    for (p, n) in repeated.into_iter().take(3) {
-        out.push(info(format!("{p} was listed {n} times")));
+    let mut repeated: Vec<(String, Vec<u64>)> = lists
+        .into_iter()
+        .filter(|(_, ids)| ids.len() >= 5)
+        .collect();
+    repeated.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+    for (p, ids) in repeated.into_iter().take(3) {
+        out.push(info(
+            format!("{p} was listed {} times", ids.len()),
+            of_records(&mut ids.into_iter()),
+        ));
     }
     out
 }
@@ -1127,11 +1179,11 @@ mod tests {
             "multipart upload b/other · 0 parts · 0 B (aborted)"
         );
         let obs = observations(&[], &eps);
-        assert!(
-            obs.iter()
-                .any(|o| o.level == "warn"
-                    && o.text.starts_with("1 multipart upload never completed"))
-        );
+        let unfinished = obs
+            .iter()
+            .find(|o| o.level == "warn" && o.text.starts_with("1 multipart upload never completed"))
+            .expect("the unfinished upload is reported");
+        assert_eq!(unfinished.episodes, vec![0], "and points at its episode");
     }
 
     #[test]

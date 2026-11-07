@@ -10,7 +10,7 @@ import type { Episode, RecordingView } from "../types";
 import { Button, Choice, Mono, Muted, Segmented } from "./kit";
 import { OperationView } from "./sessionview";
 
-export { clock, linesOf, Observations, OperationsTable, OutputTable, operationsAt, seconds, SessionHeader, SessionList } from "./sessionview";
+export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, operationsAt, seconds, SessionHeader, SessionList, statusTone } from "./sessionview";
 
 export type Policy = "allow" | "no-delete" | "read-only";
 
@@ -114,7 +114,7 @@ export function OperationDetail(props: { path: string; episode: Episode; shared:
       shared={props.shared}
       rows={rows()}
       onRecord={props.onRecord}
-      back={props.onBack ? <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={() => props.onBack?.()} testID="operation-back" /> : undefined}
+      back={props.onBack ? <Button small variant="ghost" icon="chevron-left" label={t("common.back")} onPress={() => props.onBack?.()} testID="operation-back" /> : undefined}
     />
   );
 }

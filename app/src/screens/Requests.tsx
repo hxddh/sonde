@@ -29,10 +29,10 @@ export function RecordDetail(props: { record: RequestRecord; onBack?: () => void
       record={r()}
       onBack={props.onBack}
       actions={
-        <View class="flex-row flex-wrap gap-2">
-          <Button small label={t("requests.copyCli")} onPress={() => copy(props.copyAs ? props.copyAs("cli") : api.copyAsAwsCli(r().id))} testID="copy-cli" />
-          <Button small label={t("requests.copyCurl")} onPress={() => copy(props.copyAs ? props.copyAs("curl") : api.copyAsCurl(r().id))} testID="copy-curl" />
-        </View>
+        <>
+          <Button small variant="outline" icon="copy" label={t("requests.copyCli")} onPress={() => copy(props.copyAs ? props.copyAs("cli") : api.copyAsAwsCli(r().id))} testID="copy-cli" />
+          <Button small variant="outline" icon="copy" label={t("requests.copyCurl")} onPress={() => copy(props.copyAs ? props.copyAs("curl") : api.copyAsCurl(r().id))} testID="copy-curl" />
+        </>
       }
     />
   );

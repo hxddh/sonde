@@ -452,6 +452,8 @@ export interface Episode {
 export interface Observation {
   level: "warn" | "info";
   text: string;
+  /** The episodes it is about, by index. */
+  episodes: number[];
 }
 
 export interface SessionSummary {

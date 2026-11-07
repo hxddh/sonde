@@ -2,7 +2,7 @@
 // toolbar), the sidebar with the places and recent sessions, and the
 // application's menus. A terminal has none of this (App.tsx's TerminalShell).
 
-import { type JSX, platform, reduceMotion, signal, Storage, Text, View } from "nsh";
+import { type JSX, platform, reduceMotion, signal, Storage, Text, View, windowSize } from "nsh";
 import { Button as BaseButton, Combobox } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, titleBar } from "nsh/desktop";
 import { t } from "../i18n";
@@ -17,12 +17,22 @@ import { paletteOpen } from "./palette";
 
 const mac = platform.os === "macos";
 
-export const sidebarOpen = signal(true);
+const wanted = signal(true);
 const SIDEBAR_KEY = "sidebar.open";
-void Storage.getItem(SIDEBAR_KEY).then((v) => v === "false" && sidebarOpen.set(false)).catch(() => {});
+void Storage.getItem(SIDEBAR_KEY).then((v) => v === "false" && wanted.set(false)).catch(() => {});
+/** A narrow window folds the sidebar away until it is asked for. */
+const narrow = () => windowSize().width < 1100;
+const shownWhileNarrow = signal(false);
+/** Whether the sidebar shows: the user's choice, folded away in a narrow window. */
+export const sidebarOpen = () => wanted() && (!narrow() || shownWhileNarrow());
 export function toggleSidebar() {
-  sidebarOpen.set(!sidebarOpen());
-  void Storage.setItem(SIDEBAR_KEY, String(sidebarOpen())).catch(() => {});
+  if (narrow()) {
+    if (!wanted()) wanted.set(true);
+    shownWhileNarrow.set(!sidebarOpen() || !shownWhileNarrow() ? !sidebarOpen() : false);
+    return;
+  }
+  wanted.set(!wanted());
+  void Storage.setItem(SIDEBAR_KEY, String(wanted())).catch(() => {});
 }
 
 export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", sessions: "list-clock", store: "database", settings: "settings" };

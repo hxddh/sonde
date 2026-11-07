@@ -50,8 +50,8 @@ test("an example session reads as operations, each opening on its requests", asy
   const app = await open("../App.tsx", desktop);
   await app.press("id:open-example");
   await app.waitFor("id:session-summary", { timeout: 10000 });
-  expect(app.shows("text:/172 requests · 34 operations/")).toBe(true);
-  expect(app.shows("text:/116 not found/")).toBe(true);
+  expect(app.shows("label:/172 requests · 34 operations/")).toBe(true);
+  expect(app.shows("label:/116 not found/")).toBe(true);
   expect(app.shows("text:/27 SlateDB writes: conditional create/")).toBe(true);
   expect(app.shows("text:looked for the newest WAL: probed ids 1…128")).toBe(true);
   await app.press("text:manifest 3 written");
@@ -60,9 +60,15 @@ test("an example session reads as operations, each opening on its requests", asy
   await app.press("id:op-request-4");
   await app.waitFor("id:record-detail");
   expect(app.shows("text:if-none-match")).toBe(true);
+  // what stands out narrows the operations to those it is about
+  await app.press("id:inspector-close");
+  await app.press("id:observation-1");
+  await app.waitFor("text:28 of 34 operations");
+  await app.press("id:clear-filter");
+  expect(app.shows("id:clear-filter")).toBe(false);
 });
 
-test("a session as a waterfall, replayed from the app, and the answers compared", async () => {
+test("a session as a timeline, replayed from the app, and the answers compared", async () => {
   const app = await demo();
   // a replay writes: sonde must not be read-only
   await place(app, "settings");
@@ -74,8 +80,8 @@ test("a session as a waterfall, replayed from the app, and the answers compared"
   await app.waitFor("id:run-ended", { timeout: 20000 });
   await app.press("id:run-open-session");
   await app.waitFor("id:session-pane");
-  await app.press("label:Waterfall");
-  await app.waitFor("id:waterfall");
+  await app.press("id:session-pane-mode-timeline");
+  await app.waitFor("id:timeline");
   await app.press("id:replay-open");
   await app.waitFor("id:replay-plan", { timeout: 5000 });
   expect(app.shows("text:/2 requests \\(1 writes, 0 deletes\\) under replay-/")).toBe(true);
