@@ -1,11 +1,13 @@
 // Endpoints: add, edit, import from AWS profiles, test connectivity, demo.
 
-import { batch, signal, Text, View } from "nsh";
+import { batch, effect, Scroll, signal, Text, untracked, View } from "nsh";
+import { AlertDialog, Sheet } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
-import { endpoint, endpoints, notify, refreshEndpoints, report, showRequest } from "../store";
+import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
-import { Badge, Button, Card, Check, Choice, Empty, Field, Heading, KeyValue, Muted, Page, Title, Toggle } from "../ui/kit";
+import { Icon } from "../ui/icon";
+import { Badge, Button, Card, Check, Choice, Dot, Empty, Field, IconButton, KeyValue, Muted, Page, Section, terminal, Title, Toggle } from "../ui/kit";
 import { ms as fmtMs } from "../format";
 
 type Draft = {
@@ -59,8 +61,8 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
     { value: "anonymous", title: t("endpoints.cred.anonymous") },
   ];
   return (
-    <Card testID="endpoint-form">
-      <Title>{props.editing ? t("common.edit") : t("endpoints.add")}</Title>
+    <View testID="endpoint-form" class="gap-4">
+      <Title>{props.editing ? t("endpoints.edit") : t("endpoints.add")}</Title>
       <View class="flex-row flex-wrap gap-3">
         <Field class="w-56" label={t("endpoints.field.name")} value={d().name} onChange={(v) => set("name", v)} testID="ep-name" />
         <Field class="w-40" label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} testID="ep-id" mono />
@@ -100,7 +102,7 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
         <Button variant="primary" label={t("common.save")} onPress={save} testID="ep-save" disabled={!d().url} />
         <Button variant="ghost" label={t("common.cancel")} onPress={props.onDone} />
       </View>
-    </Card>
+    </View>
   );
 }
 
@@ -151,7 +153,7 @@ function Import(props: { onDone: () => void }) {
     }
   };
   return (
-    <Card>
+    <View class="gap-4">
       <Title>{t("endpoints.import")}</Title>
       <If when={items.length > 0} else={<Muted>{t("endpoints.importNone")}</Muted>}>
         <Each of={items}>
@@ -162,12 +164,17 @@ function Import(props: { onDone: () => void }) {
         <Button variant="primary" label={t("common.add")} onPress={doImport} disabled={items.length === 0} />
         <Button variant="ghost" label={t("common.cancel")} onPress={props.onDone} />
       </View>
-    </Card>
+    </View>
   );
 }
 
 export function Endpoints() {
-  const mode = signal<"list" | "add" | "import" | { edit: EndpointView }>("list");
+  const mode = signal<"list" | "add" | "import" | { edit: EndpointView }>(endpointsMode());
+  // the welcome asked for the form
+  effect(() => {
+    const m = endpointsMode();
+    if (m !== "list") untracked(() => batch(() => (mode.set(m), endpointsMode.set("list"))));
+  });
   const tests = signal<Record<string, ConnectivityReport | "running">>({});
   const test = async (id: string) => {
     tests.update((x) => ({ ...x, [id]: "running" }));
@@ -182,62 +189,87 @@ export function Endpoints() {
       });
     }
   };
-  const demo = async () => {
+  const remove = async (e: EndpointView) => {
+    const { action } = await AlertDialog.show({
+      title: t("endpoints.removeTitle", { name: e.name }),
+      description: t("endpoints.removeText"),
+      actions: [
+        { id: "cancel", label: t("common.cancel"), role: "cancel" },
+        { id: "remove", label: t("common.remove"), role: "destructive" },
+      ],
+    });
+    if (action !== "remove") return;
     try {
-      const e = await api.startDemo();
+      api.removeEndpoint(e.id);
       refreshEndpoints();
-      endpoint.set(e.id);
-    } catch (e) {
-      report(e);
+      notify(t("endpoints.removed", { name: e.name }));
+    } catch (err) {
+      report(err);
     }
   };
-  const remove = (id: string) => {
-    try {
-      api.removeEndpoint(id);
-      refreshEndpoints();
-    } catch (e) {
-      report(e);
-    }
+  const form = () => {
+    const m = mode();
+    if (m === "list") return null;
+    if (m === "import") return <Import onDone={() => mode.set("list")} />;
+    if (m === "add") return <Form initial={blank()} editing={false} onDone={() => mode.set("list")} />;
+    return <Form initial={fromView(m.edit)} editing onDone={() => mode.set("list")} />;
+  };
+  const row = (e: EndpointView) => {
+    const r = () => tests()[e.id];
+    return (
+      <View testID={`endpoint-${e.id}`} class="gap-2.5 px-4 py-3">
+        <View class="flex-row items-center gap-3">
+          <If when={!terminal()}>
+            <View class="size-8 items-center justify-center rounded-(--radius) bg-muted">
+              <Icon name="server" size={16} tint="foreground" />
+            </View>
+          </If>
+          <View class="min-w-0 flex-1 gap-0.5">
+            <View class="flex-row items-center gap-2">
+              <Text class="text-[13px] font-semibold text-foreground">{e.name}</Text>
+              <Badge label={e.vendorLabel} />
+              <If when={endpoint() === e.id}>
+                <Badge label={t("endpoints.current")} tone="primary" />
+              </If>
+            </View>
+            <Text class="font-mono text-[11px] text-muted-foreground line-clamp-1">{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
+          </View>
+          <Button small variant="outline" icon="activity" label={r() === "running" ? t("endpoints.testing") : t("endpoints.test")} onPress={() => test(e.id)} disabled={r() === "running"} testID={`test-${e.id}`} />
+          <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
+          <IconButton icon="trash" label={t("common.remove")} onPress={() => void remove(e)} testID={`remove-${e.id}`} />
+        </View>
+        <If when={typeof r() === "object" ? (r() as ConnectivityReport) : null}>{(rep) => <TestResult report={rep()} />}</If>
+      </View>
+    );
   };
   return (
     <Page testID="screen-endpoints">
-      <View class="flex-row flex-wrap items-center gap-2">
-        <Title class="flex-1">{t("endpoints.title")}</Title>
-        <Button variant="primary" label={t("endpoints.add")} onPress={() => mode.set("add")} testID="add-endpoint" />
-        <Button label={t("endpoints.import")} onPress={() => mode.set("import")} />
-        <Button label={t("endpoints.demo")} onPress={demo} testID="open-demo" />
+      <View class={terminal() ? "gap-2" : "w-full max-w-[860px] gap-5"}>
+        <View class="flex-row flex-wrap items-center gap-2">
+          <View class="flex-1">
+            <Title>{t("endpoints.title")}</Title>
+          </View>
+          <Button variant="primary" icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} testID="add-endpoint" />
+          <Button variant="outline" icon="key-round" label={t("endpoints.import")} onPress={() => mode.set("import")} />
+          <Button variant="outline" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
+        </View>
+        <If when={terminal() && form()}>{(f) => <Card>{f()}</Card>}</If>
+        <If when={endpoints().length > 0} else={<Empty icon="server" text={t("endpoints.noneYet")} />}>
+          <View class="overflow-hidden rounded-(--radius-card) border border-border bg-card">
+            <Each of={endpoints()} key={(e) => e.id}>
+              {(e, i) => <View class={i() > 0 ? "border-t border-border" : ""}>{row(e())}</View>}
+            </Each>
+          </View>
+        </If>
+        <Text class="text-xs text-muted-foreground">{t("settings.telemetry")}</Text>
       </View>
-      <If when={mode() === "add"}>
-        <Form initial={blank()} editing={false} onDone={() => mode.set("list")} />
+      <If when={!terminal()}>
+        <Sheet open={mode() !== "list"} side="right" onOpenChange={(e) => !e.open && mode.set("list")} popupClass="w-[480px] max-w-[92%] border-l border-border bg-background shadow-xl" popupStyle={{ marginTop: 44 }} backdropClass="bg-black/20">
+          <Scroll class="flex-1" contentClass="p-6">
+            {form()}
+          </Scroll>
+        </Sheet>
       </If>
-      <If when={mode() === "import"}>
-        <Import onDone={() => mode.set("list")} />
-      </If>
-      <If when={typeof mode() === "object" ? (mode() as { edit: EndpointView }) : null}>
-        {(m) => <Form initial={fromView(m().edit)} editing onDone={() => mode.set("list")} />}
-      </If>
-      <If when={endpoints().length > 0} else={<Empty text={t("endpoints.noneYet")} />}>
-        <Each of={endpoints()} key={(e) => e.id}>
-          {(e) => (
-            <Card testID={`endpoint-${e().id}`}>
-              <View class="flex-row items-center gap-2">
-                <Text class="text-base font-semibold text-foreground">{e().name}</Text>
-                <Badge label={e().vendorLabel} tone="primary" />
-                <If when={e().pathStyle}>
-                  <Badge label="path-style" />
-                </If>
-                <View class="flex-1" />
-                <Button small label={tests()[e().id] === "running" ? t("endpoints.testing") : t("endpoints.test")} onPress={() => test(e().id)} disabled={tests()[e().id] === "running"} testID={`test-${e().id}`} />
-                <Button small variant="ghost" label={t("common.edit")} onPress={() => mode.set({ edit: e() })} />
-                <Button small variant="ghost" label={t("common.remove")} onPress={() => remove(e().id)} />
-              </View>
-              <KeyValue rows={[["URL", e().url], [t("endpoints.field.region"), e().region || "—"], [t("endpoints.credentials"), e().credentials]]} />
-              <If when={typeof tests()[e().id] === "object" ? (tests()[e().id] as ConnectivityReport) : null}>{(r) => <TestResult report={r()} />}</If>
-            </Card>
-          )}
-        </Each>
-      </If>
-      <Heading>{t("settings.telemetry")}</Heading>
     </Page>
   );
 }

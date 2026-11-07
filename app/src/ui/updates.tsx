@@ -7,7 +7,7 @@ import { openUrl, signal, Text, View } from "nsh";
 import { type AppUpdate, checkForUpdate, downloadUpdate, installAndRestart } from "nsh/updater";
 import { t } from "../i18n";
 import { report } from "../store";
-import { Button, Card, Heading, Muted } from "./kit";
+import { Button, Muted, Section } from "./kit";
 
 type State = { kind: "idle" } | { kind: "checking" } | { kind: "current" } | { kind: "found"; update: AppUpdate } | { kind: "downloading"; update: AppUpdate; share: number };
 
@@ -36,10 +36,9 @@ export function Updates() {
   };
   const s = () => state();
   return (
-    <Card testID="updates">
-      <Heading>{t("updates.title")}</Heading>
+    <Section title={t("updates.title")} testID="updates">
       <View class="flex-row flex-wrap items-center gap-2">
-        <Text class="flex-1 text-sm text-foreground">
+        <Text class="flex-1 text-[13px] text-foreground">
           {s().kind === "current"
             ? t("updates.current")
             : s().kind === "checking"
@@ -48,14 +47,14 @@ export function Updates() {
                 ? t("updates.found", { version: (s() as { update: AppUpdate }).update.version })
                 : t("updates.hint")}
         </Text>
-        <If when={s().kind === "found" ? (s() as { update: AppUpdate }).update : null} else={<Button small label={t("updates.check")} onPress={check} disabled={s().kind === "checking" || s().kind === "downloading"} testID="updates-check" />}>
-          {(u) => <Button small label={u().canInstall ? t("updates.install") : t("updates.download")} onPress={() => install(u())} testID="updates-install" />}
+        <If when={s().kind === "found" ? (s() as { update: AppUpdate }).update : null} else={<Button small variant="outline" icon="refresh-cw" label={t("updates.check")} onPress={check} disabled={s().kind === "checking" || s().kind === "downloading"} testID="updates-check" />}>
+          {(u) => <Button small variant="primary" icon="download" label={u().canInstall ? t("updates.install") : t("updates.download")} onPress={() => install(u())} testID="updates-install" />}
         </If>
       </View>
       <If when={s().kind === "downloading"}>
         <Muted class="text-xs">{t("updates.downloading", { pct: String(Math.round((s() as { share: number }).share * 100)) })}</Muted>
       </If>
       <If when={s().kind === "found" ? (s() as { update: AppUpdate }).update.notes : null}>{(n) => <Muted class="text-xs">{n()}</Muted>}</If>
-    </Card>
+    </Section>
   );
 }

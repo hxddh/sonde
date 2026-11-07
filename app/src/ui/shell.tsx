@@ -59,7 +59,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
 /** Where the window is: the place, then what it shows (a session, a bucket, a tab). */
 function Breadcrumb() {
   const detail = () => {
-    if (area() === "store") return [bucket(), sectionLabel(storeTab())].filter(Boolean).join(" · ") || null;
+    if (area() === "store") return [bucket(), storeTab() === "browse" ? t("nav.objects") : sectionLabel(storeTab())].filter(Boolean).join(" · ") || null;
     if (area() === "settings") return sectionLabel(section());
     return crumb();
   };

@@ -17,7 +17,7 @@ external-link ellipsis lock lock-open triangle-alert circle-alert info circle-ch
 refresh-cw git-compare-arrows repeat-2 app-window panel-left panel-right list-filter clock
 timer arrow-up arrow-down layers boxes hard-drive cloud server key-round shield-check trash
 plus pencil sparkles activity gauge chart-gantt sun moon languages bell zoom-in zoom-out link
-share-2 package archive calendar-clock radio circle-dot plug flask-conical scale chart-pie
+share-2 package archive calendar-clock radio circle-dot plug flask-conical scale chart-pie sliders-horizontal corner-down-left
 file-clock scroll-text undo-2 command keyboard monitor rotate-ccw ban
 """.split()))
 

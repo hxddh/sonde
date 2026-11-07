@@ -1,35 +1,93 @@
-// Settings: read-only mode, limits, prices, request log, appearance, language.
+// Settings: how sonde behaves. Grouped by what they are about — appearance,
+// safety, requests, costs, the request log, updates, files — and saved as
+// they change: a toast says so, with Undo.
 
-import { signal, View } from "nsh";
+import { cleanup, signal, Text, View } from "nsh";
+import { Input } from "nsh/base";
 import { language, t } from "../i18n";
 import { api } from "../native";
-import { refreshSettings, report, settings } from "../store";
+import { notify, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Button, Card, Choice, Field, Heading, KeyValue, Muted, Page, Title, Toggle } from "../ui/kit";
+import { Choice, Field, Page, Section, Segmented, terminal, Toggle } from "../ui/kit";
+import { Fold, Pairs } from "../ui/record";
 import { Updates } from "../ui/updates";
 
+const copyOf = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
 export function SettingsScreen() {
-  const s = settings();
-  const draft = signal<Settings | null>(s ? structuredCopy(s) : null);
-  const save = (next: Settings) => {
+  const draft = signal<Settings | null>(settings() ? copyOf(settings()!) : null);
+  let saved: Settings | null = settings() ? copyOf(settings()!) : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  cleanup(() => timer && clearTimeout(timer));
+
+  const write = (next: Settings, undo: Settings | null) => {
     try {
-      api.saveSettings(next);
+      api.saveSettings({ ...next, "read-only": settings()?.["read-only"] ?? true });
       refreshSettings();
-      draft.set(structuredCopy(next));
+      saved = copyOf(next);
+      if (undo)
+        notify(t("settings.saved"), {
+          action: t("common.undo"),
+          onAction: () => {
+            draft.set(copyOf(undo));
+            language.set(undo.language);
+            write(undo, null);
+          },
+        });
     } catch (e) {
       report(e);
     }
   };
+  /** Changes the draft; saved a moment later (typing a number saves once). */
+  const change = (next: Settings, now = false) => {
+    draft.set(next);
+    if (timer) clearTimeout(timer);
+    const undo = saved;
+    if (now) write(next, undo);
+    else timer = setTimeout(() => write(next, undo), 700);
+  };
   const num = (v: string, d: number) => (Number.isFinite(Number(v)) && v.trim() !== "" ? Number(v) : d);
   const paths = api.paths();
+
   return (
     <Page testID="screen-settings">
-      <Title>{t("settings.title")}</Title>
-      <Updates />
       <If when={draft()}>
         {(d) => (
-          <View class="gap-4">
-            <Card>
+          <View class={terminal() ? "gap-2" : "w-full max-w-[720px] gap-7"}>
+            <Section title={t("settings.appearance")}>
+              <View class="flex-row flex-wrap items-center gap-x-8 gap-y-3">
+                <View class="gap-1.5">
+                  <Text class="text-xs font-medium text-muted-foreground">{t("settings.themeLabel")}</Text>
+                  <Segmented
+                    testID="theme"
+                    value={d().theme}
+                    items={[
+                      { value: "system", title: t("settings.system"), icon: "monitor" },
+                      { value: "light", title: t("settings.light"), icon: "sun" },
+                      { value: "dark", title: t("settings.dark"), icon: "moon" },
+                    ]}
+                    onChange={(v) => change({ ...d(), theme: v }, true)}
+                  />
+                </View>
+                <Choice
+                  class="w-44"
+                  label={t("settings.language")}
+                  value={d().language}
+                  items={[
+                    { value: "auto", title: t("settings.system") },
+                    { value: "en", title: "English" },
+                    { value: "zh", title: "中文" },
+                  ]}
+                  onChange={(v) => {
+                    language.set(v);
+                    change({ ...d(), language: v }, true);
+                  }}
+                  testID="language"
+                />
+              </View>
+            </Section>
+
+            <Section title={t("settings.safety")}>
               <Toggle
                 testID="read-only"
                 label={t("settings.readOnly")}
@@ -44,71 +102,54 @@ export function SettingsScreen() {
                   }
                 }}
               />
-            </Card>
-            <Card>
+            </Section>
+
+            <Section title={t("settings.requests")} description={t("settings.requestsHint")}>
               <View class="flex-row flex-wrap gap-3">
-                <Field class="w-60" label={t("settings.concurrency")} value={String(d().concurrency)} onChange={(v) => draft.set({ ...d(), concurrency: num(v, d().concurrency) })} testID="concurrency" />
-                <Field class="w-72" label={t("settings.rate")} value={d()["rate-limit"] === null ? "" : String(d()["rate-limit"])} onChange={(v) => draft.set({ ...d(), "rate-limit": v.trim() === "" ? null : num(v, 0) })} />
-                <Field class="w-60" label={t("settings.staleDays")} value={String(d()["stale-upload-days"])} onChange={(v) => draft.set({ ...d(), "stale-upload-days": num(v, 7) })} />
+                <Field class="w-52" label={t("settings.concurrency")} value={String(d().concurrency)} onChange={(v) => change({ ...d(), concurrency: num(v, d().concurrency) })} testID="concurrency" />
+                <Field class="w-64" label={t("settings.rate")} value={d()["rate-limit"] === null ? "" : String(d()["rate-limit"])} onChange={(v) => change({ ...d(), "rate-limit": v.trim() === "" ? null : num(v, 0) })} />
+                <Field class="w-52" label={t("settings.staleDays")} value={String(d()["stale-upload-days"])} onChange={(v) => change({ ...d(), "stale-upload-days": num(v, 7) })} />
               </View>
+            </Section>
+
+            <Section title={t("settings.costs")} description={t("settings.costsHint")}>
               <View class="flex-row flex-wrap gap-3">
-                <Field class="w-60" label={t("settings.price")} value={String(d().prices["default-per-gib-month"])} onChange={(v) => draft.set({ ...d(), prices: { ...d().prices, "default-per-gib-month": num(v, 0.023) } })} />
-                <Field class="w-32" label={t("settings.currency")} value={d().prices.currency} onChange={(v) => draft.set({ ...d(), prices: { ...d().prices, currency: v } })} />
+                <Field class="w-52" label={t("settings.price")} value={String(d().prices["default-per-gib-month"])} onChange={(v) => change({ ...d(), prices: { ...d().prices, "default-per-gib-month": num(v, 0.023) } })} />
+                <Field class="w-28" label={t("settings.currency")} value={d().prices.currency} onChange={(v) => change({ ...d(), prices: { ...d().prices, currency: v } })} />
               </View>
-              <Heading>STANDARD · STANDARD_IA · GLACIER · …</Heading>
-              <View class="flex-row flex-wrap gap-3">
-                <Each of={Object.entries(d().prices["by-class"])}>
-                  {(e) => <Field class="w-44" label={e()[0]} value={String(e()[1])} onChange={(v) => draft.set({ ...d(), prices: { ...d().prices, "by-class": { ...d().prices["by-class"], [e()[0]]: num(v, e()[1]) } } })} />}
-                </Each>
-              </View>
-              <View class="flex-row flex-wrap gap-3">
-                <Field class="w-60" label={t("settings.reqlog")} value={String(d()["reqlog-capacity"])} onChange={(v) => draft.set({ ...d(), "reqlog-capacity": num(v, 5000) })} />
-              </View>
-              <Toggle label={t("settings.persist")} checked={d()["reqlog-persist"]} onChange={(v) => draft.set({ ...d(), "reqlog-persist": v })} />
-              <View class="flex-row flex-wrap gap-3">
-                <Choice
-                  class="w-48"
-                  label={t("settings.theme")}
-                  value={d().theme}
-                  items={[
-                    { value: "system", title: t("settings.system") },
-                    { value: "light", title: t("settings.light") },
-                    { value: "dark", title: t("settings.dark") },
-                  ]}
-                  onChange={(v) => draft.set({ ...d(), theme: v })}
-                />
-                <Choice
-                  class="w-48"
-                  label={t("settings.language")}
-                  value={d().language}
-                  items={[
-                    { value: "auto", title: t("settings.system") },
-                    { value: "en", title: "English" },
-                    { value: "zh", title: "中文" },
-                  ]}
-                  onChange={(v) => {
-                    draft.set({ ...d(), language: v });
-                    language.set(v);
-                  }}
-                  testID="language"
-                />
-              </View>
-              <View class="flex-row gap-2">
-                <Button variant="primary" label={t("common.save")} onPress={() => save({ ...d(), "read-only": settings()?.["read-only"] ?? true })} testID="save-settings" />
-              </View>
-            </Card>
-            <Card>
-              <Heading>{t("settings.paths")}</Heading>
-              <KeyValue mono rows={Object.entries(paths)} />
-              <Muted>{t("settings.telemetry")}</Muted>
-            </Card>
+              <Fold title={t("settings.byClass")} count={Object.keys(d().prices["by-class"]).length} open={false}>
+                <View class="overflow-hidden rounded-(--radius) border border-border bg-card">
+                  <Each of={Object.entries(d().prices["by-class"])}>
+                    {(e, i) => (
+                      <View class={`h-9 flex-row items-center gap-3 px-3 ${i() > 0 ? "border-t border-border" : ""}`}>
+                        <Text class="flex-1 font-mono text-xs text-foreground">{e()[0]}</Text>
+                        <Input
+                          value={String(e()[1])}
+                          accessibilityLabel={e()[0]}
+                          onChange={({ value }) => change({ ...d(), prices: { ...d().prices, "by-class": { ...d().prices["by-class"], [e()[0]]: num(value, e()[1]) } } })}
+                          class="h-7 w-28 rounded-(--radius-sm) border border-input bg-background px-2 text-right font-mono text-xs text-foreground focus:border-ring"
+                        />
+                        <Text class="w-20 text-xs text-muted-foreground">{`${d().prices.currency} / GiB·mo`}</Text>
+                      </View>
+                    )}
+                  </Each>
+                </View>
+              </Fold>
+            </Section>
+
+            <Section title={t("settings.log")}>
+              <Field class="w-52" label={t("settings.reqlog")} value={String(d()["reqlog-capacity"])} onChange={(v) => change({ ...d(), "reqlog-capacity": num(v, 5000) })} />
+              <Toggle label={t("settings.persist")} checked={d()["reqlog-persist"]} onChange={(v) => change({ ...d(), "reqlog-persist": v }, true)} />
+            </Section>
+
+            <Updates />
+
+            <Section title={t("settings.paths")} description={t("settings.telemetry")}>
+              <Pairs rows={Object.entries(paths)} />
+            </Section>
           </View>
         )}
       </If>
     </Page>
   );
-}
-
-function structuredCopy<T>(v: T): T {
-  return JSON.parse(JSON.stringify(v)) as T;
 }

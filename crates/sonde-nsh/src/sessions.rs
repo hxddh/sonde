@@ -397,7 +397,15 @@ impl Sessions {
         let dir = sonde().paths().sessions();
         std::fs::create_dir_all(&dir).map_err(err_msg)?;
         let path = dir.join("example-slatedb.sonde");
-        std::fs::write(&path, EXAMPLE).map_err(err_msg)?;
+        // a real recording (SlateDB on RustFS), named as a user would have
+        // run it rather than from the build tree that made it
+        let text = String::from_utf8_lossy(EXAMPLE)
+            .replace(
+                "\"command\":\"tools/gen-slatedb/target/release/gen-slatedb s3://slate\"",
+                "\"command\":\"gen-slatedb s3://slate\"",
+            )
+            .replace("\"endpoint\":\"adhoc\"", "\"endpoint\":\"rustfs\"");
+        std::fs::write(&path, text).map_err(err_msg)?;
         Ok(path.to_string_lossy().into_owned())
     }
 

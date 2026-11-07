@@ -4,6 +4,7 @@
 import { View } from "nsh";
 import { sectionLabel } from "../labels";
 import { go, SETTINGS_TABS, type SettingsTab, settingsTab } from "../store";
+import type { IconName } from "../ui/icon";
 import { TabBar } from "../ui/tabs";
 import { Audit } from "./Audit";
 import { Endpoints } from "./Endpoints";
@@ -26,10 +27,12 @@ function screen(s: SettingsTab) {
   }
 }
 
+const TAB_ICON: Record<SettingsTab, IconName> = { settings: "sliders-horizontal", endpoints: "server", requests: "activity", jobs: "timer", audit: "scroll-text" };
+
 export function SettingsArea() {
   return (
     <View class="flex-1" testID="screen-settings-area">
-      <TabBar tabs={SETTINGS_TABS} value={settingsTab()} label={sectionLabel} onChange={(s) => go(s)} />
+      <TabBar tabs={SETTINGS_TABS} value={settingsTab()} icon={(s) => TAB_ICON[s]} label={sectionLabel} onChange={(s) => go(s)} />
       <View class="flex-1">{screen(settingsTab())}</View>
     </View>
   );

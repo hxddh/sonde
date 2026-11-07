@@ -50,7 +50,25 @@ for (const size of sizes) {
     await shot("03e-timeline");
     await go("store");
     await shot("04-store");
+    await app.press("id:bucket-demo");
+    await app.waitFor("text:README.md", { timeout: 10000 });
+    await shot("04b-objects");
+    await app.press("text:README.md");
+    await app.waitFor("id:object-detail");
+    await app.waitFor("text:Single-part upload (MD5 of the body)", { timeout: 10000 });
+    await shot("04c-object");
     await go("settings");
     await shot("05-settings");
+    await app.press("id:tab-endpoints");
+    await shot("05b-endpoints");
+    await app.press("id:add-endpoint");
+    await app.waitFor("id:endpoint-form");
+    await shot("05c-endpoint-form");
+    await app.keyboard.press("Escape");
+    await app.press("id:palette");
+    await app.waitFor("id:palette-command");
+    await shot("06-palette");
+    await app.type("id:palette-command", "ver");
+    await shot("06b-palette-search");
   });
 }

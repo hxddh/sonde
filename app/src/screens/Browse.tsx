@@ -2,13 +2,16 @@
 // page and kept in Rust), and an object's details.
 
 import { batch, cleanup, Clipboard, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
-import { Button as BaseButton, DataTable } from "nsh/base";
+import { Button as BaseButton, DataTable, Input } from "nsh/base";
+import { isAvailable, Menu } from "nsh/desktop";
 import { bytes, count, date } from "../format";
 import { t } from "../i18n";
 import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
-import { Badge, Bar, Button, Card, Choice, Empty, Field, Heading, KeyValue, Mono, Muted, SimpleTable, terminal, Toggle } from "../ui/kit";
+import { Icon, iconSvg } from "../ui/icon";
+import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, Muted, terminal, Toggle } from "../ui/kit";
+import { Fold, Pairs } from "../ui/record";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const WINDOW = 400;
@@ -20,16 +23,21 @@ function Breadcrumbs() {
     return segs.map((s, i) => ({ name: s, prefix: `${segs.slice(0, i + 1).join("/")}/` }));
   };
   return (
-    <View class="flex-row flex-wrap items-center gap-1">
-      <BaseButton accessibilityLabel={bucket() ?? ""} onPress={() => prefix.set("")} class="rounded-sm px-1 hover:bg-muted">
-        <Text class="text-sm font-medium text-foreground">{bucket()}</Text>
+    <View class="min-w-0 flex-row flex-wrap items-center gap-0.5">
+      <BaseButton accessibilityLabel={bucket() ?? ""} onPress={() => prefix.set("")} class="flex-row items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-0.5 hover:bg-muted">
+        <If when={!terminal()}>
+          <Icon name="database" size={14} tint="foreground" />
+        </If>
+        <Text class="text-[13px] font-semibold text-foreground">{bucket()}</Text>
       </BaseButton>
       <Each of={parts()}>
-        {(p) => (
-          <View class="flex-row items-center gap-1">
-            <Text class="text-sm text-muted-foreground">/</Text>
-            <BaseButton accessibilityLabel={p().name} onPress={() => prefix.set(p().prefix)} class="rounded-sm px-1 hover:bg-muted">
-              <Text class="text-sm text-foreground">{p().name}</Text>
+        {(p, i) => (
+          <View class="flex-row items-center gap-0.5">
+            <If when={!terminal()} else={<Text class="text-muted-foreground">/</Text>}>
+              <Icon name="chevron-right" size={12} />
+            </If>
+            <BaseButton accessibilityLabel={p().name} onPress={() => prefix.set(p().prefix)} class="rounded-(--radius-sm) px-1.5 py-0.5 hover:bg-muted">
+              <Text class={i() === parts().length - 1 ? "text-[13px] font-medium text-foreground" : "text-[13px] text-muted-foreground"}>{p().name}</Text>
             </BaseButton>
           </View>
         )}
@@ -89,21 +97,30 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
     return t("browse.opaqueEtag");
   };
   return (
-    <View class="flex-1 gap-3" testID="object-detail">
-      <View class="flex-row items-center gap-2">
-        <If when={props.onBack}>
-          <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={() => props.onBack?.()} testID="detail-back" />
-        </If>
-        <Text class="flex-1 text-base font-semibold text-foreground line-clamp-2">
-          {props.entry.name}
-        </Text>
+    <View selectable class="gap-4" testID="object-detail">
+      <View class="gap-1.5">
+        <View class="flex-row items-center gap-2">
+          <If when={props.onBack}>
+            <Button small variant="ghost" icon="chevron-left" label={t("common.back")} onPress={() => props.onBack?.()} testID="detail-back" />
+          </If>
+          <If when={!terminal()}>
+            <Icon name="file" size={16} tint="foreground" />
+          </If>
+          <Text class="min-w-0 flex-1 text-[15px] font-semibold text-foreground line-clamp-2">{props.entry.name}</Text>
+        </View>
+        <Text class="font-mono text-[11px] text-muted-foreground line-clamp-2">{`s3://${b}/${props.entry.key}`}</Text>
       </View>
       <If when={detail()} else={<Muted>{t("common.loading")}</Muted>}>
         {(d) => (
-          <View class="gap-3">
-            <KeyValue
+          <View class="gap-4">
+            <View class="flex-row flex-wrap gap-1.5">
+              <Button small variant="primary" icon="download" label={t("browse.download")} onPress={download} disabled={!!progress()} testID="download" />
+              <Button small variant="outline" icon="file-clock" label={t("browse.versions")} onPress={() => batch(() => (versionKey.set(d().key), go("versions")))} />
+              <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(d().recordId)} />
+            </View>
+            <If when={progress()}>{(p) => <Bar value={null} label={p()} />}</If>
+            <Pairs
               rows={[
-                ["Key", d().key],
                 [t("browse.size"), `${bytes(d().size)} (${count(d().size ?? 0)} B)`],
                 ["Content-Type", d().contentType ?? "—"],
                 [t("browse.modified"), d().lastModified ?? "—"],
@@ -111,75 +128,85 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                 [t("browse.storageClass"), d().storageClass],
               ]}
             />
-            <View class="flex-row flex-wrap gap-2">
-              <Button small variant="primary" label={t("browse.download")} onPress={download} disabled={!!progress()} testID="download" />
-              <Button small label={t("browse.versions")} onPress={() => batch(() => (versionKey.set(d().key), go("versions")))} />
-              <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(d().recordId)} />
-            </View>
-            <If when={progress()}>{(p) => <Bar value={null} label={p()} />}</If>
-            <Heading>{t("browse.etag")}</Heading>
-            <Mono>{d().etag?.value ?? "—"}</Mono>
-            <Muted>{etagText(d())}</Muted>
-            <If when={d().partSizeGuesses.length > 0}>
-              <Muted>
-                {t("browse.partSizes")}: {d().partSizeGuesses.map((s) => bytes(s)).join(", ")}
-              </Muted>
-            </If>
-            <Heading>{t("browse.checksums")}</Heading>
-            <If when={d().checksums.length > 0} else={<Muted>{t("browse.noChecksum")}</Muted>}>
-              <Each of={d().checksums}>
-                {(c) => (
-                  <View class="flex-row items-center gap-2">
-                    <Badge label={c().algorithm} tone="info" />
-                    <Mono class="flex-1">{c().value}</Mono>
-                    <Text class="text-xs text-muted-foreground">
-                      {c().kind === "composite" ? t("browse.composite", { n: c().parts ?? "?" }) : t("browse.fullObject")}
-                      {c().kindFromHeader ? "" : ` · ${t("browse.inferred")}`}
-                    </Text>
-                  </View>
-                )}
-              </Each>
-            </If>
-            <Heading>{t("browse.encryption")}</Heading>
-            <KeyValue
-              rows={[
-                ["SSE", d().sse.customerAlgorithm ? `SSE-C (${d().sse.customerAlgorithm})` : (d().sse.algorithm ?? t("browse.noEncryption"))],
-                ...(d().sse.kmsKeyId ? ([["KMS key", d().sse.kmsKeyId]] as [string, string][]) : []),
-                ...(d().sse.bucketKeyEnabled !== null && d().sse.bucketKeyEnabled !== undefined ? ([["Bucket key", String(d().sse.bucketKeyEnabled)]] as [string, string][]) : []),
-                ...(d().objectLock ? ([["Object Lock", d().objectLock!]] as [string, string][]) : []),
-                ...(d().restore ? ([["Restore", d().restore!]] as [string, string][]) : []),
-              ]}
-            />
-            <Heading>{t("browse.metadata")}</Heading>
-            <If when={d().metadata.length > 0} else={<Muted>{t("common.none")}</Muted>}>
-              <KeyValue mono rows={d().metadata} />
-            </If>
-            <Heading>{t("browse.presign")}</Heading>
-            <View class="flex-row items-end gap-2">
-              <Choice
-                class="w-40"
-                label={t("browse.expires")}
-                value={presignSecs()}
-                items={[
-                  { value: "300", title: "5 min" },
-                  { value: "3600", title: "1 h" },
-                  { value: "86400", title: "1 day" },
-                  { value: "604800", title: "7 days" },
-                ]}
-                onChange={(v) => presignSecs.set(v)}
-              />
-              <Button small label={t("browse.presign")} onPress={presign} testID="presign" />
-            </View>
-            <If when={url()}>
-              {(u) => (
-                <View class="gap-1">
-                  <Mono>{u()}</Mono>
-                  <Button small label={t("common.copy")} onPress={() => Clipboard.writeText(u()).then(() => notify(t("common.copied")), report)} />
+            <Fold title={t("browse.etag")}>
+              <View class="gap-1.5">
+                <Text class="font-mono text-[11px] text-foreground">{d().etag?.value ?? "—"}</Text>
+                <Text class="text-xs text-muted-foreground">{etagText(d())}</Text>
+                <If when={d().partSizeGuesses.length > 0}>
+                  <Text class="text-xs text-muted-foreground">
+                    {t("browse.partSizes")}: {d().partSizeGuesses.map((s) => bytes(s)).join(", ")}
+                  </Text>
+                </If>
+              </View>
+            </Fold>
+            <Fold title={t("browse.checksums")} count={d().checksums.length}>
+              <If when={d().checksums.length > 0} else={<Text class="text-xs text-muted-foreground">{t("browse.noChecksum")}</Text>}>
+                <View class="gap-1.5">
+                  <Each of={d().checksums}>
+                    {(c) => (
+                      <View class="gap-0.5 rounded-(--radius) border border-border bg-card px-2.5 py-1.5">
+                        <View class="flex-row items-center gap-2">
+                          <Badge label={c().algorithm} tone="info" />
+                          <Text class="text-[11px] text-muted-foreground">
+                            {c().kind === "composite" ? t("browse.composite", { n: c().parts ?? "?" }) : t("browse.fullObject")}
+                            {c().kindFromHeader ? "" : ` · ${t("browse.inferred")}`}
+                          </Text>
+                        </View>
+                        <Text class="font-mono text-[11px] text-foreground">{c().value}</Text>
+                      </View>
+                    )}
+                  </Each>
                 </View>
-              )}
-            </If>
-            <Heading>{t("browse.headers")}</Heading>
-            <SimpleTable mono columns={["header", "value"]} rows={d().headers.map(([k, v]) => [k, v])} />
+              </If>
+            </Fold>
+            <Fold title={t("browse.encryption")}>
+              <Pairs
+                rows={[
+                  ["SSE", d().sse.customerAlgorithm ? `SSE-C (${d().sse.customerAlgorithm})` : (d().sse.algorithm ?? t("browse.noEncryption"))],
+                  ...(d().sse.kmsKeyId ? ([["KMS key", d().sse.kmsKeyId]] as [string, string][]) : []),
+                  ...(d().sse.bucketKeyEnabled !== null && d().sse.bucketKeyEnabled !== undefined ? ([["Bucket key", String(d().sse.bucketKeyEnabled)]] as [string, string][]) : []),
+                  ...(d().objectLock ? ([["Object Lock", d().objectLock!]] as [string, string][]) : []),
+                  ...(d().restore ? ([["Restore", d().restore!]] as [string, string][]) : []),
+                ]}
+              />
+            </Fold>
+            <Fold title={t("browse.metadata")} count={d().metadata.length} open={d().metadata.length > 0}>
+              <If when={d().metadata.length > 0} else={<Text class="text-xs text-muted-foreground">{t("common.none")}</Text>}>
+                <Pairs rows={d().metadata} />
+              </If>
+            </Fold>
+            <Fold title={t("browse.presign")} open={false}>
+              <View class="gap-2">
+                <View class="flex-row items-end gap-2">
+                  <Choice
+                    class="w-36"
+                    label={t("browse.expires")}
+                    value={presignSecs()}
+                    items={[
+                      { value: "300", title: "5 min" },
+                      { value: "3600", title: "1 h" },
+                      { value: "86400", title: "1 day" },
+                      { value: "604800", title: "7 days" },
+                    ]}
+                    onChange={(v) => presignSecs.set(v)}
+                  />
+                  <Button small variant="outline" icon="link" label={t("browse.presign")} onPress={presign} testID="presign" />
+                </View>
+                <If when={url()}>
+                  {(u) => (
+                    <View class="gap-1.5 rounded-(--radius) border border-border bg-card px-2.5 py-2">
+                      <Text class="font-mono text-[11px] text-foreground">{u()}</Text>
+                      <View class="flex-row">
+                        <Button small variant="ghost" icon="copy" label={t("common.copy")} onPress={() => Clipboard.writeText(u()).then(() => notify(t("common.copied")), report)} />
+                      </View>
+                    </View>
+                  )}
+                </If>
+              </View>
+            </Fold>
+            <Fold title={t("browse.headers")} count={d().headers.length}>
+              <Pairs rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
+            </Fold>
           </View>
         )}
       </If>
@@ -296,54 +323,87 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     searchJob = null;
   };
 
+  const applyFilter = (v: string) => {
+    filter.set(v);
+    searchText.set(v);
+    listing()?.setFilter(v);
+    batch(() => {
+      start.set(0);
+      version.update((x) => x + 1);
+    });
+  };
+  const entryAt = (row: number) => listing()?.row(row) as Entry | null;
+  const copy = (text: string) => void Clipboard.writeText(text).then(() => notify(t("common.copied")), report);
+  const menu = (row: number) => {
+    const e = entryAt(row);
+    const b = bucket();
+    if (!e || !b || !isAvailable) return;
+    void Menu.popup(
+      e.isPrefix
+        ? [
+            { label: t("browse.open"), icon: iconSvg("folder-open"), onSelect: () => prefix.set(e.key) },
+            { label: t("store.copyKey"), icon: iconSvg("copy"), onSelect: () => copy(e.key) },
+            { label: t("store.copyUri"), icon: iconSvg("link"), onSelect: () => copy(`s3://${b}/${e.key}`) },
+          ]
+        : [
+            { label: t("browse.detail"), icon: iconSvg("info"), onSelect: () => props.onSelect(e) },
+            { label: t("store.copyKey"), icon: iconSvg("copy"), onSelect: () => copy(e.key) },
+            { label: t("store.copyUri"), icon: iconSvg("link"), onSelect: () => copy(`s3://${b}/${e.key}`) },
+            { type: "separator" },
+            { label: t("browse.versions"), icon: iconSvg("file-clock"), onSelect: () => batch(() => (versionKey.set(e.key), go("versions"))) },
+          ],
+    );
+  };
+
   return (
-    <View class="flex-1 gap-2">
+    <View class="min-h-0 flex-1 gap-2.5">
       <View class="flex-row flex-wrap items-center gap-2">
         <Breadcrumbs />
         <View class="flex-1" />
-        <Text class="text-xs text-muted-foreground" testID="listing-count">
+        <Text class="font-mono text-xs text-muted-foreground" testID="listing-count">
           {t("browse.objects", { n: count(total()) })}
           {done() ? "" : ` · ${t("browse.more")}`}
         </Text>
-        <Toggle label={t("browse.flat")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
-        <Button small label={loadingAll() ? t("common.loading") : t("browse.loadAll")} onPress={loadAll} disabled={done() || loadingAll()} testID="load-all" />
-        <Button small label={t("common.refresh")} onPress={() => prefix.set(prefix())} />
+        <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={() => prefix.set(prefix())} />
       </View>
-      <View class="flex-row gap-2">
-        <Field
-          class="flex-1"
-          label={t("common.filter")}
-          value={filter()}
-          placeholder={t("browse.filterPlaceholder")}
-          onChange={(v) => {
-            filter.set(v);
-            listing()?.setFilter(v);
-            batch(() => {
-              start.set(0);
-              version.update((x) => x + 1);
-            });
-          }}
-          testID="listing-filter"
-        />
-        <Field class="flex-1" label={t("browse.searchAll")} value={searchText()} onChange={(v) => searchText.set(v)} testID="search-input" />
-        <View class="justify-end">
-          <Button small label={t("common.search")} onPress={search} testID="search" />
+      <View class="flex-row flex-wrap items-center gap-2">
+        <View class="h-8 min-w-[240px] flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2.5 focus-within:border-ring">
+          <If when={!terminal()}>
+            <Icon name="search" size={14} />
+          </If>
+          <Input
+            testID="listing-filter"
+            value={filter()}
+            placeholder={t("browse.filterOrSearch")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChange={({ value }) => applyFilter(value)}
+            onSubmit={search}
+            submitBehavior="submit"
+            accessibilityLabel={t("common.filter")}
+            class="min-w-0 flex-1 text-[13px] text-foreground placeholder:text-muted-foreground"
+          />
+          <If when={filter()}>
+            <Button small variant="ghost" label={t("browse.searchAll")} onPress={search} testID="search" />
+          </If>
         </View>
+        <Toggle label={t("browse.flat")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
+        <Button small variant="outline" label={loadingAll() ? t("common.loading") : t("browse.loadAll")} onPress={loadAll} disabled={done() || loadingAll()} testID="load-all" />
       </View>
       <If when={searchHits()}>
         {(hits) => (
           <Card>
             <View class="flex-row items-center gap-2">
-              <Text class="flex-1 text-sm font-medium text-foreground">
-                {hits().length} matches {searchState() ? `· ${searchState()}` : ""}
+              <Text class="flex-1 text-[13px] font-medium text-foreground">
+                {t("browse.matches", { n: hits().length })} {searchState() ? `· ${searchState()}` : ""}
               </Text>
-              <Button small variant="ghost" label={t("common.close")} onPress={() => searchHits.set(null)} />
+              <IconButton icon="x" label={t("common.close")} onPress={() => searchHits.set(null)} />
             </View>
             <Each of={hits().slice(0, 50)} key={(h) => h.key}>
               {(h) => (
-                <Text role="button" class="font-mono text-xs text-primary" onPress={() => props.onSelect(h())}>
-                  {h().key}
-                </Text>
+                <BaseButton accessibilityLabel={h().key} onPress={() => props.onSelect(h())} class="flex-row items-center gap-2 rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted">
+                  <Text class="font-mono text-xs text-primary">{h().key}</Text>
+                </BaseButton>
               )}
             </Each>
           </Card>
@@ -351,12 +411,13 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       </If>
       <DataTable
         testID="objects"
-        class="flex-1 rounded-(--radius) border border-border"
+        accessibilityLabel={t("nav.objects")}
+        class="min-h-0 flex-1 rounded-(--radius-card) border border-border bg-card"
         columns={[
           { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : 380, minWidth: 120 },
           { key: "size", title: t("browse.size"), width: 96, align: "end" },
-          { key: "modified", title: t("browse.modified"), width: 140 },
-          { key: "class", title: t("browse.class"), width: 120 },
+          { key: "modified", title: t("browse.modified"), width: 150 },
+          { key: "class", title: t("browse.class"), width: 124 },
           { key: "parts", title: "MPU", width: 56, align: "end" },
         ]}
         data={tableData()}
@@ -367,6 +428,27 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         rowSelectable
         stripe
         resizableColumns
+        fontSize={13}
+        rowHeight={terminal() ? undefined : 30}
+        renderCell={
+          terminal()
+            ? undefined
+            : (c) => {
+                if (c.key === "name") {
+                  const folder = c.text.startsWith("▸ ");
+                  return (
+                    <View class="flex-1 flex-row items-center gap-2 px-2">
+                      <Icon name={folder ? "folder" : "file"} size={14} tint={folder ? "foreground" : "muted-foreground"} />
+                      <Text class={`min-w-0 flex-1 text-[13px] line-clamp-1 ${folder ? "font-medium text-foreground" : "text-foreground"}`}>{folder ? c.text.slice(2) : c.text}</Text>
+                    </View>
+                  );
+                }
+                return <Text class={`px-2 text-xs ${c.key === "size" || c.key === "parts" ? "font-mono text-foreground" : "text-muted-foreground"}`}>{c.text}</Text>;
+              }
+        }
+        onContextMenu={(e) => {
+          if (e.row !== undefined && e.row !== null) menu(e.row);
+        }}
         onLoadMore={() => {
           const l = listing();
           if (l) void load(l);
@@ -376,8 +458,8 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           if (want < start() || range.end > start() + WINDOW - 50) start.set(want);
         }}
         onRowPress={({ row }) => open(row)}
-        classes={{ header: "bg-muted", headerCell: "px-2", row: "px-2", rowSelected: "bg-accent" }}
-        empty={<Empty text={loading() ? t("common.loading") : t("common.empty")} />}
+        classes={terminal() ? { header: "bg-muted", rowSelected: "bg-accent" } : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1", cell: "px-0", rowOdd: "bg-muted/30", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
+        empty={<Empty icon="folder" text={loading() ? t("common.loading") : t("common.empty")} />}
       />
     </View>
   );
@@ -398,23 +480,27 @@ export function Browse() {
           <BucketPicker />
         </View>
       </If>
-      <If when={endpoint() && bucket()} else={<Empty text={endpoint() ? t("common.chooseBucket") : t("common.chooseEndpoint")} />}>
+      <If when={endpoint() && bucket()} else={<Empty icon="database" title={endpoint() ? t("store.pickTitle") : undefined} text={endpoint() ? t("store.pickText") : t("common.chooseEndpoint")} />}>
         <If
           when={terminal()}
           else={
             <View class="flex-1 flex-row">
-              <View class="flex-1 p-3">
+              <View class="min-w-0 flex-1 px-5 py-4">
                 <Objects onSelect={(e) => selected.set(e)} selected={selected()?.key ?? null} />
               </View>
-              <View class="w-96 border-l border-border">
-                <If when={selected()} else={<Empty text={t("browse.selectObject")} />}>
-                  {(e) => (
+              <If when={selected()}>
+                {(e) => (
+                  <View class="w-[400px] border-l border-border bg-inspector">
+                    <View class="h-10 flex-row items-center border-b border-border px-3">
+                      <Text class="flex-1 text-xs font-semibold text-muted-foreground">{t("browse.detail")}</Text>
+                      <IconButton icon="x" label={t("common.close")} onPress={() => selected.set(null)} testID="detail-close" />
+                    </View>
                     <Scroll class="flex-1" contentClass="p-4">
                       <Detail entry={e()} />
                     </Scroll>
-                  )}
-                </If>
-              </View>
+                  </View>
+                )}
+              </If>
             </View>
           }
         >
