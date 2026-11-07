@@ -26,6 +26,78 @@ struct Recording {
 }
 
 static RECORDING: Mutex<Option<Recording>> = Mutex::new(None);
+static RUNNING: Mutex<Option<crate::run::Running>> = Mutex::new(None);
+
+/// Starts a recording: a local endpoint forwarding to `endpoint`.
+async fn begin(
+    endpoint: String,
+    policy: String,
+    command: Option<String>,
+) -> Result<JsonValue, String> {
+    if RECORDING.lock().is_some() {
+        return Err(err_msg("a recording is running: stop it first"));
+    }
+    let s = sonde();
+    let client = s.client(&endpoint).map_err(crate::state::err)?;
+    let policy = match policy.as_str() {
+        "no-delete" => Policy::NoDelete,
+        "read-only" => Policy::ReadOnly,
+        _ => Policy::Allow,
+    };
+    let dir = s.paths().sessions();
+    std::fs::create_dir_all(&dir).map_err(err_msg)?;
+    let name = command
+        .as_deref()
+        .and_then(|c| c.split_whitespace().next())
+        .and_then(|c| {
+            Path::new(c)
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "recording".into());
+    let path = dir.join(format!(
+        "{}-{name}.sonde",
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    ));
+    let cfg = client.config();
+    let header = SessionHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
+    let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
+    let log = RequestLog::new(4096);
+    log.set_sink(Some(writer.clone()));
+    let started = background({
+        let log = log.clone();
+        async move {
+            Proxy::start(
+                client,
+                log,
+                ProxyConfig {
+                    policy,
+                    ..Default::default()
+                },
+            )
+            .await
+        }
+    })
+    .await
+    .map_err(err_msg)?
+    .map_err(err_msg)?;
+    let (set, unset) = started.env();
+    let view = json!({
+        "url": started.url(),
+        "path": path.to_string_lossy(),
+        "endpoint": endpoint,
+        "requests": 0,
+        "exports": shell_exports(&set, &unset),
+    });
+    *RECORDING.lock() = Some(Recording {
+        proxy: started,
+        path,
+        endpoint,
+        log,
+        writer,
+    });
+    Ok(view)
+}
 
 fn open_session(path: &str) -> Result<Session, String> {
     Session::open(Path::new(path)).map_err(err_msg)
@@ -147,60 +219,93 @@ impl Sessions {
     /// what `policy` (`allow`, `no-delete`, `read-only`) forbids. What to
     /// point an application at, and the session file.
     pub async fn start(endpoint: String, policy: String) -> Result<JsonValue, String> {
-        if RECORDING.lock().is_some() {
-            return Err(err_msg("a recording is running: stop it first"));
+        begin(endpoint, policy, None).await
+    }
+
+    /// Runs `command` in a pseudo-terminal with its S3 requests recorded:
+    /// the program's output arrives as `{ data }` events (and goes into the
+    /// session, timed), keys go back with [`Sessions::input`]. Resolves with
+    /// `{ exit, path }` when the program ends; the recording ends with it.
+    pub async fn run(
+        command: String,
+        cwd: Option<String>,
+        endpoint: String,
+        policy: String,
+        cols: f64,
+        rows: f64,
+        #[args(event)] output: Callback<JsonValue>,
+    ) -> Result<JsonValue, String> {
+        if RUNNING.lock().is_some() {
+            return Err(err_msg("a program is running: stop it first"));
         }
-        let s = sonde();
-        let client = s.client(&endpoint).map_err(crate::state::err)?;
-        let policy = match policy.as_str() {
-            "no-delete" => Policy::NoDelete,
-            "read-only" => Policy::ReadOnly,
-            _ => Policy::Allow,
+        let view = begin(endpoint, policy, Some(command.clone())).await?;
+        let (env_set, env_unset, writer, path) = {
+            let g = RECORDING.lock();
+            let r = g.as_ref().expect("begin started a recording");
+            let (set, unset) = r.proxy.env();
+            (
+                set,
+                unset,
+                r.writer.clone(),
+                r.path.to_string_lossy().into_owned(),
+            )
         };
-        let dir = s.paths().sessions();
-        std::fs::create_dir_all(&dir).map_err(err_msg)?;
-        let path = dir.join(format!(
-            "{}-recording.sonde",
-            chrono::Local::now().format("%Y%m%d-%H%M%S")
-        ));
-        let cfg = client.config();
-        let header = SessionHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, None);
-        let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
-        let log = RequestLog::new(4096);
-        log.set_sink(Some(writer.clone()));
-        let started = background({
-            let log = log.clone();
-            async move {
-                Proxy::start(
-                    client,
-                    log,
-                    ProxyConfig {
-                        policy,
-                        ..Default::default()
-                    },
-                )
-                .await
+        let started = crate::run::spawn(
+            &command,
+            cwd.as_deref(),
+            &env_set,
+            &env_unset,
+            cols as u16,
+            rows as u16,
+        );
+        let (mut out_rx, exit_rx, handle) = match started {
+            Ok(x) => x,
+            Err(e) => {
+                Sessions::stop();
+                return Err(err_msg(format!("cannot start {command}: {e}")));
             }
-        })
-        .await
-        .map_err(err_msg)?
-        .map_err(err_msg)?;
-        let (set, unset) = started.env();
-        let view = json!({
-            "url": started.url(),
-            "path": path.to_string_lossy(),
-            "endpoint": endpoint,
-            "requests": 0,
-            "exports": shell_exports(&set, &unset),
-        });
-        *RECORDING.lock() = Some(Recording {
-            proxy: started,
-            path,
-            endpoint,
-            log,
-            writer,
-        });
-        Ok(view)
+        };
+        *RUNNING.lock() = Some(handle);
+        output.post(json!({ "started": view }));
+        let mut decoder = crate::run::Utf8Stream::default();
+        while let Some(bytes) = out_rx.recv().await {
+            let text = decoder.push(&bytes);
+            if !text.is_empty() {
+                writer.write_log(&text);
+                output.post(json!({ "data": text }));
+            }
+        }
+        let code = exit_rx.await.unwrap_or(None);
+        RUNNING.lock().take();
+        Sessions::stop();
+        Ok(json!({ "exit": code, "path": path }))
+    }
+
+    /// Text for the running program (what the user typed into its terminal).
+    pub fn input(data: String) -> bool {
+        RUNNING
+            .lock()
+            .as_mut()
+            .is_some_and(|r| r.write(data.as_bytes()))
+    }
+
+    /// The running program's terminal size, in cells.
+    pub fn resize(cols: f64, rows: f64) -> bool {
+        RUNNING
+            .lock()
+            .as_ref()
+            .is_some_and(|r| r.resize(cols as u16, rows as u16))
+    }
+
+    /// Ends the running program.
+    pub fn kill() -> bool {
+        RUNNING.lock().as_mut().is_some_and(|r| r.kill())
+    }
+
+    /// A session's output as timed lines, for lining up with its operations.
+    pub fn log_lines(path: String) -> Result<JsonValue, String> {
+        let s = open_session(&path)?;
+        Ok(to_json(sonde_proxy::logs::lines(&s.logs)))
     }
 
     /// The running recording, or null.

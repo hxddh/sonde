@@ -310,7 +310,7 @@ version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "cexpr",
  "clang-sys",
  "itertools 0.13.0",
@@ -353,6 +353,12 @@ name = "bit-vec"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
+
+[[package]]
+name = "bitflags"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
@@ -500,6 +506,12 @@ name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "cfg_aliases"
@@ -779,7 +791,7 @@ version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b9f2e4c67f833b660cdb0a3523065869fb35570177239812ed4c905aeff87b"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "crossterm_winapi",
  "derive_more",
  "document-features",
@@ -1114,6 +1126,12 @@ checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
 ]
+
+[[package]]
+name = "downcast-rs"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "dunce"
@@ -2142,6 +2160,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lazy_static"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2213,7 +2237,7 @@ version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e752191d037c44ad111a8caa762921926658402f01cc1253f7bef2020ece4f5e"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
 ]
 
 [[package]]
@@ -2373,9 +2397,9 @@ checksum = "b2bf919621e7975acb27d881bae2fb993e0d45c8e0446e85e6272971e00dc8df"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
- "bitflags",
+ "bitflags 2.13.2",
  "cfg-if",
- "cfg_aliases",
+ "cfg_aliases 0.2.2",
  "codespan-reporting",
  "half",
  "hashbrown 0.16.1",
@@ -2395,6 +2419,18 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nix"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases 0.1.1",
+ "libc",
+]
 
 [[package]]
 name = "no_std_io2"
@@ -2418,7 +2454,7 @@ dependencies = [
 [[package]]
 name = "nsh-base"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "chrono",
  "html5ever",
@@ -2442,7 +2478,7 @@ dependencies = [
 [[package]]
 name = "nsh-core"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "cap-std",
  "crc32fast",
@@ -2464,6 +2500,7 @@ dependencies = [
  "taffy",
  "tokio",
  "tokio-tungstenite",
+ "ttf-parser",
  "unicode-linebreak",
  "unicode-properties",
  "url",
@@ -2475,7 +2512,7 @@ dependencies = [
 [[package]]
 name = "nsh-dev"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "base64 0.22.1",
  "dunce",
@@ -2488,7 +2525,7 @@ dependencies = [
 [[package]]
 name = "nsh-engine"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -2496,6 +2533,7 @@ dependencies = [
  "nsh-core",
  "nsh-js",
  "nsh-package",
+ "nsh-updater",
  "oxc_sourcemap",
  "rustc-hash 2.1.3",
  "serde_json",
@@ -2507,7 +2545,7 @@ dependencies = [
 [[package]]
 name = "nsh-js"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "futures-util",
  "getrandom 0.4.3",
@@ -2528,7 +2566,7 @@ dependencies = [
 [[package]]
 name = "nsh-macros"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "imagesize",
  "proc-macro2",
@@ -2541,7 +2579,7 @@ dependencies = [
 [[package]]
 name = "nsh-package"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
@@ -2556,7 +2594,7 @@ dependencies = [
 [[package]]
 name = "nsh-platform-tui"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -2576,7 +2614,7 @@ dependencies = [
 [[package]]
 name = "nsh-testing"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",
@@ -2592,7 +2630,7 @@ dependencies = [
 [[package]]
 name = "nsh-tui-host"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -2610,7 +2648,7 @@ dependencies = [
 [[package]]
 name = "nsh-updater"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=9d12096878bb08bce28e2e72d0356c75e11244ed#9d12096878bb08bce28e2e72d0356c75e11244ed"
+source = "git+https://github.com/longbridge/nsh?rev=beeb9fc7707e0d4a195a4f7274f77b30e134c500#beeb9fc7707e0d4a195a4f7274f77b30e134c500"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
@@ -2992,6 +3030,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
+name = "portable-pty"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4a596a2b3d2752d94f51fac2d4a96737b8705dddd311a32b9af47211f08671e"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "downcast-rs",
+ "filedescriptor",
+ "lazy_static",
+ "libc",
+ "log",
+ "nix",
+ "serial2",
+ "shared_library",
+ "shell-words",
+ "winapi",
+ "winreg",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3228,7 +3287,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4051e23e9185c255a7e33ef59cdbca87a22d359052eecd22fc6b901fb37d9d11"
 dependencies = [
  "bytes",
- "cfg_aliases",
+ "cfg_aliases 0.2.2",
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
@@ -3269,7 +3328,7 @@ version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
 dependencies = [
- "cfg_aliases",
+ "cfg_aliases 0.2.2",
  "libc",
  "once_cell",
  "socket2",
@@ -3389,7 +3448,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cbb175c433c8e28a809d1f5773a2ae96e68c0ce40db865cbab1020bf33ae479c"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "compact_str",
  "critical-section",
  "hashbrown 0.17.1",
@@ -3423,7 +3482,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66e3d19bcc9130ca376277d93b60767ff121ace3be06f5f95f81dd68956407d1"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "hashbrown 0.17.1",
  "indoc",
  "instability",
@@ -3443,7 +3502,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
 ]
 
 [[package]]
@@ -3643,7 +3702,7 @@ version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",
@@ -3678,7 +3737,7 @@ version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "errno",
  "libc",
  "linux-raw-sys",
@@ -3832,7 +3891,7 @@ version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7f4bc775c73d9a02cde8bf7b2ec4c9d12743edf609006c7facc23998404cd1d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "core-foundation",
  "core-foundation-sys",
  "libc",
@@ -3940,6 +3999,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serial2"
+version = "0.2.39"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c924c7ef58d1fb741cfecb65b9b38a9e049841edd1e419544089f0cbb5a127e7"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4004,6 +4074,22 @@ dependencies = [
  "keccak",
  "sponge-cursor",
 ]
+
+[[package]]
+name = "shared_library"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a9e7e0f2bfae24d8a5b5a66c5b257a83c7412304311512a0c054cd5e619da11"
+dependencies = [
+ "lazy_static",
+ "libc",
+]
+
+[[package]]
+name = "shell-words"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shlex"
@@ -4199,12 +4285,14 @@ dependencies = [
 name = "sonde-nsh"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
  "base64 0.22.1",
  "chrono",
  "decoders",
  "nsh-core",
  "nsh-package",
  "parking_lot",
+ "portable-pty",
  "probes",
  "reqlog",
  "s3raw",
@@ -4702,7 +4790,7 @@ version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "bytes",
  "futures-util",
  "http",
@@ -5367,12 +5455,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "winreg"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
 name = "winx"
 version = "0.36.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "windows-sys 0.52.0",
 ]
 

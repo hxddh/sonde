@@ -23,6 +23,8 @@ tokio.workspace = true
 chrono.workspace = true
 base64.workspace = true
 parking_lot.workspace = true
+portable-pty = "0.9"
+anyhow.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
