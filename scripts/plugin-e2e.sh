@@ -20,7 +20,7 @@ sed -i.bak 's/"dev.sonde.plugins.delta"/"dev.sonde.plugins.rogue"/; s/"host": \[
 scripts/sign-plugin.sh "$tmp/rogue" "$tmp/keys" "$tmp/rogue.nshpkg"
 if "$sonde" plugin install "$tmp/rogue.nshpkg"; then echo "a plugin with network access was installed"; exit 1; fi
 # open it in the terminal UI on the demo's Delta table, then F12 back
-screen="$(python3 scripts/pty-screen.py "$sonde" tui --demo -- '["9", "wait:1.5", "\\t", "\\t", "\\t", "\\r", "wait:1", "\\x1b[B", "\\x1b[B", "\\r", "wait:1.5", "\\t", "delta/events/", "\\t", "\\t", "\\r", "wait:4", "shot:plugin", "\\x1b[24~", "wait:1.5", "shot:closed"]')"
+screen="$(python3 scripts/pty-screen.py "$sonde" tui --demo -- '["\\t", "\\t", "\\t", "\\t", "\\t", "\\t", "\\t", "\\t", "\\t", "\\t", "\\r", "wait:1.5", "\\t", "\\t", "\\t", "\\r", "wait:1", "\\x1b[B", "\\x1b[B", "\\r", "wait:1.5", "\\t", "delta/events/", "\\t", "\\t", "\\r", "wait:4", "shot:plugin", "\\x1b[24~", "wait:1.5", "shot:closed"]')"
 echo "$screen" | sed -n '/===== plugin/,/===== closed/p' | grep -q "Version 2: 2 files" || { echo "$screen"; echo "the plugin view did not show the table"; exit 1; }
 echo "$screen" | sed -n '/===== closed/,$p' | grep -q "TRUSTED ROOTS" || { echo "F12 did not return to sonde"; exit 1; }
 # revoke the package: it is disabled and stays so
