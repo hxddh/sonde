@@ -55,6 +55,40 @@ jobs:
       - if: failure()
         run: docker compose -f tests/integration/docker-compose.yml logs --tail 200
 
+  record:
+    # sonde run with four AWS SDKs against RustFS, and the proxy's overhead
+    runs-on: ubuntu-24.04
+    env:
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: tools/sdk-smoke/go/go.mod, cache-dependency-path: tools/sdk-smoke/go/go.sum }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17", cache: maven }
+      - run: pip install boto3
+      - name: Start RustFS
+        run: |
+          docker compose -f tests/integration/docker-compose.yml --profile rustfs up -d rustfs
+          until curl -s -o /dev/null -m 2 http://127.0.0.1:9100; do sleep 2; done
+      - run: cargo build -p sonde-cli
+      - name: Four SDKs through sonde run
+        env: { SMOKE_SESSIONS: sessions }
+        run: scripts/sdk-smoke.sh --url http://127.0.0.1:9100
+      - name: Proxy overhead
+        env: { OVERHEAD_URL: "http://127.0.0.1:9100", OVERHEAD_BUCKET: sonde-smoke }
+        run: cargo run --release -p sonde-proxy --example overhead
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: sdk-sessions, path: "sessions/*.sonde", if-no-files-found: ignore }
+
   ui:
     runs-on: ubuntu-24.04
     steps:

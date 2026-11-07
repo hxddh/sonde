@@ -13,6 +13,24 @@ One codebase, two forms:
 
 The UI is [Native Shell](https://github.com/longbridge/nsh) (TSX screens on QuickJS); everything else is Rust.
 
+## New: see what your software does to S3
+
+```sh
+sonde run -- ./my-app          # every S3 request my-app makes, re-signed by sonde and recorded
+```
+
+```
+00:22:25.053  200    16 ms   ↑130 B  PutObject      slate/db/manifest/00000000000000000001.manifest  if-none-match: *
+00:22:25.074  404     4 ms           HeadObject     slate/db/wal/00000000000000000001.sst
+00:22:25.112  200     2 ms   ↓250 B  ListObjectsV2  slate/  prefix=db/compactions/
+
+172 requests to rustfs in 0.5 s · 116 not found · ↑36.5 KiB ↓22.7 KiB
+```
+
+The application gets a local endpoint and throwaway keys; sonde holds the real credentials. `--no-delete` and
+`--read-only` refuse what you do not want the application to do. Sessions are redacted files you can attach to a bug
+report. This is the base of sonde 1.0 — [docs/recording.md](docs/recording.md).
+
 ## Features
 
 | | |
@@ -86,6 +104,7 @@ Screenshots are produced by CI on macOS (`nsh test --target macos`); see [docs/p
 |---|---|
 | [Configuration](docs/configuration.md) | `config.toml`: settings and endpoints |
 | [Credentials](docs/credentials.md) | Where credentials come from, and how they stay out of the UI |
+| [Recording](docs/recording.md) | `sonde run`, `sonde proxy`, `sonde show`, session files |
 | [CLI](docs/cli.md) | Subcommands, formats, exit codes |
 | [Probes](docs/probes.md) | Every probe and the AWS behavior it checks |
 | [Decoders](docs/decoders.md) | The layouts and format versions each lens decodes |

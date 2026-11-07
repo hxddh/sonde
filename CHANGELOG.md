@@ -4,6 +4,19 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+### Added
+
+- `sonde run -- <command>`: runs a command against a local S3 endpoint that re-signs every request with sonde's
+  credentials, forwards it and records it; `--live` prints requests as they happen.
+- `sonde proxy`: the same endpoint, standing, for an application started elsewhere.
+- `--no-delete` and `--read-only` for both: refused operations never leave the machine.
+- Session files (`.sonde`, redacted JSON lines) and `sonde show` (timeline, summary, `--errors`, JSON).
+- `sonde-proxy` crate; SDK smoke tests (boto3, JS v3, Go v2, Java v2) run through `sonde run` in CI.
+
+### Fixed
+
+- `install.sh` checks a `.sha256` per file: releases now publish them.
+
 ## [0.1.0] - 2026-11-06
 
 ### Added

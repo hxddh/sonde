@@ -64,6 +64,23 @@ JS holds one 400-row window regardless of the listing size. The 153-item commit 
 the first frame after *Load all* (the header, the footer and the first page of
 rows); every scroll commit after it touches ~16 items.
 
+## Recording proxy (`sonde run`, `sonde proxy`)
+
+The same 1 KiB GET against a local RustFS, 2 000 times directly and 2 000
+times through the proxy (interleaved rounds, release build):
+
+| | p50 | p90 | p99 |
+| --- | --- | --- | --- |
+| direct | 0.478 ms | 0.694 ms | 1.047 ms |
+| through sonde | 0.684 ms | 0.812 ms | 1.108 ms |
+| **overhead** | **+0.21 ms** | **+0.12 ms** | **+0.06 ms** |
+
+The overhead covers parsing, re-signing (one HMAC chain), the record and the
+extra loopback hop. Reproduce with
+`cargo run --release -p sonde-proxy --example overhead` (it reads
+`OVERHEAD_URL`, `OVERHEAD_BUCKET` and the AWS key variables); CI runs it in
+the `record` job.
+
 ## Long jobs
 
 Jobs (probes, multipart scan, capacity, layout scans) run in Rust on tokio and
