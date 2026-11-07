@@ -14,6 +14,6 @@ runs:
         key: nsh-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rev }}
     - if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: cargo install --locked --git https://github.com/longbridge/nsh --rev ${{ inputs.rev }} nsh-cli
+      run: cargo install --force --locked --git https://github.com/longbridge/nsh --rev ${{ inputs.rev }} nsh-cli
     - shell: bash
       run: nsh --version

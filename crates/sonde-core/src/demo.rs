@@ -771,11 +771,42 @@ fn list_v2(bucket: &str, b: &Bucket, q: &BTreeMap<String, String>) -> Resp {
 
 /// Adds the demo endpoint (`demo`) to `sonde`, starting the server.
 pub async fn install(s: &crate::Sonde) -> Result<crate::EndpointView, String> {
-    static SERVER: tokio::sync::OnceCell<DemoServer> = tokio::sync::OnceCell::const_new();
+    // The server lives on a thread (and a runtime) of its own: it outlasts
+    // whichever runtime asked for it first.
+    static SERVER: std::sync::OnceLock<Result<DemoServer, String>> = std::sync::OnceLock::new();
     let server = SERVER
-        .get_or_try_init(|| async { start().await })
-        .await
-        .map_err(|e| e.to_string())?;
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::Builder::new()
+                .name("sonde-demo".into())
+                .spawn(move || {
+                    let rt = match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        Ok(rt) => rt,
+                        Err(e) => {
+                            let _ = tx.send(Err(e.to_string()));
+                            return;
+                        }
+                    };
+                    rt.block_on(async move {
+                        match start().await {
+                            Ok(server) => {
+                                let _ = tx.send(Ok(server));
+                                std::future::pending::<()>().await
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Err(e.to_string()));
+                            }
+                        }
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+            rx.recv().map_err(|e| e.to_string())?
+        })
+        .as_ref()
+        .map_err(|e| e.clone())?;
     let mut e = crate::EndpointConfig::new(
         "demo",
         "Demo (built-in)",
