@@ -986,6 +986,35 @@ pub struct Observation {
     pub phrases: Vec<Phrase>,
     /// The episodes it is about (indexes, ascending), for showing them.
     pub episodes: Vec<usize>,
+    /// The requests it bears on: findings are ranked by it, warnings first.
+    pub impact: usize,
+    /// What acting on it would save, when that can be counted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saving: Option<Phrase>,
+    /// The saving in English.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saving_text: Option<String>,
+}
+
+impl Observation {
+    /// Weighs a finding: the requests it bears on and those acting on it would
+    /// save (out of `total`).
+    fn weigh(mut self, impact: usize, saves: usize, total: usize) -> Self {
+        self.impact = impact;
+        if saves > 0 {
+            let saving = p(
+                "obs.saves",
+                &[
+                    ("n", saves.to_string()),
+                    ("s", plural(saves)),
+                    ("pct", (saves * 100 / total.max(1)).max(1).to_string()),
+                ],
+            );
+            self.saving_text = Some(saving.en());
+            self.saving = Some(saving);
+        }
+        self
+    }
 }
 
 /// Notes that hold for (nearly) every step of a format: said once for the
@@ -1052,6 +1081,9 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             text: format!("{with} {} writes: {note}", f.name()),
             phrases,
             episodes: of_episodes(&|e| e.format == Some(f) && e.notes.contains(&note)),
+            impact: 0,
+            saving: None,
+            saving_text: None,
         });
     }
     let warn = |t: Phrase, episodes: Vec<usize>| Observation {
@@ -1059,44 +1091,63 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         text: t.en(),
         phrases: vec![t],
         episodes,
+        impact: 0,
+        saving: None,
+        saving_text: None,
     };
     let info = |t: Phrase, episodes: Vec<usize>| Observation {
         level: "info",
         text: t.en(),
         phrases: vec![t],
         episodes,
+        impact: 0,
+        saving: None,
+        saving_text: None,
     };
+    let total = records.len().max(1);
+    let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
     let unfinished =
         of_episodes(&|e| e.kind == Kind::Multipart && e.title.ends_with("(not completed)"));
     if !unfinished.is_empty() {
         let n = unfinished.len();
-        out.push(warn(
-            p("obs.unfinished", &[("n", n.to_string()), ("s", plural(n))]),
-            unfinished,
-        ));
+        let impact = requests_of(&unfinished);
+        out.push(
+            warn(
+                p("obs.unfinished", &[("n", n.to_string()), ("s", plural(n))]),
+                unfinished,
+            )
+            .weigh(impact, 0, total),
+        );
     }
     let orphans = of_episodes(&|e| e.title.contains("no commit followed"));
     if !orphans.is_empty() {
         let n = orphans.len();
-        out.push(warn(
-            if n == 1 {
-                p("obs.orphans.one", &[])
-            } else {
-                p("obs.orphans", &[("n", n.to_string())])
-            },
-            orphans,
-        ));
+        let impact = requests_of(&orphans);
+        out.push(
+            warn(
+                if n == 1 {
+                    p("obs.orphans.one", &[])
+                } else {
+                    p("obs.orphans", &[("n", n.to_string())])
+                },
+                orphans,
+            )
+            .weigh(impact, 0, total),
+        );
     }
     let retries = of_episodes(&|e| e.kind == Kind::Retry);
     let retried: usize = retries.iter().map(|&i| episodes[i].requests() - 1).sum();
     if retried > 0 {
-        out.push(warn(
-            p(
-                "obs.retried",
-                &[("n", retried.to_string()), ("s", plural(retried))],
-            ),
-            retries,
-        ));
+        out.push(
+            warn(
+                p(
+                    "obs.retried",
+                    &[("n", retried.to_string()), ("s", plural(retried))],
+                ),
+                retries,
+            )
+            .weigh(retried, 0, total),
+        );
     }
     // small files uploaded in parts: 3 requests where 1 PUT would do
     let mut uploads: HashMap<&str, (usize, u64, bool, Vec<u64>)> = HashMap::new();
@@ -1116,10 +1167,15 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .filter(|(parts, bytes, done, _)| *done && *parts == 1 && *bytes < 5 * 1024 * 1024)
         .collect();
     if small.len() >= 3 {
-        out.push(info(
-            p("obs.small", &[("n", small.len().to_string())]),
-            of_records(&mut small.iter().flat_map(|u| u.3.iter().copied())),
-        ));
+        let impact: usize = small.iter().map(|u| u.3.len()).sum();
+        out.push(
+            info(
+                p("obs.small", &[("n", small.len().to_string())]),
+                of_records(&mut small.iter().flat_map(|u| u.3.iter().copied())),
+            )
+            // one PUT for each: the rest of each upload's requests go
+            .weigh(impact, impact - small.len(), total),
+        );
     }
     let races: Vec<u64> = records
         .iter()
@@ -1127,13 +1183,16 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .map(|r| r.id)
         .collect();
     if !races.is_empty() {
-        out.push(info(
-            p(
-                "obs.races",
-                &[("n", races.len().to_string()), ("s", plural(races.len()))],
-            ),
-            of_records(&mut races.iter().copied()),
-        ));
+        out.push(
+            info(
+                p(
+                    "obs.races",
+                    &[("n", races.len().to_string()), ("s", plural(races.len()))],
+                ),
+                of_records(&mut races.iter().copied()),
+            )
+            .weigh(races.len(), 0, total),
+        );
     }
     // the same key read again and again
     let mut reads: HashMap<String, Vec<u64>> = HashMap::new();
@@ -1145,24 +1204,28 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             reads.entry(format!("{b}/{k}")).or_default().push(r.id);
         }
     }
-    let total = records.len().max(1);
     let mut hot: Vec<(String, Vec<u64>)> = reads
         .into_iter()
         .filter(|(_, ids)| ids.len() >= 10 && ids.len() * 10 >= total)
         .collect();
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     for (k, ids) in hot.into_iter().take(3) {
-        out.push(info(
-            p(
-                "obs.hot",
-                &[
-                    ("key", k),
-                    ("n", ids.len().to_string()),
-                    ("pct", (ids.len() * 100 / total).to_string()),
-                ],
-            ),
-            of_records(&mut ids.into_iter()),
-        ));
+        let n = ids.len();
+        out.push(
+            info(
+                p(
+                    "obs.hot",
+                    &[
+                        ("key", k),
+                        ("n", n.to_string()),
+                        ("pct", (n * 100 / total).to_string()),
+                    ],
+                ),
+                of_records(&mut ids.into_iter()),
+            )
+            // a cache reads it once
+            .weigh(n, n - 1, total),
+        );
     }
     // the same prefix listed again and again
     let mut lists: HashMap<String, Vec<u64>> = HashMap::new();
@@ -1184,14 +1247,131 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .collect();
     repeated.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     for (prefix_name, ids) in repeated.into_iter().take(3) {
-        out.push(info(
-            p(
-                "obs.listed",
-                &[("prefix", prefix_name), ("n", ids.len().to_string())],
-            ),
-            of_records(&mut ids.into_iter()),
-        ));
+        let n = ids.len();
+        out.push(
+            info(
+                p(
+                    "obs.listed",
+                    &[("prefix", prefix_name), ("n", n.to_string())],
+                ),
+                of_records(&mut ids.into_iter()),
+            )
+            .weigh(n, n - 1, total),
+        );
     }
+    // HEAD, then GET of the same object: the GET's answer has the HEAD's
+    let mut headed: HashMap<(&str, &str), (u64, chrono::DateTime<chrono::Utc>)> = HashMap::new();
+    let mut pairs: Vec<u64> = Vec::new();
+    let mut checked = 0usize;
+    for r in records {
+        let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
+            continue;
+        };
+        match r.operation.as_str() {
+            "HeadObject" if !r.is_error() => {
+                headed.insert((b, k), (r.id, r.time));
+            }
+            "GetObject" => {
+                if let Some((head, at)) = headed.remove(&(b, k))
+                    && (r.time - at).num_milliseconds() <= 2_000
+                {
+                    pairs.extend([head, r.id]);
+                    checked += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    if checked >= 3 {
+        out.push(
+            info(
+                p("obs.headget", &[("n", checked.to_string())]),
+                of_records(&mut pairs.iter().copied()),
+            )
+            .weigh(pairs.len(), checked, total),
+        );
+    }
+    // throttled: and how many requests were in flight when it happened
+    let throttled: Vec<&Record> = records
+        .iter()
+        .filter(|r| matches!(r.status, Some(503) | Some(429)))
+        .collect();
+    if !throttled.is_empty() {
+        let n = throttled.len();
+        let mut starts: Vec<i64> = records.iter().map(|r| r.time.timestamp_micros()).collect();
+        let mut ends: Vec<i64> = records
+            .iter()
+            .map(|r| r.time.timestamp_micros() + (r.latency_ms * 1000.0) as i64)
+            .collect();
+        starts.sort_unstable();
+        ends.sort_unstable();
+        // started by then and not yet answered (itself included)
+        let in_flight =
+            |t: i64| starts.partition_point(|s| *s <= t) - ends.partition_point(|e| *e <= t);
+        let least = throttled
+            .iter()
+            .map(|r| in_flight(r.time.timestamp_micros()))
+            .min()
+            .unwrap_or(1);
+        let phrase = if least >= 4 {
+            p(
+                "obs.throttled",
+                &[
+                    ("n", n.to_string()),
+                    ("s", plural(n)),
+                    ("min", least.to_string()),
+                    ("safe", least.to_string()),
+                ],
+            )
+        } else {
+            p(
+                "obs.throttled.rate",
+                &[("n", n.to_string()), ("s", plural(n))],
+            )
+        };
+        out.push(warn(phrase, of_records(&mut throttled.iter().map(|r| r.id))).weigh(n, 0, total));
+    }
+    // far slower than the rest: a second or more, and ten times the median
+    if records.len() >= 10 {
+        let mut lat: Vec<f64> = records.iter().map(|r| r.latency_ms).collect();
+        lat.sort_by(f64::total_cmp);
+        let median = lat[lat.len() / 2];
+        let over = (median * 10.0).max(1_000.0);
+        let slow: Vec<&Record> = records.iter().filter(|r| r.latency_ms >= over).collect();
+        if let Some(worst) = slow
+            .iter()
+            .max_by(|a, b| a.latency_ms.total_cmp(&b.latency_ms))
+        {
+            let n = slow.len();
+            let what = match &worst.key {
+                Some(k) => format!("{} {k}", worst.operation),
+                None => worst.operation.clone(),
+            };
+            out.push(
+                info(
+                    p(
+                        "obs.slow",
+                        &[
+                            ("n", n.to_string()),
+                            ("s", plural(n)),
+                            ("ms", format!("{over:.0}")),
+                            ("median", format!("{median:.0}")),
+                            ("op", what),
+                            ("max", format!("{:.0}", worst.latency_ms)),
+                        ],
+                    ),
+                    of_records(&mut slow.iter().map(|r| r.id)),
+                )
+                .weigh(n, 0, total),
+            );
+        }
+    }
+    // the most telling first: warnings, then by the requests they bear on
+    out.sort_by(|a, b| {
+        (b.level == "warn")
+            .cmp(&(a.level == "warn"))
+            .then(b.impact.cmp(&a.impact))
+    });
     out
 }
 

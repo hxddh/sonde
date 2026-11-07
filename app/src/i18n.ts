@@ -463,6 +463,10 @@ const en = {
   "versions.enabled": "On",
   "versions.suspended": "Suspended",
   "sessions.reading": "Reading the session…",
+  "why.obs.headget": "Each HEAD is a request and a round trip before the read. A GET returns the same headers with the body; a missing object answers 404 to either.",
+  "why.obs.throttled": "The store refused requests to protect itself; each one was retried or failed. Capping requests in flight, or spreading keys over more prefixes, keeps under its limit.",
+  "why.obs.throttled.rate": "The store refused requests to protect itself, even with few in flight: the rate per prefix is the limit. Back off with jitter, or spread keys over more prefixes.",
+  "why.obs.slow": "A few slow requests can set the pace of a whole program. Large objects read in ranges, retries with a timeout, or a region closer to the program shorten them.",
 };
 
 type Key = keyof typeof en;
@@ -923,6 +927,10 @@ const zh: Partial<Record<Key, string>> = {
   "versions.enabled": "已开启",
   "versions.suspended": "已暂停",
   "sessions.reading": "正在读取会话…",
+  "why.obs.headget": "每个 HEAD 都是读取之前多出的一次请求和一次往返。GET 会连同内容返回同样的头部；对象不存在时两者都返回 404。",
+  "why.obs.throttled": "存储为了保护自身拒绝了请求，每个都被重试或失败。限制同时进行的请求数，或者把键分散到更多前缀，可以保持在它的限制以下。",
+  "why.obs.throttled.rate": "即使同时进行的请求不多，存储也为了保护自身拒绝了请求：限制的是每个前缀的请求速率。带抖动地退避，或者把键分散到更多前缀。",
+  "why.obs.slow": "少数慢请求可能决定整个程序的速度。按范围读取大对象、带超时地重试，或者使用离程序更近的区域，可以缩短它们。",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

@@ -88,6 +88,19 @@ fn template(key: &str) -> &'static str {
         "obs.races" => "{n} conditional write{s} lost a race (412): another writer got there first",
         "obs.hot" => "{key} was read {n} times ({pct}% of all requests)",
         "obs.listed" => "{prefix} was listed {n} times",
+        "obs.headget" => {
+            "{n} objects were checked with HEAD and then read with GET: the GET alone answers both"
+        }
+        "obs.throttled" => {
+            "{n} request{s} throttled (503 SlowDown or 429), each with {min} or more in flight: under {safe} at once would likely avoid it"
+        }
+        "obs.throttled.rate" => {
+            "{n} request{s} throttled (503 SlowDown or 429): the store asked for fewer requests per second"
+        }
+        "obs.slow" => {
+            "{n} request{s} took over {ms} ms against a median of {median} ms; the slowest, {op}, took {max} ms"
+        }
+        "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
         _ => "",
     }
 }

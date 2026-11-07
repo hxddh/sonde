@@ -64,7 +64,11 @@ test("an example session reads as operations, each opening on its requests", asy
   await app.press("id:inspector-close");
   // each says why it matters, in place
   expect(app.texts().some((t) => t.startsWith("Every operation of this kind made the same requests"))).toBe(true);
-  await app.press("id:observation-1");
+  // ranked by the requests they bear on, with what acting on them saves
+  expect(app.shows("text:/^slate\\/db\\/gc\\/manifest.boundary was read 46 times/")).toBe(true);
+  expect(app.shows("id:observation-saving-0")).toBe(true);
+  expect(app.shows("text:45 fewer requests (26% of the session)")).toBe(true);
+  await app.press("id:observation-0");
   await app.waitFor("text:28 of 34 operations");
   await app.press("id:clear-filter");
   expect(app.shows("id:clear-filter")).toBe(false);

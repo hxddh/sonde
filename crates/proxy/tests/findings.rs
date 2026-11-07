@@ -1,0 +1,155 @@
+//! Findings added in 5.0, and how findings are ranked.
+
+use chrono::DateTime;
+use reqlog::Record;
+use sonde_proxy::episode::{Observation, episodes, observations};
+
+fn rec(id: u64, at_ms: i64, op: &str, key: Option<&str>, status: u16, latency: f64) -> Record {
+    let method = match op {
+        "HeadObject" => "HEAD",
+        "PutObject" => "PUT",
+        _ => "GET",
+    };
+    Record {
+        id,
+        time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
+        method: method.into(),
+        operation: op.into(),
+        bucket: Some("b".into()),
+        key: key.map(Into::into),
+        status: Some(status),
+        latency_ms: latency,
+        request_bytes: Some(0),
+        response_bytes: Some(10),
+        ..Default::default()
+    }
+}
+
+fn findings(recs: &[Record]) -> Vec<Observation> {
+    observations(recs, &episodes(recs))
+}
+
+fn key(o: &Observation) -> &str {
+    o.phrases[0].key
+}
+
+#[test]
+fn a_head_before_each_get_is_a_request_too_many() {
+    let mut recs = Vec::new();
+    for i in 0..4u64 {
+        let k = format!("data/{i}.parquet");
+        recs.push(rec(
+            i * 2 + 1,
+            i as i64 * 1000,
+            "HeadObject",
+            Some(&k),
+            200,
+            5.0,
+        ));
+        recs.push(rec(
+            i * 2 + 2,
+            i as i64 * 1000 + 10,
+            "GetObject",
+            Some(&k),
+            200,
+            5.0,
+        ));
+    }
+    let obs = findings(&recs);
+    let f = obs
+        .iter()
+        .find(|o| key(o) == "obs.headget")
+        .expect("HEAD then GET");
+    assert_eq!(
+        f.text,
+        "4 objects were checked with HEAD and then read with GET: the GET alone answers both"
+    );
+    assert_eq!(
+        f.saving.as_ref().unwrap().en(),
+        "4 fewer requests (50% of the session)"
+    );
+}
+
+#[test]
+fn throttling_under_load_says_how_many_at_once_was_too_many() {
+    // eight reads at once, two answered 503
+    let recs: Vec<Record> = (0..8u64)
+        .map(|i| {
+            rec(
+                i + 1,
+                i as i64,
+                "GetObject",
+                Some(&format!("k{i}")),
+                if i >= 6 { 503 } else { 200 },
+                200.0,
+            )
+        })
+        .collect();
+    let obs = findings(&recs);
+    let f = obs
+        .iter()
+        .find(|o| key(o) == "obs.throttled")
+        .expect("throttled");
+    assert_eq!(f.level, "warn");
+    assert!(
+        f.text.starts_with(
+            "2 requests throttled (503 SlowDown or 429), each with 7 or more in flight"
+        ),
+        "{}",
+        f.text
+    );
+}
+
+#[test]
+fn throttling_without_load_is_about_the_rate() {
+    let recs = [
+        rec(1, 0, "GetObject", Some("k"), 503, 5.0),
+        rec(2, 500, "GetObject", Some("k"), 200, 5.0),
+    ];
+    let obs = findings(&recs);
+    assert!(
+        obs.iter().any(|o| key(o) == "obs.throttled.rate"),
+        "{obs:#?}"
+    );
+}
+
+#[test]
+fn a_request_far_slower_than_the_rest_is_named() {
+    let mut recs: Vec<Record> = (0..20u64)
+        .map(|i| rec(i + 1, i as i64 * 100, "GetObject", Some("k"), 200, 8.0))
+        .collect();
+    recs.push(rec(21, 5_000, "GetObject", Some("big.bin"), 200, 3_250.0));
+    let obs = findings(&recs);
+    let f = obs.iter().find(|o| key(o) == "obs.slow").expect("slow");
+    assert_eq!(
+        f.text,
+        "1 request took over 1000 ms against a median of 8 ms; the slowest, GetObject big.bin, took 3250 ms"
+    );
+}
+
+#[test]
+fn warnings_come_first_then_the_findings_that_bear_on_more_requests() {
+    let mut recs = Vec::new();
+    let mut id = 0;
+    let mut push = |r: fn(u64) -> Record| {
+        id += 1;
+        recs.push(r(id));
+    };
+    // a key read 12 times, a listing repeated 5 times, one throttled request
+    for _ in 0..12 {
+        push(|id| rec(id, id as i64 * 50, "GetObject", Some("hot"), 200, 5.0));
+    }
+    for _ in 0..5 {
+        push(|id| rec(id, id as i64 * 50, "ListObjectsV2", None, 200, 5.0));
+    }
+    push(|id| rec(id, id as i64 * 50, "PutObject", Some("x"), 503, 5.0));
+    let obs = findings(&recs);
+    let order: Vec<&str> = obs.iter().map(key).collect();
+    assert_eq!(order.first(), Some(&"obs.throttled.rate"), "{order:?}");
+    let hot = order.iter().position(|k| *k == "obs.hot").unwrap();
+    let listed = order.iter().position(|k| *k == "obs.listed").unwrap();
+    assert!(hot < listed, "{order:?}");
+    for w in obs.windows(2) {
+        assert!(w[0].level == "warn" || w[1].level != "warn");
+    }
+}

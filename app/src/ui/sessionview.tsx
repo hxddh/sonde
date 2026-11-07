@@ -8,7 +8,7 @@ import { type JSX, platform, Scroll, signal, Text, View } from "nsh";
 import { Button as BaseButton, DataTable, type DataTableRef } from "nsh/base";
 import { bytes, date, ms } from "../format";
 import { t } from "../i18n";
-import { episodeNotes, episodeTitle, observationText, observationWhy } from "../phrases";
+import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
 import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
 import { Dot, Empty, rowHeight, terminal, TYPE } from "./kit";
@@ -197,6 +197,14 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       <View class="min-w-0 flex-1 gap-0.5">
         <Text class={`text-body text-foreground ${props.compact ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
         <If when={!props.compact && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
+        <If when={!props.compact && observationSaving(o())}>
+          {(v) => (
+            <View class="flex-row items-center gap-1 pt-0.5">
+              <Icon name="trending-down" size={12} tint="info" />
+              <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small font-medium text-info">{v()}</Text>
+            </View>
+          )}
+        </If>
       </View>
       <If when={props.onFilter && o().episodes?.length}>
         <View class="h-5 flex-row items-center gap-1">

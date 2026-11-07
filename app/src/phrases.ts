@@ -59,6 +59,11 @@ const zh: Record<string, string> = {
   "obs.races": "{n} 次条件写入竞争失败（412）：另一个写入者先到了",
   "obs.hot": "{key} 被读取了 {n} 次（占全部请求的 {pct}%）",
   "obs.listed": "{prefix} 被列出了 {n} 次",
+  "obs.headget": "{n} 个对象先用 HEAD 查看、再用 GET 读取：单独一个 GET 就能同时回答两者",
+  "obs.throttled": "{n} 个请求被限流（503 SlowDown 或 429），当时都有 {min} 个或更多请求在进行：同时少于 {safe} 个大概率可以避免",
+  "obs.throttled.rate": "{n} 个请求被限流（503 SlowDown 或 429）：存储要求降低每秒请求数",
+  "obs.slow": "{n} 个请求耗时超过 {ms} ms，而中位数是 {median} ms；最慢的是 {op}，耗时 {max} ms",
+  "obs.saves": "可少发 {n} 个请求（占会话的 {pct}%）",
 };
 
 const TEMPLATES: Record<string, Record<string, string>> = { zh };
@@ -84,6 +89,9 @@ export function episodeNotes(e: Episode, shared: string[]): string[] {
 }
 
 export const observationText = (o: Observation) => say(o.phrases, o.text);
+
+/** What acting on a finding would save, in the reader's language. */
+export const observationSaving = (o: Observation): string | null => (o.saving ? say([o.saving], o.savingText ?? "") : null);
 
 /** Why an observation matters, for the card it shows on hover: the key of its first phrase. */
 export const observationWhy = (o: Observation): string | null => {

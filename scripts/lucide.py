@@ -18,7 +18,7 @@ refresh-cw git-compare-arrows repeat-2 app-window panel-left panel-right list-fi
 timer arrow-up arrow-down layers boxes hard-drive cloud server key-round shield-check trash
 plus pencil sparkles activity gauge chart-gantt sun moon languages bell zoom-in zoom-out link
 share-2 package archive calendar-clock radio circle-dot plug flask-conical scale chart-pie sliders-horizontal corner-down-left
-file-clock scroll-text undo-2 command keyboard monitor rotate-ccw ban
+file-clock scroll-text undo-2 command keyboard monitor rotate-ccw ban trending-down
 """.split()))
 
 nodes = json.loads(pathlib.Path(sys.argv[1]).read_text())

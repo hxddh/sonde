@@ -466,6 +466,11 @@ export interface Observation {
   phrases?: Phrase[];
   /** The episodes it is about, by index. */
   episodes: number[];
+  /** The requests it bears on (findings come ranked by it, warnings first). */
+  impact?: number;
+  /** What acting on it would save, when that can be counted. */
+  saving?: Phrase;
+  savingText?: string;
 }
 
 export interface SessionSummary {
