@@ -28,7 +28,7 @@ const en = {
   "run.stop": "Stop",
   "run.recordOnly": "Record without a program",
   "run.title": "Run a program and see what it does to S3",
-  "run.hint": "Type a command above and press Return. sonde starts it in a terminal and signs its requests for the endpoint in the toolbar; the program gets throwaway keys, never yours.",
+  "run.hint": "Type a command above and press Return. Its requests are signed for the endpoint in the toolbar; the program never sees your keys.",
   "run.example": "Open an example",
   "run.running": "running",
   "run.exited": "exited with {code}",
@@ -446,6 +446,17 @@ const en = {
   "compat.title": "Compatibility",
   "compat.hint": "Probe how each endpoint differs from AWS: checksums, ranges, conditional writes, listing, multipart",
   "compat.open": "Check compatibility",
+  "sessions.openFile": "Open session file…",
+  "sessions.fileType": "sonde sessions",
+  "why.obs.shared": "Every operation of this kind made the same requests: a habit of the library that wrote them, not of one call. Change it once and all of them change.",
+  "why.obs.unfinished": "An upload that is started and never completed or aborted keeps its parts. They are billed as storage, invisible to listings, until an abort or a lifecycle rule (AbortIncompleteMultipartUpload) removes them.",
+  "why.obs.orphans": "Data files written with no commit after them belong to no version of the table. A failed or abandoned write leaves them; only a cleanup (vacuum, orphan-file removal) deletes them.",
+  "why.obs.retried": "The client repeated these after a 5xx, a throttle (503 SlowDown) or a timeout. A few are normal; many point at an overloaded endpoint or more concurrency than it takes.",
+  "why.obs.small": "A multipart upload takes at least three requests (create, part, complete). Under the part size threshold a single PUT does the same in one, faster and cheaper.",
+  "why.obs.races": "A conditional write (If-None-Match: * or If-Match) answered 412 Precondition Failed: two writers raced for the same key and the store kept the first. Expected where writers are fenced; worth a look where they should not meet.",
+  "why.obs.hot": "One key read again and again. Each read is a request and a round trip; a cache in front of it would remove most of them.",
+  "why.obs.listed": "Listing the same prefix again and again is slow (a page per 1000 keys) and billed per request; a manifest, or a listing kept between calls, avoids it.",
+  "obs.showOps": "Press to show its operations",
 };
 
 type Key = keyof typeof en;
@@ -475,7 +486,7 @@ const zh: Partial<Record<Key, string>> = {
   "run.stop": "停止",
   "run.recordOnly": "只录制，不运行程序",
   "run.title": "运行程序，看它对 S3 做了什么",
-  "run.hint": "在上方输入命令并回车。sonde 在终端里启动它，并为工具栏中的端点签名它的请求；程序拿到的是临时密钥，不是你的密钥。",
+  "run.hint": "在上方输入命令并回车。它的请求会按工具栏中的端点签名；程序永远拿不到你的密钥。",
   "run.example": "打开示例",
   "run.running": "运行中",
   "run.exited": "已退出，状态 {code}",
@@ -889,6 +900,17 @@ const zh: Partial<Record<Key, string>> = {
   "compat.title": "兼容性",
   "compat.hint": "探测每个端点与 AWS 的差异：校验和、范围读取、条件写入、列举、分段上传",
   "compat.open": "检查兼容性",
+  "sessions.openFile": "打开会话文件…",
+  "sessions.fileType": "sonde 会话",
+  "why.obs.shared": "这类操作每一次都发出了同样的请求：这是写入它们的库的习惯，而不是某一次调用。改一处，全部都会变。",
+  "why.obs.unfinished": "开始后既未完成也未中止的分段上传会保留它的分段。它们按存储计费，在列举中不可见，直到被中止或被生命周期规则（AbortIncompleteMultipartUpload）清除。",
+  "why.obs.orphans": "写入后没有提交跟随的数据文件不属于表的任何版本。失败或放弃的写入会留下它们；只有清理（vacuum、孤儿文件删除）才会删除它们。",
+  "why.obs.retried": "客户端在 5xx、限流（503 SlowDown）或超时后重发了这些请求。少量是正常的；大量则说明端点过载或并发超出它的承受能力。",
+  "why.obs.small": "分段上传至少需要三个请求（创建、上传分段、完成）。低于分段阈值时，一个 PUT 就能完成同样的事，更快也更便宜。",
+  "why.obs.races": "条件写入（If-None-Match: * 或 If-Match）返回了 412 Precondition Failed：两个写入者争用同一个键，存储保留了先到的那个。对有 fencing 的写入者这是预期行为；如果它们本不该相遇，值得查看。",
+  "why.obs.hot": "同一个键被反复读取。每次读取都是一次请求和一次往返；在它前面加一层缓存可以省掉大部分。",
+  "why.obs.listed": "反复列举同一个前缀很慢（每 1000 个键一页），而且按请求计费；使用清单文件，或在调用之间保留列举结果，可以避免。",
+  "obs.showOps": "点击显示相关操作",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

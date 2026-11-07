@@ -5,10 +5,10 @@
 // (sonde share) both draw with these.
 
 import { type JSX, platform, Scroll, Text, View } from "nsh";
-import { Button as BaseButton, DataTable, type DataTableRef } from "nsh/base";
+import { Button as BaseButton, DataTable, type DataTableRef, HoverCard } from "nsh/base";
 import { bytes, date, ms } from "../format";
 import { t } from "../i18n";
-import { episodeNotes, episodeTitle, observationText } from "../phrases";
+import { episodeNotes, episodeTitle, observationText, observationWhy } from "../phrases";
 import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
 import { Dot, Empty, terminal } from "./kit";
@@ -181,20 +181,41 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       <Scroll horizontal={props.oneLine} scrollable={!!props.oneLine} scrollbar={false} testID="observations" contentClass={props.oneLine ? "flex-row gap-1.5" : "flex-row flex-wrap gap-1.5"}>
         <Each of={props.view.observations}>
           {(o: () => Observation, i) => (
-            <BaseButton
-              testID={`observation-${i()}`}
-              accessibilityLabel={observationText(o())}
-              selected={props.filter === i()}
-              disabled={!props.onFilter || !o().episodes?.length}
-              onPress={() => press(i())}
-              class={`max-w-full flex-row items-center gap-1.5 rounded-full border px-2.5 py-1 ${o().level === "warn" ? "border-warn/40 bg-warn/10 hover:bg-warn/15 selected:bg-warn/25" : "border-border bg-card hover:bg-muted selected:border-primary/50 selected:bg-selection"}`}
+            <HoverCard
+              openDelay={450}
+              placement="bottom"
+              align="start"
+              popupClass="w-[340px] gap-2 rounded-(--radius-card) border border-border bg-popover p-3.5 shadow-xl"
+              popupStartingClass="opacity-0 translate-y-1"
+              popupEndingClass="opacity-0"
+              trigger={
+                <BaseButton
+                  testID={`observation-${i()}`}
+                  accessibilityLabel={observationText(o())}
+                  selected={props.filter === i()}
+                  disabled={!props.onFilter || !o().episodes?.length}
+                  onPress={() => press(i())}
+                  class={`max-w-full flex-row items-center gap-1.5 rounded-full border px-2.5 py-1 ${o().level === "warn" ? "border-warn/40 bg-warn/10 hover:bg-warn/15 selected:bg-warn/25" : "border-border bg-card hover:bg-muted selected:border-primary/50 selected:bg-selection"}`}
+                >
+                  <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={13} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
+                  <Text class="min-w-0 shrink text-xs text-foreground line-clamp-1">{observationText(o())}</Text>
+                  <If when={props.filter === i()}>
+                    <Icon name="x" size={12} />
+                  </If>
+                </BaseButton>
+              }
             >
-              <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={13} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
-              <Text class="min-w-0 shrink text-xs text-foreground line-clamp-1">{observationText(o())}</Text>
-              <If when={props.filter === i()}>
-                <Icon name="x" size={12} />
-              </If>
-            </BaseButton>
+              <View testID={`observation-card-${i()}`} class="gap-2">
+                <View class="flex-row gap-2">
+                  <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={14} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
+                  <Text class="min-w-0 flex-1 text-[13px] font-medium text-popover-foreground">{observationText(o())}</Text>
+                </View>
+                <If when={observationWhy(o())}>{(w) => <Text class="text-xs leading-5 text-muted-foreground">{w()}</Text>}</If>
+                <If when={props.onFilter && o().episodes?.length}>
+                  <Text class="text-[11px] text-primary">{`${t("obs.showOps")} (${o().episodes.length})`}</Text>
+                </If>
+              </View>
+            </HoverCard>
           )}
         </Each>
       </Scroll>

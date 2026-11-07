@@ -409,6 +409,43 @@ impl Sessions {
         Ok(path.to_string_lossy().into_owned())
     }
 
+    /// Adds a session file the user picked (its name and text) to the
+    /// sessions directory, if it reads as one; its new path.
+    pub fn import(name: String, text: String) -> Result<String, String> {
+        let dir = sonde().paths().sessions();
+        std::fs::create_dir_all(&dir).map_err(err_msg)?;
+        let stem: String = Path::new(&name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || "-_.".contains(c) {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let stem = if stem.is_empty() {
+            "imported".to_string()
+        } else {
+            stem
+        };
+        let mut path = dir.join(format!("{stem}.sonde"));
+        let mut n = 2;
+        while path.exists() {
+            path = dir.join(format!("{stem}-{n}.sonde"));
+            n += 1;
+        }
+        std::fs::write(&path, text).map_err(err_msg)?;
+        if let Err(e) = Session::open(&path) {
+            let _ = std::fs::remove_file(&path);
+            return Err(format!("{name} is not a sonde session: {e}"));
+        }
+        Ok(path.to_string_lossy().into_owned())
+    }
+
     /// Stops recording; the session file's path.
     pub fn stop() -> Option<String> {
         let r = RECORDING.lock().take()?;

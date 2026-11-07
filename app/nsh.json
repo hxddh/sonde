@@ -10,7 +10,8 @@
     "clipboard": true,
     "notifications": true,
     "windows": true,
-    "statusBar": true
+    "statusBar": true,
+    "picker": true
   },
   "macos": {
     "infoPlist": {

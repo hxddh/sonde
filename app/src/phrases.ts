@@ -4,7 +4,7 @@
 // other languages say the phrases from their templates here. A phrase with
 // no template in a language falls back to the English text, whole.
 
-import { lang } from "./i18n";
+import { type Key, lang, t } from "./i18n";
 import type { Episode, Observation, Phrase } from "./types";
 
 const zh: Record<string, string> = {
@@ -84,3 +84,12 @@ export function episodeNotes(e: Episode, shared: string[]): string[] {
 }
 
 export const observationText = (o: Observation) => say(o.phrases, o.text);
+
+/** Why an observation matters, for the card it shows on hover: the key of its first phrase. */
+export const observationWhy = (o: Observation): string | null => {
+  const key = o.phrases?.[0]?.key;
+  if (!key) return null;
+  const k = `why.${key === "obs.orphans.one" ? "obs.orphans" : key}`;
+  const s = t(k as Key);
+  return s === k ? null : s;
+};

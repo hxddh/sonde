@@ -9,7 +9,7 @@ import { t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
-import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, endpoints, go, openSession, readOnly, section, sessionsTick, storeTab } from "../store";
+import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, endpoints, go, openSession, openSessionFile, readOnly, section, sessionsTick, storeTab } from "../store";
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf } from "./sessionview";
@@ -48,6 +48,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
       label: t("menu.file"),
       submenu: [
         { label: t("run.start"), shortcut: "mod+r", onSelect: () => open("run") },
+        { label: t("sessions.openFile"), shortcut: "mod+o", onSelect: () => void openSessionFile() },
         { label: t("palette.open"), shortcut: "mod+k", onSelect: () => paletteOpen.set(true) },
         ...(mac ? [] : [{ type: "separator" } as const, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" } as const, { role: "quit", label: t("menu.quit") } as const]),
       ],

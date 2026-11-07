@@ -6,7 +6,7 @@ import { batch, effect, Notifications, platform, signal, Storage } from "nsh";
 import { isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { go, openSession, report, sessionsChanged } from "./store";
+import { area, go, openSession, report, sessionsChanged } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
 import { programOf } from "./ui/sessionview";
@@ -92,15 +92,17 @@ async function tellTheUser(r: RunResult, cmd: string) {
     const v = api.sessions.open(r.path);
     const warnings = v.observations.filter((o) => o.level === "warn").length;
     const body = [t("run.bandRequests", { n: v.summary.requests }), t("figure.operationsN", { n: v.episodes.length }), ...(warnings ? [t("run.toLook", { n: warnings })] : [])].join(" · ");
-    toast({
-      id: "run-ended",
-      kind: r.exit === 0 && !warnings ? "success" : "warning",
-      title: killed ? t("run.toastStopped", { command: programOf(cmd) ?? cmd }) : t("run.toastEnded", { command: programOf(cmd) ?? cmd, code: String(r.exit ?? "?") }),
-      description: body,
-      action: t("run.toastOpen"),
-      onAction: () => openLastRun(go),
-      duration: 8000,
-    });
+    // on Run the band says it; elsewhere a toast does
+    if (area() !== "run")
+      toast({
+        id: "run-ended",
+        kind: r.exit === 0 && !warnings ? "success" : "warning",
+        title: killed ? t("run.toastStopped", { command: programOf(cmd) ?? cmd }) : t("run.toastEnded", { command: programOf(cmd) ?? cmd, code: String(r.exit ?? "?") }),
+        description: body,
+        action: t("run.toastOpen"),
+        onAction: () => openLastRun(go),
+        duration: 8000,
+      });
     if ((await Notifications.requestPermission()) !== "granted") return;
     await Notifications.show({ id: "sonde-run", title: t("run.notifyTitle", { command: programOf(cmd) ?? cmd }), body });
   } catch {

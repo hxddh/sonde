@@ -2,7 +2,7 @@
 // errors, and navigation between sections. Rust owns the data; these
 // signals mirror it and are refreshed after each change.
 
-import { batch, signal } from "nsh";
+import { batch, Picker, signal } from "nsh";
 import { api, asError } from "./native";
 import { language, t } from "./i18n";
 import { toast, type ToastKind } from "./ui/toast";
@@ -168,6 +168,22 @@ export function init() {
   try {
     refreshSettings();
     refreshEndpoints();
+  } catch (e) {
+    report(e);
+  }
+}
+
+/** Asks for a `.sonde` file (one recorded elsewhere, or shared) and opens it in Sessions. */
+export async function openSessionFile() {
+  try {
+    const [picked] = await Picker.pickFiles({ filters: [{ name: t("sessions.fileType"), extensions: ["sonde"] }] });
+    if (!picked) return;
+    const path = api.sessions.import(picked.file.name, await picked.file.text());
+    batch(() => {
+      openSession.set(path);
+      sessionsChanged();
+      go("sessions");
+    });
   } catch (e) {
     report(e);
   }

@@ -13,7 +13,7 @@ import { running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, readOnly, report, section, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openSessionFile, readOnly, report, section, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityOpen } from "./src/ui/activity";
@@ -215,6 +215,7 @@ function installMenus() {
     "mod+shift+a": () => open("activity"),
     "mod+k": () => paletteOpen.set(!paletteOpen()),
     "mod+b": () => !terminal() && toggleSidebar(),
+    "mod+o": () => !terminal() && void openSessionFile(),
   });
   if (terminal()) keymap.bind({ "shift+;": () => paletteOpen.set(true) }, { when: "notEditing" });
 }

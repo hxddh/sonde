@@ -8,7 +8,7 @@ import { language, t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { command, history, lastRun, openLastRun, running, stop } from "../run";
-import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS } from "../store";
+import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { Kbd, terminal } from "./kit";
@@ -120,6 +120,7 @@ function actions(buckets: BucketEntry[]): Action[] {
       }
     },
   });
+  if (!terminal()) list.push({ id: "open-file", label: t("sessions.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "session", "import"], run: () => void openSessionFile() });
   list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => go("settings") });
   list.push({
     id: "read-only",

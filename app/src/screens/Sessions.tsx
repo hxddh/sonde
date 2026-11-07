@@ -12,7 +12,7 @@ import { Button as BaseButton, ResizablePanel, ResizablePanelGroup, Sheet, type 
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { t } from "../i18n";
 import { api } from "../native";
-import { crumb, go, notify, openSession, report, sessionsChanged, sessionsTick, shellWidth } from "../store";
+import { crumb, go, notify, openSession, openSessionFile, report, sessionsChanged, sessionsTick, shellWidth } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
@@ -380,6 +380,9 @@ export function Sessions() {
         <Text role="header" class="flex-1 text-[13px] font-semibold text-foreground">
           {t("timeline.sessions")}
         </Text>
+        <If when={!terminal()}>
+          <IconButton icon="folder-open" label={t("sessions.openFile")} shortcut="mod+o" onPress={() => void openSessionFile()} testID="open-file" />
+        </If>
         <IconButton icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
       </View>
       <If when={sessions().length > 0} else={<Text class="px-2 text-xs text-muted-foreground">{t("timeline.empty")}</Text>}>
@@ -411,6 +414,9 @@ export function Sessions() {
     <Empty icon="list-clock" title={t("sessions.noneTitle")} text={t("sessions.noneText")} testID="sessions-empty">
       <Button variant="primary" icon="play" label={t("sessions.runOne")} onPress={() => go("run")} />
       <Button variant="outline" icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
+      <If when={!terminal()}>
+        <Button variant="ghost" icon="folder-open" label={t("sessions.openFile")} onPress={() => void openSessionFile()} />
+      </If>
     </Empty>
   );
 
