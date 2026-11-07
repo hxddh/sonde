@@ -33,7 +33,8 @@ jobs:
           grep -q "^version = \"$v\"" Cargo.toml || { echo "::error::Cargo.toml is not at $v"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
-        with: { path: dist, merge-multiple: true }
+        # the binaries and the app (not the viewer's site, which is inside them)
+        with: { path: dist, pattern: "sonde-[lm]*", merge-multiple: true }
       - name: Checksums
         run: cd dist && cat *.sha256 > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md

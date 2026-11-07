@@ -12,7 +12,25 @@ env:
   NSH_REV: beeb9fc7707e0d4a195a4f7274f77b30e134c500
 
 jobs:
+  viewer:
+    # the page `sonde share` writes: Native Shell's web target, built once
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: wasm32-unknown-unknown }
+      - uses: Swatinem/rust-cache@v2
+        with: { key: viewer }
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - run: cd viewer && nsh package App.tsx --target web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sonde-viewer
+          path: viewer/.nsh/out/sonde-viewer
+
   terminal:
+    needs: viewer
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +50,8 @@ jobs:
         with: { rev: "${{ env.NSH_REV }}" }
       - name: Bundle the app
         run: cd app && nsh build App.tsx --release
+      - uses: actions/download-artifact@v4
+        with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Build sonde (CLI + TUI)
         run: cargo build --release --locked -p sonde-cli --features tui --target ${{ matrix.target }}
       - name: Check the binary needs no GUI libraries
@@ -43,6 +63,8 @@ jobs:
       - name: Check the binary on macOS
         if: runner.os == 'macOS'
         run: otool -L target/${{ matrix.target }}/release/sonde
+      - name: sonde share has its viewer
+        run: test -n "$(target/${{ matrix.target }}/release/sonde share crates/proxy/tests/fixtures/delta.sonde -o share-check 2>&1 >/dev/null; ls share-check/index.html)"
       - name: Package
         run: |
           mkdir -p dist

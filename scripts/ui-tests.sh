@@ -20,3 +20,4 @@ nsh test tests/desktop.test.tsx
 nsh test tests/screens.test.tsx
 nsh test tests/run.test.tsx
 nsh test tests/terminal.test.tsx --target tui
+(cd ../viewer && nsh test tests/viewer.test.tsx)
