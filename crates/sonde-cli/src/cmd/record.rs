@@ -9,8 +9,9 @@ use clap::Args;
 use reqlog::{Record, RequestLog};
 use sonde_core::Sonde;
 use sonde_core::guard::human_bytes;
+use sonde_proxy::episode::{Episode, Outcome, episodes, observations, shared_notes};
 use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
-use sonde_proxy::summary::{Summary, summarize};
+use sonde_proxy::summary::summarize;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
 
 use crate::Cli;
@@ -60,9 +61,12 @@ pub struct ShowArgs {
     /// Only the summary.
     #[arg(long)]
     summary: bool,
-    /// Only error responses.
+    /// Only what failed.
     #[arg(long)]
     errors: bool,
+    /// One line per request instead of per operation.
+    #[arg(long)]
+    requests: bool,
     #[arg(long, short = 'f', value_enum, default_value_t)]
     format: Format,
 }
@@ -260,10 +264,70 @@ fn visible_len(r: &Record, refused: bool) -> usize {
     }
 }
 
-fn print_summary(s: &Summary, endpoint: &str, path: &Path, color: bool) {
+/// One operation on one line: time, format, what happened, size of it, notes.
+/// `width` pads the title; `hide` lists notes said once for the session.
+/// `formats`: whether the session has format steps (else no format column).
+pub fn episode_line(
+    e: &Episode,
+    width: usize,
+    hide: &[String],
+    formats: bool,
+    color: bool,
+) -> String {
+    let time = e
+        .start
+        .with_timezone(&chrono::Local)
+        .format("%H:%M:%S%.3f")
+        .to_string();
+    let format = e.format.map(|f| f.name()).unwrap_or("");
+    let n = e.requests();
+    let meta = format!(
+        "{n} req{} · {:.0} ms",
+        if n == 1 { "" } else { "s" },
+        e.millis()
+    );
+    let pad = width.saturating_sub(e.title.chars().count());
+    let column = if formats {
+        format!(
+            "{}{}  ",
+            paint(format, "36", color),
+            " ".repeat(7usize.saturating_sub(format.len()))
+        )
+    } else {
+        String::new()
+    };
+    let mut line = format!(
+        "{}  {column}{}{}  {}",
+        paint(&time, "2", color),
+        e.title,
+        " ".repeat(pad),
+        paint(&format!("{meta:>16}"), "2", color),
+    );
+    match &e.outcome {
+        Outcome::Ok => {}
+        Outcome::Failed(why) => line.push_str(&paint(&format!("  ✗ {why}"), "31", color)),
+        Outcome::Refused => line.push_str(&paint("  refused by sonde", "33", color)),
+    }
+    let notes: Vec<&str> = e
+        .notes
+        .iter()
+        .filter(|n| !hide.contains(n))
+        .map(String::as_str)
+        .collect();
+    if !notes.is_empty() {
+        line.push_str(&paint(&format!("  · {}", notes.join(" · ")), "2", color));
+    }
+    line
+}
+
+fn print_summary(records: &[Record], endpoint: &str, path: &Path, color: bool) {
+    let s = &summarize(records);
+    let eps = episodes(records);
     let mut head = format!(
-        "{} requests to {endpoint} in {:.1} s",
-        s.requests, s.seconds
+        "{} requests ({} operations) to {endpoint} in {:.1} s",
+        s.requests,
+        eps.len(),
+        s.seconds
     );
     if s.errors > 0 {
         head.push_str(&format!(
@@ -314,6 +378,14 @@ fn print_summary(s: &Summary, endpoint: &str, path: &Path, color: bool) {
     for (what, n) in &s.error_codes {
         eprintln!("  {n} × {what}");
     }
+    for o in observations(records, &eps) {
+        let mark = if o.level == "warn" {
+            paint("!", "33", color)
+        } else {
+            paint("·", "2", color)
+        };
+        eprintln!("{mark} {}", o.text);
+    }
     eprintln!(
         "{}",
         paint(&format!("session: {}", path.display()), "2", color)
@@ -356,7 +428,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
     let color = std::io::stderr().is_terminal();
     print_summary(
-        &summarize(&session.records),
+        &session.records,
         &session.header.endpoint,
         &started.path,
         color,
@@ -384,7 +456,7 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
     started.writer.flush()?;
     let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
     print_summary(
-        &summarize(&session.records),
+        &session.records,
         &session.header.endpoint,
         &started.path,
         std::io::stderr().is_terminal(),
@@ -394,20 +466,18 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
 
 pub async fn show(a: &ShowArgs) -> anyhow::Result<i32> {
     let session = Session::open(&a.file).map_err(|e| anyhow::anyhow!(e))?;
-    let records: Vec<&Record> = session
-        .records
-        .iter()
-        .filter(|r| !a.errors || r.is_error())
-        .collect();
+    let all = &session.records;
+    let eps = episodes(all);
     match a.format {
         Format::Json => {
-            let owned: Vec<Record> = records.into_iter().cloned().collect();
             println!(
                 "{}",
                 output::json(&serde_json::json!({
                     "session": session.header,
-                    "summary": summarize(&owned),
-                    "records": owned,
+                    "summary": summarize(all),
+                    "episodes": eps,
+                    "observations": observations(all, &eps),
+                    "records": all,
                 }))
             );
         }
@@ -416,14 +486,35 @@ pub async fn show(a: &ShowArgs) -> anyhow::Result<i32> {
             if let Some(c) = &session.header.command {
                 println!("{}", paint(&format!("$ {c}"), "1", color));
             }
-            if !a.summary {
-                for r in &records {
+            if !a.summary && a.requests {
+                for r in all
+                    .iter()
+                    .filter(|r| !a.errors || sonde_proxy::summary::is_failure(r))
+                {
                     println!("{}", timeline_line(r, color));
                 }
+            } else if !a.summary {
+                let shown: Vec<&Episode> = eps
+                    .iter()
+                    .filter(|e| !a.errors || e.outcome != Outcome::Ok)
+                    .collect();
+                let width = shown
+                    .iter()
+                    .map(|e| e.title.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    .min(60);
+                let hide: Vec<String> = shared_notes(&eps)
+                    .into_iter()
+                    .map(|(_, n, _, _)| n)
+                    .collect();
+                let formats = eps.iter().any(|e| e.format.is_some());
+                for e in shown {
+                    println!("{}", episode_line(e, width, &hide, formats, color));
+                }
             }
-            let owned: Vec<Record> = records.into_iter().cloned().collect();
             print_summary(
-                &summarize(&owned),
+                all,
                 &session.header.endpoint,
                 &a.file,
                 std::io::stderr().is_terminal(),

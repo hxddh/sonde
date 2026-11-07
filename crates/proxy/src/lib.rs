@@ -8,6 +8,7 @@
 //! back unchanged.
 
 pub mod chunked;
+pub mod episode;
 pub mod op;
 pub mod session;
 pub mod summary;
