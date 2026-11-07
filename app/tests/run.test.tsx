@@ -61,3 +61,26 @@ test("an example session reads as operations, each opening on its requests", asy
   await app.waitFor("id:record-detail");
   expect(app.shows("text:if-none-match")).toBe(true);
 });
+
+test("a session as a waterfall, replayed from the app, and the answers compared", async () => {
+  const app = await demo();
+  // a replay writes: sonde must not be read-only
+  await place(app, "settings");
+  await app.press("id:read-only");
+  await app.waitFor("text:Writes enabled");
+  await place(app, "run");
+  await app.type("id:run-command", "curl -s -X PUT --data hello $AWS_ENDPOINT_URL/demo/t.txt -o /dev/null; curl -s $AWS_ENDPOINT_URL/demo/t.txt");
+  await app.press("id:run-start");
+  await app.waitFor("id:run-ended", { timeout: 20000 });
+  await app.press("id:run-open-session");
+  await app.waitFor("id:session-pane");
+  await app.press("label:Waterfall");
+  await app.waitFor("id:waterfall");
+  await app.press("id:replay-open");
+  await app.waitFor("id:replay-plan", { timeout: 5000 });
+  expect(app.shows("text:/2 requests \\(1 writes, 0 deletes\\) under replay-/")).toBe(true);
+  await app.press("id:replay-run");
+  await app.waitFor("id:compare", { timeout: 20000 });
+  expect(app.shows("text:2 requests compared: 2 the same")).toBe(true);
+  expect(app.shows("id:compare-diff")).toBe(true);
+});

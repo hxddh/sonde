@@ -86,6 +86,9 @@ export const api = {
     resize: (cols: number, rows: number) => Sessions.resize(cols, rows),
     kill: () => Sessions.kill(),
     logLines: (path: string) => Sessions.logLines(path) as T.LogLine[],
+    replayPlan: (path: string, endpoint: string) => Sessions.replayPlan(path, endpoint),
+    replay: (path: string, endpoint: string, prefix: string) => Sessions.replay(path, endpoint, prefix),
+    compare: (a: string, b: string) => Sessions.compare(a, b),
   },
 };
 

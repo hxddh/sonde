@@ -274,11 +274,21 @@ export function linesOf(lines: LogLine[], e: Episode): number[] {
   return before >= 0 ? [before] : [];
 }
 
-/** The operations running when a line was printed (or the first one after it). */
+/** The operations running when a line was printed, or else the nearest one.
+ * Output is read a moment after it is written, so a line can come in just
+ * after the request it announced: the nearest operation, before or after. */
 export function operationsAt(episodes: Episode[], line: LogLine): number[] {
   const at = time(line.time);
   const running = episodes.flatMap((e, i) => (time(e.start) <= at && at <= time(e.end) ? [i] : []));
   if (running.length) return running;
-  const next = episodes.findIndex((e) => time(e.start) >= at);
-  return next >= 0 ? [next] : [];
+  let best = -1;
+  let gap = Infinity;
+  episodes.forEach((e, i) => {
+    const d = at < time(e.start) ? time(e.start) - at : at - time(e.end);
+    if (d < gap) {
+      gap = d;
+      best = i;
+    }
+  });
+  return best >= 0 ? [best] : [];
 }
