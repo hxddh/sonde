@@ -4,6 +4,11 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-07
+
+sonde now looks at traffic, not only at buckets: record what an application does to its object store, read it as
+operations, and replay it on another endpoint to see where they disagree. The Timeline is the app's home.
+
 ### Added
 
 - `sonde run -- <command>`: runs a command against a local S3 endpoint that re-signs every request with sonde's
@@ -16,12 +21,21 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 - `sonde replay <session> -e <endpoint>`: re-enacts a session on another endpoint under a fresh key prefix (upload
   ids, ETags and continuation tokens mapped; payloads synthetic; bucket changes left out), cleans up, and compares
   every answer — exit 2 when anything differs. `sonde diff` compares two session files.
+- The Timeline (macOS app and terminal UI): sessions, operations, their requests and the inspector; Record starts a
+  local endpoint for the current endpoint and shows what to point an application at; an example session.
 - Records keep control documents (DeleteObjects, tagging, lifecycle XML), for replay.
 - `sonde-proxy` crate; SDK smoke tests (boto3, JS v3, Go v2, Java v2) run through `sonde run` in CI.
+
+### Changed
+
+- The app opens on the Timeline; in the terminal's home list it is `1`, so the other sections moved down by one.
+- Integration tests run on Ceph RGW and RustFS; MinIO is optional (`MINIO_IMAGE`), its public images are gone.
 
 ### Fixed
 
 - `install.sh` checks a `.sha256` per file: releases now publish them.
+- The IMDSv2 token request sends `Content-Length: 0` (some metadata servers refused it with 411).
+- The macOS disk image is sized explicitly (hdiutil sometimes ran out of room).
 
 ## [0.1.0] - 2026-11-06
 
