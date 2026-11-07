@@ -4,6 +4,45 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-07
+
+sonde is now one gesture: type a command and watch what it does to your object store. Run is the home, the app has
+four places and a command palette, and it runs on macOS, Linux and Windows.
+
+### Added
+
+- **Run**: a command runs in a real terminal inside the app (a PTY; ConPTY on Windows) with its S3 traffic recorded;
+  its requests appear beside it as operations while it runs, and a notification says when it ends. It works in
+  the terminal UI too.
+- The program's output is kept in the session with the time it arrived, and Sessions line it up with the
+  operations: choose an operation and the lines it printed light up, choose a line and the operations running then do.
+- Sessions: a waterfall of operations; **Replay** on another endpoint from the app (the plan in a dialog, refused
+  while read-only); **Compare** two sessions — the differences grouped, and both as transcripts side by side; open a
+  session in a window of its own.
+- `sonde share`: a session as a static web page anyone can open (operations, observations, output, every request),
+  written to a folder or served with `--serve`; `--json` for the computed document alone.
+- A command palette (⌘K; `:` in the terminal UI) with every place, tab and action.
+- The desktop app for Linux (GTK 4) and Windows, built and released by CI.
+- Updates in the desktop app (Settings › Updates): check, download, install and restart, from GitHub Releases; only
+  when asked. Releases publish `latest.json`.
+
+### Changed
+
+- Four places — Run, Sessions, Store (the bucket tools as tabs) and Settings (configuration, endpoints, requests,
+  jobs, audit) — replace the nine sections; ⌘1–⌘3 and ⌘, reach them, `1`–`4` in the terminal's home list.
+- The Timeline became Sessions.
+- Native Shell updated to `beeb9fc`.
+- The first window opens at 1280×820, big enough for Run's two panes.
+
+### Removed
+
+- The plugin system: signed packages, trust roots, revocation lists, `sonde plugin`, the Plugins screen and the
+  Delta lens example. Layout decoders stay built in.
+
+### Fixed
+
+- The demo server outlived only the runtime that started it first; it now runs on a thread of its own.
+
 ## [1.0.0] - 2026-11-07
 
 sonde now looks at traffic, not only at buckets: record what an application does to its object store, read it as
