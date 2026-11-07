@@ -114,10 +114,10 @@ export function Multipart() {
               </View>
               <DataTable
                 testID="uploads"
-                class="h-[420px] rounded-(--radius) border border-border"
+                class="h-[420px] rounded-(--radius-card) border border-border bg-card"
                 columns={[
                   { key: "flag", title: "", width: 28 },
-                  { key: "key", title: "Key", width: 300 },
+                  { key: "key", title: "Key", width: 240, minWidth: 120 },
                   { key: "uploadId", title: "Upload ID", width: 160 },
                   { key: "initiated", title: "Initiated", width: 130 },
                   { key: "age", title: t("mpu.age"), width: 70, align: "end" },
@@ -126,7 +126,10 @@ export function Multipart() {
                   { key: "cost", title: t("mpu.costMonth"), width: 90, align: "end" },
                 ]}
                 data={r().uploads.map((u) => ({ flag: u.stale ? "!" : "", key: u.key, uploadId: u.uploadId, initiated: date(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
-                rowClasses={r().uploads.map((u) => (u.stale ? "text-warn" : ""))}
+                rowClasses={r().uploads.map((u) => (u.stale ? "text-warn" : "text-foreground"))}
+                fontSize={13}
+                rowHeight={terminal() ? undefined : 30}
+                classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-xs font-medium text-muted-foreground", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
                 sort={{ key: "age", direction: "descending" }}
               />
               <KeyValue rows={[["Scanned", r().scannedAt], [t("common.endpoint"), r().endpoint]]} />

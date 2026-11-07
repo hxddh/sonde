@@ -13,7 +13,7 @@ import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, end
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf } from "./sessionview";
-import { IconButton, Kbd, Tip } from "./kit";
+import { fill, glass, IconButton, Kbd, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { paletteOpen } from "./palette";
 
@@ -102,7 +102,8 @@ export function EndpointSwitcher(props: { class?: string }) {
       offset={4}
       class={`h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-input bg-background pl-2 pr-1 hover:border-ring/60 ${props.class ?? "w-52"}`}
       inputClass="min-w-0 flex-1 text-[13px] text-foreground placeholder:text-foreground"
-      popupClass="min-w-[260px] rounded-(--radius-card) border border-border bg-popover p-1 shadow-lg"
+      popupClass={`min-w-[260px] rounded-(--radius-card) border border-border ${fill("bg-popover/90", "bg-popover")} p-1 shadow-lg`}
+      popupStyle={glass}
       itemClass="group rounded-(--radius-sm) px-2 py-1.5 focus:bg-accent"
       prefix={<Icon name="server" size={14} />}
       triggerButton={<Icon name="chevrons-up-down" size={13} />}

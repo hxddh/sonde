@@ -17,7 +17,7 @@ import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, 
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityOpen } from "./src/ui/activity";
-import { Badge, terminal } from "./src/ui/kit";
+import { Badge, fill, glass, terminal } from "./src/ui/kit";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, toggleSidebar, Toolbar } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
@@ -99,7 +99,7 @@ function DesktopShell() {
           {screen(area())}
         </View>
       </View>
-      <Sheet open={activityOpen()} side="right" onOpenChange={(e) => !e.open && activityOpen.set(false)} popupClass="w-[600px] max-w-[94%] border-l border-t border-border bg-background shadow-xl" popupStyle={{ marginTop: 44 }} backdropClass="bg-black/15">
+      <Sheet open={activityOpen()} side="right" onOpenChange={(e) => !e.open && activityOpen.set(false)} popupClass={`w-[600px] max-w-[94%] border-l border-t border-border ${fill("bg-background/90", "bg-background")} shadow-xl`} popupStyle={{ marginTop: 44, ...glass }} backdropClass="bg-black/15">
         <Activity onClose={() => activityOpen.set(false)} />
       </Sheet>
       <Palette />

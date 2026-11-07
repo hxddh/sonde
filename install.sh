@@ -3,7 +3,7 @@
 # SHA-256.
 #
 #   curl -fsSL https://raw.githubusercontent.com/hxddh/sonde/main/install.sh | sh
-#   SONDE_VERSION=2.1.0 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
+#   SONDE_VERSION=3.0.0 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
 set -eu
 repo="hxddh/sonde"
 version="${SONDE_VERSION:-latest}"

@@ -11,7 +11,7 @@ import { command, history, lastRun, openLastRun, running, stop } from "../run";
 import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { Kbd, terminal } from "./kit";
+import { fill, glass, Kbd, terminal } from "./kit";
 import { keyLabel } from "./keys";
 
 export const paletteOpen = signal(false);
@@ -194,8 +194,8 @@ export function Palette() {
       onOpenChange={({ open }) => paletteOpen.set(open)}
       animation="fade"
       backdropClass={terminal() ? undefined : "bg-black/25"}
-      style={terminal() ? undefined : { marginTop: 96 }}
-      class={terminal() ? "w-full" : "w-[600px] max-w-[92%] self-center overflow-hidden rounded-(--radius-card) border border-border bg-popover shadow-2xl"}
+      style={terminal() ? undefined : { marginTop: 96, ...glass }}
+      class={terminal() ? "w-full" : `w-[600px] max-w-[92%] self-center overflow-hidden rounded-(--radius-card) border border-border ${fill("bg-popover/85", "bg-popover")} shadow-2xl`}
       testID="palette-dialog"
     >
       <Command

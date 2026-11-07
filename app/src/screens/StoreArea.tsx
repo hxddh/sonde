@@ -13,7 +13,7 @@ import { api, Listing } from "../native";
 import { bucket, chooseBucket, endpoint, go, notify, prefix, report, STORE_TABS, type StoreTab, storeSheet, storeTab } from "../store";
 import type { BucketEntry, Entry } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { IconButton, terminal } from "../ui/kit";
+import { fill, glass, IconButton, terminal } from "../ui/kit";
 import { TabBar } from "../ui/tabs";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
@@ -205,8 +205,8 @@ function DetailSheet() {
       open={storeSheet() !== null}
       side="right"
       onOpenChange={(e) => !e.open && close()}
-      popupClass="w-[760px] max-w-[94%] border-l border-t border-border bg-background shadow-xl"
-      popupStyle={{ marginTop: 44 }}
+      popupClass={`w-[760px] max-w-[94%] border-l border-t border-border ${fill("bg-background/90", "bg-background")} shadow-xl`}
+      popupStyle={{ marginTop: 44, ...glass }}
       backdropClass="bg-black/15"
     >
       <If when={storeSheet()}>

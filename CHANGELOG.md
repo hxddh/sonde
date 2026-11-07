@@ -4,6 +4,44 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-07
+
+Fewer places, each doing more by itself. The app has three places — Run, Sessions, Buckets — and says what it
+noticed without being asked; Settings, sonde's own activity and compatibility move out of the way; and what sonde
+says about a session reads in Chinese as well as English.
+
+### Added
+
+- Buckets open on an overview above the objects: incomplete uploads and what they cost, versioning, the layouts
+  sonde recognises, the size once measured — each card shown only when it has something to say, filled in as the
+  bucket opens, and opening its detail (the uploads and the lifecycle verdict, a key's versions, the size by class
+  and prefix, a decoded layout) in a sheet for the prefix on screen. No forms to fill first.
+- Activity (toolbar, ⌘⇧A): sonde's own requests, its jobs and the changes it made, in a sheet from the window's edge;
+  the toolbar button counts the jobs running.
+- Settings in a window of their own (⌘, / Ctrl+,): General and Endpoints.
+- Compatibility opens from Settings › Endpoints in its own window.
+- Open a `.sonde` file recorded elsewhere or sent to you: ⌘O, the palette, or Sessions.
+- Resting on an observation shows why it matters (a card on hover).
+- Operations, notes and observations are localised: the analysis is structured phrases (a key and its arguments)
+  rendered in the app and the shared web page in English or Chinese. The CLI prints the same English as before.
+- Screenshots in CI on macOS and Windows as well as Linux (`sonde-shots-<platform>` artifacts).
+- A run's end is announced to screen readers.
+
+### Changed
+
+- The sidebar holds three places: Run, Sessions, Buckets (Store renamed). Activity and Settings left it.
+- On macOS, floating surfaces (the palette, sheets, cards, menus) use a material over what is behind them: Liquid
+  Glass on macOS 26, a blur before. Overview cards rise into place (not with reduced motion).
+- On Run, the status band says a run ended; the toast is for when you are elsewhere.
+- Run's introduction is shorter; "Multipart" and "Capacity" read "Incomplete uploads" and "Size".
+- The terminal UI keeps every place on its home list (Run, Sessions, Buckets, Activity, Settings) and the bucket
+  tools as tabs.
+
+### Removed
+
+- The Requests, Jobs and Audit pages (now Activity), and the Multipart, Versions, Capacity, Layouts and
+  Compatibility tabs in a window (now the overview's sheets and the Compatibility window).
+
 ## [2.1.0] - 2026-11-07
 
 The desktop app, made with care: a design system before the pages, Native Shell's components used to the full, and

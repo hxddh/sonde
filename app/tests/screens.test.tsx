@@ -71,7 +71,7 @@ test("layouts: detects and decodes the real SlateDB sample, with replay", async 
 test("compatibility: runs probes on the demo and fills the matrix", async () => {
   const app = await withDemo();
   await place(app, "probes");
-  await app.press("id:probe-ep-demo");
+  // the endpoint in use comes chosen
   await app.type("id:probe-bucket", "demo");
   await app.type("id:probe-only", "range.,consistency.");
   await app.press("id:probe-run");

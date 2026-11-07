@@ -8,7 +8,7 @@ import { ms } from "../format";
 import { t } from "../i18n";
 import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
-import { endpoints, notify, report, showRequest } from "../store";
+import { bucket, endpoint, endpoints, notify, report, showRequest } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
 import { Badge, Bar, Button, Card, Check, Choice, Empty, Field, Heading, Mono, Muted, Page, SimpleTable, terminal, Title, Toggle } from "../ui/kit";
 
@@ -94,8 +94,9 @@ function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: num
 }
 
 export function Probes() {
-  const chosen = signal<Record<string, boolean>>({});
-  const scratch = signal("");
+  // the endpoint in use, and the bucket open, to start from
+  const chosen = signal<Record<string, boolean>>(endpoint() ? { [endpoint()!]: true } : {});
+  const scratch = signal(bucket() ?? "");
   const temp = signal(false);
   const slow = signal(true);
   const only = signal("");

@@ -2,7 +2,7 @@
 // it. Its output is kept (the last 2 MB) so a terminal mounted later shows
 // it from the start; listeners get what arrives after.
 
-import { batch, effect, Notifications, platform, signal, Storage } from "nsh";
+import { announce, batch, effect, Notifications, platform, signal, Storage } from "nsh";
 import { isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
@@ -92,12 +92,15 @@ async function tellTheUser(r: RunResult, cmd: string) {
     const v = api.sessions.open(r.path);
     const warnings = v.observations.filter((o) => o.level === "warn").length;
     const body = [t("run.bandRequests", { n: v.summary.requests }), t("figure.operationsN", { n: v.episodes.length }), ...(warnings ? [t("run.toLook", { n: warnings })] : [])].join(" · ");
+    const title = killed ? t("run.toastStopped", { command: programOf(cmd) ?? cmd }) : t("run.toastEnded", { command: programOf(cmd) ?? cmd, code: String(r.exit ?? "?") });
+    // read out to a screen reader wherever the focus is
+    announce(`${title}. ${body}`);
     // on Run the band says it; elsewhere a toast does
     if (area() !== "run")
       toast({
         id: "run-ended",
         kind: r.exit === 0 && !warnings ? "success" : "warning",
-        title: killed ? t("run.toastStopped", { command: programOf(cmd) ?? cmd }) : t("run.toastEnded", { command: programOf(cmd) ?? cmd, code: String(r.exit ?? "?") }),
+        title,
         description: body,
         action: t("run.toastOpen"),
         onAction: () => openLastRun(go),

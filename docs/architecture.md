@@ -71,6 +71,18 @@ compose these; they do not style base components of their own.
 
 ## The two forms
 
-`App.tsx` branches on `platform.idiom === "terminal"`: windows get a sidebar with four places (Run,
-Sessions, Store, Settings), the command palette and Plot charts; terminals get a navigation stack, the F10 menu bar, keyboard shortcuts, tables and sentences
-instead of charts. The same screens serve both, adapting density (`terminal()` in `ui/kit.tsx`).
+`App.tsx` branches on `platform.idiom === "terminal"`: windows get a sidebar with three places (Run, Sessions,
+Buckets), Settings and Compatibility in windows of their own (`Window.open`), Activity and a bucket's details in
+sheets (`setOverlay` in `store.ts` routes those sections there), the command palette and Canvas charts; terminals get
+a navigation stack holding every place, the F10 menu bar, keyboard shortcuts, tables and sentences instead of charts.
+The same screens serve both, adapting density (`terminal()` in `ui/kit.tsx`).
+
+A bucket's overview (`ui/overview.tsx`) starts the cheap scans as a bucket or prefix opens and keeps what they found
+per endpoint, bucket and prefix, shared with the sheets it opens, which reuse those results instead of scanning again.
+
+## Phrases
+
+What sonde says about a session — operation titles, notes, observations — is built in `sonde-proxy` as phrases
+(`phrase.rs`: a key and its arguments) beside the English text, which the same templates produce for the CLI. The
+app and the web viewer render the phrases in the reader's language (`app/src/phrases.ts`), falling back to the English
+text for a key they have no template for.

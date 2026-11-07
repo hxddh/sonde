@@ -3,7 +3,7 @@
 // whose layouts it recognises, the size when it is known. Each card shows
 // only when it has something to say, and opens its detail in a sheet.
 
-import { batch, cleanup, effect, signal, Text, untracked, View } from "nsh";
+import { batch, cleanup, createMotion, effect, signal, Text, untracked, View } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { bytes, money } from "../format";
 import { t } from "../i18n";
@@ -74,25 +74,29 @@ function useFacts() {
 type Tone = "plain" | "warn" | "ok";
 
 function Tile(props: { id: StoreTab; icon: IconName; title: string; value: string; detail?: string; tone?: Tone; pending?: boolean }) {
+  // a card rises into place as it appears (not with reduced motion)
+  const motion = createMotion({ enter: "fadeInUp", duration: 220 });
   return (
-    <BaseButton
-      testID={`overview-${props.id}`}
-      accessibilityLabel={`${props.title}: ${props.value}`}
-      onPress={() => go(props.id)}
-      class="min-w-44 flex-1 gap-1 rounded-(--radius-card) border border-border bg-card px-3.5 py-2.5 hover:bg-row-hover active:bg-muted"
-    >
-      <View class="flex-row items-center gap-1.5">
-        <Icon name={props.icon} size={13} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
-        <Text class="flex-1 text-[11px] font-medium text-muted-foreground line-clamp-1">{props.title}</Text>
-        <Icon name="chevron-right" size={12} />
-      </View>
-      <If when={!props.pending} else={<View class="my-1 h-4 w-24 rounded-(--radius-sm) bg-muted" />}>
-        <Text class={`text-[15px] font-semibold line-clamp-1 ${props.tone === "warn" ? "text-warn" : "text-foreground"}`}>{props.value}</Text>
-      </If>
-      <If when={!props.pending} else={<View class="h-3 w-32 rounded-(--radius-sm) bg-muted/70" />}>
-        <Text class="text-[11px] text-muted-foreground line-clamp-1">{props.detail ?? ""}</Text>
-      </If>
-    </BaseButton>
+    <View class="min-w-44 flex-1" style={motion.style}>
+      <BaseButton
+        testID={`overview-${props.id}`}
+        accessibilityLabel={`${props.title}: ${props.value}`}
+        onPress={() => go(props.id)}
+        class="gap-1 rounded-(--radius-card) border border-border bg-card px-3.5 py-2.5 hover:bg-row-hover active:bg-muted"
+      >
+        <View class="flex-row items-center gap-1.5">
+          <Icon name={props.icon} size={13} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
+          <Text class="flex-1 text-[11px] font-medium text-muted-foreground line-clamp-1">{props.title}</Text>
+          <Icon name="chevron-right" size={12} />
+        </View>
+        <If when={!props.pending} else={<View class="my-1 h-4 w-24 rounded-(--radius-sm) bg-muted" />}>
+          <Text class={`text-[15px] font-semibold line-clamp-1 ${props.tone === "warn" ? "text-warn" : "text-foreground"}`}>{props.value}</Text>
+        </If>
+        <If when={!props.pending} else={<View class="h-3 w-32 rounded-(--radius-sm) bg-muted/70" />}>
+          <Text class="text-[11px] text-muted-foreground line-clamp-1">{props.detail ?? ""}</Text>
+        </If>
+      </BaseButton>
+    </View>
   );
 }
 

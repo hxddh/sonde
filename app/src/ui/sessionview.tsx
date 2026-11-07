@@ -11,7 +11,7 @@ import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationText, observationWhy } from "../phrases";
 import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Dot, Empty, terminal } from "./kit";
+import { Dot, Empty, fill, glass, terminal } from "./kit";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
 
@@ -183,10 +183,11 @@ export function Observations(props: { view: SessionView; filter?: number | null;
           {(o: () => Observation, i) => (
             <HoverCard
               openDelay={450}
-              placement="bottom"
+              placement="top"
               align="start"
-              popupClass="w-[340px] gap-2 rounded-(--radius-card) border border-border bg-popover p-3.5 shadow-xl"
-              popupStartingClass="opacity-0 translate-y-1"
+              popupClass={`w-[340px] gap-2 rounded-(--radius-card) border border-border ${fill("bg-popover/85", "bg-popover")} p-3.5 shadow-xl`}
+              popupStyle={glass}
+              popupStartingClass="opacity-0 -translate-y-1"
               popupEndingClass="opacity-0"
               trigger={
                 <BaseButton

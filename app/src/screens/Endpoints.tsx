@@ -8,7 +8,7 @@ import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, s
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Icon } from "../ui/icon";
 import { openCompatWindow } from "./CompatWindow";
-import { Badge, Button, Card, Check, Choice, Dot, Empty, Field, IconButton, KeyValue, Muted, Page, Section, terminal, Title, Toggle } from "../ui/kit";
+import { Badge, Button, Card, Check, Choice, Dot, Empty, Field, fill, glass, IconButton, KeyValue, Muted, Page, Section, terminal, Title, Toggle } from "../ui/kit";
 import { ms as fmtMs } from "../format";
 
 type Draft = {
@@ -254,6 +254,14 @@ export function Endpoints() {
           <Button variant="outline" icon="key-round" label={t("endpoints.import")} onPress={() => mode.set("import")} />
           <Button variant="outline" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
         </View>
+        <If when={terminal() && form()}>{(f) => <Card>{f()}</Card>}</If>
+        <If when={endpoints().length > 0} else={<Empty icon="server" text={t("endpoints.noneYet")} />}>
+          <View class="overflow-hidden rounded-(--radius-card) border border-border bg-card">
+            <Each of={endpoints()} key={(e) => e.id}>
+              {(e, i) => <View class={i() > 0 ? "border-t border-border" : ""}>{row(e())}</View>}
+            </Each>
+          </View>
+        </If>
         <If when={!terminal() && endpoints().length > 0}>
           <View class="flex-row items-center gap-3 rounded-(--radius-card) border border-border bg-card px-4 py-3">
             <Icon name="flask-conical" size={16} tint="muted-foreground" />
@@ -264,18 +272,10 @@ export function Endpoints() {
             <Button variant="outline" label={t("compat.open")} onPress={() => openCompatWindow()} testID="open-compat" />
           </View>
         </If>
-        <If when={terminal() && form()}>{(f) => <Card>{f()}</Card>}</If>
-        <If when={endpoints().length > 0} else={<Empty icon="server" text={t("endpoints.noneYet")} />}>
-          <View class="overflow-hidden rounded-(--radius-card) border border-border bg-card">
-            <Each of={endpoints()} key={(e) => e.id}>
-              {(e, i) => <View class={i() > 0 ? "border-t border-border" : ""}>{row(e())}</View>}
-            </Each>
-          </View>
-        </If>
         <Text class="text-xs text-muted-foreground">{t("settings.telemetry")}</Text>
       </View>
       <If when={!terminal()}>
-        <Sheet open={mode() !== "list"} side="right" onOpenChange={(e) => !e.open && mode.set("list")} popupClass="w-[480px] max-w-[92%] border-l border-border bg-background shadow-xl" popupStyle={{ marginTop: 44 }} backdropClass="bg-black/20">
+        <Sheet open={mode() !== "list"} side="right" onOpenChange={(e) => !e.open && mode.set("list")} popupClass={`w-[480px] max-w-[92%] border-l border-border ${fill("bg-background/90", "bg-background")} shadow-xl`} popupStyle={{ marginTop: 44, ...glass }} backdropClass="bg-black/20">
           <Scroll class="flex-1" contentClass="p-6">
             {form()}
           </Scroll>

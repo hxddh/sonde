@@ -8,6 +8,16 @@ import { keyLabel } from "./keys";
 
 export const terminal = () => platform.idiom === "terminal";
 
+/** Floating surfaces (the palette, sheets, cards on hover, menus): on macOS a
+ * material over what is behind them (Liquid Glass on macOS 26, a blur
+ * before) on a translucent fill; elsewhere, where a backdrop blur is not
+ * drawn everywhere, the fill stays opaque so nothing shows through. */
+const material = platform.os === "macos";
+export const glass = material ? { backdropFilter: "blur(24px) saturate(1.5)", glassEffect: "regular" as const } : {};
+/** The fill of a floating surface: the translucent class where a material
+ * is drawn behind it, the opaque one elsewhere. */
+export const fill = (translucent: string, opaque: string) => (material ? translucent : opaque);
+
 type Variant = "primary" | "secondary" | "outline" | "ghost" | "destructive";
 
 const buttonClass: Record<Variant, string> = {

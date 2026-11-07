@@ -34,14 +34,16 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
   payloads synthetic, cleaned up afterwards — and every answer compared. A store that ignores `If-None-Match`
   shows up as `PutObject recorded 412 → replay 200`.
 
-**Run** is the app's home: type a command and press Return. The program runs in a real terminal on the left; its
-requests appear on the right as operations while it works, and when it ends — with a notification — the session
-holds both, lined up in time: choose an operation and the lines it printed light up, choose a line and the operations
-running then do. **Sessions** keep every run: as operations or as a timeline, replayed on another endpoint,
-compared with another session side by side, opened in a window of their own, or shared as a web page with
-`sonde share`. **Store** keeps sonde's tools for buckets: browse 100 000+ objects, multipart health, versions,
-capacity, 40 compatibility probes, and lenses that decode SlateDB, Iceberg, lakeFS and Woodpecker layouts.
-Everything else is in **Settings** — and everything is one ⌘K away in the command palette.
+The app has three places. **Run** is its home: type a command and press Return. The program runs in a real terminal
+on the left; its requests appear on the right as operations while it works, and when it ends the session holds both,
+lined up in time: choose an operation and the lines it printed light up, choose a line and the operations running
+then do. **Sessions** keep every run — and any `.sonde` file you open (⌘O): as operations or as a timeline, what
+stands out explained on hover, replayed on another endpoint, compared with another session side by side, opened in a
+window of their own, or shared as a web page with `sonde share`. **Buckets** browse 100 000+ objects under an
+overview of what sonde noticed — incomplete uploads and their cost, versioning, the SlateDB, Iceberg, lakeFS or
+Woodpecker layout it recognises, the size once measured — each a sheet of detail away. Settings open in a window of
+their own, with the endpoints and their compatibility (40 probes); sonde's own requests, jobs and changes are in
+Activity, behind the toolbar. Everything is one ⌘K away in the command palette, in English or 中文.
 
 One codebase, three forms: a **desktop app** for macOS, Linux and Windows (it updates itself from GitHub Releases), a
 **terminal UI** in one static-libc binary for the host next to your data, and a **headless CLI** for scripts and CI.
@@ -115,25 +117,27 @@ demo-large                                                         100,000 items
 ▸ logs/
 ```
 
-The home list holds the four places: Run, Sessions, Store, Settings (`1`–`4`). Run works there too — the program
+The home list holds every place: Run, Sessions, Buckets, Activity, Settings (`1`–`5`). Run works there too — the program
 in a terminal inside the terminal. `:` opens the command palette, F10 the menu bar; Tab and the arrows move between
 controls, Esc goes back, Ctrl+C copies a selection (OSC 52, over SSH too) or quits.
 
 ### The desktop app
 
 A first launch offers the built-in demo, the AWS profiles it finds, or an endpoint by hand. Then it opens on Run.
-The toolbar is the window's title bar: where you are, the program running, the endpoint (searchable), the read-only
-lock and search (⌘K / Ctrl+K). The sidebar holds the places and recent sessions (⌘1 Run, ⌘2 Sessions, ⌘3 Store,
-⌘, Settings; ⌘B hides it). Light and dark, English and 中文, the window's size and place remembered, updates checked
+The toolbar is the window's title bar: where you are, the program running, the endpoint (searchable), Activity
+(⌘⇧A), the read-only lock and search (⌘K / Ctrl+K). The sidebar holds the places and recent sessions (⌘1 Run,
+⌘2 Sessions, ⌘3 Buckets; ⌘B hides it); Settings are a window (⌘,). Light and dark, English and 中文, the window's size and place remembered, updates checked
 only when you ask.
 
 | | |
 |---|---|
 | ![A session: its figures, what stands out as filters, operations with outcome and time, the inspector](docs/images/session.png) | ![The timeline, dark](docs/images/timeline-dark.png) |
-| ![Store: buckets and prefixes as a tree, objects, an object's details](docs/images/store.png) | ![The command palette](docs/images/palette.png) |
+| ![Buckets: the overview over the objects, an object's details](docs/images/store.png) | ![Incomplete uploads, a sheet from the overview](docs/images/uploads.png) |
+| ![Settings and endpoints in a window of their own](docs/images/endpoints.png) | ![The command palette](docs/images/palette.png) |
 
-Every place is screenshotted on a real window in CI (`scripts/shots.sh`: wide and at the least size, light and
-dark, English and Chinese); the images are the build's `sonde-shots` artifact.
+Every place is screenshotted on a real window in CI on Linux, macOS and Windows (`scripts/shots.sh`: wide and at
+the least size, light and dark, English and Chinese); the images are the build's `sonde-shots-<platform>` artifacts.
+[What changed from 2.1 to 3.0](docs/compare-3.0.md), side by side.
 
 ## Documentation
 
