@@ -23,6 +23,7 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | 13 | Components | `ErrorBoundary` around a reactive child expression (`<ErrorBoundary>{screen(area())}</ErrorBoundary>`) kept the views it had drawn when the expression changed: the old place and the new one stacked. | One boundary per place, keyed (`<Each of={[view()]} key>` around it), so a change of place draws a fresh boundary. |
 | 14 | Testing | `nsh test`'s `open` has no option for the user's text size (it has reduced motion, colour scheme, locale), so growing rows (`fontScale()`) cannot be checked in a test. | Rows are sized from `fontScale()`; checked by reading, not by a test. |
 | 15 | Text | On GTK, text set in a font the app ships (an imported `.woff2`) or with `tabular-nums` is measured narrower than it is drawn: the last glyph of a short label in a table cell (`00:22:25.049` → `00:22:25.04`) is cut off, with no ellipsis. The platform's fonts without font features measure and draw alike. | The app keeps the platform's monospace and leaves tabular digits out of table cells. |
+| 16 | Terminal (Windows) | With `portable-pty` on Windows (ConPTY) the reader of a program's output never reaches end of file after the program exits, while the pseudo-console is open; on Unix it ends when the last process holding the terminal does. A run waiting for its output to end never ends. | When the program exits on Windows, sonde drops the pseudo-console and reads what is left for up to two seconds (`Sessions::run`). |
 
 ## By design
 

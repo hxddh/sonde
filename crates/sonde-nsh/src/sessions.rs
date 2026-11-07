@@ -269,14 +269,44 @@ impl Sessions {
         *RUNNING.lock() = Some(handle);
         output.post(json!({ "started": view }));
         let mut decoder = crate::run::Utf8Stream::default();
-        while let Some(bytes) = out_rx.recv().await {
-            let text = decoder.push(&bytes);
-            if !text.is_empty() {
-                writer.write_log(&text);
-                output.post(json!({ "data": text }));
+        let mut exit_rx = exit_rx;
+        let mut code = None;
+        let mut exited = false;
+        // after the program exits on Windows: what is left to read, briefly
+        let mut drain: Option<tokio::time::Instant> = None;
+        loop {
+            let deadline = drain.unwrap_or_else(|| {
+                tokio::time::Instant::now() + std::time::Duration::from_secs(86_400)
+            });
+            tokio::select! {
+                bytes = out_rx.recv() => match bytes {
+                    Some(bytes) => {
+                        let text = decoder.push(&bytes);
+                        if !text.is_empty() {
+                            writer.write_log(&text);
+                            output.post(json!({ "data": text }));
+                        }
+                    }
+                    None => break,
+                },
+                c = &mut exit_rx, if !exited => {
+                    exited = true;
+                    code = c.unwrap_or(None);
+                    // ConPTY keeps the program's output open until the
+                    // pseudo-console closes, so a Windows run would never end:
+                    // close it, then read what is left. Elsewhere the output
+                    // closes when every process holding the terminal is gone.
+                    if cfg!(windows) {
+                        RUNNING.lock().take();
+                        drain = Some(tokio::time::Instant::now() + std::time::Duration::from_secs(2));
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline), if drain.is_some() => break,
             }
         }
-        let code = exit_rx.await.unwrap_or(None);
+        if !exited {
+            code = exit_rx.await.unwrap_or(None);
+        }
         RUNNING.lock().take();
         Sessions::stop();
         Ok(json!({ "exit": code, "path": path }))

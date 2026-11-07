@@ -30,6 +30,12 @@ what a session found given the room it deserves, and the platform's own material
 - Primary buttons only for an area's default commit; commands that open a panel, dialog or window end with "…".
 - Table rows grow with the user's text size.
 
+### Fixed
+
+- Windows: a program started from Run never ended in the app — ConPTY keeps its output open until the
+  pseudo-console closes, so the app waited for output that would not end. The pseudo-console now closes when the
+  program exits. (Found by the first screenshot tour on Windows in CI.)
+
 ## [3.0.0] - 2026-11-07
 
 Fewer places, each doing more by itself. The app has three places — Run, Sessions, Buckets — and says what it
