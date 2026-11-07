@@ -523,3 +523,257 @@ pub async fn show(a: &ShowArgs) -> anyhow::Result<i32> {
     }
     Ok(0)
 }
+
+fn bucket_pair(s: &str) -> Result<(String, String), String> {
+    s.split_once('=')
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .filter(|(a, b)| !a.is_empty() && !b.is_empty())
+        .ok_or_else(|| format!("{s:?}: expected original=target"))
+}
+
+#[derive(Args)]
+pub struct ReplayArgs {
+    /// The session to replay.
+    file: PathBuf,
+    /// The endpoint to replay on (default: --url, or the only one configured).
+    #[arg(long, short = 'e')]
+    endpoint: Option<String>,
+    /// Use another bucket: original=target (repeatable).
+    #[arg(long, value_parser = bucket_pair)]
+    bucket: Vec<(String, String)>,
+    /// The key prefix the replay writes under (default: replay-<time>/).
+    #[arg(long, conflicts_with = "in_place")]
+    prefix: Option<String>,
+    /// Replay keys as they were recorded, bucket changes included.
+    #[arg(long)]
+    in_place: bool,
+    /// Keep what the replay wrote (default: deleted afterwards).
+    #[arg(long)]
+    keep: bool,
+    /// Do not ask for confirmation.
+    #[arg(long, short = 'y')]
+    yes: bool,
+    /// The replay's session file (default: in the data directory's sessions/).
+    #[arg(long, short = 'o')]
+    out: Option<PathBuf>,
+    #[arg(long, short = 'f', value_enum, default_value_t)]
+    format: Format,
+}
+
+#[derive(Args)]
+pub struct DiffArgs {
+    /// The original session.
+    original: PathBuf,
+    /// Its replay (`sonde replay -o`).
+    replay: PathBuf,
+    #[arg(long, short = 'f', value_enum, default_value_t)]
+    format: Format,
+}
+
+fn print_comparison(c: &sonde_proxy::replay::Comparison, color: bool) {
+    let mut head = format!("{} compared: {} the same", c.compared, c.same);
+    if c.differ() > 0 {
+        head.push_str(&format!(
+            " · {}",
+            paint(&format!("{} differ", c.differ()), "33", color)
+        ));
+    }
+    if c.environment > 0 {
+        head.push_str(&format!(
+            " · {} because the target already held it",
+            c.environment
+        ));
+    }
+    println!("{}", paint(&head, "1", color));
+    for d in &c.differences {
+        let mut line = format!(
+            "{} {:<24} recorded {} → replay {}   ×{}   e.g. {}",
+            paint("✗", "33", color),
+            d.operation,
+            d.original,
+            d.replay,
+            d.count,
+            d.example
+        );
+        if !d.conditions.is_empty() {
+            line.push_str(&paint(
+                &format!("  ({})", d.conditions.join(", ")),
+                "2",
+                color,
+            ));
+        }
+        println!("{line}");
+    }
+    for (why, n) in &c.unmatched {
+        println!(
+            "{}",
+            paint(&format!("  {n} not replayed: {why}"), "2", color)
+        );
+    }
+}
+
+pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Result<i32> {
+    use sonde_proxy::replay::{self as rp, ReplayOptions};
+    let original = Session::open(&a.file).map_err(|e| anyhow::anyhow!(e))?;
+    let ep = super::endpoint(s, a.endpoint.as_deref())?;
+    let base = s.client(&ep)?;
+    let prefix = if a.in_place {
+        String::new()
+    } else {
+        a.prefix
+            .clone()
+            .unwrap_or_else(|| format!("replay-{}/", chrono::Local::now().format("%Y%m%d-%H%M%S")))
+    };
+    let opts = ReplayOptions {
+        prefix: prefix.clone(),
+        buckets: a.bucket.clone(),
+    };
+    let plan = rp::plan(&original.records, &opts);
+    let mut buckets: Vec<String> = original
+        .records
+        .iter()
+        .filter_map(|r| r.bucket.as_deref().map(|b| opts_bucket(&opts, b)))
+        .collect();
+    buckets.sort();
+    buckets.dedup();
+    let color = std::io::stderr().is_terminal();
+    let place = if prefix.is_empty() {
+        paint(
+            "in place: keys as recorded, bucket changes included",
+            "33",
+            color,
+        )
+    } else {
+        format!("under {prefix} in {}", buckets.join(", "))
+    };
+    eprintln!(
+        "Replay {} requests from {} on {ep} ({}), {place}.",
+        plan.requests,
+        a.file.display(),
+        base.config().endpoint
+    );
+    eprintln!(
+        "  {} writes and {} deletes{}.",
+        plan.writes,
+        plan.deletes,
+        if prefix.is_empty() {
+            ""
+        } else {
+            ", all under that prefix: nothing outside it is touched"
+        }
+    );
+    for (why, n) in &plan.skipped {
+        eprintln!("  {n} left out: {why}");
+    }
+    if !prefix.is_empty() && !a.keep {
+        eprintln!("  Afterwards, everything under {prefix} is deleted (--keep keeps it).");
+    }
+    if !a.yes {
+        if !std::io::stdin().is_terminal() {
+            eprintln!("sonde: replay writes to {ep}: pass --yes to confirm");
+            return Ok(77);
+        }
+        eprint!("Type yes to replay: ");
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if answer.trim() != "yes" {
+            eprintln!("Nothing was sent.");
+            return Ok(77);
+        }
+    }
+    let path = match &a.out {
+        Some(p) => p.clone(),
+        None => {
+            let dir = s.paths().sessions();
+            std::fs::create_dir_all(&dir)?;
+            dir.join(format!(
+                "{}-replay.sonde",
+                chrono::Local::now().format("%Y%m%d-%H%M%S")
+            ))
+        }
+    };
+    let cfg = base.config();
+    let header = SessionHeader::new(
+        &ep,
+        cfg.endpoint.as_str(),
+        &cfg.region,
+        Some(format!("sonde replay {}", a.file.display())),
+    );
+    let writer = Arc::new(SessionWriter::create(&path, &header)?);
+    let log = RequestLog::new(4096);
+    log.set_sink(Some(writer.clone()));
+    let client = base.with_log(log).with_retry(s3raw::RetryPolicy::none());
+    let show = color;
+    let done = rp::replay(&client, &original.records, &opts, |i, n| {
+        if show {
+            eprint!("\r\x1b[2K{i}/{n}");
+        }
+    })
+    .await;
+    if show {
+        eprint!("\r\x1b[2K");
+    }
+    writer.flush()?;
+    if !prefix.is_empty() && !a.keep {
+        let mut removed = 0usize;
+        for b in &buckets {
+            if let Ok(objects) = base.list_all(b, &prefix, usize::MAX).await {
+                for chunk in objects.chunks(1000) {
+                    let keys: Vec<(String, Option<String>)> =
+                        chunk.iter().map(|o| (o.key.clone(), None)).collect();
+                    if base.delete_objects(b, &keys, true).await.is_ok() {
+                        removed += keys.len();
+                    }
+                }
+            }
+            if let Ok(up) = base
+                .list_multipart_uploads(b, Some(&prefix), None, None)
+                .await
+            {
+                for u in up.upload {
+                    let _ = base.abort_multipart_upload(b, &u.key, &u.upload_id).await;
+                }
+            }
+        }
+        eprintln!("Removed {removed} objects under {prefix}.");
+    }
+    let replayed = Session::open(&path).map_err(|e| anyhow::anyhow!(e))?;
+    let c = rp::compare(&original.records, &replayed.records, &done);
+    match a.format {
+        Format::Json => println!(
+            "{}",
+            output::json(&serde_json::json!({
+                "plan": plan,
+                "session": path,
+                "comparison": c,
+            }))
+        ),
+        _ => {
+            print_comparison(&c, std::io::stdout().is_terminal());
+            eprintln!(
+                "{}",
+                paint(&format!("session: {}", path.display()), "2", color)
+            );
+        }
+    }
+    Ok(if c.differ() > 0 { 2 } else { 0 })
+}
+
+fn opts_bucket(o: &sonde_proxy::replay::ReplayOptions, b: &str) -> String {
+    o.buckets
+        .iter()
+        .find(|(from, _)| from == b)
+        .map(|(_, to)| to.clone())
+        .unwrap_or_else(|| b.to_string())
+}
+
+pub async fn diff(a: &DiffArgs) -> anyhow::Result<i32> {
+    let original = Session::open(&a.original).map_err(|e| anyhow::anyhow!(e))?;
+    let replay = Session::open(&a.replay).map_err(|e| anyhow::anyhow!(e))?;
+    let c = sonde_proxy::replay::compare(&original.records, &replay.records, &[]);
+    match a.format {
+        Format::Json => println!("{}", output::json(&c)),
+        _ => print_comparison(&c, std::io::stdout().is_terminal()),
+    }
+    Ok(if c.differ() > 0 { 2 } else { 0 })
+}
