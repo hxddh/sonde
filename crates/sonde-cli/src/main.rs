@@ -119,7 +119,7 @@ fn main() -> ExitCode {
         let code = match &cli.command {
             Command::Run(a) => cmd::record::run(&sonde, &cli, a).await,
             Command::Proxy(a) => cmd::record::proxy(&sonde, &cli, a).await,
-            Command::Show(a) => cmd::record::show(a).await,
+            Command::Show(a) => cmd::record::show(&sonde, a).await,
             Command::Replay(a) => cmd::record::replay(&sonde, &cli, a).await,
             Command::Diff(a) => cmd::record::diff(a).await,
             Command::Probe(a) => cmd::probe::run(&sonde, &cli, a).await,

@@ -56,8 +56,8 @@ pub struct ProxyArgs {
 
 #[derive(Args)]
 pub struct ShowArgs {
-    /// A session file.
-    file: PathBuf,
+    /// A session file (default: the newest in the data directory's sessions/).
+    file: Option<PathBuf>,
     /// Only the summary.
     #[arg(long)]
     summary: bool,
@@ -464,8 +464,37 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
     Ok(0)
 }
 
-pub async fn show(a: &ShowArgs) -> anyhow::Result<i32> {
-    let session = Session::open(&a.file).map_err(|e| anyhow::anyhow!(e))?;
+/// The newest session file in the data directory.
+fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
+    let dir = s.paths().sessions();
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
+            continue;
+        }
+        let t = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        if newest.as_ref().is_none_or(|(n, _)| t > *n) {
+            newest = Some((t, p));
+        }
+    }
+    newest.map(|(_, p)| p).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no sessions in {} yet: record one with `sonde run -- <command>`",
+            dir.display()
+        )
+    })
+}
+
+pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
+    let file = match &a.file {
+        Some(f) => f.clone(),
+        None => newest_session(s)?,
+    };
+    let session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
     let all = &session.records;
     let eps = episodes(all);
     match a.format {
@@ -516,7 +545,7 @@ pub async fn show(a: &ShowArgs) -> anyhow::Result<i32> {
             print_summary(
                 all,
                 &session.header.endpoint,
-                &a.file,
+                &file,
                 std::io::stderr().is_terminal(),
             );
         }
