@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 use reqlog::RequestLog;
 use serde_json::json;
 use sonde_proxy::episode::{episodes, observations, shared_notes};
+use sonde_proxy::replay::{self, ReplayOptions};
 use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
 use sonde_proxy::summary::summarize;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
@@ -300,6 +301,71 @@ impl Sessions {
     /// Ends the running program.
     pub fn kill() -> bool {
         RUNNING.lock().as_mut().is_some_and(|r| r.kill())
+    }
+
+    /// What replaying a session on `endpoint` would send: the plan, the
+    /// prefix it would write under, the buckets, whether sonde is read-only.
+    pub fn replay_plan(path: String, endpoint: String) -> Result<JsonValue, String> {
+        let original = open_session(&path)?;
+        let s = sonde();
+        let base = s.client(&endpoint).map_err(crate::state::err)?;
+        let opts = ReplayOptions {
+            prefix: replay::default_prefix(),
+            buckets: Vec::new(),
+        };
+        Ok(json!({
+            "plan": replay::plan(&original.records, &opts),
+            "prefix": opts.prefix,
+            "buckets": replay::buckets_of(&original.records, &opts),
+            "endpoint": endpoint,
+            "url": base.config().endpoint.as_str(),
+            "readOnly": s.settings().read_only,
+        }))
+    }
+
+    /// Replays a session on `endpoint` under `prefix`, cleans up, and
+    /// compares: `{ path, plan, comparison, removed }`. Refused while sonde is
+    /// read-only, as every write it makes.
+    pub async fn replay(
+        path: String,
+        endpoint: String,
+        prefix: String,
+    ) -> Result<JsonValue, String> {
+        let s = sonde();
+        if s.settings().read_only {
+            return Err(crate::state::err(sonde_core::S3Error::new(
+                s3raw::ErrorKind::Refused,
+                "read-only mode is on: turn it off in Settings to replay (a replay writes under its prefix)",
+            )));
+        }
+        let original = open_session(&path)?;
+        let base = s.client(&endpoint).map_err(crate::state::err)?;
+        let out = s.paths().sessions().join(format!(
+            "{}-replay.sonde",
+            chrono::Local::now().format("%Y%m%d-%H%M%S")
+        ));
+        let opts = ReplayOptions {
+            prefix,
+            buckets: Vec::new(),
+        };
+        let run = background(async move {
+            replay::replay_to_file(&base, &original, &opts, &out, false, |_, _| {}).await
+        })
+        .await
+        .map_err(err_msg)?
+        .map_err(err_msg)?;
+        Ok(to_json(run))
+    }
+
+    /// Two sessions side by side: how their answers compare (a replay's
+    /// records name the original's), and each as a transcript for a diff.
+    pub fn compare(a: String, b: String) -> Result<JsonValue, String> {
+        let (sa, sb) = (open_session(&a)?, open_session(&b)?);
+        Ok(json!({
+            "comparison": replay::compare(&sa.records, &sb.records, &[]),
+            "a": replay::transcript(&sa.records),
+            "b": replay::transcript(&sb.records),
+        }))
     }
 
     /// A session's output as timed lines, for lining up with its operations.
