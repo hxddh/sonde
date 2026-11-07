@@ -4,9 +4,10 @@ import { expect, open, test } from "nsh/test";
 
 const desktop = { platform: "macos" as const, width: 1280, height: 820 };
 
-test("starts on endpoints and opens the demo", async () => {
+test("starts on the timeline; the demo opens from endpoints", async () => {
   const app = await open("../App.tsx", desktop);
-  expect(app.shows("id:screen-endpoints")).toBe(true);
+  expect(app.shows("id:screen-timeline")).toBe(true);
+  await app.press("id:nav-endpoints");
   await app.press("id:open-demo");
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await app.press("id:test-demo");
@@ -16,6 +17,7 @@ test("starts on endpoints and opens the demo", async () => {
 
 test("browses the demo bucket and shows object details", async () => {
   const app = await open("../App.tsx", desktop);
+  await app.press("id:nav-endpoints");
   await app.press("id:open-demo");
   await app.waitFor("id:bucket-demo", { timeout: 10000 });
   await app.press("id:bucket-demo");

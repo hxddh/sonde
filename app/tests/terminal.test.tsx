@@ -21,9 +21,10 @@ async function chooseBucket(app: Awaited<ReturnType<typeof open>>, name: string)
 
 test("home lists the sections; digits open them", async () => {
   const app = await open("../App.tsx", term);
+  expect(app.shows("text:Timeline")).toBe(true);
   expect(app.shows("text:Endpoints")).toBe(true);
   expect(app.shows("text:Compatibility")).toBe(true);
-  await app.keyboard.press("8");
+  await app.keyboard.press("9");
   await app.waitFor("id:screen-layouts");
   await app.back();
   await app.waitFor("id:nav-browse");
@@ -83,4 +84,22 @@ test("multipart and the guard", async () => {
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
   expect(app.enabled("id:confirm-run")).toBe(false);
+});
+
+test("timeline in a terminal: sessions › operations › requests › request", async () => {
+  const app = await open("../App.tsx", term);
+  await app.press("id:nav-timeline");
+  await app.press("id:open-example");
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  expect(app.shows("text:/172 requests · 34 operations/")).toBe(true);
+  await app.press("text:WAL 1 written empty (fencing marker)");
+  await app.waitFor("id:operation-detail");
+  await app.press("id:op-request-1");
+  await app.waitFor("id:record-detail");
+  await app.press("id:record-back");
+  await app.waitFor("id:operation-detail");
+  await app.press("id:operation-back");
+  await app.waitFor("id:operations");
+  await app.press("id:sessions-back");
+  await app.waitFor("id:session-0");
 });

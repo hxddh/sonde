@@ -56,7 +56,7 @@ for _ in range(3):
     if len(samples) < 3: os.kill(pid, 9); os.waitpid(pid, 0)
 idle = rss(pid)
 # Browse › demo-large, flat, load all
-send(fd, "2"); until(fd, stream, screen, "Choose a bucket", 10)
+send(fd, "3"); until(fd, stream, screen, "Choose a bucket", 10)
 for k in ["\t", "\t", "\t", "\r"]: send(fd, k); pump(fd, stream, 0.4)
 send(fd, "\x1b[B"); pump(fd, stream, 0.3); send(fd, "\r")
 until(fd, stream, screen, "logs/", 10)

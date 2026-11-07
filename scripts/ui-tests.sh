@@ -18,5 +18,6 @@ export AWS_ACCESS_KEY_ID=AKIDSONDEUITEST AWS_SECRET_ACCESS_KEY=sonde-ui-test-sec
 export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
 nsh test tests/desktop.test.tsx
 nsh test tests/screens.test.tsx
+nsh test tests/timeline.test.tsx
 nsh test tests/terminal.test.tsx --target tui
 (cd ../plugins/delta-lens && nsh test)
