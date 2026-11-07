@@ -6,6 +6,7 @@ import { api } from "../native";
 import { refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
 import { Button, Card, Choice, Field, Heading, KeyValue, Muted, Page, Title, Toggle } from "../ui/kit";
+import { Updates } from "../ui/updates";
 
 export function SettingsScreen() {
   const s = settings();
@@ -24,6 +25,7 @@ export function SettingsScreen() {
   return (
     <Page testID="screen-settings">
       <Title>{t("settings.title")}</Title>
+      <Updates />
       <If when={draft()}>
         {(d) => (
           <View class="gap-4">

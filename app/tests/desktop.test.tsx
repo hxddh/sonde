@@ -39,3 +39,11 @@ test("the palette goes anywhere", async () => {
   await app.waitFor("id:screen-versions");
   expect(app.shows("id:palette-command")).toBe(false);
 });
+
+test("updates: asking is the user's move; a development run is up to date", async () => {
+  const app = await open("../App.tsx", desktop);
+  await place(app, "settings");
+  await app.waitFor("id:updates");
+  await app.press("id:updates-check");
+  await app.waitFor("text:sonde is up to date.", { timeout: 5000 });
+});

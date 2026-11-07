@@ -37,6 +37,7 @@ function actions(): Action[] {
       go("sessions");
     },
   });
+  list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), keywords: ["upgrade", "version"], run: () => go("settings") });
   list.push({
     id: "read-only",
     label: t("palette.readOnly"),

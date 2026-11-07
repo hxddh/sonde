@@ -19,5 +19,19 @@
   },
   "tui": {
     "pointsPerCell": "8x16"
+  },
+  "window": {
+    "title": "sonde",
+    "defaultSize": {
+      "width": 1280,
+      "height": 820
+    },
+    "minSize": {
+      "width": 900,
+      "height": 560
+    }
+  },
+  "updater": {
+    "github": "hxddh/sonde"
   }
 }
