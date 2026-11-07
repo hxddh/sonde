@@ -3,6 +3,7 @@
 
 import { batch, cleanup, Clipboard, effect, Scroll, signal, Text, View } from "nsh";
 import { DataTable } from "nsh/base";
+import { RecordView } from "../ui/record";
 import { date, ms } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
@@ -24,55 +25,16 @@ export function RecordDetail(props: { record: RequestRecord; onBack?: () => void
     Clipboard.writeText(text).then(() => notify(t("common.copied")), report);
   };
   return (
-    <View class="gap-3" testID="record-detail">
-      <View class="flex-row items-center gap-2">
-        <If when={props.onBack}>
-          <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={() => props.onBack?.()} testID="record-back" />
-        </If>
-        <Badge label={r().status === null ? t("requests.transport") : String(r().status)} tone={statusTone(r().status)} />
-        <Text class="text-base font-semibold text-foreground">{r().operation}</Text>
-      </View>
-      <Mono>{`${r().method} ${r().url}`}</Mono>
-      <KeyValue
-        rows={[
-          ["Time", r().time],
-          [t("common.endpoint"), r().endpoint],
-          [t("requests.latency"), ms(r().latencyMs)],
-          [t("requests.retries"), String(r().retries)],
-          ["x-amz-request-id", r().requestId ?? "—"],
-          ["x-amz-id-2", r().hostId ?? "—"],
-          ["Region", r().region ?? "—"],
-          ["Job", r().job ?? "—"],
-        ]}
-      />
-      <View class="flex-row flex-wrap gap-2">
-        <Button small label={t("requests.copyCli")} onPress={() => copy(props.copyAs ? props.copyAs("cli") : api.copyAsAwsCli(r().id))} testID="copy-cli" />
-        <Button small label={t("requests.copyCurl")} onPress={() => copy(props.copyAs ? props.copyAs("curl") : api.copyAsCurl(r().id))} testID="copy-curl" />
-      </View>
-      <If when={r().transportError}>
-        {(e) => (
-          <Text class="text-sm text-destructive">
-            {e()}
-          </Text>
-        )}
-      </If>
-      <If when={r().errorBody}>
-        {(b) => (
-          <View class="gap-1">
-            <Heading>{t("requests.errorBody")}</Heading>
-            <Mono class="rounded-(--radius) bg-muted p-2">{b()}</Mono>
-          </View>
-        )}
-      </If>
-      <If when={r().query.length > 0}>
-        <Heading>{t("requests.query")}</Heading>
-        <SimpleTable mono columns={["name", "value"]} rows={r().query.map(([k, v]) => [k, v])} />
-      </If>
-      <Heading>{t("requests.requestHeaders")}</Heading>
-      <SimpleTable mono columns={["header", "value"]} rows={r().requestHeaders.map((h) => [h.name, h.value])} />
-      <Heading>{t("requests.responseHeaders")}</Heading>
-      <SimpleTable mono columns={["header", "value"]} rows={r().responseHeaders.map((h) => [h.name, h.value])} />
-    </View>
+    <RecordView
+      record={r()}
+      onBack={props.onBack}
+      actions={
+        <View class="flex-row flex-wrap gap-2">
+          <Button small label={t("requests.copyCli")} onPress={() => copy(props.copyAs ? props.copyAs("cli") : api.copyAsAwsCli(r().id))} testID="copy-cli" />
+          <Button small label={t("requests.copyCurl")} onPress={() => copy(props.copyAs ? props.copyAs("curl") : api.copyAsCurl(r().id))} testID="copy-curl" />
+        </View>
+      }
+    />
   );
 }
 

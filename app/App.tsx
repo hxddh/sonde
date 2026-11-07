@@ -18,7 +18,8 @@ import { Sessions } from "./src/screens/Sessions";
 import { SettingsArea } from "./src/screens/SettingsArea";
 import { StoreArea } from "./src/screens/StoreArea";
 import { type Area, area, AREAS, bucket, endpoint, endpoints, go, init, readOnly, settings } from "./src/store";
-import { Badge, ErrorBanner, NoticeLine, terminal } from "./src/ui/kit";
+import { ErrorBanner, NoticeLine } from "./src/ui/banner";
+import { Badge, terminal } from "./src/ui/kit";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { Sidebar } from "./src/ui/sidebar";
 
