@@ -14,10 +14,12 @@
 mod api;
 mod listing;
 pub mod plugins;
+mod sessions;
 mod state;
 
 pub use api::Sonde;
 pub use listing::Listing;
+pub use sessions::Sessions;
 pub use state::{install, sonde};
 
 use nsh_core::prelude::*;
@@ -25,5 +27,8 @@ use nsh_core::prelude::*;
 /// The UI set TSX imports as `sonde/native`.
 #[native_module("sonde/native")]
 fn native(registry: &mut Registry) {
-    registry.module::<Sonde>().class::<Listing>();
+    registry
+        .module::<Sonde>()
+        .module::<Sessions>()
+        .class::<Listing>();
 }
