@@ -8,7 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # Native Shell, pinned (docs/decisions.md D-002)
-  NSH_REV: 9d12096878bb08bce28e2e72d0356c75e11244ed
+  NSH_REV: beeb9fc7707e0d4a195a4f7274f77b30e134c500
 
 jobs:
   lint:

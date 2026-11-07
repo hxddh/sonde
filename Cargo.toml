@@ -83,12 +83,12 @@ async-trait = "0.1"
 tempfile = "3"
 
 # Native Shell, pinned to one commit of longbridge/nsh (see docs/decisions.md D-002).
-nsh-core = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
-nsh-base = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
-nsh-package = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
-nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
-nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "9d12096878bb08bce28e2e72d0356c75e11244ed" }
+nsh-core = { git = "https://github.com/longbridge/nsh", rev = "beeb9fc7707e0d4a195a4f7274f77b30e134c500" }
+nsh-base = { git = "https://github.com/longbridge/nsh", rev = "beeb9fc7707e0d4a195a4f7274f77b30e134c500" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "beeb9fc7707e0d4a195a4f7274f77b30e134c500" }
+nsh-package = { git = "https://github.com/longbridge/nsh", rev = "beeb9fc7707e0d4a195a4f7274f77b30e134c500" }
+nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "beeb9fc7707e0d4a195a4f7274f77b30e134c500" }
+nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "beeb9fc7707e0d4a195a4f7274f77b30e134c500" }
 
 [profile.release]
 lto = "thin"

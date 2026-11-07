@@ -1,6 +1,6 @@
 # Findings from building sonde
 
-sonde was written against Native Shell as it is (commit `9d12096`), without changing it. These are the gaps it
+sonde was written against Native Shell as it is (commit `beeb9fc`), without changing it. These are the gaps it
 met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS.md`.
 
 ## Open

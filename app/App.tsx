@@ -194,13 +194,14 @@ function installMenus() {
   });
 }
 
-const WINDOW_KEY = "window.bounds";
+const WINDOW_KEY = "window.placement";
 
+/** Opens the main window where the user left it: size, place, maximized or full screen. */
 async function rememberWindow() {
   if (!isAvailable || terminal()) return;
   try {
     const saved = await Storage.getItem(WINDOW_KEY);
-    if (saved) Window.setBounds(JSON.parse(saved));
+    if (saved) Window.get("main")?.setPlacement(JSON.parse(saved));
   } catch {
     // a bad record is dropped
   }
@@ -208,9 +209,9 @@ async function rememberWindow() {
   effect(() => {
     const w = windowState();
     if (!w) return;
-    const bounds = w.windowBounds;
+    const placement = w.placement;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => void Storage.setItem(WINDOW_KEY, JSON.stringify(bounds)), 500);
+    timer = setTimeout(() => void Storage.setItem(WINDOW_KEY, JSON.stringify(placement)), 500);
   });
 }
 
