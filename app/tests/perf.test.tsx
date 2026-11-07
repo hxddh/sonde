@@ -4,14 +4,14 @@
 // The numbers are recorded in docs/performance.md.
 
 import { expect, open, test } from "nsh/test";
+import { place } from "./helpers";
 
 test("100 000 rows: load and scroll", async () => {
   const app = await open("../App.tsx", { width: 960, height: 640 });
-  await app.press("id:nav-endpoints");
+  await place(app, "endpoints");
   await app.press("id:open-demo");
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
-  await app.back();
-  await app.press("id:nav-browse");
+  await place(app, "browse");
   await app.press("label:Choose a bucket");
   await app.press("text:demo-large");
   await app.waitFor("text:▸ logs/", { timeout: 10000 });

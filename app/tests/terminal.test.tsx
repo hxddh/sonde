@@ -2,12 +2,13 @@
 // (an in-memory terminal, the real Cell renderer and keyboard).
 
 import { expect, open, test } from "nsh/test";
+import { place } from "./helpers";
 
 const term = { width: 960, height: 640 };
 
 async function demo() {
   const app = await open("../App.tsx", term);
-  await app.press("id:nav-endpoints");
+  await place(app, "endpoints");
   await app.press("id:open-demo");
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await app.back();
@@ -19,20 +20,20 @@ async function chooseBucket(app: Awaited<ReturnType<typeof open>>, name: string)
   await app.press(`text:${name}`);
 }
 
-test("home lists the sections; digits open them", async () => {
+test("home lists the four places; digits open them", async () => {
   const app = await open("../App.tsx", term);
-  expect(app.shows("text:Timeline")).toBe(true);
-  expect(app.shows("text:Endpoints")).toBe(true);
-  expect(app.shows("text:Compatibility")).toBe(true);
-  await app.keyboard.press("9");
+  for (const name of ["Run", "Sessions", "Store", "Settings"]) expect(app.shows(`text:${name}`)).toBe(true);
+  await app.keyboard.press("3");
+  await app.waitFor("id:screen-store");
+  await app.press("id:tab-layouts");
   await app.waitFor("id:screen-layouts");
   await app.back();
-  await app.waitFor("id:nav-browse");
+  await app.waitFor("id:nav-run");
 });
 
 test("browse: pick a bucket, list it, open an object, go back", async () => {
   const app = await demo();
-  await app.press("id:nav-browse");
+  await place(app, "browse");
   await app.waitFor("id:screen-browse");
   await chooseBucket(app, "demo");
   await app.waitFor("text:README.md", { timeout: 10000 });
@@ -45,7 +46,7 @@ test("browse: pick a bucket, list it, open an object, go back", async () => {
 
 test("large listing: 100 000 keys load page by page", async () => {
   const app = await demo();
-  await app.press("id:nav-browse");
+  await place(app, "browse");
   await chooseBucket(app, "demo-large");
   await app.waitFor("text:▸ logs/", { timeout: 10000 });
   await app.press("text:▸ logs/");
@@ -54,7 +55,7 @@ test("large listing: 100 000 keys load page by page", async () => {
 
 test("capacity in a terminal: tables and a sentence, no canvas", async () => {
   const app = await demo();
-  await app.press("id:nav-capacity");
+  await place(app, "capacity");
   await chooseBucket(app, "demo");
   await app.press("id:du-scan");
   await app.waitFor("id:du-findings", { timeout: 15000 });
@@ -64,11 +65,10 @@ test("capacity in a terminal: tables and a sentence, no canvas", async () => {
 
 test("request inspector: list and detail in one column", async () => {
   const app = await demo();
-  await app.press("id:nav-browse");
+  await place(app, "browse");
   await chooseBucket(app, "demo");
   await app.waitFor("text:README.md", { timeout: 10000 });
-  await app.back();
-  await app.press("id:nav-requests");
+  await place(app, "requests");
   await app.waitFor("text:ListObjectsV2", { timeout: 5000 });
   await app.press("text:ListObjectsV2 >> nth=0");
   await app.waitFor("id:record-detail");
@@ -77,7 +77,7 @@ test("request inspector: list and detail in one column", async () => {
 
 test("multipart and the guard", async () => {
   const app = await demo();
-  await app.press("id:nav-multipart");
+  await place(app, "multipart");
   await chooseBucket(app, "demo");
   await app.press("id:mpu-scan");
   await app.waitFor("text:3 incomplete uploads", { timeout: 10000 });
@@ -86,9 +86,9 @@ test("multipart and the guard", async () => {
   expect(app.enabled("id:confirm-run")).toBe(false);
 });
 
-test("timeline in a terminal: sessions › operations › requests › request", async () => {
+test("sessions in a terminal: sessions › operations › requests › request", async () => {
   const app = await open("../App.tsx", term);
-  await app.press("id:nav-timeline");
+  await place(app, "sessions");
   await app.press("id:open-example");
   await app.waitFor("id:session-summary", { timeout: 10000 });
   expect(app.shows("text:/172 requests · 34 operations/")).toBe(true);
@@ -102,4 +102,14 @@ test("timeline in a terminal: sessions › operations › requests › request",
   await app.waitFor("id:operations");
   await app.press("id:sessions-back");
   await app.waitFor("id:session-0");
+});
+
+test("run in a terminal: the program above, its operations below", async () => {
+  const app = await demo();
+  await place(app, "run");
+  await app.type("id:run-command", "curl -s $AWS_ENDPOINT_URL/demo/README.md -o /dev/null");
+  await app.press("id:run-start");
+  await app.waitFor("id:run-ended", { timeout: 20000 });
+  expect(app.shows("text:exited with 0")).toBe(true);
+  await app.waitFor("text:/GetObject demo\\/README\\.md/", { timeout: 5000 });
 });

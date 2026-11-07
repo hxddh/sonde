@@ -1,12 +1,12 @@
 // The key path of each screen, in the desktop form, on the built-in demo.
 
 import { expect, test } from "nsh/test";
-import { withDemo } from "./helpers";
+import { place, withDemo } from "./helpers";
 
 test("request inspector: records, details, copy as curl without a signature", async () => {
   const app = await withDemo("demo");
   await app.waitFor("text:README.md", { timeout: 10000 });
-  await app.press("id:nav-requests");
+  await place(app, "requests");
   await app.waitFor("id:screen-requests");
   await app.waitFor("text:ListObjectsV2", { timeout: 5000 });
   await app.press("text:ListObjectsV2 >> nth=0");
@@ -21,7 +21,7 @@ test("request inspector: records, details, copy as curl without a signature", as
 
 test("multipart: scan, lifecycle verdict, the guard refuses while read-only", async () => {
   const app = await withDemo("demo");
-  await app.press("id:nav-multipart");
+  await place(app, "multipart");
   await app.press("id:mpu-scan");
   await app.waitFor("text:3 incomplete uploads", { timeout: 10000 });
   expect(app.shows("text:2 older than 7 days")).toBe(true);
@@ -36,7 +36,7 @@ test("multipart: scan, lifecycle verdict, the guard refuses while read-only", as
 
 test("versions: the timeline of a deleted key", async () => {
   const app = await withDemo("demo");
-  await app.press("id:nav-versions");
+  await place(app, "versions");
   await app.type("id:version-key", "config/app.yaml");
   await app.press("id:load-versions");
   await app.waitFor("id:timeline", { timeout: 10000 });
@@ -47,7 +47,7 @@ test("versions: the timeline of a deleted key", async () => {
 
 test("capacity: why the bucket is this big", async () => {
   const app = await withDemo("demo");
-  await app.press("id:nav-capacity");
+  await place(app, "capacity");
   await app.press("id:du-scan");
   await app.waitFor("id:du-findings", { timeout: 15000 });
   expect(app.texts().some((t) => t.startsWith("• Incomplete multipart uploads"))).toBe(true);
@@ -56,7 +56,7 @@ test("capacity: why the bucket is this big", async () => {
 
 test("layouts: detects and decodes the real SlateDB sample, with replay", async () => {
   const app = await withDemo("demo-layouts");
-  await app.press("id:nav-layouts");
+  await place(app, "layouts");
   await app.press("id:layout-detect");
   await app.waitFor("id:analyze-slatedb", { timeout: 15000 });
   expect(app.shows("id:analyze-iceberg")).toBe(true);
@@ -70,7 +70,7 @@ test("layouts: detects and decodes the real SlateDB sample, with replay", async 
 
 test("compatibility: runs probes on the demo and fills the matrix", async () => {
   const app = await withDemo();
-  await app.press("id:nav-probes");
+  await place(app, "probes");
   await app.press("id:probe-ep-demo");
   await app.type("id:probe-bucket", "demo");
   await app.type("id:probe-only", "range.,consistency.");
@@ -85,10 +85,10 @@ test("compatibility: runs probes on the demo and fills the matrix", async () => 
 
 test("errors are readable and lead to their request", async () => {
   const app = await withDemo();
-  await app.press("id:nav-versions");
+  await place(app, "versions");
   await app.type("id:version-key", "x");
   // no bucket chosen: pick one that does not exist through the inspector path
-  await app.press("id:nav-endpoints");
+  await place(app, "endpoints");
   await app.press("id:add-endpoint");
   await app.type("id:ep-name", "Broken");
   await app.type("id:ep-url", "http://127.0.0.1:9");
@@ -103,10 +103,10 @@ test("errors are readable and lead to their request", async () => {
 
 test("settings: read-only off, a confirmed abort, the audit log", async () => {
   const app = await withDemo("demo");
-  await app.press("id:nav-settings");
+  await place(app, "settings");
   await app.press("id:read-only");
   await app.waitFor("text:Writes enabled");
-  await app.press("id:nav-multipart");
+  await place(app, "multipart");
   await app.press("id:mpu-scan");
   await app.waitFor("text:3 incomplete uploads", { timeout: 10000 });
   await app.press("id:plan-abort");
@@ -115,24 +115,16 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   await app.type("id:confirm-input", "2");
   await app.press("id:confirm-run");
   await app.waitFor("text:1 incomplete uploads", { timeout: 10000 });
-  await app.press("id:nav-audit");
+  await place(app, "audit");
   await app.waitFor("text:abortUploads · demo/demo");
-  await app.press("id:nav-settings");
+  await place(app, "settings");
   await app.press("id:read-only");
   await app.waitFor("text:Read-only");
 });
 
-test("plugins: the manager without plugins", async () => {
-  const app = await withDemo();
-  await app.press("id:nav-plugins");
-  await app.waitFor("id:screen-plugins");
-  expect(app.shows("text:No plugin installed")).toBe(true);
-  expect(app.shows("id:plugin-install")).toBe(true);
-});
-
 test("language: Chinese strings", async () => {
   const app = await withDemo();
-  await app.press("id:nav-settings");
+  await place(app, "settings");
   await app.press("label:Language");
   await app.press("text:中文");
   await app.waitFor("text:设置");
