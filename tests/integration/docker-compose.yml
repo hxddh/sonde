@@ -19,6 +19,8 @@ services:
       CEPH_DEMO_SECRET_KEY: sondesecret
       RGW_FRONTEND_PORT: "7480"
       DEMO_DAEMONS: mon,mgr,osd,rgw
+      # the monitor refuses to start under 5% free disk; a test cluster needs little
+      CEPH_ARGS: "--mon_data_avail_crit=1"
     networks:
       s3:
         ipv4_address: 172.31.0.10
