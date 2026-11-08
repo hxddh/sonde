@@ -99,6 +99,9 @@ pointer, tooltips and fading followed in Rust, never a hand-drawn canvas.
   the plot sits in a pressable view, as the plot takes no presses itself.
 - **Motion**: an appear of 420 ms ease-out per new data (`appearGeneration`), updates gliding in 260 ms; nothing
   moves with reduced motion.
+- **Flows and grids**: a Sankey shows few nodes (top operations and prefixes, the rest "other"), outcomes in their
+  status colors, ribbons a gradient from source to target; a heat map ramps from `muted` to `chart-1`.
+- **Annotations over legends**: a chart names its notable point in place (`PlotLabel`), a baseline is a dashed line.
 - Times read from the session's start (`+230 ms`, `2.35 s`); costs to two significant digits under a cent.
 
 ## Motion

@@ -4,6 +4,49 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-11-08
+
+A program over its runs. A session says in a sentence where its time went and what to do first; its requests are
+seen flowing from operation to prefix to outcome; runs of one command are tracked against a baseline, in the app
+and in CI.
+
+### Added
+
+- Runs: a session's Runs pane plots every run of its command (requests, waiting, cost, warnings), the baseline
+  dashed; make a run the baseline, and every other run is checked against it (10% to grow, no new warning).
+- `sonde check [SESSION] --baseline FILE --max-requests N --max-waiting MS --max-cost X --max-errors N --tolerance
+  PCT --no-new-warnings`: a run against a budget and a baseline, exit 1 when over, for CI.
+- Where requests went: a Sankey from each kind of operation to the prefixes it touched to how they were answered.
+- When and where: a heat map of requests by prefix over the session.
+- A finding for a prefix near the request rate S3 serves one prefix (5,500 reads or 3,500 writes a second).
+- The session in a sentence: where its time went and what acting on its first finding saves.
+- The shape names its busiest moment; resting on the requests or took figure shows them by kind.
+- `sonde://` links (`open?path=`, `session/<name>`, `bucket/<endpoint>/<bucket>/<prefix>`) and `sonde show --app`.
+- A pressed run notification opens the run; warnings wait on the Dock's icon or the taskbar button; a failed run asks
+  for attention while the window is away.
+- A request's document and an error body read in a read-only code editor, the S3 error code marked.
+- Session rows offer their commands to screen readers.
+
+### Changed
+
+- How long requests took is each kind's median to p95, the median a dot and the slowest a ring, instead of a dot per
+  request.
+- Compare loads off the interface's thread.
+
+### Fixed
+
+- A finding whose details changed between two runs (which request was the slowest, throttling either side of its
+  threshold) was reported as both gone and new; a format's shared habits were merged into one.
+- A line of output chose the wrong row when the operations were sorted.
+- Concurrent multipart uploads to one key were credited with each other's create, and the attribution scanned the
+  session once per upload.
+- Compare opened from a replay compared it the wrong way round.
+- Latency included fetching credentials; a body cut to the 256 KiB kept was guessed rather than flagged; latencies
+  past a day overflowed; a session written over another kept its old count; shared pages lost their folder across
+  versions; amounts just under a power of ten rounded to three digits; equal counts showed as fewer; operations with
+  more requests than a call takes arguments failed to draw; a stray `%` in a dropped file's name left its other
+  escapes undecoded.
+
 ## [6.0.0] - 2026-11-08
 
 Time and cost, seen. A session says where its time went and what its requests cost, two runs of a program say what a

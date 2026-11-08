@@ -10,6 +10,7 @@ another endpoint and see where the two disagree.
 sonde run -- ./my-app                    # record every S3 request my-app makes
 sonde show                               # … as operations, with what stands out and where the time went
 sonde compare before.sonde after.sonde   # what a change did: requests, waiting, cost, findings
+sonde check --baseline main.sonde        # in CI: exit 1 when a run is over its budget or past its baseline
 sonde replay session.sonde -e ceph       # the same traffic on another store: what differs?
 ```
 
@@ -61,6 +62,7 @@ default, no telemetry.
 | **Recording** | `sonde run -- <command>` or `sonde proxy`, or a recording endpoint started in the app: a local S3 endpoint that re-signs, forwards and records every request; signed aws-chunked bodies, presigned URLs and multipart uploads handled; policies `--no-delete`, `--read-only`. Sessions are redacted JSON lines ([docs/recording.md](docs/recording.md)). |
 | **Operations** | Sessions read as operations (multipart uploads, retries, lookups, listings; SlateDB, Iceberg and Delta steps) with observations; `sonde show`, or Sessions — the session's shape (requests by outcome and in flight over time, a slice a press away), a table with each operation's outcome and place in time, narrowed by what stands out, an inspector down to each request and its waterfall, or a timeline. |
 | **Time and cost** | Where a session's time went: the time the program waited on its store by kind of request (requests at once counted once), the peak in flight, the slowest requests, and the requests' cost at S3's prices (configurable). `sonde compare` and the app's Before and after: what a change did to requests, waiting, cost and findings. |
+| **Programs and CI** | Runs of one command tracked over time against a baseline (the app's Runs pane), and `sonde check` to fail a CI job when a run is over its budget or past its baseline. Where requests went (operation → prefix → outcome), when and where (a heat map by prefix), and prefixes near S3's per-prefix rate. |
 | **Replay** | `sonde replay <session> -e <endpoint>`: the traffic re-enacted on another store under a fresh prefix and compared request by request; `sonde diff` for two files. In the app: Replay from a session, then the differences grouped and both sessions as transcripts side by side. |
 | **Share** | `sonde share`: a session as a static web page (operations, observations, output, every request) for anyone with a browser — write it to a folder, host it anywhere (S3 static website hosting works), or `--serve` it. |
 | **Endpoints** | Many endpoints, from AWS profiles or by hand (URL, region, path-style, CA file, vendor: AWS, R2, MinIO, Ceph RGW, Alibaba OSS, Tigris, Backblaze B2, Wasabi, GCS XML, other). Connectivity test with STS `GetCallerIdentity` where the vendor has it. |
@@ -139,12 +141,13 @@ are in [app/DESIGN.md](app/DESIGN.md).
 |---|---|
 | ![A session: its figures, what stands out and why, operations with outcome and time](docs/images/session.png) | ![The timeline, dark](docs/images/timeline-dark.png) |
 | ![Buckets: the overview over the objects, an object's details](docs/images/store.png) | ![Incomplete uploads, a sheet from the overview](docs/images/uploads.png) |
+| ![Where requests went: operation, prefix, outcome](docs/images/flows.png) | ![When and where, and how long requests took](docs/images/spread.png) |
 | ![Where the time went, the peak in flight, the request cost](docs/images/time.png) | ![Two runs, before and after](docs/images/runs.png) |
 | ![Settings and endpoints in a window of their own](docs/images/endpoints.png) | ![The command palette](docs/images/palette.png) |
 
 Every place is screenshotted on a real window in CI on Linux, macOS and Windows (`scripts/shots.sh`: wide and at
 the least size, light and dark, English and Chinese); the images are the build's `sonde-shots-<platform>` artifacts.
-[What changed from 2.1 to 3.0](docs/compare-3.0.md), [from 3.0 to 4.0](docs/compare-4.0.md), [from 4.0 to 5.0](docs/compare-5.0.md) and [from 5.0 to 6.0](docs/compare-6.0.md), side by side.
+[What changed from 2.1 to 3.0](docs/compare-3.0.md), [from 3.0 to 4.0](docs/compare-4.0.md), [from 4.0 to 5.0](docs/compare-5.0.md), [from 5.0 to 6.0](docs/compare-6.0.md) and [from 6.0 to 7.0](docs/compare-7.0.md), side by side.
 
 ## Documentation
 

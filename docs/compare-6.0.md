@@ -12,17 +12,17 @@ narrows the operations, and the timeline, to that moment.
 
 | 5.0 | 6.0 |
 |---|---|
-| ![A session in 5.0](images/5.0/session.png) | ![A session in 6.0](images/session.png) |
-| ![A session in 5.0, in Chinese](images/5.0/session-zh.png) | ![A session in 6.0, in Chinese](images/session-zh.png) |
-| ![A session in 5.0 at the least window size](images/5.0/session-min.png) | ![A session in 6.0 at the least window size](images/session-min.png) |
-| ![The timeline in 5.0, dark](images/5.0/timeline-dark.png) | ![The timeline in 6.0, dark](images/timeline-dark.png) |
+| ![A session in 5.0](images/5.0/session.png) | ![A session in 6.0](images/6.0/session.png) |
+| ![A session in 5.0, in Chinese](images/5.0/session-zh.png) | ![A session in 6.0, in Chinese](images/6.0/session-zh.png) |
+| ![A session in 5.0 at the least window size](images/5.0/session-min.png) | ![A session in 6.0 at the least window size](images/6.0/session-min.png) |
+| ![The timeline in 5.0, dark](images/5.0/timeline-dark.png) | ![The timeline in 6.0, dark](images/6.0/timeline-dark.png) |
 
 ## New in 6.0
 
 | | |
 |---|---|
-| ![The Time pane: where the time went, the peak in flight, the request cost](images/time.png) | ![Two runs of a program, before and after](images/runs.png) |
-| ![A slice of the shape: the operations running then](images/slice.png) | ![An operation's requests as a waterfall](images/operation.png) |
+| ![The Time pane: where the time went, the peak in flight, the request cost](images/6.0/time.png) | ![Two runs of a program, before and after](images/6.0/runs.png) |
+| ![A slice of the shape: the operations running then](images/6.0/slice.png) | ![An operation's requests as a waterfall](images/6.0/operation.png) |
 
 ## What a screenshot does not show
 

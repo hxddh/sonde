@@ -179,7 +179,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           </Text>
           <Text class="text-small text-muted-foreground line-clamp-1">{`${props.view.header.endpoint} · ${props.view.header.url} · ${date(props.view.header.created)}`}</Text>
           {/* the session in a sentence: where its time went, and the first thing to do */}
-          <If when={props.view.profile?.groups.length && props.shape !== false}>
+          <If when={props.view.profile?.groups.length && props.shape !== false && !props.compact}>
             <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(props.view.profile, props.view.observations)}</Text>
           </If>
         </View>
