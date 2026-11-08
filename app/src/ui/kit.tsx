@@ -1,7 +1,7 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
 import { ErrorBoundary, fontScale, type JSX, platform, reduceMotion, Scroll, setAccessibilityFocus, Text, token, View, type ViewRef } from "nsh";
-import { Button as BaseButton, Checkbox as BaseCheckbox, DataTable, Input, Progress, Select, Sheet, Switch, Tab, Tabs, Tooltip } from "nsh/base";
+import { Button as BaseButton, Checkbox as BaseCheckbox, DataTable, Input, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
 import { keyLabel } from "./keys";
@@ -370,6 +370,32 @@ export function Segmented(props: { value: string; items: { value: string; title:
   );
 }
 
+/** One value of a few, as a row of toggles (Native Shell's ToggleGroup:
+ * arrow keys move between them, screen readers hear toggle buttons). For a
+ * value; `Segmented` (tabs) switches what a place shows. */
+export function Options(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
+  return (
+    <ToggleGroup testID={props.testID} class={`flex-row rounded-(--radius) bg-muted p-0.5 ${props.class ?? "self-start"}`}>
+      <Each of={props.items}>
+        {(item) => (
+          <BaseToggle
+            testID={props.testID ? `${props.testID}-${item().value}` : undefined}
+            accessibilityLabel={item().title}
+            pressed={props.value === item().value}
+            onChange={() => props.onChange(item().value)}
+            class="group flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5 py-1 aria-pressed:bg-background aria-pressed:shadow-sm"
+          >
+            <If when={item().icon && !terminal()}>
+              <Icon name={item().icon!} size={13} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
+            </If>
+            <Text class="text-small text-muted-foreground group-aria-pressed:font-medium group-aria-pressed:text-foreground">{item().title}</Text>
+          </BaseToggle>
+        )}
+      </Each>
+    </ToggleGroup>
+  );
+}
+
 /** A status mark: a small dot in a status color, with its meaning for screen readers. */
 export function Dot(props: { tone: "ok" | "miss" | "client" | "server" | "refused" | "live"; label?: string }) {
   const bg = { ok: "bg-status-ok", miss: "bg-status-miss", client: "bg-status-client", server: "bg-status-server", refused: "bg-status-refused", live: "bg-primary" }[props.tone];
@@ -434,6 +460,19 @@ export function Empty(props: { text: string; title?: string; icon?: IconName; ch
       <If when={props.children}>
         <View class="mt-1 flex-row items-center gap-2">{props.children}</View>
       </If>
+    </View>
+  );
+}
+
+/** Something on its way: one look for every wait in the app — a soft pulse
+ * (still with reduced motion) and what is being waited for. */
+export function Loading(props: { text?: string; class?: string; testID?: string }) {
+  return (
+    <View testID={props.testID ?? "loading"} class={`flex-row items-center gap-2 ${props.class ?? ""}`}>
+      <If when={!terminal()}>
+        <View class={`size-2 rounded-full bg-muted-foreground/60 ${reduceMotion() ? "" : "animate-pulse"}`} />
+      </If>
+      <Text class="text-small text-muted-foreground">{props.text ?? t("common.loading")}</Text>
     </View>
   );
 }

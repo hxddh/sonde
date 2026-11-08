@@ -5,7 +5,8 @@
 // (sonde share) both draw with these.
 
 import { type ContextMenuEvent, type JSX, List, platform, Scroll, signal, Text, View } from "nsh";
-import { Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, Editor, HoverCard, Toggle, ToggleGroup } from "nsh/base";
+import { Button as BaseButton, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Editor, HoverCard, MenuItem, TextView, Toggle, ToggleGroup } from "nsh/base";
+import { isAvailable } from "nsh/desktop";
 import { bytes, date, day, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
@@ -248,6 +249,16 @@ function FixPanel(props: { o: Observation }) {
           </Each>
         </ToggleGroup>
       </View>
+      {/* why it matters and what it saves, written out */}
+      <If when={observationWhy(props.o)}>
+        {(why) => (
+          <TextView
+            testID="fix-why"
+            markdown={`${why()}${observationSaving(props.o) ? `\n\n**${observationSaving(props.o)}**` : ""}`}
+            classes={{ paragraph: "text-small leading-snug text-muted-foreground", strong: "font-semibold text-info" }}
+          />
+        )}
+      </If>
       <If when={shown()}>
         {(f) => (
           <If when={!terminal()} else={<Text class="font-mono text-foreground">{f().code}</Text>}>
@@ -318,6 +329,8 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       onPress={() => press(i())}
       class={`group flex-row items-start gap-2.5 px-3 ${props.compact ? "py-1.5" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${i() > 0 ? "border-t border-border" : ""}`}
     >
+      {/* its number: where it stands on the session's shape */}
+      <Text class={`h-5 w-3 text-right tabular-nums text-caption font-semibold ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{String(i() + 1)}</Text>
       <View class="h-5 w-4 items-center justify-center">
         <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={14} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
       </View>
@@ -663,7 +676,23 @@ export function SessionList(props: {
   const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
   const name = (s: SessionInfo) => s.title || programOf(s.command) || s.endpoint;
   const args = (s: SessionInfo) => (!s.title && s.command && programOf(s.command) !== s.command.trim() && !programOf(s.command)!.endsWith("…") ? s.command.trim().split(/\s+/).slice(1).join(" ") : "");
-  const row = (x: () => { s: SessionInfo; i: number }) => (
+  // where the system has no menus to pop up (a terminal, the web): the
+  // same commands in Native Shell's own, on a right press or Shift+F10
+  const inWindowMenu = (x: () => { s: SessionInfo; i: number }, body: JSX.Element) =>
+    !props.onContextMenu && props.actions && (terminal() || !isAvailable) ? (
+      <ContextMenu trigger={body} popupClass={`${POPUP} min-w-48`}>
+        <Each of={props.actions(x().s).filter((a) => a.name !== "window")}>
+          {(a) => (
+            <MenuItem onSelect={a().run} class="rounded-(--radius-sm) px-2 py-1 focus:bg-muted">
+              <Text class="text-body text-foreground">{a().label}</Text>
+            </MenuItem>
+          )}
+        </Each>
+      </ContextMenu>
+    ) : (
+      body
+    );
+  const row = (x: () => { s: SessionInfo; i: number }) => inWindowMenu(x,
     <View
       onContextMenu={props.onContextMenu ? (e: ContextMenuEvent) => props.onContextMenu!(x().s, e.pagePosition) : undefined}
       accessibilityActions={props.actions?.(x().s).map(({ name, label }) => ({ name, label }))}
@@ -690,7 +719,7 @@ export function SessionList(props: {
         </If>
       </View>
     </BaseButton>
-    </View>
+    </View>,
   );
   return (
     <List

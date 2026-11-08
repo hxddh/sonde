@@ -97,9 +97,6 @@ for (const v of variants) {
     await app.press("id:inspector-close");
     await app.press("id:observation-1");
     await shot("03d-filtered");
-    await app.press("id:session-pane-mode-timeline");
-    await app.waitFor("id:timeline");
-    await shot("03e-timeline");
     // a slice of the session's shape: the operations running then
     await app.press("id:clear-filter");
     if (app.shows("id:session-shape")) {

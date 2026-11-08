@@ -10,7 +10,7 @@ import { api } from "../native";
 import { endpoint, endpoints, go, report } from "../store";
 import type { LatencyChange, RunChange } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Check, Choice, Heading, Muted, rowHeight, SCRIM, Segmented, TYPE } from "./kit";
+import { Badge, Button, Check, Choice, Heading, Loading, Muted, rowHeight, SCRIM, Segmented, TYPE } from "./kit";
 import { cost, groupName, offset, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
@@ -145,12 +145,12 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
           <If
             when={mode() === "answers"}
             else={
-              <If when={runs()} else={<Text class="text-small text-muted-foreground">{t("common.loading")}</Text>}>
+              <If when={runs()} else={<Loading />}>
                 {(r) => <RunChangeView change={r()} />}
               </If>
             }
           >
-            <If when={answers()} else={<Text class="text-small text-muted-foreground">{t("common.loading")}</Text>}>
+            <If when={answers()} else={<Loading />}>
             {(d) => (
             <View class="min-h-0 flex-1 gap-2">
               <Text class="text-body text-foreground" testID="compare-summary">

@@ -9,7 +9,7 @@ import { api } from "../native";
 import { report, sessionsChanged } from "../store";
 import type { ProgramHistory } from "../types";
 import { Icon } from "./icon";
-import { Button, Empty, POPUP, SimpleTable, terminal } from "./kit";
+import { Button, Empty, Loading, POPUP, SimpleTable, terminal } from "./kit";
 import { cost, offset, RunTrend } from "./plots";
 
 const TOLERANCE = "10%";
@@ -70,7 +70,7 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
     return r ? `${r[0] ? day(r[0]) : "…"} – ${r[1] ? day(r[1]) : "…"}` : t("history.allRuns");
   };
   return (
-    <If when={h()} else={<Empty icon="list-clock" text={h.loading() ? t("common.loading") : t("history.none")} />}>
+    <If when={h()} else={h.loading() ? <Loading class="p-4" /> : <Empty icon="list-clock" text={t("history.none")} />}>
       {(x) => (
         <Scroll testID="history-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-4 pb-4 pr-2"}>
           <View class="flex-row items-center gap-3">

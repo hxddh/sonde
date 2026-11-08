@@ -15,7 +15,7 @@ import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, p
 import { away, endpoint, endpoints, go, openSession, report, sessionsChanged } from "../store";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Button, Dot, Empty, IconButton, KeyValue, Segmented, terminal } from "../ui/kit";
+import { Button, Dot, Empty, IconButton, KeyValue, Options, terminal } from "../ui/kit";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { LatencyBand, liveFigures, SessionShape } from "../ui/plots";
 import { openMonitor } from "./MonitorWindow";
@@ -50,7 +50,7 @@ function CommandBar() {
             <Button variant="destructive" label={t("run.stop")} onPress={stop} testID="run-stop" />
           </If>
         </View>
-        <Segmented value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
+        <Options value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
       </View>
     );
   }
@@ -105,7 +105,7 @@ function CommandBar() {
           <Text class="text-small text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
         </View>
         <View class="flex-1" />
-        <Segmented testID="run-policy" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
+        <Options testID="run-policy" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
       </View>
     </View>
   );

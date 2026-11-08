@@ -112,8 +112,8 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   await app.waitFor("id:run-ended", { timeout: 20000 });
   await app.press("id:run-open-session");
   await app.waitFor("id:session-pane");
-  await app.press("id:session-pane-mode-timeline");
-  await app.waitFor("id:timeline");
+  // where each operation fell in time is the operations' own When column
+  expect(app.shows("id:session-pane-mode-timeline")).toBe(false);
   await app.press("id:replay-open");
   await app.waitFor("id:replay-plan", { timeout: 5000 });
   expect(app.shows("text:/2 requests \\(1 writes, 0 deletes\\) under replay-/")).toBe(true);

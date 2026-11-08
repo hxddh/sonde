@@ -3,7 +3,7 @@
 // application's menus. A terminal has none of this (App.tsx's TerminalShell).
 
 import { type JSX, platform, reduceMotion, signal, Storage, Text, View, windowSize } from "nsh";
-import { Button as BaseButton, Combobox } from "nsh/base";
+import { Button as BaseButton, Combobox, Toolbar as ToolbarGroup } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, titleBar } from "nsh/desktop";
 import { date } from "../format";
 import { t } from "../i18n";
@@ -202,6 +202,8 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       <View class="ml-1 min-w-0 flex-1">
         <Breadcrumb />
       </View>
+      {/* one stop of Tab, the arrows between its commands */}
+      <ToolbarGroup accessibilityLabel={t("toolbar.label")} class="flex-row items-center gap-2">
       <RunningPill />
       <EndpointSwitcher />
       <ActivityButton onPress={() => (activityOpen() ? activityOpen.set(false) : go("activity"))} />
@@ -221,6 +223,7 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
           onPress={() => void Menu.popup(appMenus(props.open).map((m) => ({ label: m.label, submenu: m.submenu })))}
         />
       </If>
+      </ToolbarGroup>
     </View>
   );
 }
@@ -312,11 +315,12 @@ export function Sidebar(props: { open: (a: Area) => void }) {
   return (
     <If when={sidebarOpen()}>
       <View testID="sidebar" class={`w-56 border-r border-sidebar-border ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} px-2 pb-2 pt-3`}>
-        <View class="gap-0.5">
+        {/* the places: one stop of Tab, ↑ and ↓ between them */}
+        <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="gap-0.5">
           <Place area="run" open={props.open} />
           <Place area="sessions" open={props.open} />
           <Place area="store" open={props.open} />
-        </View>
+        </ToolbarGroup>
         <Recent open={props.open} />
         <View class="flex-1" />
       </View>

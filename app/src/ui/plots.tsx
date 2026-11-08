@@ -163,7 +163,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
           {/* where each finding begins */}
           <If when={props.annotate && marked().size > 0}>
-            <Rule value={(_, i) => (marked().has(i) ? top() : (undefined as unknown as number))} class="stroke-warn/70 stroke-1 [stroke-dasharray:2_2]" />
+            <Rule value={(_, i) => (marked().has(i) ? top() : (undefined as unknown as number))} class="stroke-warn/70 stroke-1" style={{ strokeDasharray: "2 2" }} />
             <PlotLabel class="tabular-nums text-caption font-semibold text-warn" texts={[...marked()].map(([i, ns]) => ({ text: ns.join(" "), x: i, y: top(), align: "center" as const, class: "-translate-y-full pb-0.5" }))} />
           </If>
           {/* the busiest moment, named where it happened */}
@@ -278,7 +278,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
       >
         <Area y0="p50Ms" y1="p95Ms" curve="natural" class="fill-chart-1/25" />
         <Line y="p50Ms" curve="natural" class="stroke-chart-1 stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
-        <Line y="p99Ms" curve="natural" class="stroke-status-client/70 stroke-[1] [stroke-dasharray:3_3]" hoverDotClass="hidden" />
+        <Line y="p99Ms" curve="natural" class="stroke-status-client/70 stroke-[1]" style={{ strokeDasharray: "3 3" }} hoverDotClass="hidden" />
         <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), focusMs()) ? Math.max(...rows().map((b) => b.p99Ms), 1) * 1.15 : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
         <PlotAxis placement="left" ticks={3} format={(v) => ms(v)} labelClass="pr-1.5 tabular-nums text-caption text-muted-foreground" />
       </Plot>
@@ -555,61 +555,7 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
   );
 }
 
-// --- operations over time (the timeline) -------------------------------------------
 
-export type GanttRow = { i: number; title: string; start: number; end: number; tone: Tone; detail: string };
-
-/**
- * Operations in time: a bar per operation from its start to its end, in its
- * outcome's color, against the time from the session's start. `domain`
- * shows a part of the session (a slice picked on the shape).
- */
-export function Gantt(props: { rows: GanttRow[]; domain: [number, number]; selected: number | null; onSelect: (i: number) => void; label: string }) {
-  const hovered = signal<number | null>(null);
-  const ticks = () => {
-    const [a, b] = props.domain;
-    const step = niceStep((b - a) / 6);
-    const first = Math.ceil(a / step) * step;
-    return Array.from({ length: Math.floor((b - first) / step) + 1 }, (_, k) => first + k * step);
-  };
-  const tip = () => {
-    const r = hovered() === null ? null : props.rows[hovered()!];
-    return r ? { title: r.title, lines: [`+${offset(r.start)} · ${offset(r.end - r.start)}`, r.detail] } : null;
-  };
-  const color = (r: GanttRow) => (props.selected === null || props.selected === r.i ? r.tone : "dim");
-  return (
-    <BaseButton
-      testID="gantt"
-      accessibilityLabel={props.label}
-      onPress={() => {
-        const r = hovered() === null ? null : props.rows[hovered()!];
-        if (r) props.onSelect(r.i);
-      }}
-    >
-      <Plot
-        data={props.rows}
-        yScale={{ type: "band", paddingInner: 0.38, paddingOuter: 0.2 }}
-        xScale={{ type: "linear", domain: props.domain }}
-        colorScale={tones()}
-        accessibilityLabel={props.label}
-        accessibilityValue={{ text: tip() ? `${tip()!.title}, ${tip()!.lines[0]}` : "" }}
-        motion={MOTION}
-        crossLineClass="w-full h-full bg-foreground/5"
-        tooltipPlacement="pointer"
-        tooltipOffset={12}
-        tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
-        onHoverChange={({ index }) => hovered.set(index)}
-        class="ml-60 mr-4 mt-7"
-        style={{ height: props.rows.length * 22 + 8 }}
-      >
-        <Grid x={ticks()} class="stroke-border" />
-        <Bar base="start" value="end" color={color} cornerRadii={3} inactiveOpacity={0.5} />
-        <PlotAxis placement="top" tickValues={ticks()} format={(v) => offset(v)} labelClass="pb-1.5 tabular-nums text-caption text-muted-foreground" />
-        <PlotAxis placement="left" format={(i) => props.rows[i]?.title ?? ""} labelClass="w-56 pr-3 text-right text-small text-foreground line-clamp-1" />
-      </Plot>
-    </BaseButton>
-  );
-}
 
 // --- two runs ---------------------------------------------------------------------
 

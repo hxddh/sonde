@@ -10,7 +10,7 @@ import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, iconSvg } from "../ui/icon";
-import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, KeyValue, Muted, rowHeight, terminal, Toggle, TYPE } from "../ui/kit";
+import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, KeyValue, Loading, Muted, rowHeight, terminal, Toggle, TYPE } from "../ui/kit";
 import { Fold } from "../ui/record";
 import { Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
@@ -111,7 +111,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
         </View>
         <Text class="font-mono text-caption text-muted-foreground line-clamp-2">{`s3://${b}/${props.entry.key}`}</Text>
       </View>
-      <If when={detail()} else={<Muted>{t("common.loading")}</Muted>}>
+      <If when={detail()} else={<Loading />}>
         {(d) => (
           <View class="gap-4">
             <View class="flex-row flex-wrap gap-1.5">

@@ -8,7 +8,7 @@ import { language, t } from "../i18n";
 import { api } from "../native";
 import { notify, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Choice, Field, KeyValue, Page, Section, Segmented, terminal, Toggle } from "../ui/kit";
+import { Choice, Field, KeyValue, Options, Page, Section, terminal, Toggle } from "../ui/kit";
 import { Fold } from "../ui/record";
 import { Updates } from "../ui/updates";
 
@@ -58,7 +58,7 @@ export function SettingsScreen() {
               <View class="flex-row flex-wrap items-center gap-x-8 gap-y-3">
                 <View class="gap-1.5">
                   <Text class="text-small font-medium text-muted-foreground">{t("settings.themeLabel")}</Text>
-                  <Segmented
+                  <Options
                     testID="theme"
                     value={d().theme}
                     items={[

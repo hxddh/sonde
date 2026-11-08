@@ -8,7 +8,7 @@ import { api } from "../native";
 import { endpoint, endpoints, notify, report } from "../store";
 import type { Episode, RecordingView } from "../types";
 import { Icon } from "./icon";
-import { Button, Dot, Segmented, terminal } from "./kit";
+import { Button, Dot, Options, terminal } from "./kit";
 import { OperationView } from "./sessionview";
 
 export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, operationsAt, seconds, SessionHeader, SessionList, statusTone } from "./sessionview";
@@ -64,7 +64,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
             <View class="gap-2.5 border-t border-border pt-3">
               <Text class="text-small text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
               <If when={!props.policy}>
-                <Segmented
+                <Options
                   value={policy()}
                   items={[
                     { value: "allow", title: t("timeline.allow") },

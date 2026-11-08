@@ -581,5 +581,7 @@
  "history.allRuns": "All runs",
  "history.last7": "Last 7 days",
  "history.last30": "Last 30 days",
- "history.range": "Runs between"
+ "history.range": "Runs between",
+ "toolbar.label": "Window commands",
+ "sidebar.places": "Places"
 }

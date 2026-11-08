@@ -13,7 +13,7 @@ import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, away, focusRecord, notify, report } from "../store";
 import type { JobInfo, RecordSummary, RequestFilter } from "../types";
 import { Icon, iconSvg } from "./icon";
-import { Bar, Button, Dot, Empty, IconButton, PanelHeader, rowHeight, Segmented, terminal, Tip, TYPE } from "./kit";
+import { Bar, Button, Dot, Empty, IconButton, PanelHeader, Options, rowHeight, Segmented, terminal, Tip, TYPE } from "./kit";
 import { statusTone, toneText } from "./sessionview";
 
 export const activityOpen = signal(false);
@@ -89,7 +89,7 @@ function Requests() {
           </If>
           <Input value={text()} placeholder={t("activity.search")} onChange={({ value }) => text.set(value)} accessibilityLabel={t("common.search")} autoCapitalize="none" autoCorrect={false} class="min-w-0 flex-1 text-body text-foreground placeholder:text-muted-foreground" />
         </View>
-        <Segmented
+        <Options
           testID="requests-filter"
           value={errors() ? "errors" : "all"}
           items={[

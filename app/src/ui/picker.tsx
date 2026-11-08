@@ -4,7 +4,7 @@ import { resource, Text, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
 import { bucket, chooseBucket, endpoint, endpoints, report } from "../store";
-import { Choice } from "./kit";
+import { Choice, Loading } from "./kit";
 
 export function EndpointPicker(props: { testID?: string; class?: string }) {
   return (
@@ -42,7 +42,7 @@ export function BucketPicker(props: { testID?: string }) {
         class="w-56"
       />
       <If when={list.state() === "pending"}>
-        <Text class="text-small text-muted-foreground">{t("common.loading")}</Text>
+        <Loading />
       </If>
     </View>
   );

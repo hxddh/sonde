@@ -578,5 +578,7 @@
  "history.allRuns": "全部运行",
  "history.last7": "最近 7 天",
  "history.last30": "最近 30 天",
- "history.range": "运行时间范围"
+ "history.range": "运行时间范围",
+ "toolbar.label": "窗口命令",
+ "sidebar.places": "位置"
 }

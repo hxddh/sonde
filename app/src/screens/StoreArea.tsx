@@ -13,7 +13,7 @@ import { api, Listing } from "../native";
 import { bucket, chooseBucket, endpoint, go, notify, prefix, report, STORE_TABS, type StoreTab, storeSheet, storeTab } from "../store";
 import type { BucketEntry, Entry } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { IconButton, PanelHeader, SidePanel, terminal } from "../ui/kit";
+import { IconButton, Loading, PanelHeader, SidePanel, terminal } from "../ui/kit";
 import { TabBar } from "../ui/tabs";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
@@ -153,7 +153,7 @@ function Buckets() {
         <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={() => buckets.refetch()} />
       </View>
       <If when={buckets.state() === "pending"}>
-        <Text class="px-3 text-small text-muted-foreground">{t("common.loading")}</Text>
+        <Loading class="px-3" />
       </If>
       <If when={buckets.state() !== "pending" && (buckets() ?? []).length === 0}>
         <Text class="px-3 text-small text-muted-foreground">{t("store.noBuckets")}</Text>
