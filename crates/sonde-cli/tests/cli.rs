@@ -106,7 +106,19 @@ fn check_holds_a_run_to_its_programs_baseline() {
     assert!(t.path().join("data/sessions/baselines.json").is_file());
     std::thread::sleep(std::time::Duration::from_millis(1100));
     assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
-    let c = sonde(t.path(), &["check", "--baseline", "auto", "-f", "json"]);
+    // the mechanism, not this machine's timing: two runs of the demo may differ by more than 10% in waiting
+    let c = sonde(
+        t.path(),
+        &[
+            "check",
+            "--baseline",
+            "auto",
+            "--tolerance",
+            "200",
+            "-f",
+            "json",
+        ],
+    );
     let v: serde_json::Value = serde_json::from_slice(&c.stdout).unwrap();
     assert_eq!(c.status.code(), Some(0), "{v}");
     assert!(
