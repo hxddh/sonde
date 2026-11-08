@@ -29,6 +29,13 @@ pub struct SessionHeader {
     pub command: Option<String>,
 }
 
+/// A session's header alone, from its first line (compressed or not).
+pub fn read_header(path: &Path) -> Option<SessionHeader> {
+    let mut first = String::new();
+    reader(path).ok()?.read_line(&mut first).ok()?;
+    serde_json::from_str(&first).ok()
+}
+
 impl SessionHeader {
     pub fn new(endpoint: &str, url: &str, region: &str, command: Option<String>) -> Self {
         SessionHeader {

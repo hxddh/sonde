@@ -22,6 +22,7 @@ sonde-core.workspace = true
 probes.workspace = true
 decoders.workspace = true
 s3raw.workspace = true
+http.workspace = true
 reqlog.workspace = true
 sonde-proxy.workspace = true
 bytes.workspace = true

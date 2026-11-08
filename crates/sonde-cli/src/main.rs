@@ -56,10 +56,14 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// A tour: a small program's requests to a built-in store, recorded and explained.
+    Demo(cmd::record::DemoArgs),
     /// Run a command with its S3 requests recorded: sonde run -- <command>.
     Run(cmd::record::RunArgs),
     /// A local S3 endpoint that records what talks to it.
     Proxy(cmd::record::ProxyArgs),
+    /// The recorded sessions, newest first; prune old ones.
+    Sessions(cmd::sessions::SessionsArgs),
     /// Print a recorded session.
     Show(cmd::record::ShowArgs),
     /// Replay a recorded session on another endpoint and compare the answers.
@@ -102,7 +106,14 @@ fn main() -> ExitCode {
         }
         previous(info);
     }));
-    let cli = Cli::parse();
+    // a mistake in the command is a usage error (64), as docs/cli.md says; help and --version are not
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = e.print();
+            return ExitCode::from(if e.use_stderr() { 64 } else { 0 });
+        }
+    };
     #[cfg(feature = "tui")]
     if let Command::Tui(args) = &cli.command {
         return cmd::tui::run(&cli, args);
@@ -120,8 +131,10 @@ fn main() -> ExitCode {
             }
         };
         let code = match &cli.command {
+            Command::Demo(a) => cmd::record::demo(&sonde, a).await,
             Command::Run(a) => cmd::record::run(&sonde, &cli, a).await,
             Command::Proxy(a) => cmd::record::proxy(&sonde, &cli, a).await,
+            Command::Sessions(a) => cmd::sessions::run(&sonde, a).await,
             Command::Show(a) => cmd::record::show(&sonde, a).await,
             Command::Replay(a) => cmd::record::replay(&sonde, &cli, a).await,
             Command::Diff(a) => cmd::record::diff(&sonde, a).await,

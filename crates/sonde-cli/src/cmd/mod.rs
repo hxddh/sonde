@@ -4,6 +4,7 @@ pub mod layout;
 pub mod mpu;
 pub mod probe;
 pub mod record;
+pub mod sessions;
 pub mod share;
 #[cfg(feature = "tui")]
 pub mod tui;

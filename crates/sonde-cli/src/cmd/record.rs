@@ -64,8 +64,12 @@ pub struct CheckArgs {
     /// The run to check (default: the newest session).
     file: Option<PathBuf>,
     /// A run to hold it to: --tolerance and --no-new-warnings compare with it.
+    /// `auto` is the baseline set for the run's program (in the app, or with --set-baseline).
     #[arg(long)]
-    baseline: Option<PathBuf>,
+    baseline: Option<String>,
+    /// Make this run its program's baseline, for later `--baseline auto` (and the app).
+    #[arg(long)]
+    set_baseline: bool,
     /// At most this many requests.
     #[arg(long)]
     max_requests: Option<usize>,
@@ -409,25 +413,23 @@ fn money_text(v: f64, currency: &str) -> String {
 }
 
 /// Where the time went: the kinds of request the program waited on most.
-fn print_profile(p: &Profile, color: bool) {
+fn print_profile(p: &Profile, color: bool, say: &dyn Fn(String)) {
     if p.groups.is_empty() {
         return;
     }
-    eprintln!(
-        "{}",
-        paint(
-            &format!(
-                "waiting on S3 {} of {} ({:.0}%) · up to {} in flight · request cost ≈ {}",
-                ms_text(p.busy_ms),
-                ms_text(p.wall_ms),
-                p.busy_ms * 100.0 / p.wall_ms.max(1e-9),
-                p.peak_in_flight,
-                money_text(p.cost.amount, &p.cost.currency)
-            ),
-            "1",
-            color
-        )
-    );
+    say(paint(
+        &format!(
+            "waiting on S3 {} of {} ({:.0}%) · up to {} in flight · request cost ≈ {}",
+            ms_text(p.busy_ms),
+            ms_text(p.wall_ms),
+            p.busy_ms * 100.0 / p.wall_ms.max(1e-9),
+            p.peak_in_flight,
+            money_text(p.cost.amount, &p.cost.currency)
+        ),
+        "1",
+        color,
+    )
+    .to_string());
     let rows: Vec<Vec<String>> = p
         .groups
         .iter()
@@ -447,13 +449,11 @@ fn print_profile(p: &Profile, color: bool) {
             ]
         })
         .collect();
-    eprintln!(
-        "{}",
-        output::table(
-            &["waiting on", "share", "time", "requests", "p50", "p95"],
-            &rows
-        )
-    );
+    say(output::table(
+        &["waiting on", "share", "time", "requests", "p50", "p95"],
+        &rows,
+    )
+    .to_string());
 }
 
 fn print_summary(
@@ -462,7 +462,16 @@ fn print_summary(
     path: &Path,
     color: bool,
     prices: &RequestPrices,
+    stdout: bool,
 ) {
+    // `sonde show` answers on stdout; run and proxy keep stdout for the program's own output
+    let say = |line: String| {
+        if stdout {
+            println!("{line}")
+        } else {
+            eprintln!("{line}")
+        }
+    };
     let s = &summarize(records);
     let eps = episodes(records);
     let mut head = format!(
@@ -485,7 +494,7 @@ fn print_summary(
         human_bytes(s.bytes_up),
         human_bytes(s.bytes_down)
     ));
-    eprintln!("\n{}", paint(&head, "1", color));
+    say(format!("\n{}", paint(&head, "1", color)));
     if !s.operations.is_empty() {
         let rows: Vec<Vec<String>> = s
             .operations
@@ -509,30 +518,25 @@ fn print_summary(
                 ]
             })
             .collect();
-        eprintln!(
-            "{}",
-            output::table(
-                &["operation", "requests", "errors", "not found", "p50", "max"],
-                &rows
-            )
-        );
+        say(output::table(
+            &["operation", "requests", "errors", "not found", "p50", "max"],
+            &rows,
+        )
+        .to_string());
     }
     for (what, n) in &s.error_codes {
-        eprintln!("  {n} × {what}");
+        say(format!("  {n} × {what}"));
     }
-    print_profile(&profile(records, prices), color);
+    print_profile(&profile(records, prices), color, &say);
     for o in observations(records, &eps) {
         let mark = if o.level == "warn" {
             paint("!", "33", color)
         } else {
             paint("·", "2", color)
         };
-        eprintln!("{mark} {}", o.text);
+        say(format!("{mark} {}", o.text));
     }
-    eprintln!(
-        "{}",
-        paint(&format!("session: {}", path.display()), "2", color)
-    );
+    say(paint(&format!("session: {}", path.display()), "2", color).to_string());
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
@@ -577,6 +581,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         &started.path,
         color,
         &request_prices(s),
+        false,
     );
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();
@@ -622,6 +627,7 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
         &started.path,
         std::io::stderr().is_terminal(),
         &request_prices(s),
+        false,
     );
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();
@@ -657,7 +663,7 @@ pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
 
 pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     let file = match &a.file {
-        Some(f) => f.clone(),
+        Some(f) => super::sessions::resolve(s, f),
         None => newest_session(s)?,
     };
     let session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
@@ -717,6 +723,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 &file,
                 std::io::stderr().is_terminal(),
                 &request_prices(s),
+                true,
             );
         }
     }
@@ -1075,7 +1082,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
 pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     use sonde_proxy::program::{Budget, check, run_point};
     let file = match &a.file {
-        Some(f) => f.clone(),
+        Some(f) => super::sessions::resolve(s, f),
         None => newest_session(s)?,
     };
     let prices = request_prices(s);
@@ -1093,7 +1100,56 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         Ok((point, session.records, pr, ob))
     };
     let run = read(&file)?;
-    let base = a.baseline.as_ref().map(read).transpose()?;
+    let header = sonde_proxy::session::Session::open(&file)
+        .map_err(|e| anyhow::anyhow!(e))?
+        .header;
+    let program = sonde_proxy::program::program_key(header.command.as_deref());
+    let dir = s.paths().sessions();
+    if a.set_baseline {
+        let Some(key) = &program else {
+            eprintln!("this session ran no command, so it is no program's baseline");
+            return Ok(64);
+        };
+        let mut all = sonde_proxy::program::read_baselines(&dir);
+        let name = file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        all.insert(key.clone(), name);
+        sonde_proxy::program::write_baselines(&dir, &all)?;
+        eprintln!("baseline for `{key}`: {}", file.display());
+    }
+    let base_path = match a.baseline.as_deref() {
+        None => None,
+        Some("auto") => {
+            let found = program.as_ref().and_then(|k| {
+                sonde_proxy::program::read_baselines(&dir)
+                    .get(k)
+                    .map(|n| dir.join(n))
+                    .filter(|p| p.is_file())
+            });
+            if found.is_none() {
+                eprintln!(
+                    "no baseline set for this program: set one with `sonde check FILE --set-baseline` or in the app"
+                );
+                return Ok(64);
+            }
+            found
+        }
+        Some(p) => Some(PathBuf::from(p)),
+    };
+    let base = base_path.as_ref().map(read).transpose()?;
+    if let Some(b) = &base_path {
+        let bh = Session::open(b).map_err(|e| anyhow::anyhow!(e))?.header;
+        let bp = sonde_proxy::program::program_key(bh.command.as_deref());
+        if bp != program {
+            eprintln!(
+                "note: the baseline ran `{}`, this run `{}`",
+                bp.as_deref().unwrap_or("no command"),
+                program.as_deref().unwrap_or("no command")
+            );
+        }
+    }
     let budget = Budget {
         max_requests: a.max_requests,
         max_waiting_ms: a.max_waiting,
@@ -1202,4 +1258,114 @@ fn open_in_app(file: &Path) -> anyhow::Result<i32> {
             Ok(1)
         }
     }
+}
+
+#[derive(Args)]
+pub struct DemoArgs {
+    /// Open the recorded session in the sonde app afterwards.
+    #[arg(long)]
+    app: bool,
+}
+
+/// A tour in one command: a small program's requests to the built-in demo
+/// store, recorded as any program's would be, then shown with its findings.
+pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
+    use s3raw::{Body, ClientConfig, Credentials, S3Client, S3Request, StaticProvider};
+    let ep = sonde_core::demo::install(s)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let rec = Recording {
+        endpoint: Some(ep.id.clone()),
+        no_delete: false,
+        read_only: false,
+        out: None,
+    };
+    let started = start(
+        s,
+        &rec,
+        "127.0.0.1:0".parse()?,
+        Some("sonde demo".into()),
+        false,
+    )
+    .await?;
+    let (key, secret) = started.proxy.client_keys();
+    let app = S3Client::new(
+        ClientConfig::new("demo-app", &started.proxy.url(), "us-east-1")?,
+        Arc::new(StaticProvider(Some(Credentials::new(key, secret, None)))),
+        RequestLog::default(),
+    )?;
+    let send = |r: S3Request| {
+        let app = &app;
+        async move {
+            let _ = app.send_raw(r).await;
+        }
+    };
+    let get = |k: &str| {
+        S3Request::new("GetObject", http::Method::GET)
+            .bucket("demo")
+            .key(k)
+    };
+    send(
+        S3Request::new("PutObject", http::Method::PUT)
+            .bucket("demo")
+            .key("tour/config.json")
+            .body(Body::from(r#"{"format":"csv"}"#)),
+    )
+    .await;
+    // what a small ETL job does: write its parts one at a time
+    for i in 0..12 {
+        send(
+            S3Request::new("PutObject", http::Method::PUT)
+                .bucket("demo")
+                .key(&format!("tour/part-{i:02}.csv"))
+                .body(Body::from(format!("id,value\n{i},{}\n", i * 7))),
+        )
+        .await;
+    }
+    // look before reading each, one after another
+    for i in 0..12 {
+        let k = format!("tour/part-{i:02}.csv");
+        send(
+            S3Request::new("HeadObject", http::Method::HEAD)
+                .bucket("demo")
+                .key(&k),
+        )
+        .await;
+        send(get(&k)).await;
+    }
+    // read the same configuration for every part, and list the folder again and again
+    for _ in 0..12 {
+        send(get("tour/config.json")).await;
+    }
+    for _ in 0..4 {
+        send(
+            S3Request::new("ListObjectsV2", http::Method::GET)
+                .bucket("demo")
+                .query("list-type", "2")
+                .query("prefix", "tour/"),
+        )
+        .await;
+    }
+    let file = started.path.clone();
+    drop(app);
+    drop(started);
+    let _ = sonde_proxy::session::compress(&file);
+    eprintln!(
+        "recorded the demo program in {}\n  sonde show {}    the session again\n  sonde run -- <your program>    your own program's requests\n",
+        file.display(),
+        file.display()
+    );
+    show(
+        s,
+        &ShowArgs {
+            file: Some(file),
+            summary: true,
+            errors: false,
+            requests: false,
+            app: a.app,
+            format: Format::Table,
+        },
+    )
+    .await?;
+    Ok(0)
 }
