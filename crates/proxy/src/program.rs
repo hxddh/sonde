@@ -21,6 +21,23 @@ pub fn program_key(command: Option<&str>) -> Option<String> {
     }
 }
 
+/// Each program's baseline run, by file name: `baselines.json` beside the sessions.
+pub fn read_baselines(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    std::fs::read(dir.join("baselines.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+pub fn write_baselines(
+    dir: &std::path::Path,
+    all: &std::collections::BTreeMap<String, String>,
+) -> std::io::Result<()> {
+    let tmp = dir.join("baselines.json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(all)?)?;
+    std::fs::rename(&tmp, dir.join("baselines.json"))
+}
+
 /// A run, by the figures that move when the program changes.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -282,10 +282,7 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
 
 /// Each program's baseline run, by file name: `baselines.json` beside the sessions.
 fn baselines() -> std::collections::BTreeMap<String, String> {
-    std::fs::read(sonde().paths().sessions().join("baselines.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    sonde_proxy::program::read_baselines(&sonde().paths().sessions())
 }
 
 /// The sites shared from the app, each served on its own local port.
@@ -771,10 +768,8 @@ impl Sessions {
         } else if all.get(&key) == Some(&name) {
             all.remove(&key);
         }
-        let dir = sonde().paths().sessions();
-        let tmp = dir.join("baselines.json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(&all).map_err(err_msg)?).map_err(err_msg)?;
-        std::fs::rename(&tmp, dir.join("baselines.json")).map_err(err_msg)?;
+        sonde_proxy::program::write_baselines(&sonde().paths().sessions(), &all)
+            .map_err(err_msg)?;
         Ok(true)
     }
 
