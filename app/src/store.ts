@@ -222,8 +222,10 @@ export function openLink(url: string) {
     }
   };
   if (what === "open") {
-    const path = new Map(query.slice(1).split("&").map((kv) => kv.split("=").map(part) as [string, string])).get("path");
-    if (path?.toLowerCase().endsWith(".sonde")) openDropped([`file://${path.startsWith("/") ? "" : "/"}${path}`]);
+    // the value after the first "=", decoded once
+    const kv = query.slice(1).split("&").find((x) => x.startsWith("path="));
+    const path = kv === undefined ? undefined : part(kv.slice(5).replace(/\+/g, "%20"));
+    if (path?.toLowerCase().endsWith(".sonde")) openPaths([path]);
   } else if (what === "session") {
     const name = part(rest.slice(1));
     const s = api.sessions.list().find((x) => x.name === name);
@@ -234,12 +236,13 @@ export function openLink(url: string) {
     });
   } else if (what === "bucket") {
     const [ep, b, ...p] = rest.slice(1).split("/").map(part);
+    const folder = p.filter(Boolean).join("/");
     if (!endpoints().some((e) => e.id === ep)) return notify(t("link.noEndpoint", { name: ep ?? "" }), { kind: "warning" });
     if (!b) return;
     batch(() => {
       endpoint.set(ep);
       chooseBucket(b);
-      if (p.length) prefix.set(p.join("/").replace(/\/?$/, "/"));
+      if (folder) prefix.set(`${folder}/`);
       go("store");
     });
   }
@@ -247,11 +250,22 @@ export function openLink(url: string) {
 
 /** Opens session files dropped on the window; anything else is said to be no session. */
 export function openDropped(uris: string[]) {
+  openPaths(
+    uris.flatMap((uri) => {
+      const path = pathOf(uri);
+      if (/^file:/i.test(uri)) return [path];
+      notify(t("sessions.notSession", { name: uri }), { kind: "warning" });
+      return [];
+    }),
+  );
+}
+
+/** Opens session files by path; anything else is said to be no session. */
+export function openPaths(paths: string[]) {
   let last: string | null = null;
-  for (const uri of uris) {
-    const path = pathOf(uri);
+  for (const path of paths) {
     const name = path.split(/[\\/]/).pop() ?? path;
-    if (!/^file:/i.test(uri) || !name.toLowerCase().endsWith(".sonde")) {
+    if (!name.toLowerCase().endsWith(".sonde")) {
       notify(t("sessions.notSession", { name }), { kind: "warning" });
       continue;
     }

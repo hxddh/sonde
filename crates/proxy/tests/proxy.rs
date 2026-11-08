@@ -192,17 +192,50 @@ async fn setup(policy: Policy) -> (Proxy, S3Client, RequestLog, Arc<Upstream>) {
     )
     .await
     .unwrap();
-    // the application: another region, a dummy key
+    // the application: another region, the keys sonde gives it
     let cfg = ClientConfig::new("app", &proxy.url(), "us-east-1").unwrap();
+    let (key, secret) = proxy.client_keys();
     let app = S3Client::new(
         cfg,
-        Arc::new(StaticProvider(Some(Credentials::new(
-            "sonde", "dummy", None,
-        )))),
+        Arc::new(StaticProvider(Some(Credentials::new(key, secret, None)))),
         RequestLog::default(),
     )
     .unwrap();
     (proxy, app, log, up)
+}
+
+/// An `Authorization` (and its date) for a request sent by hand to the proxy.
+fn signed(
+    proxy: &Proxy,
+    method: &str,
+    path: &str,
+    query: &[(String, String)],
+    extra: &[(&str, &str)],
+    payload: &str,
+) -> (String, String) {
+    let (key, secret) = proxy.client_keys();
+    let now = Utc::now();
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let mut headers: Vec<(String, String)> = vec![
+        ("host".into(), proxy.addr().to_string()),
+        ("x-amz-date".into(), amz_date.clone()),
+        ("x-amz-content-sha256".into(), payload.into()),
+    ];
+    headers.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+    let sig = sigv4::sign(
+        &SignInput {
+            method,
+            canonical_uri: path,
+            query,
+            headers: &headers,
+            payload_hash: payload,
+            region: "us-east-1",
+            service: "s3",
+            time: now,
+        },
+        &Credentials::new(key, secret, None),
+    );
+    (amz_date, sig.authorization(key))
 }
 
 #[tokio::test]
@@ -254,13 +287,25 @@ async fn signed_aws_chunked_bodies_are_decoded() {
     let body = format!(
         "a;chunk-signature={sig}\r\n0123456789\r\n5;chunk-signature={sig}\r\nabcde\r\n0;chunk-signature={sig}\r\nx-amz-checksum-crc32:Ufg6kA==\r\nx-amz-trailer-signature:{sig}\r\n\r\n"
     );
+    let (date, auth) = signed(
+        &proxy,
+        "PUT",
+        "/data/chunked",
+        &[],
+        &[],
+        "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER",
+    );
     let resp = reqwest::Client::new()
         .put(format!("{}/data/chunked", proxy.url()))
-        .header("x-amz-content-sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER")
+        .header(
+            "x-amz-content-sha256",
+            "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER",
+        )
+        .header("x-amz-date", date)
         .header("content-encoding", "aws-chunked")
         .header("x-amz-decoded-content-length", "15")
         .header("x-amz-trailer", "x-amz-checksum-crc32")
-        .header("authorization", "AWS4-HMAC-SHA256 Credential=sonde/20260101/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=00")
+        .header("authorization", auth)
         .body(body)
         .send()
         .await
@@ -314,7 +359,13 @@ async fn upstream_errors_keep_their_body() {
     let proxy = Proxy::start(target, log.clone(), ProxyConfig::default())
         .await
         .unwrap();
-    let resp = reqwest::get(format!("{}/data/k", proxy.url()))
+    let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
+    let resp = reqwest::Client::new()
+        .get(format!("{}/data/k", proxy.url()))
+        .header("x-amz-date", date)
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+        .header("authorization", auth)
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 403);
@@ -334,10 +385,19 @@ async fn a_control_document_sent_chunked_is_kept_for_replay() {
     let doc = "<Delete><Object><Key>a</Key></Object></Delete>";
     // a body streamed without a length: plain chunked transfer
     let stream = futures::stream::iter([Ok::<_, std::io::Error>(Bytes::from(doc))]);
+    let (date, auth) = signed(
+        &proxy,
+        "POST",
+        "/data",
+        &[("delete".into(), "".into())],
+        &[],
+        "UNSIGNED-PAYLOAD",
+    );
     let resp = reqwest::Client::new()
         .post(format!("{}/data?delete", proxy.url()))
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
-        .header("authorization", "AWS4-HMAC-SHA256 Credential=sonde/20260101/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=00")
+        .header("x-amz-date", date)
+        .header("authorization", auth)
         .body(reqwest::Body::wrap_stream(stream))
         .send()
         .await
@@ -346,4 +406,58 @@ async fn a_control_document_sent_chunked_is_kept_for_replay() {
     let r = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(r.operation, "DeleteObjects");
     assert_eq!(r.request_body.as_deref(), Some(doc));
+}
+
+#[tokio::test]
+async fn only_the_program_given_the_keys_uses_the_credentials() {
+    let (proxy, _app, log, up) = setup(Policy::Allow).await;
+    let calls = || up.calls.lock().len();
+    // not signed at all
+    let r = reqwest::get(format!("{}/data/k", proxy.url()))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    // signed with a key of its own
+    let cfg = ClientConfig::new("other", &proxy.url(), "us-east-1").unwrap();
+    let other = S3Client::new(
+        cfg,
+        Arc::new(StaticProvider(Some(Credentials::new(
+            "sonde",
+            "sonde-proxy-local-secret",
+            None,
+        )))),
+        RequestLog::default(),
+    )
+    .unwrap();
+    let r = other
+        .send_raw(
+            S3Request::new("GetObject", http::Method::GET)
+                .bucket("data")
+                .key("k"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.status, 403, "{}", r.text());
+    // the right signature from a page that rebound its own name to 127.0.0.1
+    let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
+    let r = reqwest::Client::new()
+        .get(format!("{}/data/k", proxy.url()))
+        .header("host", "evil.example")
+        .header("x-amz-date", date)
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+        .header("authorization", auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    assert_eq!(calls(), 0, "nothing reached the store");
+    // each refusal is in the session, saying why
+    let refused = log.list(&reqlog::Filter::default(), 10);
+    assert_eq!(refused.len(), 3);
+    assert!(refused.iter().all(|r| r.status == Some(403)));
+    assert!(refused.iter().any(|r| {
+        r.error_body
+            .as_deref()
+            .is_some_and(|b| b.contains("not this machine's"))
+    }));
 }

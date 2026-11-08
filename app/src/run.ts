@@ -107,17 +107,19 @@ async function tellTheUser(r: RunResult, cmd: string) {
         duration: 8000,
       });
     // away from the window: a failed run asks for attention
-    if (lifecycle() !== "active" && (r.exit !== 0 || warnings > 0)) {
+    if (lifecycle() !== "active" && !killed && (r.exit !== 0 || warnings > 0)) {
       try {
-        Window.get("main")?.requestAttention({ critical: r.exit !== 0 });
+        // a failure bounces until seen; warnings ask once
+        Window.get("main")?.requestAttention({ critical: r.exit !== 0 && r.exit !== null });
       } catch {
         // no windows here
       }
     }
+    // what is left to look at, on the Dock's icon or the taskbar button, until the window is back
+    if (lifecycle() !== "active" && warnings > 0) await Notifications.setBadge(warnings).catch(() => {});
     if ((await Notifications.requestPermission()) !== "granted") return;
     await Notifications.show({ id: "sonde-run", title: t("run.notifyTitle", { command: programOf(cmd) ?? cmd }), body });
-    // what is left to look at, on the Dock's icon or the taskbar button, until the window is back
-    if (lifecycle() !== "active" && warnings > 0) await Notifications.setBadge(warnings);
+    if (lifecycle() === "active") await Notifications.setBadge(0).catch(() => {});
   } catch {
     // no notifications here (a terminal, an unbundled app): the screen says it
   }

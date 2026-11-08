@@ -73,22 +73,49 @@ pub struct ProxyConfig {
     pub max_buffer: usize,
     /// Tags every record (the `job` field), e.g. a session id.
     pub tag: Option<String>,
+    /// The keys the application signs with: made for each proxy, so only the
+    /// program sonde gave them to can use the endpoint's credentials.
+    pub client_key: String,
+    pub client_secret: String,
+    /// Requests may come from other machines (`--allow-remote`): any Host is
+    /// taken. Otherwise only loopback names are (a web page that rebinds a
+    /// name of its own to 127.0.0.1 is turned away).
+    pub allow_remote: bool,
+}
+
+/// A fresh client key and secret: the key names the proxy, the secret is 32
+/// random bytes in hex.
+pub fn client_keys() -> (String, String) {
+    use rand::RngCore;
+    let mut k = [0u8; 8];
+    let mut s = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut k);
+    rand::thread_rng().fill_bytes(&mut s);
+    (format!("SONDE{}", hex_upper(&k)), hex_lower(&s))
+}
+
+fn hex_upper(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02X}")).collect()
+}
+
+fn hex_lower(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 impl Default for ProxyConfig {
     fn default() -> Self {
+        let (key, secret) = client_keys();
         ProxyConfig {
             listen: SocketAddr::from(([127, 0, 0, 1], 0)),
             policy: Policy::Allow,
             max_buffer: 1 << 30,
             tag: None,
+            client_key: key,
+            client_secret: secret,
+            allow_remote: false,
         }
     }
 }
-
-/// The access key the application is given; any value works.
-pub const CLIENT_ACCESS_KEY: &str = "sonde";
-pub const CLIENT_SECRET_KEY: &str = "sonde-proxy-local-secret";
 
 struct Shared {
     client: S3Client,
@@ -100,6 +127,7 @@ struct Shared {
 pub struct Proxy {
     addr: SocketAddr,
     region: String,
+    keys: (String, String),
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -119,6 +147,7 @@ impl Proxy {
         let listener = TcpListener::bind(cfg.listen).await?;
         let addr = listener.local_addr()?;
         let region = client.config().region.clone();
+        let keys = (cfg.client_key.clone(), cfg.client_secret.clone());
         let shared = Arc::new(Shared { client, log, cfg });
         let task = tokio::spawn(async move {
             loop {
@@ -134,11 +163,21 @@ impl Proxy {
                 });
             }
         });
-        Ok(Proxy { addr, region, task })
+        Ok(Proxy {
+            addr,
+            region,
+            keys,
+            task,
+        })
     }
 
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// The key and secret the application signs with.
+    pub fn client_keys(&self) -> (&str, &str) {
+        (&self.keys.0, &self.keys.1)
     }
 
     pub fn url(&self) -> String {
@@ -157,8 +196,8 @@ impl Proxy {
         let set = [
             ("AWS_ENDPOINT_URL", url.as_str()),
             ("AWS_ENDPOINT_URL_S3", url.as_str()),
-            ("AWS_ACCESS_KEY_ID", CLIENT_ACCESS_KEY),
-            ("AWS_SECRET_ACCESS_KEY", CLIENT_SECRET_KEY),
+            ("AWS_ACCESS_KEY_ID", self.keys.0.as_str()),
+            ("AWS_SECRET_ACCESS_KEY", self.keys.1.as_str()),
             ("AWS_REGION", region.as_str()),
             ("AWS_DEFAULT_REGION", region.as_str()),
             // object_store and others refuse plain HTTP without these
@@ -186,6 +225,145 @@ impl Proxy {
         .collect();
         (set, unset)
     }
+}
+
+/// Whether a request may use the proxy: a loopback Host (unless remote
+/// requests are allowed), and a SigV4 signature, in its Authorization header
+/// or its query (a presigned URL), made with this proxy's client secret.
+/// The body's hash is the client's to declare: the signature proves the key.
+pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Result<(), String> {
+    if !cfg.allow_remote {
+        let name = host
+            .rsplit_once(':')
+            .filter(|(h, p)| !h.ends_with(']') || p.chars().all(|c| c.is_ascii_digit()))
+            .map_or(host, |(h, p)| {
+                if p.chars().all(|c| c.is_ascii_digit()) {
+                    h
+                } else {
+                    host
+                }
+            })
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase();
+        let loopback = name == "localhost"
+            || name.ends_with(".localhost")
+            || name == "::1"
+            || name
+                .parse::<std::net::Ipv4Addr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        if !loopback {
+            return Err(format!(
+                "Host {host:?} is not this machine's (start with --allow-remote to take other hosts)"
+            ));
+        }
+    }
+    let query = parse_query(parts.uri.query());
+    let q = |k: &str| query.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    let header = |k: &str| {
+        parts
+            .headers
+            .get(k)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+    };
+    let (credential, signed, signature, amz_date, payload, presigned) = if let Some(sig) =
+        q("X-Amz-Signature")
+    {
+        (
+            q("X-Amz-Credential").unwrap_or("").to_string(),
+            q("X-Amz-SignedHeaders").unwrap_or("").to_string(),
+            sig.to_string(),
+            q("X-Amz-Date").unwrap_or("").to_string(),
+            sigv4::UNSIGNED_PAYLOAD.to_string(),
+            true,
+        )
+    } else {
+        let auth = header("authorization");
+        if auth.is_empty() {
+            return Err("it is not signed: give the program the keys sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)".into());
+        }
+        if !auth.starts_with("AWS4-HMAC-SHA256") {
+            return Err("it is not signed with SigV4".into());
+        }
+        let field = |name: &str| {
+            auth.split([',', ' '])
+                .find_map(|p| p.trim().strip_prefix(name))
+                .unwrap_or("")
+                .to_string()
+        };
+        let payload = match header("x-amz-content-sha256") {
+            "" => sigv4::UNSIGNED_PAYLOAD.to_string(),
+            v => v.to_string(),
+        };
+        (
+            field("Credential="),
+            field("SignedHeaders="),
+            field("Signature="),
+            header("x-amz-date").to_string(),
+            payload,
+            false,
+        )
+    };
+    let mut scope = credential.split('/');
+    let key = scope.next().unwrap_or("");
+    if key != cfg.client_key {
+        return Err(format!(
+            "it is signed with the key {key:?}, not the one sonde gave the program"
+        ));
+    }
+    let _day = scope.next();
+    let region = scope.next().unwrap_or("").to_string();
+    let service = scope.next().unwrap_or("s3").to_string();
+    let time = chrono::NaiveDateTime::parse_from_str(&amz_date, "%Y%m%dT%H%M%SZ")
+        .map(|t| t.and_utc())
+        .map_err(|_| "its signature has no date".to_string())?;
+    let headers: Vec<(String, String)> = signed
+        .split(';')
+        .filter(|h| !h.is_empty())
+        .map(|h| {
+            let v = parts
+                .headers
+                .get_all(h)
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .collect::<Vec<_>>()
+                .join(",");
+            (h.to_string(), v)
+        })
+        .collect();
+    let mut unsigned_query = query.clone();
+    if presigned {
+        unsigned_query.retain(|(k, _)| k != "X-Amz-Signature");
+    }
+    let creds = s3raw::Credentials::new(&cfg.client_key, &cfg.client_secret, None);
+    let canonical_uri = if parts.uri.path().is_empty() {
+        "/"
+    } else {
+        parts.uri.path()
+    };
+    let expected = sigv4::sign(
+        &sigv4::SignInput {
+            method: parts.method.as_str(),
+            canonical_uri,
+            query: &unsigned_query,
+            headers: &headers,
+            payload_hash: &payload,
+            region: &region,
+            service: &service,
+            time,
+        },
+        &creds,
+    );
+    if constant_eq(expected.signature.as_bytes(), signature.as_bytes()) {
+        Ok(())
+    } else {
+        Err("its signature does not match the secret sonde gave the program".into())
+    }
+}
+
+fn constant_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Headers not forwarded: hop-by-hop ones, and the client's signature.
@@ -368,6 +546,18 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             "x-sonde-note",
             "presigned URL, re-signed by sonde",
         ));
+    }
+
+    // only the program sonde gave its keys to, from this machine
+    if let Err(why) = admit(&shared.cfg, &parts, &host) {
+        let msg = format!("sonde refused the request: {why}");
+        record.status = Some(403);
+        record.error_body = Some(msg.clone());
+        record
+            .response_headers
+            .push(Header::new("x-sonde-proxy", "refused"));
+        shared.log.push(record);
+        return Ok(xml_error(403, "SignatureDoesNotMatch", &msg));
     }
 
     if let Some(mode) = shared.cfg.policy.refuses(&method, &operation) {

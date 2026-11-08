@@ -154,9 +154,6 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       title: v?.header.command ?? props.path.split("/").pop() ?? "sonde",
       defaultSize: { width: 1100, height: 720 },
       restoreBounds: true,
-      // macOS: the file in the title bar, and session windows as tabs of one window
-      representedFile: props.path,
-      tabGroup: "sessions",
     });
   };
   const copy = (text: string) => void Clipboard.writeText(text).then(() => notify(t("common.copied")), report);
@@ -230,7 +227,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     ...(terminal() ? [] : [{ value: "timeline", title: t("sessions.timeline"), icon: "chart-gantt" as const }]),
     { value: "time", title: t("profile.pane"), icon: "chart-pie" as const },
     // a run of a program: its runs
-    ...(v0()?.header.command && !v0()!.header.command!.startsWith("replay of ") ? [{ value: "runs", title: t("history.pane"), icon: "activity" as const }] : []),
+    ...(v0()?.header.command?.trim() && !v0()!.header.command!.trim().startsWith("replay of ") ? [{ value: "runs", title: t("history.pane"), icon: "activity" as const }] : []),
   ];
 
   const body = (v: SessionView) => {
@@ -446,8 +443,6 @@ export function Sessions() {
       title: path.split("/").pop() ?? "sonde",
       defaultSize: { width: 1100, height: 720 },
       restoreBounds: true,
-      representedFile: path,
-      tabGroup: "sessions",
     });
   const remove = async (s: SessionInfo) => {
     const list = shown();

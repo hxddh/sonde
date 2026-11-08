@@ -11,14 +11,24 @@ use sonde_proxy::replay::{ReplayOptions, compare, plan, replay};
 use sonde_proxy::{Proxy, ProxyConfig};
 
 fn client(url: &str, log: RequestLog) -> S3Client {
+    keyed(url, "k", "s", log)
+}
+
+fn keyed(url: &str, key: &str, secret: &str, log: RequestLog) -> S3Client {
     let mut cfg = ClientConfig::new("t", url, "us-east-1").unwrap();
     cfg.retry = s3raw::RetryPolicy::none();
     S3Client::new(
         cfg,
-        Arc::new(StaticProvider(Some(Credentials::new("k", "s", None)))),
+        Arc::new(StaticProvider(Some(Credentials::new(key, secret, None)))),
         log,
     )
     .unwrap()
+}
+
+/// The application: with the keys the proxy gives it.
+fn app(proxy: &Proxy) -> S3Client {
+    let (k, s) = proxy.client_keys();
+    keyed(&proxy.url(), k, s, RequestLog::default())
 }
 
 /// What an application might do: conditional creates (one losing), a
@@ -164,7 +174,7 @@ async fn replay_finds_a_store_that_ignores_conditional_writes() {
     )
     .await
     .unwrap();
-    workload(&client(&proxy.url(), RequestLog::default())).await;
+    workload(&app(&proxy)).await;
     let mut records = recorded.list(&Filter::default(), 1000);
     records.reverse();
     assert_eq!(records.len(), 14);
@@ -231,7 +241,7 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
     )
     .await
     .unwrap();
-    workload(&client(&proxy.url(), RequestLog::default())).await;
+    workload(&app(&proxy)).await;
     let mut records = recorded.list(&Filter::default(), 1000);
     records.reverse();
     let session = sonde_proxy::session::Session {

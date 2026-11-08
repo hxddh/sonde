@@ -67,7 +67,8 @@ async fn main() {
     let proxy = Proxy::start(direct.clone(), log, ProxyConfig::default())
         .await
         .unwrap();
-    let via = client(&proxy.url(), "sonde", "dummy");
+    let (key, secret) = proxy.client_keys();
+    let via = client(&proxy.url(), key, secret);
     // warm both paths, then interleave rounds so drift hits both alike
     measure(&direct, &bucket, 100).await;
     measure(&via, &bucket, 100).await;

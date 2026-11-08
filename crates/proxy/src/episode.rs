@@ -1421,11 +1421,8 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 hot.push((prefix, n, limit, read, ids, throttled));
             }
         }
-        hot.sort_by(|a, b| {
-            (b.1 * b.2.max(1))
-                .cmp(&(a.1 * a.2.max(1)))
-                .then(a.0.cmp(&b.0))
-        });
+        // nearest its limit first: n/limit, compared without dividing
+        hot.sort_by(|a, b| (b.1 * a.2).cmp(&(a.1 * b.2)).then(a.0.cmp(&b.0)));
         for (prefix, n, limit, read, ids, throttled) in hot.into_iter().take(3) {
             let pct = n * 100 / limit;
             let phrase = p(

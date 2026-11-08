@@ -127,7 +127,8 @@ function Figure(props: { value: string; label: string; tone?: Tone; preview?: JS
 /** What a session's requests were, by kind: a figure's preview. */
 function KindsPreview(props: { profile: Profile; by: "requests" | "time" }) {
   const rows = () => [...props.profile.groups].sort((a, b) => (props.by === "requests" ? b.requests - a.requests : b.busyMs - a.busyMs)).slice(0, 5);
-  const total = () => (props.by === "requests" ? props.profile.groups.reduce((s, g) => s + g.requests, 0) : props.profile.busyMs) || 1;
+  // kinds overlap in time: each bar against the largest, not a share of a whole
+  const total = () => rows().reduce((m, g) => Math.max(m, props.by === "requests" ? g.requests : g.busyMs), 0) || 1;
   const value = (g: ProfileGroup) => (props.by === "requests" ? g.requests : g.busyMs);
   return (
     <View testID={`preview-${props.by}`} class="gap-1.5">

@@ -41,7 +41,8 @@ test("record without a program: a local endpoint to point an application at", as
   await app.waitFor("id:recording", { timeout: 10000 });
   expect(app.shows("text:/Recording on http:\\/\\/127\\.0\\.0\\.1:/")).toBe(true);
   expect(app.shows("text:/export AWS_ENDPOINT_URL=http/")).toBe(true);
-  expect(app.shows("text:/AWS_SECRET_ACCESS_KEY=sonde-proxy-local-secret/")).toBe(true);
+  // a secret made for this recording, not a shared one
+  expect(app.shows("text:/AWS_SECRET_ACCESS_KEY=[0-9a-f]{64}/")).toBe(true);
   await app.press("id:record-stop");
   await app.waitFor("id:record");
 });

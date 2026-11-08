@@ -633,6 +633,15 @@ pub struct FindingText {
 
 /// A finding's identity across runs: what it is and what it is about, not
 /// its counts.
+/// A finding's identity across runs (see [`identity`]).
+pub fn finding_identity(o: &Observation) -> String {
+    if o.phrases.is_empty() {
+        o.text.clone()
+    } else {
+        identity(o)
+    }
+}
+
 fn identity(o: &Observation) -> String {
     let p = &o.phrases[0];
     // one finding whatever its form: one or many, under a threshold or over

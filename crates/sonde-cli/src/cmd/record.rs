@@ -53,6 +53,10 @@ pub struct ProxyArgs {
     /// Address to listen on.
     #[arg(long, default_value = "127.0.0.1:9000")]
     listen: SocketAddr,
+    /// Take requests from other machines too (any Host). Anyone who has the
+    /// keys sonde prints can then use the endpoint's credentials.
+    #[arg(long)]
+    allow_remote: bool,
 }
 
 #[derive(Args)]
@@ -126,6 +130,7 @@ async fn start(
     r: &Recording,
     listen: SocketAddr,
     command: Option<String>,
+    allow_remote: bool,
 ) -> anyhow::Result<Started> {
     let ep = super::endpoint(s, r.endpoint.as_deref())?;
     let client = s.client(&ep)?;
@@ -169,6 +174,7 @@ async fn start(
         ProxyConfig {
             listen,
             policy,
+            allow_remote,
             ..Default::default()
         },
     )
@@ -536,6 +542,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         &a.rec,
         SocketAddr::from(([127, 0, 0, 1], 0)),
         Some(command),
+        false,
     )
     .await?;
     let (set, unset) = started.proxy.env();
@@ -575,7 +582,19 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
 }
 
 pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<i32> {
-    let started = start(s, &a.rec, a.listen, None).await?;
+    if !a.listen.ip().is_loopback() && !a.allow_remote {
+        anyhow::bail!(
+            "{} is reachable from other machines: add --allow-remote if that is what you want (anyone with the keys sonde prints can then use the endpoint's credentials)",
+            a.listen
+        );
+    }
+    if a.allow_remote {
+        eprintln!(
+            "warning: sonde takes requests from other machines on {}",
+            a.listen
+        );
+    }
+    let started = start(s, &a.rec, a.listen, None, a.allow_remote).await?;
     let (set, unset) = started.proxy.env();
     eprintln!(
         "sonde is listening on {}. Point the application at it:\n",
@@ -1025,6 +1044,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         base.as_ref().map(|b| (&b.0, &b.1[..], &b.2, &b.3[..])),
         &budget,
     );
+    // nothing to hold the run to is a mistake in the command, in every format
+    if c.verdicts.is_empty() {
+        eprintln!(
+            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors) or a --baseline"
+        );
+        return Ok(64);
+    }
     if matches!(a.format, Format::Json) {
         println!(
             "{}",
@@ -1033,12 +1059,6 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         return Ok(if c.passed { 0 } else { 1 });
     }
     let color = std::io::stdout().is_terminal();
-    if c.verdicts.is_empty() {
-        eprintln!(
-            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors) or a --baseline"
-        );
-        return Ok(2);
-    }
     let shown = |what: &str, v: f64| match what {
         "waiting" => ms_text(v),
         "cost" => money_text(v, &run.0.currency),
@@ -1086,7 +1106,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
 /// Hands `sonde://open?path=…` to the system, which opens the app on the session.
 fn open_in_app(file: &Path) -> anyhow::Result<i32> {
     let abs = std::fs::canonicalize(file)?;
+    // Windows' canonical form starts \\?\ (a verbatim path): the app reads C:/…
     let path = abs.to_string_lossy().replace('\\', "/");
+    let path = path
+        .strip_prefix("//?/UNC/")
+        .map(|p| format!("//{p}"))
+        .or_else(|| path.strip_prefix("//?/").map(String::from))
+        .unwrap_or(path);
     let encoded: String = path
         .bytes()
         .map(|b| match b {

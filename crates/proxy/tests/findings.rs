@@ -273,3 +273,46 @@ fn a_prefix_near_s3s_rate_per_prefix_is_named() {
     );
     assert_eq!(p.heat.iter().map(|c| c.n).sum::<usize>(), 3000);
 }
+
+#[test]
+fn the_prefix_nearest_its_limit_is_named_first() {
+    // three read prefixes at 54% of 5,500, one write prefix at 97% of 3,500
+    let mut recs = Vec::new();
+    let mut id = 0;
+    for p in ["a", "b", "c"] {
+        for i in 0..3000u64 {
+            id += 1;
+            recs.push(rec(
+                id,
+                (i / 3) as i64,
+                "GetObject",
+                Some(&format!("{p}/{i}")),
+                200,
+                1.0,
+            ));
+        }
+    }
+    for i in 0..3400u64 {
+        id += 1;
+        recs.push(rec(
+            id,
+            (i * 1000 / 3400) as i64,
+            "PutObject",
+            Some(&format!("w/{i}")),
+            200,
+            1.0,
+        ));
+    }
+    let obs = findings(&recs);
+    let hot: Vec<&Observation> = obs
+        .iter()
+        .filter(|o| key(o).starts_with("obs.prefixrate"))
+        .collect();
+    assert_eq!(
+        key(hot[0]),
+        "obs.prefixrate.writes",
+        "{:#?}",
+        hot.iter().map(|o| &o.text).collect::<Vec<_>>()
+    );
+    assert_eq!(hot[0].level, "warn");
+}

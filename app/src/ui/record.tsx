@@ -68,20 +68,46 @@ export function Document(props: { text: string; testID?: string; mark?: boolean 
   );
 }
 
-/** One element per line, indented: what S3 sends on one line reads as a document. */
-function pretty(xml: string): string {
-  if (xml.includes("\n")) return xml;
+/**
+ * An XML document one element per line, indented: what S3 sends on one line
+ * (after its declaration) reads as a document. Text stays as it was, an
+ * element with only text (or nothing) stays on one line, and a document that
+ * is already laid out is left alone.
+ */
+export function pretty(xml: string): string {
+  const body = xml.replace(/^<\?xml[^>]*\?>\s*/, "");
+  if (/\n\s+</.test(body)) return xml.trim();
+  const tokens = body.match(/<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->|<[^>]+>|[^<]+/g) ?? [];
+  const lines: string[] = [];
   let depth = 0;
-  return xml
-    .replace(/>\s*</g, ">\n<")
-    .split("\n")
-    .map((line) => {
-      if (/^<\//.test(line)) depth = Math.max(0, depth - 1);
-      const out = `${"  ".repeat(depth)}${line}`;
-      if (/^<[^!?/][^>]*[^/]>$/.test(line) && !/<\/[^>]+>$/.test(line)) depth++;
-      return out;
-    })
-    .join("\n");
+  for (let k = 0; k < tokens.length; k++) {
+    const tok = tokens[k];
+    const pad = "  ".repeat(depth);
+    if (tok.startsWith("</")) {
+      depth = Math.max(0, depth - 1);
+      lines.push("  ".repeat(depth) + tok);
+    } else if (tok.startsWith("<") && !tok.startsWith("<!") && !tok.startsWith("<?") && !tok.endsWith("/>")) {
+      // <a>text</a> and <a></a> on one line, the text as it was
+      const next = tokens[k + 1];
+      const after = tokens[k + 2];
+      if (next?.startsWith("</")) {
+        lines.push(pad + tok + next);
+        k += 1;
+      } else if (next !== undefined && !next.startsWith("<") && after?.startsWith("</")) {
+        lines.push(pad + tok + next + after);
+        k += 2;
+      } else {
+        lines.push(pad + tok);
+        depth++;
+      }
+    } else if (!tok.startsWith("<") && !tok.trim()) {
+      // whitespace between elements
+    } else {
+      lines.push(pad + (tok.startsWith("<") ? tok : tok.trim()));
+    }
+  }
+  const decl = /^<\?xml[^>]*\?>/.exec(xml.trim())?.[0];
+  return [decl, ...lines].filter(Boolean).join("\n");
 }
 
 /** Name and value pairs: names muted, values monospaced and selectable. */

@@ -9,7 +9,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  NSH_REV: beeb9fc7707e0d4a195a4f7274f77b30e134c500
+  NSH_REV: 1662115e30b4a86ca2e5eaf216e165c93bbdbee9
 
 jobs:
   viewer:

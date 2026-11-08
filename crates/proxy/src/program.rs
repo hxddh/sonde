@@ -6,7 +6,7 @@
 use serde::Serialize;
 
 use crate::episode::Observation;
-use crate::profile::{Profile, compare_runs};
+use crate::profile::Profile;
 use crate::summary::is_miss;
 use reqlog::Record;
 
@@ -135,29 +135,37 @@ pub fn check(
             limit(
                 "requests",
                 r.requests as f64,
-                (base.requests as f64 * grow)
+                // a hair over, so 100 × 1.57 is 157 and not 156.99…
+                (base.requests as f64 * grow + 1e-9)
                     .floor()
                     .max(base.requests as f64),
                 "baseline",
             );
             // a run this short varies more than its tolerance: a few ms of slack
             limit("waiting", r.busy_ms, base.busy_ms * grow + 5.0, "baseline");
-            limit("cost", r.cost, base.cost * grow, "baseline");
+            // a free baseline (deletes only) still lets a run cost a hundredth of a cent
+            limit(
+                "cost",
+                r.cost,
+                (base.cost * grow).max(base.cost + 0.0001),
+                "baseline",
+            );
             limit("errors", r.errors as f64, base.errors as f64, "baseline");
         }
         if budget.no_new_warnings {
-            let c = compare_runs((b.1, b.2, b.3), (run.1, run.2, run.3));
-            let warn_texts: Vec<&str> = run
+            // a warning the baseline did not have as a warning: new, or grown from a note
+            let was_warning: std::collections::HashSet<String> =
+                b.3.iter()
+                    .filter(|o| o.level == "warn")
+                    .map(crate::profile::finding_identity)
+                    .collect();
+            new_warnings = run
                 .3
                 .iter()
-                .filter(|o| o.level == "warn")
-                .map(|o| o.text.as_str())
-                .collect();
-            new_warnings = c
-                .appeared
-                .into_iter()
-                .filter(|f| warn_texts.contains(&f.text.as_str()))
-                .map(|f| f.text)
+                .filter(|o| {
+                    o.level == "warn" && !was_warning.contains(&crate::profile::finding_identity(o))
+                })
+                .map(|o| o.text.clone())
                 .collect();
             limit("warnings", new_warnings.len() as f64, 0.0, "baseline");
         }
@@ -242,6 +250,52 @@ mod tests {
             c.verdicts
                 .iter()
                 .any(|v| v.what == "requests" && v.against == "budget" && v.ok)
+        );
+    }
+
+    #[test]
+    fn nothing_to_check_passes_nothing_and_a_free_baseline_allows_a_cent() {
+        let base: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
+        let (pb, prb, ob) = point(&base);
+        let empty = check((&pb, &base, &prb, &ob), None, &Budget::default());
+        assert!(empty.verdicts.is_empty());
+        // a baseline that cost nothing, a run that cost a read
+        let mut free = pb.clone();
+        free.cost = 0.0;
+        let mut run = pb.clone();
+        run.cost = 4e-7;
+        let c = check(
+            (&run, &base, &prb, &ob),
+            Some((&free, &base, &prb, &ob)),
+            &Budget {
+                tolerance: Some(0.1),
+                ..Default::default()
+            },
+        );
+        assert!(
+            c.verdicts.iter().find(|v| v.what == "cost").unwrap().ok,
+            "{c:#?}"
+        );
+    }
+
+    #[test]
+    fn a_tolerance_of_57_percent_allows_157_of_100() {
+        let base: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
+        let (mut pb, prb, ob) = point(&base);
+        pb.requests = 100;
+        let mut run = pb.clone();
+        run.requests = 157;
+        let c = check(
+            (&run, &base, &prb, &ob),
+            Some((&pb, &base, &prb, &ob)),
+            &Budget {
+                tolerance: Some(0.57),
+                ..Default::default()
+            },
+        );
+        assert!(
+            c.verdicts.iter().find(|v| v.what == "requests").unwrap().ok,
+            "{c:#?}"
         );
     }
 }

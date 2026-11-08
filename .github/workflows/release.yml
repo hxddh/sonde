@@ -41,7 +41,7 @@ jobs:
         run: scripts/changelog-section.sh "$VERSION" > notes.md
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/nsh
-        with: { rev: beeb9fc7707e0d4a195a4f7274f77b30e134c500 }
+        with: { rev: 1662115e30b4a86ca2e5eaf216e165c93bbdbee9 }
       - name: The manifest the app's updater reads (latest.json)
         run: |
           shopt -s nullglob
