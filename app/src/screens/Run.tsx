@@ -15,7 +15,7 @@ import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, p
 import { away, endpoint, endpoints, go, openSession, report, sessionsChanged } from "../store";
 import type { SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Button, Dot, Empty, IconButton, Segmented, terminal } from "../ui/kit";
+import { Button, Dot, Empty, IconButton, KeyValue, Segmented, terminal } from "../ui/kit";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { SessionShape } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
@@ -202,7 +202,7 @@ function LiveOperations() {
   return (
     <View class="min-h-0 flex-1 gap-2.5" testID="run-operations">
       <StatusBand view={view()} now={now} />
-      <If when={view() && view()!.episodes.length > 0} else={<Empty icon="activity" text={t("run.waiting")} />}>
+      <If when={view() && view()!.episodes.length > 0} else={<If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}><NoRequests /></If>}>
         <View class="min-h-0 flex-1 gap-2.5">
           {/* the run's requests over time, growing as they arrive */}
           <If when={!terminal() && view()!.profile}>
@@ -214,6 +214,30 @@ function LiveOperations() {
           <OperationsTable view={view()!} onSelect={() => lastRun() && openLastRun(go)} compact />
         </View>
       </If>
+    </View>
+  );
+}
+
+/** A run that sent sonde nothing: how each common SDK is pointed at it. */
+function NoRequests() {
+  return (
+    <View testID="run-no-requests" class={terminal() ? "gap-1" : "flex-1 items-center justify-center gap-3 p-6"}>
+      <Text class={terminal() ? "font-semibold text-foreground" : "text-center text-heading font-semibold text-foreground"}>{t("run.noneTitle")}</Text>
+      <Text class={terminal() ? "text-muted-foreground" : "max-w-[520px] text-center text-body text-muted-foreground"}>{t("run.noneText")}</Text>
+      <View class={terminal() ? "" : "w-full max-w-[640px] rounded-(--radius-card) border border-border bg-card px-4 py-3"}>
+        <KeyValue
+          mono
+          rows={[
+            ["boto3 / botocore", t("run.noneBoto")],
+            ["AWS CLI", t("run.noneCli")],
+            ["Go SDK v2", t("run.noneGo")],
+            ["Java SDK v2 · s3a", t("run.noneJava")],
+            ["DuckDB", "SET s3_endpoint=…; SET s3_url_style='path'; SET s3_use_ssl=false"],
+            ["Node (@aws-sdk)", t("run.noneNode")],
+          ]}
+        />
+      </View>
+      <Text class={terminal() ? "text-muted-foreground" : "max-w-[520px] text-center text-small text-muted-foreground"}>{t("run.noneKeys")}</Text>
     </View>
   );
 }

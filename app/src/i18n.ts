@@ -538,6 +538,14 @@ const en = {
   "latency.title": "The same requests on both stores",
   "latency.hint": "Each kind's p95 on one store beside the other, the kind that slowed most first",
   "latency.text": "{what} took {a} at p95 on one store and {b} on the other ({x}×)",
+  "run.noneTitle": "The program sent sonde no requests",
+  "run.noneText": "sonde set AWS_ENDPOINT_URL, which current SDKs read. Some need the endpoint said their own way:",
+  "run.noneBoto": "1.28 or newer, or endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"]",
+  "run.noneCli": "v2.13 or newer, or --endpoint-url $AWS_ENDPOINT_URL",
+  "run.noneGo": "1.20 or newer (aws-sdk-go v1 does not read it)",
+  "run.noneJava": "2.21 or newer; s3a: fs.s3a.endpoint and fs.s3a.path.style.access=true",
+  "run.noneNode": "3.4xx or newer, or endpoint and forcePathStyle: true",
+  "run.noneKeys": "The credentials must be the ones sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): a profile or a role goes around them.",
 };
 
 type Key = keyof typeof en;
@@ -1075,6 +1083,14 @@ const zh: Partial<Record<Key, string>> = {
   "latency.title": "同样的请求在两个存储上",
   "latency.hint": "每类请求在两个存储上的 p95 并排，变慢最多的在前",
   "latency.text": "{what} 的 p95 在一个存储上是 {a}，在另一个上是 {b}（{x}×）",
+  "run.noneTitle": "程序没有向 sonde 发出请求",
+  "run.noneText": "sonde 设置了 AWS_ENDPOINT_URL，新版 SDK 都会读取它。有些需要用自己的方式指定端点：",
+  "run.noneBoto": "1.28 或更新，或 endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"]",
+  "run.noneCli": "v2.13 或更新，或 --endpoint-url $AWS_ENDPOINT_URL",
+  "run.noneGo": "1.20 或更新（aws-sdk-go v1 不读取它）",
+  "run.noneJava": "2.21 或更新；s3a：fs.s3a.endpoint 和 fs.s3a.path.style.access=true",
+  "run.noneNode": "3.4xx 或更新，或 endpoint 加 forcePathStyle: true",
+  "run.noneKeys": "凭证必须是 sonde 设置的那组（AWS_ACCESS_KEY_ID、AWS_SECRET_ACCESS_KEY）：使用 profile 或角色会绕过它们。",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

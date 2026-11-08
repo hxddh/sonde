@@ -32,6 +32,16 @@ test("run a command: its requests become operations, the session lines them up w
   expect(app.shows("text:/GetObject/")).toBe(true);
 });
 
+test("a program that sends sonde nothing: how each SDK is pointed at it", async () => {
+  const app = await demo();
+  await app.type("id:run-command", "echo nothing to store");
+  await app.press("id:run-start");
+  await app.waitFor("id:run-ended", { timeout: 20000 });
+  await app.waitFor("id:run-no-requests", { timeout: 5000 });
+  expect(app.shows("text:The program sent sonde no requests")).toBe(true);
+  expect(app.shows("text:boto3 / botocore")).toBe(true);
+});
+
 test("record without a program: a local endpoint to point an application at", async () => {
   const app = await demo();
   await app.press("id:record");
