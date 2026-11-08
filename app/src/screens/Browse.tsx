@@ -413,7 +413,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           </Card>
         )}
       </If>
-      <InWindowMenu enabled={!systemMenus} actions={() => actions(menuRow())}>
+      <InWindowMenu class="min-h-0 flex-1" enabled={!systemMenus} actions={() => actions(menuRow())}>
       <DataTable
         testID="objects"
         accessibilityLabel={t("nav.objects")}

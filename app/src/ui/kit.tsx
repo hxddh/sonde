@@ -615,10 +615,10 @@ export function Legend(props: { items: { label: string; swatch: string }[]; clas
  * Shell's own menu: for where the system has no menus to pop up (a
  * terminal, the web). Elsewhere the system's menu does it and this is only
  * `children`. */
-export function InWindowMenu(props: { enabled: boolean; actions: () => { label: string; icon?: IconName; run: () => void }[]; children: JSX.Element }) {
+export function InWindowMenu(props: { enabled: boolean; actions: () => { label: string; icon?: IconName; run: () => void }[]; class?: string; children: JSX.Element }) {
   return (
     <If when={props.enabled} else={props.children}>
-      <ContextMenu trigger={props.children} popupClass={`${POPUP} min-w-48`}>
+      <ContextMenu class={props.class} trigger={props.children} popupClass={`${POPUP} min-w-48`}>
         <Each of={props.actions()}>
           {(a) => (
             <MenuItem onSelect={a().run} class="flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1 focus:bg-muted">
