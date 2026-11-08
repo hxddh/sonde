@@ -63,7 +63,8 @@ test("capacity in a terminal: tables and a sentence, no canvas", async () => {
   await app.press("id:du-scan");
   await app.waitFor("id:du-findings", { timeout: 15000 });
   expect(app.shows("id:du-classes")).toBe(false);
-  expect(app.texts().some((t) => t.startsWith("STANDARD"))).toBe(true);
+  // a sentence for each chart, the rows in a table drawn by the terminal itself
+  expect(app.texts().some((t) => /^GLACIER: [\d.]+% of/.test(t))).toBe(true);
 });
 
 test("request inspector: list and detail in one column", async () => {

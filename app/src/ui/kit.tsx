@@ -1,7 +1,7 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { ErrorBoundary, fontScale, type JSX, platform, reduceMotion, Scroll, setAccessibilityFocus, split, Text, View, type ViewRef } from "nsh";
-import { Button as BaseButton, Checkbox as BaseCheckbox, Input, Progress, Select, Sheet, Switch, Tab, Tabs, Tooltip } from "nsh/base";
+import { ErrorBoundary, fontScale, type JSX, platform, reduceMotion, Scroll, setAccessibilityFocus, Text, token, View, type ViewRef } from "nsh";
+import { Button as BaseButton, Checkbox as BaseCheckbox, DataTable, Input, Progress, Select, Sheet, Switch, Tab, Tabs, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
 import { keyLabel } from "./keys";
@@ -473,31 +473,29 @@ export function Page(props: { children: JSX.Element; testID?: string }) {
   );
 }
 
-/** A small table of strings (layout tables, headers). Large data uses DataTable. */
+/** Rows of text as a table: Native Shell's DataTable (virtual, so every row,
+ * sortable by a press on a title), each column as wide as what it holds.
+ * `max` is how many rows show before it scrolls. */
 export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number }) {
-  const [own] = split(props, ["columns"]);
+  const per = () => (props.mono ? 7.4 : 6.6);
+  const columns = () =>
+    props.columns.map((title, c) => {
+      const longest = Math.max(title.length, ...props.rows.slice(0, 400).map((r) => (r[c] ?? "").length));
+      return { key: `c${c}`, title, width: Math.round(Math.min(360, Math.max(56, longest * per() + 20))), sortable: !terminal() };
+    });
+  const data = () => props.rows.map((r) => Object.fromEntries(r.map((cell, c) => [`c${c}`, cell])));
+  const shown = () => Math.min(props.rows.length, props.max ?? 12);
   return (
-    <View class="rounded-(--radius) border border-border">
-      <View class="flex-row border-b border-border bg-muted px-2 py-1">
-        <Each of={own.columns}>{(c) => <Text class="flex-1 text-small font-semibold text-muted-foreground">{c()}</Text>}</Each>
-      </View>
-      <Each of={props.rows.slice(0, props.max ?? 200)}>
-        {(row) => (
-          <View class="flex-row border-b border-border/60 px-2 py-1">
-            <Each of={row()}>
-              {(cell) => (
-                <Text class={`flex-1 line-clamp-2 text-small text-foreground ${props.mono ? "font-mono" : ""}`}>
-                  {cell()}
-                </Text>
-              )}
-            </Each>
-          </View>
-        )}
-      </Each>
-      <If when={props.rows.length > (props.max ?? 200)}>
-        <Text class="px-2 py-1 text-small text-muted-foreground">… {props.rows.length - (props.max ?? 200)} more</Text>
-      </If>
-    </View>
+    <DataTable
+      columns={columns()}
+      data={data()}
+      fontSize={TYPE.small}
+      fontFamily={props.mono ? token("font-mono") : undefined}
+      rowHeight={rowHeight(26)}
+      classes={terminal() ? undefined : { header: "bg-muted border-b border-border", headerCell: "pl-2 pr-1 text-small font-semibold text-muted-foreground", rowHover: "bg-row-hover" }}
+      class="rounded-(--radius) border border-border"
+      style={terminal() ? undefined : { height: (shown() + 1) * (rowHeight(26) ?? 26) + 2 }}
+    />
   );
 }
 
