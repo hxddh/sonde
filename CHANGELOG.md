@@ -4,6 +4,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [9.1.0] - 2026-11-08
+
 Native Shell where sonde still had its own: fewer parts of sonde's, and a few slips put right.
 
 ### Fixed
