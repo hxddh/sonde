@@ -29,6 +29,13 @@ pub struct ShareArgs {
     /// Write only session.json (to --out, or stdout).
     #[arg(long)]
     json: bool,
+    /// One HTML file instead of a site: findings, time, timeline, operations (to --out, or stdout).
+    #[arg(long, conflicts_with_all = ["json", "serve"])]
+    html: bool,
+    /// Replace bucket and key names with tokens and drop headers, bodies, URLs,
+    /// the program's output and arguments: safe to send outside.
+    #[arg(long)]
+    redact: bool,
 }
 
 async fn serve(dir: PathBuf, port: u16) -> anyhow::Result<()> {
@@ -46,10 +53,24 @@ async fn serve(dir: PathBuf, port: u16) -> anyhow::Result<()> {
 
 pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     let file = match &a.file {
-        Some(f) => f.clone(),
+        Some(f) => super::sessions::resolve(s, f),
         None => super::record::newest_session(s)?,
     };
-    let session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    let mut session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    if a.redact {
+        sonde_proxy::report::redact(&mut session);
+    }
+    if a.html {
+        let page = sonde_proxy::report::html(&session, &super::record::request_prices(s));
+        match &a.out {
+            Some(p) => {
+                std::fs::write(p, page)?;
+                eprintln!("{}", p.display());
+            }
+            None => print!("{page}"),
+        }
+        return Ok(0);
+    }
     let doc = serde_json::to_vec(&share::session_json(
         &session,
         &super::record::request_prices(s),

@@ -15,6 +15,7 @@ pub mod phrase;
 pub mod profile;
 pub mod program;
 pub mod replay;
+pub mod report;
 pub mod session;
 pub mod share;
 pub mod summary;
