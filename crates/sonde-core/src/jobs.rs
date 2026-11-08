@@ -119,14 +119,35 @@ impl JobCtx {
 }
 
 /// All jobs of the process.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct JobManager {
     inner: Arc<Mutex<HashMap<String, Entry>>>,
+    /// Bumped as any job starts, moves on or ends: a view of the jobs
+    /// follows it instead of asking again and again.
+    changes: Arc<tokio::sync::watch::Sender<u64>>,
+}
+
+impl Default for JobManager {
+    fn default() -> Self {
+        Self {
+            inner: Arc::default(),
+            changes: Arc::new(tokio::sync::watch::channel(0).0),
+        }
+    }
 }
 
 impl JobManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A receiver that wakes as the jobs change (one started, moved on, ended).
+    pub fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
+    fn changed(&self) {
+        self.changes.send_modify(|n| *n = n.wrapping_add(1));
     }
 
     /// Starts `work` as a job. Returns its id at once.
@@ -170,6 +191,7 @@ impl JobManager {
                 result: None,
             },
         );
+        self.changed();
         let ctx = JobCtx {
             id: id.clone(),
             throttle,
@@ -197,6 +219,8 @@ impl JobManager {
                 progress: p,
             });
         }
+        drop(g);
+        self.changed();
     }
 
     fn finish(&self, id: &str, outcome: Result<Value, S3Error>) {
@@ -226,6 +250,8 @@ impl JobManager {
             }
         };
         let _ = e.events.send(event);
+        drop(g);
+        self.changed();
     }
 
     /// Cancels a job; `false` if it is unknown or already over.
@@ -320,6 +346,26 @@ mod tests {
         });
         assert_eq!(jobs.wait(&id).await.unwrap()["ok"], true);
         assert_eq!(jobs.info(&id).unwrap().state, JobState::Finished);
+    }
+
+    #[tokio::test]
+    async fn a_view_of_the_jobs_hears_them_change() {
+        let jobs = JobManager::new();
+        let mut changes = jobs.changes();
+        changes.borrow_and_update();
+        let id = jobs.spawn("t", "test", 1, None, |_| async { Ok(serde_json::json!(1)) });
+        // the start, then the end: each wakes the view
+        tokio::time::timeout(Duration::from_secs(5), changes.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        jobs.wait(&id).await.unwrap();
+        changes.borrow_and_update();
+        assert!(!changes.has_changed().unwrap());
+        jobs.spawn("t", "again", 1, None, |_| async {
+            Ok(serde_json::json!(2))
+        });
+        assert!(changes.has_changed().unwrap());
     }
 
     #[tokio::test]

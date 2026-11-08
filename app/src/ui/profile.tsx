@@ -33,7 +33,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
           <Flows profile={p()} />
         </Section>
       </If>
-      <If when={!terminal() && p().heat?.length}>
+      <If when={p().heat?.length}>
         <Section title={t("heat.title")} plain description={t("heat.hint")}>
           <Heat profile={p()} />
         </Section>

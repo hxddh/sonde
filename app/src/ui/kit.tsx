@@ -1,12 +1,24 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { ErrorBoundary, fontScale, type JSX, platform, reduceMotion, Scroll, setAccessibilityFocus, Text, token, View, type ViewRef } from "nsh";
-import { Button as BaseButton, Checkbox as BaseCheckbox, DataTable, Input, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
+import { ErrorBoundary, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, Text, token, View, type ViewRef } from "nsh";
+import { Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
-import { keyLabel } from "./keys";
 
 export const terminal = () => platform.idiom === "terminal";
+
+/** The look of every split's handle (Native Shell's ResizablePanelGroup):
+ * a hairline that thickens under the pointer. */
+export const SPLIT_HANDLE = "bg-border group-hover:w-[3px] group-hover:bg-ring/60 group-active:w-[3px] group-active:bg-ring";
+/** A shortcut as the platform writes it: "mod+shift+k" → "⇧⌘K" on macOS,
+ * "Ctrl+Shift+K" elsewhere (Native Shell's keymap). */
+export function keyLabel(shortcut: string): string {
+  try {
+    return keymap.label(shortcut);
+  } catch {
+    return shortcut;
+  }
+}
 
 /** The type scale, in points: the `text-caption` … `text-title` classes
  * (nsh.json's `tailwind.fontSize`), for the props that take a number
@@ -263,6 +275,7 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
       <Input
         testID={props.testID}
+        accessibilityLabel={props.label}
         value={props.value}
         placeholder={props.placeholder}
         autoCapitalize="none"
@@ -272,6 +285,33 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
         submitBehavior={props.onSubmit ? "submit" : undefined}
         class={`h-8 rounded-(--radius) border border-input bg-background px-2.5 text-body text-foreground focus:border-ring ${props.mono ? "font-mono" : ""}`}
       />
+    </View>
+  );
+}
+
+/** A number to type or step (Native Shell's NumberInput: arrows and the
+ * buttons step it, screen readers hear a spin button); `null` is empty, for
+ * a number that may be unset. */
+export function NumberField(props: { label: string; value: number | null; onChange: (v: number | null) => void; min?: number; max?: number; step?: number; placeholder?: string; suffix?: string; testID?: string; class?: string; bare?: boolean }) {
+  const input = (
+    <NumberInput
+      testID={props.testID}
+      accessibilityLabel={props.label}
+      value={props.value}
+      min={props.min}
+      max={props.max}
+      step={props.step ?? 1}
+      placeholder={props.placeholder}
+      onChange={({ value }) => props.onChange(value)}
+      controlsRight
+      suffix={props.suffix ? <Text class="pr-2 text-small text-muted-foreground">{props.suffix}</Text> : undefined}
+    />
+  );
+  if (props.bare) return <View class={props.class}>{input}</View>;
+  return (
+    <View class={`gap-1 ${props.class ?? ""}`}>
+      <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
+      {input}
     </View>
   );
 }
@@ -551,5 +591,43 @@ export function Recoverable(props: { children: JSX.Element }) {
     >
       {props.children}
     </ErrorBoundary>
+  );
+}
+
+/** What a chart's colors stand for: a swatch (its `bg-*` class) and a name
+ * each, in a row that wraps. One legend for every chart. */
+export function Legend(props: { items: { label: string; swatch: string }[]; class?: string; square?: boolean }) {
+  return (
+    <View class={`flex-row flex-wrap gap-x-4 gap-y-1 ${props.class ?? ""}`}>
+      <Each of={props.items}>
+        {(it) => (
+          <View class="flex-row items-center gap-1.5">
+            <View class={`size-2 ${props.square ? "rounded-sm" : "rounded-full"} ${it().swatch}`} />
+            <Text class="text-caption text-muted-foreground">{it().label}</Text>
+          </View>
+        )}
+      </Each>
+    </View>
+  );
+}
+
+/** A right press (or Shift+F10) on `children` offers `actions` in Native
+ * Shell's own menu: for where the system has no menus to pop up (a
+ * terminal, the web). Elsewhere the system's menu does it and this is only
+ * `children`. */
+export function InWindowMenu(props: { enabled: boolean; actions: () => { label: string; icon?: IconName; run: () => void }[]; children: JSX.Element }) {
+  return (
+    <If when={props.enabled} else={props.children}>
+      <ContextMenu trigger={props.children} popupClass={`${POPUP} min-w-48`}>
+        <Each of={props.actions()}>
+          {(a) => (
+            <MenuItem onSelect={a().run} class="flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1 focus:bg-muted">
+              <If when={a().icon && !terminal()}>{(_) => <Icon name={a().icon!} size={14} tint="muted-foreground" />}</If>
+              <Text class="text-body text-foreground">{a().label}</Text>
+            </MenuItem>
+          )}
+        </Each>
+      </ContextMenu>
+    </If>
   );
 }

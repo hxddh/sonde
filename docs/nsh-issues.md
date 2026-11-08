@@ -35,3 +35,14 @@ and NSApplication's, which is why `nsh test --target macos` does not show it.
 the windows it opens.
 
 **Repro.** macOS in light mode, `"backdrop": "sidebar"`, a transparent root, `setColorScheme("dark")`.
+
+## A Button cannot say it is expanded
+
+**What happens.** A disclosure button (sonde's "What stands out" over a `Collapsible`) has no way to tell a screen
+reader whether its region is open: `ButtonProps` takes `selected` but no `accessibilityState`.
+
+**Expected.** As `Collapsible`'s documentation asks of its trigger (`accessibilityState={{ expanded: open }}`),
+`Button` takes `accessibilityState` (or an `expanded` prop).
+
+**Repro.** `<Button accessibilityState={{ expanded: true }} />`: TS2322.
+

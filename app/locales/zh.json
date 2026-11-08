@@ -302,7 +302,6 @@
  "welcome.addText": "任何兼容 S3 的服务：AWS、R2、MinIO、Ceph RGW、OSS…",
  "welcome.addDo": "添加…",
  "welcome.example": "或者先看一个示例会话",
- "welcome.importFoundOne": "~/.aws 中有 1 个 profile",
  "figure.requests": "请求",
  "figure.operations": "操作",
  "figure.took": "耗时",
@@ -581,5 +580,14 @@
  "history.range": "运行时间范围",
  "toolbar.label": "窗口命令",
  "sidebar.places": "位置",
- "updates.restart": "更新并重启"
+ "updates.restart": "更新并重启",
+ "mpu.days": "天数",
+ "probes.probe": "探针",
+ "probes.matrix": "兼容性矩阵",
+ "sessions.resizeList": "调整会话列表宽度",
+ "browse.resizeDetail": "调整详情宽度",
+ "store.resizeBuckets": "调整存储桶列表宽度",
+ "heat.requests": "请求",
+ "heat.peak": "峰值 / 秒",
+ "heat.errors": "错误"
 }

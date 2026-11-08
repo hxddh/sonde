@@ -2,16 +2,17 @@
 // page and kept in Rust), and an object's details.
 
 import { batch, cleanup, Clipboard, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
-import { Button as BaseButton, DataTable, Input } from "nsh/base";
+import { Button as BaseButton, DataTable, Input, Link, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { bytes, count, date } from "../format";
 import { t } from "../i18n";
 import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
-import { Icon, iconSvg } from "../ui/icon";
-import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, KeyValue, Loading, Muted, rowHeight, terminal, Toggle, TYPE } from "../ui/kit";
+import { Icon, type IconName, iconSvg } from "../ui/icon";
+import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, InWindowMenu, KeyValue, Loading, Muted, rowHeight, SPLIT_HANDLE, terminal, Toggle, TYPE } from "../ui/kit";
 import { Fold } from "../ui/record";
+import { rememberedSize } from "../ui/sizes";
 import { Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
@@ -25,21 +26,22 @@ function Breadcrumbs() {
   };
   return (
     <View class="min-w-0 flex-row flex-wrap items-center gap-0.5">
-      <BaseButton accessibilityLabel={bucket() ?? ""} onPress={() => prefix.set("")} class="flex-row items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-0.5 hover:bg-muted">
+      {/* links of the path (the last one the place shown): screen readers hear them so */}
+      <Link testID="crumb-root" href={`s3://${bucket()}/`} openWith="app" onOpen={() => prefix.set("")} current={parts().length === 0} accessibilityLabel={bucket() ?? ""} class="flex-row items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-0.5 hover:bg-muted">
         <If when={!terminal()}>
           <Icon name="database" size={14} tint="foreground" />
         </If>
         <Text class="text-body font-semibold text-foreground">{bucket()}</Text>
-      </BaseButton>
+      </Link>
       <Each of={parts()}>
         {(p, i) => (
           <View class="flex-row items-center gap-0.5">
             <If when={!terminal()} else={<Text class="text-muted-foreground">/</Text>}>
               <Icon name="chevron-right" size={12} />
             </If>
-            <BaseButton accessibilityLabel={p().name} onPress={() => prefix.set(p().prefix)} class="rounded-(--radius-sm) px-1.5 py-0.5 hover:bg-muted">
+            <Link href={`s3://${bucket()}/${p().prefix}`} openWith="app" onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} accessibilityLabel={p().name} class="rounded-(--radius-sm) px-1.5 py-0.5 hover:bg-muted">
               <Text class={i() === parts().length - 1 ? "text-body font-medium text-foreground" : "text-body text-muted-foreground"}>{p().name}</Text>
-            </BaseButton>
+            </Link>
           </View>
         )}
       </Each>
@@ -335,25 +337,26 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   };
   const entryAt = (row: number) => listing()?.row(row) as Entry | null;
   const copy = (text: string) => void Clipboard.writeText(text).then(() => notify(t("common.copied")), report);
-  const menu = (row: number) => {
-    const e = entryAt(row);
+  type Action = { label: string; icon: IconName; run: () => void };
+  /** What a row offers: in the system's menu, or Native Shell's own where there is none. */
+  const actions = (row: number | null): Action[] => {
+    const e = row === null ? null : entryAt(row);
     const b = bucket();
-    if (!e || !b || !isAvailable) return;
-    void Menu.popup(
-      e.isPrefix
-        ? [
-            { label: t("browse.open"), icon: iconSvg("folder-open"), onSelect: () => prefix.set(e.key) },
-            { label: t("store.copyKey"), icon: iconSvg("copy"), onSelect: () => copy(e.key) },
-            { label: t("store.copyUri"), icon: iconSvg("link"), onSelect: () => copy(`s3://${b}/${e.key}`) },
-          ]
-        : [
-            { label: t("browse.detail"), icon: iconSvg("info"), onSelect: () => props.onSelect(e) },
-            { label: t("store.copyKey"), icon: iconSvg("copy"), onSelect: () => copy(e.key) },
-            { label: t("store.copyUri"), icon: iconSvg("link"), onSelect: () => copy(`s3://${b}/${e.key}`) },
-            { type: "separator" },
-            { label: t("browse.versions"), icon: iconSvg("file-clock"), onSelect: () => batch(() => (versionKey.set(e.key), go("versions"))) },
-          ],
-    );
+    if (!e || !b) return [];
+    const copies: Action[] = [
+      { label: t("store.copyKey"), icon: "copy", run: () => copy(e.key) },
+      { label: t("store.copyUri"), icon: "link", run: () => copy(`s3://${b}/${e.key}`) },
+    ];
+    return e.isPrefix
+      ? [{ label: t("browse.open"), icon: "folder-open", run: () => prefix.set(e.key) }, ...copies]
+      : [{ label: t("browse.detail"), icon: "info", run: () => props.onSelect(e) }, ...copies, { label: t("browse.versions"), icon: "file-clock", run: () => batch(() => (versionKey.set(e.key), go("versions"))) }];
+  };
+  const menuRow = signal<number | null>(null);
+  const systemMenus = isAvailable && !terminal();
+  const menu = (row: number) => {
+    menuRow.set(row);
+    if (!systemMenus) return;
+    void Menu.popup(actions(row).map((a) => ({ label: a.label, icon: iconSvg(a.icon), onSelect: a.run })));
   };
 
   return (
@@ -410,6 +413,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           </Card>
         )}
       </If>
+      <InWindowMenu enabled={!systemMenus} actions={() => actions(menuRow())}>
       <DataTable
         testID="objects"
         accessibilityLabel={t("nav.objects")}
@@ -462,9 +466,12 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         classes={terminal() ? { header: "bg-muted", rowSelected: "bg-accent" } : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-0", rowOdd: "bg-muted/30", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
         empty={<Empty icon="folder" text={loading() ? t("common.loading") : t("common.empty")} />}
       />
+      </InWindowMenu>
     </View>
   );
 }
+
+const detailWidth = rememberedSize("browse.detail", 400);
 
 export function Browse() {
   const selected = signal<Entry | null>(null);
@@ -485,14 +492,15 @@ export function Browse() {
         <If
           when={terminal()}
           else={
-            <View class="flex-1 flex-row">
-              <View class="min-w-0 flex-1 gap-3 px-5 py-4">
+            <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("browse.resizeDetail")}>
+              <ResizablePanel minSize={420} class="min-w-0 gap-3 px-5 py-4">
                 <Overview />
                 <Objects onSelect={(e) => selected.set(e)} selected={selected()?.key ?? null} />
-              </View>
+              </ResizablePanel>
+              <ResizablePanel visible={!!selected()} size={detailWidth.size()} minSize={300} maxSize={720} onResize={detailWidth.onResize} class="bg-inspector">
               <If when={selected()}>
                 {(e) => (
-                  <View class="w-[400px] border-l border-border bg-inspector">
+                  <View class="flex-1">
                     <View class="h-10 flex-row items-center border-b border-border px-3">
                       <Text class="flex-1 text-small font-semibold text-muted-foreground">{t("browse.detail")}</Text>
                       <IconButton icon="x" label={t("common.close")} onPress={() => selected.set(null)} testID="detail-close" />
@@ -503,7 +511,8 @@ export function Browse() {
                   </View>
                 )}
               </If>
-            </View>
+              </ResizablePanel>
+            </ResizablePanelGroup>
           }
         >
           <If when={selected()} else={<Objects onSelect={(e) => selected.set(e)} selected={null} />}>

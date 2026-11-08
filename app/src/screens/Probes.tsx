@@ -3,14 +3,14 @@
 // runs and the difference between two of them.
 
 import { cleanup, Scroll, signal, Text, View } from "nsh";
-import { Button as BaseButton } from "nsh/base";
+import { Button as BaseButton, DataTable } from "nsh/base";
 import { ms } from "../format";
 import { t } from "../i18n";
 import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
 import { bucket, endpoint, endpoints, notify, report, showRequest } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
-import { Badge, Bar, Button, Card, Check, Choice, Empty, Field, Heading, Mono, Muted, Page, SimpleTable, terminal, Title, Toggle } from "../ui/kit";
+import { Badge, Bar, Button, Card, Check, Choice, Empty, Field, Heading, Mono, Muted, Page, rowHeight, SimpleTable, terminal, Title, Toggle, TYPE } from "../ui/kit";
 
 function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName: string; onBack: () => void }) {
   return (
@@ -49,46 +49,58 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
 }
 
 function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: number) => void }) {
+  // a row a probe, a column a store: the probe's column stays while the stores scroll under it
+  const columns = () => [
+    { key: "probe", title: t("probes.probe"), width: 288, fixed: true, sortable: !terminal() },
+    ...props.matrix.columns.map((c, i) => ({ key: `s${i}`, title: c.server ? `${c.name} · ${c.server}` : `${c.name} · ${c.vendor}`, width: 150, align: "start" as const })),
+  ];
+  const data = () =>
+    props.matrix.rows.map((r) => ({
+      probe: `${r.probe.title}\n${r.probe.id}`,
+      ...Object.fromEntries(r.cells.map((c, i) => [`s${i}`, c ? `${SYMBOL[c.verdict]} ${verdictLabel(c.verdict)}` : "—"])),
+    }));
   return (
     <If when={props.matrix.columns.length > 0} else={<Empty text={t("probes.noRuns")} />}>
-      <Scroll horizontal class="flex-1">
-        <View testID="matrix">
-          <View class="flex-row border-b border-border pb-1">
-            <Text class="w-72 text-small font-semibold text-muted-foreground">probe</Text>
-            <Each of={props.matrix.columns}>
-              {(c) => (
-                <View class="w-36 px-1">
-                  <Text class="line-clamp-1 text-small font-semibold text-foreground">{c().name}</Text>
-                  <Text class="line-clamp-1 text-small text-muted-foreground">{c().server ?? c().vendor}</Text>
-                </View>
-              )}
-            </Each>
-          </View>
-          <Each of={props.matrix.rows} key={(r) => r.probe.id}>
-            {(row) => (
-              <View class="flex-row items-center border-b border-border/50 py-0.5">
-                <View class="w-72 pr-2">
-                  <Text class="line-clamp-1 text-small text-foreground">{row().probe.title}</Text>
-                  <Text class="line-clamp-1 font-mono text-small text-muted-foreground">{row().probe.id}</Text>
-                </View>
-                <Each of={row().cells}>
-                  {(cell, i) => (
-                    <View class="w-36 px-1">
-                      <If when={cell()} else={<Text class="text-small text-muted-foreground">—</Text>}>
-                        {(c) => (
-                          <BaseButton testID={`cell-${row().probe.id}-${i()}`} accessibilityLabel={`${row().probe.id} ${props.matrix.columns[i()].name} ${c().verdict}`} onPress={() => props.onOpen(row().probe, i())} class="rounded-sm px-1 py-0.5 hover:bg-muted">
-                            <Badge label={`${SYMBOL[c().verdict]} ${verdictLabel(c().verdict)}`} tone={verdictTone(c().verdict)} />
-                          </BaseButton>
-                        )}
-                      </If>
+      <DataTable
+        testID="matrix"
+        accessibilityLabel={t("probes.matrix")}
+        columns={columns()}
+        data={data()}
+        fontSize={TYPE.small}
+        rowHeight={rowHeight(44)}
+        renderCell={
+          terminal()
+            ? undefined
+            : (cell) => {
+                const row = props.matrix.rows[cell.row];
+                if (!row) return <Text>{cell.text}</Text>;
+                if (cell.key === "probe")
+                  return (
+                    <View class="flex-1 justify-center px-2">
+                      <Text class="line-clamp-1 text-small text-foreground">{row.probe.title}</Text>
+                      <Text class="line-clamp-1 font-mono text-caption text-muted-foreground">{row.probe.id}</Text>
                     </View>
-                  )}
-                </Each>
-              </View>
-            )}
-          </Each>
-        </View>
-      </Scroll>
+                  );
+                const i = Number(cell.key.slice(1));
+                const c = row.cells[i];
+                if (!c) return <Text class="px-2 text-small text-muted-foreground">—</Text>;
+                return (
+                  <BaseButton testID={`cell-${row.probe.id}-${i}`} accessibilityLabel={`${row.probe.id} ${props.matrix.columns[i].name} ${c.verdict}`} onPress={() => props.onOpen(row.probe, i)} class="mx-1 self-start rounded-sm px-1 py-0.5 hover:bg-muted">
+                    <Badge label={`${SYMBOL[c.verdict]} ${verdictLabel(c.verdict)}`} tone={verdictTone(c.verdict)} />
+                  </BaseButton>
+                );
+              }
+        }
+        onRowPress={terminal() ? ({ row }) => {
+          // in a terminal a row opens its first result
+          const r = props.matrix.rows[row];
+          const i = r?.cells.findIndex((c) => c) ?? -1;
+          if (r && i >= 0) props.onOpen(r.probe, i);
+        } : undefined}
+        classes={terminal() ? { header: "bg-muted", rowSelected: "bg-accent" } : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-0", rowHover: "bg-row-hover", fixedEdge: "bg-border" }}
+        class="rounded-(--radius) border border-border"
+        style={terminal() ? { flexGrow: 1 } : { height: Math.min(props.matrix.rows.length + 1, 12) * (rowHeight(44) ?? 44) + 2 }}
+      />
     </If>
   );
 }

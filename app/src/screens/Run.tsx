@@ -15,9 +15,9 @@ import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, p
 import { away, endpoint, endpoints, go, openSession, report, sessionsChanged } from "../store";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Button, Dot, Empty, IconButton, KeyValue, Options, terminal } from "../ui/kit";
+import { Button, Dot, Empty, IconButton, KeyValue, Options, SPLIT_HANDLE, terminal } from "../ui/kit";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
-import { LatencyBand, liveFigures, SessionShape } from "../ui/plots";
+import { LatencyBand, liveFigures, SessionShape, ShareGauge } from "../ui/plots";
 import { openMonitor } from "./MonitorWindow";
 import { rememberedSize } from "../ui/sizes";
 import { seconds } from "../ui/sessionview";
@@ -203,7 +203,10 @@ function LivePanel(props: { profile: Profile }) {
     <View testID="live" class="gap-2 rounded-(--radius-card) border border-border bg-card px-3.5 py-2.5">
       <View class="flex-row items-center gap-6">
         {figure(f().perSecond.toFixed(f().perSecond < 10 ? 1 : 0), t("live.perSecond"), "live-rate")}
-        {figure(`${Math.round(f().failedShare * 100)}%`, t("live.failed"), "live-failed", f().failedShare > 0 ? "text-status-server" : "text-foreground")}
+        <View class="flex-row items-center gap-2">
+          <ShareGauge share={f().failedShare} label={`${t("live.failed")} ${Math.round(f().failedShare * 100)}%`} testID="live-failed-gauge" />
+          {figure(`${Math.round(f().failedShare * 100)}%`, t("live.failed"), "live-failed", f().failedShare > 0 ? "text-status-server" : "text-foreground")}
+        </View>
         {figure(String(f().inFlight), t("live.inFlight"), "live-in-flight")}
         {figure(ms(f().p95), t("live.p95"), "live-p95")}
         <View class="flex-1" />
@@ -348,7 +351,7 @@ export function Run() {
         <If
           when={terminal()}
           else={
-            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1">
+            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE}>
               <ResizablePanel minSize={320}>
                 <View class="flex-1 pr-2">
                   <ProgramTerminal />

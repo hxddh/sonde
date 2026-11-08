@@ -22,7 +22,8 @@
     "notifications": true,
     "windows": true,
     "statusBar": true,
-    "picker": true
+    "picker": true,
+    "openUrl": { "schemes": ["http", "https"] }
   },
   "macos": {
     "infoPlist": {
@@ -47,7 +48,8 @@
       "style": "hidden",
       "height": 44
     },
-    "backdrop": "sidebar"
+    "backdrop": "sidebar",
+    "restoreBounds": true
   },
   "updater": {
     "github": "hxddh/sonde"

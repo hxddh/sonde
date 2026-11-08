@@ -133,8 +133,10 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
     }
     // what is left to look at, on the Dock's icon or the taskbar button, until the window is back
     if (lifecycle() !== "active" && warnings > 0) await Notifications.setBadge(warnings).catch(() => {});
-    if ((await Notifications.requestPermission()) !== "granted") return;
-    await Notifications.show({ id: "sonde-run", title: t("run.notifyTitle", { command: programOf(cmd) ?? cmd }), body });
+    // asked for when the run began (something the user did), not now
+    if ((await Notifications.permission()) !== "granted") return;
+    // the session in the id: pressed after the app was quit, it still opens that run
+    await Notifications.show({ id: `${NOTIFY}${r.path}`, title: t("run.notifyTitle", { command: programOf(cmd) ?? cmd }), body });
     if (lifecycle() === "active") await Notifications.setBadge(0).catch(() => {});
   } catch {
     // no notifications here (a terminal, an unbundled app): the screen says it
@@ -143,6 +145,7 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
 
 /** Runs `cmd` against `endpoint`, its requests recorded. */
 export function start(cmd: string, endpoint: string) {
+  askToNotify();
   if (running() || !cmd.trim()) return;
   buffer = "";
   killed = false;
@@ -203,10 +206,22 @@ export function openLastRun(go: (s: "sessions") => void) {
   go("sessions");
 }
 
-/** A pressed notification opens the run it told of; the badge goes as the window comes back. */
-export function followNotifications(open: () => void) {
+const NOTIFY = "sonde-run:";
+
+/** The first run asks once whether sonde may say when a run ends (the
+ * system asks only when the user did something; starting a run is that). */
+function askToNotify() {
+  if (platform.idiom === "terminal") return;
+  void Notifications.permission()
+    .then((p) => (p === "default" ? Notifications.requestPermission() : p))
+    .catch(() => {});
+}
+
+/** A pressed notification opens the session it told of (the one that
+ * started the app too); the badge goes as the window comes back. */
+export function followNotifications(open: (path: string) => void) {
   try {
-    Notifications.on("press", ({ id }) => id === "sonde-run" && open());
+    Notifications.on("press", ({ id }) => id.startsWith(NOTIFY) && open(id.slice(NOTIFY.length)));
   } catch {
     // no notifications here
   }

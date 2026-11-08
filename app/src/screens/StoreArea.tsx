@@ -5,7 +5,7 @@
 // sheet. A terminal keeps them as tabs.
 
 import { batch, Clipboard, effect, resource, signal, Text, untracked, View } from "nsh";
-import { Tree, type TreeItem, type TreeRef } from "nsh/base";
+import { ResizablePanel, ResizablePanelGroup, Tree, type TreeItem, type TreeRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { t } from "../i18n";
 import { sectionLabel } from "../labels";
@@ -13,7 +13,8 @@ import { api, Listing } from "../native";
 import { bucket, chooseBucket, endpoint, go, notify, prefix, report, STORE_TABS, type StoreTab, storeSheet, storeTab } from "../store";
 import type { BucketEntry, Entry } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { IconButton, Loading, PanelHeader, SidePanel, terminal } from "../ui/kit";
+import { IconButton, Loading, PanelHeader, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
+import { rememberedSize } from "../ui/sizes";
 import { TabBar } from "../ui/tabs";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
@@ -145,7 +146,7 @@ function Buckets() {
   };
 
   return (
-    <View class="w-60 border-r border-border bg-sidebar/40">
+    <View class="flex-1 bg-sidebar/40">
       <View class="h-10 flex-row items-center gap-2 px-3">
         <Text role="header" class="flex-1 text-small font-semibold text-muted-foreground">
           {t("browse.buckets")}
@@ -217,6 +218,8 @@ function DetailSheet() {
   );
 }
 
+const bucketsWidth = rememberedSize("store.buckets", 240);
+
 export function StoreArea() {
   const tabs = () => (
     <TabBar tabs={STORE_TABS} value={storeTab()} icon={(s) => TAB_ICON[s]} label={(s) => (s === "browse" ? t("nav.objects") : sectionLabel(s))} onChange={(s) => go(s)} />
@@ -225,11 +228,15 @@ export function StoreArea() {
     <If
       when={terminal()}
       else={
-        <View class="flex-1 flex-row" testID="screen-store">
-          <Buckets />
-          <View class="min-w-0 flex-1">
-            <Browse />
-          </View>
+        <View class="flex-1" testID="screen-store">
+          <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("store.resizeBuckets")}>
+            <ResizablePanel fixed size={bucketsWidth.size()} minSize={180} maxSize={400} onResize={bucketsWidth.onResize}>
+              <Buckets />
+            </ResizablePanel>
+            <ResizablePanel minSize={560} class="min-w-0">
+              <Browse />
+            </ResizablePanel>
+          </ResizablePanelGroup>
           <DetailSheet />
         </View>
       }

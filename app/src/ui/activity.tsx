@@ -10,7 +10,7 @@ import { ago, date, hm, ms } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { RecordDetail } from "../screens/Requests";
-import { ACTIVITY_TABS, type ActivityTab, activityTab, away, focusRecord, notify, report } from "../store";
+import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, notify, report } from "../store";
 import type { JobInfo, RecordSummary, RequestFilter } from "../types";
 import { Icon, iconSvg } from "./icon";
 import { Bar, Button, Dot, Empty, IconButton, PanelHeader, Options, rowHeight, Segmented, terminal, Tip, TYPE } from "./kit";
@@ -20,17 +20,32 @@ export const activityOpen = signal(false);
 
 /** Jobs running now, for the toolbar's badge. */
 export const runningJobs = signal(0);
-let poll: ReturnType<typeof setInterval> | undefined;
+let following = false;
 export function watchJobs() {
-  poll ??= setInterval(() => {
-    if (away()) return;
-    try {
-      const n = api.jobs().filter((j) => j.state === "running").length;
-      if (n !== runningJobs()) runningJobs.set(n);
-    } catch {
-      // the engine is gone
-    }
-  }, 800);
+  if (following) return;
+  following = true;
+  try {
+    // the engine says when the jobs change
+    api.on("jobs", (n) => n !== runningJobs() && runningJobs.set(n));
+  } catch {
+    // the engine is gone
+  }
+}
+
+/** `f`, at most every `ms` while calls keep coming (the last one wins). */
+function throttled(f: () => void, ms: number): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let last = 0;
+  cleanup(() => timer && clearTimeout(timer));
+  return () => {
+    if (timer) return;
+    const wait = Math.max(0, last + ms - Date.now());
+    timer = setTimeout(() => {
+      timer = undefined;
+      last = Date.now();
+      f();
+    }, wait);
+  };
 }
 
 const TAB_LABEL: Record<ActivityTab, () => string> = { requests: () => t("activity.requests"), jobs: () => t("activity.jobs"), audit: () => t("activity.changes") };
@@ -44,12 +59,12 @@ function Requests() {
     const f = focusRecord();
     if (f !== null) batch(() => (selected.set(f), focusRecord.set(null)));
   });
-  const timer = setInterval(() => {
-    if (away()) return;
+  // new records refresh the list, a few times a second at most
+  const refresh = throttled(() => {
     const l = api.latestRequest();
     if (l !== latest()) latest.set(l);
-  }, 700);
-  cleanup(() => clearInterval(timer));
+  }, 300);
+  api.on("request", refresh);
   const filter = (): RequestFilter => ({ status: errors() ? { kind: "errors" } : null, text: text() || null });
   const rows = (): RecordSummary[] => {
     latest();
@@ -151,8 +166,9 @@ function Requests() {
 
 function Jobs() {
   const jobs = signal<JobInfo[]>(api.jobs());
-  const timer = setInterval(() => !away() && jobs.set(api.jobs()), 500);
-  cleanup(() => clearInterval(timer));
+  // the engine says when a job starts, moves on or ends
+  const refresh = throttled(() => jobs.set(api.jobs()), 200);
+  api.on("jobs", refresh);
   const tone = (s: string) => (s === "finished" ? "ok" : s === "failed" ? "server" : s === "cancelled" ? "miss" : "live") as "ok" | "server" | "miss" | "live";
   return (
     <If when={jobs().length > 0} else={<Empty icon="timer" text={t("jobs.none")} />}>

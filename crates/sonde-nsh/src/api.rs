@@ -15,6 +15,16 @@ fn parse<T: serde::de::DeserializeOwned>(v: JsonValue, what: &str) -> Result<T, 
     serde_json::from_value(v).map_err(|e| err_msg(format!("{what}: {e}")))
 }
 
+/// The id of the newest record in the request log (0 when empty).
+fn latest_id() -> f64 {
+    sonde()
+        .log()
+        .list(&reqlog::Filter::default(), 1)
+        .first()
+        .map(|r| r.id as f64)
+        .unwrap_or(0.0)
+}
+
 /// What the endpoint form sends: everything but secrets.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -388,14 +398,76 @@ impl Sonde {
         ))
     }
 
+    /// Listens to `event`, so views follow the engine instead of asking it
+    /// on a timer: `"request"` gets the newest record's id as records come
+    /// (several at once come as one), `"jobs"` the number of jobs running
+    /// as any job starts, moves on or ends. Each gets the current value at
+    /// once. Returns the function that stops listening.
+    pub fn on(
+        event: String,
+        listener: Callback<JsonValue>,
+        cx: CallCx<'_>,
+    ) -> Result<Stop, String> {
+        let held = std::rc::Rc::new(std::cell::RefCell::new(Some(listener)));
+        let task = held.clone();
+        let alive = move || task.borrow().clone();
+        match event.as_str() {
+            "request" => {
+                let mut rx = sonde().log().subscribe();
+                cx.start(async move {
+                    let mut last = latest_id();
+                    if let Some(l) = alive() {
+                        l.post(json!(last));
+                    }
+                    loop {
+                        let id = match rx.recv().await {
+                            Ok(id) => id,
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                latest_id() as u64
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                        };
+                        // the ones that came meanwhile, as one
+                        let mut newest = id as f64;
+                        while let Ok(more) = rx.try_recv() {
+                            newest = more as f64;
+                        }
+                        if newest == last {
+                            continue;
+                        }
+                        last = newest;
+                        let Some(l) = alive() else { return };
+                        l.post(json!(newest));
+                    }
+                });
+            }
+            "jobs" => {
+                let mut rx = sonde().jobs().changes();
+                cx.start(async move {
+                    loop {
+                        let running = sonde()
+                            .jobs()
+                            .list()
+                            .iter()
+                            .filter(|j| j.state == JobState::Running)
+                            .count();
+                        let Some(l) = alive() else { return };
+                        l.post(json!(running));
+                        rx.borrow_and_update();
+                        if rx.changed().await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+            other => return Err(err_msg(format!("no Sonde event `{other}`"))),
+        }
+        Ok(Stop::new(move || drop(held.take())))
+    }
+
     /// The id of the newest record (0 when empty): poll it to refresh.
     pub fn latest_request() -> f64 {
-        sonde()
-            .log()
-            .list(&reqlog::Filter::default(), 1)
-            .first()
-            .map(|r| r.id as f64)
-            .unwrap_or(0.0)
+        latest_id()
     }
 
     /// One record in full (redacted headers, error body, timing).

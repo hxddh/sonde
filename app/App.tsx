@@ -3,17 +3,17 @@
 // sidebar and the place beside it; a terminal gets a home list and a
 // navigation stack, the F10 menu bar and `:` for the palette.
 
-import { batch, effect, keymap, mount, platform, setColorScheme, Storage, Text, UrlScheme, View } from "nsh";
+import { batch, effect, keymap, mount, platform, setColorScheme, Text, UrlScheme, View } from "nsh";
 import { createNavStack, NavPage, NavStack } from "nsh/base";
-import { currentWindow, isAvailable, Menu, Window, windowState } from "nsh/desktop";
+import { currentWindow, Menu } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
 import { areaLabel } from "./src/labels";
-import { followNotifications, openLastRun, running } from "./src/run";
+import { followNotifications, running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLink, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLink, openSession, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
@@ -244,33 +244,6 @@ function installMenus() {
   if (terminal()) keymap.bind({ "shift+;": () => paletteOpen.set(true) }, { when: "notEditing" });
 }
 
-const WINDOW_KEY = "window.placement";
-
-/** Opens the main window where the user left it: size, place, maximized or full screen. */
-async function rememberWindow() {
-  if (!isAvailable || terminal()) return;
-  try {
-    const saved = await Storage.getItem(WINDOW_KEY);
-    const main = Window.get("main");
-    const placement = saved ? JSON.parse(saved) : null;
-    // a placement smaller than the window's least size (a phone-sized window
-    // some platforms open before applying nsh.json) is not restored
-    const size = placement?.bounds?.size ?? placement?.normal?.size;
-    if (placement && (!size || (size.width >= 900 && size.height >= 560))) main?.setPlacement(placement);
-    else if ((main?.state()?.bounds.size.width ?? 0) < 900) main?.setBounds({ size: { width: 1280, height: 820 } });
-  } catch {
-    // a bad record is dropped
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  effect(() => {
-    const w = windowState();
-    if (!w) return;
-    const placement = w.placement;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => void Storage.setItem(WINDOW_KEY, JSON.stringify(placement)), 500);
-  });
-}
-
 function App() {
   init();
   // links into the app (sonde show --app, a shared page) and a pressed notification
@@ -280,7 +253,10 @@ function App() {
     } catch {
       // no links here
     }
-    followNotifications(() => openLastRun(go));
+    followNotifications((path) => {
+      openSession.set(path);
+      go("sessions");
+    });
   }
   effect(() => {
     const theme = settings()?.theme ?? "system";
@@ -291,7 +267,6 @@ function App() {
     if (platform.idiom !== "terminal") applyContrast(settings()?.["high-contrast"] ?? false);
   });
   installMenus();
-  void rememberWindow();
   return platform.idiom === "terminal" ? <TerminalShell /> : <DesktopShell />;
 }
 

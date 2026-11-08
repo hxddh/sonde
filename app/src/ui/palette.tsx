@@ -12,8 +12,7 @@ import { command, history, lastRun, openLastRun, running, stop } from "../run";
 import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { fill, glass, Kbd, SCRIM, terminal } from "./kit";
-import { keyLabel } from "./keys";
+import { fill, glass, Kbd, keyLabel, SCRIM, terminal } from "./kit";
 
 export const paletteOpen = signal(false);
 

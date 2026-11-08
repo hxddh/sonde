@@ -1,6 +1,6 @@
 // The key path of each screen, in the desktop form, on the built-in demo.
 
-import { expect, test } from "nsh/test";
+import { expect, open, test } from "nsh/test";
 import { desktop, place, withDemo } from "./helpers";
 
 test("request inspector: records, details, copy as curl without a signature", async () => {
@@ -110,7 +110,7 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   expect(app.enabled("id:confirm-run")).toBe(false);
   await app.type("id:confirm-input", "2");
   await app.press("id:confirm-run");
-  await app.waitFor("text:1 incomplete uploads", { timeout: 10000 });
+  await app.waitFor("text:1 incomplete upload", { timeout: 10000 });
   await place(app, "audit");
   await app.waitFor("text:abortUploads · demo/demo");
   await app.press("id:activity-close");
@@ -163,4 +163,20 @@ test("reduced motion: the overview's cards are there at once, still", async () =
   await app.waitFor("id:overview-versions", { timeout: 10000 });
   expect(app.shows("id:overview-multipart")).toBe(true);
   expect(app.shows("id:overview-capacity")).toBe(true);
+});
+
+test("a number typed in Settings is saved a moment after the last key", async () => {
+  const app = await open("../App.tsx", { ...desktop, clock: {} });
+  await place(app, "settings");
+  await app.waitFor("id:concurrency");
+  await app.clear("id:concurrency");
+  await app.type("id:concurrency", "12");
+  // the clock stands still: nothing saved yet, however long the test takes
+  expect(app.shows("text:Settings saved")).toBe(false);
+  await app.clock!.runFor(400);
+  expect(app.shows("text:Settings saved")).toBe(false);
+  // 0.7 s after the last key it is saved, with Undo (the toast shows in each window)
+  await app.clock!.runFor(400);
+  await app.waitFor("text:Settings saved >> nth=0");
+  await app.press("text:Undo >> nth=0");
 });

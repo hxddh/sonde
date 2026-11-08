@@ -40,6 +40,11 @@ export const api = {
   cancelJob: (id: string) => Sonde.cancelJob(id),
   requests: (f: T.RequestFilter, limit: number) => Sonde.requests(f, limit) as T.RecordSummary[],
   latestRequest: () => Sonde.latestRequest(),
+  /** Follows the engine instead of asking it on a timer: `request` with the
+   * newest record's id as records come, `jobs` with the number running as
+   * jobs change; each at once with the value now. Stops with the view that
+   * called it, or with the function it returns. */
+  on: ((event: string, listener: (v: number) => void) => Sonde.on(event, (v) => listener(v as number))) as (event: "request" | "jobs", listener: (v: number) => void) => () => void,
   request: (id: number) => Sonde.request(id) as T.RequestRecord | null,
   findRequest: (rid: string) => Sonde.findRequest(rid) as T.RequestRecord | null,
   requestOperations: () => Sonde.requestOperations() as string[],

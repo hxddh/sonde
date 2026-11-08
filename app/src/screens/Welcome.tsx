@@ -87,7 +87,7 @@ export function Welcome() {
           <Way
             icon="key-round"
             title={t("welcome.import")}
-            text={profiles.length ? profiles.length === 1 ? t("welcome.importFoundOne") : t("welcome.importFound", { n: profiles.length }) : t("welcome.importNone")}
+            text={profiles.length ? t("welcome.importFound", { n: profiles.length }) : t("welcome.importNone")}
             action={<Button variant="outline" label={t("welcome.importChoose")} onPress={() => showProfiles.set(!showProfiles())} disabled={profiles.length === 0} testID="welcome-import" />}
           >
             <If when={showProfiles()}>

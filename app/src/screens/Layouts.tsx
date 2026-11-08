@@ -2,7 +2,7 @@
 // (and measures closed formats), decodes them, and replays the logical
 // state at a chosen time.
 
-import { cleanup, signal, Text, View } from "nsh";
+import { cleanup, List, signal, Text, View } from "nsh";
 import { Slider } from "nsh/base";
 import { bytes, date } from "../format";
 import { t } from "../i18n";
@@ -179,15 +179,15 @@ export function Layouts() {
             </Each>
             <Card>
               <Heading>{t("layouts.timeline")}</Heading>
-              <Each of={l().layout.timeline.slice(-300)}>
+              <List each={l().layout.timeline} estimatedItemSize={26} initialScrollIndex={Math.max(0, l().layout.timeline.length - 1)} style={{ height: Math.min(l().layout.timeline.length * 26, 420) }}>
                 {(e) => (
-                  <View class="flex-row gap-3">
+                  <View class="h-[26px] flex-row items-center gap-3">
                     <Text class="w-36 text-small text-muted-foreground">{date(e().time)}</Text>
                     <Badge label={e().kind} tone={e().kind === "fence" || e().kind === "gap" ? "warn" : "neutral"} />
-                    <Text class="flex-1 text-small text-foreground">{`${e().label}${e().detail ? ` — ${e().detail}` : ""}`}</Text>
+                    <Text class="flex-1 text-small text-foreground line-clamp-1">{`${e().label}${e().detail ? ` — ${e().detail}` : ""}`}</Text>
                   </View>
                 )}
-              </Each>
+              </List>
             </Card>
           </View>
         )}

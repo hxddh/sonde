@@ -220,3 +220,33 @@ test("a program over its runs: history, a baseline, and the flows of its request
   expect(app.shows("id:spread")).toBe(true);
 });
 
+
+test("a shared session opens in the browser, on a local address", async () => {
+  const app = await open("../App.tsx", desktop);
+  await app.press("id:open-example");
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.press("id:session-more");
+  await app.chooseMenuItem("Share as a web page…");
+  await app.waitUntil(() => app.openedUrls().length > 0, { timeout: 10000 });
+  // the openUrl capability lets the app open its own page (http) and nothing else
+  expect(app.openedUrls()[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+});
+
+test("relative times read in the app's language", async () => {
+  const app = await open("../App.tsx", desktop);
+  await app.press("id:open-example");
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.waitUntil(() => app.texts().some((x) => /^(\d+ (min|h|d)|now)$/.test(x)), { timeout: 5000 });
+  await place(app, "settings");
+  await app.press("label:Language");
+  await app.press("text:中文");
+  await app.waitFor("text:通用");
+  await app.press("id:nav-sessions");
+  // a session's age, in Chinese, and no longer in English
+  await app.waitUntil(() => app.texts().some((x) => /^(\d+ (分钟|小时|天)|刚刚)$/.test(x)), { timeout: 5000 });
+  expect(app.texts().some((x) => /^(\d+ (min|h|d)|now)$/.test(x))).toBe(false);
+  await place(app, "settings");
+  await app.press("label:语言");
+  await app.press("text:English");
+  await app.waitFor("text:General");
+});

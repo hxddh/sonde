@@ -4,7 +4,7 @@
 import { signal, Text, View } from "nsh";
 import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, pct } from "../format";
-import { SimpleTable, terminal } from "./kit";
+import { Legend, SimpleTable, terminal } from "./kit";
 
 const PALETTE = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;
 const MOTION = { appear: { duration: 420, easing: "easeOut" as const }, enter: { duration: 100 }, exit: { duration: 160 } };
@@ -71,16 +71,7 @@ export function StackBar(props: { parts: { label: string; value: number }[]; tes
           <Each of={props.parts}>{(_, i) => <Bar value={`p${i()}`} stack="parts" class={`fill-${PALETTE[i() % PALETTE.length]}`} />}</Each>
         </Plot>
       </If>
-      <View class="flex-row flex-wrap gap-x-4 gap-y-1">
-        <Each of={props.parts}>
-          {(p, i) => (
-            <View class="flex-row items-center gap-1.5">
-              <View class={`h-2.5 w-2.5 rounded-sm bg-${PALETTE[i() % PALETTE.length]}`} />
-              <Text class="text-small text-muted-foreground">{`${p().label} ${bytes(p().value)} (${pct(p().value, total())})`}</Text>
-            </View>
-          )}
-        </Each>
-      </View>
+      <Legend square items={props.parts.map((p, i) => ({ label: `${p.label} ${bytes(p.value)} (${pct(p.value, total())})`, swatch: `bg-${PALETTE[i % PALETTE.length]}` }))} />
     </View>
   );
 }

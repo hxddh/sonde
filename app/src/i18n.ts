@@ -25,10 +25,20 @@ effect(() => {
   setLocale(l === "en" || l === "zh" ? l : null);
 });
 
+function lookup(key: string, vars: Record<string, string | number> | undefined): string | null {
+  const s = translate(key, vars ? { ...vars, locale: lang() } : { locale: lang() });
+  // a key nothing has words for reads as `<locale>.<key>`
+  return s === `${lang()}.${key}` ? null : s;
+}
+
+/** The words for `key`, filled from `vars`. A count of one (`n: 1`) reads
+ * `<key>.one` where the language has it ("1 request", not "1 requests"). */
 export function t(key: Key, vars?: Record<string, string | number>): string {
   // read so a view that shows it follows the setting at once
   lang();
-  const s = translate(key, vars ? { ...vars, locale: lang() } : { locale: lang() });
-  // a key nothing has words for reads as itself, not `<locale>.<key>`
-  return s === `${lang()}.${key}` ? key : s;
+  if (vars && Number(vars.n) === 1) {
+    const one = lookup(`${key}.one`, vars);
+    if (one !== null) return one;
+  }
+  return lookup(key, vars) ?? key;
 }

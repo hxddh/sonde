@@ -1,7 +1,7 @@
 // A key's version timeline, delete markers highlighted; restoring a deleted
 // key and deleting a version, behind the guard; the bucket's versioning.
 
-import { resource, signal, Text, View } from "nsh";
+import { List, resource, signal, Text, View } from "nsh";
 import { bytes, date } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
@@ -86,9 +86,10 @@ export function Versions() {
               </If>
               <Muted>{`${t("versions.noncurrent")}: ${bytes(tl().noncurrentBytes)}`}</Muted>
             </View>
-            <Each of={tl().versions} key={(v) => v.versionId}>
+            {/* a key may hold thousands: only the rows in view are drawn */}
+            <List testID="versions" each={tl().versions} keyExtractor={(v) => v.versionId} estimatedItemSize={62} style={{ height: Math.min(tl().versions.length * 62, 620) }}>
               {(v) => (
-                <View class={`flex-row items-center gap-3 rounded-(--radius) border px-3 py-2 ${v().isDeleteMarker ? "border-warn/50 bg-warn/10" : "border-border bg-card"}`}>
+                <View class={`mb-1.5 flex-row items-center gap-3 rounded-(--radius) border px-3 py-2 ${v().isDeleteMarker ? "border-warn/50 bg-warn/10" : "border-border bg-card"}`}>
                   <View class={`h-2.5 w-2.5 rounded-full ${v().isDeleteMarker ? "bg-warn" : v().isLatest ? "bg-primary" : "bg-muted-foreground/40"}`} />
                   <View class="flex-1 gap-0.5">
                     <View class="flex-row items-center gap-2">
@@ -106,7 +107,7 @@ export function Versions() {
                   <Button small variant="ghost" label={t("versions.deleteVersion")} onPress={() => del(v().versionId, v().size)} />
                 </View>
               )}
-            </Each>
+            </List>
           </View>
         )}
       </If>

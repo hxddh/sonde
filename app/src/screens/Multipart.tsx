@@ -9,7 +9,7 @@ import { t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan } from "../types";
-import { Badge, Bar, Button, Card, Empty, Field, KeyValue, Muted, Page, rowHeight, terminal, Title, TYPE } from "../ui/kit";
+import { Badge, Bar, Button, Card, Empty, Field, KeyValue, NumberField, Muted, Page, rowHeight, terminal, Title, TYPE } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
@@ -21,7 +21,7 @@ export function Multipart() {
   const report_ = signal<MpuReport | null>(terminal() ? null : (here().mpu ?? null));
   const progress = signal<string | null>(null);
   const plan = signal<Plan | null>(null);
-  const days_ = signal(String(settings()?.["stale-upload-days"] ?? 7));
+  const days_ = signal<number | null>(settings()?.["stale-upload-days"] ?? 7);
   let job: string | null = null;
   cleanup(() => {
     if (job) api.cancelJob(job);
@@ -56,7 +56,7 @@ export function Multipart() {
     const r = report_();
     if (!r) return;
     try {
-      plan.set(await api.planLifecycle(r.endpoint, r.bucket, r.prefix, Number(days_()) || 7));
+      plan.set(await api.planLifecycle(r.endpoint, r.bucket, r.prefix, days_() ?? 7));
     } catch (e) {
       report(e);
     }
@@ -101,7 +101,7 @@ export function Multipart() {
                 <Text class="text-body text-foreground">{r().lifecycle.message}</Text>
                 <If when={r().lifecycle.status !== "covered"}>
                   <View class="flex-row items-end gap-2">
-                    <Field class="w-24" label="days" value={days_()} onChange={(v) => days_.set(v)} />
+                    <NumberField class="w-28" label={t("mpu.days")} value={days_()} min={1} max={3650} onChange={(v) => days_.set(v)} />
                     <Button small label={t("mpu.generateRule")} onPress={planRule} testID="plan-rule" />
                   </View>
                   <Document text={r().lifecycle.suggestedRule} testID="lifecycle-rule" />

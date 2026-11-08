@@ -8,7 +8,7 @@
 // session, and opens in a window of its own. In a terminal the levels stack.
 
 import { batch, cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, type ViewRef, windowSize } from "nsh";
-import { Button as BaseButton, Input, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
+import { Button as BaseButton, createNavStack, Input, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { hm } from "../format";
 import { t } from "../i18n";
@@ -18,7 +18,7 @@ import { away, crumb, go, notify, openSession, openSessionFile, report, sessions
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
-import { Button, Empty, IconButton, Segmented, SessionSkeleton, SidePanel, terminal } from "../ui/kit";
+import { Button, Empty, IconButton, Segmented, SessionSkeleton, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
 import { removeSession, rename, RenameDialog, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
@@ -35,6 +35,7 @@ const program = programOf;
 
 /** The inspector's width, as the user leaves it. */
 const inspectorWidth = rememberedSize("sessions.inspector", 420);
+const listWidth = rememberedSize("sessions.list", 256);
 
 /** One session: its figures, its operations (and output), the inspector, and what can be done with it. */
 export function SessionPane(props: { path: string; others: () => SessionInfo[]; tick: () => number; onBack?: () => void; onOpen?: (p: string) => void; inWindow?: boolean }) {
@@ -234,7 +235,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     if (pane() === "aligned" && lines().length) {
       if (terminal()) return output();
       return (
-        <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1">
+        <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE}>
           <ResizablePanel minSize={240}>
             <View class="flex-1 pr-1.5">{output()}</View>
           </ResizablePanel>
@@ -335,7 +336,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
                     </View>
                   }
                 >
-                  <ResizablePanelGroup axis="horizontal" class="flex-1">
+                  <ResizablePanelGroup axis="horizontal" class="flex-1" handleClass={SPLIT_HANDLE}>
                     <ResizablePanel minSize={460}>{main(v())}</ResizablePanel>
                     <If when={inspecting()}>
                       <ResizablePanel size={inspectorWidth.size()} onResize={inspectorWidth.onResize} minSize={320} maxSize={680}>
@@ -520,6 +521,12 @@ export function Sessions() {
   );
 
   // a pane per session: another session gets a fresh one (no selection carried over)
+  // a terminal's pages: the list, and the session chosen over it
+  const stack = createNavStack<string | null>([null]);
+  effect(() => {
+    const p = selected();
+    if (terminal()) untracked(() => stack.setRoutes(p ? [null, p] : [null]));
+  });
   const keyed = () => (
     <Each of={selected() ? [selected()!] : []} key={(p) => p}>
       {(p) => pane(p())}
@@ -549,23 +556,24 @@ export function Sessions() {
         when={terminal()}
         else={
           <If when={sessions().length > 0} else={nothing()}>
-            <View class="flex-1 flex-row">
-              <View class={`${shellWidth() < 1100 ? "w-56" : "w-64"} border-r border-border px-2 pt-4`}>{list()}</View>
-              <View class="min-w-0 flex-1">
+            <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeList")}>
+              <ResizablePanel fixed size={listWidth.size()} minSize={200} maxSize={440} onResize={listWidth.onResize} class="px-2 pt-4">
+                {list()}
+              </ResizablePanel>
+              <ResizablePanel minSize={480} class="min-w-0">
                 <If when={selected()} else={<Empty icon="list-clock" text={t("timeline.pick")} />}>
                   {keyed()}
                 </If>
-              </View>
-            </View>
+              </ResizablePanel>
+            </ResizablePanelGroup>
           </If>
         }
       >
-        {/* one level at a time: sessions › session › operation › request */}
-        <View class="flex-1 p-1">
-          <If when={selected()} else={list()}>
-            {keyed()}
-          </If>
-        </View>
+        {/* one level at a time: sessions › session › operation › request; the
+            list stays mounted under the session, so going back finds it as it was */}
+        <NavStack testID="sessions-stack" state={stack} class="flex-1 p-1">
+          {(route) => (route === null ? list() : pane(route))}
+        </NavStack>
       </If>
     </View>
   );

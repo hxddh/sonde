@@ -4,6 +4,38 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+Native Shell where sonde still had its own: fewer parts of sonde's, and a few slips put right.
+
+### Fixed
+
+- "Share as a web page" opened nothing in a packaged app: opening URLs needs the `openUrl` capability (http and
+  https only).
+- Fields named themselves to screen readers only by their placeholder; each now says its label.
+- "1 requests", "1 incomplete uploads" and the like: a count of one reads in the singular.
+- Ages ("3 h", "2 d") and an upload's age were English in Chinese.
+- A run's notification opened the last run, not the one it told of, when pressed after sonde was quit; the
+  permission is asked once, as a run starts, not as it ends.
+
+### Changed
+
+- Numbers in Settings and the multipart threshold are steppers (arrows and buttons; screen readers hear a spin
+  button).
+- The sessions list, the buckets list and an object's details are split views: drag the line between them; the
+  width is kept.
+- The findings open and close with a springing height; breadcrumbs are links (the last one the place shown).
+- An operation's requests, a key's versions and a layout's timeline draw only the rows in view (thousands stay
+  quick); the compatibility matrix is a table whose probe column stays while the stores scroll.
+- Charts: the keys step the hover with a spring; the live view's failed share is a gauge; the latency band's
+  labels sit inside it; the store matrix colors a p95 well past the recording's; every chart tells a screen
+  reader the point the keys are on; the busiest prefixes read as a table in a terminal.
+- Activity follows the engine (records and jobs as they come) instead of asking it on a timer.
+- In a terminal, a session opens over the list, which is as it was on going back.
+- The window opens where it was left (Native Shell's `restoreBounds`).
+
+### Removed
+
+- sonde's own shortcut labels, window placement, legends (one for every chart now) and a chart nobody used.
+
 ## [9.0.0] - 2026-11-08
 
 From diagnosis to observability. A run is watched as it goes, production traffic reads like a recording, every

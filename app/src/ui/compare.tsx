@@ -10,7 +10,7 @@ import { api } from "../native";
 import { endpoint, endpoints, go, report } from "../store";
 import type { LatencyChange, RunChange } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Check, Choice, Heading, Loading, Muted, rowHeight, SCRIM, Segmented, TYPE } from "./kit";
+import { Badge, Button, Check, Choice, Heading, Loading, Muted, rowHeight, SCRIM, Segmented, terminal, TYPE } from "./kit";
 import { cost, groupName, offset, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
@@ -227,7 +227,7 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
   };
   const p95 = (r: StoreRun, k: LatencyChange) => r.latency.find((l) => l.operation === k.operation && l.missed === k.missed)?.p95Ms[1];
   const columns = () => [
-    { key: "what", title: "", width: 190 },
+    { key: "what", title: "", width: 190, fixed: true },
     { key: "recorded", title: t("matrix.recorded"), width: 90, align: "end" as const },
     ...props.runs.map((r, i) => ({ key: `s${i}`, title: r.endpoint, width: 100, align: "end" as const })),
   ];
@@ -241,7 +241,26 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
   ];
   return (
     <View testID="store-matrix" class="gap-2">
-      <DataTable columns={columns()} data={rows()} rowHeight={rowHeight(28)} fontSize={TYPE.body} class="h-[220px] rounded-(--radius) border border-border bg-card" />
+      <DataTable
+        columns={columns()}
+        data={rows()}
+        rowHeight={rowHeight(28)}
+        fontSize={TYPE.body}
+        // a store's p95 against the recording's: much slower in red, much faster in green
+        renderCell={
+          terminal()
+            ? undefined
+            : (c) => {
+                const k = c.row > 0 && c.key.startsWith("s") ? kinds()[c.row - 1] : null;
+                const v = k ? p95(props.runs[Number(c.key.slice(1))], k) : undefined;
+                const r = k && v !== undefined && k.p95Ms[0] > 0 ? v / k.p95Ms[0] : 1;
+                const tone = r >= 1.5 ? "text-status-server font-medium" : r <= 0.67 ? "text-status-ok font-medium" : c.key === "what" ? "text-foreground" : "text-muted-foreground";
+                return <Text class={`flex-1 px-2 tabular-nums text-body ${c.key === "what" ? "" : "text-right"} ${tone}`}>{c.text}</Text>;
+              }
+        }
+        classes={terminal() ? undefined : { cell: "px-0", fixedEdge: "bg-border" }}
+        class="h-[220px] rounded-(--radius) border border-border bg-card"
+      />
       <View class="flex-row flex-wrap gap-2">
         <Each of={props.runs}>{(r) => <Button small variant="outline" icon="git-compare-arrows" label={t("matrix.open", { name: r().endpoint })} onPress={() => props.onOpen(r().path)} />}</Each>
       </View>

@@ -4,8 +4,8 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type ContextMenuEvent, effect, type JSX, List, platform, Scroll, type ScrollRef, signal, Text, View } from "nsh";
-import { Button as BaseButton, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Editor, HoverCard, MenuItem, TextView, Toggle, ToggleGroup } from "nsh/base";
+import { type ContextMenuEvent, effect, type JSX, List, platform, reduceMotion, Scroll, type ScrollRef, signal, Text, View } from "nsh";
+import { Button as BaseButton, Collapsible, DataTable, type DataTableRef, type DataTableSort, Editor, HoverCard, TextView, Toggle, ToggleGroup } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
 import { bytes, date, day, ms } from "../format";
 import { t } from "../i18n";
@@ -13,7 +13,7 @@ import { episodeNotes, episodeTitle, observationSaving, observationText, observa
 import { groupName, offset, OutcomeRing, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Dot, Empty, POPUP, rowHeight, terminal, TYPE } from "./kit";
+import { Dot, Empty, InWindowMenu, POPUP, rowHeight, terminal, TYPE } from "./kit";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
 
@@ -363,7 +363,27 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   );
   return (
     <If when={props.view.observations.length > 0}>
-      <View testID="observations" class="gap-1.5">
+      {/* the findings open and close with a springing height (Native Shell's Collapsible) */}
+      <Collapsible
+        testID="observations"
+        class="gap-1.5"
+        open={props.compact || findingsOpen()}
+        reveal={!reduceMotion()}
+        content={
+          /* a short window keeps room for the operations: the findings scroll */
+          <Scroll ref={(r) => (scroller = r)} class="overflow-hidden rounded-(--radius-card) border border-border bg-card" style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
+            <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
+            {/* the finding pressed: what to change, in the findings' own room */}
+            <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
+              {(o) => (
+                <View class="border-t border-border p-2">
+                  <FixPanel o={o()} />
+                </View>
+              )}
+            </If>
+          </Scroll>
+        }
+      >
         <If when={!props.compact}>
           <BaseButton testID="observations-toggle" accessibilityLabel={t("obs.title")} selected={findingsOpen()} onPress={() => findingsOpen.set(!findingsOpen())} class="flex-row items-center gap-1 self-start rounded-(--radius-sm) px-1 hover:bg-muted">
             <Icon name={findingsOpen() ? "chevron-down" : "chevron-right"} size={12} />
@@ -378,21 +398,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
             </View>
           )}
         </If>
-        <If when={props.compact || findingsOpen()}>
-          {/* a short window keeps room for the operations: the findings scroll */}
-          <Scroll ref={(r) => (scroller = r)} class="overflow-hidden rounded-(--radius-card) border border-border bg-card" style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
-            <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
-            {/* the finding pressed: what to change, in the findings' own room */}
-            <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
-              {(o) => (
-                <View class="border-t border-border p-2">
-                  <FixPanel o={o()} />
-                </View>
-              )}
-            </If>
-          </Scroll>
-        </If>
-      </View>
+      </Collapsible>
     </If>
   );
 }
@@ -624,14 +630,22 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
       <View class="gap-1">
         <Text role="header" class="text-small font-semibold text-muted-foreground">{`${t("timeline.requestsOf")} (${e().records.length})`}</Text>
         <Waterfall records={props.rows} onRecord={props.onRecord} />
-        <View class="overflow-hidden rounded-(--radius) border border-border bg-card">
-          <Each of={props.rows} key={(r) => r.id}>
+        {/* an operation may hold thousands of requests: only those in view are drawn */}
+        <List
+          testID="op-requests"
+          each={props.rows}
+          keyExtractor={(r) => String(r.id)}
+          estimatedItemSize={rowHeight(44) ?? 32}
+          class="overflow-hidden rounded-(--radius) border border-border bg-card"
+          style={{ height: Math.min(props.rows.length, 10) * (rowHeight(44) ?? 32) + 2 }}
+        >
             {(r, i) => (
               <BaseButton
                 testID={`op-request-${i()}`}
                 accessibilityLabel={`${r().operation} ${r().target}`}
                 onPress={() => props.onRecord(r().id)}
-                class={`flex-row items-center gap-2 px-2.5 py-1.5 hover:bg-row-hover active:bg-selection ${i() > 0 ? "border-t border-border" : ""}`}
+                style={{ height: rowHeight(44) }}
+                class={`flex-row items-center gap-2 px-2.5 hover:bg-row-hover active:bg-selection ${i() > 0 ? "border-t border-border" : ""}`}
               >
                 <Text class={`w-8 font-mono text-caption font-semibold ${TONE_TEXT[statusTone(r().status)]}`}>{r().status === null ? "—" : String(r().status)}</Text>
                 <View class="min-w-0 flex-1">
@@ -644,8 +658,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
                 </If>
               </BaseButton>
             )}
-          </Each>
-        </View>
+        </List>
       </View>
     </View>
   );
@@ -689,20 +702,11 @@ export function SessionList(props: {
   const args = (s: SessionInfo) => (!s.title && s.command && programOf(s.command) !== s.command.trim() && !programOf(s.command)!.endsWith("…") ? s.command.trim().split(/\s+/).slice(1).join(" ") : "");
   // where the system has no menus to pop up (a terminal, the web): the
   // same commands in Native Shell's own, on a right press or Shift+F10
-  const inWindowMenu = (x: () => { s: SessionInfo; i: number }, body: JSX.Element) =>
-    !props.onContextMenu && props.actions && (terminal() || !isAvailable) ? (
-      <ContextMenu trigger={body} popupClass={`${POPUP} min-w-48`}>
-        <Each of={props.actions(x().s).filter((a) => a.name !== "window")}>
-          {(a) => (
-            <MenuItem onSelect={a().run} class="rounded-(--radius-sm) px-2 py-1 focus:bg-muted">
-              <Text class="text-body text-foreground">{a().label}</Text>
-            </MenuItem>
-          )}
-        </Each>
-      </ContextMenu>
-    ) : (
-      body
-    );
+  const inWindowMenu = (x: () => { s: SessionInfo; i: number }, body: JSX.Element) => (
+    <InWindowMenu enabled={!props.onContextMenu && !!props.actions && (terminal() || !isAvailable)} actions={() => (props.actions?.(x().s) ?? []).filter((a) => a.name !== "window")}>
+      {body}
+    </InWindowMenu>
+  );
   const row = (x: () => { s: SessionInfo; i: number }) => inWindowMenu(x,
     <View
       onContextMenu={props.onContextMenu ? (e: ContextMenuEvent) => props.onContextMenu!(x().s, e.pagePosition) : undefined}

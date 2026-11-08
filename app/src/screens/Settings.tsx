@@ -3,12 +3,11 @@
 // they change: a toast says so, with Undo.
 
 import { cleanup, signal, Text, View } from "nsh";
-import { Input } from "nsh/base";
 import { language, t } from "../i18n";
 import { api } from "../native";
 import { notify, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Choice, Field, KeyValue, Options, Page, Section, terminal, Toggle } from "../ui/kit";
+import { Choice, Field, KeyValue, NumberField, Options, Page, Section, terminal, Toggle } from "../ui/kit";
 import { Fold } from "../ui/record";
 import { Updates } from "../ui/updates";
 
@@ -46,7 +45,6 @@ export function SettingsScreen() {
     if (now) write(next, undo);
     else timer = setTimeout(() => write(next, undo), 700);
   };
-  const num = (v: string, d: number) => (Number.isFinite(Number(v)) && v.trim() !== "" ? Number(v) : d);
   const paths = api.paths();
 
   return (
@@ -109,15 +107,15 @@ export function SettingsScreen() {
 
             <Section title={t("settings.requests")} description={t("settings.requestsHint")}>
               <View class="flex-row flex-wrap gap-3">
-                <Field class="w-52" label={t("settings.concurrency")} value={String(d().concurrency)} onChange={(v) => change({ ...d(), concurrency: num(v, d().concurrency) })} testID="concurrency" />
-                <Field class="w-64" label={t("settings.rate")} value={d()["rate-limit"] === null ? "" : String(d()["rate-limit"])} onChange={(v) => change({ ...d(), "rate-limit": v.trim() === "" ? null : num(v, 0) })} />
-                <Field class="w-52" label={t("settings.staleDays")} value={String(d()["stale-upload-days"])} onChange={(v) => change({ ...d(), "stale-upload-days": num(v, 7) })} />
+                <NumberField class="w-52" label={t("settings.concurrency")} value={d().concurrency} min={1} max={256} onChange={(v) => change({ ...d(), concurrency: v ?? d().concurrency })} testID="concurrency" />
+                <NumberField class="w-64" label={t("settings.rate")} value={d()["rate-limit"]} min={0} step={10} onChange={(v) => change({ ...d(), "rate-limit": v })} />
+                <NumberField class="w-52" label={t("settings.staleDays")} value={d()["stale-upload-days"]} min={1} max={3650} onChange={(v) => change({ ...d(), "stale-upload-days": v ?? 7 })} />
               </View>
             </Section>
 
             <Section title={t("settings.costs")} description={t("settings.costsHint")}>
               <View class="flex-row flex-wrap gap-3">
-                <Field class="w-52" label={t("settings.price")} value={String(d().prices["default-per-gib-month"])} onChange={(v) => change({ ...d(), prices: { ...d().prices, "default-per-gib-month": num(v, 0.023) } })} />
+                <NumberField class="w-52" label={t("settings.price")} value={d().prices["default-per-gib-month"]} min={0} step={0.001} onChange={(v) => change({ ...d(), prices: { ...d().prices, "default-per-gib-month": v ?? 0.023 } })} />
                 <Field class="w-28" label={t("settings.currency")} value={d().prices.currency} onChange={(v) => change({ ...d(), prices: { ...d().prices, currency: v } })} />
               </View>
               <Fold title={t("settings.byClass")} count={Object.keys(d().prices["by-class"]).length} open={false}>
@@ -126,12 +124,7 @@ export function SettingsScreen() {
                     {(e, i) => (
                       <View class={`h-9 flex-row items-center gap-3 px-3 ${i() > 0 ? "border-t border-border" : ""}`}>
                         <Text class="flex-1 font-mono text-small text-foreground">{e()[0]}</Text>
-                        <Input
-                          value={String(e()[1])}
-                          accessibilityLabel={e()[0]}
-                          onChange={({ value }) => change({ ...d(), prices: { ...d().prices, "by-class": { ...d().prices["by-class"], [e()[0]]: num(value, e()[1]) } } })}
-                          class="h-7 w-28 rounded-(--radius-sm) border border-input bg-background px-2 text-right font-mono text-small text-foreground focus:border-ring"
-                        />
+                        <NumberField bare class="w-32" label={e()[0]} value={e()[1]} min={0} step={0.001} onChange={(v) => change({ ...d(), prices: { ...d().prices, "by-class": { ...d().prices["by-class"], [e()[0]]: v ?? e()[1] } } })} />
                         <Text class="w-20 text-small text-muted-foreground">{`${d().prices.currency} / GiB·mo`}</Text>
                       </View>
                     )}
@@ -141,7 +134,7 @@ export function SettingsScreen() {
             </Section>
 
             <Section title={t("settings.log")}>
-              <Field class="w-52" label={t("settings.reqlog")} value={String(d()["reqlog-capacity"])} onChange={(v) => change({ ...d(), "reqlog-capacity": num(v, 5000) })} />
+              <NumberField class="w-52" label={t("settings.reqlog")} value={d()["reqlog-capacity"]} min={100} step={1000} onChange={(v) => change({ ...d(), "reqlog-capacity": v ?? 5000 })} />
               <Toggle label={t("settings.persist")} checked={d()["reqlog-persist"]} onChange={(v) => change({ ...d(), "reqlog-persist": v }, true)} />
             </Section>
 

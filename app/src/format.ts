@@ -2,7 +2,7 @@
 // follow the app's language and the user's clock (12 or 24 hours).
 
 import { localeSettings } from "nsh";
-import { lang } from "./i18n";
+import { lang, t } from "./i18n";
 
 /** The locale to write dates and numbers in: the app's language, the user's region where it matches. */
 function locale(): string {
@@ -83,16 +83,16 @@ export function ago(s: string | null | undefined): string {
   const ms = Date.now() - new Date(s).getTime();
   if (Number.isNaN(ms)) return s;
   const m = Math.round(ms / 60000);
-  if (m < 1) return "now";
-  if (m < 60) return `${m} min`;
+  if (m < 1) return t("time.now");
+  if (m < 60) return t("time.minutes", { n: m });
   const h = Math.round(m / 60);
-  if (h < 48) return `${h} h`;
-  return `${Math.round(h / 24)} d`;
+  if (h < 48) return t("time.hours", { n: h });
+  return t("time.days", { n: Math.round(h / 24) });
 }
 
 export function days(d: number | null | undefined): string {
   if (d === null || d === undefined) return "—";
-  return d < 1 ? `${Math.round(d * 24)} h` : `${d.toFixed(1)} d`;
+  return d < 1 ? t("time.hours", { n: Math.round(d * 24) }) : t("time.days", { n: d.toFixed(1) });
 }
 
 export function money(v: number, currency: string): string {
