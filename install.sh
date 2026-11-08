@@ -21,7 +21,10 @@ case "$arch" in
   arm64|aarch64) arch=aarch64 ;;
   *) fail "no sonde build for $arch" ;;
 esac
-asset="sonde-$os-$arch.tar.gz"
+# Alpine and other musl systems take the static build
+libc=""
+if [ "$os-$arch" = linux-x86_64 ] && { [ -n "${SONDE_STATIC:-}" ] || ls /lib/ld-musl-* >/dev/null 2>&1; }; then libc=-musl; fi
+asset="sonde-$os-$arch$libc.tar.gz"
 if [ "$version" = latest ]; then
   base="https://github.com/$repo/releases/latest/download"
 else

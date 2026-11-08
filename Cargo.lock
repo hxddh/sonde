@@ -1063,7 +1063,7 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "decoders"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "apache-avro",
  "async-trait",
@@ -3317,7 +3317,7 @@ dependencies = [
 
 [[package]]
 name = "probes"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3780,7 +3780,7 @@ dependencies = [
 
 [[package]]
 name = "reqlog"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "chrono",
  "parking_lot",
@@ -4063,7 +4063,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "s3raw"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4486,7 +4486,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-cli"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4495,6 +4495,7 @@ dependencies = [
  "clap",
  "crossterm",
  "decoders",
+ "http",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -4519,7 +4520,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-core"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4550,7 +4551,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-nsh"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4572,7 +4573,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-proxy"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "chrono",

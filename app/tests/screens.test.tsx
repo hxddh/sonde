@@ -132,6 +132,16 @@ test("appearance: higher contrast, kept with the settings", async () => {
   await app.waitUntil(() => app.spanStyle(hint).color === before);
 });
 
+test("sonde:// links: a bucket's folder opens in the store; an unknown endpoint is said", async () => {
+  const app = await withDemo();
+  await place(app, "settings");
+  await app.openWithUrl("sonde://bucket/demo/demo/reports");
+  await app.waitFor("id:screen-browse");
+  await app.waitFor("text:2026-q1.csv", { timeout: 10000 });
+  await app.openWithUrl("sonde://bucket/nowhere/b");
+  await app.waitFor("text:/nowhere/");
+});
+
 test("language: Chinese strings", async () => {
   const app = await withDemo();
   await place(app, "settings");

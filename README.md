@@ -10,7 +10,7 @@ another endpoint and see where the two disagree.
 sonde run -- ./my-app                    # record every S3 request my-app makes
 sonde show                               # … as operations, with what stands out and where the time went
 sonde compare before.sonde after.sonde   # what a change did: requests, waiting, cost, findings
-sonde check --baseline main.sonde        # in CI: exit 1 when a run is over its budget or past its baseline
+sonde check --baseline auto             # in CI: exit 1 when a run is over its budget or past its program's baseline
 sonde replay session.sonde -e ceph       # the same traffic on another store: what differs?
 ```
 
@@ -59,12 +59,16 @@ default, no telemetry.
 | | |
 |---|---|
 | **Run** | A command run in the app's terminal (a real PTY: colours, progress bars, input) with its S3 traffic recorded; the output and the operations lined up in time; a notification when it ends. |
-| **Recording** | `sonde run -- <command>` or `sonde proxy`, or a recording endpoint started in the app: a local S3 endpoint that re-signs, forwards and records every request; signed aws-chunked bodies, presigned URLs and multipart uploads handled; policies `--no-delete`, `--read-only`. Sessions are redacted JSON lines ([docs/recording.md](docs/recording.md)). |
+| **Recording** | `sonde run -- <command>` or `sonde proxy`, or a recording endpoint started in the app: a local S3 endpoint that re-signs, forwards and records every request; signed aws-chunked bodies, presigned URLs and multipart uploads handled; policies `--no-delete`, `--read-only`. Only the program given the recording's keys can use the endpoint's
+credentials (loopback only, SigV4 verified). `sonde watch` keeps it running with a live status. Sessions are redacted,
+compressed JSON lines ([docs/recording.md](docs/recording.md)). |
 | **Operations** | Sessions read as operations (multipart uploads, retries, lookups, listings; SlateDB, Iceberg and Delta steps) with observations; `sonde show`, or Sessions — the session's shape (requests by outcome and in flight over time, a slice a press away), a table with each operation's outcome and place in time, narrowed by what stands out, an inspector down to each request and its waterfall, or a timeline. |
-| **Time and cost** | Where a session's time went: the time the program waited on its store by kind of request (requests at once counted once), the peak in flight, the slowest requests, and the requests' cost at S3's prices (configurable). `sonde compare` and the app's Before and after: what a change did to requests, waiting, cost and findings. |
+| **Time and cost** | Where a session's time went: the time the program waited on its store by kind of request (requests at once counted once), the peak in flight, the slowest requests, the requests' cost at S3's prices (configurable), and chains of requests that each waited for the one before, with
+how much sooner they would finish eight at once. `sonde compare` and the app's Before and after: what a change did to requests, waiting, cost and findings. |
 | **Programs and CI** | Runs of one command tracked over time against a baseline (the app's Runs pane), and `sonde check` to fail a CI job when a run is over its budget or past its baseline. Where requests went (operation → prefix → outcome), when and where (a heat map by prefix), and prefixes near S3's per-prefix rate. |
-| **Replay** | `sonde replay <session> -e <endpoint>`: the traffic re-enacted on another store under a fresh prefix and compared request by request; `sonde diff` for two files. In the app: Replay from a session, then the differences grouped and both sessions as transcripts side by side. |
-| **Share** | `sonde share`: a session as a static web page (operations, observations, output, every request) for anyone with a browser — write it to a folder, host it anywhere (S3 static website hosting works), or `--serve` it. |
+| **Replay** | `sonde replay <session> -e <endpoint>`: the traffic re-enacted on another store under a fresh prefix and compared request by request, with each kind's p50 and p95 on both stores; `sonde diff` for two files. In the app: Replay from a session, then the differences grouped and both sessions as transcripts side by side. |
+| **Share** | `sonde share`: a session as a static web page (operations, observations, output, every request) for anyone with a browser — write it to a folder, host it anywhere (S3 static website hosting works), or `--serve` it; or `--html` as one file,
+`--redact`ed to send outside. |
 | **Endpoints** | Many endpoints, from AWS profiles or by hand (URL, region, path-style, CA file, vendor: AWS, R2, MinIO, Ceph RGW, Alibaba OSS, Tigris, Backblaze B2, Wasabi, GCS XML, other). Connectivity test with STS `GetCallerIdentity` where the vendor has it. |
 | **Browse** | Buckets, prefixes and objects (`ListObjectsV2`, paged, 100 000+ rows kept in Rust and scrolled smoothly), HEAD details: every header, user metadata, ETag analysis (`-N` = N parts, consistent part sizes), full-object vs composite checksums, storage class, SSE. Download (streamed, cancellable), presigned URLs, filter and search. |
 | **Request inspector** | Every request (ring buffer, 5000 by default, optional SQLite): time, operation, target, status, latency, retries, `x-amz-request-id` / `x-amz-id-2`, redacted headers, raw error body. Filters by status, operation, endpoint. Copy as `aws s3api` or as (unsigned) curl; export JSON or HAR. |
@@ -85,7 +89,7 @@ brew install hxddh/sonde/sonde                                                  
 brew install --cask hxddh/sonde/sonde-app                                        # the macOS app
 ```
 
-Or download a release: `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz`, `sonde-macos-aarch64.tar.gz`,
+Or download a release: `sonde-linux-x86_64.tar.gz` (or the static `sonde-linux-x86_64-musl.tar.gz`), `sonde-linux-aarch64.tar.gz`, `sonde-macos-aarch64.tar.gz`,
 `sonde-macos-x86_64.tar.gz`, `sonde-macos.dmg`, the desktop app for Linux (`sonde-<version>-linux-x86_64.tar.gz`,
 GTK 4) and Windows (`sonde-<version>-windows-x86_64.zip`), with `SHA256SUMS`. The Linux binary needs only libc
 (`ldd` in [docs/packaging.md](docs/packaging.md)), so it runs on minimal server images.
@@ -93,9 +97,12 @@ GTK 4) and Windows (`sonde-<version>-windows-x86_64.zip`), with `SHA256SUMS`. Th
 ## Quick start
 
 ```sh
+sonde demo                            # a tour: a small program's requests to a built-in store, explained
 sonde run -- python etl.py            # record an application's S3 traffic (endpoint from --url or the config)
 sonde show                            # the newest session, as operations
 sonde share --serve                   # … as a web page
+sonde share --html --redact -o run.html   # … as one HTML file, names replaced, safe to send
+sonde watch                           # a proxy left running: live status, new warnings, rotating files
 sonde tui --demo                      # the terminal UI on a built-in demo server (no account needed)
 sonde endpoints import                # endpoints for your ~/.aws/config profiles
 sonde endpoints test prod             # reachability, credentials source, STS identity

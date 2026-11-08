@@ -5,6 +5,11 @@ on:
     branches: [main, "claude/**"]
   pull_request:
 
+# a newer push supersedes the run before it
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   # Native Shell, pinned (docs/decisions.md D-002)

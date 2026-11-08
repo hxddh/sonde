@@ -82,6 +82,29 @@ extra loopback hop. Reproduce with
 `OVERHEAD_URL`, `OVERHEAD_BUCKET` and the AWS key variables); CI runs it in
 the `record` job.
 
+## A session of a million requests (8.0.0)
+
+`cargo run --release -p sonde-proxy --example scale -- 1000000` writes a
+synthetic session of a million requests (a mix of PUT, HEAD, LIST and GET over
+97 prefixes), compresses it, reads it back and analyses it, timing each step
+(same machine, release build):
+
+| Step | Time |
+| --- | --- |
+| Write 1 000 000 records (375 MiB of JSON lines) | 1.3 s |
+| Compress (gzip level 6) | 1.7 s → 10 MiB (35×) |
+| Read back | 1.5 s |
+| Operations | 1.6 s |
+| Findings | 1.6 s |
+| Where the time went (profile, chains) | 1.8 s |
+| Peak memory | 1.6 GiB |
+
+The app reads a session once per version of its file and keeps the analysis;
+a live recording is read in steps (only the lines appended since the last
+look), and each finished run's history figures are kept in
+`sessions/.runpoints.json`, so a program's history of 30 runs reads no session
+twice.
+
 ## Long jobs
 
 Jobs (probes, multipart scan, capacity, layout scans) run in Rust on tokio and

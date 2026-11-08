@@ -3,6 +3,7 @@
 | Artifact | Built by | How |
 |---|---|---|
 | `sonde-linux-x86_64.tar.gz`, `sonde-linux-aarch64.tar.gz` | `build.yml` on Ubuntu 22.04 (x86_64 and arm64 runners) | `nsh build App.tsx --release` (the bundle), then `cargo build --release -p sonde-cli --features tui` — one binary: CLI and terminal UI, the bundle embedded. |
+| `sonde-linux-x86_64-musl.tar.gz` | `build.yml` on Ubuntu 22.04, `--target x86_64-unknown-linux-musl` (musl-tools) | The same binary, statically linked: no libc needed, it runs on Alpine, distroless and old distributions alike (checked in an `alpine` container). `install.sh` takes it on musl systems, or anywhere with `SONDE_STATIC=1`. |
 | `sonde-macos-aarch64.tar.gz`, `sonde-macos-x86_64.tar.gz` | `build.yml` on macOS 15 (arm64) and macOS 15 Intel | The same. |
 | `sonde-macos.dmg` | `build.yml` on macOS 15 | `nsh package app/App.tsx --target macos` (`sonde.app`, AppKit runner with sonde's crate), `scripts/macos-sign.sh` (Developer ID, hardened runtime), `scripts/macos-dmg.sh`, `scripts/macos-notarize.sh` (notarytool, stapled). |
 | `sonde-<version>-macos-<arch>.tar.gz` | `build.yml` on macOS 15 | The `.app` archived for the updater. |

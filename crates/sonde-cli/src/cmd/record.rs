@@ -1133,6 +1133,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             eprintln!("this session ran no command, so it is no program's baseline");
             return Ok(64);
         };
+        if file.parent().map(|p| p.canonicalize().ok()) != Some(dir.canonicalize().ok()) {
+            eprintln!(
+                "a baseline is a session in {}: record it there (no -o), or pass --baseline FILE",
+                dir.display()
+            );
+            return Ok(64);
+        }
         let mut all = sonde_proxy::program::read_baselines(&dir);
         let name = file
             .file_name()

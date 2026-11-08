@@ -38,7 +38,7 @@ session as printed — do not run commands that print secrets.
 | Variable | Value |
 |---|---|
 | `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_S3` | `http://127.0.0.1:<port>` |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `sonde` / a fixed dummy secret |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | keys made for this recording (`SONDE…` / 64 random hex digits): only a program that has them can use the endpoint's credentials |
 | `AWS_REGION`, `AWS_DEFAULT_REGION` | the endpoint's region (`us-east-1` when it has none) |
 | `AWS_ALLOW_HTTP`, `AWS_S3_FORCE_PATH_STYLE` | `true` (object_store, some SDKs) |
 | `AWS_VIRTUAL_HOSTED_STYLE_REQUEST` | `false` |
@@ -59,10 +59,18 @@ object_store (Rust) — `scripts/sdk-smoke.sh` runs them in CI.
    `<bucket>.localhost` Host header; the query is decoded as is (`+` stays a plus).
 2. The operation is named from method, path and query (`UploadPart`,
    `ListObjectsV2`, …).
-3. The policy may refuse it: `--no-delete` refuses deletes, aborts and
+3. sonde checks it is meant for it: the Host must be a loopback name
+   (`127.0.0.1`, `localhost`, `*.localhost`, `::1`) unless `--allow-remote`,
+   and the request must carry a SigV4 signature (header or presigned query)
+   made with this recording's keys. Anything else — an unsigned request, other
+   keys, a web page rebinding a name to 127.0.0.1 — gets `403
+   SignatureDoesNotMatch`, is recorded as refused, and never reaches the store.
+   `sonde proxy` listens on loopback only; `--allow-remote` opens it to other
+   machines, for whoever holds the keys it prints.
+4. The policy may refuse it: `--no-delete` refuses deletes, aborts and
    lifecycle changes; `--read-only` lets only GET and HEAD through. A refused
    request gets an S3 `AccessDenied` error and never leaves the machine.
-4. The client's signature headers are dropped and the request is signed again
+5. The client's signature headers are dropped and the request is signed again
    for the real endpoint (SigV4, the same code as every other sonde request).
    Bodies stream through, with these exceptions:
    - **signed `aws-chunked`** (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD[-TRAILER]`,
@@ -73,9 +81,9 @@ object_store (Rust) — `scripts/sdk-smoke.sh` runs them in CI.
      `Content-Length`;
    - `STREAMING-UNSIGNED-PAYLOAD-TRAILER` passes through unchanged (SDKs use it
      over HTTPS only; not yet exercised by the SDK tests).
-5. **Presigned URLs** made with the dummy key are re-signed with headers; the
+6. **Presigned URLs** made with the recording's key are re-signed with headers; the
    record says so (`x-sonde-note`).
-6. The response streams back unchanged. Error bodies are read whole and kept in
+7. The response streams back unchanged. Error bodies are read whole and kept in
    the record.
 
 What a record holds: the headers **the application sent** (signatures
@@ -92,7 +100,14 @@ creation time, endpoint id and URL, region, the command) and then one record
 per line, appended as requests complete — a session survives a crash, and a
 torn last line is skipped on reading. They hold no secrets: records are
 redacted before they are written. Without `-o`, sessions go to the data
-directory's `sessions/`.
+directory's `sessions/`. A finished session is gzip-compressed in place (a
+tenth of its size or less; still a `.sonde` file every command and the app
+open); a live one stays plain while it is appended to, and the app reads only
+what it appended since its last look. `sonde sessions` lists them,
+`sonde sessions prune --keep N --yes` keeps the newest N (and every baseline).
+
+`sonde watch` keeps a proxy running for hours: a status line for the last
+minute, each new warning once, and a new session file every `--rotate` minutes.
 
 `sonde show` prints the timeline and a summary; `--format json` gives the
 header, the summary and every record.
@@ -198,6 +213,7 @@ sonde share                              # the newest session → ./<session>-sh
 sonde share run.sonde -o /tmp/site       # a session, to a folder
 sonde share --serve                      # on http://127.0.0.1:<port>/ until Ctrl-C
 sonde share --json -o session.json       # only the computed document
+sonde share --html --redact -o run.html  # one HTML file, names replaced: safe to send outside
 ```
 
 A shared session is a static web site: sonde's viewer (Native Shell's web
@@ -206,7 +222,14 @@ computed — header, summary, operations, observations, every record and the
 output lines. Anyone with a browser reads it with the app's views; nothing
 runs on a server, and nothing is installed. It holds what the session file
 holds (redacted records, the program's output), so share it as you would the
-file.
+file — or with `--redact`, which replaces bucket and key names with tokens
+(the same name, the same token; `_delta_log`, `metadata`, numbered files and
+file types kept, so the findings still read) and drops headers, bodies, URLs,
+request ids, the program's output and its arguments.
+
+`--html` is the session as one file with nothing to serve: its figures, its
+findings (each linking to its operations), where the time went, a timeline
+and every operation at its own `#op-N` link, in light and dark.
 
 
 

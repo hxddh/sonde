@@ -4,6 +4,63 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [8.0.0] - 2026-11-08
+
+Safer, larger, and to the point. The recording endpoint serves only the program sonde gave its keys; sessions of a
+million requests are compressed and read in steps; a session names the requests that waited on each other and what
+running them together saves, and a replay compares the same workload's latency on two stores. New: `sonde demo`,
+`sonde watch`, `sonde sessions`, one-file shares with redaction, a static Linux build.
+
+### Security
+
+- The recording proxy verifies every request's SigV4 signature (header or presigned) against keys made for that
+  recording, and takes requests only for a loopback Host: an unsigned request, other keys or a web page rebinding a
+  name to 127.0.0.1 get 403 and never reach the store. `sonde proxy` refuses a non-loopback `--listen` without
+  `--allow-remote`.
+
+### Added
+
+- `sonde demo`: a small program's requests to the built-in store, recorded and explained, with no account.
+- `sonde watch`: a proxy left running, with a status line for the last minute, each new warning once, and a new
+  session file every `--rotate` minutes.
+- `sonde sessions` (list, `prune --keep N --yes`, baselines kept); sessions are named by file name anywhere a path
+  is taken.
+- `sonde check --baseline auto` and `--set-baseline`: the baseline the app sets, shared with the CLI; a baseline of
+  another program is named.
+- `sonde share --html` (one self-contained page, each operation at `#op-N`) and `--redact` (bucket and key names
+  replaced by stable tokens; headers, bodies, URLs, output and arguments dropped).
+- `sonde endpoints add ID URL [--profile P]`.
+- A finding for requests that each waited for the one before, with how much sooner eight at once would finish; Time
+  shows each chain as it ran beside the same requests at once.
+- Replay and diff compare each kind's p50 and p95 on both stores (CLI table, JSON, and a chart in the app).
+- A run that sends sonde nothing says how each common SDK is pointed at it (CLI and app).
+- Higher contrast (Settings › Appearance), and Updates names the installed version and its Native Shell runtime.
+- The terminal UI tells the session in a sentence, its findings narrow the operations, and its columns sort.
+- `sonde-linux-x86_64-musl.tar.gz`: a static binary for Alpine, distroless and old distributions; `install.sh`
+  takes it on musl systems.
+- Chinese for the web viewer; `sonde://` links are tested.
+
+### Changed
+
+- Finished sessions are gzip-compressed in place (35× on a large session); every reader opens both forms.
+- A live recording is read in steps in the app; each finished run's history figures are kept on disk.
+- `sonde show` answers on stdout; Markdown and CSV are real tables; a mistake in the command exits 64.
+- Native Shell 1662115 (was beeb9fc).
+- Fewer components: one figure, one section, one name/value list, one popup surface.
+
+### Fixed
+
+- The prefix nearest its rate limit was not always named first.
+- A tolerance of 57% allowed 156 of 100 requests, and a free baseline allowed no cost at all.
+- A warning grown from a note was not counted as new against the baseline.
+- Formatting an XML document dropped its declaration and split empty elements.
+- `sonde://open?path=` with `+` or `%2B` in the path, and bucket links with empty segments.
+- A killed run asked for attention; the run badge was set after the permission prompt.
+- The kinds preview's bars were shares of a whole instead of relative to the largest.
+- A session read while recording and then compressed could read as empty.
+- `sonde endpoints add` with a URL also registered an ad hoc endpoint.
+
+
 ## [7.0.0] - 2026-11-08
 
 A program over its runs. A session says in a sentence where its time went and what to do first; its requests are
