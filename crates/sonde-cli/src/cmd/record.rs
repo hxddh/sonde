@@ -590,7 +590,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     Ok(status.code().unwrap_or(1))
 }
 
-pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<i32> {
+fn check_listen(a: &ProxyArgs) -> anyhow::Result<()> {
     if !a.listen.ip().is_loopback() && !a.allow_remote {
         anyhow::bail!(
             "{} is reachable from other machines: add --allow-remote if that is what you want (anyone with the keys sonde prints can then use the endpoint's credentials)",
@@ -603,11 +603,14 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
             a.listen
         );
     }
-    let started = start(s, &a.rec, a.listen, None, a.allow_remote).await?;
-    let (set, unset) = started.proxy.env();
+    Ok(())
+}
+
+fn print_env(proxy: &Proxy) {
+    let (set, unset) = proxy.env();
     eprintln!(
         "sonde is listening on {}. Point the application at it:\n",
-        started.proxy.url()
+        proxy.url()
     );
     for k in &unset {
         eprintln!("  unset {k}");
@@ -616,6 +619,12 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
         eprintln!("  export {k}={v}");
     }
     eprintln!("\nCtrl-C stops.\n");
+}
+
+pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<i32> {
+    check_listen(a)?;
+    let started = start(s, &a.rec, a.listen, None, a.allow_remote).await?;
+    print_env(&started.proxy);
     let printer = follow(&started.log, false);
     tokio::signal::ctrl_c().await?;
     printer.abort();
@@ -1367,5 +1376,124 @@ pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
         },
     )
     .await?;
+    Ok(0)
+}
+
+#[derive(Args)]
+pub struct WatchArgs {
+    #[command(flatten)]
+    proxy: ProxyArgs,
+    /// Start a new session file every this many minutes (the finished one is compressed).
+    #[arg(long, default_value_t = 60)]
+    rotate: u64,
+}
+
+/// A proxy left running: one status line for the last minute, each new
+/// warning as it appears, and a new session file every --rotate minutes.
+pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
+    use std::collections::{HashSet, VecDeque};
+    use std::time::{Duration, Instant};
+    check_listen(&a.proxy)?;
+    let started = start(s, &a.proxy.rec, a.proxy.listen, None, a.proxy.allow_remote).await?;
+    print_env(&started.proxy);
+    let header = sonde_proxy::session::read_header(&started.path)
+        .ok_or_else(|| anyhow::anyhow!("cannot read {}", started.path.display()))?;
+    let tty = std::io::stderr().is_terminal();
+    let dir = started
+        .path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let mut rx = started.log.subscribe();
+    let mut writer = started.writer.clone();
+    let mut path = started.path.clone();
+    let mut file_records: Vec<Record> = Vec::new();
+    let mut minute: VecDeque<(Instant, Record)> = VecDeque::new();
+    let mut warned: HashSet<String> = HashSet::new();
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    let mut rotated = Instant::now();
+    let mut seconds = 0u64;
+    let finish = |w: Arc<SessionWriter>, p: &Path| {
+        let _ = w.flush();
+        drop(w);
+        let _ = sonde_proxy::session::compress(p);
+    };
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break,
+            got = rx.recv() => match got {
+                Ok(id) => {
+                    if let Some(r) = started.log.get(id) {
+                        minute.push_back((Instant::now(), r.clone()));
+                        file_records.push(r);
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => break,
+            },
+            _ = tick.tick() => {
+                seconds += 1;
+                while minute.front().is_some_and(|(t, _)| t.elapsed() > Duration::from_secs(60)) {
+                    minute.pop_front();
+                }
+                let n = minute.len();
+                let errors = minute.iter().filter(|(_, r)| r.is_error() && !sonde_proxy::summary::is_miss(r)).count();
+                let mut lat: Vec<f64> = minute.iter().map(|(_, r)| r.latency_ms).collect();
+                lat.sort_by(f64::total_cmp);
+                let p95 = lat.get(((lat.len() as f64 * 0.95).ceil() as usize).saturating_sub(1)).copied().unwrap_or(0.0);
+                let line = format!(
+                    "last minute: {n} requests ({:.1}/s) · {errors} errors · p95 {} · {} in this file",
+                    n as f64 / 60.0,
+                    ms_text(p95),
+                    file_records.len()
+                );
+                if tty {
+                    eprint!("\r\x1b[2K{line}");
+                } else if seconds % 30 == 0 {
+                    eprintln!("{line}");
+                }
+                // what this file's requests say, every five seconds: each warning once
+                if seconds % 5 == 0 && !file_records.is_empty() {
+                    let recent = &file_records[file_records.len().saturating_sub(50_000)..];
+                    for o in observations(recent, &episodes(recent)) {
+                        if o.level == "warn" && warned.insert(sonde_proxy::profile::finding_identity(&o)) {
+                            if tty {
+                                eprint!("\r\x1b[2K");
+                            }
+                            eprintln!("{} {}", paint("!", "33", tty), o.text);
+                        }
+                    }
+                }
+                if rotated.elapsed() >= Duration::from_secs(a.rotate.max(1) * 60) {
+                    let next = sonde_proxy::session::fresh_path(
+                        &dir,
+                        &format!("{}-watch", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+                    );
+                    let mut h = header.clone();
+                    h.created = chrono::Utc::now();
+                    let w = Arc::new(SessionWriter::create(&next, &h)?);
+                    started.log.set_sink(Some(w.clone()));
+                    let old = std::mem::replace(&mut writer, w);
+                    let old_path = std::mem::replace(&mut path, next);
+                    finish(old, &old_path);
+                    if tty {
+                        eprint!("\r\x1b[2K");
+                    }
+                    eprintln!("{} {}", paint("·", "2", tty), old_path.display());
+                    file_records.clear();
+                    warned.clear();
+                    rotated = Instant::now();
+                }
+            }
+        }
+    }
+    if tty {
+        eprintln!();
+    }
+    started.log.set_sink(None);
+    let Started { proxy, .. } = started;
+    drop(proxy);
+    finish(writer, &path);
+    eprintln!("{}", path.display());
     Ok(0)
 }

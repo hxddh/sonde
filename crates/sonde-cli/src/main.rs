@@ -64,6 +64,8 @@ enum Command {
     Proxy(cmd::record::ProxyArgs),
     /// The recorded sessions, newest first; prune old ones.
     Sessions(cmd::sessions::SessionsArgs),
+    /// A proxy left running: a live status line, each new warning, rotating session files.
+    Watch(cmd::record::WatchArgs),
     /// Print a recorded session.
     Show(cmd::record::ShowArgs),
     /// Replay a recorded session on another endpoint and compare the answers.
@@ -135,6 +137,7 @@ fn main() -> ExitCode {
             Command::Run(a) => cmd::record::run(&sonde, &cli, a).await,
             Command::Proxy(a) => cmd::record::proxy(&sonde, &cli, a).await,
             Command::Sessions(a) => cmd::sessions::run(&sonde, a).await,
+            Command::Watch(a) => cmd::record::watch(&sonde, a).await,
             Command::Show(a) => cmd::record::show(&sonde, a).await,
             Command::Replay(a) => cmd::record::replay(&sonde, &cli, a).await,
             Command::Diff(a) => cmd::record::diff(&sonde, a).await,
