@@ -227,11 +227,12 @@ test("a shared session opens in the browser, on a local address", async () => {
   await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.press("id:session-more");
   await app.chooseMenuItem("Share as a web page…");
-  const noViewer = "text:/this build has no web viewer/";
+  const noViewer = "text:Copied the command that makes the web page";
   await app.waitUntil(() => app.openedUrls().length > 0 || app.shows(noViewer), { timeout: 10000 });
   if (app.shows(noViewer)) {
-    // a build without the viewer (CI's test job) says so, and opens nothing
+    // a build without the viewer (CI's test job) copies the command that makes the page instead
     expect(app.openedUrls()).toEqual([]);
+    expect(app.clipboard()).toContain("sonde share");
     return;
   }
   // the openUrl capability lets the app open its own page (http) and nothing else
