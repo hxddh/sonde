@@ -168,6 +168,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
         <Text class="text-muted-foreground" testID="session-summary">
           {line()}
         </Text>
+        <Text class="text-foreground" testID="session-story">{sessionStory(props.view.profile, props.view.observations)}</Text>
       </View>
     );
   }
@@ -225,11 +226,22 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       <If when={props.view.observations.length > 0}>
         <View testID="observations">
           <Each of={list()}>
-            {(o) => (
-              <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
-                {o().level === "warn" ? "! " : "· "}
-                {observationText(o())}
-              </Text>
+            {(o, i) => (
+              // a finding narrows the operations to its own, as on the desktop
+              <BaseButton
+                testID={`observation-${i()}`}
+                accessibilityLabel={observationText(o())}
+                selected={props.filter === i()}
+                disabled={!props.onFilter || !o().episodes?.length}
+                onPress={() => press(i())}
+                class="focus:bg-row-hover selected:bg-selection"
+              >
+                <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
+                  {o().level === "warn" ? "! " : "· "}
+                  {observationText(o())}
+                  <If when={!props.compact && observationSaving(o())}>{(s) => <Text class="text-status-ok">{` — ${s()}`}</Text>}</If>
+                </Text>
+              </BaseButton>
             )}
           </Each>
         </View>
@@ -333,11 +345,11 @@ export function OperationsTable(props: {
   const ep = (row: number) => props.view.episodes[shown()[row]];
   const columns = () => [
     ...(terminal() ? [] : [{ key: "status", title: "", width: 26, resizable: false, selectable: false }]),
-    { key: "time", title: t("column.time"), width: 110, sortable: !terminal() },
+    { key: "time", title: t("column.time"), width: 110, sortable: true },
     ...(formats() ? [{ key: "format", title: "", width: 86 }] : []),
     { key: "title", title: t("column.operation"), width: props.compact ? 220 : 340, minWidth: 160 },
-    { key: "requests", title: t("column.requests"), width: 56, align: "end" as const, sortable: !terminal() },
-    { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: !terminal() },
+    { key: "requests", title: t("column.requests"), width: 56, align: "end" as const, sortable: true },
+    { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: true },
     ...(terminal() || props.compact ? [] : [{ key: "bar", title: t("column.when"), width: 150, minWidth: 80 }]),
     ...(props.compact ? [] : [{ key: "notes", title: t("column.notes"), width: 320, minWidth: 120 }]),
   ];

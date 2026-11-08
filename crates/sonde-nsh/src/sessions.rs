@@ -138,6 +138,9 @@ fn open_session(path: &str) -> Result<Arc<Session>, String> {
     let p = Path::new(path);
     let now = stamp(p)?;
     let used = USE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // a finished recording is compressed in place, and a tiny one can come
+    // out larger: never read a compressed file as appended lines
+    let compressed = sonde_proxy::session::is_compressed(p);
     let grown = {
         let mut cache = CACHE.lock();
         match cache.get_mut(p) {
@@ -147,13 +150,12 @@ fn open_session(path: &str) -> Result<Arc<Session>, String> {
             }
             // a live recording that grew: read only what it appended (taken
             // out of the cache so that, unshared, it grows without a copy)
-            Some(c) if now.0 > c.stamp.0 && c.read_to.is_some() => {
+            Some(c) if !compressed && now.0 > c.stamp.0 && c.read_to.is_some() => {
                 cache.remove(p).map(|c| (c.session, c.read_to.unwrap_or(0)))
             }
             _ => None,
         }
     };
-    let compressed = sonde_proxy::session::is_compressed(p);
     let (session, read_to) = match grown {
         Some((old, from)) => {
             let mut s = Arc::unwrap_or_clone(old);
@@ -1058,6 +1060,32 @@ mod tests {
         }
         g.flush().unwrap();
         assert_eq!(count_records(&path), 6);
+    }
+
+    #[test]
+    fn a_live_session_read_in_steps_then_compressed_reads_whole() {
+        use reqlog::Sink;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("grows.sonde");
+        let w =
+            SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let rec = |id| reqlog::Record {
+            id,
+            time: chrono::Utc::now(),
+            operation: "GetObject".into(),
+            ..Default::default()
+        };
+        w.flush().unwrap();
+        let p = path.to_string_lossy().into_owned();
+        // read while live, with its header only
+        assert_eq!(open_session(&p).unwrap().records.len(), 0);
+        let live = std::fs::metadata(&path).unwrap().len();
+        w.write(&rec(1));
+        drop(w);
+        // finished: compressed in place, still longer than what was read
+        sonde_proxy::session::compress(&path).unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() > live);
+        assert_eq!(open_session(&p).unwrap().records.len(), 1);
     }
 
     #[test]
