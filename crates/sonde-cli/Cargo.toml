@@ -27,6 +27,8 @@ reqlog.workspace = true
 sonde-proxy.workspace = true
 bytes.workspace = true
 tempfile.workspace = true
+futures.workspace = true
+reqwest.workspace = true
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"

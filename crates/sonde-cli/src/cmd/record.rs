@@ -786,8 +786,9 @@ pub struct ReplayArgs {
     /// The session to replay.
     file: PathBuf,
     /// The endpoint to replay on (default: --url, or the only one configured).
+    /// Several (`-e a -e b`) replay on each at once and compare them side by side.
     #[arg(long, short = 'e')]
-    endpoint: Option<String>,
+    endpoint: Vec<String>,
     /// Use another bucket: original=target (repeatable).
     #[arg(long, value_parser = bucket_pair)]
     bucket: Vec<(String, String)>,
@@ -864,8 +865,11 @@ fn print_comparison(c: &sonde_proxy::replay::Comparison, color: bool) {
 
 pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Result<i32> {
     use sonde_proxy::replay::{self as rp, ReplayOptions};
+    if a.endpoint.len() > 1 {
+        return replay_many(s, a).await;
+    }
     let original = Session::open(&a.file).map_err(|e| anyhow::anyhow!(e))?;
-    let ep = super::endpoint(s, a.endpoint.as_deref())?;
+    let ep = super::endpoint(s, a.endpoint.first().map(String::as_str))?;
     let base = s.client(&ep)?;
     let prefix = if a.in_place {
         String::new()
@@ -985,6 +989,148 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
         }
     }
     Ok(if c.differ() > 0 { 2 } else { 0 })
+}
+
+/// One session replayed on several stores at once: each answers under its
+/// own prefix (cleaned up after), and the stores are compared side by side:
+/// how many answers differ from the recording, and each kind's p95.
+async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
+    use sonde_proxy::replay::{self as rp, ReplayOptions};
+    let original = Session::open(&a.file).map_err(|e| anyhow::anyhow!(e))?;
+    if a.in_place {
+        anyhow::bail!("--in-place replays on one endpoint at a time");
+    }
+    let prefix = match &a.prefix {
+        Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
+        None => rp::default_prefix(),
+    };
+    let opts = ReplayOptions {
+        prefix: prefix.clone(),
+        buckets: a.bucket.clone(),
+    };
+    let plan = rp::plan(&original.records, &opts);
+    let mut targets = Vec::new();
+    for e in &a.endpoint {
+        let id = super::endpoint(s, Some(e))?;
+        targets.push((id.clone(), s.client(&id)?));
+    }
+    eprintln!(
+        "Replay {} requests from {} on {} at once, under {prefix} on each ({} writes, {} deletes; deleted afterwards unless --keep).",
+        plan.requests,
+        a.file.display(),
+        a.endpoint.join(", "),
+        plan.writes,
+        plan.deletes
+    );
+    if !a.yes {
+        if !std::io::stdin().is_terminal() {
+            eprintln!(
+                "sonde: replay writes to {}: pass --yes to confirm",
+                a.endpoint.join(", ")
+            );
+            return Ok(77);
+        }
+        eprint!("Type yes to replay: ");
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if answer.trim() != "yes" {
+            eprintln!("Nothing was sent.");
+            return Ok(77);
+        }
+    }
+    let dir = s.paths().sessions();
+    std::fs::create_dir_all(&dir)?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let runs = futures::future::join_all(targets.iter().map(|(id, client)| {
+        let path = sonde_proxy::session::fresh_path(&dir, &format!("{stamp}-replay-{id}"));
+        let (original, opts) = (&original, &opts);
+        async move {
+            let run = rp::replay_to_file(client, original, opts, &path, a.keep, |_, _| {}).await;
+            let _ = sonde_proxy::session::compress(&path);
+            (id.clone(), path, run)
+        }
+    }))
+    .await;
+    let prices = request_prices(s);
+    let before = profile(&original.records, &prices);
+    let mut columns = vec![original.header.endpoint.clone()];
+    let mut stores = Vec::new();
+    let mut differ_total = 0;
+    for (id, path, run) in runs {
+        let run = match run {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("sonde: {id}: {e}");
+                continue;
+            }
+        };
+        differ_total += run.comparison.differ();
+        let replayed = Session::open(&path).map_err(|e| anyhow::anyhow!(e))?;
+        columns.push(id.clone());
+        stores.push((
+            id,
+            path,
+            run.comparison,
+            profile(&replayed.records, &prices),
+        ));
+    }
+    let kinds: Vec<(String, bool)> = before
+        .groups
+        .iter()
+        .map(|g| (g.operation.clone(), g.missed))
+        .collect();
+    let p95 = |p: &Profile, op: &str, missed: bool| {
+        p.groups
+            .iter()
+            .find(|g| g.operation == op && g.missed == missed)
+            .map(|g| g.p95_ms)
+    };
+    if matches!(a.format, Format::Json) {
+        let doc = serde_json::json!({
+            "plan": plan,
+            "stores": stores.iter().map(|(id, path, c, p)| serde_json::json!({
+                "endpoint": id,
+                "session": path,
+                "comparison": c,
+                "latency": sonde_proxy::profile::latency_changes(&before, p),
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", output::json(&doc));
+    } else {
+        let mut rows: Vec<Vec<String>> = vec![{
+            let mut r = vec!["answers that differ".to_string(), "—".to_string()];
+            r.extend(
+                stores
+                    .iter()
+                    .map(|(_, _, c, _)| format!("{} of {}", c.differ(), c.compared)),
+            );
+            r
+        }];
+        for (op, missed) in &kinds {
+            let name = if *missed {
+                format!("{op} (not found)")
+            } else {
+                op.clone()
+            };
+            let mut r = vec![
+                format!("{name} p95"),
+                p95(&before, op, *missed).map(ms_text).unwrap_or_default(),
+            ];
+            r.extend(
+                stores
+                    .iter()
+                    .map(|(_, _, _, p)| p95(p, op, *missed).map(ms_text).unwrap_or_default()),
+            );
+            rows.push(r);
+        }
+        let mut headers = vec![""];
+        headers.extend(columns.iter().map(String::as_str));
+        output::print(a.format, &headers, &rows);
+        for (id, path, _, _) in &stores {
+            eprintln!("{id}: {}", path.display());
+        }
+    }
+    Ok(if differ_total > 0 { 2 } else { 0 })
 }
 
 /// The same workload on two stores: each kind's p50 and p95 on each, slowest change first.

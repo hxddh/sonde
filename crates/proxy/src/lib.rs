@@ -13,6 +13,7 @@ pub mod fixes;
 pub mod import;
 pub mod logs;
 pub mod op;
+pub mod otlp;
 pub mod phrase;
 pub mod profile;
 pub mod program;

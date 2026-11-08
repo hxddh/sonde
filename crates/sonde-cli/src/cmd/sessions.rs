@@ -195,3 +195,45 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     );
     super::record::show_file(s, &path).await
 }
+
+#[derive(Args)]
+pub struct ExportArgs {
+    /// The session (default: the newest).
+    file: Option<PathBuf>,
+    /// OpenTelemetry traces (OTLP/JSON): each operation a span, its requests under it.
+    #[arg(long, required = true)]
+    otlp: bool,
+    /// Write it here (default: stdout).
+    #[arg(long, short = 'o')]
+    out: Option<PathBuf>,
+    /// Send it to an OTLP/HTTP collector instead, e.g. http://localhost:4318/v1/traces.
+    #[arg(long, conflicts_with = "out")]
+    to: Option<String>,
+}
+
+pub async fn export(s: &Arc<Sonde>, a: &ExportArgs) -> anyhow::Result<i32> {
+    let file = match &a.file {
+        Some(f) => resolve(s, f),
+        None => super::record::newest_session(s)?,
+    };
+    let session = sonde_proxy::session::Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    let doc = sonde_proxy::otlp::traces(&session);
+    match (&a.to, &a.out) {
+        (Some(url), _) => {
+            let resp = reqwest::Client::new()
+                .post(url)
+                .header("content-type", "application/json")
+                .body(serde_json::to_vec(&doc)?)
+                .send()
+                .await?;
+            if !resp.status().is_success() {
+                eprintln!("sonde: {url} answered {}", resp.status());
+                return Ok(70);
+            }
+            eprintln!("{} requests sent to {url} as traces", session.records.len());
+        }
+        (None, Some(p)) => std::fs::write(p, serde_json::to_vec_pretty(&doc)?)?,
+        (None, None) => println!("{}", output::json(&doc)),
+    }
+    Ok(0)
+}

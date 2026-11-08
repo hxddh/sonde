@@ -68,6 +68,8 @@ enum Command {
     Watch(cmd::record::WatchArgs),
     /// Production traffic as a session: an S3 server access log, CloudTrail events or a HAR.
     Import(cmd::sessions::ImportArgs),
+    /// A session for other tools: OpenTelemetry traces (`--otlp`), to a file or a collector.
+    Export(cmd::sessions::ExportArgs),
     /// Print a recorded session.
     Show(cmd::record::ShowArgs),
     /// Replay a recorded session on another endpoint and compare the answers.
@@ -141,6 +143,7 @@ fn main() -> ExitCode {
             Command::Sessions(a) => cmd::sessions::run(&sonde, a).await,
             Command::Watch(a) => cmd::record::watch(&sonde, a).await,
             Command::Import(a) => cmd::sessions::import(&sonde, a).await,
+            Command::Export(a) => cmd::sessions::export(&sonde, a).await,
             Command::Show(a) => cmd::record::show(&sonde, a).await,
             Command::Replay(a) => cmd::record::replay(&sonde, &cli, a).await,
             Command::Diff(a) => cmd::record::diff(&sonde, a).await,
