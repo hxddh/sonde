@@ -100,7 +100,14 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
     },
   );
   // a replay's answers match the original's; two runs of a program compare as before and after
-  const mode = signal<"runs" | "answers">(untracked(() => ((data()?.comparison.compared ?? 0) > 0 ? "answers" : "runs")));
+  const replay = () => {
+    try {
+      return api.sessions.list().some((x) => (x.path === props.a || x.path === props.b) && x.command?.startsWith("replay of "));
+    } catch {
+      return false;
+    }
+  };
+  const mode = signal<"runs" | "answers">(untracked(() => (replay() ? "answers" : "runs")));
   const name = (p: string) => p.split("/").pop() ?? p;
   return (
     <If when={data()}>

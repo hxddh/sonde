@@ -136,3 +136,28 @@ test("sessions are looked after: renamed, searched, deleted, dropped on the wind
   await app.dropFiles("id:shell", ["file:///tmp/notes.txt"]);
   await app.waitFor("text:notes.txt is not a session file");
 });
+
+test("a session's time: where it went, and two runs before and after", async () => {
+  const app = await open("../App.tsx", desktop);
+  await place(app, "sessions");
+  await app.press("id:open-example");
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  // the shape of the session beside its figures
+  expect(app.shows("id:session-shape")).toBe(true);
+  expect(app.shows("label:/^Waiting on S3 .* of .*; up to 8 requests in flight/")).toBe(true);
+  await app.press("id:session-pane-mode-time");
+  await app.waitFor("id:time-pane");
+  expect(app.shows("text:Where the time went")).toBe(true);
+  expect(app.shows("label:/^Most of the waiting: PutObject, 65%/")).toBe(true);
+  expect(app.shows("id:profile-cost")).toBe(true);
+  // the operations sort by how long they took
+  await app.press("id:session-pane-mode-operations");
+  // compared with another run: before and after
+  await app.press("id:compare-open");
+  const run = app.menu()!.map((m) => m.label).find((l) => l.startsWith("echo"))!;
+  await app.chooseMenuItem(run);
+  await app.waitFor("id:compare");
+  await app.waitFor("id:run-change", { timeout: 10000 });
+  expect(app.shows("id:run-change-requests")).toBe(true);
+  expect(app.shows("text:/^172 → /")).toBe(true);
+});

@@ -101,6 +101,15 @@ for (const v of variants) {
     await app.press("id:session-pane-mode-time");
     await app.waitFor("id:time-pane");
     await shot("03g-time");
+    // the same program run twice: before and after
+    await app.press("id:compare-open");
+    const run = app.menu()?.map((m) => m.label).find((l) => l.startsWith("curl"));
+    if (run) {
+      await app.chooseMenuItem(run);
+      await app.waitFor("id:run-change", { timeout: 10000 });
+      await shot("03h-runs");
+      await app.press("id:compare-back");
+    } else if (app.menu()) await app.closeMenu();
 
     await go("store");
     await shot("04-store");
