@@ -1305,6 +1305,22 @@ pub struct DemoArgs {
     app: bool,
 }
 
+/// A session's summary and findings on stdout, as `sonde show --summary`.
+pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
+    show(
+        s,
+        &ShowArgs {
+            file: Some(file.to_path_buf()),
+            summary: true,
+            errors: false,
+            requests: false,
+            app: false,
+            format: Format::Table,
+        },
+    )
+    .await
+}
+
 /// A tour in one command: a small program's requests to the built-in demo
 /// store, recorded as any program's would be, then shown with its findings.
 pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {

@@ -905,6 +905,12 @@ impl Sessions {
             stem
         };
         let path = sonde_proxy::session::fresh_path(&dir, &stem);
+        // production traffic: an access log, CloudTrail events, a HAR
+        if sonde_proxy::import::detect(&text).is_some() {
+            let (_, session) = sonde_proxy::import::import(&text, &stem)?;
+            sonde_proxy::import::save(&session, &path).map_err(err_msg)?;
+            return Ok(path.to_string_lossy().into_owned());
+        }
         std::fs::write(&path, text).map_err(err_msg)?;
         if let Err(e) = Session::open(&path) {
             let _ = std::fs::remove_file(&path);

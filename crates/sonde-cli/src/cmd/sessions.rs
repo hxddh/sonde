@@ -151,3 +151,47 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
         }
     }
 }
+
+#[derive(Args)]
+pub struct ImportArgs {
+    /// An S3 server access log, a CloudTrail file (`{"Records": …}` or one event a line), or a HAR.
+    file: PathBuf,
+    /// The session file (default: a new one in the data directory's sessions/).
+    #[arg(long, short = 'o')]
+    out: Option<PathBuf>,
+}
+
+/// Production traffic as a session: the same operations, findings and
+/// figures as a recording, with no proxy in front of the program.
+pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
+    let bytes = std::fs::read(&a.file)?;
+    let text = String::from_utf8_lossy(&bytes);
+    let name = a
+        .file
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "imported".into());
+    let (source, session) = match sonde_proxy::import::import(&text, &name) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("sonde: {}: {e}", a.file.display());
+            return Ok(64);
+        }
+    };
+    let path = match &a.out {
+        Some(p) => p.clone(),
+        None => {
+            let dir = s.paths().sessions();
+            std::fs::create_dir_all(&dir)?;
+            sonde_proxy::session::fresh_path(&dir, &name)
+        }
+    };
+    sonde_proxy::import::save(&session, &path)?;
+    eprintln!(
+        "{} requests from a {} → {}",
+        session.records.len(),
+        source.name(),
+        path.display()
+    );
+    super::record::show_file(s, &path).await
+}

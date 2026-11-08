@@ -9,6 +9,7 @@
 
 pub mod chunked;
 pub mod episode;
+pub mod import;
 pub mod logs;
 pub mod op;
 pub mod phrase;

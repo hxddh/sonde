@@ -555,6 +555,7 @@ const en = {
   "mpu.initiated": "Started",
   "run.stoppedEmpty": "Stopped before it sent a request",
   "run.notFound": "The command was not found: check its name and the folder it runs in",
+  "sessions.trafficType": "S3 access logs, CloudTrail, HAR",
 };
 
 type Key = keyof typeof en;
@@ -1109,6 +1110,7 @@ const zh: Partial<Record<Key, string>> = {
   "mpu.initiated": "开始于",
   "run.stoppedEmpty": "在发出任何请求前已停止",
   "run.notFound": "找不到该命令：请检查命令名和运行目录",
+  "sessions.trafficType": "S3 访问日志、CloudTrail、HAR",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

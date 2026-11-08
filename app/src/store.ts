@@ -260,12 +260,16 @@ export function openDropped(uris: string[]) {
   );
 }
 
+/** What opens as a session: a recording, or traffic sonde reads as one (an
+ * S3 server access log, CloudTrail events, a HAR). */
+const OPENS = /\.(sonde|log|txt|json|jsonl|har)$/i;
+
 /** Opens session files by path; anything else is said to be no session. */
 export function openPaths(paths: string[]) {
   let last: string | null = null;
   for (const path of paths) {
     const name = path.split(/[\\/]/).pop() ?? path;
-    if (!name.toLowerCase().endsWith(".sonde")) {
+    if (!OPENS.test(name)) {
       notify(t("sessions.notSession", { name }), { kind: "warning" });
       continue;
     }
@@ -286,7 +290,12 @@ export function openPaths(paths: string[]) {
 
 export async function openSessionFile() {
   try {
-    const [picked] = await Picker.pickFiles({ filters: [{ name: t("sessions.fileType"), extensions: ["sonde"] }] });
+    const [picked] = await Picker.pickFiles({
+      filters: [
+        { name: t("sessions.fileType"), extensions: ["sonde"] },
+        { name: t("sessions.trafficType"), extensions: ["log", "txt", "json", "jsonl", "har"] },
+      ],
+    });
     if (!picked) return;
     const path = api.sessions.import(picked.file.name, await picked.file.text());
     batch(() => {
