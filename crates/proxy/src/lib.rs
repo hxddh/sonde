@@ -72,6 +72,10 @@ pub struct ProxyConfig {
     pub policy: Policy,
     /// Largest body buffered (signed `aws-chunked` bodies are decoded whole).
     pub max_buffer: usize,
+    /// All the bodies buffered at once, together: a request past it waits
+    /// for the ones before it, so concurrent large uploads queue rather than
+    /// hold a gigabyte each.
+    pub max_buffered_total: usize,
     /// Tags every record (the `job` field), e.g. a session id.
     pub tag: Option<String>,
     /// The keys the application signs with: made for each proxy, so only the
@@ -110,6 +114,7 @@ impl Default for ProxyConfig {
             listen: SocketAddr::from(([127, 0, 0, 1], 0)),
             policy: Policy::Allow,
             max_buffer: 1 << 30,
+            max_buffered_total: 2 << 30,
             tag: None,
             client_key: key,
             client_secret: secret,
@@ -122,6 +127,18 @@ struct Shared {
     client: S3Client,
     log: RequestLog,
     cfg: ProxyConfig,
+    /// The buffering budget, in MiB (`max_buffered_total`).
+    buffered: Arc<tokio::sync::Semaphore>,
+}
+
+const MIB: usize = 1 << 20;
+
+/// What a body about to be buffered takes from the budget: its declared
+/// size (at most `max_buffer`), or `max_buffer` when it declares none.
+fn buffer_share(cfg: &ProxyConfig, declared: Option<u64>) -> u32 {
+    let bytes = declared.map_or(cfg.max_buffer, |n| (n as usize).min(cfg.max_buffer));
+    let total = (cfg.max_buffered_total / MIB).max(1);
+    bytes.div_ceil(MIB).clamp(1, total) as u32
 }
 
 /// A running proxy. Dropping it stops accepting connections.
@@ -149,7 +166,15 @@ impl Proxy {
         let addr = listener.local_addr()?;
         let region = client.config().region.clone();
         let keys = (cfg.client_key.clone(), cfg.client_secret.clone());
-        let shared = Arc::new(Shared { client, log, cfg });
+        let buffered = Arc::new(tokio::sync::Semaphore::new(
+            (cfg.max_buffered_total / MIB).max(1),
+        ));
+        let shared = Arc::new(Shared {
+            client,
+            log,
+            cfg,
+            buffered,
+        });
         let task = tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
@@ -730,6 +755,22 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .to_ascii_lowercase()
         .contains("chunked");
     let has_body = length.is_some_and(|l| l > 0) || chunked_te;
+    // a body read whole waits its turn in the buffering budget, held until
+    // the request is answered
+    let _budget = if chunked::is_signed_streaming(&content_sha) || (has_body && length.is_none()) {
+        let declared = header_value(&parts.headers, "x-amz-decoded-content-length")
+            .parse()
+            .ok()
+            .or(length);
+        shared
+            .buffered
+            .clone()
+            .acquire_many_owned(buffer_share(&shared.cfg, declared))
+            .await
+            .ok()
+    } else {
+        None
+    };
 
     let (payload_hash, upstream_body, sent_len): (String, reqwest::Body, Option<u64>) =
         if chunked::is_signed_streaming(&content_sha) {
@@ -973,5 +1014,25 @@ mod tests {
             Some("read-only")
         );
         assert_eq!(Policy::ReadOnly.refuses("GET", "GetObject"), None);
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn a_body_takes_its_size_from_the_budget_and_an_unsized_one_the_most() {
+        let cfg = ProxyConfig::default();
+        assert_eq!(buffer_share(&cfg, Some(10)), 1);
+        assert_eq!(buffer_share(&cfg, Some(5 << 20)), 5);
+        assert_eq!(buffer_share(&cfg, None), 1024);
+        // never more than one body may take, nor than the whole budget
+        assert_eq!(buffer_share(&cfg, Some(8 << 30)), 1024);
+        let small = ProxyConfig {
+            max_buffered_total: 100 << 20,
+            ..ProxyConfig::default()
+        };
+        assert_eq!(buffer_share(&small, None), 100);
     }
 }

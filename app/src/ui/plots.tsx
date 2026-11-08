@@ -180,7 +180,7 @@ export function Chains(props: { profile: Profile; max?: number }) {
           tooltipOffset={10}
           tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
           onHoverChange={({ index }) => hovered.set(index)}
-          class="ml-32"
+          class="mb-6 ml-32"
           style={{ height: rows().length * 34 + 30 }}
         >
           {/* as it ran: one after another */}

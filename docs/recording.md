@@ -249,4 +249,5 @@ failures, and requests sonde refused.
   interface (no TLS listener yet).
 - One target endpoint per proxy.
 - Replay is sequential: concurrency and timing of the original are not reproduced.
-- Signed `aws-chunked` bodies are decoded in memory, up to 1 GiB each.
+- Signed `aws-chunked` bodies (and bodies sent chunked without a length) are read whole, up to 1 GiB each
+  and 2 GiB at once: a request past that budget waits for the ones before it.

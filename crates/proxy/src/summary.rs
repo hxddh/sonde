@@ -47,7 +47,14 @@ fn s3_code(body: &str) -> Option<&str> {
 
 /// Whether a record is a lookup that found nothing (GET or HEAD → 404).
 pub fn is_miss(r: &Record) -> bool {
-    r.status == Some(404) && (r.method == "GET" || r.method == "HEAD")
+    r.status == Some(404)
+        && (r.method == "GET" || r.method == "HEAD")
+        // a bucket that is not there is a mistake, not a lookup: a key is
+        // looked for, a bucket is named
+        && !r
+            .error_body
+            .as_deref()
+            .is_some_and(|b| b.contains("<Code>NoSuchBucket</Code>"))
 }
 
 /// Whether a record failed (a miss is not a failure).
@@ -145,6 +152,17 @@ mod tests {
             response_bytes: Some(100),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_missing_bucket_is_an_error_and_a_missing_key_a_lookup() {
+        let mut key = rec("GetObject", 404, 1.0, 0);
+        key.method = "GET".into();
+        key.error_body = Some("<Error><Code>NoSuchKey</Code></Error>".into());
+        let mut bucket = key.clone();
+        bucket.error_body = Some("<Error><Code>NoSuchBucket</Code></Error>".into());
+        assert!(is_miss(&key) && !is_failure(&key));
+        assert!(!is_miss(&bucket) && is_failure(&bucket));
     }
 
     #[test]

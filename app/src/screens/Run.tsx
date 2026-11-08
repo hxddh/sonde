@@ -79,6 +79,12 @@ function CommandBar() {
           <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
         </If>
       </View>
+      {/* a command longer than the field, whole: the field scrolls, this wraps */}
+      <If when={command().length > 72}>
+        <View selectable class="px-1">
+          <Text testID="run-command-full" class="font-mono text-small leading-5 text-muted-foreground">{`$ ${command()}`}</Text>
+        </View>
+      </If>
       <View class="flex-row flex-wrap items-center gap-x-4 gap-y-2 px-1">
         <View class="h-7 w-64 flex-row items-center gap-1.5 rounded-(--radius) px-1.5 hover:bg-muted">
           <Icon name="folder" size={14} />

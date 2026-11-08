@@ -550,6 +550,9 @@ const en = {
   "settings.contrastHint": "Stronger borders and secondary text",
   "updates.running": "sonde {version} · Native Shell {nsh}",
   "updates.dev": "(development run)",
+  "mpu.key": "Key",
+  "mpu.uploadId": "Upload ID",
+  "mpu.initiated": "Started",
 };
 
 type Key = keyof typeof en;
@@ -1099,6 +1102,9 @@ const zh: Partial<Record<Key, string>> = {
   "settings.contrastHint": "更清晰的边框和次要文字",
   "updates.running": "sonde {version} · Native Shell {nsh}",
   "updates.dev": "（开发运行）",
+  "mpu.key": "键",
+  "mpu.uploadId": "上传 ID",
+  "mpu.initiated": "开始于",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

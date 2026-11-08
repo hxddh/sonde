@@ -17,9 +17,9 @@ import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, 
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
-import { Badge, material, Recoverable, SidePanel, terminal } from "./src/ui/kit";
+import { Badge, Recoverable, SidePanel, terminal } from "./src/ui/kit";
 import { Palette, paletteOpen } from "./src/ui/palette";
-import { appMenus, Sidebar, toggleSidebar, Toolbar } from "./src/ui/shell";
+import { appMenus, Sidebar, toggleSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
 import { applyContrast } from "./src/theme";
 
@@ -104,7 +104,7 @@ function DesktopShell() {
     // on macOS the window's own sidebar material shows through the sidebar
     <View
       testID="shell"
-      class={`flex-1 ${material ? "" : "bg-background"}`}
+      class={`flex-1 ${windowMaterial() ? "" : "bg-background"}`}
       onLayout={(e) => batch(() => (shellWidth.set(e.bounds.size.width), shellHeight.set(e.bounds.size.height)))}
       // a .sonde file dropped anywhere on the window opens it
       onFileDrop={(e) => openDropped(e.uris)}

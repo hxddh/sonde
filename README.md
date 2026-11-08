@@ -175,6 +175,9 @@ the least size, light and dark, English and Chinese); the images are the build's
 
 ## Development
 
+Rust 1.95 or newer builds sonde; the `nsh` CLI that bundles the app and runs its UI tests needs 1.97 (it is
+installed from Native Shell at the pinned commit, `docs/decisions.md` D-002).
+
 ```sh
 cargo test --workspace                       # unit tests (SigV4 vectors, redaction, parsers, judges, decoders)
 scripts/integration.sh                       # Ceph RGW and RustFS in docker compose (MinIO with MINIO_IMAGE)

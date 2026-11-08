@@ -10,11 +10,11 @@ import { t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
-import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, endpoints, go, openSession, openSessionFile, readOnly, section, sessionsTick, storeTab } from "../store";
+import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, endpoints, go, openSession, openSessionFile, readOnly, section, settings, sessionsTick, storeTab } from "../store";
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf } from "./sessionview";
-import { fill, glass, IconButton, Kbd, POPUP, Tip } from "./kit";
+import { glass, IconButton, Kbd, material, POPUP, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { sessionName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -303,10 +303,15 @@ function Recent(props: { open: (a: Area) => void }) {
   );
 }
 
+/** Whether the window's own material (macOS's sidebar backdrop) shows through
+ * the shell: it follows the system's appearance, so only while the app does
+ * too; a light or dark chosen in Settings gets opaque surfaces instead. */
+export const windowMaterial = () => material && (settings()?.theme ?? "system") === "system";
+
 export function Sidebar(props: { open: (a: Area) => void }) {
   return (
     <If when={sidebarOpen()}>
-      <View testID="sidebar" class={`w-56 border-r border-sidebar-border ${fill("bg-sidebar/40", "bg-sidebar")} px-2 pb-2 pt-3`}>
+      <View testID="sidebar" class={`w-56 border-r border-sidebar-border ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} px-2 pb-2 pt-3`}>
         <View class="gap-0.5">
           <Place area="run" open={props.open} />
           <Place area="sessions" open={props.open} />

@@ -8,7 +8,8 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { go, notify, readOnly, report } from "../store";
 import type { Outcome, Plan } from "../types";
-import { Button, Field, Heading, Mono, Muted, SCRIM, SimpleTable } from "./kit";
+import { Button, Field, Heading, Muted, SCRIM, SimpleTable } from "./kit";
+import { Document } from "./record";
 
 export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outcome | null) => void }) {
   const typed = signal("");
@@ -57,7 +58,7 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
               {(doc) => (
                 <View class="gap-1">
                   <Muted>new lifecycle document</Muted>
-                  <Mono>{doc()}</Mono>
+                  <Document text={doc()} testID="confirm-document" />
                 </View>
               )}
             </If>

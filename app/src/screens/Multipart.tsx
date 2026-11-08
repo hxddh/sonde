@@ -4,14 +4,15 @@
 
 import { cleanup, signal, Text, View } from "nsh";
 import { DataTable } from "nsh/base";
-import { bytes, count, date, days, money } from "../format";
+import { bytes, count, day, days, money } from "../format";
 import { t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan } from "../types";
-import { Badge, Bar, Button, Card, Empty, Field, KeyValue, Mono, Muted, Page, rowHeight, terminal, Title, TYPE } from "../ui/kit";
+import { Badge, Bar, Button, Card, Empty, Field, KeyValue, Muted, Page, rowHeight, terminal, Title, TYPE } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
+import { Document } from "../ui/record";
 import { here, remember } from "../ui/overview";
 
 export function Multipart() {
@@ -103,7 +104,7 @@ export function Multipart() {
                     <Field class="w-24" label="days" value={days_()} onChange={(v) => days_.set(v)} />
                     <Button small label={t("mpu.generateRule")} onPress={planRule} testID="plan-rule" />
                   </View>
-                  <Mono>{r().lifecycle.suggestedRule}</Mono>
+                  <Document text={r().lifecycle.suggestedRule} testID="lifecycle-rule" />
                 </If>
               </Card>
             </View>
@@ -116,16 +117,17 @@ export function Multipart() {
                 testID="uploads"
                 class="h-[420px] rounded-(--radius-card) border border-border bg-card"
                 columns={[
-                  { key: "flag", title: "", width: 28 },
-                  { key: "key", title: "Key", width: 240, minWidth: 120 },
-                  { key: "uploadId", title: "Upload ID", width: 160 },
-                  { key: "initiated", title: "Initiated", width: 130 },
-                  { key: "age", title: t("mpu.age"), width: 70, align: "end" },
-                  { key: "parts", title: t("mpu.parts"), width: 56, align: "end" },
-                  { key: "bytes", title: t("mpu.bytes"), width: 90, align: "end" },
-                  { key: "cost", title: t("mpu.costMonth"), width: 90, align: "end" },
+                  // fits the detail panel (760pt) without a sideways scroll: the date as a day
+                  { key: "flag", title: "", width: 22, resizable: false },
+                  { key: "key", title: t("mpu.key"), width: 196, minWidth: 120 },
+                  { key: "uploadId", title: t("mpu.uploadId"), width: 116, minWidth: 80 },
+                  { key: "initiated", title: t("mpu.initiated"), width: 100 },
+                  { key: "age", title: t("mpu.age"), width: 58, align: "end" },
+                  { key: "parts", title: t("mpu.parts"), width: 50, align: "end" },
+                  { key: "bytes", title: t("mpu.bytes"), width: 78, align: "end" },
+                  { key: "cost", title: t("mpu.costMonth"), width: 72, align: "end" },
                 ]}
-                data={r().uploads.map((u) => ({ flag: u.stale ? "!" : "", key: u.key, uploadId: u.uploadId, initiated: date(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
+                data={r().uploads.map((u) => ({ flag: u.stale ? "!" : "", key: u.key, uploadId: u.uploadId, initiated: day(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
                 rowClasses={r().uploads.map((u) => (u.stale ? "text-warn" : "text-foreground"))}
                 fontSize={TYPE.body}
                 rowHeight={rowHeight(30)}

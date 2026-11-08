@@ -368,10 +368,7 @@ fn build(kind: Kind, format: Option<Format>, title: Vec<Phrase>, mut rs: Vec<&Re
         outcome,
         notes: Vec::new(),
         notes_text: Vec::new(),
-        not_found: rs
-            .iter()
-            .filter(|r| r.status == Some(404) && (r.method == "GET" || r.method == "HEAD"))
-            .count(),
+        not_found: rs.iter().filter(|r| crate::summary::is_miss(r)).count(),
     }
 }
 
