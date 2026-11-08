@@ -107,6 +107,9 @@ pub struct ShowArgs {
     /// One line per request instead of per operation.
     #[arg(long)]
     requests: bool,
+    /// Open it in the sonde app instead (a sonde:// link).
+    #[arg(long)]
+    app: bool,
     #[arg(long, short = 'f', value_enum, default_value_t)]
     format: Format,
 }
@@ -631,6 +634,9 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         None => newest_session(s)?,
     };
     let session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    if a.app {
+        return open_in_app(&file);
+    }
     let all = &session.records;
     let eps = episodes(all);
     match a.format {
@@ -1075,4 +1081,36 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         )
     );
     Ok(if c.passed { 0 } else { 1 })
+}
+
+/// Hands `sonde://open?path=…` to the system, which opens the app on the session.
+fn open_in_app(file: &Path) -> anyhow::Result<i32> {
+    let abs = std::fs::canonicalize(file)?;
+    let path = abs.to_string_lossy().replace('\\', "/");
+    let encoded: String = path
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' | b':' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    let url = format!("sonde://open?path={encoded}");
+    let status = if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(&url).status()
+    } else if cfg!(windows) {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .status()
+    } else {
+        std::process::Command::new("xdg-open").arg(&url).status()
+    };
+    match status {
+        Ok(s) if s.success() => Ok(0),
+        _ => {
+            eprintln!("could not open the sonde app; the link is {url}");
+            Ok(1)
+        }
+    }
 }

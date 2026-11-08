@@ -3,7 +3,7 @@
 // error body is highlighted as the XML it is (TextView).
 
 import { type JSX, signal, Text, View } from "nsh";
-import { Button as BaseButton, Collapsible, TextView } from "nsh/base";
+import { Button as BaseButton, Collapsible, Editor, type EditorDiagnostic } from "nsh/base";
 import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
@@ -32,6 +32,56 @@ export function Fold(props: { title: string; count?: number; open?: boolean; chi
       </BaseButton>
     </Collapsible>
   );
+}
+
+/** An XML document as code, read-only: the S3 error's code marked where it stands. */
+export function Document(props: { text: string; testID?: string; mark?: boolean }) {
+  const text = () => pretty(props.text.trim());
+  const diagnostics = (): EditorDiagnostic[] => {
+    if (!props.mark) return [];
+    const lines = text().split("\n");
+    const at = lines.findIndex((l) => l.includes("<Code>"));
+    if (at < 0) return [];
+    const code = /<Code>([^<]*)<\/Code>/.exec(lines[at])?.[1] ?? "";
+    const message = /<Message>([^<]*)<\/Message>/.exec(text())?.[1] ?? code;
+    const col = lines[at].indexOf("<Code>") + 6;
+    return [{ range: { start: { line: at, column: col }, end: { line: at, column: col + code.length } }, severity: "error", message, source: "S3", code }];
+  };
+  return (
+    <If when={!terminal()} else={<Text class="text-foreground">{text()}</Text>}>
+      <Editor
+        testID={props.testID}
+        value={text()}
+        language="xml"
+        readOnly
+        lineNumbers={false}
+        folding
+        softWrap
+        minRows={2}
+        maxRows={18}
+        fontSize={12}
+        diagnostics={diagnostics()}
+        accessibilityLabel={props.mark ? diagnostics()[0]?.message : undefined}
+        class="rounded-(--radius) border border-border bg-card"
+      />
+    </If>
+  );
+}
+
+/** One element per line, indented: what S3 sends on one line reads as a document. */
+function pretty(xml: string): string {
+  if (xml.includes("\n")) return xml;
+  let depth = 0;
+  return xml
+    .replace(/>\s*</g, ">\n<")
+    .split("\n")
+    .map((line) => {
+      if (/^<\//.test(line)) depth = Math.max(0, depth - 1);
+      const out = `${"  ".repeat(depth)}${line}`;
+      if (/^<[^!?/][^>]*[^/]>$/.test(line) && !/<\/[^>]+>$/.test(line)) depth++;
+      return out;
+    })
+    .join("\n");
 }
 
 /** Name and value pairs: names muted, values monospaced and selectable. */
@@ -99,14 +149,14 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
       <If when={r().errorBody}>
         {(b) => (
           <Fold title={t("requests.errorBody")} testID="record-error">
-            <If when={!terminal()} else={<Text class="text-foreground">{b()}</Text>}>
-              <TextView
-                selectable
-                markdown={"```xml\n" + b().trim() + "\n```"}
-                codeBlockActions={[{ id: "copy" }]}
-                classes={{ codeBlock: "rounded-(--radius) border border-border bg-card", codeBlockCode: "p-2.5 text-caption" }}
-              />
-            </If>
+            <Document text={b()} mark testID="record-error-body" />
+          </Fold>
+        )}
+      </If>
+      <If when={r().requestBody}>
+        {(b) => (
+          <Fold title={r().requestBodyTruncated ? t("requests.bodyCut") : t("requests.body")} testID="record-body">
+            <Document text={b()} />
           </Fold>
         )}
       </If>

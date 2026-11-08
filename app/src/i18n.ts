@@ -518,6 +518,10 @@ const en = {
   "history.verdict.errors": "errors",
   "history.verdict.warnings": "new warnings",
   "obs.warnings": "Warnings",
+  "link.noSession": "No session called {name}",
+  "link.noEndpoint": "No endpoint called {name}",
+  "requests.body": "Document sent",
+  "requests.bodyCut": "Document sent (cut to what is kept)",
 };
 
 type Key = keyof typeof en;
@@ -1035,6 +1039,10 @@ const zh: Partial<Record<Key, string>> = {
   "history.verdict.errors": "错误",
   "history.verdict.warnings": "新警告",
   "obs.warnings": "警告",
+  "link.noSession": "没有名为 {name} 的会话",
+  "link.noEndpoint": "没有名为 {name} 的端点",
+  "requests.body": "发送的文档",
+  "requests.bodyCut": "发送的文档（已截断）",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

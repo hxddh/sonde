@@ -203,6 +203,48 @@ export function pathOf(uri: string): string {
   return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;
 }
 
+/**
+ * A `sonde://` link (from `sonde show --app`, a shared page, the docs). Its
+ * URL is anyone's to make: it only opens what sonde would open itself.
+ *   sonde://open?path=/abs/file.sonde   a session file, added as a drop is
+ *   sonde://session/<file name>         a session of the sessions folder
+ *   sonde://bucket/<endpoint>/<bucket>[/<prefix>]
+ */
+export function openLink(url: string) {
+  const m = /^sonde:\/\/([a-z]+)(\/[^?#]*)?(\?[^#]*)?/i.exec(url.trim());
+  if (!m) return;
+  const [, what, rest = "", query = ""] = m;
+  const part = (s: string) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
+  if (what === "open") {
+    const path = new Map(query.slice(1).split("&").map((kv) => kv.split("=").map(part) as [string, string])).get("path");
+    if (path?.toLowerCase().endsWith(".sonde")) openDropped([`file://${path.startsWith("/") ? "" : "/"}${path}`]);
+  } else if (what === "session") {
+    const name = part(rest.slice(1));
+    const s = api.sessions.list().find((x) => x.name === name);
+    if (!s) return notify(t("link.noSession", { name }), { kind: "warning" });
+    batch(() => {
+      openSession.set(s.path);
+      go("sessions");
+    });
+  } else if (what === "bucket") {
+    const [ep, b, ...p] = rest.slice(1).split("/").map(part);
+    if (!endpoints().some((e) => e.id === ep)) return notify(t("link.noEndpoint", { name: ep ?? "" }), { kind: "warning" });
+    if (!b) return;
+    batch(() => {
+      endpoint.set(ep);
+      chooseBucket(b);
+      if (p.length) prefix.set(p.join("/").replace(/\/?$/, "/"));
+      go("store");
+    });
+  }
+}
+
 /** Opens session files dropped on the window; anything else is said to be no session. */
 export function openDropped(uris: string[]) {
   let last: string | null = null;

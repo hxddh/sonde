@@ -5,6 +5,7 @@
   "build": 8,
   "icon": "assets/icon.png",
   "rust": "../crates/sonde-nsh",
+  "schemes": ["sonde"],
   "theme": "theme.json",
   "tailwind": {
     "fontSize": {

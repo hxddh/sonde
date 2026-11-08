@@ -3,17 +3,17 @@
 // sidebar and the place beside it; a terminal gets a home list and a
 // navigation stack, the F10 menu bar and `:` for the palette.
 
-import { batch, effect, keymap, mount, platform, setColorScheme, Storage, Text, View } from "nsh";
+import { batch, effect, keymap, mount, platform, setColorScheme, Storage, Text, UrlScheme, View } from "nsh";
 import { createNavStack, NavPage, NavStack } from "nsh/base";
 import { currentWindow, isAvailable, Menu, Window, windowState } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
 import { areaLabel } from "./src/labels";
-import { running } from "./src/run";
+import { followNotifications, openLastRun, running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLink, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
@@ -272,6 +272,15 @@ async function rememberWindow() {
 
 function App() {
   init();
+  // links into the app (sonde show --app, a shared page) and a pressed notification
+  if (platform.idiom !== "terminal") {
+    try {
+      UrlScheme.on("open", ({ url }) => openLink(url));
+    } catch {
+      // no links here
+    }
+    followNotifications(() => openLastRun(go));
+  }
   effect(() => {
     const theme = settings()?.theme ?? "system";
     setColorScheme(theme === "light" || theme === "dark" ? theme : "system");

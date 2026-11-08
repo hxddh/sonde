@@ -168,6 +168,9 @@ export interface RequestRecord extends RecordSummary {
   requestBytes: number | null;
   responseBytes: number | null;
   errorBody: string | null;
+  /** A control request's document (DeleteObjects, a lifecycle rule), as sent. */
+  requestBody?: string | null;
+  requestBodyTruncated?: boolean;
   transportError: string | null;
   region: string | null;
   job: string | null;

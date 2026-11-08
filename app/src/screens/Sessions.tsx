@@ -498,7 +498,18 @@ export function Sessions() {
       </If>
       <If when={sessions().length > 0} else={<Text class="px-2 text-small text-muted-foreground">{t("timeline.empty")}</Text>}>
         <If when={shown().length > 0} else={<Text class="px-2 text-small text-muted-foreground">{t("sessions.noMatch")}</Text>}>
-          <SessionList sessions={shown()} selected={selected()} onSelect={(p) => selected.set(p)} onContextMenu={isAvailable && !terminal() ? rowMenu : undefined} />
+          <SessionList
+            sessions={shown()}
+            selected={selected()}
+            onSelect={(p) => selected.set(p)}
+            onContextMenu={isAvailable && !terminal() ? rowMenu : undefined}
+            actions={(s) => [
+              { name: "window", label: t("sessions.window"), run: () => openInWindow(s.path) },
+              { name: "share", label: t("sessions.share"), run: () => void shareSession(s.path) },
+              { name: "rename", label: t("sessions.rename"), run: () => rename(s) },
+              ...(s.live ? [] : [{ name: "delete", label: t("sessions.removeMenu"), run: () => void remove(s) }]),
+            ]}
+          />
         </If>
       </If>
     </View>

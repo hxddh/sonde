@@ -553,7 +553,14 @@ function dayLabel(iso: string): string {
 }
 
 /** The sessions, newest first, by day: the program (or the endpoint), its time and requests. */
-export function SessionList(props: { sessions: SessionInfo[]; selected: string | null; onSelect: (p: string) => void; onContextMenu?: (s: SessionInfo, at?: { x: number; y: number }) => void }) {
+export function SessionList(props: {
+  sessions: SessionInfo[];
+  selected: string | null;
+  onSelect: (p: string) => void;
+  onContextMenu?: (s: SessionInfo, at?: { x: number; y: number }) => void;
+  /** The context menu's commands, offered to screen readers on each row. */
+  actions?: (s: SessionInfo) => { name: string; label: string; run: () => void }[];
+}) {
   // one list, the days as headers that stay in view while their sessions scroll
   type Row = { day: string } | { s: SessionInfo; i: number };
   const rows = (): Row[] => {
@@ -571,7 +578,11 @@ export function SessionList(props: { sessions: SessionInfo[]; selected: string |
   const name = (s: SessionInfo) => s.title || programOf(s.command) || s.endpoint;
   const args = (s: SessionInfo) => (!s.title && s.command && programOf(s.command) !== s.command.trim() && !programOf(s.command)!.endsWith("…") ? s.command.trim().split(/\s+/).slice(1).join(" ") : "");
   const row = (x: () => { s: SessionInfo; i: number }) => (
-    <View onContextMenu={props.onContextMenu ? (e: ContextMenuEvent) => props.onContextMenu!(x().s, e.pagePosition) : undefined}>
+    <View
+      onContextMenu={props.onContextMenu ? (e: ContextMenuEvent) => props.onContextMenu!(x().s, e.pagePosition) : undefined}
+      accessibilityActions={props.actions?.(x().s).map(({ name, label }) => ({ name, label }))}
+      onAccessibilityAction={props.actions ? ({ actionName }) => props.actions!(x().s).find((a) => a.name === actionName)?.run() : undefined}
+    >
     <BaseButton
       testID={`session-${x().i}`}
       accessibilityLabel={x().s.title ?? x().s.command ?? x().s.name}

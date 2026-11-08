@@ -2,7 +2,7 @@
 // it. Its output is kept (the last 2 MB) so a terminal mounted later shows
 // it from the start; listeners get what arrives after.
 
-import { announce, batch, effect, Notifications, platform, signal, Storage } from "nsh";
+import { announce, batch, effect, lifecycle, Notifications, platform, signal, Storage } from "nsh";
 import { isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
@@ -106,8 +106,18 @@ async function tellTheUser(r: RunResult, cmd: string) {
         onAction: () => openLastRun(go),
         duration: 8000,
       });
+    // away from the window: a failed run asks for attention
+    if (lifecycle() !== "active" && (r.exit !== 0 || warnings > 0)) {
+      try {
+        Window.get("main")?.requestAttention({ critical: r.exit !== 0 });
+      } catch {
+        // no windows here
+      }
+    }
     if ((await Notifications.requestPermission()) !== "granted") return;
     await Notifications.show({ id: "sonde-run", title: t("run.notifyTitle", { command: programOf(cmd) ?? cmd }), body });
+    // what is left to look at, on the Dock's icon or the taskbar button, until the window is back
+    if (lifecycle() !== "active" && warnings > 0) await Notifications.setBadge(warnings);
   } catch {
     // no notifications here (a terminal, an unbundled app): the screen says it
   }
@@ -165,4 +175,16 @@ export function openLastRun(go: (s: "sessions") => void) {
   if (!r) return;
   openSession.set(r.path);
   go("sessions");
+}
+
+/** A pressed notification opens the run it told of; the badge goes as the window comes back. */
+export function followNotifications(open: () => void) {
+  try {
+    Notifications.on("press", ({ id }) => id === "sonde-run" && open());
+  } catch {
+    // no notifications here
+  }
+  effect(() => {
+    if (lifecycle() === "active") void Notifications.setBadge(0).catch(() => {});
+  });
 }
