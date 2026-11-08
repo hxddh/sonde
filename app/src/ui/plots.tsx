@@ -7,10 +7,11 @@
 
 import { signal, Text, token, View } from "nsh";
 import { Button as BaseButton } from "nsh/base";
-import { Bar, Dot, Grid, Line, Plot, PlotAxis } from "nsh/base/plot";
+import { Bar, Cell, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Sankey } from "nsh/base/plot";
 import { bytes, ms } from "../format";
 import { t } from "../i18n";
-import type { Profile, ProfileGroup, RecordSummary, RunChange } from "../types";
+import type { Observation, Profile, ProfileGroup, ProgramHistory, RecordSummary, RunChange } from "../types";
+import { observationSaving, observationText } from "../phrases";
 import { SimpleTable, terminal } from "./kit";
 
 /** Time from a session's start: 840 ms, 2.35 s, 41.2 s. */
@@ -78,9 +79,14 @@ export function shapeSentence(p: Profile): string {
  * a step line of the requests in flight. A press picks the slice under the
  * pointer (again: lets it go), for the operations running then.
  */
-export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string }) {
+export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean }) {
   const hovered = signal<number | null>(null);
   const rows = () => slices(props.profile);
+  const peakBin = () => {
+    const at = props.profile.peakAtMs;
+    const i = Math.floor(at / props.profile.binMs);
+    return props.profile.peakInFlight > 1 && i < rows().length ? i : null;
+  };
   const tone = (x: Tone) => (d: Slice, i: number) => (props.slice == null || props.slice === i ? x : "dim");
   const tip = () => {
     const i = hovered();
@@ -125,6 +131,14 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           <Bar value="client" stack="r" color={tone("client")} />
           <Bar value="server" stack="r" color={tone("server")} cornerRadii={{ topLeft: 1.5, topRight: 1.5 }} />
           <Line y="inFlight" scale="y2" curve="stepAfter" class="stroke-foreground/30 stroke-[1.25]" hoverDotClass="hidden" />
+          {/* the busiest moment, named where it happened */}
+          <If when={props.annotate && peakBin() !== null}>
+            <PlotLabel
+              scale="y2"
+              class="tabular-nums text-caption font-medium text-foreground"
+              texts={[{ text: t("profile.peakLabel", { n: props.profile.peakInFlight }), x: peakBin()!, y: props.profile.peakInFlight, align: "center", class: "-translate-y-full pb-0.5" }]}
+            />
+          </If>
         </Plot>
       </BaseButton>
     </If>
@@ -393,5 +407,230 @@ export function RunBars(props: { change: RunChange; max?: number }) {
         </Plot>
       </If>
     </If>
+  );
+}
+
+// --- what a session comes to, in a sentence ------------------------------------------
+
+/** A session in a sentence: where its time went and what the first finding would save. */
+export function sessionStory(p: Profile, findings: Observation[]): string {
+  const top = p.groups[0];
+  const parts = top ? [t("story.time", { busy: offset(p.busyMs), wall: offset(p.wallMs), what: groupName(top), pct: pct(top.share) })] : [];
+  const first = findings.find((o) => o.saving) ?? findings[0];
+  if (first) {
+    const saving = observationSaving(first);
+    parts.push(saving ? t("story.saving", { saving }) : t("story.finding", { finding: observationText(first) }));
+  }
+  return parts.join(" ");
+}
+
+// --- where requests went -----------------------------------------------------------
+
+const OUTCOME_FILL: Record<string, string> = { ok: "fill-bar", "not found": "fill-status-miss", "client error": "fill-status-client", "server error": "fill-status-server" };
+const OUTCOME_FROM: Record<string, string> = { ok: "to-bar/45", "not found": "to-status-miss/45", "client error": "to-status-client/45", "server error": "to-status-server/45" };
+
+/**
+ * Where a session's requests went: from each kind of operation to the
+ * prefixes it touched, and from each prefix to how it was answered. The
+ * widths are requests; the pointer over a node keeps its flows and fades the rest.
+ */
+export function Flows(props: { profile: Profile }) {
+  const nodes = () => {
+    const names: string[] = [];
+    for (const f of props.profile.flows) for (const n of [f.source, f.target]) if (!names.includes(n)) names.push(n);
+    return names.map((name) => ({ name, stage: OUTCOME_FILL[name] ? 2 : props.profile.groups.some((g) => g.operation === name) || name === "other operations" ? 0 : 1 }));
+  };
+  const links = () => {
+    const at = new Map(nodes().map((n, i) => [n.name, i]));
+    return props.profile.flows.map((f) => ({ source: at.get(f.source)!, target: at.get(f.target)!, value: f.value }));
+  };
+  const bucketOf = (p: string) => p.split("/")[0];
+  const oneBucket = () => new Set(props.profile.prefixes.filter((x) => x.prefix !== "other").map((x) => bucketOf(x.prefix))).size === 1;
+  const short = (n: string) => (oneBucket() && n.includes("/") && n.indexOf("/") < n.length - 1 ? n.slice(n.indexOf("/") + 1) : n);
+  const name = (n: { name: string }) => (n.name === "other operations" ? t("flows.otherOps") : n.name === "other prefixes" ? t("flows.otherPrefixes") : OUTCOME_FILL[n.name] ? t(`flows.${n.name.replace(" ", "")}` as never) : short(n.name));
+  const fill = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FILL[n.name] : n.stage === 0 ? "fill-chart-1" : "fill-chart-2");
+  const from = (n: { stage: number }) => (n.stage === 0 ? "from-chart-1/35" : "from-chart-2/35");
+  const to = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FROM[n.name] : "to-chart-2/35");
+  const hovered = signal<number | null>(null);
+  const label = () => {
+    const ok = props.profile.flows.filter((f) => f.target === "ok").reduce((s, f) => s + f.value, 0);
+    const all = props.profile.flows.filter((f) => OUTCOME_FILL[f.target]).reduce((s, f) => s + f.value, 0);
+    const top = props.profile.prefixes[0];
+    return t("flows.text", { n: all, ok: pct(ok / Math.max(all, 1)), prefix: top?.prefix ?? "", share: pct((top?.requests ?? 0) / Math.max(all, 1)) });
+  };
+  return (
+    <If when={!terminal() && props.profile.flows.length > 0} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{label()}</Text>}>
+      <Plot
+        testID="flows"
+        data={nodes()}
+        accessibilityLabel={label()}
+        accessibilityValue={{ text: hovered() === null ? "" : name(nodes()[hovered()!]) }}
+        onHoverChange={({ index }) => hovered.set(index)}
+        appearGeneration={1}
+        motion={{ ...MOTION, appear: { duration: 700, easing: "easeOut" } }}
+        class="mx-36 mt-4 h-96"
+      >
+        <Sankey
+          links={links()}
+          nodeWidth={7}
+          nodePadding={26}
+          nodeCornerRadius={2}
+          valueScale="sqrt"
+          minLinkWidth={1.5}
+          nodeClass={(n) => fill(n)}
+          linkBackgroundClass={(l) => `bg-linear-to-r ${from(nodes()[l.source])} ${to(nodes()[l.target])}`}
+          hoverDim={0.75}
+          nodeLabel={(n) => name(n)}
+          valueLabel={(_, v) => String(v)}
+          nodeLabelClass="max-w-36 truncate px-2 py-0.5 text-small text-foreground"
+          valueLabelClass="tabular-nums text-caption text-muted-foreground"
+        />
+      </Plot>
+    </If>
+  );
+}
+
+// --- when, and where ---------------------------------------------------------------
+
+/** Requests by prefix and slice of the session: when each part of the key space was busy. */
+export function Heat(props: { profile: Profile }) {
+  const p = () => props.profile;
+  const bins = () => p().rate.map((_, i) => String(i));
+  const names = () => p().prefixes.map((x) => (x.prefix === "other" ? t("flows.otherPrefixes") : x.prefix));
+  const rows = () => p().heat.map((c) => ({ x: String(c.bin), y: names()[c.prefix] ?? "", n: c.n, bin: c.bin }));
+  const hovered = signal<number | null>(null);
+  const max = () => rows().reduce((m, r) => Math.max(m, r.n), 1);
+  const tip = () => {
+    const r = hovered() === null ? null : rows()[hovered()!];
+    return r ? { title: r.y, lines: [`+${offset(r.bin * p().binMs)} – +${offset((r.bin + 1) * p().binMs)}`, t("sessions.requestsN", { n: r.n })] } : null;
+  };
+  const last = () => Math.max(0, bins().length - 1);
+  const label = () => {
+    const top = p().prefixes[0];
+    return top ? t("heat.text", { prefix: top.prefix, n: top.peakPerSecond }) : "";
+  };
+  return (
+    <If when={!terminal() && rows().length > 0 && bins().length > 1}>
+      <Plot
+        testID="heat"
+        data={rows()}
+        xScale={{ type: "band", domain: bins(), paddingInner: 0.12 }}
+        yScale={{ type: "band", domain: names(), paddingInner: 0.18 }}
+        colorScale={{ type: "sequential", domain: [0, max()], range: [token("muted" as never) as unknown as string, token("chart-1" as never) as unknown as string] }}
+        accessibilityLabel={label()}
+        accessibilityValue={{ text: tip() ? `${tip()!.title}, ${tip()!.lines.join(", ")}` : "" }}
+        appearGeneration={1}
+        motion={MOTION}
+        tooltipPlacement="pointer"
+        tooltipOffset={10}
+        tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
+        onHoverChange={({ index }) => hovered.set(index)}
+        class="mb-6 ml-52"
+        style={{ height: names().length * 22 + 8 }}
+      >
+        <Cell x="x" y="y" value="n" cornerRadii={2} inactiveOpacity={0.45} stagger={0.2} hoverCellClass="rounded-sm outline-2 outline-offset-1 outline-foreground" />
+        <PlotAxis placement="left" labelClass="w-48 pr-3 text-right text-small text-foreground line-clamp-1" />
+        <PlotAxis tickValues={[0, Math.round(last() / 2), last()]} format={(i) => `+${offset(i * p().binMs)}`} labelClass="pt-2 tabular-nums text-caption text-muted-foreground" />
+      </Plot>
+    </If>
+  );
+}
+
+// --- how long, and how spread ----------------------------------------------------------
+
+/** Each kind's latency: its middle half (median to p95) as a line, the median a dot, the slowest a ring. */
+export function Spread(props: { profile: Profile; max?: number }) {
+  const rows = () => props.profile.groups.slice(0, props.max ?? 8).map((g) => ({ ...g, name: groupName(g) }));
+  const top = () => rows().reduce((m, g) => Math.max(m, g.maxMs), 1);
+  const ticks = () => {
+    const step = niceStep(top() / 4);
+    return [0, step, step * 2, step * 3, step * 4].filter((v) => v <= top() * 1.05);
+  };
+  const hovered = signal<number | null>(null);
+  const tip = () => {
+    const g = hovered() === null ? null : rows()[hovered()!];
+    return g ? { title: g.name, lines: [t("profile.latencyLine", { p50: ms(g.p50Ms), p95: ms(g.p95Ms), max: ms(g.maxMs) }), t("sessions.requestsN", { n: g.requests })] } : null;
+  };
+  const slowest = () => rows().reduce<(typeof rows extends () => (infer R)[] ? R : never) | null>((m, g) => (!m || g.maxMs > m.maxMs ? g : m), null);
+  return (
+    <If when={!terminal() && rows().length > 0} else={<SimpleTable columns={[t("profile.kind"), "p50", "p95", "max"]} rows={rows().map((g) => [g.name, ms(g.p50Ms), ms(g.p95Ms), ms(g.maxMs)])} />}>
+      <Plot
+        testID="spread"
+        data={rows()}
+        yScale={{ type: "band", paddingInner: 0.4, paddingOuter: 0.2 }}
+        xScale={{ type: "linear", domain: [0, top() * 1.05] }}
+        accessibilityLabel={slowest() ? t("profile.latencyText", { what: slowest()!.name, ms: ms(slowest()!.maxMs) }) : ""}
+        accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
+        appearGeneration={1}
+        motion={MOTION}
+        crossLineClass="w-full h-full rounded-sm bg-foreground/5"
+        tooltipPlacement="pointer"
+        tooltipOffset={10}
+        tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
+        onHoverChange={({ index }) => hovered.set(index)}
+        class="mb-6 ml-52"
+        style={{ height: rows().length * 30 + 8 }}
+      >
+        <Grid x={ticks()} class="stroke-border" />
+        <Rule base="p50Ms" value="maxMs" class="stroke-muted-foreground/35 stroke-1" />
+        <Rule base="p50Ms" value="p95Ms" class="stroke-chart-1 stroke-[3]" inactiveOpacity={0.4} />
+        <Dot value="maxMs" r={3} class="fill-card stroke-muted-foreground stroke-[1.5]" />
+        <Dot value="p50Ms" r={4} class="fill-chart-1 stroke-card stroke-2" inactiveOpacity={0.4} />
+        <PlotAxis placement="left" format={(i) => rows()[i]?.name ?? ""} labelClass="pr-3 text-small text-foreground" />
+        <PlotAxis tickValues={ticks()} format={(v) => ms(v)} labelClass="pt-2 tabular-nums text-caption text-muted-foreground" />
+      </Plot>
+    </If>
+  );
+}
+
+// --- a program over its runs ------------------------------------------------------------
+
+type Measure = "requests" | "busyMs" | "cost" | "warnings";
+
+/** One figure of a program over its runs: a line through them, the baseline dashed, the latest run labelled. */
+export function RunTrend(props: { history: ProgramHistory; measure: Measure; title: string; format: (v: number) => string; onOpen?: (path: string) => void }) {
+  const runs = () => props.history.runs;
+  const values = () => runs().map((r) => r[props.measure] as number);
+  const base = () => {
+    const b = runs().find((r) => r.path === props.history.baseline);
+    return b ? (b[props.measure] as number) : null;
+  };
+  const hi = () => Math.max(...values(), base() ?? 0, 1e-9) * 1.25;
+  const hovered = signal<number | null>(null);
+  const shown = () => runs()[hovered() ?? runs().length - 1];
+  const last = () => runs().length - 1;
+  return (
+    <View testID={`trend-${props.measure}`} class="min-w-[220px] flex-1 gap-1.5 rounded-(--radius-card) border border-border bg-card px-3.5 py-3">
+      <View class="flex-row items-baseline gap-2">
+        <Text class="flex-1 text-caption font-medium text-muted-foreground">{props.title}</Text>
+        <Text class="tabular-nums text-heading font-semibold text-foreground">{props.format(shown()[props.measure] as number)}</Text>
+      </View>
+      <BaseButton
+        accessibilityLabel={`${props.title}: ${values().map(props.format).join(", ")}`}
+        disabled={!props.onOpen}
+        onPress={() => {
+          const r = hovered() === null ? null : runs()[hovered()!];
+          if (r) props.onOpen?.(r.path);
+        }}
+      >
+        <Plot
+          data={runs().map((r, i) => ({ v: r[props.measure] as number, i }))}
+          y="v"
+          yScale={{ type: "linear", domain: [0, hi()] }}
+          accessibilityLabel={`${props.title}: ${values().map(props.format).join(", ")}`}
+          appearGeneration={props.history.program}
+          motion={MOTION}
+          crossLineClass="w-px h-full bg-muted-foreground/40"
+          onHoverChange={({ index }) => hovered.set(index)}
+          class="mr-1 h-16"
+        >
+          <If when={base() !== null}>
+            <Grid y={[base()!]} class="stroke-muted-foreground/60" style={{ strokeDasharray: "3 3" }} />
+          </If>
+          <Line curve="linear" class="stroke-chart-1 stroke-2" dot dotClass="size-1.5 rounded-full bg-chart-1" hoverDotClass="size-2.5 rounded-full border-2 border-card bg-chart-1" />
+          <PlotLabel class="tabular-nums text-caption text-muted-foreground" texts={last() > 0 ? [{ text: props.format(values()[last()]), x: last(), y: values()[last()], align: "right", class: "-translate-y-full pb-1" }] : []} />
+        </Plot>
+      </BaseButton>
+    </View>
   );
 }

@@ -101,6 +101,11 @@ for (const v of variants) {
     await app.press("id:session-pane-mode-time");
     await app.waitFor("id:time-pane");
     await shot("03g-time");
+    // further down the Time pane: where requests went, when and where, how long
+    await app.scroll("id:time-pane", 380);
+    await shot("03i-flows");
+    await app.scroll("id:time-pane", 420);
+    await shot("03j-spread");
     // the same program run twice: before and after
     await app.press("id:compare-open");
     const run = app.menu()?.map((m) => m.label).find((l) => l.startsWith("curl"));

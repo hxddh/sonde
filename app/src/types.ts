@@ -516,6 +516,39 @@ export interface Profile {
   samples: { id: number; group: number; ms: number; tMs: number }[];
   cost: { writes: number; reads: number; free: number; amount: number; currency: string };
   prices: { per1000Writes: number; per1000Reads: number; currency: string };
+  prefixes: { prefix: string; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number }[];
+  heat: { prefix: number; bin: number; n: number }[];
+  flows: { source: string; target: string; value: number }[];
+}
+
+/** A run of a program, by the figures that move when the program changes. */
+export interface RunPoint {
+  path: string;
+  created: string;
+  requests: number;
+  busyMs: number;
+  wallMs: number;
+  cost: number;
+  currency: string;
+  errors: number;
+  warnings: number;
+  findings: number;
+}
+
+export interface BudgetVerdict {
+  what: "requests" | "waiting" | "cost" | "errors" | "warnings";
+  value: number;
+  limit: number;
+  against: "budget" | "baseline";
+  ok: boolean;
+}
+
+/** A program over its runs, its baseline and this run checked against it. */
+export interface ProgramHistory {
+  program: string;
+  runs: RunPoint[];
+  baseline: string | null;
+  check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[] } | null;
 }
 
 /** Two runs of a program compared, before and after. */

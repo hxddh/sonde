@@ -5,14 +5,14 @@
 // (sonde share) both draw with these.
 
 import { type ContextMenuEvent, type JSX, List, platform, Scroll, signal, Text, View } from "nsh";
-import { Button as BaseButton, DataTable, type DataTableRef, type DataTableSort } from "nsh/base";
+import { Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, HoverCard } from "nsh/base";
 import { bytes, date, day, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { SessionShape, Waterfall } from "./plots";
-import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
+import { groupName, offset, sessionStory, SessionShape, Waterfall } from "./plots";
+import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Dot, Empty, rowHeight, terminal, TYPE } from "./kit";
+import { Dot, Empty, POPUP, rowHeight, terminal, TYPE } from "./kit";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
 
@@ -98,11 +98,53 @@ export function span(v: SessionView): [number, number] {
 }
 
 /** A figure of the session: a number, and what it counts. */
-function Figure(props: { value: string; label: string; tone?: Tone }) {
-  return (
-    <View class="gap-0.5 pr-5">
+function Figure(props: { value: string; label: string; tone?: Tone; preview?: JSX.Element; testID?: string }) {
+  const figure = (
+    <View testID={props.testID} class="gap-0.5 pr-5">
       <Text class={`tabular-nums text-heading font-semibold ${props.tone ? TONE_TEXT[props.tone] : "text-foreground"}`}>{props.value}</Text>
       <Text class="text-caption text-muted-foreground">{props.label}</Text>
+    </View>
+  );
+  if (!props.preview || terminal()) return figure;
+  // resting on a figure shows what it is made of
+  return (
+    <HoverCard
+      openDelay={450}
+      closeDelay={120}
+      placement="bottom"
+      align="start"
+      offset={6}
+      trigger={figure}
+      popupClass={`w-[300px] gap-2 ${POPUP} p-3`}
+      popupStartingClass="opacity-0 -translate-y-1"
+      popupEndingClass="opacity-0"
+    >
+      {props.preview}
+    </HoverCard>
+  );
+}
+
+/** What a session's requests were, by kind: a figure's preview. */
+function KindsPreview(props: { profile: Profile; by: "requests" | "time" }) {
+  const rows = () => [...props.profile.groups].sort((a, b) => (props.by === "requests" ? b.requests - a.requests : b.busyMs - a.busyMs)).slice(0, 5);
+  const total = () => (props.by === "requests" ? props.profile.groups.reduce((s, g) => s + g.requests, 0) : props.profile.busyMs) || 1;
+  const value = (g: ProfileGroup) => (props.by === "requests" ? g.requests : g.busyMs);
+  return (
+    <View testID={`preview-${props.by}`} class="gap-1.5">
+      <Text class="text-caption font-medium text-muted-foreground">{props.by === "requests" ? t("figure.requests") : t("profile.spentTitle")}</Text>
+      <Each of={rows()}>
+        {(g) => (
+          <View class="gap-0.5">
+            <View class="flex-row items-baseline gap-2">
+              <Text class="min-w-0 flex-1 text-small text-popover-foreground line-clamp-1">{groupName(g())}</Text>
+              <Text class="tabular-nums text-caption text-muted-foreground">{props.by === "requests" ? String(g().requests) : offset(g().busyMs)}</Text>
+            </View>
+            <View class="h-1 overflow-hidden rounded-full bg-muted">
+              <View class="h-full rounded-full bg-chart-1" style={{ width: `${Math.max(2, Math.round((value(g()) * 100) / total()))}%` }} />
+            </View>
+          </View>
+        )}
+      </Each>
     </View>
   );
 }
@@ -136,14 +178,18 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
             {command() ? `$ ${command()}` : props.view.header.endpoint}
           </Text>
           <Text class="text-small text-muted-foreground line-clamp-1">{`${props.view.header.endpoint} · ${props.view.header.url} · ${date(props.view.header.created)}`}</Text>
+          {/* the session in a sentence: where its time went, and the first thing to do */}
+          <If when={props.view.profile?.groups.length && props.shape !== false}>
+            <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(props.view.profile, props.view.observations)}</Text>
+          </If>
         </View>
         {props.actions}
       </View>
       <View class={props.compact ? "gap-2" : "flex-row items-center gap-5"}>
       <View testID="session-summary" accessibilityLabel={line()} class="flex-row overflow-hidden">
-          <Figure value={String(s().requests)} label={t("figure.requests")} />
+          <Figure testID="figure-requests" value={String(s().requests)} label={t("figure.requests")} preview={props.view.profile?.groups.length ? <KindsPreview profile={props.view.profile} by="requests" /> : undefined} />
           <Figure value={String(props.view.episodes.length)} label={t("figure.operations")} />
-          <Figure value={`${seconds(s().seconds)} s`} label={t("figure.took")} />
+          <Figure value={`${seconds(s().seconds)} s`} label={t("figure.took")} preview={props.view.profile?.groups.length ? <KindsPreview profile={props.view.profile} by="time" /> : undefined} />
           <If when={s().errors > 0}>
             <Figure value={String(s().errors)} label={t("figure.errors")} tone="server" />
           </If>
@@ -157,7 +203,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
         </View>
         {/* the session's shape: requests by outcome over time, and in flight */}
         <If when={props.view.profile && props.shape !== false}>
-          <SessionShape profile={props.view.profile} slice={props.slice} onSlice={props.onSlice} class={props.compact ? "h-10 w-full" : "h-12 min-w-[200px] flex-1"} />
+          <SessionShape profile={props.view.profile} slice={props.slice} onSlice={props.onSlice} annotate={!props.compact} class={props.compact ? "h-10 w-full" : "mt-3 h-12 min-w-[200px] flex-1"} />
         </If>
       </View>
     </View>

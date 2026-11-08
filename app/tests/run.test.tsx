@@ -161,3 +161,28 @@ test("a session's time: where it went, and two runs before and after", async () 
   expect(app.shows("id:run-change-requests")).toBe(true);
   expect(app.shows("text:/^172 → /")).toBe(true);
 });
+
+test("a program over its runs: history, a baseline, and the flows of its requests", async () => {
+  const app = await demo();
+  const cmd = "curl -s $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; curl -s $AWS_ENDPOINT_URL/demo/missing.txt -o /dev/null";
+  for (let i = 0; i < 2; i++) {
+    await app.clear("id:run-command");
+    await app.type("id:run-command", cmd);
+    await app.press("id:run-start");
+    await app.waitFor("id:run-ended", { timeout: 20000 });
+  }
+  await app.press("id:run-open-session");
+  await app.waitFor("id:session-pane");
+  await app.press("id:session-pane-mode-runs");
+  await app.waitFor("id:history-pane", { timeout: 10000 });
+  expect(app.shows("text:/, over [2-9] runs$/")).toBe(true);
+  expect(app.shows("id:trend-requests")).toBe(true);
+  await app.press("id:history-baseline");
+  await app.waitFor("label:Not the baseline");
+  // where its requests went
+  await app.press("id:session-pane-mode-time");
+  await app.waitFor("id:time-pane");
+  expect(app.shows("id:flows")).toBe(true);
+  expect(app.shows("label:/^2 requests: 50% answered/")).toBe(true);
+  expect(app.shows("id:spread")).toBe(true);
+});

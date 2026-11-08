@@ -24,12 +24,13 @@ import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
 import { programOf } from "../ui/sessionview";
+import { HistoryPane } from "../ui/history";
 import { TimePane } from "../ui/profile";
 import { offset } from "../ui/plots";
 import { Timeline } from "../ui/timeline";
 import { RecordDetail } from "./Requests";
 
-type Pane = "operations" | "aligned" | "timeline" | "time";
+type Pane = "operations" | "aligned" | "timeline" | "time" | "runs";
 
 const program = programOf;
 
@@ -222,16 +223,20 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   );
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
 
+  const v0 = () => view();
   const panes = () => [
     { value: "operations", title: t("sessions.operations"), icon: "list-filter" as const },
     ...(lines().length ? [{ value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const }] : []),
     ...(terminal() ? [] : [{ value: "timeline", title: t("sessions.timeline"), icon: "chart-gantt" as const }]),
     { value: "time", title: t("profile.pane"), icon: "chart-pie" as const },
+    // a run of a program: its runs
+    ...(v0()?.header.command && !v0()!.header.command!.startsWith("replay of ") ? [{ value: "runs", title: t("history.pane"), icon: "activity" as const }] : []),
   ];
 
   const body = (v: SessionView) => {
     if (pane() === "timeline") return <Timeline view={v} rows={rows()} selected={op()} onSelect={chooseOperation} window={window()} />;
     if (pane() === "time") return <TimePane view={v} onRequest={(id) => rec.set(id)} />;
+    if (pane() === "runs") return <HistoryPane path={props.path} onOpen={(p) => openSession.set(p)} />;
     if (pane() === "aligned" && lines().length) {
       if (terminal()) return output();
       return (

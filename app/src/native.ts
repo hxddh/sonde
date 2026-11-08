@@ -95,6 +95,8 @@ export const api = {
     replayPlan: (path: string, endpoint: string) => Sessions.replayPlan(path, endpoint),
     replay: (path: string, endpoint: string, prefix: string) => Sessions.replay(path, endpoint, prefix),
     compare: async (a: string, b: string) => await Sessions.compare(a, b),
+    history: async (path: string) => (await Sessions.history(path)) as T.ProgramHistory | null,
+    setBaseline: (path: string, on: boolean) => Sessions.setBaseline(path, on) as boolean,
     compareRuns: async (before: string, after: string) => (await Sessions.compareRuns(before, after)) as T.RunChange,
   },
 };
