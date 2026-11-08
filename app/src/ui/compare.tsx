@@ -4,6 +4,7 @@
 import { resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { Dialog, DiffView } from "nsh/base";
 import { t } from "../i18n";
+import { say } from "../phrases";
 import { api } from "../native";
 import { endpoint, endpoints, go, report } from "../store";
 import type { RunChange } from "../types";
@@ -57,7 +58,7 @@ export function RunChangeView(props: { change: RunChange }) {
                 <Icon name="circle-check" size={14} tint="status-ok" />
                 <Text class="flex-1 text-body text-foreground">
                   <Text class="font-medium text-status-ok">{`${t("profile.resolved")} · `}</Text>
-                  {x()}
+                  {say(x().phrases, x().text)}
                 </Text>
               </View>
             )}
@@ -68,7 +69,7 @@ export function RunChangeView(props: { change: RunChange }) {
                 <Icon name="triangle-alert" size={14} tint="warn" />
                 <Text class="flex-1 text-body text-foreground">
                   <Text class="font-medium text-warn">{`${t("profile.appeared")} · `}</Text>
-                  {x()}
+                  {say(x().phrases, x().text)}
                 </Text>
               </View>
             )}
@@ -80,14 +81,29 @@ export function RunChangeView(props: { change: RunChange }) {
 }
 
 export function CompareView(props: { a: string; b: string; onClose: () => void }) {
-  const data = () => {
+  // which one is a replay: its answers are compared with its original's, whichever was opened first
+  const replayOf = () => {
     try {
-      return api.sessions.compare(props.a, props.b) as { comparison: Comparison; a: string; b: string };
-    } catch (e) {
-      report(e);
+      const list = api.sessions.list();
+      const isReplay = (p: string) => list.some((x) => x.path === p && x.command?.startsWith("replay of "));
+      return isReplay(props.a) ? "a" : isReplay(props.b) ? "b" : null;
+    } catch {
       return null;
     }
   };
+  const answers = resource(
+    () => `${props.a}\n${props.b}`,
+    async () => {
+      // the original first: a replay's records name the original's
+      const [o, r] = replayOf() === "a" ? [props.b, props.a] : [props.a, props.b];
+      try {
+        return (await api.sessions.compare(o, r)) as { comparison: Comparison; a: string; b: string };
+      } catch (e) {
+        report(e);
+        return null;
+      }
+    },
+  );
   const runs = resource(
     () => `${props.a}\n${props.b}`,
     async () => {
@@ -99,19 +115,10 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
       }
     },
   );
-  // a replay's answers match the original's; two runs of a program compare as before and after
-  const replay = () => {
-    try {
-      return api.sessions.list().some((x) => (x.path === props.a || x.path === props.b) && x.command?.startsWith("replay of "));
-    } catch {
-      return false;
-    }
-  };
-  const mode = signal<"runs" | "answers">(untracked(() => (replay() ? "answers" : "runs")));
+  // a replay opens on its answers; two runs of a program on before and after
+  const mode = signal<"runs" | "answers">(untracked(() => (replayOf() ? "answers" : "runs")));
   const name = (p: string) => p.split("/").pop() ?? p;
   return (
-    <If when={data()}>
-      {(d) => (
         <View class="flex-1 gap-3" testID="compare">
           <View class="flex-row items-center gap-2">
             <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={props.onClose} testID="compare-back" />
@@ -134,6 +141,8 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
               </If>
             }
           >
+            <If when={answers()} else={<Text class="text-small text-muted-foreground">{t("common.loading")}</Text>}>
+            {(d) => (
             <View class="min-h-0 flex-1 gap-2">
               <Text class="text-body text-foreground" testID="compare-summary">
                 {t("compare.summary", { n: d().comparison.compared, same: d().comparison.same })}
@@ -150,10 +159,10 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
               </Each>
               <DiffView testID="compare-diff" oldValue={d().a} newValue={d().b} layout="split" inline="word" contextLines={2} lineNumbers class="flex-1 rounded-(--radius) border border-border" />
             </View>
+            )}
+            </If>
           </If>
         </View>
-      )}
-    </If>
   );
 }
 

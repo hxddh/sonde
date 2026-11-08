@@ -93,7 +93,7 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   expect(app.shows("text:/2 requests \\(1 writes, 0 deletes\\) under replay-/")).toBe(true);
   await app.press("id:replay-run");
   await app.waitFor("id:compare", { timeout: 20000 });
-  expect(app.shows("text:2 requests compared: 2 the same")).toBe(true);
+  await app.waitFor("text:2 requests compared: 2 the same");
   expect(app.shows("id:compare-diff")).toBe(true);
 });
 

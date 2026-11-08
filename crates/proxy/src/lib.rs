@@ -357,6 +357,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         response_bytes: None,
         error_body: None,
         request_body: None,
+        request_body_truncated: false,
         transport_error: None,
         region: Some(cfg.region.clone()),
         job: shared.cfg.tag.clone(),
@@ -495,7 +496,11 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.request_bytes = sent_len;
 
     out.push(("host".into(), upstream_host));
-    match client.credentials().await {
+    // signing's credentials may be fetched now (STS, IMDS): not the store's time
+    let fetching = Instant::now();
+    let credentials = client.credentials().await;
+    let fetched = fetching.elapsed();
+    match credentials {
         Ok(Some(creds)) => {
             sigv4::sign_headers(
                 &mut out,
@@ -530,7 +535,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         rb = rb.header("content-length", n.to_string());
     }
     let sent = rb.body(upstream_body).send().await;
-    record.latency_ms = received.elapsed().as_secs_f64() * 1000.0;
+    record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
     let resp = match sent {
         Ok(r) => r,
         Err(e) => {

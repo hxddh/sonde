@@ -153,3 +153,80 @@ fn warnings_come_first_then_the_findings_that_bear_on_more_requests() {
         assert!(w[0].level == "warn" || w[1].level != "warn");
     }
 }
+
+#[test]
+fn a_finding_whose_details_change_is_the_same_finding() {
+    use sonde_proxy::profile::{RequestPrices, compare_runs, profile};
+    let run = |slow: &str| {
+        let mut recs: Vec<Record> = (0..20u64)
+            .map(|i| rec(i + 1, i as i64 * 100, "GetObject", Some("k"), 200, 8.0))
+            .collect();
+        recs.push(rec(21, 5_000, "GetObject", Some(slow), 200, 3_000.0));
+        recs
+    };
+    let (a, b) = (run("x"), run("y"));
+    let prices = RequestPrices::default();
+    let (pa, pb) = (profile(&a, &prices), profile(&b, &prices));
+    let (oa, ob) = (findings(&a), findings(&b));
+    let c = compare_runs((&a, &pa, &oa), (&b, &pb, &ob));
+    assert!(c.resolved.is_empty() && c.appeared.is_empty(), "{c:?}");
+}
+
+#[test]
+fn concurrent_uploads_to_one_key_each_get_their_own_create() {
+    let q = |mut r: Record, kv: &[(&str, &str)]| {
+        r.query = kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        r
+    };
+    let mut recs = Vec::new();
+    // create A, create B, then each upload's one part and its completion
+    recs.push(q(
+        rec(1, 0, "CreateMultipartUpload", Some("k"), 200, 5.0),
+        &[("uploads", "")],
+    ));
+    recs.push(q(
+        rec(2, 1, "CreateMultipartUpload", Some("k"), 200, 5.0),
+        &[("uploads", "")],
+    ));
+    for (i, u) in ["a", "b", "c"].iter().enumerate() {
+        let base = 10 + i as u64 * 10;
+        if i == 2 {
+            recs.push(q(
+                rec(
+                    base,
+                    base as i64 - 1,
+                    "CreateMultipartUpload",
+                    Some("k"),
+                    200,
+                    5.0,
+                ),
+                &[("uploads", "")],
+            ));
+        }
+        recs.push(q(
+            rec(base + 1, base as i64, "UploadPart", Some("k"), 200, 5.0),
+            &[("partNumber", "1"), ("uploadId", u)],
+        ));
+        recs.push(q(
+            rec(
+                base + 2,
+                base as i64 + 1,
+                "CompleteMultipartUpload",
+                Some("k"),
+                200,
+                5.0,
+            ),
+            &[("uploadId", u)],
+        ));
+    }
+    let obs = findings(&recs);
+    let small = obs
+        .iter()
+        .find(|o| key(o) == "obs.small")
+        .expect("small uploads");
+    // three uploads of three requests each: every create counted once
+    assert_eq!(small.impact, 9, "{small:#?}");
+}

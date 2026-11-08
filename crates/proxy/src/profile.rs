@@ -153,7 +153,7 @@ fn start_us(r: &Record) -> i64 {
 }
 
 fn end_us(r: &Record) -> i64 {
-    start_us(r) + (r.latency_ms.max(0.0) * 1000.0) as i64
+    start_us(r) + r.latency_us()
 }
 
 /// The length of the union of intervals, in microseconds.
@@ -425,21 +425,42 @@ pub struct RunChange {
     pub peak_in_flight: (usize, usize),
     /// Kinds of request, the largest change first.
     pub groups: Vec<GroupChange>,
-    /// Findings of the first run the second no longer has, by text.
-    pub resolved: Vec<String>,
+    /// Findings of the first run the second no longer has.
+    pub resolved: Vec<FindingText>,
     /// Findings only the second run has.
-    pub appeared: Vec<String>,
+    pub appeared: Vec<FindingText>,
+}
+
+/// A finding as it reads: in English, and as phrases for other languages.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FindingText {
+    pub text: String,
+    pub phrases: Vec<crate::phrase::Phrase>,
 }
 
 /// A finding's identity across runs: what it is and what it is about, not
 /// its counts.
 fn identity(o: &Observation) -> String {
     let p = &o.phrases[0];
-    let about: Vec<&str> = ["key", "prefix", "format", "op"]
-        .iter()
-        .filter_map(|k| p.args.get(*k).map(String::as_str))
-        .collect();
-    format!("{}|{}", p.key, about.join("|"))
+    // one finding whatever its form: one or many, under a threshold or over
+    let key = p.key.trim_end_matches(".rate").trim_end_matches(".one");
+    let mut about: Vec<String> = match key {
+        // which request was the slowest is a detail, not another finding
+        "obs.slow" => Vec::new(),
+        _ => ["key", "prefix", "format"]
+            .iter()
+            .filter_map(|k| p.args.get(*k).cloned())
+            .collect(),
+    };
+    // a format's shared habit is the note it shares
+    if key == "obs.shared"
+        && let Some(note) = o.phrases.get(1)
+    {
+        about.push(note.key.to_string());
+        about.extend(note.args.values().cloned());
+    }
+    format!("{key}|{}", about.join("|"))
 }
 
 pub fn compare_runs(
@@ -480,10 +501,18 @@ pub fn compare_runs(
                 .cmp(&(x.requests.1 as i64 - x.requests.0 as i64).abs()),
         )
     });
-    let ids = |o: &[Observation]| -> BTreeMap<String, String> {
+    let ids = |o: &[Observation]| -> BTreeMap<String, FindingText> {
         o.iter()
             .filter(|o| !o.phrases.is_empty())
-            .map(|o| (identity(o), o.text.clone()))
+            .map(|o| {
+                (
+                    identity(o),
+                    FindingText {
+                        text: o.text.clone(),
+                        phrases: o.phrases.clone(),
+                    },
+                )
+            })
             .collect()
     };
     let (ia, ib) = (ids(a.2), ids(b.2));
@@ -633,8 +662,8 @@ mod tests {
         assert_eq!(c.groups[0].operation, "GetObject");
         assert_eq!(c.groups[0].requests, (12, 1));
         assert_eq!(
-            c.resolved,
-            ["b/hot was read 12 times (100% of all requests)"]
+            c.resolved[0].text,
+            "b/hot was read 12 times (100% of all requests)"
         );
         assert!(c.appeared.is_empty());
     }

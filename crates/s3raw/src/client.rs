@@ -753,6 +753,7 @@ impl S3Client {
                 }
                 _ => None,
             },
+            request_body_truncated: false,
             transport_error: None,
             region: Some(self.cfg.region.clone()),
             job: self.job.clone(),

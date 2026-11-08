@@ -263,6 +263,8 @@ export function OperationsTable(props: {
   ref?: (r: DataTableRef) => void;
   highlight?: number[];
   compact?: boolean;
+  /** Gets the order the table shows the operations in (sorted by a column, or as given). */
+  order?: (shown: () => number[]) => void;
 }) {
   const notes = (e: Episode) => episodeNotes(e, props.view.sharedNotes).join(" · ");
   // the slowest or busiest first, at a press on their column's title
@@ -278,6 +280,7 @@ export function OperationsTable(props: {
     const dir = s.direction === "descending" ? -1 : 1;
     return [...list].sort((a, b) => (by(a) - by(b)) * dir || a - b);
   };
+  props.order?.(() => shown());
   const formats = () => props.view.episodes.some((e) => family(e).label);
   const range = () => span(props.view);
   const ep = (row: number) => props.view.episodes[shown()[row]];

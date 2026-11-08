@@ -189,7 +189,14 @@ export function pathOf(uri: string): string {
   try {
     p = decodeURIComponent(rest);
   } catch {
-    p = rest; // a stray % is part of the name
+    // a stray % is part of the name; the other escapes still decode
+    p = rest.replace(/(%[0-9A-Fa-f]{2})+/g, (m) => {
+      try {
+        return decodeURIComponent(m);
+      } catch {
+        return m;
+      }
+    });
   }
   if (unc) return `\\\\${p.replace(/^\/\//, "").replace(/\//g, "\\")}`;
   // file:///C:/x on Windows

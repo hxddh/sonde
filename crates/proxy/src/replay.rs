@@ -131,9 +131,11 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     {
         return Some("copies a version of the original endpoint".into());
     }
-    if r.request_body
-        .as_ref()
-        .is_some_and(|b| b.len() + 4 >= reqlog::MAX_REQUEST_BODY)
+    // sessions before 7.0 have no flag: a cut document no longer ends its root element
+    if r.request_body_truncated
+        || r.request_body.as_ref().is_some_and(|b| {
+            b.len() + 1024 >= reqlog::MAX_REQUEST_BODY && !b.trim_end().ends_with('>')
+        })
     {
         return Some("its body was too large to keep when recorded".into());
     }

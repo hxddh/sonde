@@ -18,7 +18,11 @@ export const offset = (v: number) => (v < 1000 ? `${Math.round(v)} ms` : `${(v /
 
 /** Small amounts to two significant digits: a session's requests often cost thousandths of a cent. */
 export function cost(v: number, currency: string): string {
-  if (v > 0 && v < 0.01) return `${v.toFixed(Math.floor(-Math.log10(v)) + 1)} ${currency}`;
+  if (!Number.isFinite(v) || v < 0) return `— ${currency}`;
+  if (v > 0 && v < 0.01) {
+    const s = Number(v.toPrecision(2));
+    return `${s < 1e-6 ? "<0.000001" : s.toFixed(Math.max(2, Math.ceil(-Math.log10(s)) + 1))} ${currency}`;
+  }
   return `${v.toFixed(2)} ${currency}`;
 }
 
@@ -241,7 +245,8 @@ const statusTone = (s: number | null): Tone => (s === null || s >= 500 ? "server
 
 /** An operation's requests in time: a bar from each one's start to its end, so waits and overlaps show. */
 export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: number) => void }) {
-  const t0 = () => Math.min(...props.records.map((r) => new Date(r.time).getTime()));
+  // a loop, not a spread: an operation may hold more requests than a call takes arguments
+  const t0 = () => props.records.reduce((m, r) => Math.min(m, new Date(r.time).getTime()), Infinity);
   const rows = () =>
     props.records.slice(0, 60).map((r) => {
       const s = new Date(r.time).getTime() - t0();
@@ -352,7 +357,7 @@ export function RunBars(props: { change: RunChange; max?: number }) {
     props.change.groups
       .filter((g) => g.requests[0] !== g.requests[1] || Math.abs(g.busyMs[0] - g.busyMs[1]) >= 1)
       .slice(0, props.max ?? 8)
-      .map((g) => ({ name: groupName(g), before: g.requests[0], after: g.requests[1], tone: g.requests[1] <= g.requests[0] ? "fewer" : "more" }));
+      .map((g) => ({ name: groupName(g), before: g.requests[0], after: g.requests[1], tone: g.requests[1] < g.requests[0] ? "fewer" : g.requests[1] > g.requests[0] ? "more" : "same" }));
   const hovered = signal<number | null>(null);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
@@ -370,7 +375,7 @@ export function RunBars(props: { change: RunChange; max?: number }) {
           yScale={{ type: "band", paddingInner: 0.3, paddingOuter: 0.15, groupPadding: 0.12 }}
           // room for the labels at the bars' ends
           xScale={{ type: "linear", domain: [0, Math.max(1, ...rows().map((r) => Math.max(r.before, r.after))) * 1.15] }}
-          colorScale={{ type: "ordinal", domain: ["fewer", "more"], range: [token("status-ok" as never) as unknown as string, token("status-server" as never) as unknown as string] }}
+          colorScale={{ type: "ordinal", domain: ["fewer", "more", "same"], range: [token("status-ok" as never) as unknown as string, token("status-server" as never) as unknown as string, token("muted-foreground" as never) as unknown as string] }}
           accessibilityLabel={rows().map((r) => `${r.name} ${r.before} → ${r.after}`).join(", ")}
           motion={MOTION}
           appearGeneration={props.change.requests.join("-")}

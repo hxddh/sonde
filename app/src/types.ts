@@ -528,8 +528,8 @@ export interface RunChange {
   currency: string;
   peakInFlight: [number, number];
   groups: { operation: string; missed: boolean; requests: [number, number]; busyMs: [number, number] }[];
-  resolved: string[];
-  appeared: string[];
+  resolved: { text: string; phrases: Phrase[] }[];
+  appeared: { text: string; phrases: Phrase[] }[];
 }
 
 export interface SessionView {

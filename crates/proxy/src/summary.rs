@@ -91,7 +91,7 @@ pub fn summarize(records: &[Record]) -> Summary {
             };
             *codes.entry(what).or_default() += 1;
         }
-        let end = r.time + chrono::Duration::microseconds((r.latency_ms * 1000.0) as i64);
+        let end = r.time + chrono::Duration::microseconds(r.latency_us());
         first = Some(first.map_or(r.time, |f| f.min(r.time)));
         last = Some(last.map_or(end, |l| l.max(end)));
         let e = ops.entry(r.operation.as_str()).or_insert_with(|| {

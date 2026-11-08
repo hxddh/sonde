@@ -242,7 +242,7 @@ impl Episode {
 }
 
 fn end_of(r: &Record) -> DateTime<Utc> {
-    r.time + Duration::microseconds((r.latency_ms * 1000.0) as i64)
+    r.time + Duration::microseconds(r.latency_us())
 }
 
 fn refused(r: &Record) -> bool {
@@ -1162,21 +1162,53 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             u.3.push(r.id);
         }
     }
-    // each upload began with a CreateMultipartUpload (`?uploads`, no upload id):
-    // the latest one for its key before its first part
+    // each upload began with a CreateMultipartUpload (`?uploads`, no upload
+    // id): the creates of a key go to its uploads in order, each the earliest
+    // left before the upload's first part
     let mut uploads: Vec<(usize, u64, bool, Vec<u64>)> = uploads.into_values().collect();
-    for u in &mut uploads {
-        let first = u.3.iter().min().copied().unwrap_or(0);
-        let Some(part) = records.iter().find(|r| r.id == first) else {
-            continue;
-        };
-        if let Some(create) = records.iter().rev().find(|r| {
-            r.operation == "CreateMultipartUpload"
-                && r.time <= part.time
-                && r.bucket == part.bucket
-                && r.key == part.key
-        }) {
-            u.3.push(create.id);
+    {
+        use std::collections::VecDeque;
+        let at: HashMap<u64, &Record> = records.iter().map(|r| (r.id, r)).collect();
+        let mut creates: HashMap<(Option<&str>, Option<&str>), VecDeque<&Record>> = HashMap::new();
+        let mut sorted: Vec<&Record> = records
+            .iter()
+            .filter(|r| r.operation == "CreateMultipartUpload" && !r.is_error())
+            .collect();
+        sorted.sort_by_key(|r| (r.time, r.id));
+        for r in sorted {
+            creates
+                .entry((r.bucket.as_deref(), r.key.as_deref()))
+                .or_default()
+                .push_back(r);
+        }
+        let mut order: Vec<(chrono::DateTime<chrono::Utc>, usize)> = uploads
+            .iter()
+            .enumerate()
+            .filter_map(|(i, u)| {
+                let first =
+                    u.3.iter()
+                        .filter_map(|id| at.get(id))
+                        .min_by_key(|r| (r.time, r.id))?;
+                Some((first.time, i))
+            })
+            .collect();
+        order.sort();
+        for (t, i) in order {
+            let Some(first) = uploads[i]
+                .3
+                .iter()
+                .filter_map(|id| at.get(id))
+                .min_by_key(|r| (r.time, r.id))
+                .copied()
+            else {
+                continue;
+            };
+            if let Some(q) = creates.get_mut(&(first.bucket.as_deref(), first.key.as_deref()))
+                && q.front().is_some_and(|c| c.time <= t)
+            {
+                let c = q.pop_front().expect("a create in front");
+                uploads[i].3.push(c.id);
+            }
         }
     }
     let small: Vec<&(usize, u64, bool, Vec<u64>)> = uploads
@@ -1323,7 +1355,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         let mut starts: Vec<i64> = records.iter().map(|r| r.time.timestamp_micros()).collect();
         let mut ends: Vec<i64> = records
             .iter()
-            .map(|r| r.time.timestamp_micros() + (r.latency_ms.max(0.0) * 1000.0) as i64)
+            .map(|r| r.time.timestamp_micros() + r.latency_us())
             .collect();
         starts.sort_unstable();
         ends.sort_unstable();

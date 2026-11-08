@@ -56,6 +56,9 @@ pub struct Record {
     /// …), kept so the request can be replayed; never object data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_body: Option<String>,
+    /// The body was longer than what is kept: replaying it would send another document.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub request_body_truncated: bool,
     /// A transport error (DNS, TLS, timeout), when there was no response.
     pub transport_error: Option<String>,
     /// The region used for signing, for "copy as aws cli".
@@ -103,6 +106,17 @@ pub const MAX_ERROR_BODY: usize = 64 * 1024;
 /// Largest control body kept on a record.
 pub const MAX_REQUEST_BODY: usize = 256 * 1024;
 
+/// The longest a request is taken to have lasted (a day): a latency past it is
+/// a bad record, and kept from overflowing the times built from it.
+pub const MAX_LATENCY_MS: f64 = 86_400_000.0;
+
+impl Record {
+    /// The request's latency in microseconds, never negative and never past a day.
+    pub fn latency_us(&self) -> i64 {
+        (self.latency_ms.clamp(0.0, MAX_LATENCY_MS) * 1000.0) as i64
+    }
+}
+
 impl Record {
     /// Redacts every field that can carry a secret. Idempotent.
     pub fn redacted(mut self) -> Self {
@@ -135,6 +149,7 @@ impl Record {
                     cut -= 1;
                 }
                 body.truncate(cut);
+                self.request_body_truncated = true;
             }
             *body = crate::redact::redact_text(body);
         }

@@ -201,8 +201,9 @@ fn view_of(path: &str) -> Result<Arc<JsonValue>, String> {
 }
 
 /// path → (bytes counted up to the last complete line, records in them)
-static COUNTS: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, (u64, usize)>>> =
-    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+static COUNTS: std::sync::LazyLock<
+    Mutex<std::collections::HashMap<PathBuf, (u64, usize, Option<String>)>>,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
 /// Forgets what was read of a session file (it was removed or replaced).
 fn forget(path: &Path) {
@@ -256,8 +257,10 @@ fn count_records(path: &Path) -> usize {
     let Ok(len) = std::fs::metadata(path).map(|m| m.len()) else {
         return 0;
     };
-    let (mut from, mut n) = COUNTS.lock().get(path).copied().unwrap_or((0, 0));
-    if len < from {
+    // the file's first line tells one session from another written in its place
+    let header = header_line(path);
+    let (mut from, mut n, seen) = COUNTS.lock().get(path).cloned().unwrap_or((0, 0, None));
+    if len < from || (from > 0 && seen != header) {
         // rewritten: count again
         (from, n) = (0, 0);
     }
@@ -280,9 +283,17 @@ fn count_records(path: &Path) -> usize {
             .filter(|l| !l.is_empty() && l.starts_with(b"{") && !l.starts_with(b"{\"log\""))
             .count();
         from += end as u64;
-        COUNTS.lock().insert(path.to_path_buf(), (from, n));
+        COUNTS.lock().insert(path.to_path_buf(), (from, n, header));
     }
     n
+}
+
+fn header_line(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(path).ok()?;
+    let mut first = String::new();
+    std::io::BufReader::new(f).read_line(&mut first).ok()?;
+    Some(first)
 }
 
 fn header_of(path: &Path) -> Option<SessionHeader> {
@@ -560,13 +571,17 @@ impl Sessions {
 
     /// Two sessions side by side: how their answers compare (a replay's
     /// records name the original's), and each as a transcript for a diff.
-    pub fn compare(a: String, b: String) -> Result<JsonValue, String> {
-        let (sa, sb) = (open_session(&a)?, open_session(&b)?);
-        Ok(json!({
-            "comparison": replay::compare(&sa.records, &sb.records, &[]),
-            "a": replay::transcript(&sa.records),
-            "b": replay::transcript(&sb.records),
-        }))
+    pub async fn compare(a: String, b: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let (sa, sb) = (open_session(&a)?, open_session(&b)?);
+            Ok(json!({
+                "comparison": replay::compare(&sa.records, &sb.records, &[]),
+                "a": replay::transcript(&sa.records),
+                "b": replay::transcript(&sb.records),
+            }))
+        })
+        .await
+        .map_err(err_msg)?
     }
 
     /// Two runs of a program, before and after a change: requests, time,
@@ -727,12 +742,11 @@ impl Sessions {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "session".into());
         // the stem and where the file is: two sessions of one name never share a page
-        let dir = sonde().paths().shared().join(format!("{stem}-{:08x}", {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            path.hash(&mut h);
-            h.finish() as u32
-        }));
+        // FNV-1a of the path: the same folder from one version of sonde to the next
+        let hash = path.bytes().fold(0x811c_9dc5u32, |h, b| {
+            (h ^ b as u32).wrapping_mul(0x0100_0193)
+        });
+        let dir = sonde().paths().shared().join(format!("{stem}-{hash:08x}"));
         let doc = serde_json::to_vec(&sonde_proxy::share::session_json(
             &session,
             &crate::state::request_prices(),
@@ -803,6 +817,15 @@ mod tests {
         writeln!(f, "{{\"time\":\"2026-01-01T00:00:00Z\",\"id\":4}}").unwrap();
         f.flush().unwrap();
         assert_eq!(count_records(&path), 4);
+        // another session written in its place, as long or longer
+        drop(f);
+        let mut g = std::fs::File::create(&path).unwrap();
+        writeln!(g, "{{\"format\":\"sonde-session\",\"other\":true}}").unwrap();
+        for i in 0..6 {
+            writeln!(g, "{{\"id\":{i}}}").unwrap();
+        }
+        g.flush().unwrap();
+        assert_eq!(count_records(&path), 6);
     }
 
     #[test]

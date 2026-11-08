@@ -102,7 +102,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     let list = f === null ? v.episodes.map((_, i) => i) : (v.observations[f]?.episodes ?? []);
     if (w) {
       // from the first request, as the shape counts
-      const start = Math.min(...v.episodes.map((e) => new Date(e.start).getTime()));
+      const start = v.episodes.reduce((m, e) => Math.min(m, new Date(e.start).getTime()), Infinity);
       list = list.filter((i) => {
         const e = v.episodes[i];
         return new Date(e.start).getTime() - start < w[1] && new Date(e.end).getTime() - start >= w[0];
@@ -133,8 +133,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     if (ops.length) {
       op.set(ops[0]);
       rec.set(null);
-      const shown = rows();
-      const at = shown ? shown.indexOf(ops[0]) : ops[0];
+      // the row as the table shows it: sorted by a column, it is not the operation's index
+      const at = (opsOrder?.() ?? rows() ?? v.episodes.map((_, i) => i)).indexOf(ops[0]);
       if (at >= 0) opsRef?.select({ row: at });
     }
   };
@@ -214,9 +214,10 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   );
 
   let opsAnchor: ViewRef | undefined;
+  let opsOrder: (() => number[]) | undefined;
   const operations = (v: SessionView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-    <OperationsTable view={v} rows={rows()} onSelect={chooseOperation} onContextMenu={isAvailable && !terminal() ? operationMenu : undefined} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || (inspecting() && roomy())} />
+    <OperationsTable view={v} rows={rows()} order={(o) => (opsOrder = o)} onSelect={chooseOperation} onContextMenu={isAvailable && !terminal() ? operationMenu : undefined} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || (inspecting() && roomy())} />
     </View>
   );
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;

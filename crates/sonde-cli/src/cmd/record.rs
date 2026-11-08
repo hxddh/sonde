@@ -352,9 +352,19 @@ fn ms_text(ms: f64) -> String {
 /// Money to two significant digits under a cent: a session's requests often
 /// cost thousandths.
 fn money_text(v: f64, currency: &str) -> String {
+    if !v.is_finite() || v < 0.0 {
+        return format!("— {currency}");
+    }
     if v > 0.0 && v < 0.01 {
-        let digits = (-v.log10().floor()) as usize + 1;
-        format!("{v:.digits$} {currency}")
+        // two significant digits, after rounding (0.00996 is 0.010, not 0.0100)
+        let exp = v.log10().floor() as i32;
+        let scale = 10f64.powi(1 - exp);
+        let r = (v * scale).round() / scale;
+        if r < 1e-6 {
+            return format!("<0.000001 {currency}");
+        }
+        let digits = (1 - r.log10().floor() as i32).max(2) as usize;
+        format!("{r:.digits$} {currency}")
     } else {
         format!("{v:.2} {currency}")
     }
@@ -935,11 +945,11 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     if !rows.is_empty() {
         println!("{}", output::table(&["kind", "requests", "waiting"], &rows));
     }
-    for t in &c.resolved {
-        println!("{} {t}", paint("✓", "32", color));
+    for f in &c.resolved {
+        println!("{} {}", paint("✓", "32", color), f.text);
     }
-    for t in &c.appeared {
-        println!("{} {t}", paint("!", "33", color));
+    for f in &c.appeared {
+        println!("{} {}", paint("!", "33", color), f.text);
     }
     Ok(0)
 }

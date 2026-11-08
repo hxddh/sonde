@@ -84,4 +84,5 @@ test("a dropped file's URL becomes its path on every platform", async () => {
   expect(pathOf("file:///C:/Users/me/x.sonde")).toBe("C:/Users/me/x.sonde");
   expect(pathOf("file://server/share/x.sonde")).toBe("\\\\server\\share\\x.sonde");
   expect(pathOf("file:///tmp/100%.sonde")).toBe("/tmp/100%.sonde");
+  expect(pathOf("file:///tmp/a%20b%.sonde")).toBe("/tmp/a b%.sonde");
 });
