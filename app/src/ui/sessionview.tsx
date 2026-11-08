@@ -4,7 +4,7 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type ContextMenuEvent, type JSX, List, platform, Scroll, signal, Text, View } from "nsh";
+import { type ContextMenuEvent, effect, type JSX, List, platform, Scroll, type ScrollRef, signal, Text, View } from "nsh";
 import { Button as BaseButton, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Editor, HoverCard, MenuItem, TextView, Toggle, ToggleGroup } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
 import { bytes, date, day, ms } from "../format";
@@ -292,6 +292,13 @@ export function whatIfText(v: SessionView): string | null {
  * about. `compact` (beside a run's live operations): the sentences only. */
 export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; max?: number; maxHeight?: number }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
+  // a finding pressed brings its fixes into view, under the list
+  let scroller: ScrollRef | undefined;
+  effect(() => {
+    const f = props.filter;
+    if (f == null || !props.view.observations[f]?.fixes?.length) return;
+    setTimeout(() => scroller?.scrollTo({ y: 1e6, animated: true }), 60);
+  });
   const list = () => props.view.observations.slice(0, props.max ?? props.view.observations.length);
   if (terminal()) {
     return (
@@ -373,13 +380,17 @@ export function Observations(props: { view: SessionView; filter?: number | null;
         </If>
         <If when={props.compact || findingsOpen()}>
           {/* a short window keeps room for the operations: the findings scroll */}
-          <Scroll class="overflow-hidden rounded-(--radius-card) border border-border bg-card" style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
+          <Scroll ref={(r) => (scroller = r)} class="overflow-hidden rounded-(--radius-card) border border-border bg-card" style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
             <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
+            {/* the finding pressed: what to change, in the findings' own room */}
+            <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
+              {(o) => (
+                <View class="border-t border-border p-2">
+                  <FixPanel o={o()} />
+                </View>
+              )}
+            </If>
           </Scroll>
-        </If>
-        {/* the finding pressed: what to change */}
-        <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
-          {(o) => <FixPanel o={o()} />}
         </If>
       </View>
     </If>

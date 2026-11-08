@@ -79,6 +79,8 @@ test("an example session reads as operations, each opening on its requests", asy
   expect(app.shows("id:fix-code")).toBe(true);
   await app.press("id:fix-go");
   await app.waitFor("text:Go SDK v2");
+  // the fixes scrolled into view under the findings; back up to the first
+  await app.scroll("id:fix", -2000);
   await app.press("id:observation-0");
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
