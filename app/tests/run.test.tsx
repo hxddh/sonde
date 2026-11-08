@@ -15,7 +15,7 @@ async function demo() {
 
 test("run a command: its requests become operations, the session lines them up with its output", async () => {
   const app = await demo();
-  await app.type("id:run-command", "echo fetching; curl -s $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; echo done");
+  await app.type("id:run-command", "echo fetching; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; echo done");
   await app.press("id:run-start");
   await app.waitFor("id:run-terminal", { timeout: 10000 });
   await app.waitFor("id:run-ended", { timeout: 20000 });
@@ -82,7 +82,7 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   await app.press("id:read-only");
   await app.waitFor("label:Writes enabled");
   await place(app, "run");
-  await app.type("id:run-command", "curl -s -X PUT --data hello $AWS_ENDPOINT_URL/demo/t.txt -o /dev/null; curl -s $AWS_ENDPOINT_URL/demo/t.txt");
+  await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/t.txt -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/t.txt");
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   await app.press("id:run-open-session");
@@ -165,7 +165,7 @@ test("a session's time: where it went, and two runs before and after", async () 
 
 test("a program over its runs: history, a baseline, and the flows of its requests", async () => {
   const app = await demo();
-  const cmd = "curl -s $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; curl -s $AWS_ENDPOINT_URL/demo/missing.txt -o /dev/null";
+  const cmd = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/missing.txt -o /dev/null";
   for (let i = 0; i < 2; i++) {
     await app.clear("id:run-command");
     await app.type("id:run-command", cmd);

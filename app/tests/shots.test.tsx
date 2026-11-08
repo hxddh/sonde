@@ -13,8 +13,11 @@ const dir = (globalThis as any).process?.env?.SONDE_SHOTS ?? "shots";
 function command(cmd: boolean) {
   const url = cmd ? "%AWS_ENDPOINT_URL%" : "$AWS_ENDPOINT_URL";
   const sink = cmd ? "NUL" : "/dev/null";
-  const get = (k: string) => `curl -s -o ${sink} ${url}/demo/${k} && echo fetched ${k}`;
-  return [...["README.md", "config/app.yaml", "images/logo.png"].map(get), `curl -s -o ${sink} ${url}/demo/missing.txt`, "echo done"].join(" && ");
+  // signed with the keys sonde gives the program: its proxy refuses anything else
+  const keys = cmd ? "%AWS_ACCESS_KEY_ID%:%AWS_SECRET_ACCESS_KEY%" : "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY";
+  const curl = `curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u ${keys}`;
+  const get = (k: string) => `${curl} -o ${sink} ${url}/demo/${k} && echo fetched ${k}`;
+  return [...["README.md", "config/app.yaml", "images/logo.png"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, "echo done"].join(" && ");
 }
 
 interface Variant {

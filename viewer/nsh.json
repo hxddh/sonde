@@ -12,5 +12,6 @@
       "title": 20
     }
   },
+  "locales": ["zh"],
   "capabilities": {}
 }

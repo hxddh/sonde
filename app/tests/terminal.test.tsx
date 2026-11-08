@@ -110,7 +110,7 @@ test("sessions in a terminal: sessions › operations › requests › request",
 test("run in a terminal: the program above, its operations below", async () => {
   const app = await demo();
   await place(app, "run");
-  await app.type("id:run-command", "curl -s $AWS_ENDPOINT_URL/demo/README.md -o /dev/null");
+  await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null");
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   expect(app.shows("text:exited with 0")).toBe(true);
