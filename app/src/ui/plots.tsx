@@ -368,6 +368,8 @@ export function RunBars(props: { change: RunChange; max?: number }) {
           testID="run-bars"
           data={rows()}
           yScale={{ type: "band", paddingInner: 0.3, paddingOuter: 0.15, groupPadding: 0.12 }}
+          // room for the labels at the bars' ends
+          xScale={{ type: "linear", domain: [0, Math.max(1, ...rows().map((r) => Math.max(r.before, r.after))) * 1.15] }}
           colorScale={{ type: "ordinal", domain: ["fewer", "more"], range: [token("status-ok" as never) as unknown as string, token("status-server" as never) as unknown as string] }}
           accessibilityLabel={rows().map((r) => `${r.name} ${r.before} → ${r.after}`).join(", ")}
           motion={MOTION}

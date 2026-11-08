@@ -9,9 +9,10 @@
 |---|---|
 | `sonde run [--no-delete\|--read-only] [--live] [-o FILE] -- COMMAND…` | Runs a command against a local endpoint that re-signs and records its S3 requests; prints the session's summary; exits with the command's status. |
 | `sonde proxy [--listen ADDR] [--no-delete\|--read-only] [-o FILE]` | The same endpoint, standing: prints the variables to set, then every request. |
-| `sonde show [FILE] [--requests] [--errors] [--summary] [-f json]` | A session (default: the newest) as operations (or requests) and observations. |
+| `sonde show [FILE] [--requests] [--errors] [--summary] [-f json]` | A session (default: the newest) as operations (or requests) and observations, and where its time went: the time it waited on its store by kind of request, the peak in flight and the requests' cost. |
 | `sonde replay FILE -e E [--bucket A=B] [--prefix P\|--in-place] [--keep] [--yes] [-o FILE]` | Re-enacts a session on another endpoint, cleans up, compares every answer. |
 | `sonde diff ORIGINAL REPLAY` | Compares a session with its replay. |
+| `sonde compare BEFORE AFTER [-f json]` | Two runs of a program, before and after a change: requests, waiting, time, errors and request cost, by kind of request, and the findings gone and new. |
 | `sonde share [FILE] [-o DIR] [--serve [--port N]] [--json]` | A session (default: the newest) as a static web page: sonde's viewer and the computed `session.json`; `--serve` on 127.0.0.1 until Ctrl-C. |
 | `sonde probe -e A -e B -b BUCKET [--only checksum.] [--temp-buckets] [--no-slow] [-f json\|markdown\|csv] [-o FILE]` | Runs the probes on each endpoint in parallel; saves the runs. |
 | `sonde probe list` / `sonde probe runs` / `sonde probe diff RUN:EP RUN:EP` | The catalog, saved runs, changes between two runs. |

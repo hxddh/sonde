@@ -4,6 +4,55 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-11-08
+
+Time and cost, seen. A session says where its time went and what its requests cost, two runs of a program say what a
+change did, and every chart is drawn by Native Shell's Plot: clear, quiet, interactive and accessible.
+
+### Added
+
+- Where the time went: the time a program waited on its store by kind of request (an operation, its lookups that
+  found nothing apart), counted as wall-clock time so requests at once count once; the peak in flight; the slowest
+  requests; and the requests' cost at S3's prices (`settings.prices.per-1000-writes`, `per-1000-reads`). In
+  `sonde show`, in the app's new Time pane and on the shared page.
+- `sonde compare BEFORE AFTER` and Compare › Before and after in the app: two runs of a program, requests, waiting,
+  time, errors and cost with their change, the requests by kind before and after, and the findings gone and new.
+- A session's shape beside its figures: requests by outcome over time and requests in flight. A press on a slice
+  narrows the operations and the timeline to that moment. It grows live under Run.
+- An operation's requests as a waterfall, a press away from each request.
+- Capacity's prefixes as a treemap.
+- Operations sort by time, requests or duration.
+
+### Changed
+
+- Every chart is a Native Shell Plot: the pointer, tooltips, fading and the keyboard handled natively, motion that
+  respects reduced motion, and a sentence for screen readers saying what stands out. The timeline no longer redraws
+  on every mouse move; zoom is a slice of the session's shape.
+- Compare opens on Before and after, unless one session is a replay.
+- `app/DESIGN.md` has the rules the charts follow.
+
+### Fixed
+
+- The last refresh of a live session was dropped when it came while the session was being read: Run and Sessions
+  could keep showing a run without its last operations.
+- Records joined from two recordings repeated ids, so findings, the inspector and copy could name another request;
+  a session now numbers them afresh.
+- "Small files uploaded in parts" left out each upload's CreateMultipartUpload: 3 requests each, as it says, and the
+  saving with them.
+- A DeleteObjects (or another control document) sent with plain chunked transfer was not kept, and its replay was
+  skipped as from "an older session".
+- A CopyObject of a version, and a document longer than the 256 KiB kept, were replayed with another meaning; each is
+  now skipped with its reason.
+- HEAD before a ranged or part GET (reading a large object in parallel) was reported as a request too many.
+- The in-flight count behind the throttling finding could underflow; latency now counts from the request's arrival,
+  its body's upload included.
+- A search left over after deleting sessions down to four could hide them with no field to clear it; a deleted
+  session's neighbour now takes its place.
+- Dropped files: UNC paths, a stray `%`, `.SONDE` in capitals, a session already in the folder (on Windows), and a
+  file torn mid-character all open.
+- A session written by another tool with its keys in another order counted no requests; two shared sessions of one
+  name shared a page.
+
 ## [5.0.0] - 2026-11-07
 
 What a session finds, made more correct, faster and more useful: findings ranked by what they cost with the requests

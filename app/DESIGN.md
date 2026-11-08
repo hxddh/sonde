@@ -82,6 +82,25 @@ scale belong to a component (`SidePanel`, the palette, the inspector) and nowher
 - Destructive actions are read-only by default and go through a dry run and a typed
   confirmation; the result is in the audit log (Activity › Changes).
 
+## Charts
+
+Every chart is Native Shell's `Plot` (`src/ui/plots.tsx`, `src/ui/charts.tsx`): drawn natively from the rows, the
+pointer, tooltips and fading followed in Rust, never a hand-drawn canvas.
+
+- **One question per chart**, said in words beside it and in its `accessibilityLabel`: what it shows and what stands
+  out ("Most of the waiting: PutObject, 65%"). A terminal gets the sentence and a table.
+- **Colors are roles.** Outcomes in their status tokens (`bar` for ok, `status-miss`, `status-client`,
+  `status-server`); a quantity in `chart-1`; before is `muted-foreground/30`, after its outcome (`status-ok` fewer,
+  `status-server` more). What a selection leaves out turns `muted`, it does not disappear.
+- **Quiet frames**: hairline grids (`stroke-border`), no axis lines, small tabular labels in `text-caption`
+  `muted-foreground`; bars' tips rounded, their bases square; labels at the bars' ends rather than a value axis.
+- **The tooltip** is the popup surface (`Tip`): a title and one or two lines of figures, beside the pointer.
+- **A press acts on what the pointer is over** (a slice narrows the operations; a dot or a bar opens its request);
+  the plot sits in a pressable view, as the plot takes no presses itself.
+- **Motion**: an appear of 420 ms ease-out per new data (`appearGeneration`), updates gliding in 260 ms; nothing
+  moves with reduced motion.
+- Times read from the session's start (`+230 ms`, `2.35 s`); costs to two significant digits under a cent.
+
 ## Motion
 
 Short, and only to explain a change: overview cards rise in, operations slide into

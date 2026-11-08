@@ -28,6 +28,8 @@ stale-upload-days = 7     # uploads older than this are flagged
 [settings.prices]          # per GiB-month, for multipart and capacity costs
 default-per-gib-month = 0.023
 currency = "USD"
+per-1000-writes = 0.005    # PUT, COPY, POST, LIST: a session's request cost
+per-1000-reads = 0.0004    # GET, HEAD and the rest (DELETE is free)
 [settings.prices.by-class]
 STANDARD = 0.023
 STANDARD_IA = 0.0125
