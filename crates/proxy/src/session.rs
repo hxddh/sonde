@@ -2,7 +2,7 @@
 //! per line. Written as requests happen, so a crash keeps what came before.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -117,6 +117,47 @@ impl Sink for SessionWriter {
     }
 }
 
+/// A session file's bytes as lines: plain, or gzip (a finished session is
+/// compressed: [`compress`]).
+pub fn reader(path: &Path) -> std::io::Result<Box<dyn BufRead>> {
+    let mut f = File::open(path)?;
+    let mut magic = [0u8; 2];
+    let n = f.read(&mut magic)?;
+    f.seek(SeekFrom::Start(0))?;
+    Ok(if n == 2 && magic == [0x1f, 0x8b] {
+        Box::new(BufReader::new(flate2::read::MultiGzDecoder::new(f)))
+    } else {
+        Box::new(BufReader::new(f))
+    })
+}
+
+/// Whether a session file is compressed.
+pub fn is_compressed(path: &Path) -> bool {
+    let mut magic = [0u8; 2];
+    File::open(path)
+        .and_then(|mut f| f.read_exact(&mut magic))
+        .is_ok_and(|_| magic == [0x1f, 0x8b])
+}
+
+/// Compresses a finished session in place (gzip; a tenth of its size or
+/// less): it stays a `.sonde` file every reader opens. A live session is
+/// not compressed: it is still being appended to.
+pub fn compress(path: &Path) -> std::io::Result<()> {
+    if is_compressed(path) {
+        return Ok(());
+    }
+    let tmp = path.with_extension("sonde.gz.tmp");
+    {
+        let mut src = BufReader::new(File::open(path)?);
+        let out = File::create(&tmp)?;
+        let mut gz =
+            flate2::write::GzEncoder::new(BufWriter::new(out), flate2::Compression::new(6));
+        std::io::copy(&mut src, &mut gz)?;
+        gz.finish()?.flush()?;
+    }
+    std::fs::rename(&tmp, path)
+}
+
 /// A session read back.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -130,9 +171,9 @@ impl Session {
     /// Reads a session file. A torn last line (the recorder was killed) is
     /// skipped; any other bad line is an error.
     pub fn open(path: &Path) -> Result<Session, String> {
-        let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let reader = reader(path).map_err(|e| format!("{}: {e}", path.display()))?;
         // bytes, not text: a line torn mid-character is still a torn line
-        let mut lines = BufReader::new(file).split(b'\n').map(|l| {
+        let mut lines = reader.split(b'\n').map(|l| {
             l.map(|b| {
                 String::from_utf8_lossy(&b)
                     .trim_end_matches('\r')

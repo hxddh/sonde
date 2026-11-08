@@ -294,3 +294,32 @@ fn throttling_counts_never_underflow() {
             .any(|o| o.phrases[0].key.starts_with("obs.throttled"))
     );
 }
+
+#[test]
+fn a_finished_session_is_compressed_and_still_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("done.sonde");
+    let w = SessionWriter::create(&path, &SessionHeader::new("r2", "u", "auto", None)).unwrap();
+    for i in 0..500u64 {
+        w.write(&rec(
+            i + 1,
+            i as i64,
+            "GET",
+            "GetObject",
+            Some(&format!("data/part-{i}.parquet")),
+            200,
+        ));
+    }
+    w.flush().unwrap();
+    drop(w);
+    let plain = std::fs::metadata(&path).unwrap().len();
+    sonde_proxy::session::compress(&path).unwrap();
+    let packed = std::fs::metadata(&path).unwrap().len();
+    assert!(packed * 5 < plain, "{packed} of {plain}");
+    assert!(sonde_proxy::session::is_compressed(&path));
+    let s = Session::open(&path).unwrap();
+    assert_eq!(s.records.len(), 500);
+    // compressing again changes nothing
+    sonde_proxy::session::compress(&path).unwrap();
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), packed);
+}

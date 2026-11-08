@@ -4576,6 +4576,7 @@ version = "7.0.0"
 dependencies = [
  "bytes",
  "chrono",
+ "flate2",
  "futures",
  "http",
  "http-body-util",

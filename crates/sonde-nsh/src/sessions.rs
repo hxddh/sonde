@@ -2,6 +2,7 @@
 //! recording. Credentials stay in Rust: the recording's endpoint signs with
 //! them; the application gets dummy keys and the proxy's URL.
 
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -306,6 +307,20 @@ fn count_records(path: &Path) -> usize {
         // rewritten: count again
         (from, n) = (0, 0);
     }
+    // a finished session is compressed: counted whole, once
+    if len > from && sonde_proxy::session::is_compressed(path) {
+        let n = sonde_proxy::session::reader(path)
+            .map(|r| {
+                r.split(b'\n')
+                    .skip(1)
+                    .filter_map(Result::ok)
+                    .filter(|l| !l.is_empty() && l.starts_with(b"{") && !l.starts_with(b"{\"log\""))
+                    .count()
+            })
+            .unwrap_or(0);
+        COUNTS.lock().insert(path.to_path_buf(), (len, n, header));
+        return n;
+    }
     if len > from {
         let Ok(mut f) = std::fs::File::open(path) else {
             return n;
@@ -331,19 +346,16 @@ fn count_records(path: &Path) -> usize {
 }
 
 fn header_line(path: &Path) -> Option<String> {
-    use std::io::BufRead;
-    let f = std::fs::File::open(path).ok()?;
     let mut first = String::new();
-    std::io::BufReader::new(f).read_line(&mut first).ok()?;
+    sonde_proxy::session::reader(path)
+        .ok()?
+        .read_line(&mut first)
+        .ok()?;
     Some(first)
 }
 
 fn header_of(path: &Path) -> Option<SessionHeader> {
-    use std::io::BufRead;
-    let f = std::fs::File::open(path).ok()?;
-    let mut first = String::new();
-    std::io::BufReader::new(f).read_line(&mut first).ok()?;
-    serde_json::from_str(&first).ok()
+    serde_json::from_str(&header_line(path)?).ok()
 }
 
 fn shell_exports(set: &[(String, String)], unset: &[String]) -> String {
@@ -413,11 +425,19 @@ impl Sessions {
     /// Short rows for the records with these ids (an operation's requests).
     pub fn records(path: String, ids: Vec<f64>) -> Result<JsonValue, String> {
         let s = open_session(&path)?;
-        let rows: Vec<_> = ids
+        // one pass: an operation of thousands of requests in a session of millions
+        let want: std::collections::HashMap<u64, usize> = ids
             .iter()
-            .filter_map(|id| s.records.iter().find(|r| r.id == *id as u64))
-            .map(|r| r.summary())
+            .enumerate()
+            .map(|(i, id)| (*id as u64, i))
             .collect();
+        let mut found: Vec<Option<&reqlog::Record>> = vec![None; ids.len()];
+        for r in &s.records {
+            if let Some(&i) = want.get(&r.id) {
+                found[i] = Some(r);
+            }
+        }
+        let rows: Vec<_> = found.into_iter().flatten().map(|r| r.summary()).collect();
         Ok(to_json(rows))
     }
 
@@ -602,12 +622,14 @@ impl Sessions {
             prefix,
             buckets: Vec::new(),
         };
+        let file = out.clone();
         let run = background(async move {
             replay::replay_to_file(&base, &original, &opts, &out, false, |_, _| {}).await
         })
         .await
         .map_err(err_msg)?
         .map_err(err_msg)?;
+        let _ = sonde_proxy::session::compress(&file);
         Ok(to_json(run))
     }
 
@@ -616,7 +638,14 @@ impl Sessions {
     pub async fn compare(a: String, b: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
             let (sa, sb) = (open_session(&a)?, open_session(&b)?);
+            let prices = crate::state::request_prices();
+            let latency = sonde_proxy::profile::latency_changes(
+                &sonde_proxy::profile::profile(&sa.records, &prices),
+                &sonde_proxy::profile::profile(&sb.records, &prices),
+            );
             Ok(json!({
+                "latency": latency,
+                "endpoints": [&sa.header.endpoint, &sb.header.endpoint],
                 "comparison": replay::compare(&sa.records, &sb.records, &[]),
                 "a": replay::transcript(&sa.records),
                 "b": replay::transcript(&sb.records),
@@ -928,8 +957,11 @@ impl Sessions {
     pub fn stop() -> Option<String> {
         let r = RECORDING.lock().take()?;
         let _ = r.writer.flush();
-        let path = r.path.to_string_lossy().into_owned();
-        drop(r.proxy);
+        let file = r.path.clone();
+        let path = file.to_string_lossy().into_owned();
+        drop(r);
+        // finished: a tenth of its size; still a .sonde file every reader opens
+        let _ = sonde_proxy::session::compress(&file);
         Some(path)
     }
 }
