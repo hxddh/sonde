@@ -12,7 +12,7 @@ import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import type { LatencyChange, Observation, Profile, ProfileGroup, ProgramHistory, RecordSummary, RunChange } from "../types";
 import { observationSaving, observationText } from "../phrases";
-import { SimpleTable, terminal } from "./kit";
+import { POPUP, SimpleTable, terminal } from "./kit";
 
 /** Time from a session's start: 840 ms, 2.35 s, 41.2 s. */
 export const offset = (v: number) => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(v < 10000 ? 2 : 1)} s`);
@@ -39,10 +39,10 @@ type Tone = (typeof TONES)[number];
 const TONE_TOKEN: Record<Tone, string> = { ok: "bar", miss: "status-miss", client: "status-client", server: "status-server" };
 const tones = () => ({ type: "ordinal" as const, domain: [...TONES, "dim"], range: [...TONES.map((x) => token(TONE_TOKEN[x] as never) as unknown as string), token("muted" as never) as unknown as string] });
 
-/** A tooltip's card: the plot's popup surface. */
+/** A tooltip's card: the app's one popup surface. */
 function Tip(props: { title: string; lines: string[] }) {
   return (
-    <View class="max-w-[280px] gap-0.5 rounded-(--radius) border border-border bg-popover px-2.5 py-1.5 shadow-lg">
+    <View class={`max-w-[280px] gap-0.5 ${POPUP} px-2.5 py-1.5`}>
       <Text class="text-small font-medium text-popover-foreground line-clamp-2">{props.title}</Text>
       <Each of={props.lines}>{(l) => <Text class="tabular-nums text-caption text-muted-foreground">{l()}</Text>}</Each>
     </View>

@@ -8,8 +8,8 @@ import { language, t } from "../i18n";
 import { api } from "../native";
 import { notify, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Choice, Field, Page, Section, Segmented, terminal, Toggle } from "../ui/kit";
-import { Fold, Pairs } from "../ui/record";
+import { Choice, Field, KeyValue, Page, Section, Segmented, terminal, Toggle } from "../ui/kit";
+import { Fold } from "../ui/record";
 import { Updates } from "../ui/updates";
 
 const copyOf = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -148,7 +148,7 @@ export function SettingsScreen() {
             <Updates />
 
             <Section title={t("settings.paths")} description={t("settings.telemetry")}>
-              <Pairs rows={Object.entries(paths)} />
+              <KeyValue boxed rows={Object.entries(paths)} />
             </Section>
           </View>
         )}

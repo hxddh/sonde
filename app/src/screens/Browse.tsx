@@ -10,8 +10,8 @@ import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, iconSvg } from "../ui/icon";
-import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, Muted, rowHeight, terminal, Toggle, TYPE } from "../ui/kit";
-import { Fold, Pairs } from "../ui/record";
+import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, KeyValue, Muted, rowHeight, terminal, Toggle, TYPE } from "../ui/kit";
+import { Fold } from "../ui/record";
 import { Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
@@ -120,7 +120,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(d().recordId)} />
             </View>
             <If when={progress()}>{(p) => <Bar value={null} label={p()} />}</If>
-            <Pairs
+            <KeyValue boxed
               rows={[
                 [t("browse.size"), `${bytes(d().size)} (${count(d().size ?? 0)} B)`],
                 ["Content-Type", d().contentType ?? "—"],
@@ -161,7 +161,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               </If>
             </Fold>
             <Fold title={t("browse.encryption")}>
-              <Pairs
+              <KeyValue boxed
                 rows={[
                   ["SSE", d().sse.customerAlgorithm ? `SSE-C (${d().sse.customerAlgorithm})` : (d().sse.algorithm ?? t("browse.noEncryption"))],
                   ...(d().sse.kmsKeyId ? ([["KMS key", d().sse.kmsKeyId]] as [string, string][]) : []),
@@ -173,7 +173,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
             </Fold>
             <Fold title={t("browse.metadata")} count={d().metadata.length} open={d().metadata.length > 0}>
               <If when={d().metadata.length > 0} else={<Text class="text-small text-muted-foreground">{t("common.none")}</Text>}>
-                <Pairs rows={d().metadata} />
+                <KeyValue boxed rows={d().metadata} />
               </If>
             </Fold>
             <Fold title={t("browse.presign")} open={false}>
@@ -206,7 +206,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               </View>
             </Fold>
             <Fold title={t("browse.headers")} count={d().headers.length}>
-              <Pairs rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
+              <KeyValue boxed rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
             </Fold>
           </View>
         )}

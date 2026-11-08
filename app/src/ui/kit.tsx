@@ -223,7 +223,22 @@ export function Badge(props: { label: string; tone?: Tone }) {
   );
 }
 
-export function KeyValue(props: { rows: [string, string][]; mono?: boolean }) {
+/** Names and their values: muted names, selectable values. `boxed` lists
+ * them in a bordered card, compact and monospaced (a request's headers). */
+export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxed?: boolean }) {
+  if (props.boxed)
+    return (
+      <View selectable class="overflow-hidden rounded-(--radius) border border-border bg-card">
+        <Each of={props.rows}>
+          {(row, i) => (
+            <View class={`flex-row gap-3 px-2.5 py-1 ${i() > 0 ? "border-t border-border" : ""}`}>
+              <Text class="w-[136px] shrink-0 font-mono text-caption text-muted-foreground line-clamp-1">{row()[0]}</Text>
+              <Text class={`min-w-0 flex-1 text-caption text-foreground ${props.mono === false ? "" : "font-mono"}`}>{row()[1]}</Text>
+            </View>
+          )}
+        </Each>
+      </View>
+    );
   return (
     <View class="gap-1">
       <Each of={props.rows}>
@@ -362,7 +377,7 @@ export function Dot(props: { tone: "ok" | "miss" | "client" | "server" | "refuse
 }
 
 /** A titled group of settings or facts: a hairline-bounded surface. */
-export function Section(props: { title?: string; description?: string; children: JSX.Element; testID?: string; action?: JSX.Element }) {
+export function Section(props: { title?: string; description?: string; children: JSX.Element; testID?: string; action?: JSX.Element; plain?: boolean }) {
   return (
     <View testID={props.testID} class="gap-3">
       <If when={props.title}>
@@ -378,7 +393,9 @@ export function Section(props: { title?: string; description?: string; children:
           {props.action}
         </View>
       </If>
-      <View class="gap-3 rounded-(--radius-card) border border-border bg-card p-4">{props.children}</View>
+      <If when={!props.plain} else={props.children}>
+        <View class="gap-3 rounded-(--radius-card) border border-border bg-card p-4">{props.children}</View>
+      </If>
     </View>
   );
 }

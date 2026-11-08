@@ -4,29 +4,9 @@
 import { type JSX, Scroll, Text, View } from "nsh";
 import { t } from "../i18n";
 import type { SessionView } from "../types";
-import { terminal } from "./kit";
+import { Section, terminal } from "./kit";
+import { Figure } from "./sessionview";
 import { Chains, cost, Flows, Heat, offset, shapeSentence, Spread, TimeSpent } from "./plots";
-
-function Figure(props: { value: string; label: string; testID?: string }) {
-  return (
-    <View testID={props.testID} class="gap-0.5">
-      <Text class="tabular-nums text-heading font-semibold text-foreground">{props.value}</Text>
-      <Text class="text-caption text-muted-foreground">{props.label}</Text>
-    </View>
-  );
-}
-
-function Section(props: { title: string; hint: string; children: JSX.Element }) {
-  return (
-    <View class="gap-3">
-      <View class="gap-0.5">
-        <Text role="header" class="text-body font-semibold text-foreground">{props.title}</Text>
-        <Text class="text-small text-muted-foreground">{props.hint}</Text>
-      </View>
-      {props.children}
-    </View>
-  );
-}
 
 /** The Time pane of a session. */
 export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void }) {
@@ -34,31 +14,31 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
   return (
     <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-7 pb-4 pr-2"}>
       <If when={!terminal()} else={<Text class="text-foreground">{shapeSentence(p())}</Text>}>
-        <View class="flex-row gap-8 rounded-(--radius-card) border border-border bg-card px-4 py-3">
+        <View class="flex-row gap-3 rounded-(--radius-card) border border-border bg-card px-4 py-3">
           <Figure testID="profile-waiting" value={offset(p().busyMs)} label={`${t("profile.waiting")} · ${Math.round((p().busyMs * 100) / Math.max(p().wallMs, 1e-9))}%`} />
           <Figure value={String(p().peakInFlight)} label={t("profile.peak")} />
           <Figure testID="profile-cost" value={cost(p().cost.amount, p().cost.currency)} label={t("profile.cost")} />
         </View>
       </If>
-      <Section title={t("profile.spentTitle")} hint={t("profile.spentHint")}>
+      <Section title={t("profile.spentTitle")} plain description={t("profile.spentHint")}>
         <TimeSpent profile={p()} />
       </Section>
       <If when={p().chains?.length}>
-        <Section title={t("chains.title")} hint={t("chains.hint")}>
+        <Section title={t("chains.title")} plain description={t("chains.hint")}>
           <Chains profile={p()} />
         </Section>
       </If>
       <If when={p().flows?.length}>
-        <Section title={t("flows.title")} hint={t("flows.hint")}>
+        <Section title={t("flows.title")} plain description={t("flows.hint")}>
           <Flows profile={p()} />
         </Section>
       </If>
       <If when={!terminal() && p().heat?.length}>
-        <Section title={t("heat.title")} hint={t("heat.hint")}>
+        <Section title={t("heat.title")} plain description={t("heat.hint")}>
           <Heat profile={p()} />
         </Section>
       </If>
-      <Section title={t("spread.title")} hint={t("spread.hint")}>
+      <Section title={t("spread.title")} plain description={t("spread.hint")}>
         <Spread profile={p()} />
       </Section>
     </Scroll>

@@ -8,7 +8,7 @@ import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
 import { Icon } from "./icon";
-import { Button, Dot, terminal } from "./kit";
+import { Button, Dot, KeyValue, terminal } from "./kit";
 import { statusTone, toneText } from "./sessionview";
 
 /** A part of the request that folds: its title and count, open or not. */
@@ -110,23 +110,6 @@ export function pretty(xml: string): string {
   return [decl, ...lines].filter(Boolean).join("\n");
 }
 
-/** Name and value pairs: names muted, values monospaced and selectable. */
-export function Pairs(props: { rows: [string, string][]; mono?: boolean }) {
-  return (
-    <View selectable class="overflow-hidden rounded-(--radius) border border-border bg-card">
-      <Each of={props.rows}>
-        {(row, i) => (
-          <View class={`flex-row gap-3 px-2.5 py-1 ${i() > 0 ? "border-t border-border" : ""}`}>
-            <Text class="w-[136px] shrink-0 font-mono text-caption text-muted-foreground line-clamp-1">{row()[0]}</Text>
-            <Text class={`min-w-0 flex-1 text-caption text-foreground ${props.mono === false ? "" : "font-mono"}`}>
-              {row()[1]}
-            </Text>
-          </View>
-        )}
-      </Each>
-    </View>
-  );
-}
 
 const headerRows = (h: Header[]): [string, string][] => h.map((x) => [x.name, x.value]);
 
@@ -187,18 +170,18 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
         )}
       </If>
       <Fold title={t("requests.facts")}>
-        <Pairs rows={facts()} />
+        <KeyValue boxed rows={facts()} />
       </Fold>
       <If when={r().query.length > 0}>
         <Fold title={t("requests.query")} count={r().query.length}>
-          <Pairs rows={r().query.map(([k, v]) => [k, v])} />
+          <KeyValue boxed rows={r().query.map(([k, v]) => [k, v])} />
         </Fold>
       </If>
       <Fold title={t("requests.requestHeaders")} count={r().requestHeaders.length}>
-        <Pairs rows={headerRows(r().requestHeaders)} />
+        <KeyValue boxed rows={headerRows(r().requestHeaders)} />
       </Fold>
       <Fold title={t("requests.responseHeaders")} count={r().responseHeaders.length}>
-        <Pairs rows={headerRows(r().responseHeaders)} />
+        <KeyValue boxed rows={headerRows(r().responseHeaders)} />
       </Fold>
     </View>
   );

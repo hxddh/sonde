@@ -97,8 +97,8 @@ export function span(v: SessionView): [number, number] {
   return [a, Math.max(b, a + 1)];
 }
 
-/** A figure of the session: a number, and what it counts. */
-function Figure(props: { value: string; label: string; tone?: Tone; preview?: JSX.Element; testID?: string }) {
+/** A figure: a number, and what it counts; resting on it can show what it is made of. */
+export function Figure(props: { value: string; label: string; tone?: Tone; preview?: JSX.Element; testID?: string }) {
   const figure = (
     <View testID={props.testID} class="gap-0.5 pr-5">
       <Text class={`tabular-nums text-heading font-semibold ${props.tone ? TONE_TEXT[props.tone] : "text-foreground"}`}>{props.value}</Text>
