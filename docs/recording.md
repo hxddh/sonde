@@ -113,6 +113,19 @@ minute, each new warning once, and a new session file every `--rotate` minutes.
 `sonde show` prints the timeline and a summary; `--format json` gives the
 header, the summary and every record.
 
+## Production traffic: access logs, CloudTrail, HAR
+
+```sh
+sonde import access.log            # S3 server access log lines
+sonde import trail.json            # CloudTrail data events ({"Records": …}, or one event a line)
+sonde import browser.har           # a HAR (a browser's, or sonde's own --log-out)
+```
+
+Each becomes a session in the data directory (or `-o FILE`), read like a recording: operations, findings, where
+the time went. The app opens them too (Open, or drop the file on the window). What a source does not carry stays
+empty: CloudTrail has no latency, an access log no request headers; a 404 whose code is `NoSuchBucket` counts as an
+error, a missing key as a lookup.
+
 ## Operations, not requests
 
 `sonde show` groups a session's requests into operations; `--requests` prints

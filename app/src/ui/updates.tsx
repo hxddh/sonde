@@ -4,18 +4,38 @@
 // links to the release.
 
 import { openUrl, signal, Text, View } from "nsh";
-import { type AppUpdate, checkForUpdate, downloadUpdate, installAndRestart, shellInfo } from "nsh/updater";
+import { type AppUpdate, checkForPackage, checkForUpdate, downloadPackage, downloadUpdate, installAndRestart, type PackageUpdate, restartToPackage, shellInfo } from "nsh/updater";
 import { t } from "../i18n";
 import { report } from "../store";
 import { Button, Muted, Section } from "./kit";
 
-type State = { kind: "idle" } | { kind: "checking" } | { kind: "current" } | { kind: "found"; update: AppUpdate } | { kind: "downloading"; update: AppUpdate; share: number };
+type State =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "current" }
+  | { kind: "found"; update: AppUpdate }
+  | { kind: "downloading"; update: AppUpdate; share: number }
+  // the app's code alone, signed: no new app to install, a restart runs it
+  | { kind: "package"; update: PackageUpdate; share: number | null };
 
 export function Updates() {
   const state = signal<State>({ kind: "idle" });
+  // what this is: the version installed and the Native Shell runtime it runs on
+  const shell = (() => {
+    try {
+      return shellInfo();
+    } catch {
+      return null;
+    }
+  })();
   const check = async () => {
     state.set({ kind: "checking" });
     try {
+      // a signed package of sonde's code first: smaller, and nothing to install
+      if (shell?.packages) {
+        const p = await checkForPackage().catch(() => null);
+        if (p) return void state.set({ kind: "package", update: p, share: null });
+      }
       const u = await checkForUpdate();
       state.set(u ? { kind: "found", update: u } : { kind: "current" });
     } catch (e) {
@@ -35,14 +55,16 @@ export function Updates() {
     }
   };
   const s = () => state();
-  // what this is: the version installed and the Native Shell runtime it runs on
-  const shell = (() => {
+  const applyPackage = async (p: PackageUpdate) => {
+    state.set({ kind: "package", update: p, share: 0 });
     try {
-      return shellInfo();
-    } catch {
-      return null;
+      await downloadPackage(({ received, total }) => state.set({ kind: "package", update: p, share: total ? received / total : 0 }));
+      await restartToPackage();
+    } catch (e) {
+      state.set({ kind: "package", update: p, share: null });
+      report(e);
     }
-  })();
+  };
   return (
     <Section title={t("updates.title")} testID="updates">
       <View class="flex-row flex-wrap items-center gap-2">
@@ -51,11 +73,14 @@ export function Updates() {
             ? t("updates.current")
             : s().kind === "checking"
               ? t("updates.checking")
-              : s().kind === "found" || s().kind === "downloading"
-                ? t("updates.found", { version: (s() as { update: AppUpdate }).update.version })
+              : s().kind === "found" || s().kind === "downloading" || s().kind === "package"
+                ? t("updates.found", { version: (s() as { update: { version: string } }).update.version })
                 : t("updates.hint")}
         </Text>
-        <If when={s().kind === "found" ? (s() as { update: AppUpdate }).update : null} else={<Button small variant="outline" icon="refresh-cw" label={t("updates.check")} onPress={check} disabled={s().kind === "checking" || s().kind === "downloading"} testID="updates-check" />}>
+        <If when={s().kind === "package" ? (s() as { update: PackageUpdate }).update : null}>
+          {(p) => <Button small variant="primary" icon="refresh-cw" label={t("updates.restart")} onPress={() => void applyPackage(p())} disabled={(s() as { share: number | null }).share !== null} testID="updates-package" />}
+        </If>
+        <If when={s().kind === "found" ? (s() as { update: AppUpdate }).update : null} else={s().kind === "package" ? undefined : <Button small variant="outline" icon="refresh-cw" label={t("updates.check")} onPress={check} disabled={s().kind === "checking" || s().kind === "downloading"} testID="updates-check" />}>
           {(u) => <Button small variant="primary" icon="download" label={u().canInstall ? t("updates.install") : t("updates.download")} onPress={() => install(u())} testID="updates-install" />}
         </If>
       </View>

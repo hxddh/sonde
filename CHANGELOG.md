@@ -4,6 +4,62 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [9.0.0] - 2026-11-08
+
+From diagnosis to observability. A run is watched as it goes, production traffic reads like a recording, every
+finding says what to change and what acting on all of them would leave, and the charts of a session read as one.
+Fewer of sonde's own parts: tables, toolbars, toggles, menus and words are Native Shell's.
+
+### Added
+
+- Live: Run shows requests a second, failures, in flight and the p95 as they happen, and how long requests take as
+  a band (median to p95, p99 dashed) beside the session's shape; a small monitor floats above other windows (from
+  Run or the tray); ⌘⌥R / Ctrl+Alt+R runs the last command again, or stops it, from any app.
+- `sonde import`: S3 server access logs, CloudTrail data events and HAR files as sessions, also opened or dropped in
+  the app.
+- What to change: each finding with its fix in Python, Java, Go and JavaScript (or the bucket rule), shown in the app
+  with an SDK switch; what acting on every finding would leave (requests, waiting, cost) in the app, `show` and JSON.
+- `sonde replay FILE -e a -e b …`: one session on several stores at once, side by side (answers that differ, each
+  kind's p95); in the app, the replay dialog's "Also on".
+- `sonde export --otlp [--to URL]`: a session as OpenTelemetry traces, each operation a span with its requests.
+- Charts: a moment rested on in one time chart is marked in the other; each finding's number stands over where it
+  begins; how requests were answered as a ring; a sparkline per session in the list; Capacity's prefixes nested by
+  folder; a replay's differences marked in its transcript; a program's history over a range of days; the latency
+  band in Time.
+- Signed packages of the app's code, offered first by Updates once the project's keys are set (packaging.md).
+- CI: tables in the detail panel must fit it (`scripts/lint-layout.py`); each run's screens are compared with the
+  last green run's in the job summary, with before | after | difference images.
+
+### Changed
+
+- The words are Native Shell's i18n (`app/locales/en.json`, `zh.json`).
+- Tables are Native Shell's DataTable everywhere (every row, sortable, drawn by the terminal too); values of a few
+  are ToggleGroups; the toolbar's commands and the sidebar's places are Toolbars (one Tab stop, arrows between);
+  in a terminal a session's commands are a ContextMenu; a finding's why reads as text above its fixes.
+- The Timeline pane is gone: the operations' When column places each in time, the shape says when.
+- One loading state for every wait; dashed lines drawn dashed.
+- `rust-version` 1.95.
+
+### Fixed
+
+- `share --redact` let names through: transport errors (the URL), job tags, query values such as
+  `response-content-disposition`, and any "extension" after a dot (`john.smith`).
+- The proxy took an expired presigned URL and a signature of any age; it now refuses them as S3 does (15 minutes).
+- SigV2 requests to replication, object-lock and other subresources were refused; `localhost.` and the long form
+  of `::1` were taken for another machine.
+- `check --set-baseline` alone exited 64, refused a relative path; `--baseline` took no session name.
+- `show` and `demo` wrote colour codes into a file; an exit status past 255 could read as success.
+- A live session could lose a record written after a newer one, or read another file written in its place.
+- A chain's saving counted the program's own work between requests.
+- `share --serve` wrote to a temporary directory another user could claim first.
+- Run: a stopped run or a command not found got SDK hints; the ended toast could say "ended" for a stopped run;
+  output could be cut inside a character.
+- Incomplete uploads lost Bytes and Cost off the panel's edge; the chains chart's legend sat on its axis; macOS:
+  a scheme chosen in Settings left a light sidebar; `font-mono` text was proportional on Linux and Windows; the
+  lifecycle rule broke inside its tags; a long command was cut off; a 404 `NoSuchBucket` read as "not found";
+  concurrent large uploads each held up to 1 GiB.
+
+
 ## [8.0.0] - 2026-11-08
 
 Safer, larger, and to the point. The recording endpoint serves only the program sonde gave its keys; sessions of a

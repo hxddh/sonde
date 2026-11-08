@@ -580,5 +580,6 @@
  "history.last30": "最近 30 天",
  "history.range": "运行时间范围",
  "toolbar.label": "窗口命令",
- "sidebar.places": "位置"
+ "sidebar.places": "位置",
+ "updates.restart": "更新并重启"
 }

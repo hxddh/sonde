@@ -41,8 +41,8 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 The app has three places. **Run** is its home: type a command and press Return. The program runs in a real terminal
 on the left; its requests appear on the right as operations while it works, and when it ends the session holds both,
 lined up in time: choose an operation and the lines it printed light up, choose a line and the operations running
-then do. **Sessions** keep every run — and any `.sonde` file you open (⌘O) or drop on the window: as operations or
-as a timeline, what stands out first and why, replayed on another endpoint, compared with another session side by
+then do. **Sessions** keep every run — and any `.sonde` file, access log, CloudTrail file or HAR you open (⌘O) or drop on the window: as
+operations placed in time, what stands out first and why, replayed on another endpoint, compared with another session side by
 side, opened in a window of their own, renamed, searched, or shared as a web page from the app (or `sonde share`). **Buckets** browse 100 000+ objects under an
 overview of what sonde noticed — incomplete uploads and their cost, versioning, the SlateDB, Iceberg, lakeFS or
 Woodpecker layout it recognises, the size once measured — each a sheet of detail away. Settings open in a window of
@@ -62,11 +62,14 @@ default, no telemetry.
 | **Recording** | `sonde run -- <command>` or `sonde proxy`, or a recording endpoint started in the app: a local S3 endpoint that re-signs, forwards and records every request; signed aws-chunked bodies, presigned URLs and multipart uploads handled; policies `--no-delete`, `--read-only`. Only the program given the recording's keys can use the endpoint's
 credentials (loopback only, SigV4 verified). `sonde watch` keeps it running with a live status. Sessions are redacted,
 compressed JSON lines ([docs/recording.md](docs/recording.md)). |
-| **Operations** | Sessions read as operations (multipart uploads, retries, lookups, listings; SlateDB, Iceberg and Delta steps) with observations; `sonde show`, or Sessions — the session's shape (requests by outcome and in flight over time, a slice a press away), a table with each operation's outcome and place in time, narrowed by what stands out, an inspector down to each request and its waterfall, or a timeline. |
+| **Live** | A run as it goes: requests a second, failures, in flight and the p95, requests over time beside how long they take (median to p95 as a band, p99 dashed); a small floating monitor above other windows, and ⌘⌥R / Ctrl+Alt+R to run the last command again from anywhere. `sonde watch` in a terminal. |
+| **Production traffic** | `sonde import` reads S3 server access logs, CloudTrail data events and HAR files as sessions; `sonde export --otlp` sends a session to an OpenTelemetry collector as traces. |
+| **What to change** | Each finding with its fix in Python, Java, Go and JavaScript (or the bucket rule), and an estimate of what acting on all of them would leave: requests, waiting, cost. |
+| **Operations** | Sessions read as operations (multipart uploads, retries, lookups, listings; SlateDB, Iceberg and Delta steps) with observations; `sonde show`, or Sessions — the session's shape (requests by outcome and in flight over time, a slice a press away), a table with each operation's outcome and place in time, narrowed by what stands out, and an inspector down to each request and its waterfall. |
 | **Time and cost** | Where a session's time went: the time the program waited on its store by kind of request (requests at once counted once), the peak in flight, the slowest requests, the requests' cost at S3's prices (configurable), and chains of requests that each waited for the one before, with
 how much sooner they would finish eight at once. `sonde compare` and the app's Before and after: what a change did to requests, waiting, cost and findings. |
 | **Programs and CI** | Runs of one command tracked over time against a baseline (the app's Runs pane), and `sonde check` to fail a CI job when a run is over its budget or past its baseline. Where requests went (operation → prefix → outcome), when and where (a heat map by prefix), and prefixes near S3's per-prefix rate. |
-| **Replay** | `sonde replay <session> -e <endpoint>`: the traffic re-enacted on another store under a fresh prefix and compared request by request, with each kind's p50 and p95 on both stores; `sonde diff` for two files. In the app: Replay from a session, then the differences grouped and both sessions as transcripts side by side. |
+| **Replay** | `sonde replay <session> -e <endpoint>`: the traffic re-enacted on another store under a fresh prefix and compared request by request, with each kind's p50 and p95 on both stores, or on several stores at once side by side; `sonde diff` for two files. In the app: Replay from a session, then the differences grouped and both sessions as transcripts side by side. |
 | **Share** | `sonde share`: a session as a static web page (operations, observations, output, every request) for anyone with a browser — write it to a folder, host it anywhere (S3 static website hosting works), or `--serve` it; or `--html` as one file,
 `--redact`ed to send outside. |
 | **Endpoints** | Many endpoints, from AWS profiles or by hand (URL, region, path-style, CA file, vendor: AWS, R2, MinIO, Ceph RGW, Alibaba OSS, Tigris, Backblaze B2, Wasabi, GCS XML, other). Connectivity test with STS `GetCallerIdentity` where the vendor has it. |
@@ -98,10 +101,12 @@ GTK 4) and Windows (`sonde-<version>-windows-x86_64.zip`), with `SHA256SUMS`. Th
 
 ```sh
 sonde demo                            # a tour: a small program's requests to a built-in store, explained
+sonde import access.log               # production traffic (S3 access logs, CloudTrail, HAR) as a session
 sonde run -- python etl.py            # record an application's S3 traffic (endpoint from --url or the config)
 sonde show                            # the newest session, as operations
 sonde share --serve                   # … as a web page
 sonde share --html --redact -o run.html   # … as one HTML file, names replaced, safe to send
+sonde export --otlp --to http://localhost:4318/v1/traces   # … as OpenTelemetry traces
 sonde watch                           # a proxy left running: live status, new warnings, rotating files
 sonde tui --demo                      # the terminal UI on a built-in demo server (no account needed)
 sonde endpoints import                # endpoints for your ~/.aws/config profiles
@@ -146,7 +151,7 @@ are in [app/DESIGN.md](app/DESIGN.md).
 
 | | |
 |---|---|
-| ![A session: its figures, what stands out and why, operations with outcome and time](docs/images/session.png) | ![The timeline, dark](docs/images/timeline-dark.png) |
+| ![A session: its figures, what stands out and why, operations with outcome and time](docs/images/session.png) | ![Where the time went, dark](docs/images/time-dark.png) |
 | ![Buckets: the overview over the objects, an object's details](docs/images/store.png) | ![Incomplete uploads, a sheet from the overview](docs/images/uploads.png) |
 | ![Where requests went: operation, prefix, outcome](docs/images/flows.png) | ![When and where, and how long requests took](docs/images/spread.png) |
 | ![Where the time went, the peak in flight, the request cost](docs/images/time.png) | ![Two runs, before and after](docs/images/runs.png) |

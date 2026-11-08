@@ -50,3 +50,18 @@ binary for `sonde share`.
 
 `install.sh` downloads the binary for the machine, checks its `.sha256` and installs it in `~/.local/bin`
 (`SONDE_INSTALL_DIR`, `SONDE_VERSION`).
+
+## Signed packages of the app's code
+
+A release that changes only the TSX can reach installed apps as a signed package, without a new app
+(Native Shell's OTA updates, `docs/dev/signed-packages.md` there). It is off until the project has keys:
+
+1. Once, offline: `nsh keygen root` (keep `root.secret` off any server) and add `root.pub`'s key to `app/nsh.json`:
+   `"updater": { "github": "hxddh/sonde", "packages": { "roots": ["<root.pub>"] } }`.
+2. A release key: `nsh keygen release`, then `nsh certify --root root.secret --key release.pub --app dev.sonde.app`
+   for its certificate.
+3. Repository secrets: `NSH_PACKAGE_KEY` (the release key's `.secret`) and `NSH_PACKAGE_CERT` (its certificate).
+
+The release workflow then signs `sonde-<version>.nshpkg` (`nsh publish`) and names it in `latest.json`; Settings ›
+Updates offers it first ("Update and restart"), and the app runs it from its next start, on trial until it proves
+healthy. Without the secrets the step is skipped and updates are whole apps, as before.

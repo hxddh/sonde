@@ -583,5 +583,6 @@
  "history.last30": "Last 30 days",
  "history.range": "Runs between",
  "toolbar.label": "Window commands",
- "sidebar.places": "Places"
+ "sidebar.places": "Places",
+ "updates.restart": "Update and restart"
 }

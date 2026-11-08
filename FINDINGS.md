@@ -27,6 +27,8 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | 18 | Theme | A `font-*` token keeps only the first family of its list (`nsh-base` `theme.rs` `font_family`): `"SF Mono, Menlo, …, monospace"` became `SF Mono`, which Linux and Windows do not have, so `font-mono` text was set in the proportional default (the lifecycle rule broke inside its tags). | The token starts with the generic `ui-monospace`: SF Mono on macOS, Consolas on Windows, fontconfig's monospace on Linux. |
 | 19 | Window (macOS) | `setColorScheme` gives its appearance to the main window's root view and to windows opened later, not to the main NSWindow: the window's backdrop (`"backdrop": "sidebar"`, a sibling of the root) keeps the system's. App dark on a light system: a light sidebar under light text. | While the app's scheme is its own (not System), the shell and sidebar are opaque (`windowMaterial()`); the material shows only when it matches. |
 
+Both drafted as issues for Native Shell in [docs/nsh-issues.md](docs/nsh-issues.md).
+
 ## By design
 
 - No styled components: every control (buttons, fields, switches, selects, segmented control, badges) is sonde's own

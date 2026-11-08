@@ -42,11 +42,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/nsh
         with: { rev: 1662115e30b4a86ca2e5eaf216e165c93bbdbee9 }
+      # the app's code alone, signed: installed apps that trust the root run
+      # it without a new app (skipped without the release key and its certificate)
+      - name: Signed package of the app's code
+        env:
+          NSH_PACKAGE_KEY: ${{ secrets.NSH_PACKAGE_KEY }}
+          NSH_PACKAGE_CERT: ${{ secrets.NSH_PACKAGE_CERT }}
+        if: env.NSH_PACKAGE_KEY != '' && env.NSH_PACKAGE_CERT != ''
+        run: |
+          printf '%s' "$NSH_PACKAGE_KEY" > "$RUNNER_TEMP/release.secret"
+          printf '%s' "$NSH_PACKAGE_CERT" > "$RUNNER_TEMP/release.cert"
+          cd app && nsh publish --key "$RUNNER_TEMP/release.secret" --cert "$RUNNER_TEMP/release.cert" -o "../dist/sonde-$VERSION.nshpkg"
+          rm -f "$RUNNER_TEMP/release.secret"
       - name: The manifest the app's updater reads (latest.json)
         run: |
           shopt -s nullglob
           cd app
+          pkg=(../dist/sonde-*.nshpkg)
           nsh update-manifest ../dist/sonde-[0-9]*.tar.gz ../dist/sonde-[0-9]*.zip \
+            ${pkg:+--package "${pkg[0]}"} \
             --notes ../notes.md \
             --base-url "https://github.com/${{ github.repository }}/releases/download/v$VERSION" \
             -o ../dist
@@ -62,6 +76,7 @@ jobs:
             dist/*.zip
             dist/*.dmg
             dist/latest.json
+            dist/*.nshpkg
             dist/*.sha256
             dist/SHA256SUMS
       - name: Update the Homebrew tap (skipped without HOMEBREW_TAP_TOKEN)
