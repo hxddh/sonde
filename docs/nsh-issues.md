@@ -46,3 +46,15 @@ reader whether its region is open: `ButtonProps` takes `selected` but no `access
 
 **Repro.** `<Button accessibilityState={{ expanded: true }} />`: TS2322.
 
+
+## A macOS test window larger than the screen is captured cut off, even when opened smaller
+
+**What happens.** On the macOS CI runner (a 1024×768 screen), `open("../App.tsx", { width: 1024, height: 688 })`
+then `app.screenshot()` writes a 1280×820 image whose content is 1024 points wide, offset 128 points from the left
+and cut off on both sides: the app is laid out for one size and drawn into a window of another.
+
+**Expected.** `open`'s size is the window's and the screenshot's on every target, or the window is fitted to the
+screen and the app laid out for the size it got.
+
+**Repro.** `nsh test tests/shots.test.tsx --target macos` on a GitHub `macos-15` runner with
+`SONDE_SHOT_MAX=1024x688`; any screenshot.

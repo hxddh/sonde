@@ -101,9 +101,14 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
   // where the findings happened: their numbers over the slices they start in
   const marked = () => {
     const m = new Map<number, number[]>();
-    for (const k of props.marks ?? []) {
-      const i = Math.min(rows().length - 1, Math.max(0, Math.floor(k.tMs / props.profile.binMs)));
+    // numbers a few slices apart would print over each other: they share the first one's place
+    const near = Math.max(2, Math.round(rows().length / 40));
+    const at = (props.marks ?? []).map((k) => ({ n: k.n, i: Math.min(rows().length - 1, Math.max(0, Math.floor(k.tMs / props.profile.binMs))) })).sort((a, b) => a.i - b.i || a.n - b.n);
+    let last = -Infinity;
+    for (const k of at) {
+      const i = k.i - last <= near ? last : k.i;
       m.set(i, [...(m.get(i) ?? []), k.n]);
+      last = i;
     }
     return m;
   };

@@ -31,6 +31,8 @@ Native Shell where sonde still had its own: fewer parts of sonde's, and a few sl
 - Activity follows the engine (records and jobs as they come) instead of asking it on a timer.
 - In a terminal, a session opens over the list, which is as it was on going back.
 - The window opens where it was left (Native Shell's `restoreBounds`).
+- A session's shape no longer prints its busiest moment over the findings' numbers, nor two numbers over each
+  other.
 
 ### Removed
 
