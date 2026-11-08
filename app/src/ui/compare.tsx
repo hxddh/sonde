@@ -2,15 +2,16 @@
 // endpoint, or any two — and the dialog that starts a replay.
 
 import { resource, Scroll, signal, Text, untracked, View } from "nsh";
-import { Dialog, DiffView } from "nsh/base";
+import { DataTable, Dialog, DiffView } from "nsh/base";
+import { ms } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
 import { endpoint, endpoints, go, report } from "../store";
 import type { LatencyChange, RunChange } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Choice, Heading, Muted, SCRIM, Segmented } from "./kit";
-import { cost, offset, RunBars, StoreLatency } from "./plots";
+import { Badge, Button, Check, Choice, Heading, Muted, rowHeight, SCRIM, Segmented, TYPE } from "./kit";
+import { cost, groupName, offset, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
   compared: number;
@@ -182,9 +183,51 @@ interface ReplayPlan {
 }
 
 /** Replays a session on an endpoint the user picks; `onDone` gets the replay's session. */
+/** One session replayed on several stores: each store's answers and each kind's p95, beside the recording's. */
+interface StoreRun {
+  endpoint: string;
+  path: string;
+  compared: number;
+  differ: number;
+  latency: LatencyChange[];
+}
+
+function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }) {
+  const kinds = () => {
+    const seen = new Map<string, LatencyChange>();
+    for (const r of props.runs) for (const l of r.latency) seen.set(`${l.operation}\u0000${l.missed}`, l);
+    return [...seen.values()];
+  };
+  const p95 = (r: StoreRun, k: LatencyChange) => r.latency.find((l) => l.operation === k.operation && l.missed === k.missed)?.p95Ms[1];
+  const columns = () => [
+    { key: "what", title: "", width: 190 },
+    { key: "recorded", title: t("matrix.recorded"), width: 90, align: "end" as const },
+    ...props.runs.map((r, i) => ({ key: `s${i}`, title: r.endpoint, width: 100, align: "end" as const })),
+  ];
+  const rows = () => [
+    { what: t("matrix.differ"), recorded: "—", ...Object.fromEntries(props.runs.map((r, i) => [`s${i}`, t("matrix.of", { n: r.differ, of: r.compared })])) },
+    ...kinds().map((k) => ({
+      what: `${groupName(k)} · p95`,
+      recorded: ms(k.p95Ms[0]),
+      ...Object.fromEntries(props.runs.map((r, i) => [`s${i}`, p95(r, k) === undefined ? "" : ms(p95(r, k)!)])),
+    })),
+  ];
+  return (
+    <View testID="store-matrix" class="gap-2">
+      <DataTable columns={columns()} data={rows()} rowHeight={rowHeight(28)} fontSize={TYPE.body} class="h-[220px] rounded-(--radius) border border-border bg-card" />
+      <View class="flex-row flex-wrap gap-2">
+        <Each of={props.runs}>{(r) => <Button small variant="outline" icon="git-compare-arrows" label={t("matrix.open", { name: r().endpoint })} onPress={() => props.onOpen(r().path)} />}</Each>
+      </View>
+    </View>
+  );
+}
+
 export function ReplayDialog(props: { path: string; open: boolean; onClose: () => void; onDone: (replay: string) => void }) {
   const target = signal<string | null>(endpoint());
   const busy = signal(false);
+  // more stores at once: the same requests on each, side by side
+  const also = signal<string[]>([]);
+  const runs = signal<StoreRun[] | null>(null);
   const plan = (): ReplayPlan | null => {
     const ep = target();
     if (!ep) return null;
@@ -201,9 +244,21 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
     if (!p || !ep) return;
     busy.set(true);
     try {
-      const r = (await api.sessions.replay(props.path, ep, p.prefix)) as { path: string };
-      props.onClose();
-      props.onDone(r.path);
+      const stores = [ep, ...also().filter((x) => x !== ep)];
+      if (stores.length === 1) {
+        const r = (await api.sessions.replay(props.path, ep, p.prefix)) as { path: string };
+        props.onClose();
+        props.onDone(r.path);
+        return;
+      }
+      const done = await Promise.all(
+        stores.map(async (id) => {
+          const r = (await api.sessions.replay(props.path, id, p.prefix)) as { path: string; comparison: { compared: number; differences: { count: number }[] } };
+          const c = (await api.sessions.compare(props.path, r.path)) as { latency?: LatencyChange[] };
+          return { endpoint: endpoints().find((e) => e.id === id)?.name ?? id, path: r.path, compared: r.comparison.compared, differ: r.comparison.differences.reduce((s, d) => s + d.count, 0), latency: c.latency ?? [] };
+        }),
+      );
+      runs.set(done);
     } catch (e) {
       report(e);
     } finally {
@@ -215,6 +270,17 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
       <Text class="text-heading font-semibold text-foreground">{t("replay.title")}</Text>
       <Muted class="text-body">{t("replay.hint")}</Muted>
       <Choice label={t("common.endpoint")} value={target()} placeholder={t("replay.choose")} items={endpoints().map((e) => ({ value: e.id, title: e.name }))} onChange={(v) => target.set(v)} testID="replay-endpoint" />
+      <If when={endpoints().length > 1}>
+        <View class="gap-1">
+          <Muted class="text-small">{t("replay.also")}</Muted>
+          <View class="flex-row flex-wrap gap-x-4 gap-y-1">
+            <Each of={endpoints().filter((e) => e.id !== target())}>
+              {(e) => <Check label={e().name} checked={also().includes(e().id)} onChange={(on) => also.set(on ? [...also(), e().id] : also().filter((x) => x !== e().id))} testID={`replay-also-${e().id}`} />}
+            </Each>
+          </View>
+        </View>
+      </If>
+      <If when={runs()}>{(r) => <StoreMatrix runs={r()} onOpen={(path) => (props.onClose(), props.onDone(path))} />}</If>
       <If when={plan()}>
         {(p) => (
           <View class="gap-1" testID="replay-plan">

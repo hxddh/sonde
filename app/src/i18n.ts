@@ -559,6 +559,11 @@ const en = {
   "fix.title": "What to change",
   "fix.sdk": "SDK",
   "whatIf.text": "Acting on {n} findings: {a} → {b} requests · waiting {wa} → {wb} · cost {ca} → {cb} {cur}",
+  "replay.also": "Also on (the same requests, side by side)",
+  "matrix.recorded": "Recorded",
+  "matrix.differ": "Answers that differ",
+  "matrix.of": "{n} of {of}",
+  "matrix.open": "Compare with {name}",
 };
 
 type Key = keyof typeof en;
@@ -1117,6 +1122,11 @@ const zh: Partial<Record<Key, string>> = {
   "fix.title": "怎么改",
   "fix.sdk": "SDK",
   "whatIf.text": "处理这 {n} 个发现后：请求 {a} → {b} · 等待 {wa} → {wb} · 费用 {ca} → {cb} {cur}",
+  "replay.also": "同时回放到（同样的请求并排对比）",
+  "matrix.recorded": "录制时",
+  "matrix.differ": "不一致的应答",
+  "matrix.of": "{of} 个中 {n} 个",
+  "matrix.open": "与 {name} 对比",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");
