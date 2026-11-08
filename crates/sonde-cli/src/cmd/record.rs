@@ -583,12 +583,26 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         &request_prices(s),
         false,
     );
+    if session.records.is_empty() {
+        eprintln!("{}", NO_REQUESTS);
+    }
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();
     drop(started);
     let _ = sonde_proxy::session::compress(&file);
     Ok(status.code().unwrap_or(1))
 }
+
+/// What to try when a program sent sonde nothing: most SDKs read
+/// AWS_ENDPOINT_URL, some need the endpoint said their own way.
+const NO_REQUESTS: &str = "\nThe program sent sonde no requests. sonde set AWS_ENDPOINT_URL, which current SDKs read; some need it said their own way:
+  boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])
+  AWS CLI             v2.13 or newer, or --endpoint-url \"$AWS_ENDPOINT_URL\"
+  Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)
+  Java SDK v2         2.21 or newer; Hadoop s3a: -Dfs.s3a.endpoint=$AWS_ENDPOINT_URL -Dfs.s3a.path.style.access=true
+  DuckDB              SET s3_endpoint='127.0.0.1:PORT'; SET s3_url_style='path'; SET s3_use_ssl=false
+  Node (@aws-sdk/*)   3.4xx or newer, or new S3Client({ endpoint: process.env.AWS_ENDPOINT_URL, forcePathStyle: true })
+Credentials must be the ones sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): a profile or a role bypasses them.";
 
 fn check_listen(a: &ProxyArgs) -> anyhow::Result<()> {
     if !a.listen.ip().is_loopback() && !a.allow_remote {
@@ -1449,11 +1463,11 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                 );
                 if tty {
                     eprint!("\r\x1b[2K{line}");
-                } else if seconds % 30 == 0 {
+                } else if seconds.is_multiple_of(30) {
                     eprintln!("{line}");
                 }
                 // what this file's requests say, every five seconds: each warning once
-                if seconds % 5 == 0 && !file_records.is_empty() {
+                if seconds.is_multiple_of(5) && !file_records.is_empty() {
                     let recent = &file_records[file_records.len().saturating_sub(50_000)..];
                     for o in observations(recent, &episodes(recent)) {
                         if o.level == "warn" && warned.insert(sonde_proxy::profile::finding_identity(&o)) {

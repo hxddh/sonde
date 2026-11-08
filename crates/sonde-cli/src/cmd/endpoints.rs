@@ -20,6 +20,18 @@ enum EndpointAction {
     List,
     /// Lists buckets and, where the vendor has it, asks STS who the credentials belong to.
     Test { endpoint: Option<String> },
+    /// Adds an endpoint: its URL, credentials from a profile or the AWS default chain (never a key on the command line).
+    Add {
+        /// A short id: what -e names it by.
+        id: String,
+        /// The endpoint URL, e.g. https://s3.eu-west-1.amazonaws.com or http://localhost:9000
+        /// (--region, --path-style and --ca-file apply to it).
+        #[arg(value_name = "URL")]
+        endpoint_url: String,
+        /// Credentials from this profile of ~/.aws/config (default: the AWS default chain).
+        #[arg(long)]
+        profile: Option<String>,
+    },
     /// Adds endpoints for the profiles of ~/.aws/config.
     Import {
         /// Only these profiles (default: all that are not configured yet).
@@ -27,8 +39,34 @@ enum EndpointAction {
     },
 }
 
-pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &EndpointArgs) -> anyhow::Result<i32> {
+pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<i32> {
     match &a.action {
+        EndpointAction::Add {
+            id,
+            endpoint_url,
+            profile,
+        } => {
+            let vendor = sonde_core::Vendor::guess(endpoint_url);
+            let mut e = sonde_core::EndpointConfig::new(id, id, endpoint_url, &cli.region, vendor);
+            e.path_style |= cli.path_style;
+            e.ca_file = cli.ca_file.clone();
+            if let Some(name) = profile {
+                e.credentials = sonde_core::CredentialSource::Profile { name: name.clone() };
+            }
+            match s.upsert_endpoint(e) {
+                Ok(v) => {
+                    eprintln!(
+                        "added {} ({}): `sonde endpoints test {}` checks it",
+                        v.id, v.url, v.id
+                    );
+                    Ok(0)
+                }
+                Err(e) => {
+                    eprintln!("sonde: {e}");
+                    Ok(64)
+                }
+            }
+        }
         EndpointAction::List => {
             let e = s.endpoints();
             match a.format {

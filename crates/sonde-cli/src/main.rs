@@ -34,13 +34,13 @@ pub struct Cli {
     url: Option<String>,
     /// Region for --url.
     #[arg(long, global = true, default_value = "us-east-1")]
-    region: String,
+    pub region: String,
     /// Path-style addressing for --url.
     #[arg(long, global = true)]
-    path_style: bool,
+    pub path_style: bool,
     /// A PEM CA bundle for --url.
     #[arg(long, global = true)]
-    ca_file: Option<std::path::PathBuf>,
+    pub ca_file: Option<std::path::PathBuf>,
     /// Requests per second per job.
     #[arg(long, global = true)]
     rate: Option<f64>,
