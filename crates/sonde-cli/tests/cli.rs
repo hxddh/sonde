@@ -152,10 +152,23 @@ fn a_baseline_set_alone_succeeds_by_name_or_relative_path() {
         .env("SONDE_DATA_DIR", t.path().join("data"))
         .output()
         .unwrap();
-    assert_eq!(set.status.code(), Some(0), "{}", String::from_utf8_lossy(&set.stderr));
+    assert_eq!(
+        set.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
     // a baseline named, not a path
-    let by_name = sonde(t.path(), &["check", "--baseline", name.trim_end_matches(".sonde")]);
-    assert_eq!(by_name.status.code(), Some(0), "{}", String::from_utf8_lossy(&by_name.stderr));
+    let by_name = sonde(
+        t.path(),
+        &["check", "--baseline", name.trim_end_matches(".sonde")],
+    );
+    assert_eq!(
+        by_name.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&by_name.stderr)
+    );
     // what goes to a file has no colour in it
     assert!(!stdout(&sonde(t.path(), &["show", "--summary"])).contains('\u{1b}'));
 }
