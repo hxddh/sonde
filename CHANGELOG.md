@@ -52,6 +52,10 @@ change did, and every chart is drawn by Native Shell's Plot: clear, quiet, inter
   file torn mid-character all open.
 - A session written by another tool with its keys in another order counted no requests; two shared sessions of one
   name shared a page.
+- (Found reviewing 6.0 before its release.) A request that took no time (a refused one) left the requests in flight
+  one too high for the rest of the session; a burst's peak in flight ran on through the idle time after it in long
+  sessions; live charts drew themselves in again on every refresh; a slice picked on a live session's shape pointed
+  at another time once the session grew.
 
 ## [5.0.0] - 2026-11-07
 

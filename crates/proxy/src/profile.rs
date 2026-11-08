@@ -307,8 +307,10 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     }
 
     // in flight: a step at each start and end, the busiest kept per slice
+    // a request that took no time (refused, failed before it left) is never in flight
     let mut events: Vec<(i64, i32)> = records
         .iter()
+        .filter(|r| end_us(r) > start_us(r))
         .flat_map(|r| [(start_us(r), 1), (end_us(r), -1)])
         .collect();
     // ends before starts at one instant: a request answered as the next leaves
@@ -332,16 +334,30 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         }
     }
     if steps.len() > MAX_STEPS {
+        // per slice its busiest moment, then where it ended: a burst's peak
+        // does not run on through the idle time after it
         let slice = ms(wall_us) / MAX_STEPS as f64;
-        let mut kept: Vec<Step> = Vec::with_capacity(MAX_STEPS + 1);
+        let mut per: Vec<(f64, usize, usize)> = Vec::with_capacity(MAX_STEPS + 1);
         for s in steps {
             let at = (s.t_ms / slice).floor() * slice;
-            match kept.last_mut() {
-                Some(k) if k.t_ms == at => k.n = k.n.max(s.n),
-                _ => kept.push(Step { t_ms: at, n: s.n }),
+            match per.last_mut() {
+                Some(k) if k.0 == at => {
+                    k.1 = k.1.max(s.n);
+                    k.2 = s.n;
+                }
+                _ => per.push((at, s.n, s.n)),
             }
         }
-        steps = kept;
+        steps = Vec::with_capacity(per.len() * 2);
+        for (at, max, last) in per {
+            steps.push(Step { t_ms: at, n: max });
+            if last != max {
+                steps.push(Step {
+                    t_ms: at + slice * 0.5,
+                    n: last,
+                });
+            }
+        }
     }
 
     // the slowest requests
@@ -583,7 +599,11 @@ mod tests {
             })
             .collect();
         let p = profile(&rs, &RequestPrices::default());
-        assert!(p.in_flight.len() <= MAX_STEPS + 1, "{}", p.in_flight.len());
+        assert!(
+            p.in_flight.len() <= 2 * MAX_STEPS + 2,
+            "{}",
+            p.in_flight.len()
+        );
         assert_eq!(p.in_flight.iter().map(|s| s.n).max(), Some(1));
         assert!(p.rate.len() <= MAX_BINS as usize + 1);
         assert_eq!(p.samples.len(), MAX_SAMPLES);
@@ -617,5 +637,39 @@ mod tests {
             ["b/hot was read 12 times (100% of all requests)"]
         );
         assert!(c.appeared.is_empty());
+    }
+
+    #[test]
+    fn a_request_that_took_no_time_is_never_in_flight() {
+        let rs = [
+            rec(1, 0, "DeleteObject", 403, 0.0),
+            rec(2, 1, "DeleteObject", 403, 0.0),
+            rec(3, 10, "GetObject", 200, 5.0),
+            rec(4, 20, "GetObject", 200, 5.0),
+        ];
+        let p = profile(&rs, &RequestPrices::default());
+        assert_eq!(p.peak_in_flight, 1);
+        assert_eq!(p.in_flight.last().map(|s| s.n), Some(0));
+    }
+
+    #[test]
+    fn a_bursts_peak_ends_with_the_burst() {
+        let mut rs: Vec<Record> = (0..600)
+            .map(|i| rec(i + 1, i as i64, "GetObject", 200, 3.0))
+            .collect();
+        rs.push(rec(601, 100_000, "GetObject", 200, 5.0));
+        let p = profile(&rs, &RequestPrices::default());
+        let at_50s = p
+            .in_flight
+            .iter()
+            .rev()
+            .find(|s| s.t_ms <= 50_000.0)
+            .unwrap();
+        assert_eq!(
+            at_50s.n,
+            0,
+            "{:?}",
+            &p.in_flight[p.in_flight.len().saturating_sub(5)..]
+        );
     }
 }

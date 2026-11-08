@@ -78,6 +78,13 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   };
   /** A slice of the session's shape: the time it covers, from the session's start. */
   const slice = signal<number | null>(null);
+  // a live session's slices change length as it grows: a picked one would point at another time
+  let binMs: number | undefined;
+  effect(() => {
+    const b = view()?.profile?.binMs;
+    if (binMs !== undefined && b !== binMs) untracked(() => slice.set(null));
+    binMs = b;
+  });
   const window = (): [number, number] | null => {
     const v = view();
     const i = slice();

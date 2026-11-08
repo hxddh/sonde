@@ -107,7 +107,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           colorScale={tones()}
           accessibilityLabel={shapeSentence(props.profile)}
           accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines.join(", ")}` : "" }}
-          appearGeneration={props.profile.wallMs}
+          appearGeneration={1}
           motion={MOTION}
           crossLineClass="w-full h-full rounded-sm bg-foreground/6"
           tooltipPlacement="pointer"
@@ -153,7 +153,7 @@ export function TimeSpent(props: { profile: Profile; max?: number }) {
         xScale={{ type: "linear", domain: [0, Math.max(...rows().map((g) => g.busyMs), 1) * 1.18] }}
         accessibilityLabel={label()}
         accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
-        appearGeneration={props.profile.wallMs}
+        appearGeneration={1}
         motion={MOTION}
         crossLineClass="w-full h-full rounded-sm bg-foreground/5"
         tooltipPlacement="pointer"
@@ -210,7 +210,7 @@ export function Latencies(props: { profile: Profile; max?: number; onRequest?: (
           xScale={{ type: "linear", domain: [0, top() * 1.05] }}
           yScale={{ type: "linear", domain: [-0.6, groups().length - 0.4], reverse: true }}
           accessibilityLabel={slowest() ? t("profile.latencyText", { what: groupName(groups()[slowest()!.group]), ms: ms(slowest()!.ms) }) : ""}
-          appearGeneration={props.profile.wallMs}
+          appearGeneration={1}
           motion={MOTION}
           tooltipPlacement="pointer"
           tooltipOffset={10}
