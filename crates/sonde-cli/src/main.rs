@@ -124,7 +124,7 @@ fn main() -> ExitCode {
             Command::Proxy(a) => cmd::record::proxy(&sonde, &cli, a).await,
             Command::Show(a) => cmd::record::show(&sonde, a).await,
             Command::Replay(a) => cmd::record::replay(&sonde, &cli, a).await,
-            Command::Diff(a) => cmd::record::diff(a).await,
+            Command::Diff(a) => cmd::record::diff(&sonde, a).await,
             Command::Share(a) => cmd::share::run(&sonde, a).await,
             Command::Compare(a) => cmd::record::compare(&sonde, a).await,
             Command::Check(a) => cmd::record::check(&sonde, a).await,

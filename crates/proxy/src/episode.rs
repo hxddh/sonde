@@ -1447,6 +1447,57 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             out.push(o.weigh(impact, 0, total));
         }
     }
+    // requests one after another, each waiting for the one before
+    {
+        use crate::profile::{CHAIN_CONCURRENCY, chains};
+        let found = chains(records);
+        let serial: usize = found.iter().map(|c| c.requests).sum();
+        let wall: f64 = found.iter().map(|c| c.end_ms - c.start_ms).sum();
+        let fast: f64 = found.iter().map(|c| c.at_once_ms).sum();
+        let saved = wall - fast;
+        if !found.is_empty() && saved >= 100.0 {
+            let busy = crate::profile::busy_ms(records).max(1e-9);
+            let time = |v: f64| {
+                if v >= 1000.0 {
+                    format!("{:.1} s", v / 1000.0)
+                } else {
+                    format!("{v:.0} ms")
+                }
+            };
+            let ids: Vec<u64> = found.iter().flat_map(|c| c.ids.iter().copied()).collect();
+            let mut o = warn(
+                p(
+                    "obs.serial",
+                    &[
+                        ("n", serial.to_string()),
+                        ("time", time(wall)),
+                        ("k", CHAIN_CONCURRENCY.to_string()),
+                        ("fast", time(fast)),
+                    ],
+                ),
+                of_records(&mut ids.into_iter()),
+            );
+            if saved * 4.0 < busy {
+                o.level = "info";
+            }
+            o.impact = serial;
+            let s = p(
+                "obs.savesTime",
+                &[
+                    ("time", time(saved)),
+                    (
+                        "pct",
+                        ((saved * 100.0 / busy).round() as usize)
+                            .min(100)
+                            .to_string(),
+                    ),
+                ],
+            );
+            o.saving_text = Some(s.en());
+            o.saving = Some(s);
+            out.push(o);
+        }
+    }
     // far slower than the rest: a second or more, and ten times the median
     if records.len() >= 10 {
         let mut lat: Vec<f64> = records.iter().map(|r| r.latency_ms).collect();

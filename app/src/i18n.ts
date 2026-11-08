@@ -522,6 +522,8 @@ const en = {
   "link.noEndpoint": "No endpoint called {name}",
   "requests.body": "Document sent",
   "requests.bodyCut": "Document sent (cut to what is kept)",
+  "why.obs.serial": "Requests that each wait for the one before add up their latencies: the program waits for every round trip in turn. Issuing independent requests together (a pool, async tasks, or a batch API) overlaps that waiting.",
+  "why.obs.prefixrate": "S3 serves about 5,500 reads and 3,500 writes a second for each prefix and throttles beyond that. Keys spread over more prefixes (a hash or date in the path) share the load.",
 };
 
 type Key = keyof typeof en;
@@ -1043,6 +1045,8 @@ const zh: Partial<Record<Key, string>> = {
   "link.noEndpoint": "没有名为 {name} 的端点",
   "requests.body": "发送的文档",
   "requests.bodyCut": "发送的文档（已截断）",
+  "why.obs.serial": "每个都等上一个完成的请求会把延迟累加起来：程序要依次等待每一次往返。把互不依赖的请求一起发出（连接池、异步任务或批量接口），等待就能重叠。",
+  "why.obs.prefixrate": "S3 每个前缀每秒大约支持 5,500 次读取和 3,500 次写入，超过就会限流。把键分散到更多前缀（在路径中加入哈希或日期）可以分摊负载。",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

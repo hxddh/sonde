@@ -148,6 +148,86 @@ pub struct Profile {
     pub heat: Vec<HeatCell>,
     /// Where requests went: operation → prefix → outcome, each a flow of requests.
     pub flows: Vec<Flow>,
+    /// Runs of requests made one after another (each waiting for the one
+    /// before), longest first: where requests at once would save time.
+    pub chains: Vec<Chain>,
+}
+
+/// Requests made one at a time, each starting once the one before ended
+/// (with no other request in flight): the program waited for each in turn.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Chain {
+    pub start_ms: f64,
+    pub end_ms: f64,
+    pub requests: usize,
+    /// The record ids, in order.
+    pub ids: Vec<u64>,
+    /// What it would take with [`CHAIN_CONCURRENCY`] at once, about.
+    pub at_once_ms: f64,
+}
+
+/// The requests at once a chain is weighed with: what SDKs default to, or near.
+pub const CHAIN_CONCURRENCY: usize = 8;
+/// The fewest requests a chain is told of.
+pub const CHAIN_MIN: usize = 10;
+/// The longest wait between two requests of a chain (the program's own time).
+const CHAIN_GAP_US: i64 = 10_000;
+
+/// The chains of `records`: see [`Chain`].
+pub fn chains(records: &[Record]) -> Vec<Chain> {
+    let mut sorted: Vec<&Record> = records.iter().collect();
+    sorted.sort_by_key(|r| (start_us(r), r.id));
+    let Some(t0) = sorted.first().map(|r| start_us(r)) else {
+        return Vec::new();
+    };
+    let ms = |us: i64| (us - t0) as f64 / 1000.0;
+    let mut out: Vec<Chain> = Vec::new();
+    let mut cur: Vec<&Record> = Vec::new();
+    let mut end = i64::MIN;
+    let close = |cur: &mut Vec<&Record>, out: &mut Vec<Chain>| {
+        if cur.len() >= CHAIN_MIN {
+            let (a, b) = (
+                start_us(cur[0]),
+                cur.iter().map(|r| end_us(r)).max().unwrap_or(0),
+            );
+            // the same requests at once: the waves of the longest ones
+            let mut lat: Vec<i64> = cur.iter().map(|r| end_us(r) - start_us(r)).collect();
+            lat.sort_unstable_by(|x, y| y.cmp(x));
+            let at_once: i64 = lat.iter().step_by(CHAIN_CONCURRENCY).sum();
+            out.push(Chain {
+                start_ms: ms(a),
+                end_ms: ms(b),
+                requests: cur.len(),
+                ids: cur.iter().map(|r| r.id).collect(),
+                at_once_ms: at_once as f64 / 1000.0,
+            });
+        }
+        cur.clear();
+    };
+    for r in sorted {
+        let s = start_us(r);
+        if !cur.is_empty() && (s < end || s - end > CHAIN_GAP_US) {
+            // an overlap (requests at once already) or the program's own pause
+            let overlapped = s < end;
+            close(&mut cur, &mut out);
+            if overlapped {
+                end = end.max(end_us(r));
+                continue;
+            }
+        }
+        if cur.is_empty() && s < end {
+            end = end.max(end_us(r));
+            continue;
+        }
+        cur.push(r);
+        end = end_us(r);
+    }
+    close(&mut cur, &mut out);
+    out.sort_by(|a, b| {
+        (b.end_ms - b.start_ms - b.at_once_ms).total_cmp(&(a.end_ms - a.start_ms - a.at_once_ms))
+    });
+    out
 }
 
 /// A prefix (a key's folder, three levels at most): S3 scales its request
@@ -233,6 +313,11 @@ fn end_us(r: &Record) -> i64 {
     start_us(r) + r.latency_us()
 }
 
+/// The time with a request in flight, in ms.
+pub fn busy_ms(records: &[Record]) -> f64 {
+    union_us(records.iter().map(|r| (start_us(r), end_us(r))).collect()) as f64 / 1000.0
+}
+
 /// The length of the union of intervals, in microseconds.
 fn union_us(mut iv: Vec<(i64, i64)>) -> i64 {
     iv.sort_unstable();
@@ -307,6 +392,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         prefixes: Vec::new(),
         heat: Vec::new(),
         flows: Vec::new(),
+        chains: Vec::new(),
     };
     let Some(t0) = records.iter().map(start_us).min() else {
         return empty;
@@ -591,7 +677,47 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         prefixes,
         heat,
         flows,
+        chains: chains(records),
     }
+}
+
+/// One kind of request on two stores (a session and its replay): how long it
+/// took on each.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencyChange {
+    pub operation: String,
+    pub missed: bool,
+    pub requests: (usize, usize),
+    pub p50_ms: (f64, f64),
+    pub p95_ms: (f64, f64),
+    pub busy_ms: (f64, f64),
+}
+
+/// The kinds of request two sessions share, by how much slower (p95) the
+/// second is, slowest first: a workload measured on two stores.
+pub fn latency_changes(a: &Profile, b: &Profile) -> Vec<LatencyChange> {
+    let mut out: Vec<LatencyChange> = a
+        .groups
+        .iter()
+        .filter_map(|ga| {
+            let gb = b
+                .groups
+                .iter()
+                .find(|g| g.operation == ga.operation && g.missed == ga.missed)?;
+            Some(LatencyChange {
+                operation: ga.operation.clone(),
+                missed: ga.missed,
+                requests: (ga.requests, gb.requests),
+                p50_ms: (ga.p50_ms, gb.p50_ms),
+                p95_ms: (ga.p95_ms, gb.p95_ms),
+                busy_ms: (ga.busy_ms, gb.busy_ms),
+            })
+        })
+        .collect();
+    let ratio = |c: &LatencyChange| c.p95_ms.1.max(0.01) / c.p95_ms.0.max(0.01);
+    out.sort_by(|x, y| ratio(y).total_cmp(&ratio(x)));
+    out
 }
 
 /// A group's change from one run to the other.

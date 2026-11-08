@@ -64,6 +64,10 @@ const zh: Record<string, string> = {
   "obs.throttled.rate": "{n} 个请求被限流（503 SlowDown 或 429）：存储要求降低每秒请求数",
   "obs.slow": "{n} 个请求耗时超过 {ms} ms，而中位数是 {median} ms；最慢的是 {op}，耗时 {max} ms",
   "obs.saves": "可少发 {n} 个请求（占会话的 {pct}%）",
+  "obs.prefixrate.reads": "{prefix} 每秒最多读取 {n} 次，达到 S3 单个前缀上限 {limit} 的 {pct}%：在被限流前把键分散到更多前缀",
+  "obs.prefixrate.writes": "{prefix} 每秒最多写入 {n} 次，达到 S3 单个前缀上限 {limit} 的 {pct}%：在被限流前把键分散到更多前缀",
+  "obs.serial": "{n} 个请求一个接一个地运行了 {time}，每个都在等上一个：同时发 {k} 个大约只需 {fast}",
+  "obs.savesTime": "大约快 {time}（占等待时间的 {pct}%）",
 };
 
 const TEMPLATES: Record<string, Record<string, string>> = { zh };
@@ -97,7 +101,7 @@ export const observationSaving = (o: Observation): string | null => (o.saving ? 
 export const observationWhy = (o: Observation): string | null => {
   const key = o.phrases?.[0]?.key;
   if (!key) return null;
-  const k = `why.${key === "obs.orphans.one" ? "obs.orphans" : key}`;
+  const k = `why.${key === "obs.orphans.one" ? "obs.orphans" : key.startsWith("obs.prefixrate") ? "obs.prefixrate" : key}`;
   const s = t(k as Key);
   return s === k ? null : s;
 };

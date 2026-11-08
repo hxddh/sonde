@@ -316,3 +316,63 @@ fn the_prefix_nearest_its_limit_is_named_first() {
     );
     assert_eq!(hot[0].level, "warn");
 }
+
+#[test]
+fn requests_one_after_another_are_a_chain_that_requests_at_once_would_shorten() {
+    // 40 reads, each 20 ms, each starting as the one before ends
+    let recs: Vec<Record> = (0..40u64)
+        .map(|i| {
+            rec(
+                i + 1,
+                i as i64 * 21,
+                "GetObject",
+                Some(&format!("k{i}")),
+                200,
+                20.0,
+            )
+        })
+        .collect();
+    let p = sonde_proxy::profile::profile(&recs, &Default::default());
+    assert_eq!(p.chains.len(), 1);
+    assert_eq!(p.chains[0].requests, 40);
+    assert!(
+        (p.chains[0].at_once_ms - 100.0).abs() < 1e-6,
+        "{:?}",
+        p.chains[0]
+    );
+    let obs = findings(&recs);
+    let f = obs
+        .iter()
+        .find(|o| key(o) == "obs.serial")
+        .expect("a chain");
+    assert_eq!(
+        f.text,
+        "40 requests ran one after another for 839 ms, each waiting for the one before: 8 at once would take about 100 ms"
+    );
+    assert!(
+        f.saving_text
+            .as_deref()
+            .unwrap()
+            .starts_with("about 739 ms sooner"),
+        "{:?}",
+        f.saving_text
+    );
+    // the same reads 8 at a time make no chain
+    let together: Vec<Record> = (0..40u64)
+        .map(|i| {
+            rec(
+                i + 1,
+                (i / 8) as i64 * 21,
+                "GetObject",
+                Some(&format!("k{i}")),
+                200,
+                20.0,
+            )
+        })
+        .collect();
+    assert!(
+        sonde_proxy::profile::profile(&together, &Default::default())
+            .chains
+            .is_empty()
+    );
+}

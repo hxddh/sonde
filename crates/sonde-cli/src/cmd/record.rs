@@ -578,6 +578,10 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         color,
         &request_prices(s),
     );
+    // finished: compressed to a tenth or less, still a .sonde file
+    let file = started.path.clone();
+    drop(started);
+    let _ = sonde_proxy::session::compress(&file);
     Ok(status.code().unwrap_or(1))
 }
 
@@ -619,6 +623,10 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
         std::io::stderr().is_terminal(),
         &request_prices(s),
     );
+    // finished: compressed to a tenth or less, still a .sonde file
+    let file = started.path.clone();
+    drop(started);
+    let _ = sonde_proxy::session::compress(&file);
     Ok(0)
 }
 
@@ -892,6 +900,7 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
     })
     .await
     .map_err(|e| anyhow::anyhow!(e))?;
+    let _ = sonde_proxy::session::compress(&path);
     if show {
         eprint!("\r\x1b[2K");
     }
@@ -910,6 +919,14 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
         ),
         _ => {
             print_comparison(&c, std::io::stdout().is_terminal());
+            if let Ok(replayed) = Session::open(&path) {
+                print_latency(
+                    &original.records,
+                    &replayed.records,
+                    (&original.header.endpoint, &replayed.header.endpoint),
+                    &request_prices(s),
+                );
+            }
             eprintln!(
                 "{}",
                 paint(&format!("session: {}", path.display()), "2", color)
@@ -917,6 +934,37 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
         }
     }
     Ok(if c.differ() > 0 { 2 } else { 0 })
+}
+
+/// The same workload on two stores: each kind's p50 and p95 on each, slowest change first.
+fn print_latency(a: &[Record], b: &[Record], names: (&str, &str), prices: &RequestPrices) {
+    let changes = sonde_proxy::profile::latency_changes(&profile(a, prices), &profile(b, prices));
+    if changes.is_empty() {
+        return;
+    }
+    let rows: Vec<Vec<String>> = changes
+        .iter()
+        .take(10)
+        .map(|c| {
+            let ratio = c.p95_ms.1.max(0.01) / c.p95_ms.0.max(0.01);
+            vec![
+                if c.missed {
+                    format!("{} (not found)", c.operation)
+                } else {
+                    c.operation.clone()
+                },
+                format!("{} → {}", ms_text(c.p50_ms.0), ms_text(c.p50_ms.1)),
+                format!("{} → {}", ms_text(c.p95_ms.0), ms_text(c.p95_ms.1)),
+                format!("{ratio:.1}×"),
+            ]
+        })
+        .collect();
+    println!(
+        "\nlatency, {} → {}\n{}",
+        names.0,
+        names.1,
+        output::table(&["kind", "p50", "p95", "p95 ×"], &rows)
+    );
 }
 
 fn opts_bucket(o: &sonde_proxy::replay::ReplayOptions, b: &str) -> String {
@@ -927,13 +975,28 @@ fn opts_bucket(o: &sonde_proxy::replay::ReplayOptions, b: &str) -> String {
         .unwrap_or_else(|| b.to_string())
 }
 
-pub async fn diff(a: &DiffArgs) -> anyhow::Result<i32> {
+pub async fn diff(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
     let original = Session::open(&a.original).map_err(|e| anyhow::anyhow!(e))?;
     let replay = Session::open(&a.replay).map_err(|e| anyhow::anyhow!(e))?;
     let c = sonde_proxy::replay::compare(&original.records, &replay.records, &[]);
+    let prices = request_prices(s);
     match a.format {
-        Format::Json => println!("{}", output::json(&c)),
-        _ => print_comparison(&c, std::io::stdout().is_terminal()),
+        Format::Json => println!(
+            "{}",
+            output::json(&serde_json::json!({
+                "comparison": c,
+                "latency": sonde_proxy::profile::latency_changes(&profile(&original.records, &prices), &profile(&replay.records, &prices)),
+            }))
+        ),
+        _ => {
+            print_comparison(&c, std::io::stdout().is_terminal());
+            print_latency(
+                &original.records,
+                &replay.records,
+                (&original.header.endpoint, &replay.header.endpoint),
+                &prices,
+            );
+        }
     }
     Ok(if c.differ() > 0 { 2 } else { 0 })
 }
