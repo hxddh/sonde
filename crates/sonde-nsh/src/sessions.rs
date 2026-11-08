@@ -214,11 +214,14 @@ fn view_of(path: &str) -> Result<Arc<JsonValue>, String> {
         .into_iter()
         .map(|(_, n, _, _)| n)
         .collect();
+    let prof = sonde_proxy::profile::profile(&s.records, &crate::state::request_prices());
+    let what_if = sonde_proxy::fixes::what_if(&s.records, &prof, &obs);
     let view = Arc::new(json!({
         "path": path,
         "header": s.header,
         "summary": summarize(&s.records),
-        "profile": sonde_proxy::profile::profile(&s.records, &crate::state::request_prices()),
+        "profile": prof,
+        "whatIf": what_if,
         "episodes": eps,
         "observations": obs,
         "sharedNotes": shared,

@@ -276,7 +276,9 @@ export function openPaths(paths: string[]) {
     try {
       last = api.sessions.importPath(path);
     } catch (e) {
-      report(e);
+      // a log or JSON that is no traffic sonde reads: said as plainly as any other file
+      if (name.toLowerCase().endsWith(".sonde")) report(e);
+      else notify(t("sessions.notSession", { name }), { kind: "warning" });
     }
   }
   if (!last) return;

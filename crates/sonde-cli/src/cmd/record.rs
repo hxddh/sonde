@@ -527,14 +527,34 @@ fn print_summary(
     for (what, n) in &s.error_codes {
         say(format!("  {n} × {what}"));
     }
-    print_profile(&profile(records, prices), color, &say);
-    for o in observations(records, &eps) {
+    let prof = profile(records, prices);
+    print_profile(&prof, color, &say);
+    let obs = observations(records, &eps);
+    for o in &obs {
         let mark = if o.level == "warn" {
             paint("!", "33", color)
         } else {
             paint("·", "2", color)
         };
         say(format!("{mark} {}", o.text));
+    }
+    // acting on all of them, at once
+    if let Some(w) = sonde_proxy::fixes::what_if(records, &prof, &obs) {
+        say(paint(
+            &format!(
+                "acting on {} finding{}: {} → {} requests · waiting {} → {} · cost {} → {}",
+                w.findings,
+                if w.findings == 1 { "" } else { "s" },
+                w.requests.0,
+                w.requests.1,
+                ms_text(w.waiting_ms.0),
+                ms_text(w.waiting_ms.1),
+                money_text(w.cost.0, &w.currency),
+                money_text(w.cost.1, &w.currency),
+            ),
+            "32",
+            color,
+        ));
     }
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
 }
@@ -704,6 +724,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "summary": summarize(all),
                     "episodes": eps,
                     "observations": observations(all, &eps),
+                    "whatIf": sonde_proxy::fixes::what_if(all, &profile(all, &request_prices(s)), &observations(all, &eps)),
                     "records": all,
                 }))
             );

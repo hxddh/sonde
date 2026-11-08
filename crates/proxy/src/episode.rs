@@ -991,6 +991,23 @@ pub struct Observation {
     /// The saving in English.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saving_text: Option<String>,
+    /// The saving, counted: requests acting on it would not send …
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub saves_requests: usize,
+    /// … and time the program would not wait, in ms.
+    #[serde(default, skip_serializing_if = "is_zero_ms")]
+    pub saves_ms: f64,
+    /// What to change in the program, by SDK.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fixes: Vec<crate::fixes::Fix>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+fn is_zero_ms(n: &f64) -> bool {
+    *n == 0.0
 }
 
 impl Observation {
@@ -998,6 +1015,7 @@ impl Observation {
     /// save (out of `total`).
     fn weigh(mut self, impact: usize, saves: usize, total: usize) -> Self {
         self.impact = impact;
+        self.saves_requests = saves;
         if saves > 0 {
             let saving = p(
                 "obs.saves",
@@ -1081,6 +1099,9 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             impact: 0,
             saving: None,
             saving_text: None,
+            saves_requests: 0,
+            saves_ms: 0.0,
+            fixes: Vec::new(),
         });
     }
     let warn = |t: Phrase, episodes: Vec<usize>| Observation {
@@ -1091,6 +1112,9 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         impact: 0,
         saving: None,
         saving_text: None,
+        saves_requests: 0,
+        saves_ms: 0.0,
+        fixes: Vec::new(),
     };
     let info = |t: Phrase, episodes: Vec<usize>| Observation {
         level: "info",
@@ -1100,6 +1124,9 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         impact: 0,
         saving: None,
         saving_text: None,
+        saves_requests: 0,
+        saves_ms: 0.0,
+        fixes: Vec::new(),
     };
     let total = records.len().max(1);
     let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
@@ -1494,6 +1521,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             );
             o.saving_text = Some(s.en());
             o.saving = Some(s);
+            o.saves_ms = saved;
             out.push(o);
         }
     }
@@ -1538,6 +1566,11 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .cmp(&(a.level == "warn"))
             .then(b.impact.cmp(&a.impact))
     });
+    for o in &mut out {
+        if let Some(first) = o.phrases.first() {
+            o.fixes = crate::fixes::for_key(first.key);
+        }
+    }
     out
 }
 

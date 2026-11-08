@@ -556,6 +556,9 @@ const en = {
   "run.stoppedEmpty": "Stopped before it sent a request",
   "run.notFound": "The command was not found: check its name and the folder it runs in",
   "sessions.trafficType": "S3 access logs, CloudTrail, HAR",
+  "fix.title": "What to change",
+  "fix.sdk": "SDK",
+  "whatIf.text": "Acting on {n} findings: {a} → {b} requests · waiting {wa} → {wb} · cost {ca} → {cb} {cur}",
 };
 
 type Key = keyof typeof en;
@@ -1111,6 +1114,9 @@ const zh: Partial<Record<Key, string>> = {
   "run.stoppedEmpty": "在发出任何请求前已停止",
   "run.notFound": "找不到该命令：请检查命令名和运行目录",
   "sessions.trafficType": "S3 访问日志、CloudTrail、HAR",
+  "fix.title": "怎么改",
+  "fix.sdk": "SDK",
+  "whatIf.text": "处理这 {n} 个发现后：请求 {a} → {b} · 等待 {wa} → {wb} · 费用 {ca} → {cb} {cur}",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

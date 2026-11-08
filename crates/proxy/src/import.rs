@@ -383,6 +383,20 @@ fn har(text: &str) -> Result<Vec<Record>, String> {
     Ok(out)
 }
 
+/// Writes an imported session as a `.sonde` file, compressed as a finished
+/// recording is.
+pub fn save(session: &Session, path: &std::path::Path) -> std::io::Result<()> {
+    use reqlog::Sink;
+    {
+        let w = crate::session::SessionWriter::create(path, &session.header)?;
+        for r in &session.records {
+            w.write(r);
+        }
+        w.flush()?;
+    }
+    crate::session::compress(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,18 +456,4 @@ mod tests {
         let s = r#"{"format":"sonde-session","version":1}"#;
         assert_eq!(detect(s), None);
     }
-}
-
-/// Writes an imported session as a `.sonde` file, compressed as a finished
-/// recording is.
-pub fn save(session: &Session, path: &std::path::Path) -> std::io::Result<()> {
-    use reqlog::Sink;
-    {
-        let w = crate::session::SessionWriter::create(path, &session.header)?;
-        for r in &session.records {
-            w.write(r);
-        }
-        w.flush()?;
-    }
-    crate::session::compress(path)
 }

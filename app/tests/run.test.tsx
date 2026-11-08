@@ -65,6 +65,14 @@ test("an example session reads as operations, each opening on its requests", asy
   expect(app.shows("label:/116 not found/")).toBe(true);
   expect(app.shows("text:/27 SlateDB writes: conditional create/")).toBe(true);
   expect(app.shows("text:looked for the newest WAL: probed ids 1…128")).toBe(true);
+  // acting on the findings, estimated; a finding pressed says what to change, by SDK
+  expect(app.shows("text:/^Acting on \\d+ findings?: 172 → \\d+ requests/")).toBe(true);
+  await app.press("id:observation-0");
+  await app.waitFor("id:fix");
+  expect(app.shows("id:fix-code")).toBe(true);
+  await app.press("id:fix-go");
+  await app.waitFor("text:Go SDK v2");
+  await app.press("id:observation-0");
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
   expect(app.shows("text:/^requests \\(5\\)$/i")).toBe(true);

@@ -5,7 +5,7 @@
 // (sonde share) both draw with these.
 
 import { type ContextMenuEvent, type JSX, List, platform, Scroll, signal, Text, View } from "nsh";
-import { Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, HoverCard } from "nsh/base";
+import { Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, Editor, HoverCard, Toggle, ToggleGroup } from "nsh/base";
 import { bytes, date, day, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
@@ -215,6 +215,54 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
 /** Whether a session's findings are folded away (kept while the app runs). */
 const findingsOpen = signal(true);
 
+const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3", config: "Bucket" } as const;
+const LANG = { python: "python", java: "java", go: "go", js: "javascript", config: "xml" } as const;
+/** The SDK the fixes are shown for, kept while the app runs. */
+const fixSdk = signal<keyof typeof SDKS>("python");
+
+/** What to change for a finding: its fix in each SDK, one shown. */
+function FixPanel(props: { o: Observation }) {
+  const fixes = () => props.o.fixes ?? [];
+  const shown = () => fixes().find((f) => f.sdk === fixSdk()) ?? fixes()[0];
+  return (
+    <View testID="fix" class="gap-2 rounded-(--radius-card) border border-border bg-card p-3">
+      <View class="flex-row flex-wrap items-center gap-2">
+        <Icon name="sparkles" size={13} />
+        <Text role="header" class="flex-1 text-small font-semibold text-foreground">{t("fix.title")}</Text>
+        <ToggleGroup class="flex-row rounded-(--radius) bg-muted p-0.5">
+          <Each of={fixes()}>
+            {(f) => (
+              <Toggle
+                testID={`fix-${f().sdk}`}
+                pressed={shown()?.sdk === f().sdk}
+                onChange={() => fixSdk.set(f().sdk)}
+                class="group rounded-(--radius-sm) px-2 py-0.5 aria-pressed:bg-background aria-pressed:shadow-sm"
+              >
+                <Text class="text-caption text-muted-foreground group-aria-pressed:font-medium group-aria-pressed:text-foreground">{SDKS[f().sdk]}</Text>
+              </Toggle>
+            )}
+          </Each>
+        </ToggleGroup>
+      </View>
+      <If when={shown()}>
+        {(f) => (
+          <If when={!terminal()} else={<Text class="font-mono text-foreground">{f().code}</Text>}>
+            <Editor testID="fix-code" value={f().code} language={LANG[f().sdk]} readOnly lineNumbers={false} softWrap minRows={2} maxRows={10} fontSize={12} class="rounded-(--radius) border border-border bg-background" />
+          </If>
+        )}
+      </If>
+    </View>
+  );
+}
+
+/** Acting on every finding at once, as an estimate: requests, waiting, cost. */
+export function whatIfText(v: SessionView): string | null {
+  const w = v.whatIf;
+  if (!w) return null;
+  const money = (x: number) => (x < 0.01 ? x.toPrecision(2) : x.toFixed(2));
+  return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: offset(w.waitingMs[0]), wb: offset(w.waitingMs[1]), ca: money(w.cost[0]), cb: money(w.cost[1]), cur: w.currency });
+}
+
 /** What stands out in a session — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
@@ -289,11 +337,23 @@ export function Observations(props: { view: SessionView; filter?: number | null;
             <Text role="header" class="text-caption font-medium text-muted-foreground">{`${t("obs.title")} · ${props.view.observations.length}`}</Text>
           </BaseButton>
         </If>
+        <If when={!props.compact && whatIfText(props.view)}>
+          {(w) => (
+            <View class="flex-row items-center gap-1.5 px-1">
+              <Icon name="trending-down" size={12} tint="info" />
+              <Text testID="what-if" class="tabular-nums text-small text-info">{w()}</Text>
+            </View>
+          )}
+        </If>
         <If when={props.compact || findingsOpen()}>
           {/* a short window keeps room for the operations: the findings scroll */}
           <Scroll class="overflow-hidden rounded-(--radius-card) border border-border bg-card" style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
             <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
           </Scroll>
+        </If>
+        {/* the finding pressed: what to change */}
+        <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
+          {(o) => <FixPanel o={o()} />}
         </If>
       </View>
     </If>

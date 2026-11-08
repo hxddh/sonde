@@ -477,6 +477,20 @@ export interface Observation {
   /** What acting on it would save, when that can be counted. */
   saving?: Phrase;
   savingText?: string;
+  /** The saving, counted. */
+  savesRequests?: number;
+  savesMs?: number;
+  /** What to change in the program, by SDK. */
+  fixes?: { sdk: "python" | "java" | "go" | "js" | "config"; code: string }[];
+}
+
+/** A session after acting on every finding that counts a saving: an estimate. */
+export interface WhatIf {
+  requests: [number, number];
+  waitingMs: [number, number];
+  cost: [number, number];
+  currency: string;
+  findings: number;
 }
 
 export interface SessionSummary {
@@ -586,6 +600,7 @@ export interface SessionView {
   header: { endpoint: string; url: string; region: string; created: string; command?: string | null };
   summary: SessionSummary;
   profile: Profile;
+  whatIf?: WhatIf | null;
   episodes: Episode[];
   observations: Observation[];
   sharedNotes: string[];
