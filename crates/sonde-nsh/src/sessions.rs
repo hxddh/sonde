@@ -233,11 +233,14 @@ fn own_session(path: &str) -> Result<(PathBuf, String), String> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let inside = p.parent().and_then(|d| d.canonicalize().ok()) == dir.canonicalize().ok();
+    let here = p.parent().and_then(|d| d.canonicalize().ok());
+    let inside = here.is_some() && here == dir.canonicalize().ok();
     if !inside || !name.ends_with(".sonde") || !p.is_file() {
         return Err(format!("{path} is not one of sonde's sessions"));
     }
-    Ok((p.to_path_buf(), name))
+    // as the list names it (a dropped file's path may be spelled otherwise:
+    // forward slashes on Windows, a symlinked folder)
+    Ok((dir.join(&name), name))
 }
 
 /// The sites shared from the app, each served on its own local port.
@@ -267,9 +270,13 @@ fn count_records(path: &Path) -> usize {
         }
         // complete lines only: the last may still be being written
         let end = buf.iter().rposition(|c| *c == b'\n').map_or(0, |i| i + 1);
-        n += buf[..end]
-            .split(|c| *c == b'\n')
-            .filter(|l| l.starts_with(b"{\"id\""))
+        // records are the lines after the header that are not output
+        let mut lines = buf[..end].split(|c| *c == b'\n');
+        if from == 0 {
+            lines.next();
+        }
+        n += lines
+            .filter(|l| !l.is_empty() && l.starts_with(b"{") && !l.starts_with(b"{\"log\""))
             .count();
         from += end as u64;
         COUNTS.lock().insert(path.to_path_buf(), (from, n));
@@ -637,11 +644,14 @@ impl Sessions {
     /// Adds a session file at `path` (dropped on the window) to the sessions
     /// directory, as [`Sessions::import`]; one already there is opened as it is.
     pub fn import_path(path: String) -> Result<String, String> {
-        if own_session(&path).is_ok() {
-            return Ok(path);
+        if let Ok((own, _)) = own_session(&path) {
+            return Ok(own.to_string_lossy().into_owned());
         }
         let p = Path::new(&path);
-        let text = std::fs::read_to_string(p).map_err(|e| format!("{path}: {e}"))?;
+        // bytes, as a session is read: a torn last character is a torn line
+        let text = std::fs::read(p)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .map_err(|e| format!("{path}: {e}"))?;
         let name = p
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -692,7 +702,13 @@ impl Sessions {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "session".into());
-        let dir = sonde().paths().shared().join(&stem);
+        // the stem and where the file is: two sessions of one name never share a page
+        let dir = sonde().paths().shared().join(format!("{stem}-{:08x}", {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            path.hash(&mut h);
+            h.finish() as u32
+        }));
         let doc =
             serde_json::to_vec(&sonde_proxy::share::session_json(&session)).map_err(err_msg)?;
         let site = dir.clone();
@@ -756,6 +772,10 @@ mod tests {
         writeln!(f, "{{\"log\":{{\"text\":\"bye\"}}}}").unwrap();
         f.flush().unwrap();
         assert_eq!(count_records(&path), 3);
+        // a record written by another tool, its keys in another order
+        writeln!(f, "{{\"time\":\"2026-01-01T00:00:00Z\",\"id\":4}}").unwrap();
+        f.flush().unwrap();
+        assert_eq!(count_records(&path), 4);
     }
 
     #[test]

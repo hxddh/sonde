@@ -181,7 +181,17 @@ export function init() {
 /** Asks for a `.sonde` file (one recorded elsewhere, or shared) and opens it in Sessions. */
 /** A local path from a `file:` URL (a file manager's drop). */
 export function pathOf(uri: string): string {
-  const p = decodeURIComponent(uri.replace(/^file:\/\/(localhost)?/, ""));
+  let rest = uri.replace(/^file:/i, "");
+  // file://host/share/x is a UNC path; file:///x and file://localhost/x are local
+  const unc = /^\/\/(?!localhost\/)[^/]+\//i.test(rest);
+  rest = rest.replace(/^\/\/(localhost)?(?=\/)/i, "");
+  let p: string;
+  try {
+    p = decodeURIComponent(rest);
+  } catch {
+    p = rest; // a stray % is part of the name
+  }
+  if (unc) return `\\\\${p.replace(/^\/\//, "").replace(/\//g, "\\")}`;
   // file:///C:/x on Windows
   return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;
 }
@@ -192,7 +202,7 @@ export function openDropped(uris: string[]) {
   for (const uri of uris) {
     const path = pathOf(uri);
     const name = path.split(/[\\/]/).pop() ?? path;
-    if (!uri.startsWith("file:") || !name.endsWith(".sonde")) {
+    if (!/^file:/i.test(uri) || !name.toLowerCase().endsWith(".sonde")) {
       notify(t("sessions.notSession", { name }), { kind: "warning" });
       continue;
     }

@@ -332,6 +332,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         format!("{origin}{path}?{qs}")
     };
 
+    // the request as the application saw it: from its arrival (a buffered
+    // body's upload included) to the answer
+    let received = Instant::now();
     let mut record = Record {
         id: 0,
         time: Utc::now(),
@@ -480,6 +483,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                         }
                     };
                     let n = raw.len() as u64;
+                    // a control document sent chunked is kept too, for replay
+                    if reqlog::is_control_operation(&operation) {
+                        record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
+                    }
                     (hash, reqwest::Body::from(raw), Some(n))
                 }
             }
@@ -521,9 +528,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     {
         rb = rb.header("content-length", n.to_string());
     }
-    let start = Instant::now();
     let sent = rb.body(upstream_body).send().await;
-    record.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+    record.latency_ms = received.elapsed().as_secs_f64() * 1000.0;
     let resp = match sent {
         Ok(r) => r,
         Err(e) => {

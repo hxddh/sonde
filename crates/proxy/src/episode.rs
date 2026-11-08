@@ -1162,8 +1162,25 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             u.3.push(r.id);
         }
     }
+    // each upload began with a CreateMultipartUpload (`?uploads`, no upload id):
+    // the latest one for its key before its first part
+    let mut uploads: Vec<(usize, u64, bool, Vec<u64>)> = uploads.into_values().collect();
+    for u in &mut uploads {
+        let first = u.3.iter().min().copied().unwrap_or(0);
+        let Some(part) = records.iter().find(|r| r.id == first) else {
+            continue;
+        };
+        if let Some(create) = records.iter().rev().find(|r| {
+            r.operation == "CreateMultipartUpload"
+                && r.time <= part.time
+                && r.bucket == part.bucket
+                && r.key == part.key
+        }) {
+            u.3.push(create.id);
+        }
+    }
     let small: Vec<&(usize, u64, bool, Vec<u64>)> = uploads
-        .values()
+        .iter()
         .filter(|(parts, bytes, done, _)| *done && *parts == 1 && *bytes < 5 * 1024 * 1024)
         .collect();
     if small.len() >= 3 {
@@ -1271,6 +1288,11 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             "HeadObject" if !r.is_error() => {
                 headed.insert((b, k), (r.id, r.time));
             }
+            // a ranged or part read after a HEAD is the usual way to read in
+            // parallel (the size first): not a request too many
+            "GetObject" if header(r, "range").is_some() || query(r, "partNumber").is_some() => {
+                headed.remove(&(b, k));
+            }
             "GetObject" => {
                 if let Some((head, at)) = headed.remove(&(b, k))
                     && (r.time - at).num_milliseconds() <= 2_000
@@ -1301,13 +1323,18 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         let mut starts: Vec<i64> = records.iter().map(|r| r.time.timestamp_micros()).collect();
         let mut ends: Vec<i64> = records
             .iter()
-            .map(|r| r.time.timestamp_micros() + (r.latency_ms * 1000.0) as i64)
+            .map(|r| r.time.timestamp_micros() + (r.latency_ms.max(0.0) * 1000.0) as i64)
             .collect();
         starts.sort_unstable();
         ends.sort_unstable();
         // started by then and not yet answered (itself included)
-        let in_flight =
-            |t: i64| starts.partition_point(|s| *s <= t) - ends.partition_point(|e| *e <= t);
+        // (a request that took no time still counts itself; odd latencies never
+        // make the count negative)
+        let in_flight = |t: i64| {
+            (starts.partition_point(|s| *s <= t))
+                .saturating_sub(ends.partition_point(|e| *e < t))
+                .max(1)
+        };
         let least = throttled
             .iter()
             .map(|r| in_flight(r.time.timestamp_micros()))

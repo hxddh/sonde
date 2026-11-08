@@ -385,8 +385,13 @@ export function Sessions() {
     }
   };
   const query = signal("");
+  const searchable = () => !terminal() && sessions().length > 4;
+  // no field, no filter: a search left over from more sessions cannot hide them
+  effect(() => {
+    if (!searchable()) untracked(() => query() && query.set(""));
+  });
   const shown = () => {
-    const q = query().trim().toLowerCase();
+    const q = searchable() ? query().trim().toLowerCase() : "";
     if (!q) return sessions();
     return sessions().filter((s) => [s.title, s.command, s.endpoint, s.name].some((f) => f?.toLowerCase().includes(q)));
   };
@@ -402,10 +407,11 @@ export function Sessions() {
   const remove = async (s: SessionInfo) => {
     const list = shown();
     const at = list.findIndex((x) => x.path === s.path);
-    if (!(await removeSession(s))) return;
+    // the one after it takes its place, before the list changes
+    await removeSession(s, () => {
+      if (selected() === s.path) selected.set(list[at + 1]?.path ?? list[at - 1]?.path ?? null);
+    });
     sessions.set(api.sessions.list());
-    // the one after it takes its place
-    if (selected() === s.path) selected.set(list[at + 1]?.path ?? list[at - 1]?.path ?? null);
   };
   const rowMenu = (s: SessionInfo, at?: { x: number; y: number }) => {
     if (!isAvailable) return;
@@ -432,7 +438,7 @@ export function Sessions() {
         </If>
         <IconButton icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
       </View>
-      <If when={!terminal() && sessions().length > 4}>
+      <If when={searchable()}>
         <View class="px-1">
           <Input
             testID="session-search"

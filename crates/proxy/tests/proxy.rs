@@ -327,3 +327,23 @@ async fn upstream_errors_keep_their_body() {
             .contains("SignatureDoesNotMatch")
     );
 }
+
+#[tokio::test]
+async fn a_control_document_sent_chunked_is_kept_for_replay() {
+    let (proxy, _app, log, _up) = setup(Policy::Allow).await;
+    let doc = "<Delete><Object><Key>a</Key></Object></Delete>";
+    // a body streamed without a length: plain chunked transfer
+    let stream = futures::stream::iter([Ok::<_, std::io::Error>(Bytes::from(doc))]);
+    let resp = reqwest::Client::new()
+        .post(format!("{}/data?delete", proxy.url()))
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+        .header("authorization", "AWS4-HMAC-SHA256 Credential=sonde/20260101/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=00")
+        .body(reqwest::Body::wrap_stream(stream))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), 400, "{}", resp.text().await.unwrap());
+    let r = &log.list(&reqlog::Filter::default(), 1)[0];
+    assert_eq!(r.operation, "DeleteObjects");
+    assert_eq!(r.request_body.as_deref(), Some(doc));
+}

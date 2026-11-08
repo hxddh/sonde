@@ -124,6 +124,19 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if r.query.iter().any(|(k, _)| k == "versionId") {
         return Some("names a version of the original endpoint".into());
     }
+    // a copy of a version: its id is the original endpoint's
+    if r.request_headers
+        .iter()
+        .any(|h| h.name.eq_ignore_ascii_case("x-amz-copy-source") && h.value.contains("versionId="))
+    {
+        return Some("copies a version of the original endpoint".into());
+    }
+    if r.request_body
+        .as_ref()
+        .is_some_and(|b| b.len() + 4 >= reqlog::MAX_REQUEST_BODY)
+    {
+        return Some("its body was too large to keep when recorded".into());
+    }
     if reqlog::is_control_operation(&r.operation)
         && r.operation != "CompleteMultipartUpload"
         && r.operation != "CreateBucket"

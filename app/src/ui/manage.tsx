@@ -56,7 +56,7 @@ export function RenameDialog() {
 }
 
 /** Asks, then removes a session's file. Resolves whether it went. */
-export async function removeSession(s: SessionInfo): Promise<boolean> {
+export async function removeSession(s: SessionInfo, removed?: () => void): Promise<boolean> {
   const { action } = await AlertDialog.show({
     title: t("sessions.removeTitle", { name: sessionName(s) }),
     description: t("sessions.removeText", { n: s.requests }),
@@ -68,6 +68,7 @@ export async function removeSession(s: SessionInfo): Promise<boolean> {
   if (action !== "remove") return false;
   try {
     api.sessions.remove(s.path);
+    removed?.();
     sessionsChanged();
     notify(t("sessions.removed", { name: sessionName(s) }));
     return true;

@@ -151,3 +151,146 @@ fn a_replays_root_listing_reads_as_the_original() {
         sonde_proxy::replay::transcript(&[b])
     );
 }
+
+#[test]
+fn records_joined_from_two_recordings_get_ids_of_their_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("joined.sonde");
+    let w = SessionWriter::create(&path, &SessionHeader::new("r2", "u", "auto", None)).unwrap();
+    for (id, key) in [(1, "a"), (2, "b"), (1, "c")] {
+        w.write(&rec(id, id as i64, "GET", "GetObject", Some(key), 200));
+    }
+    w.flush().unwrap();
+    drop(w);
+    let s = Session::open(&path).unwrap();
+    let ids: Vec<u64> = s.records.iter().map(|r| r.id).collect();
+    assert_eq!(ids, [1, 2, 3]);
+    assert_eq!(s.records[2].key.as_deref(), Some("c"));
+}
+
+#[test]
+fn a_small_multipart_upload_counts_its_create_too() {
+    let mut recs = Vec::new();
+    for i in 0..3u64 {
+        let k = format!("f{i}");
+        let at = i as i64 * 100;
+        recs.push(q(
+            rec(
+                i * 3 + 1,
+                at,
+                "POST",
+                "CreateMultipartUpload",
+                Some(&k),
+                200,
+            ),
+            &[("uploads", "")],
+        ));
+        recs.push(q(
+            rec(i * 3 + 2, at + 10, "PUT", "UploadPart", Some(&k), 200),
+            &[("partNumber", "1"), ("uploadId", &format!("u{i}"))],
+        ));
+        recs.push(q(
+            rec(
+                i * 3 + 3,
+                at + 20,
+                "POST",
+                "CompleteMultipartUpload",
+                Some(&k),
+                200,
+            ),
+            &[("uploadId", &format!("u{i}"))],
+        ));
+    }
+    let eps = episodes(&recs);
+    let obs = observations(&recs, &eps);
+    let small = obs
+        .iter()
+        .find(|o| o.phrases[0].key == "obs.small")
+        .expect("small uploads");
+    assert_eq!(small.impact, 9);
+    assert_eq!(
+        small.saving_text.as_deref(),
+        Some("6 fewer requests (66% of the session)")
+    );
+}
+
+#[test]
+fn a_head_before_ranged_reads_is_not_a_request_too_many() {
+    let mut recs = Vec::new();
+    for i in 0..4u64 {
+        let k = format!("big{i}");
+        recs.push(rec(
+            i * 2 + 1,
+            i as i64 * 100,
+            "HEAD",
+            "HeadObject",
+            Some(&k),
+            200,
+        ));
+        let mut g = rec(
+            i * 2 + 2,
+            i as i64 * 100 + 5,
+            "GET",
+            "GetObject",
+            Some(&k),
+            206,
+        );
+        g.request_headers.push(reqlog::Header {
+            name: "Range".into(),
+            value: "bytes=0-99".into(),
+        });
+        recs.push(g);
+    }
+    let obs = observations(&recs, &episodes(&recs));
+    assert!(
+        !obs.iter().any(|o| o.phrases[0].key == "obs.headget"),
+        "{obs:#?}"
+    );
+}
+
+#[test]
+fn a_copy_of_a_version_and_a_cut_body_are_not_replayed() {
+    use sonde_proxy::replay::{ReplayOptions, plan};
+    let mut copy = rec(1, 0, "PUT", "CopyObject", Some("dst"), 200);
+    copy.request_headers.push(reqlog::Header {
+        name: "x-amz-copy-source".into(),
+        value: "/b/src?versionId=v1".into(),
+    });
+    let mut del = q(
+        rec(2, 10, "POST", "DeleteObjects", None, 200),
+        &[("delete", "")],
+    );
+    del.request_body = Some("x".repeat(reqlog::MAX_REQUEST_BODY));
+    let p = plan(
+        &[copy, del],
+        &ReplayOptions {
+            prefix: "p/".into(),
+            buckets: Vec::new(),
+        },
+    );
+    assert_eq!(
+        p.skipped.get("copies a version of the original endpoint"),
+        Some(&1),
+        "{:?}",
+        p.skipped
+    );
+    assert_eq!(
+        p.skipped
+            .get("its body was too large to keep when recorded"),
+        Some(&1),
+        "{:?}",
+        p.skipped
+    );
+}
+
+#[test]
+fn throttling_counts_never_underflow() {
+    let mut a = rec(1, 0, "GET", "GetObject", Some("k"), 503);
+    a.latency_ms = -5.0;
+    let b = rec(2, 0, "GET", "GetObject", Some("k"), 200);
+    let obs = observations(&[a.clone(), b.clone()], &episodes(&[a, b]));
+    assert!(
+        obs.iter()
+            .any(|o| o.phrases[0].key.starts_with("obs.throttled"))
+    );
+}

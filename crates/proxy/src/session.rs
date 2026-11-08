@@ -175,6 +175,14 @@ impl Session {
                 Err(e) => return Err(format!("line {}: {e}", i + 2)),
             }
         }
+        // ids name records everywhere (operations, findings, the inspector): a
+        // file joined from two recordings repeats them, so number them afresh
+        let mut seen = std::collections::HashSet::with_capacity(records.len());
+        if !records.iter().all(|r| seen.insert(r.id)) {
+            for (i, r) in records.iter_mut().enumerate() {
+                r.id = i as u64 + 1;
+            }
+        }
         Ok(Session {
             header,
             records,

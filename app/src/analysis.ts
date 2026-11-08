@@ -19,11 +19,22 @@ export interface Analysis {
 export function analysis(path: () => string | null, tick: () => unknown = () => 0): Analysis {
   const r = resource(path, (p) => api.sessions.analyse(p));
   let first = true;
+  // a tick during a reading is kept for when it ends: the last one (a program
+  // that just ended) must not be lost
+  let pending = false;
   effect(() => {
     tick();
     if (first) return void (first = false);
-    // a reading still running would only be dropped: let it end
-    untracked(() => path() && !r.loading() && r.refetch());
+    untracked(() => {
+      if (!path()) return;
+      if (r.loading()) pending = true;
+      else r.refetch();
+    });
+  });
+  effect(() => {
+    if (r.loading() || !pending) return;
+    pending = false;
+    untracked(() => path() && r.refetch());
   });
   // the value is kept while another session loads: never show one for another
   const view = () => {
