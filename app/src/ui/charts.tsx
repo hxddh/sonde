@@ -90,24 +90,41 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
   const total = () => props.items.reduce((s, i) => s + i.value, 0);
   const hovered = signal<number | null>(null);
   const sentence = () => (props.items.length > 0 ? `${props.items[0].label}: ${pct(props.items[0].value, total())} of ${bytes(total())}` : "");
+  // nested: each prefix under its top folder, so a folder reads as the sum of its parts
+  const top = (label: string) => label.split("/")[0] || label;
+  const groups = () => [...new Set(props.items.map((i) => top(i.label)))];
+  const nested = () => groups().some((g) => props.items.filter((i) => top(i.label) === g).length > 1);
+  const rows = () =>
+    nested()
+      ? [
+          ...groups().map((g) => ({ id: `g:${g}`, parent: "", label: `${g}/`, value: 0, group: g })),
+          ...props.items.map((i) => ({ id: i.label, parent: `g:${top(i.label)}`, label: i.label.slice(top(i.label).length + 1) || i.label, value: i.value, group: top(i.label) })),
+        ]
+      : props.items.map((i) => ({ id: i.label, parent: "", label: i.label, value: i.value, group: i.label }));
+  const color = (g: string) => PALETTE[groups().indexOf(g) % PALETTE.length];
   return (
     <If when={!terminal()} else={<BarChart items={props.items} />}>
       <Plot
         testID={props.testID}
-        data={props.items}
+        data={rows()}
         accessibilityLabel={sentence()}
-        accessibilityValue={{ text: hovered() === null ? "" : `${props.items[hovered()!]?.label}, ${bytes(props.items[hovered()!]?.value ?? 0)}` }}
+        accessibilityValue={{ text: hovered() === null ? "" : `${rows()[hovered()!]?.id}, ${bytes(rows()[hovered()!]?.value ?? 0)}` }}
         appearGeneration={total()}
         motion={MOTION}
         onHoverChange={({ index }) => hovered.set(index)}
         class="h-64"
       >
         <Treemap
-          id="label"
+          id="id"
+          parent="parent"
           value="value"
           paddingInner={2}
+          paddingTop={nested() ? 18 : 0}
           cornerRadii={4}
-          leafClass={(_, i) => `fill-${PALETTE[i % PALETTE.length]}/70`}
+          leafClass={(_, i) => `fill-${color(rows()[i].group)}/70`}
+          groupClass={(_, i) => `fill-${color(rows()[i].group)}/15`}
+          groupLabel="label"
+          groupLabelClass="px-1.5 text-caption font-semibold text-foreground"
           inactiveOpacity={0.55}
           label="label"
           valueLabel={(_, v) => `${bytes(v)} · ${pct(v, total())}`}

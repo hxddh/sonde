@@ -7,7 +7,7 @@
 
 import { signal, Text, token, View } from "nsh";
 import { Button as BaseButton } from "nsh/base";
-import { Area, Bar, Cell, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Sankey } from "nsh/base/plot";
+import { Area, Bar, Cell, Dot, Grid, Line, Pie, Plot, PlotAppearScope, PlotAxis, PlotLabel, Rule, Sankey } from "nsh/base/plot";
 import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import type { LatencyChange, Observation, Profile, ProfileGroup, ProgramHistory, RecordSummary, RunChange } from "../types";
@@ -49,6 +49,20 @@ function Tip(props: { title: string; lines: string[] }) {
   );
 }
 
+// --- one moment across the charts ------------------------------------------------
+
+/** The moment the pointer rests on in one time chart (ms from the session's
+ * start), marked in the others: the charts of a session read as one. */
+export const focusMs = signal<number | null>(null);
+
+/** The row of `rows` nearest the focused moment, if one is focused. */
+function nearest(rows: { tMs: number }[], at: number | null): number | null {
+  if (at === null || rows.length === 0) return null;
+  let best = 0;
+  for (let i = 1; i < rows.length; i++) if (Math.abs(rows[i].tMs - at) < Math.abs(rows[best].tMs - at)) best = i;
+  return best;
+}
+
 // --- the shape of a session ---------------------------------------------------
 
 type Slice = { tMs: number; ok: number; miss: number; client: number; server: number; inFlight: number };
@@ -79,9 +93,20 @@ export function shapeSentence(p: Profile): string {
  * a step line of the requests in flight. A press picks the slice under the
  * pointer (again: lets it go), for the operations running then.
  */
-export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean }) {
+export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean; marks?: { tMs: number; n: number }[] }) {
   const hovered = signal<number | null>(null);
   const rows = () => slices(props.profile);
+  const top = () => Math.max(1, ...rows().map((r) => r.ok + r.miss + r.client + r.server));
+  // where the findings happened: their numbers over the slices they start in
+  const marked = () => {
+    const m = new Map<number, number[]>();
+    for (const k of props.marks ?? []) {
+      const i = Math.min(rows().length - 1, Math.max(0, Math.floor(k.tMs / props.profile.binMs)));
+      m.set(i, [...(m.get(i) ?? []), k.n]);
+    }
+    return m;
+  };
+  const focused = () => (hovered() === null ? nearest(rows(), focusMs()) : null);
   const peakBin = () => {
     const at = props.profile.peakAtMs;
     const i = Math.floor(at / props.profile.binMs);
@@ -123,7 +148,10 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           tooltipPlacement="pointer"
           tooltipOffset={10}
           tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
-          onHoverChange={({ index }) => hovered.set(index)}
+          onHoverChange={({ index }) => {
+            hovered.set(index);
+            focusMs.set(index === null ? null : rows()[index].tMs + props.profile.binMs / 2);
+          }}
           class="h-full w-full"
         >
           <Bar value="ok" stack="r" color={tone("ok")} />
@@ -131,6 +159,13 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           <Bar value="client" stack="r" color={tone("client")} />
           <Bar value="server" stack="r" color={tone("server")} cornerRadii={{ topLeft: 1.5, topRight: 1.5 }} />
           <Line y="inFlight" scale="y2" curve="stepAfter" class="stroke-foreground/30 stroke-[1.25]" hoverDotClass="hidden" />
+          {/* the moment another chart rests on */}
+          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
+          {/* where each finding begins */}
+          <If when={props.annotate && marked().size > 0}>
+            <Rule value={(_, i) => (marked().has(i) ? top() : (undefined as unknown as number))} class="stroke-warn/70 stroke-1 [stroke-dasharray:2_2]" />
+            <PlotLabel class="tabular-nums text-caption font-semibold text-warn" texts={[...marked()].map(([i, ns]) => ({ text: ns.join(" "), x: i, y: top(), align: "center" as const, class: "-translate-y-full pb-0.5" }))} />
+          </If>
           {/* the busiest moment, named where it happened */}
           <If when={props.annotate && peakBin() !== null}>
             <PlotLabel
@@ -141,6 +176,54 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           </If>
         </Plot>
       </BaseButton>
+    </If>
+  );
+}
+
+// --- a session in a row --------------------------------------------------------------
+
+/** A session's requests over its time, a few points high: drawn once per
+ * session, kept as it is when its row scrolls away and back. */
+export function Sparkline(props: { shape: number[]; id: string; class?: string }) {
+  const rows = () => props.shape.map((n, i) => ({ i, n }));
+  return (
+    <If when={!terminal() && props.shape.some((n) => n > 0)}>
+      <PlotAppearScope id={props.id}>
+        <Plot data={rows()} xScale={{ type: "band", paddingInner: 0.25 }} yScale={{ type: "linear", domain: [0, Math.max(1, ...props.shape)] }} interactive={false} accessibilityLabel="" appearGeneration={1} motion={MOTION} class={props.class ?? "h-4 w-16"}>
+          <Bar value="n" class="fill-chart-1/70" cornerRadii={{ topLeft: 1, topRight: 1 }} />
+        </Plot>
+      </PlotAppearScope>
+    </If>
+  );
+}
+
+// --- how requests were answered ---------------------------------------------------
+
+/** The session's answers as a ring: answered, not found, refused or failed by
+ * the client's fault, failed by the store's. */
+export function OutcomeRing(props: { profile: Profile; class?: string }) {
+  const sum = (k: Tone) => props.profile.rate.reduce((s, b) => s + b[k], 0);
+  const rows = () => TONES.map((k) => ({ k, n: sum(k) })).filter((r) => r.n > 0);
+  const total = () => rows().reduce((s, r) => s + r.n, 0);
+  const names: Record<Tone, () => string> = { ok: () => t("ring.ok"), miss: () => t("ring.miss"), client: () => t("ring.client"), server: () => t("ring.server") };
+  const label = () => rows().map((r) => `${names[r.k]()} ${pct(r.n / Math.max(total(), 1))}`).join(", ");
+  const hovered = signal<number | null>(null);
+  return (
+    <If when={!terminal() && total() > 0}>
+      <Plot
+        testID="outcome-ring"
+        data={rows()}
+        colorScale={tones()}
+        accessibilityLabel={label()}
+        motion={MOTION}
+        tooltipPlacement="pointer"
+        tooltipOffset={10}
+        tooltipContent={<If when={hovered() !== null ? rows()[hovered()!] : null}>{(r) => <Tip title={names[r().k]()} lines={[`${r().n} · ${pct(r().n / Math.max(total(), 1))}`]} />}</If>}
+        onHoverChange={({ index }) => hovered.set(index)}
+        class={props.class ?? "size-12"}
+      >
+        <Pie value="n" color="k" innerRadius="62%" padAngle={0.03} cornerRadius={2} hoverDim={0.4} />
+      </Plot>
     </If>
   );
 }
@@ -187,12 +270,16 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
         tooltipPlacement="pointer"
         tooltipOffset={10}
         tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
-        onHoverChange={({ index }) => hovered.set(index)}
+        onHoverChange={({ index }) => {
+          hovered.set(index);
+          focusMs.set(index === null ? null : rows()[index].tMs);
+        }}
         class={props.class ?? "h-24 w-full"}
       >
         <Area y0="p50Ms" y1="p95Ms" curve="natural" class="fill-chart-1/25" />
         <Line y="p50Ms" curve="natural" class="stroke-chart-1 stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
         <Line y="p99Ms" curve="natural" class="stroke-status-client/70 stroke-[1] [stroke-dasharray:3_3]" hoverDotClass="hidden" />
+        <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), focusMs()) ? Math.max(...rows().map((b) => b.p99Ms), 1) * 1.15 : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
         <PlotAxis placement="left" ticks={3} format={(v) => ms(v)} labelClass="pr-1.5 tabular-nums text-caption text-muted-foreground" />
       </Plot>
     </If>

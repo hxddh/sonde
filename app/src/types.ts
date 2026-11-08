@@ -440,6 +440,8 @@ export interface SessionInfo {
   live: boolean;
   /** A title the user gave it. */
   title?: string | null;
+  /** A finished session's requests over its time, in slices: the list's sparkline. */
+  shape?: number[];
 }
 
 /** A phrase of what sonde says: a key and its arguments (crates/proxy/src/phrase.rs). */

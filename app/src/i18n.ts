@@ -577,6 +577,15 @@ const en = {
   "run.shortcutNothing": "Run a command once: then ⌘⌥R / Ctrl+Alt+R runs it again from anywhere",
   "run.shortcutStarted": "Recording {command}",
   "band.title": "How long requests took, over time",
+  "ring.ok": "Answered",
+  "ring.miss": "Not found",
+  "ring.client": "Refused or invalid",
+  "ring.server": "Failed at the store",
+  "compare.note": "{op}: recorded {a}, replayed {b} ({n}×)",
+  "history.allRuns": "All runs",
+  "history.last7": "Last 7 days",
+  "history.last30": "Last 30 days",
+  "history.range": "Runs between",
 };
 
 type Key = keyof typeof en;
@@ -1153,6 +1162,15 @@ const zh: Partial<Record<Key, string>> = {
   "run.shortcutNothing": "先运行一次命令：之后在任何地方按 ⌘⌥R / Ctrl+Alt+R 即可再次运行",
   "run.shortcutStarted": "正在录制 {command}",
   "band.title": "请求耗时随时间的变化",
+  "ring.ok": "成功",
+  "ring.miss": "未找到",
+  "ring.client": "被拒或无效",
+  "ring.server": "存储端失败",
+  "compare.note": "{op}：录制时 {a}，回放 {b}（{n} 次）",
+  "history.allRuns": "全部运行",
+  "history.last7": "最近 7 天",
+  "history.last30": "最近 30 天",
+  "history.range": "运行时间范围",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

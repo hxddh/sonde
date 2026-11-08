@@ -412,6 +412,58 @@ fn count_records(path: &Path) -> usize {
     n
 }
 
+/// A finished session's requests over its time, in `SHAPE_BINS` slices: the
+/// list's sparkline. Read once per version of the file; a live session has
+/// none (it is still growing).
+const SHAPE_BINS: usize = 24;
+static SHAPES: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, (u64, Vec<u32>)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+fn shape_of(path: &Path) -> Vec<u32> {
+    let Ok(len) = std::fs::metadata(path).map(|m| m.len()) else {
+        return Vec::new();
+    };
+    if !sonde_proxy::session::is_compressed(path) {
+        return Vec::new();
+    }
+    if let Some((l, s)) = SHAPES.lock().get(path)
+        && *l == len
+    {
+        return s.clone();
+    }
+    // the request's start, from its line, without reading the rest of it
+    let time_of = |l: &[u8]| -> Option<i64> {
+        let line = std::str::from_utf8(l).ok()?;
+        let at = line.find("\"time\":\"")? + 8;
+        let end = line[at..].find('"')? + at;
+        chrono::DateTime::parse_from_rfc3339(&line[at..end])
+            .ok()
+            .map(|t| t.timestamp_micros())
+    };
+    let times: Vec<i64> = sonde_proxy::session::reader(path)
+        .map(|r| {
+            r.split(b'\n')
+                .skip(1)
+                .filter_map(Result::ok)
+                .filter(|l| l.starts_with(b"{") && !l.starts_with(b"{\"log\""))
+                .filter_map(|l| time_of(&l))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut bins = vec![0u32; SHAPE_BINS];
+    if let (Some(a), Some(b)) = (times.iter().min(), times.iter().max()) {
+        let span = (b - a).max(1) as f64;
+        for t in &times {
+            let i = (((t - a) as f64 / span) * SHAPE_BINS as f64) as usize;
+            bins[i.min(SHAPE_BINS - 1)] += 1;
+        }
+    }
+    SHAPES
+        .lock()
+        .insert(path.to_path_buf(), (len, bins.clone()));
+    bins
+}
+
 fn header_line(path: &Path) -> Option<String> {
     let mut first = String::new();
     sonde_proxy::session::reader(path)
@@ -466,6 +518,7 @@ impl Sessions {
                         "endpoint": h.endpoint,
                         "command": h.command,
                         "requests": count_records(&p),
+                        "shape": shape_of(&p),
                         "live": live.as_deref() == Some(p.as_path()),
                     }),
                 ));

@@ -68,6 +68,8 @@ test("an example session reads as operations, each opening on its requests", asy
   await app.waitFor("id:session-summary", { timeout: 10000 });
   expect(app.shows("label:/172 requests · 34 operations/")).toBe(true);
   expect(app.shows("label:/116 not found/")).toBe(true);
+  // how the requests were answered, at a glance
+  expect(app.shows("id:outcome-ring")).toBe(true);
   expect(app.shows("text:/27 SlateDB writes: conditional create/")).toBe(true);
   expect(app.shows("text:looked for the newest WAL: probed ids 1…128")).toBe(true);
   // acting on the findings, estimated; a finding pressed says what to change, by SDK
@@ -202,6 +204,8 @@ test("a program over its runs: history, a baseline, and the flows of its request
   await app.waitFor("id:session-pane");
   await app.press("id:session-pane-mode-runs");
   await app.waitFor("id:history-pane", { timeout: 10000 });
+  // the runs of a stretch of days
+  expect(app.shows("id:history-range")).toBe(true);
   expect(app.shows("text:/, over [2-9] runs$/")).toBe(true);
   expect(app.shows("id:trend-requests")).toBe(true);
   await app.press("id:history-baseline");

@@ -116,6 +116,14 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
       }
     },
   );
+  // each difference marked where it first shows in the replay's transcript
+  const notes = (d: { comparison: Comparison; b: string }) => {
+    const lines = d.b.split("\n");
+    return d.comparison.differences.flatMap((x, i) => {
+      const line = lines.findIndex((l) => l.includes(x.operation) && l.includes(x.example));
+      return line < 0 ? [] : [{ id: `d${i}`, line, text: t("compare.note", { op: x.operation, a: x.original, b: x.replay, n: x.count }) }];
+    });
+  };
   // a replay opens on its answers; two runs of a program on before and after
   const mode = signal<"runs" | "answers">(untracked(() => (replayOf() ? "answers" : "runs")));
   const name = (p: string) => p.split("/").pop() ?? p;
@@ -165,7 +173,26 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
                   </View>
                 )}
               </Each>
-              <DiffView testID="compare-diff" oldValue={d().a} newValue={d().b} layout="split" inline="word" contextLines={2} lineNumbers class="flex-1 rounded-(--radius) border border-border" />
+              <DiffView
+                testID="compare-diff"
+                oldValue={d().a}
+                newValue={d().b}
+                layout="split"
+                inline="word"
+                contextLines={2}
+                lineNumbers
+                annotations={notes(d()).map((n) => ({ id: n.id, side: "new" as const, line: n.line }))}
+                renderAnnotation={(a) => {
+                  const n = notes(d()).find((x) => x.id === a.id);
+                  return (
+                    <View class="mx-2 my-1 flex-row items-center gap-2 rounded-(--radius-sm) border border-status-server/40 bg-status-server/10 px-2 py-1">
+                      <Icon name="circle-alert" size={12} tint="status-server" />
+                      <Text class="text-small text-foreground">{n?.text ?? ""}</Text>
+                    </View>
+                  );
+                }}
+                class="flex-1 rounded-(--radius) border border-border"
+              />
             </View>
             )}
             </If>

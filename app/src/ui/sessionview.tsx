@@ -9,7 +9,7 @@ import { Button as BaseButton, DataTable, type DataTableRef, type DataTableSort,
 import { bytes, date, day, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { groupName, offset, sessionStory, SessionShape, Waterfall } from "./plots";
+import { groupName, offset, OutcomeRing, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
 import { Dot, Empty, POPUP, rowHeight, terminal, TYPE } from "./kit";
@@ -203,9 +203,13 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
             <Figure value={`↓${bytes(s().bytesDown)}`} label={t("figure.down")} />
           </If>
         </View>
+        {/* how the requests were answered, at a glance */}
+        <If when={!props.compact && props.view.profile}>
+          <OutcomeRing profile={props.view.profile} class="mt-2 size-12 shrink-0" />
+        </If>
         {/* the session's shape: requests by outcome over time, and in flight */}
         <If when={props.view.profile && props.shape !== false}>
-          <SessionShape profile={props.view.profile} slice={props.slice} onSlice={props.onSlice} annotate={!props.compact} class={props.compact ? "h-10 w-full" : "mt-3 h-12 min-w-[200px] flex-1"} />
+          <SessionShape profile={props.view.profile} slice={props.slice} onSlice={props.onSlice} annotate={!props.compact} marks={findingMarks(props.view)} class={props.compact ? "h-10 w-full" : "mt-3 h-12 min-w-[200px] flex-1"} />
         </If>
       </View>
     </View>
@@ -253,6 +257,15 @@ function FixPanel(props: { o: Observation }) {
       </If>
     </View>
   );
+}
+
+/** Where each finding begins, by its number in the list: for the shape. */
+export function findingMarks(v: SessionView): { tMs: number; n: number }[] {
+  const t0 = v.episodes.length ? Date.parse(v.episodes[0].start) : 0;
+  return v.observations.flatMap((o, i) => {
+    const e = o.episodes?.length ? v.episodes[o.episodes[0]] : undefined;
+    return e ? [{ tMs: Math.max(0, Date.parse(e.start) - t0), n: i + 1 }] : [];
+  });
 }
 
 /** Acting on every finding at once, as an estimate: requests, waiting, cost. */
@@ -670,7 +683,12 @@ export function SessionList(props: {
         <Text class="min-w-0 shrink text-body font-medium text-foreground line-clamp-1">{name(x().s)}</Text>
         <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{args(x().s)}</Text>
       </View>
-      <Text class="text-caption text-muted-foreground line-clamp-1">{`${clock(x().s.created).slice(0, 5)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
+      <View class="flex-row items-center gap-2">
+        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{`${clock(x().s.created).slice(0, 5)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
+        <If when={x().s.shape?.length}>
+          <Sparkline shape={x().s.shape!} id={x().s.path} />
+        </If>
+      </View>
     </BaseButton>
     </View>
   );
