@@ -36,6 +36,7 @@ export interface Settings {
   "reqlog-capacity": number;
   "reqlog-persist": boolean;
   theme: string;
+  "high-contrast"?: boolean;
   language: string;
   "stale-upload-days": number;
   "exports-dir": string | null;

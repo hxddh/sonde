@@ -119,6 +119,19 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   await app.waitFor("label:Read-only");
 });
 
+test("appearance: higher contrast, kept with the settings", async () => {
+  const app = await withDemo();
+  await place(app, "settings");
+  await app.waitFor("id:high-contrast");
+  // secondary text reads stronger, and back
+  const hint = "text:Stronger borders and secondary text";
+  const before = app.spanStyle(hint).color;
+  await app.press("id:high-contrast");
+  await app.waitUntil(() => app.spanStyle(hint).color !== before);
+  await app.press("id:high-contrast");
+  await app.waitUntil(() => app.spanStyle(hint).color === before);
+});
+
 test("language: Chinese strings", async () => {
   const app = await withDemo();
   await place(app, "settings");

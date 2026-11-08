@@ -220,6 +220,8 @@ pub struct Settings {
     pub reqlog_persist: bool,
     /// `system`, `light` or `dark`.
     pub theme: String,
+    /// Stronger borders and text: the theme's high-contrast variant.
+    pub high_contrast: bool,
     /// `auto`, `en` or `zh`.
     pub language: String,
     /// Multipart uploads older than this are flagged.
@@ -238,6 +240,7 @@ impl Default for Settings {
             reqlog_capacity: reqlog::DEFAULT_CAPACITY,
             reqlog_persist: false,
             theme: "system".into(),
+            high_contrast: false,
             language: "auto".into(),
             stale_upload_days: 7,
             exports_dir: None,

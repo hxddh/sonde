@@ -546,6 +546,10 @@ const en = {
   "run.noneJava": "2.21 or newer; s3a: fs.s3a.endpoint and fs.s3a.path.style.access=true",
   "run.noneNode": "3.4xx or newer, or endpoint and forcePathStyle: true",
   "run.noneKeys": "The credentials must be the ones sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): a profile or a role goes around them.",
+  "settings.contrast": "Higher contrast",
+  "settings.contrastHint": "Stronger borders and secondary text",
+  "updates.running": "sonde {version} · Native Shell {nsh}",
+  "updates.dev": "(development run)",
 };
 
 type Key = keyof typeof en;
@@ -1091,6 +1095,10 @@ const zh: Partial<Record<Key, string>> = {
   "run.noneJava": "2.21 或更新；s3a：fs.s3a.endpoint 和 fs.s3a.path.style.access=true",
   "run.noneNode": "3.4xx 或更新，或 endpoint 加 forcePathStyle: true",
   "run.noneKeys": "凭证必须是 sonde 设置的那组（AWS_ACCESS_KEY_ID、AWS_SECRET_ACCESS_KEY）：使用 profile 或角色会绕过它们。",
+  "settings.contrast": "更高对比度",
+  "settings.contrastHint": "更清晰的边框和次要文字",
+  "updates.running": "sonde {version} · Native Shell {nsh}",
+  "updates.dev": "（开发运行）",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

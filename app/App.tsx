@@ -21,6 +21,7 @@ import { Badge, material, Recoverable, SidePanel, terminal } from "./src/ui/kit"
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, toggleSidebar, Toolbar } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
+import { applyContrast } from "./src/theme";
 
 /** The view of an area: a plain function, called in a binding, so the view follows `area()`.
  * Until there is an endpoint, Run and Store open on the welcome. */
@@ -284,6 +285,10 @@ function App() {
   effect(() => {
     const theme = settings()?.theme ?? "system";
     setColorScheme(theme === "light" || theme === "dark" ? theme : "system");
+  });
+  // a terminal draws in its own colors
+  effect(() => {
+    if (platform.idiom !== "terminal") applyContrast(settings()?.["high-contrast"] ?? false);
   });
   installMenus();
   void rememberWindow();

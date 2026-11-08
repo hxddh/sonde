@@ -69,6 +69,9 @@ export function SettingsScreen() {
                     onChange={(v) => change({ ...d(), theme: v }, true)}
                   />
                 </View>
+                <If when={!terminal()}>
+                  <Toggle label={t("settings.contrast")} hint={t("settings.contrastHint")} checked={d()["high-contrast"] ?? false} onChange={(v) => change({ ...d(), "high-contrast": v }, true)} testID="high-contrast" />
+                </If>
                 <Choice
                   class="w-44"
                   label={t("settings.language")}
