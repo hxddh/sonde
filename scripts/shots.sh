@@ -26,7 +26,8 @@ case "$(uname -s)" in
       res="$(system_profiler SPDisplaysDataType 2>/dev/null | awk '/Resolution/ {print $2"x"$4; exit}')"
       w="${res%x*}"; h="${res#*x}"
       case "$w$h" in *[!0-9]* | "") ;; *) export SONDE_SHOT_MAX="$w"x"$((h - 80))" ;; esac
-    fi ;;
+    fi
+    echo "windows at most ${SONDE_SHOT_MAX:-as large as asked}" ;;
   MINGW* | MSYS* | CYGWIN*) target=windows ;;
   *) target=linux ;;
 esac

@@ -134,6 +134,10 @@ jobs:
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
       - name: Screenshots
+        # the macOS runner's screen is 1024×768 (a menu bar above): a larger
+        # window is cut off, and system_profiler does not say so there
+        env:
+          SONDE_SHOT_MAX: ${{ runner.os == 'macOS' && '1024x688' || '' }}
         run: scripts/shots.sh
       - uses: actions/upload-artifact@v4
         if: always()

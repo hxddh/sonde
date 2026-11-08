@@ -168,7 +168,8 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
             <PlotLabel class="tabular-nums text-caption font-semibold text-warn" texts={[...marked()].map(([i, ns]) => ({ text: ns.join(" "), x: i, y: top(), align: "center" as const, class: "-translate-y-full pb-0.5" }))} />
           </If>
           {/* the busiest moment, named where it happened */}
-          <If when={props.annotate && peakBin() !== null}>
+          {/* (left out where a finding's number stands near it: the two would cross; Time says it too) */}
+          <If when={props.annotate && peakBin() !== null && ![...marked().keys()].some((i) => Math.abs(i - peakBin()!) <= Math.max(3, rows().length / 12))}>
             <PlotLabel
               scale="y2"
               class="tabular-nums text-caption font-medium text-foreground"
