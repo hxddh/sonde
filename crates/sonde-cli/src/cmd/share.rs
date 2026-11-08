@@ -50,7 +50,10 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         None => super::record::newest_session(s)?,
     };
     let session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
-    let doc = serde_json::to_vec(&share::session_json(&session))?;
+    let doc = serde_json::to_vec(&share::session_json(
+        &session,
+        &super::record::request_prices(s),
+    ))?;
     if a.json {
         match &a.out {
             Some(p) => std::fs::write(p, &doc)?,

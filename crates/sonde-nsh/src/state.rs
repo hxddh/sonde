@@ -58,3 +58,13 @@ where
         Err(e) => Err(err_msg(format!("task failed: {e}"))),
     }
 }
+
+/// The request prices the settings give, for a session's cost.
+pub fn request_prices() -> sonde_proxy::profile::RequestPrices {
+    let p = sonde().settings().prices;
+    sonde_proxy::profile::RequestPrices {
+        per_1000_writes: p.per_1000_writes,
+        per_1000_reads: p.per_1000_reads,
+        currency: p.currency,
+    }
+}

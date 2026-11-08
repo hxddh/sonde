@@ -154,6 +154,20 @@ pub struct Prices {
     pub by_class: BTreeMap<String, f64>,
     #[serde(default = "usd")]
     pub currency: String,
+    /// Requests that write or list (PUT, COPY, POST, LIST), per thousand.
+    #[serde(default = "writes_per_1000")]
+    pub per_1000_writes: f64,
+    /// Requests that read (GET, HEAD and the rest), per thousand.
+    #[serde(default = "reads_per_1000")]
+    pub per_1000_reads: f64,
+}
+
+fn writes_per_1000() -> f64 {
+    0.005
+}
+
+fn reads_per_1000() -> f64 {
+    0.0004
 }
 
 fn usd() -> String {
@@ -175,6 +189,8 @@ impl Default for Prices {
             default_per_gib_month: 0.023,
             by_class,
             currency: usd(),
+            per_1000_writes: writes_per_1000(),
+            per_1000_reads: reads_per_1000(),
         }
     }
 }

@@ -12,6 +12,7 @@ pub mod episode;
 pub mod logs;
 pub mod op;
 pub mod phrase;
+pub mod profile;
 pub mod replay;
 pub mod session;
 pub mod share;

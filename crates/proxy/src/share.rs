@@ -28,7 +28,7 @@ pub fn has_viewer() -> bool {
 }
 /// Everything the viewer shows, computed: header, summary, operations,
 /// observations, records (with their short target) and output lines.
-pub fn session_json(s: &Session) -> Value {
+pub fn session_json(s: &Session, prices: &crate::profile::RequestPrices) -> Value {
     let eps = episodes(&s.records);
     let records: Vec<Value> = s
         .records
@@ -49,6 +49,7 @@ pub fn session_json(s: &Session) -> Value {
         "episodes": eps,
         "observations": observations(&s.records, &eps),
         "sharedNotes": shared_notes(&eps).into_iter().map(|(_, n, _, _)| n).collect::<Vec<_>>(),
+        "profile": crate::profile::profile(&s.records, prices),
         "records": records,
         "lines": crate::logs::lines(&s.logs),
     })

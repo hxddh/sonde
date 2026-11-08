@@ -187,6 +187,7 @@ fn view_of(path: &str) -> Result<Arc<JsonValue>, String> {
         "path": path,
         "header": s.header,
         "summary": summarize(&s.records),
+        "profile": sonde_proxy::profile::profile(&s.records, &crate::state::request_prices()),
         "episodes": eps,
         "observations": obs,
         "sharedNotes": shared,
@@ -568,6 +569,29 @@ impl Sessions {
         }))
     }
 
+    /// Two runs of a program, before and after a change: requests, time,
+    /// cost and findings, by kind of request.
+    pub async fn compare_runs(before: String, after: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let (a, b) = (open_session(&before)?, open_session(&after)?);
+            let prices = crate::state::request_prices();
+            let (pa, pb) = (
+                sonde_proxy::profile::profile(&a.records, &prices),
+                sonde_proxy::profile::profile(&b.records, &prices),
+            );
+            let (oa, ob) = (
+                observations(&a.records, &episodes(&a.records)),
+                observations(&b.records, &episodes(&b.records)),
+            );
+            Ok(to_json(sonde_proxy::profile::compare_runs(
+                (&a.records, &pa, &oa),
+                (&b.records, &pb, &ob),
+            )))
+        })
+        .await
+        .map_err(err_msg)?
+    }
+
     /// A session's output as timed lines, for lining up with its operations.
     pub fn log_lines(path: String) -> Result<JsonValue, String> {
         let s = open_session(&path)?;
@@ -709,8 +733,11 @@ impl Sessions {
             path.hash(&mut h);
             h.finish() as u32
         }));
-        let doc =
-            serde_json::to_vec(&sonde_proxy::share::session_json(&session)).map_err(err_msg)?;
+        let doc = serde_json::to_vec(&sonde_proxy::share::session_json(
+            &session,
+            &crate::state::request_prices(),
+        ))
+        .map_err(err_msg)?;
         let site = dir.clone();
         tokio::task::spawn_blocking(move || {
             std::fs::create_dir_all(&site)?;

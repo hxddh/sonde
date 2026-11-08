@@ -10,6 +10,7 @@ use reqlog::{Record, RequestLog};
 use sonde_core::Sonde;
 use sonde_core::guard::human_bytes;
 use sonde_proxy::episode::{Episode, Outcome, episodes, observations, shared_notes};
+use sonde_proxy::profile::{Profile, RequestPrices, profile};
 use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
 use sonde_proxy::summary::summarize;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
@@ -52,6 +53,16 @@ pub struct ProxyArgs {
     /// Address to listen on.
     #[arg(long, default_value = "127.0.0.1:9000")]
     listen: SocketAddr,
+}
+
+#[derive(Args)]
+pub struct CompareArgs {
+    /// The run before a change.
+    before: PathBuf,
+    /// The run after it.
+    after: PathBuf,
+    #[arg(long, short = 'f', value_enum, default_value_t)]
+    format: Format,
 }
 
 #[derive(Args)]
@@ -320,7 +331,90 @@ pub fn episode_line(
     line
 }
 
-fn print_summary(records: &[Record], endpoint: &str, path: &Path, color: bool) {
+/// The request prices the settings give.
+pub fn request_prices(s: &Sonde) -> RequestPrices {
+    let p = s.settings().prices;
+    RequestPrices {
+        per_1000_writes: p.per_1000_writes,
+        per_1000_reads: p.per_1000_reads,
+        currency: p.currency,
+    }
+}
+
+fn ms_text(ms: f64) -> String {
+    if ms >= 1000.0 {
+        format!("{:.1} s", ms / 1000.0)
+    } else {
+        format!("{ms:.0} ms")
+    }
+}
+
+/// Money to two significant digits under a cent: a session's requests often
+/// cost thousandths.
+fn money_text(v: f64, currency: &str) -> String {
+    if v > 0.0 && v < 0.01 {
+        let digits = (-v.log10().floor()) as usize + 1;
+        format!("{v:.digits$} {currency}")
+    } else {
+        format!("{v:.2} {currency}")
+    }
+}
+
+/// Where the time went: the kinds of request the program waited on most.
+fn print_profile(p: &Profile, color: bool) {
+    if p.groups.is_empty() {
+        return;
+    }
+    eprintln!(
+        "{}",
+        paint(
+            &format!(
+                "waiting on S3 {} of {} ({:.0}%) · up to {} in flight · request cost ≈ {}",
+                ms_text(p.busy_ms),
+                ms_text(p.wall_ms),
+                p.busy_ms * 100.0 / p.wall_ms.max(1e-9),
+                p.peak_in_flight,
+                money_text(p.cost.amount, &p.cost.currency)
+            ),
+            "1",
+            color
+        )
+    );
+    let rows: Vec<Vec<String>> = p
+        .groups
+        .iter()
+        .take(8)
+        .map(|g| {
+            vec![
+                if g.missed {
+                    format!("{} (not found)", g.operation)
+                } else {
+                    g.operation.clone()
+                },
+                format!("{:.0}%", g.share * 100.0),
+                ms_text(g.busy_ms),
+                g.requests.to_string(),
+                ms_text(g.p50_ms),
+                ms_text(g.p95_ms),
+            ]
+        })
+        .collect();
+    eprintln!(
+        "{}",
+        output::table(
+            &["waiting on", "share", "time", "requests", "p50", "p95"],
+            &rows
+        )
+    );
+}
+
+fn print_summary(
+    records: &[Record],
+    endpoint: &str,
+    path: &Path,
+    color: bool,
+    prices: &RequestPrices,
+) {
     let s = &summarize(records);
     let eps = episodes(records);
     let mut head = format!(
@@ -378,6 +472,7 @@ fn print_summary(records: &[Record], endpoint: &str, path: &Path, color: bool) {
     for (what, n) in &s.error_codes {
         eprintln!("  {n} × {what}");
     }
+    print_profile(&profile(records, prices), color);
     for o in observations(records, &eps) {
         let mark = if o.level == "warn" {
             paint("!", "33", color)
@@ -432,6 +527,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         &session.header.endpoint,
         &started.path,
         color,
+        &request_prices(s),
     );
     Ok(status.code().unwrap_or(1))
 }
@@ -460,6 +556,7 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
         &session.header.endpoint,
         &started.path,
         std::io::stderr().is_terminal(),
+        &request_prices(s),
     );
     Ok(0)
 }
@@ -547,6 +644,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 &session.header.endpoint,
                 &file,
                 std::io::stderr().is_terminal(),
+                &request_prices(s),
             );
         }
     }
@@ -774,4 +872,74 @@ pub async fn diff(a: &DiffArgs) -> anyhow::Result<i32> {
         _ => print_comparison(&c, std::io::stdout().is_terminal()),
     }
     Ok(if c.differ() > 0 { 2 } else { 0 })
+}
+
+fn change(a: f64, b: f64, text: impl Fn(f64) -> String) -> String {
+    let pct = if a > 0.0 {
+        format!(" ({:+.0}%)", (b - a) * 100.0 / a)
+    } else {
+        String::new()
+    };
+    format!("{} → {}{pct}", text(a), text(b))
+}
+
+/// `sonde compare`: two runs of a program, before and after a change.
+pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
+    let open = |p: &PathBuf| Session::open(p).map_err(|e| anyhow::anyhow!(e));
+    let (sa, sb) = (open(&a.before)?, open(&a.after)?);
+    let prices = request_prices(s);
+    let (pa, pb) = (profile(&sa.records, &prices), profile(&sb.records, &prices));
+    let (oa, ob) = (
+        observations(&sa.records, &episodes(&sa.records)),
+        observations(&sb.records, &episodes(&sb.records)),
+    );
+    let c = sonde_proxy::profile::compare_runs((&sa.records, &pa, &oa), (&sb.records, &pb, &ob));
+    if matches!(a.format, Format::Json) {
+        println!("{}", output::json(&c));
+        return Ok(0);
+    }
+    let color = std::io::stdout().is_terminal();
+    let n = |v: f64| format!("{v:.0}");
+    println!("{}", paint("before → after", "1", color));
+    println!(
+        "  requests   {}",
+        change(c.requests.0 as f64, c.requests.1 as f64, n)
+    );
+    println!("  waiting    {}", change(c.busy_ms.0, c.busy_ms.1, ms_text));
+    println!("  took       {}", change(c.wall_ms.0, c.wall_ms.1, ms_text));
+    println!(
+        "  errors     {}",
+        change(c.errors.0 as f64, c.errors.1 as f64, n)
+    );
+    println!(
+        "  cost ≈     {}",
+        change(c.cost.0, c.cost.1, |v| money_text(v, &c.currency))
+    );
+    let rows: Vec<Vec<String>> = c
+        .groups
+        .iter()
+        .filter(|g| g.requests.0 != g.requests.1 || (g.busy_ms.0 - g.busy_ms.1).abs() >= 1.0)
+        .take(10)
+        .map(|g| {
+            vec![
+                if g.missed {
+                    format!("{} (not found)", g.operation)
+                } else {
+                    g.operation.clone()
+                },
+                format!("{} → {}", g.requests.0, g.requests.1),
+                format!("{} → {}", ms_text(g.busy_ms.0), ms_text(g.busy_ms.1)),
+            ]
+        })
+        .collect();
+    if !rows.is_empty() {
+        println!("{}", output::table(&["kind", "requests", "waiting"], &rows));
+    }
+    for t in &c.resolved {
+        println!("{} {t}", paint("✓", "32", color));
+    }
+    for t in &c.appeared {
+        println!("{} {t}", paint("!", "33", color));
+    }
+    Ok(0)
 }
