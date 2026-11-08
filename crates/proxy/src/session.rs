@@ -174,7 +174,58 @@ pub struct Session {
     pub logs: Vec<LogChunk>,
 }
 
+/// Where a growing (uncompressed) session file's complete lines end: what
+/// [`Session::read_more`] starts from next time.
+pub fn complete_len(path: &Path) -> std::io::Result<u64> {
+    let mut f = std::fs::File::open(path)?;
+    let len = f.metadata()?.len();
+    let back = len.min(1 << 20);
+    f.seek(SeekFrom::Start(len - back))?;
+    let mut tail = Vec::with_capacity(back as usize);
+    f.read_to_end(&mut tail)?;
+    Ok(match tail.iter().rposition(|&b| b == b'\n') {
+        Some(i) => len - back + i as u64 + 1,
+        None => len - back,
+    })
+}
+
 impl Session {
+    /// Appends what a live recording wrote after `from` (a byte offset at a
+    /// line's start, from [`complete_len`] or an earlier call): its complete
+    /// lines only, and of those only what is newer than what the session
+    /// holds, so `from` may lag behind it. Returns where the next call
+    /// starts. Not for compressed files.
+    pub fn read_more(&mut self, path: &Path, from: u64) -> std::io::Result<u64> {
+        let mut f = std::fs::File::open(path)?;
+        f.seek(SeekFrom::Start(from))?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)?;
+        let Some(end) = buf.iter().rposition(|&b| b == b'\n') else {
+            return Ok(from);
+        };
+        let last_id = self.records.last().map(|r| r.id).unwrap_or(0);
+        let last_log = self.logs.last().map(|l| l.time);
+        for line in buf[..end].split(|&b| b == b'\n') {
+            let l = String::from_utf8_lossy(line);
+            let l = l.trim_end_matches('\r');
+            if l.trim().is_empty() {
+                continue;
+            }
+            if l.starts_with("{\"log\":") {
+                if let Ok(x) = serde_json::from_str::<LogLine>(l)
+                    && last_log.is_none_or(|t| x.log.time > t)
+                {
+                    self.logs.push(x.log);
+                }
+            } else if let Ok(r) = serde_json::from_str::<Record>(l)
+                && r.id > last_id
+            {
+                self.records.push(r);
+            }
+        }
+        Ok(from + end as u64 + 1)
+    }
+
     /// Reads a session file. A torn last line (the recorder was killed) is
     /// skipped; any other bad line is an error.
     pub fn open(path: &Path) -> Result<Session, String> {

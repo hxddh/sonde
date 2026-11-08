@@ -3,7 +3,7 @@
 //! errors, findings), and a run checked against a budget or a baseline run:
 //! what `sonde check` gates CI on, and what the app's history shows.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::episode::Observation;
 use crate::profile::Profile;
@@ -39,7 +39,7 @@ pub fn write_baselines(
 }
 
 /// A run, by the figures that move when the program changes.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunPoint {
     pub path: String,

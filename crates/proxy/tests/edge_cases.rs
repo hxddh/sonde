@@ -323,3 +323,45 @@ fn a_finished_session_is_compressed_and_still_opens() {
     sonde_proxy::session::compress(&path).unwrap();
     assert_eq!(std::fs::metadata(&path).unwrap().len(), packed);
 }
+
+#[test]
+fn a_growing_session_is_read_in_steps_without_repeats() {
+    use reqlog::Sink;
+    use sonde_proxy::session::{Session, SessionHeader, SessionWriter, complete_len};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("live.sonde");
+    let w = SessionWriter::create(&path, &SessionHeader::new("e", "http://e", "r", None)).unwrap();
+    let rec = |id| reqlog::Record {
+        id,
+        operation: "GetObject".into(),
+        ..Default::default()
+    };
+    for id in 1..=3 {
+        w.write(&rec(id));
+    }
+    w.flush().unwrap();
+    // the offset is taken before the read, so it may lag behind it
+    let at = complete_len(&path).unwrap();
+    w.write(&rec(4));
+    w.flush().unwrap();
+    let mut s = Session::open(&path).unwrap();
+    assert_eq!(s.records.len(), 4);
+    let at = s.read_more(&path, at).unwrap();
+    assert_eq!(s.records.len(), 4, "record 4 is not read twice");
+    for id in 5..=7 {
+        w.write(&rec(id));
+    }
+    w.flush().unwrap();
+    // half a line at the end waits for the rest
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, b"{\"id\":8,"))
+        .unwrap();
+    let at2 = s.read_more(&path, at).unwrap();
+    assert_eq!(
+        s.records.iter().map(|r| r.id).collect::<Vec<_>>(),
+        (1..=7).collect::<Vec<_>>()
+    );
+    assert_eq!(at2, std::fs::metadata(&path).unwrap().len() - 8);
+}

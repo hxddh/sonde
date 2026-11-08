@@ -116,6 +116,8 @@ async fn begin(
 /// records, its output or a live recording that has not grown costs nothing.
 struct Cached {
     stamp: (u64, Option<std::time::SystemTime>),
+    /// For a growing (uncompressed) file: where its unread lines start.
+    read_to: Option<u64>,
     used: u64,
     session: Arc<Session>,
     view: Option<Arc<JsonValue>>,
@@ -136,14 +138,37 @@ fn open_session(path: &str) -> Result<Arc<Session>, String> {
     let p = Path::new(path);
     let now = stamp(p)?;
     let used = USE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if let Some(c) = CACHE.lock().get_mut(p)
-        && c.stamp == now
-    {
-        c.used = used;
-        return Ok(c.session.clone());
-    }
-    // read outside the lock: another session opens meanwhile
-    let session = Arc::new(Session::open(p).map_err(err_msg)?);
+    let grown = {
+        let mut cache = CACHE.lock();
+        match cache.get_mut(p) {
+            Some(c) if c.stamp == now => {
+                c.used = used;
+                return Ok(c.session.clone());
+            }
+            // a live recording that grew: read only what it appended (taken
+            // out of the cache so that, unshared, it grows without a copy)
+            Some(c) if now.0 > c.stamp.0 && c.read_to.is_some() => {
+                cache.remove(p).map(|c| (c.session, c.read_to.unwrap_or(0)))
+            }
+            _ => None,
+        }
+    };
+    let compressed = sonde_proxy::session::is_compressed(p);
+    let (session, read_to) = match grown {
+        Some((old, from)) => {
+            let mut s = Arc::unwrap_or_clone(old);
+            let to = s.read_more(p, from).map_err(err_msg)?;
+            (Arc::new(s), Some(to))
+        }
+        None => {
+            // where complete lines end, taken before the read: the next read starts there
+            let to = (!compressed)
+                .then(|| sonde_proxy::session::complete_len(p).ok())
+                .flatten();
+            // read outside the lock: another session opens meanwhile
+            (Arc::new(Session::open(p).map_err(err_msg)?), to)
+        }
+    };
     let mut cache = CACHE.lock();
     if cache.len() >= KEEP && !cache.contains_key(p) {
         let oldest = cache
@@ -158,6 +183,7 @@ fn open_session(path: &str) -> Result<Arc<Session>, String> {
         p.to_path_buf(),
         Cached {
             stamp: now,
+            read_to,
             used,
             session: session.clone(),
             view: None,
@@ -266,6 +292,29 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
     {
         return Some(p.clone());
     }
+    // kept on disk too, beside the sessions: a program's history reads 30
+    // runs, and a finished run does not change
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    let mtime = now
+        .1
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let disk = path.parent()?.join(".runpoints.json");
+    let mut stored: std::collections::HashMap<String, (u64, u64, sonde_proxy::program::RunPoint)> =
+        std::fs::read(&disk)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+    if let Some((len, t, p)) = stored.get(&name)
+        && *len == now.0
+        && *t == mtime
+    {
+        let mut p = p.clone();
+        p.path = path.to_string_lossy().into_owned();
+        POINTS.lock().insert(path.to_path_buf(), (now, p.clone()));
+        return Some(p);
+    }
     let s = Session::open(path).ok()?;
     let pr = sonde_proxy::profile::profile(&s.records, &crate::state::request_prices());
     let ob = observations(&s.records, &episodes(&s.records));
@@ -277,6 +326,20 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
         &ob,
     );
     POINTS.lock().insert(path.to_path_buf(), (now, p.clone()));
+    // only finished runs: a live one changes
+    if sonde_proxy::session::is_compressed(path) {
+        let dir = path.parent()?;
+        stored.retain(|n, _| dir.join(n).is_file());
+        stored.insert(name, (now.0, mtime, p.clone()));
+        let tmp = dir.join(".runpoints.json.tmp");
+        if serde_json::to_vec(&stored)
+            .ok()
+            .and_then(|b| std::fs::write(&tmp, b).ok())
+            .is_some()
+        {
+            let _ = std::fs::rename(&tmp, &disk);
+        }
+    }
     Some(p)
 }
 
