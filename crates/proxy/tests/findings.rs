@@ -230,3 +230,46 @@ fn concurrent_uploads_to_one_key_each_get_their_own_create() {
     // three uploads of three requests each: every create counted once
     assert_eq!(small.impact, 9, "{small:#?}");
 }
+
+#[test]
+fn a_prefix_near_s3s_rate_per_prefix_is_named() {
+    // 3,000 reads of one folder in a second: 54% of 5,500
+    let recs: Vec<Record> = (0..3000u64)
+        .map(|i| {
+            rec(
+                i + 1,
+                (i / 3) as i64,
+                "GetObject",
+                Some(&format!("logs/2026/{i}.json")),
+                200,
+                2.0,
+            )
+        })
+        .collect();
+    let obs = findings(&recs);
+    let f = obs
+        .iter()
+        .find(|o| key(o) == "obs.prefixrate.reads")
+        .expect("a hot prefix");
+    assert_eq!(f.level, "info");
+    assert!(
+        f.text
+            .starts_with("b/logs/2026/ took up to 3000 reads a second, 54% of the 5500"),
+        "{}",
+        f.text
+    );
+    let p = sonde_proxy::profile::profile(&recs, &Default::default());
+    assert_eq!(p.prefixes[0].prefix, "b/logs/2026/");
+    assert_eq!(p.prefixes[0].peak_reads, 3000);
+    assert!(
+        p.flows
+            .iter()
+            .any(|f| f.source == "GetObject" && f.target == "b/logs/2026/" && f.value == 3000)
+    );
+    assert!(
+        p.flows
+            .iter()
+            .any(|f| f.source == "b/logs/2026/" && f.target == "ok")
+    );
+    assert_eq!(p.heat.iter().map(|c| c.n).sum::<usize>(), 3000);
+}

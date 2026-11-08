@@ -245,6 +245,48 @@ fn own_session(path: &str) -> Result<(PathBuf, String), String> {
     Ok((dir.join(&name), name))
 }
 
+/// A run's figures, kept per version of its file (a history reads many runs).
+static POINTS: std::sync::LazyLock<
+    Mutex<
+        std::collections::HashMap<
+            PathBuf,
+            (
+                (u64, Option<std::time::SystemTime>),
+                sonde_proxy::program::RunPoint,
+            ),
+        >,
+    >,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
+    let now = stamp(path).ok()?;
+    if let Some((s, p)) = POINTS.lock().get(path)
+        && *s == now
+    {
+        return Some(p.clone());
+    }
+    let s = Session::open(path).ok()?;
+    let pr = sonde_proxy::profile::profile(&s.records, &crate::state::request_prices());
+    let ob = observations(&s.records, &episodes(&s.records));
+    let p = sonde_proxy::program::run_point(
+        &path.to_string_lossy(),
+        &s.header.created.to_rfc3339(),
+        &s.records,
+        &pr,
+        &ob,
+    );
+    POINTS.lock().insert(path.to_path_buf(), (now, p.clone()));
+    Some(p)
+}
+
+/// Each program's baseline run, by file name: `baselines.json` beside the sessions.
+fn baselines() -> std::collections::BTreeMap<String, String> {
+    std::fs::read(sonde().paths().sessions().join("baselines.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
 /// The sites shared from the app, each served on its own local port.
 static SHARED: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, String>>> =
     std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
@@ -605,6 +647,106 @@ impl Sessions {
         })
         .await
         .map_err(err_msg)?
+    }
+
+    /// The program a session ran, over its runs (the newest 30, oldest first),
+    /// its baseline run, and this run checked against it (10% to grow, no new
+    /// warning): `{ program, runs, baseline, check }`; `null` for a replay or a
+    /// recording without a command.
+    pub async fn history(path: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let Some(key) = header_of(Path::new(&path))
+                .and_then(|h| sonde_proxy::program::program_key(h.command.as_deref()))
+            else {
+                return Ok(JsonValue::Null);
+            };
+            let dir = sonde().paths().sessions();
+            let mut runs: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
+                .filter_map(|p| {
+                    let h = header_of(&p)?;
+                    (sonde_proxy::program::program_key(h.command.as_deref()).as_deref()
+                        == Some(key.as_str()))
+                    .then(|| (h.created.to_rfc3339(), p))
+                })
+                .collect();
+            runs.sort();
+            let runs: Vec<_> = runs
+                .into_iter()
+                .rev()
+                .take(30)
+                .rev()
+                .filter_map(|(_, p)| run_point(&p))
+                .collect();
+            let base = baselines()
+                .get(&key)
+                .map(|name| dir.join(name))
+                .filter(|p| p.is_file());
+            let check = match &base {
+                Some(b) if b.to_string_lossy() != path => {
+                    let read = |p: &str| -> Result<_, String> {
+                        let s = open_session(p)?;
+                        let pr = sonde_proxy::profile::profile(
+                            &s.records,
+                            &crate::state::request_prices(),
+                        );
+                        let ob = observations(&s.records, &episodes(&s.records));
+                        let pt = sonde_proxy::program::run_point(
+                            p,
+                            &s.header.created.to_rfc3339(),
+                            &s.records,
+                            &pr,
+                            &ob,
+                        );
+                        Ok((pt, s, pr, ob))
+                    };
+                    let (rp, rs, rpr, rob) = read(&path)?;
+                    let (bp, bs, bpr, bob) = read(&b.to_string_lossy())?;
+                    let budget = sonde_proxy::program::Budget {
+                        tolerance: Some(0.1),
+                        no_new_warnings: true,
+                        ..Default::default()
+                    };
+                    Some(sonde_proxy::program::check(
+                        (&rp, &rs.records, &rpr, &rob),
+                        Some((&bp, &bs.records, &bpr, &bob)),
+                        &budget,
+                    ))
+                }
+                _ => None,
+            };
+            Ok(json!({
+                "program": key,
+                "runs": runs,
+                "baseline": base.map(|b| b.to_string_lossy().into_owned()),
+                "check": check,
+            }))
+        })
+        .await
+        .map_err(err_msg)?
+    }
+
+    /// Makes a session its program's baseline (`on`), or no longer.
+    pub fn set_baseline(path: String, on: bool) -> Result<bool, String> {
+        let (_, name) = own_session(&path)?;
+        let key = header_of(Path::new(&path))
+            .and_then(|h| sonde_proxy::program::program_key(h.command.as_deref()))
+            .ok_or_else(|| err_msg("only a run of a program has a baseline"))?;
+        let mut all = baselines();
+        if on {
+            all.insert(key, name);
+        } else if all.get(&key) == Some(&name) {
+            all.remove(&key);
+        }
+        let dir = sonde().paths().sessions();
+        let tmp = dir.join("baselines.json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&all).map_err(err_msg)?).map_err(err_msg)?;
+        std::fs::rename(&tmp, dir.join("baselines.json")).map_err(err_msg)?;
+        Ok(true)
     }
 
     /// A session's output as timed lines, for lining up with its operations.

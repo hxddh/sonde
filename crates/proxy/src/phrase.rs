@@ -100,6 +100,12 @@ fn template(key: &str) -> &'static str {
         "obs.slow" => {
             "{n} request{s} took over {ms} ms against a median of {median} ms; the slowest, {op}, took {max} ms"
         }
+        "obs.prefixrate.reads" => {
+            "{prefix} took up to {n} reads a second, {pct}% of the {limit} S3 serves one prefix: spread its keys over more prefixes before it throttles"
+        }
+        "obs.prefixrate.writes" => {
+            "{prefix} took up to {n} writes a second, {pct}% of the {limit} S3 serves one prefix: spread its keys over more prefixes before it throttles"
+        }
         "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
         _ => "",
     }

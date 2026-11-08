@@ -56,6 +56,35 @@ pub struct ProxyArgs {
 }
 
 #[derive(Args)]
+pub struct CheckArgs {
+    /// The run to check (default: the newest session).
+    file: Option<PathBuf>,
+    /// A run to hold it to: --tolerance and --no-new-warnings compare with it.
+    #[arg(long)]
+    baseline: Option<PathBuf>,
+    /// At most this many requests.
+    #[arg(long)]
+    max_requests: Option<usize>,
+    /// At most this much time waiting on the store, in ms.
+    #[arg(long)]
+    max_waiting: Option<f64>,
+    /// At most this request cost (in the settings' currency).
+    #[arg(long)]
+    max_cost: Option<f64>,
+    /// At most this many failed requests.
+    #[arg(long)]
+    max_errors: Option<usize>,
+    /// Against the baseline: requests, waiting and cost may grow this many percent.
+    #[arg(long, default_value_t = 10.0)]
+    tolerance: f64,
+    /// Against the baseline: fail on a warning it did not have.
+    #[arg(long)]
+    no_new_warnings: bool,
+    #[arg(long, short = 'f', value_enum, default_value_t)]
+    format: Format,
+}
+
+#[derive(Args)]
 pub struct CompareArgs {
     /// The run before a change.
     before: PathBuf,
@@ -952,4 +981,98 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         println!("{} {}", paint("!", "33", color), f.text);
     }
     Ok(0)
+}
+
+/// `sonde check`: a run against a budget and a baseline run; exit 1 when it is past either.
+pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
+    use sonde_proxy::program::{Budget, check, run_point};
+    let file = match &a.file {
+        Some(f) => f.clone(),
+        None => newest_session(s)?,
+    };
+    let prices = request_prices(s);
+    let read = |p: &PathBuf| -> anyhow::Result<_> {
+        let session = Session::open(p).map_err(|e| anyhow::anyhow!(e))?;
+        let pr = profile(&session.records, &prices);
+        let ob = observations(&session.records, &episodes(&session.records));
+        let point = run_point(
+            &p.to_string_lossy(),
+            &session.header.created.to_rfc3339(),
+            &session.records,
+            &pr,
+            &ob,
+        );
+        Ok((point, session.records, pr, ob))
+    };
+    let run = read(&file)?;
+    let base = a.baseline.as_ref().map(read).transpose()?;
+    let budget = Budget {
+        max_requests: a.max_requests,
+        max_waiting_ms: a.max_waiting,
+        max_cost: a.max_cost,
+        max_errors: a.max_errors,
+        tolerance: base.as_ref().map(|_| a.tolerance / 100.0),
+        no_new_warnings: a.no_new_warnings,
+    };
+    let c = check(
+        (&run.0, &run.1, &run.2, &run.3),
+        base.as_ref().map(|b| (&b.0, &b.1[..], &b.2, &b.3[..])),
+        &budget,
+    );
+    if matches!(a.format, Format::Json) {
+        println!(
+            "{}",
+            output::json(&serde_json::json!({ "run": run.0, "check": c }))
+        );
+        return Ok(if c.passed { 0 } else { 1 });
+    }
+    let color = std::io::stdout().is_terminal();
+    if c.verdicts.is_empty() {
+        eprintln!(
+            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors) or a --baseline"
+        );
+        return Ok(2);
+    }
+    let shown = |what: &str, v: f64| match what {
+        "waiting" => ms_text(v),
+        "cost" => money_text(v, &run.0.currency),
+        _ => format!("{v:.0}"),
+    };
+    let rows: Vec<Vec<String>> = c
+        .verdicts
+        .iter()
+        .map(|v| {
+            vec![
+                if v.ok {
+                    paint("pass", "32", color)
+                } else {
+                    paint("FAIL", "31", color)
+                },
+                v.what.to_string(),
+                shown(v.what, v.value),
+                format!("≤ {}", shown(v.what, v.limit)),
+                v.against.to_string(),
+            ]
+        })
+        .collect();
+    println!(
+        "{}",
+        output::table(&["", "", "run", "limit", "from"], &rows)
+    );
+    for w in &c.new_warnings {
+        println!("{} {w}", paint("!", "33", color));
+    }
+    println!(
+        "{}",
+        paint(
+            if c.passed {
+                "within budget"
+            } else {
+                "over budget"
+            },
+            if c.passed { "32" } else { "31" },
+            color
+        )
+    );
+    Ok(if c.passed { 0 } else { 1 })
 }

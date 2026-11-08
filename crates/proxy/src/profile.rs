@@ -142,7 +142,84 @@ pub struct Profile {
     pub cost: Cost,
     /// The prices the cost is reckoned at.
     pub prices: RequestPrices,
+    /// The busiest prefixes, most requests first (at most 8, then "other").
+    pub prefixes: Vec<PrefixStat>,
+    /// Requests per prefix (by index) and slice of the session (by `rate`'s index).
+    pub heat: Vec<HeatCell>,
+    /// Where requests went: operation → prefix → outcome, each a flow of requests.
+    pub flows: Vec<Flow>,
 }
+
+/// A prefix (a key's folder, three levels at most): S3 scales its request
+/// rate per prefix.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrefixStat {
+    pub prefix: String,
+    pub requests: usize,
+    pub reads: usize,
+    pub writes: usize,
+    pub errors: usize,
+    /// The most requests started in any one second.
+    pub peak_per_second: usize,
+    /// Of reads and of writes, in any one second.
+    pub peak_reads: usize,
+    pub peak_writes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeatCell {
+    pub prefix: usize,
+    pub bin: usize,
+    pub n: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Flow {
+    pub source: String,
+    pub target: String,
+    pub value: usize,
+}
+
+/// S3's request rate per prefix and second: reads (GET, HEAD) and writes
+/// (PUT, COPY, POST, DELETE).
+pub const READS_PER_PREFIX: usize = 5_500;
+pub const WRITES_PER_PREFIX: usize = 3_500;
+
+/// A key's prefix: its bucket and folder, three levels at most ("b/logs/2026/").
+pub fn prefix_of(r: &Record) -> String {
+    let b = r.bucket.as_deref().unwrap_or("");
+    let k = r.key.as_deref().unwrap_or("");
+    let dir = match k.rfind('/') {
+        Some(i) => &k[..=i],
+        None => "",
+    };
+    let short: String = dir.split_inclusive('/').take(3).collect();
+    match (b.is_empty(), short.is_empty()) {
+        (true, true) => "/".into(),
+        (true, false) => short,
+        _ => format!("{b}/{short}"),
+    }
+}
+
+pub fn is_read(r: &Record) -> bool {
+    matches!(r.method.as_str(), "GET" | "HEAD")
+}
+
+/// The most of `times` (µs, sorted) within any one second.
+pub fn peak_second(times: &[i64]) -> usize {
+    let (mut best, mut lo) = (0, 0);
+    for hi in 0..times.len() {
+        while times[hi] - times[lo] >= 1_000_000 {
+            lo += 1;
+        }
+        best = best.max(hi - lo + 1);
+    }
+    best
+}
+
+const MAX_PREFIXES: usize = 8;
 
 const MAX_BINS: f64 = 90.0;
 const MAX_STEPS: usize = 480;
@@ -227,6 +304,9 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             currency: prices.currency.clone(),
         },
         prices: prices.clone(),
+        prefixes: Vec::new(),
+        heat: Vec::new(),
+        flows: Vec::new(),
     };
     let Some(t0) = records.iter().map(start_us).min() else {
         return empty;
@@ -381,6 +461,115 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         amount: records.iter().map(|r| price(class(r))).sum(),
         currency: prices.currency.clone(),
     };
+    // prefixes: their requests, their busiest second, and when
+    let mut per: HashMap<String, Vec<&Record>> = HashMap::new();
+    for r in records {
+        per.entry(prefix_of(r)).or_default().push(r);
+    }
+    let mut ranked: Vec<(String, Vec<&Record>)> = per.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+    let stat = |prefix: String, rs: &[&Record]| {
+        let mut all: Vec<i64> = rs.iter().map(|r| start_us(r)).collect();
+        let mut reads: Vec<i64> = rs
+            .iter()
+            .filter(|r| is_read(r))
+            .map(|r| start_us(r))
+            .collect();
+        let mut writes: Vec<i64> = rs
+            .iter()
+            .filter(|r| !is_read(r))
+            .map(|r| start_us(r))
+            .collect();
+        all.sort_unstable();
+        reads.sort_unstable();
+        writes.sort_unstable();
+        PrefixStat {
+            prefix,
+            requests: rs.len(),
+            reads: reads.len(),
+            writes: writes.len(),
+            errors: rs.iter().filter(|r| r.is_error() && !is_miss(r)).count(),
+            peak_per_second: peak_second(&all),
+            peak_reads: peak_second(&reads),
+            peak_writes: peak_second(&writes),
+        }
+    };
+    let mut prefixes: Vec<PrefixStat> = ranked
+        .iter()
+        .take(MAX_PREFIXES)
+        .map(|(p, rs)| stat(p.clone(), rs))
+        .collect();
+    let rest: Vec<&Record> = ranked
+        .iter()
+        .skip(MAX_PREFIXES)
+        .flat_map(|(_, rs)| rs.iter().copied())
+        .collect();
+    if !rest.is_empty() {
+        prefixes.push(stat("other".into(), &rest));
+    }
+    let prefix_index = |r: &Record| {
+        let p = prefix_of(r);
+        prefixes
+            .iter()
+            .take(MAX_PREFIXES)
+            .position(|s| s.prefix == p)
+            .unwrap_or(prefixes.len().saturating_sub(1))
+    };
+    let mut cells: HashMap<(usize, usize), usize> = HashMap::new();
+    for r in records {
+        let b = ((ms(start_us(r) - t0) / bin) as usize).min(bins - 1);
+        *cells.entry((prefix_index(r), b)).or_default() += 1;
+    }
+    let mut heat: Vec<HeatCell> = cells
+        .into_iter()
+        .map(|((prefix, bin), n)| HeatCell { prefix, bin, n })
+        .collect();
+    heat.sort_by_key(|c| (c.prefix, c.bin));
+
+    // flows: operation → prefix → outcome
+    let outcome = |r: &Record| match tone(r) {
+        0 => "ok",
+        1 => "not found",
+        2 => "client error",
+        _ => "server error",
+    };
+    let top_ops: Vec<String> =
+        groups
+            .iter()
+            .map(|(g, _)| g.operation.clone())
+            .fold(Vec::new(), |mut v, o| {
+                if !v.contains(&o) {
+                    v.push(o);
+                }
+                v
+            });
+    let op_name = |r: &Record| {
+        if top_ops.iter().take(6).any(|o| *o == r.operation) {
+            r.operation.clone()
+        } else {
+            "other operations".into()
+        }
+    };
+    let mut flow: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for r in records {
+        let p = &prefixes[prefix_index(r)].prefix;
+        let p = if p == "other" {
+            "other prefixes".to_string()
+        } else {
+            p.clone()
+        };
+        *flow.entry((op_name(r), p.clone())).or_default() += 1;
+        *flow.entry((p, outcome(r).to_string())).or_default() += 1;
+    }
+    let flows: Vec<Flow> = flow
+        .into_iter()
+        .map(|((source, target), value)| Flow {
+            source,
+            target,
+            value,
+        })
+        .collect();
+
     let sum_ms: f64 = records.iter().map(|r| r.latency_ms.max(0.0)).sum();
     Profile {
         wall_ms: ms(wall_us),
@@ -399,6 +588,9 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         samples,
         cost,
         prices: prices.clone(),
+        prefixes,
+        heat,
+        flows,
     }
 }
 
@@ -444,7 +636,12 @@ pub struct FindingText {
 fn identity(o: &Observation) -> String {
     let p = &o.phrases[0];
     // one finding whatever its form: one or many, under a threshold or over
-    let key = p.key.trim_end_matches(".rate").trim_end_matches(".one");
+    let key = p
+        .key
+        .trim_end_matches(".rate")
+        .trim_end_matches(".one")
+        .trim_end_matches(".reads")
+        .trim_end_matches(".writes");
     let mut about: Vec<String> = match key {
         // which request was the slowest is a detail, not another finding
         "obs.slow" => Vec::new(),

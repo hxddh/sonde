@@ -68,6 +68,8 @@ enum Command {
     Diff(cmd::record::DiffArgs),
     /// Two runs of a program, before and after a change: requests, time, cost, findings.
     Compare(cmd::record::CompareArgs),
+    /// A run against a budget or a baseline run: exit 1 when it is over (for CI).
+    Check(cmd::record::CheckArgs),
     /// A session as a web page anyone opens in a browser.
     Share(cmd::share::ShareArgs),
     /// Compatibility probes.
@@ -125,6 +127,7 @@ fn main() -> ExitCode {
             Command::Diff(a) => cmd::record::diff(a).await,
             Command::Share(a) => cmd::share::run(&sonde, a).await,
             Command::Compare(a) => cmd::record::compare(&sonde, a).await,
+            Command::Check(a) => cmd::record::check(&sonde, a).await,
             Command::Probe(a) => cmd::probe::run(&sonde, &cli, a).await,
             Command::Mpu(a) => cmd::mpu::run(&sonde, &cli, a).await,
             Command::Du(a) => cmd::du::run(&sonde, &cli, a).await,

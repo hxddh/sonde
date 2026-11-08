@@ -1390,6 +1390,66 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         };
         out.push(warn(phrase, of_records(&mut throttled.iter().map(|r| r.id))).weigh(n, 0, total));
     }
+    // a prefix near what S3 serves one prefix a second
+    {
+        use crate::profile::{
+            READS_PER_PREFIX, WRITES_PER_PREFIX, is_read, peak_second, prefix_of,
+        };
+        let mut per: HashMap<String, (Vec<i64>, Vec<i64>, Vec<u64>, usize)> = HashMap::new();
+        for r in records {
+            let e = per.entry(prefix_of(r)).or_default();
+            if is_read(r) {
+                e.0.push(r.time.timestamp_micros());
+            } else {
+                e.1.push(r.time.timestamp_micros());
+            }
+            e.2.push(r.id);
+            e.3 += matches!(r.status, Some(503) | Some(429)) as usize;
+        }
+        let mut hot: Vec<(String, usize, usize, bool, Vec<u64>, usize)> = Vec::new();
+        for (prefix, (mut reads, mut writes, ids, throttled)) in per {
+            reads.sort_unstable();
+            writes.sort_unstable();
+            let (pr, pw) = (peak_second(&reads), peak_second(&writes));
+            // the nearer of the two to its limit
+            let (n, limit, read) = if pr * WRITES_PER_PREFIX >= pw * READS_PER_PREFIX {
+                (pr, READS_PER_PREFIX, true)
+            } else {
+                (pw, WRITES_PER_PREFIX, false)
+            };
+            if n * 2 >= limit {
+                hot.push((prefix, n, limit, read, ids, throttled));
+            }
+        }
+        hot.sort_by(|a, b| {
+            (b.1 * b.2.max(1))
+                .cmp(&(a.1 * a.2.max(1)))
+                .then(a.0.cmp(&b.0))
+        });
+        for (prefix, n, limit, read, ids, throttled) in hot.into_iter().take(3) {
+            let pct = n * 100 / limit;
+            let phrase = p(
+                if read {
+                    "obs.prefixrate.reads"
+                } else {
+                    "obs.prefixrate.writes"
+                },
+                &[
+                    ("prefix", prefix),
+                    ("n", n.to_string()),
+                    ("pct", pct.to_string()),
+                    ("limit", limit.to_string()),
+                ],
+            );
+            let impact = ids.len();
+            let o = if pct >= 80 || throttled > 0 {
+                warn(phrase, of_records(&mut ids.into_iter()))
+            } else {
+                info(phrase, of_records(&mut ids.into_iter()))
+            };
+            out.push(o.weigh(impact, 0, total));
+        }
+    }
     // far slower than the rest: a second or more, and ten times the median
     if records.len() >= 10 {
         let mut lat: Vec<f64> = records.iter().map(|r| r.latency_ms).collect();
