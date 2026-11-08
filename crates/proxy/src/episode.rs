@@ -1451,7 +1451,9 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         let serial: usize = found.iter().map(|c| c.requests).sum();
         let wall: f64 = found.iter().map(|c| c.end_ms - c.start_ms).sum();
         let fast: f64 = found.iter().map(|c| c.at_once_ms).sum();
-        let saved = wall - fast;
+        // only the waiting goes: the program's own work between requests stays
+        let waiting: f64 = found.iter().map(|c| c.waiting_ms).sum();
+        let saved = (waiting - fast).max(0.0);
         if !found.is_empty() && saved >= 100.0 {
             let busy = crate::profile::busy_ms(records).max(1e-9);
             let time = |v: f64| {

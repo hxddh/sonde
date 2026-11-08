@@ -19,7 +19,14 @@ export AWS_ACCESS_KEY_ID=AKIDSONDEUITEST AWS_SECRET_ACCESS_KEY=sonde-ui-test-sec
   AWS_EC2_METADATA_DISABLED=true
 export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}" CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 case "$(uname -s)" in
-  Darwin) target=macos ;;
+  Darwin)
+    target=macos
+    # the window must fit the screen (a CI runner's is 1024×768, a menu bar above)
+    if [ -z "${SONDE_SHOT_MAX:-}" ]; then
+      res="$(system_profiler SPDisplaysDataType 2>/dev/null | awk '/Resolution/ {print $2"x"$4; exit}')"
+      w="${res%x*}"; h="${res#*x}"
+      case "$w$h" in *[!0-9]* | "") ;; *) export SONDE_SHOT_MAX="$w"x"$((h - 80))" ;; esac
+    fi ;;
   MINGW* | MSYS* | CYGWIN*) target=windows ;;
   *) target=linux ;;
 esac

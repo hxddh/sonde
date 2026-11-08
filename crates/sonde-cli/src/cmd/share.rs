@@ -83,12 +83,10 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         return Ok(0);
     }
     if a.serve {
-        let dir = std::env::temp_dir().join(format!("sonde-share-{}", std::process::id()));
-        std::fs::create_dir_all(&dir)?;
-        share::write_site(&dir, &doc)?;
-        let r = serve(dir.clone(), a.port).await;
-        let _ = std::fs::remove_dir_all(&dir);
-        r?;
+        // a directory of its own, made fresh (no name another user can claim first)
+        let tmp = tempfile::Builder::new().prefix("sonde-share-").tempdir()?;
+        share::write_site(tmp.path(), &doc)?;
+        serve(tmp.path().to_path_buf(), a.port).await?;
         return Ok(0);
     }
     let dir = a.out.clone().unwrap_or_else(|| {

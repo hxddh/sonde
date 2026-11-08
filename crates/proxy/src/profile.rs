@@ -165,6 +165,9 @@ pub struct Chain {
     pub ids: Vec<u64>,
     /// What it would take with [`CHAIN_CONCURRENCY`] at once, about.
     pub at_once_ms: f64,
+    /// The time spent waiting on the requests themselves (the gaps between
+    /// them are the program's own work, which running them at once keeps).
+    pub waiting_ms: f64,
 }
 
 /// The requests at once a chain is weighed with: what SDKs default to, or near.
@@ -201,6 +204,7 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
                 requests: cur.len(),
                 ids: cur.iter().map(|r| r.id).collect(),
                 at_once_ms: at_once as f64 / 1000.0,
+                waiting_ms: lat.iter().sum::<i64>() as f64 / 1000.0,
             });
         }
         cur.clear();

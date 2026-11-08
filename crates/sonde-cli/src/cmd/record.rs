@@ -744,7 +744,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 all,
                 &session.header.endpoint,
                 &file,
-                std::io::stderr().is_terminal(),
+                std::io::stdout().is_terminal(),
                 &request_prices(s),
                 true,
             );
@@ -1133,7 +1133,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             eprintln!("this session ran no command, so it is no program's baseline");
             return Ok(64);
         };
-        if file.parent().map(|p| p.canonicalize().ok()) != Some(dir.canonicalize().ok()) {
+        // compared whole: `x.sonde` given from inside the directory has an empty parent
+        let parent = std::path::absolute(&file)
+            .ok()
+            .and_then(|f| f.parent().and_then(|p| p.canonicalize().ok()));
+        if parent.is_none() || parent != dir.canonicalize().ok() {
             eprintln!(
                 "a baseline is a session in {}: record it there (no -o), or pass --baseline FILE",
                 dir.display()
@@ -1166,7 +1170,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             }
             found
         }
-        Some(p) => Some(PathBuf::from(p)),
+        Some(p) => Some(super::sessions::resolve(s, &PathBuf::from(p))),
     };
     let base = base_path.as_ref().map(read).transpose()?;
     if let Some(b) = &base_path {
@@ -1193,6 +1197,10 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         base.as_ref().map(|b| (&b.0, &b.1[..], &b.2, &b.3[..])),
         &budget,
     );
+    // setting a baseline alone is a whole command
+    if c.verdicts.is_empty() && a.set_baseline {
+        return Ok(0);
+    }
     // nothing to hold the run to is a mistake in the command, in every format
     if c.verdicts.is_empty() {
         eprintln!(

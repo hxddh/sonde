@@ -272,11 +272,12 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
             .trim_start_matches('[')
             .trim_end_matches(']')
             .to_ascii_lowercase();
+        // a fully qualified name may end with a dot
+        let name = name.strip_suffix('.').unwrap_or(&name);
         let loopback = name == "localhost"
             || name.ends_with(".localhost")
-            || name == "::1"
             || name
-                .parse::<std::net::Ipv4Addr>()
+                .parse::<std::net::IpAddr>()
                 .is_ok_and(|ip| ip.is_loopback());
         if !loopback {
             return Err(format!(
@@ -348,6 +349,21 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
     let time = chrono::NaiveDateTime::parse_from_str(&amz_date, "%Y%m%dT%H%M%SZ")
         .map(|t| t.and_utc())
         .map_err(|_| "its signature has no date".to_string())?;
+    let now = chrono::Utc::now();
+    if presigned {
+        // a presigned URL lasts what it says (at most a week, as S3 has it)
+        let expires: i64 = q("X-Amz-Expires").and_then(|v| v.parse().ok()).unwrap_or(0);
+        if !(1..=604_800).contains(&expires) {
+            return Err("its X-Amz-Expires is missing or out of range".into());
+        }
+        if now > time + chrono::Duration::seconds(expires) || time > now + SKEW {
+            return Err("its presigned URL has expired".into());
+        }
+    } else if (now - time).abs() > SKEW {
+        return Err(
+            "its signature's time is more than 15 minutes from this machine's clock".into(),
+        );
+    }
     let headers: Vec<(String, String)> = signed
         .split(';')
         .filter(|h| !h.is_empty())
@@ -392,17 +408,27 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
     }
 }
 
+/// How far a signature's time may be from the clock, as S3 allows.
+const SKEW: chrono::Duration = chrono::Duration::minutes(15);
+
 /// Subresources a SigV2 signature covers, as S3 lists them.
 const V2_SUBRESOURCES: &[&str] = &[
+    "accelerate",
     "acl",
+    "analytics",
     "cors",
+    "defaultObjectAcl",
     "delete",
+    "inventory",
     "lifecycle",
     "location",
     "logging",
+    "metrics",
     "notification",
+    "object-lock",
     "partNumber",
     "policy",
+    "replication",
     "requestPayment",
     "response-cache-control",
     "response-content-disposition",
@@ -411,6 +437,9 @@ const V2_SUBRESOURCES: &[&str] = &[
     "response-content-type",
     "response-expires",
     "restore",
+    "select",
+    "select-type",
+    "storageClass",
     "tagging",
     "torrent",
     "uploadId",
@@ -467,6 +496,35 @@ fn admit_v2(
         return Err(format!(
             "it is signed with the key {key:?}, not the one sonde gave the program"
         ));
+    }
+    let now = chrono::Utc::now();
+    match q("Expires") {
+        Some(e) if q("AWSAccessKeyId").is_some() => {
+            let at: i64 = e.parse().map_err(|_| "its Expires is not a time")?;
+            if now.timestamp() > at {
+                return Err("its presigned URL has expired".into());
+            }
+        }
+        _ => {
+            let date = header("x-amz-date");
+            let date = if date.is_empty() {
+                header("date")
+            } else {
+                date
+            };
+            let t = chrono::DateTime::parse_from_rfc2822(&date)
+                .map(|t| t.with_timezone(&chrono::Utc))
+                .or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(&date, "%Y%m%dT%H%M%SZ")
+                        .map(|t| t.and_utc())
+                })
+                .map_err(|_| "its signature has no date")?;
+            if (now - t).abs() > SKEW {
+                return Err(
+                    "its signature's time is more than 15 minutes from this machine's clock".into(),
+                );
+            }
+        }
     }
     let mut amz: Vec<(String, String)> = parts
         .headers

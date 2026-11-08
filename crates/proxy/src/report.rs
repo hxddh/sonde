@@ -30,6 +30,88 @@ const STRUCTURAL: &[&str] = &[
     "tmp",
 ];
 
+/// File types a key keeps when redacted: the kind of data, not its name.
+/// Anything else after a dot (`john.smith`) is part of the name.
+const FILE_TYPES: &[&str] = &[
+    "parquet",
+    "orc",
+    "avro",
+    "arrow",
+    "ipc",
+    "json",
+    "jsonl",
+    "ndjson",
+    "csv",
+    "tsv",
+    "txt",
+    "log",
+    "xml",
+    "yaml",
+    "yml",
+    "md",
+    "html",
+    "sst",
+    "wal",
+    "manifest",
+    "metadata",
+    "checkpoint",
+    "crc",
+    "idx",
+    "db",
+    "sqlite",
+    "pb",
+    "bin",
+    "dat",
+    "gz",
+    "zst",
+    "lz4",
+    "snappy",
+    "bz2",
+    "xz",
+    "zip",
+    "tar",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "mov",
+    "mp4",
+    "pdf",
+];
+
+/// Query parameters whose values say how, not what: kept as they are.
+const PLAIN_QUERY: &[&str] = &[
+    "list-type",
+    "max-keys",
+    "max-uploads",
+    "max-parts",
+    "delimiter",
+    "encoding-type",
+    "fetch-owner",
+    "partNumber",
+    "part-number-marker",
+    "uploads",
+    "versions",
+    "versioning",
+    "x-id",
+    "acl",
+    "tagging",
+    "lifecycle",
+    "location",
+    "policy",
+    "cors",
+    "delete",
+    "attributes",
+    "restore",
+    "object-lock",
+    "retention",
+    "legal-hold",
+    "torrent",
+    "select",
+    "select-type",
+];
+
 struct Redactor {
     salt: u64,
 }
@@ -53,7 +135,9 @@ impl Redactor {
         }
         // keep what kind of file it is: `.parquet`, `.json`, `.sst`
         match seg.rsplit_once('.') {
-            Some((stem, ext)) if !stem.is_empty() && ext.len() <= 10 => {
+            Some((stem, ext))
+                if !stem.is_empty() && FILE_TYPES.contains(&ext.to_ascii_lowercase().as_str()) =>
+            {
                 // a numbered file keeps its number: 00000000000000000010.json
                 if stem.chars().all(|c| c.is_ascii_digit()) {
                     seg.to_string()
@@ -96,6 +180,12 @@ pub fn redact(s: &mut Session) {
     for rec in &mut s.records {
         rec.endpoint = "endpoint".into();
         rec.url = String::new();
+        rec.job = None;
+        // what failed, not where: the message names the URL
+        rec.transport_error = rec
+            .transport_error
+            .as_ref()
+            .map(|_| "the request did not reach the store".to_string());
         rec.bucket = rec
             .bucket
             .as_deref()
@@ -107,10 +197,8 @@ pub fn redact(s: &mut Session) {
                 "prefix" | "start-after" | "marker" | "key-marker"
             ) {
                 *v = r.path(v);
-            } else if matches!(
-                k.as_str(),
-                "continuation-token" | "uploadId" | "upload-id-marker" | "versionId"
-            ) {
+            } else if !PLAIN_QUERY.contains(&k.as_str()) && !v.is_empty() {
+                // ids, tokens, response-* overrides (a file name), an app's own
                 *v = r.token(v);
             }
         }
@@ -420,6 +508,30 @@ mod tests {
             Some("<Error><Code>NoSuchKey</Code></Error>")
         );
         assert_eq!(s.header.command.as_deref(), Some("run"));
+    }
+
+    #[test]
+    fn nothing_that_names_the_data_survives_redaction() {
+        let mut s = session();
+        let r = &mut s.records[0];
+        r.key = Some("hr/john.smith".into());
+        r.job = Some("payroll-alice".into());
+        r.transport_error = Some(
+            "error sending request for url (https://acme-payroll.s3.amazonaws.com/hr/alice)".into(),
+        );
+        r.query = vec![
+            (
+                "response-content-disposition".into(),
+                "attachment; filename=alice-salary.csv".into(),
+            ),
+            ("list-type".into(), "2".into()),
+        ];
+        redact(&mut s);
+        let doc = serde_json::to_string(&s.records).unwrap();
+        for secret in ["smith", "alice", "payroll", "amazonaws"] {
+            assert!(!doc.contains(secret), "{secret} leaked: {doc}");
+        }
+        assert!(doc.contains("\"list-type\",\"2\""));
     }
 
     #[test]

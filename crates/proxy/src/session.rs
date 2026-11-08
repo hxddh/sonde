@@ -203,7 +203,19 @@ impl Session {
         let Some(end) = buf.iter().rposition(|&b| b == b'\n') else {
             return Ok(from);
         };
-        let last_id = self.records.last().map(|r| r.id).unwrap_or(0);
+        // concurrent requests are written as they finish, not in id order: a
+        // record a little older than the newest may still arrive
+        const WINDOW: u64 = 4096;
+        let last_id = self.records.iter().map(|r| r.id).max().unwrap_or(0);
+        let floor = last_id.saturating_sub(WINDOW);
+        let recent: std::collections::HashSet<u64> = self
+            .records
+            .iter()
+            .rev()
+            .take(WINDOW as usize * 2)
+            .map(|r| r.id)
+            .filter(|id| *id > floor)
+            .collect();
         let last_log = self.logs.last().map(|l| l.time);
         for line in buf[..end].split(|&b| b == b'\n') {
             let l = String::from_utf8_lossy(line);
@@ -218,7 +230,8 @@ impl Session {
                     self.logs.push(x.log);
                 }
             } else if let Ok(r) = serde_json::from_str::<Record>(l)
-                && r.id > last_id
+                && r.id > floor
+                && !recent.contains(&r.id)
             {
                 self.records.push(r);
             }

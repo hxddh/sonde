@@ -194,5 +194,10 @@ fn main() -> ExitCode {
         }
         code
     });
-    ExitCode::from(code as u8)
+    // an exit status past what a process can return (Windows' are 32-bit)
+    // still says it failed: 1, not its low byte (256 would read as 0)
+    ExitCode::from(match code {
+        0..=255 => code as u8,
+        _ => 1,
+    })
 }

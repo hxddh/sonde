@@ -208,7 +208,15 @@ function LiveOperations() {
   return (
     <View class="min-h-0 flex-1 gap-2.5" testID="run-operations">
       <StatusBand view={view()} now={now} />
-      <If when={view() && view()!.episodes.length > 0} else={<If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}><NoRequests /></If>}>
+      <If when={view() && view()!.episodes.length > 0} else={<If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}>
+            {/* the SDK hints only for a program that ran and still sent nothing */}
+            <If
+              when={!lastRun()!.killed && lastRun()!.exit !== 127}
+              else={<Empty icon="activity" text={lastRun()!.killed ? t("run.stoppedEmpty") : t("run.notFound")} />}
+            >
+              <NoRequests />
+            </If>
+          </If>}>
         <View class="min-h-0 flex-1 gap-2.5">
           {/* the run's requests over time, growing as they arrive */}
           <If when={!terminal() && view()!.profile}>

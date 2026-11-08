@@ -132,3 +132,30 @@ fn check_holds_a_run_to_its_programs_baseline() {
         2
     );
 }
+
+#[test]
+fn a_baseline_set_alone_succeeds_by_name_or_relative_path() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    let dir = t.path().join("data/sessions");
+    let name = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n.ends_with(".sonde"))
+        .unwrap();
+    // from inside the sessions directory, by a relative path
+    let set = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(["check", &name, "--set-baseline"])
+        .current_dir(&dir)
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .output()
+        .unwrap();
+    assert_eq!(set.status.code(), Some(0), "{}", String::from_utf8_lossy(&set.stderr));
+    // a baseline named, not a path
+    let by_name = sonde(t.path(), &["check", "--baseline", name.trim_end_matches(".sonde")]);
+    assert_eq!(by_name.status.code(), Some(0), "{}", String::from_utf8_lossy(&by_name.stderr));
+    // what goes to a file has no colour in it
+    assert!(!stdout(&sonde(t.path(), &["show", "--summary"])).contains('\u{1b}'));
+}

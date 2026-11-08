@@ -87,7 +87,7 @@ export function resize(cols: number, rows: number) {
   if (running()) api.sessions.resize(cols, rows);
 }
 
-async function tellTheUser(r: RunResult, cmd: string) {
+async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
   try {
     const v = await api.sessions.analyse(r.path);
     const warnings = v.observations.filter((o) => o.level === "warn").length;
@@ -142,7 +142,14 @@ export function start(cmd: string, endpoint: string) {
         running.set({ command: cmd, path: e.started.path, endpoint });
       } else if ("data" in e) {
         buffer += e.data;
-        if (buffer.length > MAX) buffer = buffer.slice(buffer.length - MAX);
+        if (buffer.length > MAX) {
+          // cut at a line, so no escape sequence or surrogate pair is split
+          const from = buffer.indexOf("\n", buffer.length - MAX);
+          let at = from < 0 ? buffer.length - MAX : from + 1;
+          // never start on the second half of a pair
+          if (/[\udc00-\udfff]/.test(buffer[at] ?? "")) at += 1;
+          buffer = buffer.slice(at);
+        }
         for (const l of listeners) l(e.data);
       }
     })
@@ -152,7 +159,8 @@ export function start(cmd: string, endpoint: string) {
         lastRun.set({ ...r, command: cmd, killed });
       });
       sessionsChanged();
-      void tellTheUser(r, cmd);
+      // this run's own: a new run may start before the analysis is back
+      void tellTheUser(r, cmd, killed);
     })
     .catch((e) => {
       running.set(null);

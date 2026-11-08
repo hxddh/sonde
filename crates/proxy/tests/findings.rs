@@ -353,7 +353,7 @@ fn requests_one_after_another_are_a_chain_that_requests_at_once_would_shorten() 
         f.saving_text
             .as_deref()
             .unwrap()
-            .starts_with("about 739 ms sooner"),
+            .starts_with("about 700 ms sooner"),
         "{:?}",
         f.saving_text
     );

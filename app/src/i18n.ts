@@ -553,6 +553,8 @@ const en = {
   "mpu.key": "Key",
   "mpu.uploadId": "Upload ID",
   "mpu.initiated": "Started",
+  "run.stoppedEmpty": "Stopped before it sent a request",
+  "run.notFound": "The command was not found: check its name and the folder it runs in",
 };
 
 type Key = keyof typeof en;
@@ -1105,6 +1107,8 @@ const zh: Partial<Record<Key, string>> = {
   "mpu.key": "键",
   "mpu.uploadId": "上传 ID",
   "mpu.initiated": "开始于",
+  "run.stoppedEmpty": "在发出任何请求前已停止",
+  "run.notFound": "找不到该命令：请检查命令名和运行目录",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

@@ -507,3 +507,117 @@ fn a_sigv2_presigned_url_with_the_keys_is_admitted_and_one_without_is_not() {
     assert!(request(&bad, &cfg.client_key, "127.0.0.1:9000", "/data/a%20b.txt").is_err());
     assert!(request(&good, "AKIDOTHER", "127.0.0.1:9000", "/data/a%20b.txt").is_err());
 }
+
+#[test]
+fn an_expired_presigned_url_or_a_stale_signature_is_refused() {
+    let cfg = ProxyConfig::default();
+    let creds = Credentials::new(&cfg.client_key, &cfg.client_secret, None);
+    let host = "127.0.0.1:9000";
+    let v4 = |at: chrono::DateTime<Utc>, expires: u64| {
+        let (query, _) = sigv4::presign(
+            "GET",
+            "/data/k",
+            host,
+            &[],
+            "us-east-1",
+            "s3",
+            at,
+            expires,
+            &creds,
+        );
+        let uri = format!("/data/k?{}", sigv4::canonical_query(&query));
+        let (parts, _) = Request::builder()
+            .uri(uri)
+            .header("host", host)
+            .body(())
+            .unwrap()
+            .into_parts();
+        sonde_proxy::admit(&cfg, &parts, host)
+    };
+    assert_eq!(v4(Utc::now(), 60), Ok(()));
+    // made a minute ago for ten seconds
+    let old = v4(Utc::now() - chrono::Duration::seconds(60), 10);
+    assert!(old.unwrap_err().contains("expired"));
+    // a header signature an hour old
+    let stale = Utc::now() - chrono::Duration::hours(1);
+    let amz_date = stale.format("%Y%m%dT%H%M%SZ").to_string();
+    let headers: Vec<(String, String)> = vec![
+        ("host".into(), host.into()),
+        ("x-amz-date".into(), amz_date.clone()),
+        (
+            "x-amz-content-sha256".into(),
+            sigv4::UNSIGNED_PAYLOAD.into(),
+        ),
+    ];
+    let sig = sigv4::sign(
+        &SignInput {
+            method: "GET",
+            canonical_uri: "/data/k",
+            query: &[],
+            headers: &headers,
+            payload_hash: sigv4::UNSIGNED_PAYLOAD,
+            region: "us-east-1",
+            service: "s3",
+            time: stale,
+        },
+        &creds,
+    );
+    let (parts, _) = Request::builder()
+        .uri("/data/k")
+        .header("host", host)
+        .header("x-amz-date", amz_date)
+        .header("x-amz-content-sha256", sigv4::UNSIGNED_PAYLOAD)
+        .header("authorization", sig.authorization(&cfg.client_key))
+        .body(())
+        .unwrap()
+        .into_parts();
+    assert!(
+        sonde_proxy::admit(&cfg, &parts, host)
+            .unwrap_err()
+            .contains("15 minutes")
+    );
+    // SigV2: expired in 2020
+    let (parts, _) = Request::builder()
+        .uri(format!(
+            "/data/k?AWSAccessKeyId={}&Signature=x&Expires=1577836801",
+            cfg.client_key
+        ))
+        .header("host", host)
+        .body(())
+        .unwrap()
+        .into_parts();
+    assert!(
+        sonde_proxy::admit(&cfg, &parts, host)
+            .unwrap_err()
+            .contains("expired")
+    );
+}
+
+#[test]
+fn every_way_of_writing_this_machine_is_this_machine() {
+    let cfg = ProxyConfig::default();
+    let host_refused = |host: &str| {
+        let (parts, _) = Request::builder()
+            .uri("/b/k")
+            .header("host", host)
+            .body(())
+            .unwrap()
+            .into_parts();
+        sonde_proxy::admit(&cfg, &parts, host)
+            .unwrap_err()
+            .contains("not this machine")
+    };
+    for ok in [
+        "localhost:9000",
+        "localhost.:9000",
+        "b.localhost:9000",
+        "127.0.0.1:9000",
+        "[::1]:9000",
+        "[0:0:0:0:0:0:0:1]:9000",
+    ] {
+        assert!(!host_refused(ok), "{ok} was refused as another machine");
+    }
+    for other in ["evil.com", "evil.com:9000", "10.0.0.1:9000", "[::]:9000"] {
+        assert!(host_refused(other), "{other} was taken");
+    }
+}

@@ -35,9 +35,15 @@ const variants: Variant[] = [
   { name: "zh", width: 1280, height: 820, lang: "zh" },
 ];
 
+// a window no larger than the screen it is on: the macOS runner's is
+// 1024×768, and a larger window is cut off (scripts/shots.sh sets it)
+const [maxW, maxH] = String((globalThis as any).process?.env?.SONDE_SHOT_MAX ?? "").split("x").map(Number);
+
 for (const v of variants) {
   test(`shots ${v.name}`, async () => {
-    const app: App = await open("../App.tsx", { width: v.width, height: v.height });
+    const width = maxW ? Math.min(v.width, maxW) : v.width;
+    const height = maxH ? Math.min(v.height, maxH) : v.height;
+    const app: App = await open("../App.tsx", { width, height });
     const shot = async (name: string) => {
       await app.wait(450);
       await app.screenshot(`${dir}/${v.name}-${name}.png`);

@@ -365,3 +365,31 @@ fn a_growing_session_is_read_in_steps_without_repeats() {
     );
     assert_eq!(at2, std::fs::metadata(&path).unwrap().len() - 8);
 }
+
+#[test]
+fn a_record_written_after_a_newer_one_is_still_read() {
+    use reqlog::Sink;
+    use sonde_proxy::session::{Session, SessionHeader, SessionWriter, complete_len};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("live.sonde");
+    let w = SessionWriter::create(&path, &SessionHeader::new("e", "http://e", "r", None)).unwrap();
+    let rec = |id| reqlog::Record {
+        id,
+        operation: "GetObject".into(),
+        ..Default::default()
+    };
+    for id in [1, 2, 4] {
+        w.write(&rec(id));
+    }
+    w.flush().unwrap();
+    let mut s = Session::open(&path).unwrap();
+    let at = complete_len(&path).unwrap();
+    // 3 finished after 4
+    w.write(&rec(3));
+    w.write(&rec(5));
+    w.flush().unwrap();
+    s.read_more(&path, at).unwrap();
+    let mut ids: Vec<u64> = s.records.iter().map(|r| r.id).collect();
+    ids.sort();
+    assert_eq!(ids, vec![1, 2, 3, 4, 5]);
+}

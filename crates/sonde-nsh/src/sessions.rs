@@ -156,6 +156,8 @@ fn open_session(path: &str) -> Result<Arc<Session>, String> {
             _ => None,
         }
     };
+    // the same recording, grown; not another written in its place
+    let grown = grown.filter(|(old, _)| header_of(p).as_ref() == Some(&old.header));
     let (session, read_to) = match grown {
         Some((old, from)) => {
             let mut s = Arc::unwrap_or_clone(old);
