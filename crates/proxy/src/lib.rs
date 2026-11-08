@@ -268,6 +268,10 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
     };
+    // the legacy form some SDKs still presign with (boto3's default for S3)
+    if q("AWSAccessKeyId").is_some() || header("authorization").starts_with("AWS ") {
+        return admit_v2(cfg, parts, host, &query);
+    }
     let (credential, signed, signature, amz_date, payload, presigned) = if let Some(sig) =
         q("X-Amz-Signature")
     {
@@ -357,6 +361,148 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
         &creds,
     );
     if constant_eq(expected.signature.as_bytes(), signature.as_bytes()) {
+        Ok(())
+    } else {
+        Err("its signature does not match the secret sonde gave the program".into())
+    }
+}
+
+/// Subresources a SigV2 signature covers, as S3 lists them.
+const V2_SUBRESOURCES: &[&str] = &[
+    "acl",
+    "cors",
+    "delete",
+    "lifecycle",
+    "location",
+    "logging",
+    "notification",
+    "partNumber",
+    "policy",
+    "requestPayment",
+    "response-cache-control",
+    "response-content-disposition",
+    "response-content-encoding",
+    "response-content-language",
+    "response-content-type",
+    "response-expires",
+    "restore",
+    "tagging",
+    "torrent",
+    "uploadId",
+    "uploads",
+    "versionId",
+    "versioning",
+    "versions",
+    "website",
+];
+
+/// A SigV2 request (`Authorization: AWS key:signature`, or a presigned URL
+/// with `AWSAccessKeyId`, `Signature` and `Expires`) signed with this
+/// recording's keys.
+fn admit_v2(
+    cfg: &ProxyConfig,
+    parts: &http::request::Parts,
+    host: &str,
+    query: &[(String, String)],
+) -> Result<(), String> {
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    let q = |k: &str| query.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    let header = |k: &str| {
+        parts
+            .headers
+            .get(k)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let (key, signature, date) = match q("AWSAccessKeyId") {
+        Some(k) => (
+            k.to_string(),
+            q("Signature").unwrap_or("").to_string(),
+            q("Expires").unwrap_or("").to_string(),
+        ),
+        None => {
+            let auth = header("authorization");
+            let (k, s) = auth
+                .strip_prefix("AWS ")
+                .and_then(|x| x.split_once(':'))
+                .ok_or("its SigV2 signature is malformed")?;
+            // x-amz-date stands in for Date and is signed among the amz headers
+            let date = if parts.headers.contains_key("x-amz-date") {
+                String::new()
+            } else {
+                header("date")
+            };
+            (k.to_string(), s.to_string(), date)
+        }
+    };
+    if key != cfg.client_key {
+        return Err(format!(
+            "it is signed with the key {key:?}, not the one sonde gave the program"
+        ));
+    }
+    let mut amz: Vec<(String, String)> = parts
+        .headers
+        .iter()
+        .filter(|(n, _)| n.as_str().starts_with("x-amz-"))
+        .map(|(n, v)| {
+            (
+                n.as_str().to_string(),
+                v.to_str().unwrap_or("").trim().to_string(),
+            )
+        })
+        .collect();
+    amz.sort();
+    let mut merged: Vec<(String, String)> = Vec::new();
+    for (n, v) in amz {
+        match merged.last_mut() {
+            Some((ln, lv)) if *ln == n => {
+                lv.push(',');
+                lv.push_str(&v);
+            }
+            _ => merged.push((n, v)),
+        }
+    }
+    // a virtual-hosted request names its bucket in the Host
+    let name = host
+        .rsplit_once(':')
+        .map_or(host, |(h, _)| h)
+        .to_ascii_lowercase();
+    let mut resource = match name.strip_suffix(".localhost") {
+        Some(bucket) if !bucket.is_empty() => format!("/{bucket}{}", parts.uri.path()),
+        _ => parts.uri.path().to_string(),
+    };
+    let mut subs: Vec<&(String, String)> = query
+        .iter()
+        .filter(|(k, _)| V2_SUBRESOURCES.contains(&k.as_str()))
+        .collect();
+    subs.sort_by(|a, b| a.0.cmp(&b.0));
+    for (i, (k, v)) in subs.iter().enumerate() {
+        resource.push(if i == 0 { '?' } else { '&' });
+        resource.push_str(k);
+        if !v.is_empty() {
+            resource.push('=');
+            resource.push_str(v);
+        }
+    }
+    let mut to_sign = format!(
+        "{}\n{}\n{}\n{}\n",
+        parts.method.as_str(),
+        header("content-md5"),
+        header("content-type"),
+        date
+    );
+    for (n, v) in &merged {
+        to_sign.push_str(&format!("{n}:{v}\n"));
+    }
+    to_sign.push_str(&resource);
+    let mut mac = Hmac::<sha1::Sha1>::new_from_slice(cfg.client_secret.as_bytes())
+        .map_err(|e| e.to_string())?;
+    mac.update(to_sign.as_bytes());
+    let expected = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    if constant_eq(expected.as_bytes(), signature.as_bytes()) {
         Ok(())
     } else {
         Err("its signature does not match the secret sonde gave the program".into())

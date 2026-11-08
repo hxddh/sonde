@@ -461,3 +461,49 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
             .is_some_and(|b| b.contains("not this machine's"))
     }));
 }
+
+#[test]
+fn a_sigv2_presigned_url_with_the_keys_is_admitted_and_one_without_is_not() {
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    let cfg = ProxyConfig::default();
+    let sign = |secret: &str, resource: &str, expires: &str| {
+        let mut mac = Hmac::<sha1::Sha1>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(format!("GET\n\n\n{expires}\n{resource}").as_bytes());
+        base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
+    };
+    let enc = |s: &str| {
+        s.replace('+', "%2B")
+            .replace('/', "%2F")
+            .replace('=', "%3D")
+    };
+    let request = |sig: &str, key: &str, host: &str, path: &str| {
+        let uri = format!(
+            "{path}?AWSAccessKeyId={key}&Signature={}&Expires=1900000000",
+            enc(sig)
+        );
+        let (parts, _) = Request::builder()
+            .uri(uri)
+            .header("host", host)
+            .body(())
+            .unwrap()
+            .into_parts();
+        sonde_proxy::admit(&cfg, &parts, host)
+    };
+    // path style, a key with an encoded space
+    let good = sign(&cfg.client_secret, "/data/a%20b.txt", "1900000000");
+    assert_eq!(
+        request(&good, &cfg.client_key, "127.0.0.1:9000", "/data/a%20b.txt"),
+        Ok(())
+    );
+    // virtual-hosted: the bucket is in the Host, and in what was signed
+    let vh = sign(&cfg.client_secret, "/data/k", "1900000000");
+    assert_eq!(
+        request(&vh, &cfg.client_key, "data.localhost:9000", "/k"),
+        Ok(())
+    );
+    // the right key with another secret, or another key
+    let bad = sign("not-the-secret", "/data/a%20b.txt", "1900000000");
+    assert!(request(&bad, &cfg.client_key, "127.0.0.1:9000", "/data/a%20b.txt").is_err());
+    assert!(request(&good, "AKIDOTHER", "127.0.0.1:9000", "/data/a%20b.txt").is_err());
+}

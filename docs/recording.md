@@ -61,7 +61,8 @@ object_store (Rust) — `scripts/sdk-smoke.sh` runs them in CI.
    `ListObjectsV2`, …).
 3. sonde checks it is meant for it: the Host must be a loopback name
    (`127.0.0.1`, `localhost`, `*.localhost`, `::1`) unless `--allow-remote`,
-   and the request must carry a SigV4 signature (header or presigned query)
+   and the request must carry a SigV4 signature (header or presigned query),
+   or the SigV2 one older clients and boto3's presigned URLs use,
    made with this recording's keys. Anything else — an unsigned request, other
    keys, a web page rebinding a name to 127.0.0.1 — gets `403
    SignatureDoesNotMatch`, is recorded as refused, and never reaches the store.

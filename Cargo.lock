@@ -4575,10 +4575,12 @@ dependencies = [
 name = "sonde-proxy"
 version = "8.0.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "flate2",
  "futures",
+ "hmac 0.12.1",
  "http",
  "http-body-util",
  "hyper",
@@ -4591,6 +4593,7 @@ dependencies = [
  "s3raw",
  "serde",
  "serde_json",
+ "sha1 0.10.7",
  "tempfile",
  "tokio",
  "tracing",
