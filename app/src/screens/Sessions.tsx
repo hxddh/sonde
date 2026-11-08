@@ -7,7 +7,7 @@
 // shows as a timeline, replays on another endpoint, compares with another
 // session, and opens in a window of its own. In a terminal the levels stack.
 
-import { cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, type ViewRef, windowSize } from "nsh";
+import { batch, cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, type ViewRef, windowSize } from "nsh";
 import { Button as BaseButton, Input, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { hm } from "../format";
@@ -24,10 +24,12 @@ import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
 import { programOf } from "../ui/sessionview";
+import { TimePane } from "../ui/profile";
+import { offset } from "../ui/plots";
 import { Timeline } from "../ui/timeline";
 import { RecordDetail } from "./Requests";
 
-type Pane = "operations" | "aligned" | "timeline";
+type Pane = "operations" | "aligned" | "timeline" | "time";
 
 const program = programOf;
 
@@ -74,12 +76,32 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const id = rec();
     return id === null ? null : api.sessions.record(props.path, id);
   };
-  /** The operations shown: all, or those the chosen observation is about. */
+  /** A slice of the session's shape: the time it covers, from the session's start. */
+  const slice = signal<number | null>(null);
+  const window = (): [number, number] | null => {
+    const v = view();
+    const i = slice();
+    if (!v || i === null || !v.profile) return null;
+    const a = v.profile.rate[i]?.tMs ?? 0;
+    return [a, a + v.profile.binMs];
+  };
+  /** The operations shown: all, those the chosen finding is about, and those running in the chosen slice. */
   const rows = () => {
     const v = view();
+    if (!v) return undefined;
     const f = filter();
-    if (!v || f === null) return undefined;
-    return v.observations[f]?.episodes;
+    const w = window();
+    if (f === null && !w) return undefined;
+    let list = f === null ? v.episodes.map((_, i) => i) : (v.observations[f]?.episodes ?? []);
+    if (w) {
+      // from the first request, as the shape counts
+      const start = Math.min(...v.episodes.map((e) => new Date(e.start).getTime()));
+      list = list.filter((i) => {
+        const e = v.episodes[i];
+        return new Date(e.start).getTime() - start < w[1] && new Date(e.end).getTime() - start >= w[0];
+      });
+    }
+    return list;
   };
 
   const chooseOperation = (i: number) => {
@@ -196,10 +218,12 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     { value: "operations", title: t("sessions.operations"), icon: "list-filter" as const },
     ...(lines().length ? [{ value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const }] : []),
     ...(terminal() ? [] : [{ value: "timeline", title: t("sessions.timeline"), icon: "chart-gantt" as const }]),
+    { value: "time", title: t("profile.pane"), icon: "chart-pie" as const },
   ];
 
   const body = (v: SessionView) => {
-    if (pane() === "timeline") return <Timeline view={v} rows={rows()} selected={op()} onSelect={chooseOperation} />;
+    if (pane() === "timeline") return <Timeline view={v} rows={rows()} selected={op()} onSelect={chooseOperation} window={window()} />;
+    if (pane() === "time") return <TimePane view={v} onRequest={(id) => rec.set(id)} />;
     if (pane() === "aligned" && lines().length) {
       if (terminal()) return output();
       return (
@@ -229,8 +253,11 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const filterNote = () => {
     const v = view();
     const f = filter();
-    if (!v || f === null) return null;
-    return t("sessions.filtered", { n: v.observations[f]?.episodes.length ?? 0, of: v.episodes.length });
+    const w = window();
+    if (!v || (f === null && !w)) return null;
+    const n = rows()?.length ?? 0;
+    if (w) return t("profile.sliceFilter", { a: offset(w[0]), b: offset(w[1]), n, of: v.episodes.length });
+    return t("sessions.filtered", { n, of: v.episodes.length });
   };
 
   const main = (v: SessionView) => (
@@ -239,7 +266,12 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         <If when={props.onBack}>
           <Button small variant="ghost" icon="chevron-left" label={t("timeline.sessions")} onPress={() => props.onBack?.()} testID="sessions-back" class="self-start" />
         </If>
-        <SessionHeader view={v} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || (props.inWindow ? windowSize().width : shellWidth()) < 1180} />
+        <SessionHeader
+          view={v}
+          slice={slice()}
+          onSlice={(i) => slice.set(i)}
+          // a short window keeps its height for the operations
+          shape={(props.inWindow ? windowSize().height : shellHeight()) >= 700} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || (props.inWindow ? windowSize().width : shellWidth()) < 1180} />
         <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(96, Math.round((props.inWindow ? windowSize().height : shellHeight()) * 0.28))} />
         <If when={terminal()}>{actions()}</If>
       </View>
@@ -248,7 +280,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         <View class="flex-1" />
         <If when={filterNote()}>
           {(n) => (
-            <BaseButton testID="clear-filter" accessibilityLabel={t("sessions.clearFilter")} onPress={() => filter.set(null)} class="flex-row items-center gap-1.5 rounded-full bg-selection px-2.5 py-1 hover:bg-accent">
+            <BaseButton testID="clear-filter" accessibilityLabel={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), slice.set(null)))} class="flex-row items-center gap-1.5 rounded-full bg-selection px-2.5 py-1 hover:bg-accent">
               <Text class="text-small text-foreground">{n()}</Text>
               <If when={!terminal()}>
                 <Icon name="x" size={12} />

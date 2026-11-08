@@ -91,6 +91,16 @@ for (const v of variants) {
     await app.press("id:session-pane-mode-timeline");
     await app.waitFor("id:timeline");
     await shot("03e-timeline");
+    // a slice of the session's shape: the operations running then
+    await app.press("id:clear-filter");
+    if (app.shows("id:session-shape")) {
+      await app.hover("id:session-shape");
+      await app.press("id:session-shape");
+      await shot("03f-slice");
+    }
+    await app.press("id:session-pane-mode-time");
+    await app.waitFor("id:time-pane");
+    await shot("03g-time");
 
     await go("store");
     await shot("04-store");

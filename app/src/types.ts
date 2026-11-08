@@ -485,10 +485,58 @@ export interface SessionSummary {
   bytesDown: number;
 }
 
+/** One kind of request: an operation, its lookups that found nothing apart (crates/proxy/src/profile.rs). */
+export interface ProfileGroup {
+  operation: string;
+  missed: boolean;
+  requests: number;
+  busyMs: number;
+  sumMs: number;
+  share: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  errors: number;
+  bytesUp: number;
+  bytesDown: number;
+  cost: number;
+}
+
+/** Where a session's time went, its rate and concurrency, its requests' cost. */
+export interface Profile {
+  wallMs: number;
+  busyMs: number;
+  peakInFlight: number;
+  peakAtMs: number;
+  meanInFlight: number;
+  groups: ProfileGroup[];
+  binMs: number;
+  rate: { tMs: number; ok: number; miss: number; client: number; server: number }[];
+  inFlight: { tMs: number; n: number }[];
+  samples: { id: number; group: number; ms: number; tMs: number }[];
+  cost: { writes: number; reads: number; free: number; amount: number; currency: string };
+  prices: { per1000Writes: number; per1000Reads: number; currency: string };
+}
+
+/** Two runs of a program compared, before and after. */
+export interface RunChange {
+  requests: [number, number];
+  wallMs: [number, number];
+  busyMs: [number, number];
+  errors: [number, number];
+  cost: [number, number];
+  currency: string;
+  peakInFlight: [number, number];
+  groups: { operation: string; missed: boolean; requests: [number, number]; busyMs: [number, number] }[];
+  resolved: string[];
+  appeared: string[];
+}
+
 export interface SessionView {
   path: string;
   header: { endpoint: string; url: string; region: string; created: string; command?: string | null };
   summary: SessionSummary;
+  profile: Profile;
   episodes: Episode[];
   observations: Observation[];
   sharedNotes: string[];

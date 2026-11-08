@@ -95,6 +95,7 @@ export const api = {
     replayPlan: (path: string, endpoint: string) => Sessions.replayPlan(path, endpoint),
     replay: (path: string, endpoint: string, prefix: string) => Sessions.replay(path, endpoint, prefix),
     compare: (a: string, b: string) => Sessions.compare(a, b),
+    compareRuns: async (before: string, after: string) => (await Sessions.compareRuns(before, after)) as T.RunChange,
   },
 };
 

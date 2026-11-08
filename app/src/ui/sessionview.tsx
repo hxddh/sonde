@@ -5,10 +5,11 @@
 // (sonde share) both draw with these.
 
 import { type ContextMenuEvent, type JSX, List, platform, Scroll, signal, Text, View } from "nsh";
-import { Button as BaseButton, DataTable, type DataTableRef } from "nsh/base";
+import { Button as BaseButton, DataTable, type DataTableRef, type DataTableSort } from "nsh/base";
 import { bytes, date, day, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
+import { SessionShape, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
 import { Dot, Empty, rowHeight, terminal, TYPE } from "./kit";
@@ -107,7 +108,7 @@ function Figure(props: { value: string; label: string; tone?: Tone }) {
 }
 
 /** The command and where it ran, then the session's figures. */
-export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; compact?: boolean }) {
+export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; compact?: boolean; slice?: number | null; onSlice?: (i: number | null) => void; shape?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
     const parts = [t("timeline.operations", { n: s().requests, ops: props.view.episodes.length, secs: seconds(s().seconds) })];
@@ -138,19 +139,25 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
         </View>
         {props.actions}
       </View>
+      <View class={props.compact ? "gap-2" : "flex-row items-center gap-5"}>
       <View testID="session-summary" accessibilityLabel={line()} class="flex-row overflow-hidden">
-        <Figure value={String(s().requests)} label={t("figure.requests")} />
-        <Figure value={String(props.view.episodes.length)} label={t("figure.operations")} />
-        <Figure value={`${seconds(s().seconds)} s`} label={t("figure.took")} />
-        <If when={s().errors > 0}>
-          <Figure value={String(s().errors)} label={t("figure.errors")} tone="server" />
-        </If>
-        <If when={s().misses > 0}>
-          <Figure value={String(s().misses)} label={t("figure.notFound")} tone="miss" />
-        </If>
-        <If when={!props.compact}>
-          <Figure value={`↑${bytes(s().bytesUp)}`} label={t("figure.up")} />
-          <Figure value={`↓${bytes(s().bytesDown)}`} label={t("figure.down")} />
+          <Figure value={String(s().requests)} label={t("figure.requests")} />
+          <Figure value={String(props.view.episodes.length)} label={t("figure.operations")} />
+          <Figure value={`${seconds(s().seconds)} s`} label={t("figure.took")} />
+          <If when={s().errors > 0}>
+            <Figure value={String(s().errors)} label={t("figure.errors")} tone="server" />
+          </If>
+          <If when={s().misses > 0}>
+            <Figure value={String(s().misses)} label={t("figure.notFound")} tone="miss" />
+          </If>
+          <If when={!props.compact}>
+            <Figure value={`↑${bytes(s().bytesUp)}`} label={t("figure.up")} />
+            <Figure value={`↓${bytes(s().bytesDown)}`} label={t("figure.down")} />
+          </If>
+        </View>
+        {/* the session's shape: requests by outcome over time, and in flight */}
+        <If when={props.view.profile && props.shape !== false}>
+          <SessionShape profile={props.view.profile} slice={props.slice} onSlice={props.onSlice} class={props.compact ? "h-10 w-full" : "h-12 min-w-[200px] flex-1"} />
         </If>
       </View>
     </View>
@@ -258,17 +265,29 @@ export function OperationsTable(props: {
   compact?: boolean;
 }) {
   const notes = (e: Episode) => episodeNotes(e, props.view.sharedNotes).join(" · ");
-  const shown = () => props.rows ?? props.view.episodes.map((_, i) => i);
+  // the slowest or busiest first, at a press on their column's title
+  const sort = signal<DataTableSort | null>(null);
+  const shown = () => {
+    const list = props.rows ?? props.view.episodes.map((_, i) => i);
+    const s = sort();
+    if (!s) return list;
+    const by = (i: number) => {
+      const e = props.view.episodes[i];
+      return s.key === "duration" ? duration(e) : s.key === "requests" ? e.records.length : time(e.start);
+    };
+    const dir = s.direction === "descending" ? -1 : 1;
+    return [...list].sort((a, b) => (by(a) - by(b)) * dir || a - b);
+  };
   const formats = () => props.view.episodes.some((e) => family(e).label);
   const range = () => span(props.view);
   const ep = (row: number) => props.view.episodes[shown()[row]];
   const columns = () => [
     ...(terminal() ? [] : [{ key: "status", title: "", width: 26, resizable: false, selectable: false }]),
-    { key: "time", title: t("column.time"), width: 110 },
+    { key: "time", title: t("column.time"), width: 110, sortable: !terminal() },
     ...(formats() ? [{ key: "format", title: "", width: 86 }] : []),
     { key: "title", title: t("column.operation"), width: props.compact ? 220 : 340, minWidth: 160 },
-    { key: "requests", title: t("column.requests"), width: 48, align: "end" as const },
-    { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const },
+    { key: "requests", title: t("column.requests"), width: 56, align: "end" as const, sortable: !terminal() },
+    { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: !terminal() },
     ...(terminal() || props.compact ? [] : [{ key: "bar", title: t("column.when"), width: 150, minWidth: 80 }]),
     ...(props.compact ? [] : [{ key: "notes", title: t("column.notes"), width: 320, minWidth: 120 }]),
   ];
@@ -339,6 +358,8 @@ export function OperationsTable(props: {
       rowClasses={shown().map((i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
       renderCell={terminal() ? undefined : cell}
       rowSelectable
+      sort={sort()}
+      onSortChange={({ sort: next }) => sort.set(next)}
       onRowPress={({ row }) => props.onSelect(shown()[row])}
       onContextMenu={props.onContextMenu ? (e) => { if (e.row !== undefined && e.row !== null) props.onContextMenu?.(shown()[e.row]); } : undefined}
       empty={<Empty text={t("common.empty")} />}
@@ -443,6 +464,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
       </If>
       <View class="gap-1">
         <Text role="header" class="text-small font-semibold text-muted-foreground">{`${t("timeline.requestsOf")} (${e().records.length})`}</Text>
+        <Waterfall records={props.rows} onRecord={props.onRecord} />
         <View class="overflow-hidden rounded-(--radius) border border-border bg-card">
           <Each of={props.rows} key={(r) => r.id}>
             {(r, i) => (

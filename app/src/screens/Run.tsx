@@ -17,6 +17,7 @@ import type { SessionView } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, Dot, Empty, IconButton, Segmented, terminal } from "../ui/kit";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
+import { SessionShape } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
 import { seconds } from "../ui/sessionview";
 
@@ -203,6 +204,10 @@ function LiveOperations() {
       <StatusBand view={view()} now={now} />
       <If when={view() && view()!.episodes.length > 0} else={<Empty icon="activity" text={t("run.waiting")} />}>
         <View class="min-h-0 flex-1 gap-2.5">
+          {/* the run's requests over time, growing as they arrive */}
+          <If when={!terminal() && view()!.profile}>
+            <SessionShape profile={view()!.profile} class="h-10 w-full" testID="run-shape" />
+          </If>
           <If when={lastRun() && view()}>
             <Observations view={view()!} compact max={3} />
           </If>

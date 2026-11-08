@@ -11,6 +11,7 @@ import type { Episode, LogLine, RecordSummary, RequestRecord, SessionView } from
 import { Empty, IconButton, Segmented } from "../app/src/ui/kit";
 import { RecordView } from "../app/src/ui/record";
 import { linesOf, Observations, OperationsTable, OperationView, OutputTable, operationsAt, SessionHeader } from "../app/src/ui/sessionview";
+import { TimePane } from "../app/src/ui/profile";
 import { Timeline } from "../app/src/ui/timeline";
 
 /** What `sonde share` writes. */
@@ -21,7 +22,7 @@ export interface SharedSession extends SessionView {
   lines: LogLine[];
 }
 
-type Pane = "operations" | "aligned" | "timeline";
+type Pane = "operations" | "aligned" | "timeline" | "time";
 
 export function SessionViewer(props: { data: SharedSession }) {
   const d = props.data;
@@ -70,6 +71,7 @@ export function SessionViewer(props: { data: SharedSession }) {
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
   const body = () => {
     if (pane() === "timeline") return <Timeline view={d} rows={shown()} selected={op()} onSelect={chooseOperation} />;
+    if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} />;
     if (pane() === "operations" || !d.lines.length) return operations();
     return (
       <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1">
@@ -100,6 +102,7 @@ export function SessionViewer(props: { data: SharedSession }) {
             { value: "operations", title: t("sessions.operations"), icon: "list-filter" },
             ...(d.lines.length ? [{ value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const }] : []),
             { value: "timeline", title: t("sessions.timeline"), icon: "chart-gantt" },
+            ...(d.profile ? [{ value: "time", title: t("profile.pane"), icon: "chart-pie" as const }] : []),
           ]}
           onChange={(p) => pane.set(p as Pane)}
         />

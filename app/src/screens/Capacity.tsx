@@ -10,7 +10,7 @@ import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
 import { Bar, Button, Card, Empty, Field, Heading, KeyValue, Muted, Page, terminal, Title, Toggle } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
-import { BarChart, StackBar } from "../ui/charts";
+import { BarChart, PrefixMap, StackBar } from "../ui/charts";
 
 export function Capacity() {
   const pfx = terminal() ? signal("") : prefix;
@@ -114,7 +114,7 @@ export function Capacity() {
             </View>
             <Card>
               <Heading>{t("du.byPrefix")}</Heading>
-              <BarChart testID="du-prefixes" items={r().byPrefix.slice(0, 15).map((p) => ({ label: p.name, value: p.current.bytes + p.noncurrent.bytes }))} />
+              <PrefixMap testID="du-prefixes" items={r().byPrefix.slice(0, 24).map((p) => ({ label: p.name, value: p.current.bytes + p.noncurrent.bytes }))} />
             </Card>
           </View>
         )}

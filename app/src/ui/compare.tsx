@@ -1,12 +1,15 @@
 // Two sessions side by side — a recording and its replay on another
 // endpoint, or any two — and the dialog that starts a replay.
 
-import { signal, Text, View } from "nsh";
+import { resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { Dialog, DiffView } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
 import { endpoint, endpoints, go, report } from "../store";
-import { Badge, Button, Choice, Heading, Muted, SCRIM } from "./kit";
+import type { RunChange } from "../types";
+import { Icon } from "./icon";
+import { Badge, Button, Choice, Heading, Muted, SCRIM, Segmented } from "./kit";
+import { cost, offset, RunBars } from "./plots";
 
 interface Comparison {
   compared: number;
@@ -14,6 +17,66 @@ interface Comparison {
   environment: number;
   differences: { operation: string; original: string; replay: string; count: number; example: string; conditions: string[] }[];
   unmatched: Record<string, number>;
+}
+
+/** A change in a figure, before → after, and how much. */
+function Delta(props: { label: string; a: number; b: number; text: (v: number) => string; testID?: string }) {
+  const d = () => props.b - props.a;
+  const pctText = () => (props.a > 0 ? ` ${d() > 0 ? "+" : ""}${Math.round((d() * 100) / props.a)}%` : "");
+  const tone = () => (Math.abs(d()) < 1e-9 ? "text-muted-foreground" : d() < 0 ? "text-status-ok" : "text-status-server");
+  return (
+    <View testID={props.testID} class="gap-0.5">
+      <Text class="tabular-nums text-heading font-semibold text-foreground">{`${props.text(props.a)} → ${props.text(props.b)}`}</Text>
+      <Text class="text-caption text-muted-foreground">
+        {props.label}
+        <Text class={`tabular-nums font-medium ${tone()}`}>{pctText()}</Text>
+      </Text>
+    </View>
+  );
+}
+
+/** Two runs of a program, before and after a change: the figures, by kind of request, and the findings gone and new. */
+export function RunChangeView(props: { change: RunChange }) {
+  const c = () => props.change;
+  const n = (v: number) => String(Math.round(v));
+  return (
+    <Scroll testID="run-change" class="min-h-0 flex-1" contentClass="gap-5 pb-4">
+      <View class="flex-row flex-wrap gap-x-8 gap-y-3 rounded-(--radius-card) border border-border bg-card px-4 py-3">
+        <Delta testID="run-change-requests" label={t("figure.requests")} a={c().requests[0]} b={c().requests[1]} text={n} />
+        <Delta label={t("profile.waiting")} a={c().busyMs[0]} b={c().busyMs[1]} text={offset} />
+        <Delta label={t("figure.took")} a={c().wallMs[0]} b={c().wallMs[1]} text={offset} />
+        <Delta label={t("figure.errors")} a={c().errors[0]} b={c().errors[1]} text={n} />
+        <Delta label={t("profile.cost")} a={c().cost[0]} b={c().cost[1]} text={(v) => cost(v, c().currency)} />
+      </View>
+      <RunBars change={c()} />
+      <If when={c().resolved.length + c().appeared.length > 0}>
+        <View class="gap-1.5">
+          <Each of={c().resolved}>
+            {(x) => (
+              <View class="flex-row items-start gap-2">
+                <Icon name="circle-check" size={14} tint="status-ok" />
+                <Text class="flex-1 text-body text-foreground">
+                  <Text class="font-medium text-status-ok">{`${t("profile.resolved")} · `}</Text>
+                  {x()}
+                </Text>
+              </View>
+            )}
+          </Each>
+          <Each of={c().appeared}>
+            {(x) => (
+              <View class="flex-row items-start gap-2">
+                <Icon name="triangle-alert" size={14} tint="warn" />
+                <Text class="flex-1 text-body text-foreground">
+                  <Text class="font-medium text-warn">{`${t("profile.appeared")} · `}</Text>
+                  {x()}
+                </Text>
+              </View>
+            )}
+          </Each>
+        </View>
+      </If>
+    </Scroll>
+  );
 }
 
 export function CompareView(props: { a: string; b: string; onClose: () => void }) {
@@ -25,30 +88,62 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
       return null;
     }
   };
+  const runs = resource(
+    () => `${props.a}\n${props.b}`,
+    async () => {
+      try {
+        return await api.sessions.compareRuns(props.a, props.b);
+      } catch (e) {
+        report(e);
+        return null;
+      }
+    },
+  );
+  // a replay's answers match the original's; two runs of a program compare as before and after
+  const mode = signal<"runs" | "answers">(untracked(() => ((data()?.comparison.compared ?? 0) > 0 ? "answers" : "runs")));
   const name = (p: string) => p.split("/").pop() ?? p;
   return (
     <If when={data()}>
       {(d) => (
-        <View class="flex-1 gap-2" testID="compare">
+        <View class="flex-1 gap-3" testID="compare">
           <View class="flex-row items-center gap-2">
             <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={props.onClose} testID="compare-back" />
-            <Text class="flex-1 text-body font-semibold text-foreground line-clamp-1">{`${name(props.a)} ↔ ${name(props.b)}`}</Text>
+            <Text class="flex-1 text-body font-semibold text-foreground line-clamp-1">{`${name(props.a)} → ${name(props.b)}`}</Text>
+            <Segmented
+              testID="compare-mode"
+              value={mode()}
+              items={[
+                { value: "runs", title: t("profile.runsTitle") },
+                { value: "answers", title: t("compare.transcripts") },
+              ]}
+              onChange={(v) => mode.set(v as "runs" | "answers")}
+            />
           </View>
-          <Text class="text-body text-foreground" testID="compare-summary">
-            {t("compare.summary", { n: d().comparison.compared, same: d().comparison.same })}
-            {d().comparison.differences.length ? ` · ${t("compare.differ", { n: d().comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
-          </Text>
-          <Each of={d().comparison.differences}>
-            {(x) => (
-              <View class="flex-row flex-wrap items-center gap-2 rounded-(--radius) bg-muted px-2 py-1">
-                <Badge label={`×${x().count}`} tone="fail" />
-                <Text class="text-body text-foreground">{`${x().operation}  ${x().original} → ${x().replay}`}</Text>
-                <Muted class="text-small">{`${x().example}${x().conditions.length ? `  (${x().conditions.join(", ")})` : ""}`}</Muted>
-              </View>
-            )}
-          </Each>
-          <Heading>{t("compare.transcripts")}</Heading>
-          <DiffView testID="compare-diff" oldValue={d().a} newValue={d().b} layout="split" inline="word" contextLines={2} lineNumbers class="flex-1 rounded-(--radius) border border-border" />
+          <If
+            when={mode() === "answers"}
+            else={
+              <If when={runs()} else={<Text class="text-small text-muted-foreground">{t("common.loading")}</Text>}>
+                {(r) => <RunChangeView change={r()} />}
+              </If>
+            }
+          >
+            <View class="min-h-0 flex-1 gap-2">
+              <Text class="text-body text-foreground" testID="compare-summary">
+                {t("compare.summary", { n: d().comparison.compared, same: d().comparison.same })}
+                {d().comparison.differences.length ? ` · ${t("compare.differ", { n: d().comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
+              </Text>
+              <Each of={d().comparison.differences}>
+                {(x) => (
+                  <View class="flex-row flex-wrap items-center gap-2 rounded-(--radius) bg-muted px-2 py-1">
+                    <Badge label={`×${x().count}`} tone="fail" />
+                    <Text class="text-body text-foreground">{`${x().operation}  ${x().original} → ${x().replay}`}</Text>
+                    <Muted class="text-small">{`${x().example}${x().conditions.length ? `  (${x().conditions.join(", ")})` : ""}`}</Muted>
+                  </View>
+                )}
+              </Each>
+              <DiffView testID="compare-diff" oldValue={d().a} newValue={d().b} layout="split" inline="word" contextLines={2} lineNumbers class="flex-1 rounded-(--radius) border border-border" />
+            </View>
+          </If>
         </View>
       )}
     </If>
