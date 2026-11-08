@@ -564,6 +564,19 @@ const en = {
   "matrix.differ": "Answers that differ",
   "matrix.of": "{n} of {of}",
   "matrix.open": "Compare with {name}",
+  "band.text": "Requests now take {p50} at the median, {p95} at p95 and {p99} at p99",
+  "band.line": "median {p50} · p95 {p95} · p99 {p99}",
+  "live.perSecond": "requests a second",
+  "live.failed": "failed",
+  "live.inFlight": "in flight",
+  "live.p95": "p95 now",
+  "live.latency": "How long requests take: median to p95, p99 dashed",
+  "live.monitor": "Monitor in a small window",
+  "monitor.title": "sonde · live",
+  "monitor.idle": "Nothing is recording",
+  "run.shortcutNothing": "Run a command once: then ⌘⌥R / Ctrl+Alt+R runs it again from anywhere",
+  "run.shortcutStarted": "Recording {command}",
+  "band.title": "How long requests took, over time",
 };
 
 type Key = keyof typeof en;
@@ -1127,6 +1140,19 @@ const zh: Partial<Record<Key, string>> = {
   "matrix.differ": "不一致的应答",
   "matrix.of": "{of} 个中 {n} 个",
   "matrix.open": "与 {name} 对比",
+  "band.text": "当前请求中位数 {p50}，p95 {p95}，p99 {p99}",
+  "band.line": "中位数 {p50} · p95 {p95} · p99 {p99}",
+  "live.perSecond": "每秒请求",
+  "live.failed": "失败",
+  "live.inFlight": "进行中",
+  "live.p95": "当前 p95",
+  "live.latency": "请求耗时：中位数到 p95，虚线为 p99",
+  "live.monitor": "在小窗口中监视",
+  "monitor.title": "sonde · 实时",
+  "monitor.idle": "当前没有录制",
+  "run.shortcutNothing": "先运行一次命令：之后在任何地方按 ⌘⌥R / Ctrl+Alt+R 即可再次运行",
+  "run.shortcutStarted": "正在录制 {command}",
+  "band.title": "请求耗时随时间的变化",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

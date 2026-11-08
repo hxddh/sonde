@@ -90,6 +90,10 @@ pub struct Bin {
     pub miss: usize,
     pub client: usize,
     pub server: usize,
+    /// How long the slice's requests took: median, p95 and p99 (0 without any).
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub p99_ms: f64,
 }
 
 /// Requests in flight from `t_ms` on.
@@ -463,10 +467,15 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             miss: 0,
             client: 0,
             server: 0,
+            p50_ms: 0.0,
+            p95_ms: 0.0,
+            p99_ms: 0.0,
         })
         .collect();
+    let mut took: Vec<Vec<f64>> = vec![Vec::new(); bins];
     for r in records {
         let i = ((ms(start_us(r) - t0) / bin) as usize).min(bins - 1);
+        took[i].push(r.latency_ms);
         let b = &mut rate[i];
         match tone(r) {
             0 => b.ok += 1,
@@ -474,6 +483,16 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             2 => b.client += 1,
             _ => b.server += 1,
         }
+    }
+
+    // how long requests took, slice by slice: the band the live view draws
+    for (b, mut l) in rate.iter_mut().zip(took) {
+        if l.is_empty() {
+            continue;
+        }
+        l.sort_by(f64::total_cmp);
+        let at = |q: f64| l[((l.len() as f64 * q).ceil() as usize).clamp(1, l.len()) - 1];
+        (b.p50_ms, b.p95_ms, b.p99_ms) = (at(0.5), at(0.95), at(0.99));
     }
 
     // in flight: a step at each start and end, the busiest kept per slice

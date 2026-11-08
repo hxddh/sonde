@@ -21,6 +21,11 @@ test("run a command: its requests become operations, the session lines them up w
   await app.waitFor("id:run-ended", { timeout: 20000 });
   expect(app.shows("text:exited with 0")).toBe(true);
   await app.waitFor("text:/GetObject demo\\/README\\.md/", { timeout: 5000 });
+  // the run as it went: rate, failures, in flight, p95; and a monitor that floats
+  expect(app.shows("id:live")).toBe(true);
+  expect(app.shows("id:live-p95")).toBe(true);
+  await app.press("id:open-monitor");
+  await app.waitUntil(() => app.window("monitor").state() !== null);
   await app.press("id:run-open-session");
   await app.waitFor("id:screen-sessions");
   await app.waitFor("id:output", { timeout: 5000 });

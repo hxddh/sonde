@@ -529,7 +529,7 @@ export interface Profile {
   meanInFlight: number;
   groups: ProfileGroup[];
   binMs: number;
-  rate: { tMs: number; ok: number; miss: number; client: number; server: number }[];
+  rate: { tMs: number; ok: number; miss: number; client: number; server: number; p50Ms: number; p95Ms: number; p99Ms: number }[];
   inFlight: { tMs: number; n: number }[];
   samples: { id: number; group: number; ms: number; tMs: number }[];
   cost: { writes: number; reads: number; free: number; amount: number; currency: string };

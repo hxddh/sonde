@@ -3,10 +3,11 @@
 // it from the start; listeners get what arrives after.
 
 import { announce, batch, effect, lifecycle, Notifications, platform, signal, Storage } from "nsh";
-import { isAvailable, Tray, Window } from "nsh/desktop";
+import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { area, go, openSession, report, sessionsChanged } from "./store";
+import { openMonitor } from "./screens/MonitorWindow";
+import { area, endpoint, go, notify, openSession, report, sessionsChanged } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
 import { programOf } from "./ui/sessionview";
@@ -53,6 +54,7 @@ if (isAvailable && platform.idiom !== "terminal") {
               onClick: () => Window.get("main")?.show(),
               menu: [
                 { label: t("run.trayShow"), onSelect: () => Window.get("main")?.show() },
+                { label: t("live.monitor"), onSelect: openMonitor },
                 { label: t("run.stop"), onSelect: stop },
               ],
             }
@@ -63,6 +65,20 @@ if (isAvailable && platform.idiom !== "terminal") {
     }
   });
 }
+/** The shortcut that starts the last command, or stops the running one, from
+ * any app: ⌘⌥R / Ctrl+Alt+R. */
+export const RUN_SHORTCUT = "mod+alt+r";
+if (isAvailable && platform.idiom !== "terminal") {
+  void GlobalShortcut.register(RUN_SHORTCUT, () => {
+    if (running()) return stop();
+    const last = history()[0];
+    const ep = endpoint();
+    if (!last || !ep) return notify(t("run.shortcutNothing"), { kind: "warning" });
+    start(last, ep);
+    announce(t("run.shortcutStarted", { command: last }));
+  }).catch(() => false);
+}
+
 export const cwd = signal("");
 export const policy = signal<Policy>("allow");
 

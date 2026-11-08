@@ -7,17 +7,18 @@
 import { cleanup, LayoutAnimation, reduceMotion, signal, Text, View } from "nsh";
 import { Button as BaseButton, Input, ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
-import { bytes } from "../format";
+import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, running, start, startedAt, stop } from "../run";
 import { away, endpoint, endpoints, go, openSession, report, sessionsChanged } from "../store";
-import type { SessionView } from "../types";
+import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, Dot, Empty, IconButton, KeyValue, Segmented, terminal } from "../ui/kit";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
-import { SessionShape } from "../ui/plots";
+import { LatencyBand, liveFigures, SessionShape } from "../ui/plots";
+import { openMonitor } from "./MonitorWindow";
 import { rememberedSize } from "../ui/sizes";
 import { seconds } from "../ui/sessionview";
 
@@ -188,6 +189,38 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   );
 }
 
+/** The run as it goes: requests a second, failures, in flight and the p95
+ * now; requests over time beside how long they take. */
+function LivePanel(props: { profile: Profile }) {
+  const f = () => liveFigures(props.profile);
+  const figure = (value: string, label: string, testID: string, tone = "text-foreground") => (
+    <View testID={testID} class="gap-0">
+      <Text class={`tabular-nums text-body font-semibold ${tone}`}>{value}</Text>
+      <Text class="text-caption text-muted-foreground">{label}</Text>
+    </View>
+  );
+  return (
+    <View testID="live" class="gap-2 rounded-(--radius-card) border border-border bg-card px-3.5 py-2.5">
+      <View class="flex-row items-center gap-6">
+        {figure(f().perSecond.toFixed(f().perSecond < 10 ? 1 : 0), t("live.perSecond"), "live-rate")}
+        {figure(`${Math.round(f().failedShare * 100)}%`, t("live.failed"), "live-failed", f().failedShare > 0 ? "text-status-server" : "text-foreground")}
+        {figure(String(f().inFlight), t("live.inFlight"), "live-in-flight")}
+        {figure(ms(f().p95), t("live.p95"), "live-p95")}
+        <View class="flex-1" />
+        <If when={isAvailable}>
+          <IconButton icon="app-window" label={t("live.monitor")} onPress={openMonitor} testID="open-monitor" />
+        </If>
+      </View>
+      <View class="flex-row gap-4">
+        <SessionShape profile={props.profile} class="h-16 min-w-0 flex-1" testID="run-shape" />
+        <View class="min-w-0 flex-1 gap-0.5">
+          <LatencyBand profile={props.profile} class="h-16 w-full" testID="run-band" />
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function LiveOperations() {
   const tick = signal(0);
   const now = signal(Date.now());
@@ -220,7 +253,7 @@ function LiveOperations() {
         <View class="min-h-0 flex-1 gap-2.5">
           {/* the run's requests over time, growing as they arrive */}
           <If when={!terminal() && view()!.profile}>
-            <SessionShape profile={view()!.profile} class="h-10 w-full" testID="run-shape" />
+            <LivePanel profile={view()!.profile} />
           </If>
           <If when={lastRun() && view()}>
             <Observations view={view()!} compact max={3} />

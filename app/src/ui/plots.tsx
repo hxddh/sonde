@@ -7,7 +7,7 @@
 
 import { signal, Text, token, View } from "nsh";
 import { Button as BaseButton } from "nsh/base";
-import { Bar, Cell, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Sankey } from "nsh/base/plot";
+import { Area, Bar, Cell, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Sankey } from "nsh/base/plot";
 import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import type { LatencyChange, Observation, Profile, ProfileGroup, ProgramHistory, RecordSummary, RunChange } from "../types";
@@ -141,6 +141,60 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           </If>
         </Plot>
       </BaseButton>
+    </If>
+  );
+}
+
+// --- the live view ----------------------------------------------------------------
+
+/** What the last few seconds of a session looked like: requests a second,
+ * the share that failed, in flight now and the p95, for the live view. */
+export function liveFigures(p: Profile, slices = 5) {
+  const recent = p.rate.slice(-slices);
+  const n = recent.reduce((s, b) => s + b.ok + b.miss + b.client + b.server, 0);
+  const failed = recent.reduce((s, b) => s + b.client + b.server, 0);
+  const secs = Math.max((recent.length * p.binMs) / 1000, 1e-3);
+  const p95 = Math.max(0, ...recent.map((b) => b.p95Ms));
+  const inFlight = p.inFlight.length ? p.inFlight[p.inFlight.length - 1].n : 0;
+  return { perSecond: n / secs, failedShare: n ? failed / n : 0, inFlight, p95 };
+}
+
+/** How long requests took over the session: the band from median to p95,
+ * the p99 a line above it; slices without requests leave a gap. */
+export function LatencyBand(props: { profile: Profile; class?: string; testID?: string }) {
+  const rows = () => props.profile.rate.filter((b) => b.ok + b.miss + b.client + b.server > 0);
+  const hovered = signal<number | null>(null);
+  const label = () => {
+    const last = rows()[rows().length - 1];
+    return last ? t("band.text", { p50: ms(last.p50Ms), p95: ms(last.p95Ms), p99: ms(last.p99Ms) }) : "";
+  };
+  const tip = () => {
+    const b = hovered() === null ? null : rows()[hovered()!];
+    return b ? { title: `+${offset(b.tMs)}`, lines: [t("band.line", { p50: ms(b.p50Ms), p95: ms(b.p95Ms), p99: ms(b.p99Ms) })] } : null;
+  };
+  return (
+    <If when={!terminal() && rows().length > 1} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{label()}</Text>}>
+      <Plot
+        testID={props.testID ?? "latency-band"}
+        data={rows()}
+        x="tMs"
+        xScale={{ type: "linear", domain: [0, Math.max(props.profile.wallMs, 1)] }}
+        yScale={{ type: "linear", domain: [0, Math.max(...rows().map((b) => b.p99Ms), 1) * 1.15] }}
+        accessibilityLabel={label()}
+        accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
+        motion={MOTION}
+        crossLineClass="w-px h-full bg-foreground/20"
+        tooltipPlacement="pointer"
+        tooltipOffset={10}
+        tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
+        onHoverChange={({ index }) => hovered.set(index)}
+        class={props.class ?? "h-24 w-full"}
+      >
+        <Area y0="p50Ms" y1="p95Ms" curve="natural" class="fill-chart-1/25" />
+        <Line y="p50Ms" curve="natural" class="stroke-chart-1 stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
+        <Line y="p99Ms" curve="natural" class="stroke-status-client/70 stroke-[1] [stroke-dasharray:3_3]" hoverDotClass="hidden" />
+        <PlotAxis placement="left" ticks={3} format={(v) => ms(v)} labelClass="pr-1.5 tabular-nums text-caption text-muted-foreground" />
+      </Plot>
     </If>
   );
 }

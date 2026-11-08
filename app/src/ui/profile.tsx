@@ -6,7 +6,7 @@ import { t } from "../i18n";
 import type { SessionView } from "../types";
 import { Section, terminal } from "./kit";
 import { Figure } from "./sessionview";
-import { Chains, cost, Flows, Heat, offset, shapeSentence, Spread, TimeSpent } from "./plots";
+import { Chains, cost, Flows, Heat, LatencyBand, offset, shapeSentence, Spread, TimeSpent } from "./plots";
 
 /** The Time pane of a session. */
 export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void }) {
@@ -36,6 +36,11 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       <If when={!terminal() && p().heat?.length}>
         <Section title={t("heat.title")} plain description={t("heat.hint")}>
           <Heat profile={p()} />
+        </Section>
+      </If>
+      <If when={!terminal() && p().rate.filter((b) => b.ok + b.miss + b.client + b.server > 0).length > 2}>
+        <Section title={t("band.title")} plain description={t("live.latency")}>
+          <LatencyBand profile={p()} class="h-32 w-full" testID="time-band" />
         </Section>
       </If>
       <Section title={t("spread.title")} plain description={t("spread.hint")}>
