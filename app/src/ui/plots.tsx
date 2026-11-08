@@ -10,7 +10,7 @@ import { Button as BaseButton } from "nsh/base";
 import { Bar, Cell, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Sankey } from "nsh/base/plot";
 import { bytes, ms } from "../format";
 import { t } from "../i18n";
-import type { Observation, Profile, ProfileGroup, ProgramHistory, RecordSummary, RunChange } from "../types";
+import type { LatencyChange, Observation, Profile, ProfileGroup, ProgramHistory, RecordSummary, RunChange } from "../types";
 import { observationSaving, observationText } from "../phrases";
 import { SimpleTable, terminal } from "./kit";
 
@@ -141,6 +141,113 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           </If>
         </Plot>
       </BaseButton>
+    </If>
+  );
+}
+
+// --- requests that waited on each other ------------------------------------------
+
+/** Chains of requests that each waited for the one before: how long each took
+ * in turn, beside how long the same requests would take eight at once. */
+export function Chains(props: { profile: Profile; max?: number }) {
+  const rows = () => (props.profile.chains ?? []).slice(0, props.max ?? 5).map((c, i) => ({ ...c, name: t("chains.row", { i: i + 1, n: c.requests }), soon: c.startMs + c.atOnceMs }));
+  const hovered = signal<number | null>(null);
+  const label = () => {
+    const c = rows()[0];
+    return c ? t("chains.text", { n: c.requests, time: offset(c.endMs - c.startMs), fast: offset(c.atOnceMs) }) : "";
+  };
+  const tip = () => {
+    const c = hovered() === null ? null : rows()[hovered()!];
+    return c ? { title: c.name, lines: [t("chains.line", { from: offset(c.startMs), to: offset(c.endMs) }), t("chains.fast", { fast: offset(c.atOnceMs), saved: offset(c.endMs - c.startMs - c.atOnceMs) })] } : null;
+  };
+  return (
+    <If
+      when={!terminal()}
+      else={<SimpleTable columns={[t("chains.chain"), t("chains.from"), t("profile.time"), t("chains.atOnce")]} rows={rows().map((c) => [c.name, `+${offset(c.startMs)}`, offset(c.endMs - c.startMs), offset(c.atOnceMs)])} />}
+    >
+      <View class="gap-2">
+        <Plot
+          testID="chains"
+          data={rows()}
+          yScale={{ type: "band", paddingInner: 0.28, paddingOuter: 0.12 }}
+          xScale={{ type: "linear", domain: [0, Math.max(props.profile.wallMs, 1)] }}
+          accessibilityLabel={label()}
+          accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines.join(", ")}` : "" }}
+          appearGeneration={1}
+          motion={MOTION}
+          crossLineClass="w-full h-full rounded-sm bg-foreground/5"
+          tooltipPlacement="pointer"
+          tooltipOffset={10}
+          tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
+          onHoverChange={({ index }) => hovered.set(index)}
+          class="ml-32"
+          style={{ height: rows().length * 34 + 30 }}
+        >
+          {/* as it ran: one after another */}
+          <Bar base="startMs" value="endMs" class="fill-status-client" cornerRadii={3} inactiveOpacity={0.45} label={(_, i) => offset(rows()[i].endMs - rows()[i].startMs)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
+          {/* the same requests eight at once */}
+          <Bar base="startMs" value="soon" class="fill-chart-1" cornerRadii={3} inactiveOpacity={0.45} label={(_, i) => t("chains.bar", { fast: offset(rows()[i].atOnceMs) })} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
+          <PlotAxis placement="left" format={(i) => rows()[i]?.name ?? ""} labelClass="pr-3 text-small text-foreground" />
+          <PlotAxis placement="bottom" ticks={4} format={(v) => offset(v)} labelClass="pt-1 tabular-nums text-caption text-muted-foreground" />
+        </Plot>
+        <View class="flex-row gap-4 pl-32">
+          <View class="flex-row items-center gap-1.5"><View class="h-2 w-2 rounded-full bg-status-client" /><Text class="text-caption text-muted-foreground">{t("chains.asRan")}</Text></View>
+          <View class="flex-row items-center gap-1.5"><View class="h-2 w-2 rounded-full bg-chart-1" /><Text class="text-caption text-muted-foreground">{t("chains.atOnce")}</Text></View>
+        </View>
+      </View>
+    </If>
+  );
+}
+
+// --- one workload on two stores ---------------------------------------------------
+
+/** The same requests on two stores: each kind's p95 on one beside the other,
+ * the kind that slowed most first; the median as a dot on each bar. */
+export function StoreLatency(props: { changes: LatencyChange[]; names: [string, string]; max?: number }) {
+  const rows = () => props.changes.slice(0, props.max ?? 8).map((c) => ({ ...c, name: groupName(c), a95: c.p95Ms[0], b95: c.p95Ms[1], a50: c.p50Ms[0], b50: c.p50Ms[1] }));
+  const hovered = signal<number | null>(null);
+  const ratio = (c: LatencyChange) => c.p95Ms[1] / Math.max(c.p95Ms[0], 0.01);
+  const label = () => {
+    const c = rows()[0];
+    return c ? t("latency.text", { what: c.name, a: ms(c.a95), b: ms(c.b95), x: ratio(c).toFixed(1) }) : "";
+  };
+  const tip = () => {
+    const c = hovered() === null ? null : rows()[hovered()!];
+    return c ? { title: c.name, lines: [`${props.names[0]}: p50 ${ms(c.a50)} · p95 ${ms(c.a95)} · ${c.requests[0]}`, `${props.names[1]}: p50 ${ms(c.b50)} · p95 ${ms(c.b95)} · ${c.requests[1]}`] } : null;
+  };
+  const top = () => Math.max(...rows().flatMap((c) => [c.a95, c.b95]), 1) * 1.25;
+  return (
+    <If
+      when={!terminal()}
+      else={<SimpleTable columns={[t("profile.kind"), `p50 ${props.names[0]} → ${props.names[1]}`, `p95 ${props.names[0]} → ${props.names[1]}`, "×"]} rows={rows().map((c) => [c.name, `${ms(c.a50)} → ${ms(c.b50)}`, `${ms(c.a95)} → ${ms(c.b95)}`, `${ratio(c).toFixed(1)}×`])} />}
+    >
+      <View class="gap-2">
+        <Plot
+          testID="store-latency"
+          data={rows()}
+          yScale={{ type: "band", paddingInner: 0.3, paddingOuter: 0.12 }}
+          xScale={{ type: "linear", domain: [0, top()] }}
+          accessibilityLabel={label()}
+          accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines.join(", ")}` : "" }}
+          appearGeneration={1}
+          motion={MOTION}
+          crossLineClass="w-full h-full rounded-sm bg-foreground/5"
+          tooltipPlacement="pointer"
+          tooltipOffset={10}
+          tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
+          onHoverChange={({ index }) => hovered.set(index)}
+          class="ml-52"
+          style={{ height: rows().length * 40 + 8 }}
+        >
+          <Bar value="a95" class="fill-muted-foreground/45" cornerRadii={{ topRight: 3, bottomRight: 3 }} inactiveOpacity={0.45} label={(_, i) => ms(rows()[i].a95)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
+          <Bar value="b95" class="fill-chart-1" cornerRadii={{ topRight: 3, bottomRight: 3 }} inactiveOpacity={0.45} label={(_, i) => `${ms(rows()[i].b95)} · ${ratio(rows()[i]).toFixed(1)}×`} labelClass="pl-2 tabular-nums text-caption font-medium text-foreground" />
+          <PlotAxis placement="left" format={(i) => rows()[i]?.name ?? ""} labelClass="pr-3 text-small text-foreground" />
+        </Plot>
+        <View class="flex-row gap-4 pl-52">
+          <View class="flex-row items-center gap-1.5"><View class="h-2 w-2 rounded-full bg-muted-foreground/45" /><Text class="text-caption text-muted-foreground">{`p95 · ${props.names[0]}`}</Text></View>
+          <View class="flex-row items-center gap-1.5"><View class="h-2 w-2 rounded-full bg-chart-1" /><Text class="text-caption text-muted-foreground">{`p95 · ${props.names[1]}`}</Text></View>
+        </View>
+      </View>
     </If>
   );
 }

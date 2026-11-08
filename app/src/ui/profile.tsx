@@ -5,7 +5,7 @@ import { type JSX, Scroll, Text, View } from "nsh";
 import { t } from "../i18n";
 import type { SessionView } from "../types";
 import { terminal } from "./kit";
-import { cost, Flows, Heat, offset, shapeSentence, Spread, TimeSpent } from "./plots";
+import { Chains, cost, Flows, Heat, offset, shapeSentence, Spread, TimeSpent } from "./plots";
 
 function Figure(props: { value: string; label: string; testID?: string }) {
   return (
@@ -43,6 +43,11 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       <Section title={t("profile.spentTitle")} hint={t("profile.spentHint")}>
         <TimeSpent profile={p()} />
       </Section>
+      <If when={p().chains?.length}>
+        <Section title={t("chains.title")} hint={t("chains.hint")}>
+          <Chains profile={p()} />
+        </Section>
+      </If>
       <If when={p().flows?.length}>
         <Section title={t("flows.title")} hint={t("flows.hint")}>
           <Flows profile={p()} />

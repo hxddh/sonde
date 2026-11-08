@@ -96,6 +96,9 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   await app.waitFor("id:compare", { timeout: 20000 });
   await app.waitFor("text:2 requests compared: 2 the same");
   expect(app.shows("id:compare-diff")).toBe(true);
+  // the same workload's latency on both stores, kind by kind
+  expect(app.shows("id:store-latency")).toBe(true);
+  expect(app.shows("text:The same requests on both stores")).toBe(true);
 });
 
 test("sessions are looked after: renamed, searched, deleted, dropped on the window", async () => {

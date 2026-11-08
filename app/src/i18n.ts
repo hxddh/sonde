@@ -524,6 +524,20 @@ const en = {
   "requests.bodyCut": "Document sent (cut to what is kept)",
   "why.obs.serial": "Requests that each wait for the one before add up their latencies: the program waits for every round trip in turn. Issuing independent requests together (a pool, async tasks, or a batch API) overlaps that waiting.",
   "why.obs.prefixrate": "S3 serves about 5,500 reads and 3,500 writes a second for each prefix and throttles beyond that. Keys spread over more prefixes (a hash or date in the path) share the load.",
+  "chains.title": "Requests that waited on each other",
+  "chains.hint": "Requests issued one after another, each after the one before answered: as they ran, and the same requests eight at once",
+  "chains.row": "Chain {i} · {n} req",
+  "chains.text": "{n} requests ran one after another for {time}; eight at once would take about {fast}",
+  "chains.line": "From +{from} to +{to}",
+  "chains.fast": "Eight at once: about {fast}, {saved} sooner",
+  "chains.chain": "Chain",
+  "chains.from": "Starts",
+  "chains.atOnce": "Eight at once",
+  "chains.asRan": "As it ran",
+  "chains.bar": "≈ {fast} at once",
+  "latency.title": "The same requests on both stores",
+  "latency.hint": "Each kind's p95 on one store beside the other, the kind that slowed most first",
+  "latency.text": "{what} took {a} at p95 on one store and {b} on the other ({x}×)",
 };
 
 type Key = keyof typeof en;
@@ -1047,6 +1061,20 @@ const zh: Partial<Record<Key, string>> = {
   "requests.bodyCut": "发送的文档（已截断）",
   "why.obs.serial": "每个都等上一个完成的请求会把延迟累加起来：程序要依次等待每一次往返。把互不依赖的请求一起发出（连接池、异步任务或批量接口），等待就能重叠。",
   "why.obs.prefixrate": "S3 每个前缀每秒大约支持 5,500 次读取和 3,500 次写入，超过就会限流。把键分散到更多前缀（在路径中加入哈希或日期）可以分摊负载。",
+  "chains.title": "互相等待的请求",
+  "chains.hint": "一个接一个发出的请求，每个都在上一个返回之后才发：实际耗时，以及同时发 8 个的耗时",
+  "chains.row": "链 {i} · {n} 个请求",
+  "chains.text": "{n} 个请求一个接一个地运行了 {time}；同时发 8 个大约只需 {fast}",
+  "chains.line": "从 +{from} 到 +{to}",
+  "chains.fast": "同时发 8 个：大约 {fast}，快 {saved}",
+  "chains.chain": "链",
+  "chains.from": "开始",
+  "chains.atOnce": "同时发 8 个",
+  "chains.asRan": "实际",
+  "chains.bar": "同时发 ≈ {fast}",
+  "latency.title": "同样的请求在两个存储上",
+  "latency.hint": "每类请求在两个存储上的 p95 并排，变慢最多的在前",
+  "latency.text": "{what} 的 p95 在一个存储上是 {a}，在另一个上是 {b}（{x}×）",
 };
 
 const systemLanguage = () => (locale().toLowerCase().startsWith("zh") ? "zh" : "en");

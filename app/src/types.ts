@@ -522,6 +522,18 @@ export interface Profile {
   prefixes: { prefix: string; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number }[];
   heat: { prefix: number; bin: number; n: number }[];
   flows: { source: string; target: string; value: number }[];
+  /** Requests that each waited for the one before, longest first. */
+  chains?: { startMs: number; endMs: number; requests: number; ids: number[]; atOnceMs: number }[];
+}
+
+/** A kind of request on two stores: the same workload's latency on each. */
+export interface LatencyChange {
+  operation: string;
+  missed: boolean;
+  requests: [number, number];
+  p50Ms: [number, number];
+  p95Ms: [number, number];
+  busyMs: [number, number];
 }
 
 /** A run of a program, by the figures that move when the program changes. */

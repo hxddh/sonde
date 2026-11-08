@@ -7,10 +7,10 @@ import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
 import { endpoint, endpoints, go, report } from "../store";
-import type { RunChange } from "../types";
+import type { LatencyChange, RunChange } from "../types";
 import { Icon } from "./icon";
 import { Badge, Button, Choice, Heading, Muted, SCRIM, Segmented } from "./kit";
-import { cost, offset, RunBars } from "./plots";
+import { cost, offset, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
   compared: number;
@@ -97,7 +97,7 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
       // the original first: a replay's records name the original's
       const [o, r] = replayOf() === "a" ? [props.b, props.a] : [props.a, props.b];
       try {
-        return (await api.sessions.compare(o, r)) as { comparison: Comparison; a: string; b: string };
+        return (await api.sessions.compare(o, r)) as { comparison: Comparison; a: string; b: string; latency?: LatencyChange[]; endpoints?: [string, string] };
       } catch (e) {
         report(e);
         return null;
@@ -148,6 +148,13 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
                 {t("compare.summary", { n: d().comparison.compared, same: d().comparison.same })}
                 {d().comparison.differences.length ? ` · ${t("compare.differ", { n: d().comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
               </Text>
+              <If when={d().latency?.length}>
+                <View class="gap-2 rounded-(--radius-card) border border-border bg-card p-4">
+                  <Text role="header" class="text-body font-semibold text-foreground">{t("latency.title")}</Text>
+                  <Text class="text-small text-muted-foreground">{t("latency.hint")}</Text>
+                  <StoreLatency changes={d().latency!} names={d().endpoints ?? ["A", "B"]} />
+                </View>
+              </If>
               <Each of={d().comparison.differences}>
                 {(x) => (
                   <View class="flex-row flex-wrap items-center gap-2 rounded-(--radius) bg-muted px-2 py-1">
