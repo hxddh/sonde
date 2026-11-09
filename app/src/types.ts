@@ -542,7 +542,11 @@ export interface Profile {
   binMs: number;
   rate: { tMs: number; ok: number; miss: number; client: number; server: number; p50Ms: number; p95Ms: number; p99Ms: number; throttled?: number; retried?: number; bytesUp?: number; bytesDown?: number }[];
   inFlight: { tMs: number; n: number }[];
-  samples: { id: number; group: number; ms: number; tMs: number }[];
+  samples: { id: number; group: number; ms: number; tMs: number; status?: number | null; bytes?: number }[];
+  /** The busiest kinds' latency, slice by slice. */
+  groupRate?: { group: number; bin: number; n: number; p50Ms: number; p95Ms: number }[];
+  /** The places in the program's code that sent requests (x-sonde-caller). */
+  callers?: { place: string; requests: number; waitedMs: number; errors: number; cost: number }[];
   cost: { writes: number; reads: number; free: number; amount: number; currency: string };
   prices: { per1000Writes: number; per1000Reads: number; currency: string };
   prefixes: { prefix: string; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number; cost?: number }[];
@@ -628,6 +632,8 @@ export interface RunChange {
   appeared: { text: string; phrases: Phrase[] }[];
   /** Both are runs of one program; across programs the findings gone and new are left out. */
   sameProgram: boolean;
+  /** Both runs' latency on the same bucket edges. */
+  latency?: [{ leMs: number | null; n: number }[], { leMs: number | null; n: number }[]];
 }
 
 export interface SessionView {

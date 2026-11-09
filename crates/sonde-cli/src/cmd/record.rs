@@ -2090,7 +2090,9 @@ pub const LOGS_OF: &str = "logs of ";
 fn every(v: &str) -> anyhow::Result<std::time::Duration> {
     let t = v.trim();
     let (n, unit) = t.split_at(t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len()));
-    let n: u64 = n.parse().map_err(|_| anyhow::anyhow!("--every {v:?}: say 30s, 15m or 1h"))?;
+    let n: u64 = n
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--every {v:?}: say 30s, 15m or 1h"))?;
     let secs = match unit.trim() {
         "" | "s" => n,
         "m" | "min" => n * 60,
@@ -2125,9 +2127,14 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
     // where the last pass got to, per source
     let mark_file = dir.join(format!(
         "logs-{:016x}.mark",
-        key.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+        key.bytes()
+            .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64)
+                .wrapping_mul(0x100_0000_01b3))
     ));
-    let mut after = std::fs::read_to_string(&mark_file).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let mut after = std::fs::read_to_string(&mark_file)
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
     let mut warned: HashSet<String> = HashSet::new();
     let mut sent = Vec::new();
     eprintln!("watching {src} every {}s", pause.as_secs());
@@ -2164,7 +2171,12 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
             let mut bytes = r.body.to_vec();
             if bytes.starts_with(&[0x1f, 0x8b]) {
                 let mut out = Vec::new();
-                if std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(&bytes[..]), &mut out).is_ok() {
+                if std::io::Read::read_to_end(
+                    &mut flate2::read::MultiGzDecoder::new(&bytes[..]),
+                    &mut out,
+                )
+                .is_ok()
+                {
                     bytes = out;
                 }
             }
@@ -2186,23 +2198,52 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
             header.created = chrono::Utc::now();
             let path = sonde_proxy::session::fresh_path(
                 &dir,
-                &format!("{}-logs-{bucket}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+                &format!(
+                    "{}-logs-{bucket}",
+                    chrono::Local::now().format("%Y%m%d-%H%M%S")
+                ),
             );
-            let session = Session { header, records, logs: Vec::new() };
+            let session = Session {
+                header,
+                records,
+                logs: Vec::new(),
+            };
             sonde_proxy::import::save(&session, &path)?;
             let records = &session.records;
-            eprintln!("{} {} requests · {}", paint("·", "2", std::io::stderr().is_terminal()), records.len(), path.display());
+            eprintln!(
+                "{} {} requests · {}",
+                paint("·", "2", std::io::stderr().is_terminal()),
+                records.len(),
+                path.display()
+            );
             for o in observations(records, &episodes(records)) {
                 if o.level == "warn" && warned.insert(sonde_proxy::profile::finding_identity(&o)) {
-                    let place = o.callers.first().map(|c| format!(" — {}", c.place)).unwrap_or_default();
-                    eprintln!("{} {}{place}", paint("!", "33", std::io::stderr().is_terminal()), o.text);
+                    let place = o
+                        .callers
+                        .first()
+                        .map(|c| format!(" — {}", c.place))
+                        .unwrap_or_default();
+                    eprintln!(
+                        "{} {}{place}",
+                        paint("!", "33", std::io::stderr().is_terminal()),
+                        o.text
+                    );
                     if let Some(url) = &a.alert {
-                        sent.push(post_alert(url, format!("sonde watch ({src}): {}{place}", o.text)));
+                        sent.push(post_alert(
+                            url,
+                            format!("sonde watch ({src}): {}{place}", o.text),
+                        ));
                     }
                 }
             }
             if let (Some(url), Some(over)) = (&a.alert, over_budget(s, records)) {
-                sent.push(post_alert(url, format!("sonde watch ({src}): {} is over budget: {over}", path.display())));
+                sent.push(post_alert(
+                    url,
+                    format!(
+                        "sonde watch ({src}): {} is over budget: {over}",
+                        path.display()
+                    ),
+                ));
             }
         }
         sent.retain(|h: &tokio::task::JoinHandle<()>| !h.is_finished());
@@ -2214,7 +2255,11 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
             _ = tokio::time::sleep(pause) => {}
         }
     }
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), futures::future::join_all(sent)).await;
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        futures::future::join_all(sent),
+    )
+    .await;
     Ok(0)
 }
 
@@ -2441,12 +2486,22 @@ mod tests {
                    79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be demo [06/Feb/2026:00:00:39 +0000] 192.0.2.3 - 3E57427F3EXAMPLF REST.HEAD.OBJECT data/missing \"HEAD /demo/data/missing HTTP/1.1\" 404 NoSuchKey - - 4 4 \"-\" \"boto3/1.34\" - x SigV4 ECDHE TLSv1.2 - -\n";
         s.client("demo")
             .unwrap()
-            .put_object("demo", "logs/2026-02-06-00-00-40-AB", bytes::Bytes::from(log), &[])
+            .put_object(
+                "demo",
+                "logs/2026-02-06-00-00-40-AB",
+                bytes::Bytes::from(log),
+                &[],
+            )
             .await
             .unwrap();
         let args = WatchArgs {
             proxy: ProxyArgs {
-                rec: Recording { endpoint: Some("demo".into()), no_delete: false, read_only: true, out: None },
+                rec: Recording {
+                    endpoint: Some("demo".into()),
+                    no_delete: false,
+                    read_only: true,
+                    out: None,
+                },
                 listen: "127.0.0.1:0".parse().unwrap(),
                 allow_remote: false,
             },
@@ -2466,7 +2521,10 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         let session = Session::open(&sessions[0]).unwrap();
         assert_eq!(session.records.len(), 2);
-        assert_eq!(session.header.command.as_deref(), Some("logs of s3://demo/logs/"));
+        assert_eq!(
+            session.header.command.as_deref(),
+            Some("logs of s3://demo/logs/")
+        );
         // a second pass has nothing new: no second session
         assert_eq!(watch_logs(&s, &args, "s3://demo/logs/").await.unwrap(), 0);
         let n = std::fs::read_dir(s.paths().sessions())

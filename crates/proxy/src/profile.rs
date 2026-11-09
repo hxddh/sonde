@@ -164,6 +164,36 @@ pub struct Sample {
     pub group: usize,
     pub ms: f64,
     pub t_ms: f64,
+    /// The answer's status (none: no answer).
+    pub status: Option<u16>,
+    /// Bytes sent and received.
+    pub bytes: u64,
+}
+
+/// One kind of request's latency in one slice of the session: how many,
+/// and their median and p95 (the busiest kinds only).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupBin {
+    /// The group, by index into `groups`.
+    pub group: usize,
+    /// The slice, by index into `rate`.
+    pub bin: usize,
+    pub n: usize,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+}
+
+/// The requests one place in the program's code sent (`x-sonde-caller`):
+/// their part of the waiting, failures and cost.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallerStat {
+    pub place: String,
+    pub requests: usize,
+    pub waited_ms: f64,
+    pub errors: usize,
+    pub cost: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -212,6 +242,10 @@ pub struct Profile {
     pub p50_ms: f64,
     pub p95_ms: f64,
     pub p99_ms: f64,
+    /// The busiest kinds' latency over the session, slice by slice.
+    pub group_rate: Vec<GroupBin>,
+    /// The places in the program's code that sent requests, most waiting first.
+    pub callers: Vec<CallerStat>,
 }
 
 /// Requests made one at a time, each starting once the one before ended
@@ -370,7 +404,12 @@ const MAX_PREFIXES: usize = 8;
 
 const MAX_BINS: f64 = 90.0;
 const MAX_STEPS: usize = 480;
-const MAX_SAMPLES: usize = 400;
+/// Requests drawn one by one: every request of a session this size or
+/// smaller; of a larger one, the slowest and an even spread of the rest.
+const MAX_SAMPLES: usize = 4000;
+const SLOWEST: usize = 400;
+/// The kinds of request whose latency is drawn over time.
+const GROUP_RATES: usize = 5;
 
 fn start_us(r: &Record) -> i64 {
     r.time.timestamp_micros()
@@ -501,6 +540,8 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         p50_ms: 0.0,
         p95_ms: 0.0,
         p99_ms: 0.0,
+        group_rate: Vec::new(),
+        callers: Vec::new(),
     };
     let Some(t0) = records.iter().map(start_us).min() else {
         return empty;
@@ -664,18 +705,78 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         }
     }
 
-    // the slowest requests
-    let mut samples: Vec<Sample> = records
-        .iter()
-        .map(|r| Sample {
-            id: r.id,
-            group: group_of[&r.id],
-            ms: r.latency_ms.max(0.0),
-            t_ms: ms(start_us(r) - t0),
+    // the requests one by one: all of them, or the slowest and an even
+    // spread of the rest (in time order), so the picture is not only the tail
+    let sample = |r: &Record| Sample {
+        id: r.id,
+        group: group_of[&r.id],
+        ms: r.latency_ms.max(0.0),
+        t_ms: ms(start_us(r) - t0),
+        status: r.status,
+        bytes: r.request_bytes.unwrap_or(0) + r.response_bytes.unwrap_or(0),
+    };
+    let mut samples: Vec<Sample> = if records.len() <= MAX_SAMPLES {
+        records.iter().map(sample).collect()
+    } else {
+        let mut by_ms: Vec<&Record> = records.iter().collect();
+        by_ms.sort_by(|a, b| b.latency_ms.total_cmp(&a.latency_ms));
+        let slow: std::collections::HashSet<u64> = by_ms[..SLOWEST].iter().map(|r| r.id).collect();
+        let rest: Vec<&Record> = records.iter().filter(|r| !slow.contains(&r.id)).collect();
+        let want = MAX_SAMPLES - SLOWEST;
+        let step = rest.len() as f64 / want as f64;
+        by_ms[..SLOWEST]
+            .iter()
+            .copied()
+            .chain((0..want).map(|i| rest[((i as f64 * step) as usize).min(rest.len() - 1)]))
+            .map(sample)
+            .collect()
+    };
+    samples.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));
+
+    // the busiest kinds' latency, slice by slice
+    let mut group_rate = Vec::new();
+    for (gi, (_, rs)) in groups.iter().enumerate().take(GROUP_RATES) {
+        let mut per: BTreeMap<usize, Vec<f64>> = BTreeMap::new();
+        for r in rs {
+            let i = ((ms(start_us(r) - t0) / bin) as usize).min(bins - 1);
+            per.entry(i).or_default().push(r.latency_ms.max(0.0));
+        }
+        for (i, mut lat) in per {
+            lat.sort_by(f64::total_cmp);
+            group_rate.push(GroupBin {
+                group: gi,
+                bin: i,
+                n: lat.len(),
+                p50_ms: percentile(&lat, 0.5),
+                p95_ms: percentile(&lat, 0.95),
+            });
+        }
+    }
+
+    // the places in the program's code that sent them, when it says
+    let mut by_place: BTreeMap<String, Vec<&Record>> = BTreeMap::new();
+    for r in records {
+        if let Some(p) = crate::callers::caller(r) {
+            by_place.entry(p).or_default().push(r);
+        }
+    }
+    let place_waited = waited_us(&by_place);
+    let mut callers: Vec<CallerStat> = by_place
+        .into_iter()
+        .map(|(place, rs)| CallerStat {
+            waited_ms: place_waited.get(&place).copied().unwrap_or(0.0) / 1000.0,
+            requests: rs.len(),
+            errors: rs.iter().filter(|r| r.is_error() && !is_miss(r)).count(),
+            cost: rs.iter().map(|r| price(r)).sum(),
+            place,
         })
         .collect();
-    samples.sort_by(|a, b| b.ms.total_cmp(&a.ms));
-    samples.truncate(MAX_SAMPLES);
+    callers.sort_by(|a, b| {
+        b.waited_ms
+            .total_cmp(&a.waited_ms)
+            .then(b.requests.cmp(&a.requests))
+    });
+    callers.truncate(12);
 
     let count = |c: Class| records.iter().filter(|r| class(r) == c).count();
     let cost = Cost {
@@ -830,6 +931,8 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         rate,
         in_flight: steps,
         samples,
+        group_rate,
+        callers,
         cost,
         prices: prices.clone(),
         prefixes,
@@ -913,6 +1016,9 @@ pub struct RunChange {
     /// but their findings do not: one's are not "gone" because the other
     /// never had them.
     pub same_program: bool,
+    /// Both runs' latency, bucket by bucket on the same edges: their two
+    /// distributions side by side.
+    pub latency: (Vec<LatencyBucket>, Vec<LatencyBucket>),
 }
 
 impl RunChange {
@@ -1041,6 +1147,7 @@ pub fn compare_runs(
         currency: b.1.cost.currency.clone(),
         peak_in_flight: (a.1.peak_in_flight, b.1.peak_in_flight),
         groups,
+        latency: (a.1.latency.clone(), b.1.latency.clone()),
         resolved: ia
             .iter()
             .filter(|(k, _)| !ib.contains_key(*k))
@@ -1191,7 +1298,48 @@ mod tests {
         );
         assert_eq!(p.in_flight.iter().map(|s| s.n).max(), Some(1));
         assert!(p.rate.len() <= MAX_BINS as usize + 1);
-        assert_eq!(p.samples.len(), MAX_SAMPLES);
+        assert_eq!(p.samples.len(), rs.len().min(MAX_SAMPLES));
+    }
+
+    #[test]
+    fn requests_by_the_code_that_sent_them_and_kinds_over_time() {
+        use reqlog::Header;
+        let rs: Vec<Record> = (0..6)
+            .map(|i| Record {
+                id: i + 1,
+                time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 20)
+                    .unwrap(),
+                method: "GET".into(),
+                operation: if i < 4 {
+                    "GetObject".into()
+                } else {
+                    "HeadObject".into()
+                },
+                status: Some(200),
+                latency_ms: 10.0,
+                request_headers: vec![Header::new(
+                    crate::callers::CALLER_HEADER,
+                    if i < 4 {
+                        "etl/load.py:12 read"
+                    } else {
+                        "etl/load.py:30 check"
+                    },
+                )],
+                ..Default::default()
+            })
+            .collect();
+        let p = profile(&rs, &RequestPrices::default());
+        assert_eq!(p.callers.len(), 2);
+        assert_eq!(p.callers[0].place, "etl/load.py:12 read");
+        assert_eq!(p.callers[0].requests, 4);
+        assert!((p.callers.iter().map(|c| c.waited_ms).sum::<f64>() - p.busy_ms).abs() < 1e-6);
+        // each sample says its answer; every request is drawn in a session this small
+        assert_eq!(p.samples.len(), 6);
+        assert!(p.samples.iter().all(|s| s.status == Some(200)));
+        // the kinds' latency over time: both kinds, each in the slices it ran
+        assert!(p.group_rate.iter().any(|g| g.group == 0));
+        assert!(p.group_rate.iter().any(|g| g.group == 1));
+        assert_eq!(p.group_rate.iter().map(|g| g.n).sum::<usize>(), 6);
     }
 
     #[test]

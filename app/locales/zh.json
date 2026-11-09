@@ -722,5 +722,16 @@
  "replay.deletes.one": "%{n} 个删除",
  "common.clear": "清除",
  "welcome.openLog": "打开生产环境的日志…",
- "git.dirty": "含未提交的改动"
+ "git.dirty": "含未提交的改动",
+ "scatter.text": "%{n} 个请求，每个一个点：耗时（对数刻度）；p95 %{p95}",
+ "kinds.band": "中位数到 p95",
+ "cdf.text": "在各耗时内完成的请求占比：%{a} 为虚线，%{b} 为实线",
+ "scatter.title": "每个请求",
+ "scatter.byTime": "时间",
+ "scatter.bySize": "大小",
+ "kinds.title": "各类请求随时间",
+ "spent.byKind": "按操作",
+ "spent.byCode": "按代码位置",
+ "cdf.title": "两次运行的请求耗时",
+ "waterfall.more": "另有 %{n} 个，见下方列表"
 }

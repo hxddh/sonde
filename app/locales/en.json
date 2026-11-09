@@ -722,5 +722,16 @@
  "replay.deletes.one": "%{n} delete",
  "common.clear": "Clear",
  "welcome.openLog": "Open a log of production…",
- "git.dirty": "with changes not committed"
+ "git.dirty": "with changes not committed",
+ "scatter.text": "%{n} requests, each a dot: how long it took, on a log scale; p95 %{p95}",
+ "kinds.band": "median to p95",
+ "cdf.text": "Share of requests done within each time: %{a} dashed, %{b} solid",
+ "scatter.title": "Every request",
+ "scatter.byTime": "When",
+ "scatter.bySize": "Size",
+ "kinds.title": "Each kind over time",
+ "spent.byKind": "By kind",
+ "spent.byCode": "By code",
+ "cdf.title": "How long requests took, both runs",
+ "waterfall.more": "and %{n} more, in the list below"
 }

@@ -10,8 +10,8 @@ import { api } from "../native";
 import { endpoint, endpoints, go, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, CARD, Check, Choice, Heading, Loading, Modal, Muted, terminal, rowHeight, Segmented, TABLE, Title, TYPE } from "./kit";
-import { cost, groupName, offset, RunBars, StoreLatency } from "./plots";
+import { Badge, Button, CARD, Check, Choice, Heading, Loading, Modal, Muted, rowHeight, Section, Segmented, TABLE, terminal, Title, TYPE } from "./kit";
+import { cost, DistributionCompare, groupName, offset, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
   compared: number;
@@ -57,6 +57,12 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
         <Delta label={t("profile.cost")} a={c().cost[0]} b={c().cost[1]} text={(v) => cost(v, c().currency)} />
       </View>
       <RunBars change={c()} />
+      {/* both runs' latency: where the curves part says for which requests it changed */}
+      <If when={c().latency && c().latency![0].length > 1 && c().latency![1].length > 1}>
+        <Section title={t("cdf.title")} plain>
+          <DistributionCompare latency={c().latency!} names={[t("profile.before"), t("profile.after")]} />
+        </Section>
+      </If>
       <If when={c().resolved.length + c().appeared.length > 0}>
         <View class="gap-1.5">
           <Each of={c().resolved}>

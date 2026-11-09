@@ -1,6 +1,7 @@
 // Capacity's charts, on Native Shell's Plot in windows; in a terminal, a
 // table and a sentence.
 
+import { AXIS_LABEL, GUTTER } from "./plots";
 import { signal, Text, View } from "nsh";
 import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, pct } from "../format";
@@ -34,7 +35,7 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
         appearGeneration={total()}
         motion={MOTION}
         crossLineClass="w-full h-full rounded-sm bg-foreground/5"
-        class="ml-36"
+        class={GUTTER}
         style={{ height: props.height ?? Math.max(48, props.items.length * 28 + 8) }}
       >
         <Bar
@@ -45,7 +46,7 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
           label={(_, i) => `${fmt(props.items[i].value)} · ${pct(props.items[i].value, total())}`}
           labelClass="pl-2 tabular-nums text-caption text-muted-foreground"
         />
-        <PlotAxis placement="left" format={(i) => props.items[i]?.label ?? ""} labelClass="w-32 pr-3 text-right text-small text-foreground line-clamp-1" />
+        <PlotAxis placement="left" format={(i) => props.items[i]?.label ?? ""} labelClass={AXIS_LABEL} />
       </Plot>
     </If>
   );
