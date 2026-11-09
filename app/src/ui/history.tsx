@@ -9,7 +9,7 @@ import { api } from "../native";
 import { report, sessionsChanged, sessionsTick } from "../store";
 import type { ProgramHistory } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Empty, Loading, POPUP, SimpleTable, terminal } from "./kit";
+import { Badge, Button, Empty, ListRow, Loading, POPUP, SimpleTable, terminal } from "./kit";
 import { cost, offset, RunTrend, Sparkline } from "./plots";
 import { programOf } from "./sessionview";
 
@@ -137,9 +137,11 @@ export interface ProgramSummary {
   runs: number;
   latest: string | null;
   created: string;
-  points: { requests: number; busyMs: number }[];
+  points: { requests: number; busyMs: number; currency?: string }[];
   baseline: string | null;
   regressed: boolean;
+  /** A month of it at the pace it runs. */
+  monthly?: { cost: number; perDay: number } | null;
 }
 
 /** The programs run here, newest first: what each did over its runs, at a
@@ -163,11 +165,11 @@ export function ProgramList(props: { onOpen: (path: string) => void }) {
         <If when={list().length > 0} else={<Text class="px-2 text-small text-muted-foreground">{t("programs.none")}</Text>}>
           <List testID="program-list" class="flex-1" each={list()} keyExtractor={(p) => p.program} estimatedItemSize={terminal() ? 2 : 52} scrollbar={false}>
             {(p) => (
-              <BaseButton
+              <ListRow
                 testID="program-row"
-                accessibilityLabel={`${programOf(p().program) ?? p().program}, ${t("programs.runs", { n: p().runs })}${p().regressed ? `, ${t("programs.regressed")}` : ""}`}
+                label={`${programOf(p().program) ?? p().program}, ${t("programs.runs", { n: p().runs })}${p().regressed ? `, ${t("programs.regressed")}` : ""}`}
                 onPress={() => p().latest && props.onOpen(p().latest!)}
-                class="gap-1 rounded-(--radius) px-2 py-1.5 hover:bg-muted"
+                class="flex-col items-stretch gap-1"
               >
                 <View class="flex-row items-center gap-2">
                   <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{programOf(p().program) ?? p().program}</Text>
@@ -176,12 +178,13 @@ export function ProgramList(props: { onOpen: (path: string) => void }) {
                   </If>
                 </View>
                 <View class="flex-row items-center gap-2">
-                  <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{`${t("programs.runs", { n: p().runs })} · ${day(p().created)}`}</Text>
+                  {/* how often it runs, and what a month of it costs at that pace */}
+                  <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{[t("programs.runs", { n: p().runs }), day(p().created), p().monthly ? t("programs.monthly", { cost: cost(p().monthly!.cost, p().points[0]?.currency ?? "USD") }) : ""].filter(Boolean).join(" · ")}</Text>
                   <If when={p().points.length > 1}>
                     <Sparkline shape={p().points.map((x) => x.requests)} id={`program:${p().program}`} class="h-4 w-20" />
                   </If>
                 </View>
-              </BaseButton>
+              </ListRow>
             )}
           </List>
         </If>

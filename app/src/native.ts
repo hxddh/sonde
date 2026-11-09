@@ -93,6 +93,7 @@ export const api = {
     import: (name: string, text: string) => Sessions.import(name, text) as string,
     importPath: (path: string) => Sessions.importPath(path) as string,
     pick: (sessionsKind: string, trafficKind: string) => Sessions.pick(sessionsKind, trafficKind) as Promise<string | null>,
+    openCode: (session: string, place: string) => Sessions.openCode(session, place) as Promise<void>,
     rename: (path: string, title: string) => Sessions.rename(path, title) as boolean,
     /** To the system's trash (deleted where there is none). */
     remove: (path: string) => Sessions.remove(path) as Promise<boolean>,

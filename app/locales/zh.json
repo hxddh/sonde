@@ -733,5 +733,17 @@
  "spent.byKind": "按操作",
  "spent.byCode": "按代码位置",
  "cdf.title": "两次运行的请求耗时",
- "waterfall.more": "另有 %{n} 个，见下方列表"
+ "waterfall.more": "另有 %{n} 个，见下方列表",
+ "run.withinBaseline": "在基线内",
+ "run.pastBaseline": "超出基线",
+ "run.pastBaselineBy": "%{what}超出基线 %{pct}%",
+ "verdict.requests": "请求数",
+ "verdict.waiting": "等待时间",
+ "verdict.cost": "成本",
+ "verdict.errors": "错误",
+ "verdict.warnings": "警告",
+ "fix.openCode": "打开 %{place}",
+ "programs.monthly": "约每月 %{cost}",
+ "run.nowYours": "换成你自己的存储…",
+ "run.nowYoursHint": "添加你的端点，然后在这里运行你的程序：sonde 会让它的 SDK 指向自己（AWS_ENDPOINT_URL）"
 }

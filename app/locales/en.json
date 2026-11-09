@@ -733,5 +733,17 @@
  "spent.byKind": "By kind",
  "spent.byCode": "By code",
  "cdf.title": "How long requests took, both runs",
- "waterfall.more": "and %{n} more, in the list below"
+ "waterfall.more": "and %{n} more, in the list below",
+ "run.withinBaseline": "Within its baseline",
+ "run.pastBaseline": "Past its baseline",
+ "run.pastBaselineBy": "%{what} %{pct}% past its baseline",
+ "verdict.requests": "Requests",
+ "verdict.waiting": "Waiting",
+ "verdict.cost": "Cost",
+ "verdict.errors": "Errors",
+ "verdict.warnings": "Warnings",
+ "fix.openCode": "Open %{place}",
+ "programs.monthly": "≈ %{cost} a month",
+ "run.nowYours": "Now your own store…",
+ "run.nowYoursHint": "Add your endpoint, then run your program here: sonde points its SDK at itself (AWS_ENDPOINT_URL)"
 }

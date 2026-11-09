@@ -9,6 +9,8 @@ import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTri
 import { isAvailable } from "nsh/desktop";
 import { bytes, count, date, day, middle, ms } from "../format";
 import { t } from "../i18n";
+import { api } from "../native";
+import { report } from "../store";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
 import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
@@ -336,7 +338,7 @@ const sdkOfAgent = (sdk: string | undefined): keyof typeof SDKS | null => {
   return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : null;
 };
 
-function FixPanel(props: { o: Observation }) {
+function FixPanel(props: { o: Observation; path?: string }) {
   const fixes = () => props.o.fixes ?? [];
   // the program's own SDK first, when its requests said which; else the one last chosen
   const own = () => sdkOfAgent(props.o.sdk);
@@ -365,13 +367,17 @@ function FixPanel(props: { o: Observation }) {
       {/* where in the program, when it said: the place to change */}
       <If when={props.o.callers?.length}>
         <View testID="fix-callers" class="gap-0.5">
-          <Each of={props.o.callers!}>
+          <Each of={props.o.callers!} key={(c) => c.place}>
             {(c) => (
-              <View class="flex-row items-center gap-1.5">
+              <ListRow
+                label={t("fix.openCode", { place: c().place })}
+                onPress={() => props.path && api.sessions.openCode(props.path, c().place).catch(report)}
+                class="py-1"
+              >
                 <Icon name="file" size={12} />
-                <Text class="min-w-0 flex-1 font-mono text-small text-foreground line-clamp-1">{c().place}</Text>
+                <Text class="min-w-0 flex-1 font-mono text-small text-primary line-clamp-1">{c().place}</Text>
                 <Text class="tabular-nums text-caption text-muted-foreground">{t("run.bandRequests", { n: c().requests })}</Text>
-              </View>
+              </ListRow>
             )}
           </Each>
         </View>
@@ -512,7 +518,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
               <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
                 {(o) => (
                   <View class="border-t border-border p-3">
-                    <FixPanel o={o()} />
+                    <FixPanel o={o()} path={props.view.path} />
                   </View>
                 )}
               </If>

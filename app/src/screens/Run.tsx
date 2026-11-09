@@ -4,20 +4,20 @@
 // over a band of live figures. When it ends, a toast and a notification
 // say how, and the session opens lined up with the output.
 
-import { cleanup, LayoutAnimation, reduceMotion, signal, Text, View } from "nsh";
+import { cleanup, LayoutAnimation, reduceMotion, resource, signal, Text, View } from "nsh";
 import { Button as BaseButton, Input, ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
-import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, running, start, startedAt, stop } from "../run";
-import { away, endpoint, endpoints, go, openSession, report, sessionsChanged } from "../store";
+import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, runAgain, running, start, startedAt, stop } from "../run";
+import { away, endpoint, endpoints, endpointsMode, go, openSession, report, sessionsChanged } from "../store";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Button, CARD, Dot, Empty, IconButton, KeyValue, Options, terminal, SPLIT_HANDLE } from "../ui/kit";
+import { Badge, Button, CARD, Dot, Empty, IconButton, KeyValue, Options, terminal, SPLIT_HANDLE } from "../ui/kit";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
-import { LatencyBand, liveFigures, SessionShape, sessionStory } from "../ui/plots";
+import { LatencyBand, liveFigures, offset, SessionShape, sessionStory } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
 import { seconds } from "../ui/sessionview";
 
@@ -137,8 +137,29 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   const s = () => props.view?.summary;
   const r = () => lastRun();
   const warnings = () => props.view?.observations.filter((o) => o.level === "warn").length ?? 0;
+  // once it ended: held to its program's baseline, as sonde check would
+  const verdict = resource(
+    () => (r() && !r()!.removed && r()!.path ? r()!.path : null),
+    async (path) => {
+      try {
+        return await api.sessions.history(path);
+      } catch {
+        return null;
+      }
+    },
+  );
+  const failed = () => verdict()?.check?.verdicts.filter((v) => !v.ok) ?? [];
+  const verdictText = () => {
+    const c = verdict()?.check;
+    if (!c) return null;
+    if (c.passed) return t("run.withinBaseline");
+    const v = failed()[0];
+    if (!v) return t("run.pastBaseline");
+    const grew = v.limit > 0 ? Math.round(((v.value - v.limit) * 100) / v.limit) : 0;
+    return t("run.pastBaselineBy", { what: t(`verdict.${v.what}` as never), pct: grew });
+  };
   return (
-    <View testID={r() ? "run-ended" : "run-status"} class={terminal() ? "flex-row gap-2" : "min-h-11 flex-row flex-wrap items-center gap-x-4 gap-y-1 rounded-(--radius-card) border border-border bg-card px-3 py-2"}>
+    <View testID={r() ? "run-ended" : "run-status"} class={`min-h-11 flex-row flex-wrap items-center gap-x-4 gap-y-2 ${CARD} px-3 py-2`}>
       <If
         when={r()}
         else={
@@ -157,27 +178,35 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
       </If>
       <If when={s()}>
         {(x) => (
-          <View class="flex-row flex-wrap items-center gap-x-4">
+          <View class="flex-row flex-wrap items-center gap-x-3">
             <Text class="tabular-nums text-small text-foreground">{t("run.bandRequests", { n: x().requests })}</Text>
             <If when={x().errors > 0}>
               <Text class="tabular-nums text-small text-status-server">{t("run.bandErrors", { n: x().errors })}</Text>
             </If>
             <If when={x().misses > 0}>
-              <Text class="tabular-nums text-small text-muted-foreground">{t("run.bandMisses", { n: x().misses })}</Text>
-            </If>
-            <Text class="tabular-nums text-small text-muted-foreground">{`↑${bytes(x().bytesUp)} ↓${bytes(x().bytesDown)}`}</Text>
-            <If when={r() && warnings() > 0}>
-              <Text class="text-small text-warn">{t("run.toLook", { n: warnings() })}</Text>
+              <Text class="tabular-nums text-small text-foreground">{t("run.bandMisses", { n: x().misses })}</Text>
             </If>
             <If when={r()}>
-              <Text class="tabular-nums text-small text-muted-foreground">{`${seconds(x().seconds)} s`}</Text>
+              <Text class="tabular-nums text-small text-muted-foreground">{offset(x().seconds * 1000)}</Text>
+            </If>
+            <If when={r() && warnings() > 0}>
+              <Text class="text-small text-warn">{t("run.toLook", { n: warnings() })}</Text>
             </If>
           </View>
         )}
       </If>
+      <If when={verdictText()}>{(v) => <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "pass" : "fail"} />}</If>
       <View class="flex-1" />
+      {/* the demo done: the next step is the user's own program and store */}
+      <If when={r() && !r()!.removed && endpoint() === "demo"}>
+        <Button small variant="ghost" icon="plus" label={t("run.nowYours")} tip={t("run.nowYoursHint")} onPress={() => (endpointsMode.set("add"), go("endpoints"))} testID="run-now-yours" />
+      </If>
       <If when={r() && !r()!.removed}>
-        <Button small variant="outline" icon="list-clock" label={t("run.lineUp")} onPress={() => openLastRun(go)} testID="run-open-session" />
+        <View class="flex-row items-center gap-2">
+          {/* the loop in one place: change the program, run it again, see what it did */}
+          <Button small variant="outline" icon="play" label={t("sessions.runAgain")} onPress={() => endpoint() && runAgain(r()!.path, r()!.command, running()?.endpoint ?? endpoint()!, cwd() || null)} disabled={!endpoint()} testID="run-again-band" />
+          <Button small variant="outline" icon="list-clock" label={t("run.lineUp")} onPress={() => openLastRun(go)} testID="run-open-session" />
+        </View>
       </If>
     </View>
   );

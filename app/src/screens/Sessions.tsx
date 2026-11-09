@@ -283,7 +283,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     <View class="flex-row items-center gap-1.5">
       {/* the program again, after a change: it opens compared with this run */}
       {/* the built-in demo is not saved: running a demo session again starts it */}
-      <If when={view()?.header.command && !view()!.header.command!.startsWith("replay of ") && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
+      <If when={view()?.header.command && !view()!.header.command!.startsWith("replay of ") && !view()!.header.command!.startsWith("logs of ") && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
         <Button
           small
           variant="primary"

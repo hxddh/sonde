@@ -1226,6 +1226,34 @@ impl Sessions {
         Ok(true)
     }
 
+    /// Opens the file a finding's code place names (`etl/load.py:212 read`)
+    /// in the app the system opens it with: found in the folder the session
+    /// ran in, or as written when absolute. Refused for what is not a file.
+    pub async fn open_code(session: String, place: String) -> Result<(), String> {
+        let file = place
+            .split_whitespace()
+            .next()
+            .and_then(|at| at.rsplit_once(':').map(|(f, _)| f).or(Some(at)))
+            .unwrap_or_default()
+            .to_string();
+        if file.is_empty() {
+            return Err(err_msg("the place names no file"));
+        }
+        let dir = header_of(Path::new(&session)).and_then(|h| h.cwd);
+        let candidate = Path::new(&file);
+        let full = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            dir.map(PathBuf::from)
+                .ok_or_else(|| err_msg("the session does not say which folder it ran in"))?
+                .join(candidate)
+        };
+        if !full.is_file() {
+            return Err(err_msg(format!("{} is not there", full.display())));
+        }
+        nsh_core::element::open_path(full).await
+    }
+
     /// Shows `path` (a session, or a folder sonde wrote) selected in the
     /// file manager.
     pub async fn reveal(path: String) -> Result<(), String> {

@@ -316,10 +316,10 @@ const toneClass: Record<Tone, string> = {
   primary: "bg-primary/15 text-primary",
 };
 
-export function Badge(props: { label: string; tone?: Tone }) {
+export function Badge(props: { label: string; tone?: Tone; testID?: string }) {
   const [bg, fg] = toneClass[props.tone ?? "neutral"].split(" ");
   return (
-    <View class={`self-start rounded-full px-2 py-0.5 ${bg}`}>
+    <View testID={props.testID} accessibilityLabel={props.label} class={`self-start rounded-full px-2 py-0.5 ${bg}`}>
       <Text class={`text-small font-medium ${fg}`}>{props.label}</Text>
     </View>
   );
