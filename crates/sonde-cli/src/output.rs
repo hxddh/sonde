@@ -9,6 +9,9 @@ pub enum Format {
     Json,
     Markdown,
     Csv,
+    /// GitHub Actions annotations (`sonde check`): on the run's summary and,
+    /// where a finding names its code, on that line of the diff.
+    Github,
 }
 
 /// Prints rows as an aligned table (wide characters counted as two).

@@ -819,7 +819,16 @@ export function SessionList(props: {
   const dayOf = (r: Row) => ("day" in r ? r.day : null);
   const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
   const name = (s: SessionInfo) => s.title || programOf(s.command) || s.endpoint;
-  const args = (s: SessionInfo) => (!s.title && s.command && programOf(s.command) !== s.command.trim() && !programOf(s.command)!.endsWith("…") ? s.command.trim().split(/\s+/).slice(1).join(" ") : "");
+  // the rest of the command after its program, scrubbed; the whole of it when
+  // the program is not its first word (`cd etl && python load.py`)
+  const args = (s: SessionInfo) => {
+    const p = programOf(s.command);
+    if (s.title || !s.command || !p || p.endsWith("…")) return "";
+    const c = scrubCommand(s.command);
+    const [first, ...rest] = c.split(" ");
+    if (first.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() === p) return rest.join(" ");
+    return c === p ? "" : c;
+  };
   // where the system has no menus to pop up (a terminal, the web): the
   // same commands in Native Shell's own, on a right press or Shift+F10
   const inWindowMenu = (x: () => { s: SessionInfo; i: number }, body: JSX.Element) => (

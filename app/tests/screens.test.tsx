@@ -83,6 +83,41 @@ test("compatibility: runs probes on the demo and fills the matrix", async () => 
   expect(app.shows("text:/^requests and responses$/i")).toBe(true);
 }, 120_000);
 
+test("endpoints: adding never replaces one; a name in another script gets an id of its own", async () => {
+  const app = await withDemo();
+  await place(app, "endpoints");
+  for (const [name, port] of [["Prod", 9001], ["Prod", 9002], ["生产", 9003], ["测试", 9004]] as const) {
+    await app.press("id:add-endpoint");
+    await app.type("id:ep-name", name);
+    await app.type("id:ep-url", `http://127.0.0.1:${port}`);
+    await app.press("id:ep-save");
+    await app.waitFor("id:add-endpoint");
+  }
+  // each its own: the second Prod beside the first, the Chinese names apart
+  for (const id of ["prod", "prod-2", "endpoint", "endpoint-2"]) expect(app.shows(`id:endpoint-${id}`)).toBe(true);
+  expect(app.shows("text:/^http:\\/\\/127\\.0\\.0\\.1:9001 /")).toBe(true);
+  expect(app.shows("text:/^http:\\/\\/127\\.0\\.0\\.1:9002 /")).toBe(true);
+});
+
+test("browse: an object's detail is its own, never the one chosen before", async () => {
+  const app = await withDemo("demo");
+  await app.waitFor("text:README.md", { timeout: 10000 });
+  await app.press("text:README.md");
+  await app.waitFor("text:s3://demo/README.md", { timeout: 10000 });
+  await app.press("text:Presigned URL");
+  await app.press("id:presign");
+  await app.waitFor("text:/README\\.md\\?X-Amz-/", { timeout: 10000 });
+  await app.press("id:flat");
+  await app.waitFor("text:images/logo.png", { timeout: 10000 });
+  await app.press("text:images/logo.png");
+  await app.waitFor("text:s3://demo/images/logo.png", { timeout: 10000 });
+  // the URL asked for README.md went with it
+  expect(app.shows("text:/README\\.md\\?X-Amz-/")).toBe(false);
+  // Refresh lists the same place again
+  await app.press("id:listing-refresh");
+  await app.waitFor("text:images/logo.png", { timeout: 10000 });
+});
+
 test("errors are readable and lead to their request", async () => {
   const app = await withDemo();
   await place(app, "endpoints");

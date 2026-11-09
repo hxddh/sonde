@@ -167,7 +167,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
             }
             o
         }
-        Format::Table => {
+        Format::Table | Format::Github => {
             let m = probes::report::matrix(&runs);
             let mut headers = vec!["probe"];
             headers.extend(m.columns.iter().map(|c| c.name.as_str()));

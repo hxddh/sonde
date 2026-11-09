@@ -224,3 +224,54 @@ fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
     assert_ne!(c.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&c.stderr).contains("sonde.toml"));
 }
+
+#[test]
+fn check_init_writes_a_budget_the_run_passes_and_github_annotates_it() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    let cfg = t.path().join("sonde.toml");
+    let c = sonde(
+        t.path(),
+        &["check", "--init", "--config", cfg.to_str().unwrap()],
+    );
+    assert_eq!(
+        c.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&c.stderr)
+    );
+    let text = std::fs::read_to_string(&cfg).unwrap();
+    assert!(
+        text.contains("[check]") && text.contains("max-requests ="),
+        "{text}"
+    );
+    // the run it was made from passes it
+    let c = sonde(
+        t.path(),
+        &["check", "--config", cfg.to_str().unwrap(), "-f", "github"],
+    );
+    assert_eq!(c.status.code(), Some(0), "{}", stdout(&c));
+    assert!(
+        stdout(&c).contains("sonde: within budget"),
+        "{}",
+        stdout(&c)
+    );
+    // never over a file there is
+    let again = sonde(
+        t.path(),
+        &["check", "--init", "--config", cfg.to_str().unwrap()],
+    );
+    assert_eq!(again.status.code(), Some(64));
+    // a budget it is past: an error annotation on the run
+    std::fs::write(&cfg, "[check]\nmax-requests = 1\n").unwrap();
+    let c = sonde(
+        t.path(),
+        &["check", "--config", cfg.to_str().unwrap(), "-f", "github"],
+    );
+    assert_eq!(c.status.code(), Some(1));
+    assert!(
+        stdout(&c).contains("::error title=sonde check::requests"),
+        "{}",
+        stdout(&c)
+    );
+}

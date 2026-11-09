@@ -332,6 +332,49 @@ pub fn past_baseline(run: &RunPoint, base: &RunPoint, tolerance: f64) -> bool {
         || run.errors as f64 > l.errors
 }
 
+/// Where a program's runs went past their baseline: the first run of the
+/// stretch of runs past it that ends with the newest, and the run before it
+/// (the last within), each with its commit when the run recorded one. What
+/// to look at between the two commits is what made it worse.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Since {
+    /// How many runs ago the first run past the baseline was (0: the newest).
+    pub runs_ago: usize,
+    pub first_past: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_past_commit: Option<crate::session::GitStamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_within: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_within_commit: Option<crate::session::GitStamp>,
+}
+
+/// [`Since`] of `runs` (oldest first, the newest last), against `base`.
+/// None when the newest run is within it.
+pub fn since(
+    runs: &[(RunPoint, Option<crate::session::GitStamp>)],
+    base: &RunPoint,
+    tolerance: f64,
+) -> Option<Since> {
+    let past = |r: &RunPoint| r.path != base.path && past_baseline(r, base, tolerance);
+    if !past(&runs.last()?.0) {
+        return None;
+    }
+    let mut first = runs.len() - 1;
+    while first > 0 && past(&runs[first - 1].0) {
+        first -= 1;
+    }
+    let good = first.checked_sub(1).map(|i| &runs[i]);
+    Some(Since {
+        runs_ago: runs.len() - 1 - first,
+        first_past: runs[first].0.path.clone(),
+        first_past_commit: runs[first].1.clone(),
+        last_within: good.map(|g| g.0.path.clone()),
+        last_within_commit: good.and_then(|g| g.1.clone()),
+    })
+}
+
 pub fn check(
     run: (&RunPoint, &[Record], &Profile, &[Observation]),
     baseline: Option<(&RunPoint, &[Record], &Profile, &[Observation])>,
@@ -420,6 +463,46 @@ mod tests {
         let p = profile(rs, &RequestPrices::default());
         let o = observations(rs, &episodes(rs));
         (run_point("x", "", rs, &p, &o), p, o)
+    }
+
+    #[test]
+    fn the_run_where_a_program_went_past_its_baseline() {
+        let pt = |path: &str, requests: usize| RunPoint {
+            path: path.into(),
+            created: String::new(),
+            requests,
+            busy_ms: 10.0,
+            wall_ms: 10.0,
+            cost: 0.0,
+            currency: "USD".into(),
+            errors: 0,
+            warnings: 0,
+            findings: 0,
+        };
+        let git = |c: &str| {
+            Some(crate::session::GitStamp {
+                commit: c.into(),
+                branch: None,
+                dirty: false,
+            })
+        };
+        let base = pt("a", 100);
+        let runs = vec![
+            (pt("a", 100), git("aaa")),
+            (pt("b", 105), git("bbb")),
+            (pt("c", 140), git("ccc")),
+            (pt("d", 150), git("ddd")),
+        ];
+        let s = since(&runs, &base, DEFAULT_TOLERANCE).unwrap();
+        assert_eq!(s.runs_ago, 1);
+        assert_eq!(s.first_past, "c");
+        assert_eq!(s.first_past_commit.unwrap().commit, "ccc");
+        assert_eq!(s.last_within.as_deref(), Some("b"));
+        assert_eq!(s.last_within_commit.unwrap().commit, "bbb");
+        // within again: nothing to say
+        let mut back = runs.clone();
+        back.push((pt("e", 101), None));
+        assert_eq!(since(&back, &base, DEFAULT_TOLERANCE), None);
     }
 
     #[test]

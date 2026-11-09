@@ -43,6 +43,9 @@ test("a program that sends sonde nothing: how each SDK is pointed at it", async 
   await app.waitFor("id:run-no-requests", { timeout: 5000 });
   expect(app.shows("text:The program sent sonde no requests")).toBe(true);
   expect(app.shows("text:boto3 / botocore")).toBe(true);
+  // not kept: once it is gone, nothing on Run opens another session in its place
+  await app.waitFor("id:run-open-session");
+  await app.waitUntil(() => !app.shows("id:run-open-session"), { timeout: 15000 });
 });
 
 test("record without a program: a local endpoint to point an application at", async () => {
@@ -114,7 +117,7 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   expect(app.shows("id:session-pane-mode-timeline")).toBe(false);
   await app.press("id:replay-open");
   await app.waitFor("id:replay-plan", { timeout: 5000 });
-  expect(app.shows("text:/2 requests \\(1 writes, 0 deletes\\) under replay-/")).toBe(true);
+  expect(app.shows("text:/2 requests \\(1 write, 0 deletes\\) under replay-/")).toBe(true);
   await app.press("id:replay-run");
   await app.waitFor("id:compare", { timeout: 20000 });
   await app.waitFor("text:2 requests compared: 2 the same");
@@ -187,7 +190,7 @@ test("a session's time: where it went, and two runs before and after", async () 
   // compared with another run: before and after
   await app.press("id:compare-open");
   // another program's runs are under their own heading, and say so once compared
-  const run = app.menu()!.map((m) => m.label).find((l) => l.startsWith("Other programs > echo"))!;
+  const run = app.menu()!.map((m) => m.label).find((l) => l.startsWith("Other programs > curl"))!;
   await app.chooseMenuItem(run);
   await app.waitFor("id:compare");
   await app.waitFor("id:run-change", { timeout: 10000 });

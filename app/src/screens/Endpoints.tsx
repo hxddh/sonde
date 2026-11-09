@@ -32,12 +32,13 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
   const d = signal<Draft>(props.initial);
   const set = (k: keyof Draft, v: string | boolean) => d.update((x) => ({ ...x, [k]: v }));
   const vendors = api.vendors();
-  // an id from the name: its letters and digits (any script), made unique
-  // among the endpoints there are, so adding never replaces one
+  // an id from the name: its ASCII letters and digits ("endpoint" for a name
+  // with none), made unique among the endpoints there are, so adding never
+  // replaces one
   const idFor = (x: Draft) => {
     const typed = x.id.trim();
     if (typed || props.editing) return typed;
-    const base = x.name.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "endpoint";
+    const base = x.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "endpoint";
     const taken = new Set(endpoints().map((e) => e.id));
     let id = base;
     for (let i = 2; taken.has(id); i++) id = `${base}-${i}`;
