@@ -83,9 +83,10 @@ export function Welcome() {
             <Text class="text-caption text-muted-foreground">{t("welcome.or")}</Text>
             <View class="h-px flex-1 bg-border" />
           </View>
-          <View class="flex-row flex-wrap justify-center gap-2">
+          {/* one column, aligned with the card above: never a ragged wrap */}
+          <View class="items-stretch gap-1">
             <If when={profiles.length > 0}>
-              <Button small variant="ghost" icon="key-round" label={t("welcome.importFound", { n: profiles.length })} onPress={() => showProfiles.set(!showProfiles())} testID="welcome-import" />
+              <Button small variant="ghost" icon="key-round" label={t("welcome.importFound", { n: profiles.length })} onPress={() => showProfiles.set(!showProfiles())} testID="welcome-import" class="justify-start" />
             </If>
             <Button
               small
@@ -96,11 +97,11 @@ export function Welcome() {
                 endpointsMode.set("add");
                 go("endpoints");
               }}
-              testID="welcome-add"
+              testID="welcome-add" class="justify-start"
             />
             {/* production as it ran: an access log, CloudTrail files, a HAR */}
-            <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openSessionFile()} testID="welcome-open-log" />
-            <Button small variant="ghost" icon="list-clock" label={t("welcome.example")} onPress={example} testID="open-example" />
+            <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openSessionFile()} testID="welcome-open-log" class="justify-start" />
+            <Button small variant="ghost" icon="list-clock" label={t("welcome.example")} onPress={example} testID="open-example" class="justify-start" />
           </View>
           <If when={showProfiles()}>
             <Card>

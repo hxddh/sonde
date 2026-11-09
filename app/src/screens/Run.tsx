@@ -197,12 +197,12 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
       </If>
       <If when={verdictText()}>{(v) => <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "pass" : "fail"} />}</If>
       <View class="flex-1" />
-      {/* the demo done: the next step is the user's own program and store */}
-      <If when={r() && !r()!.removed && endpoint() === "demo"}>
-        <Button small variant="ghost" icon="plus" label={t("run.nowYours")} tip={t("run.nowYoursHint")} onPress={() => (endpointsMode.set("add"), go("endpoints"))} testID="run-now-yours" />
-      </If>
       <If when={r() && !r()!.removed}>
-        <View class="flex-row items-center gap-2">
+        <View class="flex-row flex-wrap items-center gap-2">
+          {/* the demo done: the next step is the user's own program and store */}
+          <If when={endpoint() === "demo"}>
+            <Button small variant="outline" icon="plus" label={t("run.nowYours")} tip={t("run.nowYoursHint")} onPress={() => (endpointsMode.set("add"), go("endpoints"))} testID="run-now-yours" />
+          </If>
           {/* the loop in one place: change the program, run it again, see what it did */}
           <Button small variant="outline" icon="play" label={t("sessions.runAgain")} onPress={() => endpoint() && runAgain(r()!.path, r()!.command, running()?.endpoint ?? endpoint()!, cwd() || null)} disabled={!endpoint()} testID="run-again-band" />
           <Button small variant="outline" icon="list-clock" label={t("run.lineUp")} onPress={() => openLastRun(go)} testID="run-open-session" />
