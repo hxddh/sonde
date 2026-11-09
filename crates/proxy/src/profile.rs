@@ -1096,14 +1096,20 @@ mod tests {
 
     #[test]
     fn every_request_is_in_the_distribution_and_a_slow_down_in_its_slice() {
-        let mut rs: Vec<Record> = (0..20).map(|i| rec(i + 1, i as i64, "GetObject", 200, 3.0 + i as f64)).collect();
+        let mut rs: Vec<Record> = (0..20)
+            .map(|i| rec(i + 1, i as i64, "GetObject", 200, 3.0 + i as f64))
+            .collect();
         let mut slow = rec(21, 30, "PutObject", 503, 400.0);
         slow.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         slow.retries = 2;
         rs.push(slow);
         let p = profile(&rs, &RequestPrices::default());
         assert_eq!(p.latency.iter().map(|b| b.n).sum::<usize>(), 21);
-        assert_eq!(p.latency.first().map(|b| b.le_ms), Some(5.0), "no empty buckets before the first request");
+        assert_eq!(
+            p.latency.first().map(|b| b.le_ms),
+            Some(5.0),
+            "no empty buckets before the first request"
+        );
         assert_eq!(p.rate.iter().map(|b| b.throttled).sum::<usize>(), 1);
         assert_eq!(p.rate.iter().map(|b| b.retried).sum::<usize>(), 1);
         assert!(p.p50_ms >= 12.0 && p.p50_ms <= 14.0, "{}", p.p50_ms);

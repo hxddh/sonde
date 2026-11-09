@@ -104,7 +104,8 @@ for (const v of variants) {
     await app.press("id:session-pane-mode-time");
     await app.waitFor("id:time-pane");
     await shot("03g-time");
-    if (app.shows("id:flows-show")) await app.press("id:flows-show");
+    // the flows on demand: where the button is in view (a small window has it further down)
+    if (app.shows("id:flows-show")) await app.press("id:flows-show").catch(() => {});
     // further down the Time pane: where requests went, when and where, how long
     await app.scroll("id:time-pane", 380);
     await shot("03i-flows");
