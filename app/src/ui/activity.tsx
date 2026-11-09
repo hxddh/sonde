@@ -64,7 +64,7 @@ function Requests() {
     const l = api.latestRequest();
     if (l !== latest()) latest.set(l);
   }, 300);
-  api.on("request", refresh);
+  cleanup(api.on("request", refresh));
   const filter = (): RequestFilter => ({ status: errors() ? { kind: "errors" } : null, text: text() || null });
   const rows = (): RecordSummary[] => {
     latest();
@@ -168,7 +168,7 @@ function Jobs() {
   const jobs = signal<JobInfo[]>(api.jobs());
   // the engine says when a job starts, moves on or ends
   const refresh = throttled(() => jobs.set(api.jobs()), 200);
-  api.on("jobs", refresh);
+  cleanup(api.on("jobs", refresh));
   const tone = (s: string) => (s === "finished" ? "ok" : s === "failed" ? "server" : s === "cancelled" ? "miss" : "live") as "ok" | "server" | "miss" | "live";
   return (
     <If when={jobs().length > 0} else={<Empty icon="timer" text={t("jobs.none")} />}>

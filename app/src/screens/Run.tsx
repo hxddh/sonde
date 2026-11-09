@@ -351,7 +351,7 @@ export function Run() {
         <If
           when={terminal()}
           else={
-            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE}>
+            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("run.resizeOperations")}>
               <ResizablePanel minSize={320}>
                 <View class="flex-1 pr-2">
                   <ProgramTerminal />

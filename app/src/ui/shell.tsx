@@ -13,7 +13,7 @@ import { running } from "../run";
 import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, endpoints, go, openSession, openSessionFile, readOnly, section, settings, sessionsTick, storeTab } from "../store";
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { programOf } from "./sessionview";
+import { programOf, scrubCommand } from "./sessionview";
 import { glass, IconButton, Kbd, material, POPUP, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { sessionName } from "./manage";
@@ -161,7 +161,7 @@ function RunningPill() {
           testID="running-pill"
           accessibilityLabel={t("run.running")}
           onPress={() => go("run")}
-          tooltip={<Tip text={r().command} />}
+          tooltip={<Tip text={scrubCommand(r().command)} />}
           class="h-7 max-w-[220px] flex-row items-center gap-2 rounded-full bg-primary/12 px-3 hover:bg-primary/20"
         >
           <View class={`size-1.5 rounded-full bg-primary ${reduceMotion() ? "" : "animate-pulse"}`} />

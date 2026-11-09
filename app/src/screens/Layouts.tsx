@@ -5,15 +5,20 @@
 import { cleanup, List, signal, Text, View } from "nsh";
 import { Slider } from "nsh/base";
 import { bytes, date } from "../format";
-import { t } from "../i18n";
+import { type Key, t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, prefix, report } from "../store";
-import { here, remember } from "../ui/overview";
+import { here, LAYOUT_LABEL, remember } from "../ui/overview";
 import type { Detection, Layout, Snapshot } from "../types";
 import { Badge, Bar, Button, Card, Empty, Field, Heading, KeyValue, Muted, Page, SimpleTable, terminal, Title } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
-const LABEL: Record<string, string> = { slatedb: "SlateDB", iceberg: "Apache Iceberg", lakefs: "lakeFS", woodpecker: "Milvus Woodpecker", turbopuffer: "turbopuffer", warpstream: "WarpStream", generic: "Write cadence" };
+const LABEL = LAYOUT_LABEL;
+/** A timeline event's kind in the reader's words (a decoder's own, as itself). */
+const kindLabel = (k: string) => {
+  const s = t(`layouts.kind.${k}` as Key);
+  return s === `layouts.kind.${k}` ? k : s;
+};
 
 function Replay(props: { job: string; layout: Layout }) {
   const times = () => props.layout.snapshots.map((s) => (s.time ? new Date(s.time).getTime() : 0)).filter((x) => x > 0);
@@ -183,7 +188,7 @@ export function Layouts() {
                 {(e) => (
                   <View class="h-[26px] flex-row items-center gap-3">
                     <Text class="w-36 text-small text-muted-foreground">{date(e().time)}</Text>
-                    <Badge label={e().kind} tone={e().kind === "fence" || e().kind === "gap" ? "warn" : "neutral"} />
+                    <Badge label={kindLabel(e().kind)} tone={e().kind === "fence" || e().kind === "gap" ? "warn" : "neutral"} />
                     <Text class="flex-1 text-small text-foreground line-clamp-1">{`${e().label}${e().detail ? ` — ${e().detail}` : ""}`}</Text>
                   </View>
                 )}

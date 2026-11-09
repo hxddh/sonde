@@ -73,12 +73,9 @@ for (const v of variants) {
       await app.window("settings").pressClose();
     }
     await shot("02-run");
-    // which shell Run uses: only cmd.exe expands %OS%
-    await app.type("id:run-command", "echo %OS%");
-    await app.press("id:run-start");
-    await app.waitFor("id:run-ended", { timeout: 20000 });
-    const cmd = app.texts().some((t) => t.includes("Windows_NT"));
-    await app.clear("id:run-command");
+    // which shell Run uses: cmd.exe on Windows (no probe run: it would sit in every list)
+    const env = (globalThis as any).process?.env ?? {};
+    const cmd = (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
     await app.type("id:run-command", command(cmd));
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });

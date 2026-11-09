@@ -50,7 +50,7 @@ if (isAvailable && platform.idiom !== "terminal") {
         r
           ? {
               icon: iconSvg("circle-dot"),
-              tooltip: t("run.trayTip", { command: r.command.split(" ")[0] }),
+              tooltip: t("run.trayTip", { command: programOf(r.command) ?? "" }),
               onClick: () => Window.get("main")?.show(),
               menu: [
                 { label: t("run.trayShow"), onSelect: () => Window.get("main")?.show() },
@@ -119,7 +119,11 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
         title,
         description: body,
         action: t("run.toastOpen"),
-        onAction: () => openLastRun(go),
+        // this run's session, whatever ran since
+        onAction: () => {
+          openSession.set(r.path);
+          go("sessions");
+        },
         duration: 8000,
       });
     // away from the window: a failed run asks for attention

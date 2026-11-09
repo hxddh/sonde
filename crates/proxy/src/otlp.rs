@@ -110,14 +110,18 @@ pub fn traces(s: &Session) -> Value {
                 s.header
                     .command
                     .as_deref()
-                    .and_then(|c| c.split_whitespace().next())
-                    .unwrap_or("sonde-session")
+                    .and_then(crate::program::program_name)
+                    .unwrap_or_else(|| "sonde-session".into())
             ),
         ),
         attr("sonde.endpoint", json!(s.header.endpoint)),
     ];
     if let Some(c) = &s.header.command {
-        resource.push(attr("process.command_line", json!(c)));
+        // the variables it sets, without their values: a key never leaves
+        resource.push(attr(
+            "process.command_line",
+            json!(crate::program::scrub_command(c)),
+        ));
     }
     json!({
         "resourceSpans": [{

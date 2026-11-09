@@ -3,13 +3,13 @@
 // uploads, both behind the guard.
 
 import { cleanup, signal, Text, View } from "nsh";
-import { DataTable } from "nsh/base";
-import { bytes, count, day, days, money } from "../format";
-import { t } from "../i18n";
+import { DataTable, type DataTableSort } from "nsh/base";
+import { bytes, count, date, day, days, money } from "../format";
+import { type Key, t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
-import type { MpuReport, Plan } from "../types";
-import { Badge, Bar, Button, Card, Empty, Field, KeyValue, NumberField, Muted, Page, rowHeight, terminal, Title, TYPE } from "../ui/kit";
+import type { MpuReport, Plan, UploadRow } from "../types";
+import { Badge, Bar, Button, Card, Empty, Field, KeyValue, NumberField, Muted, Page, rowHeight, sortRows, terminal, Title, TYPE } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
@@ -22,6 +22,12 @@ export function Multipart() {
   const progress = signal<string | null>(null);
   const plan = signal<Plan | null>(null);
   const days_ = signal<number | null>(settings()?.["stale-upload-days"] ?? 7);
+  // the oldest first; a press on a title sorts by its column's values, not their text
+  const uploadSort = signal<DataTableSort | null>({ key: "age", direction: "descending" });
+  const sorted = (rows: UploadRow[]) =>
+    sortRows(rows, uploadSort(), (u, key) =>
+      key === "age" ? (u.ageDays ?? -1) : key === "parts" ? u.parts : key === "bytes" ? u.bytes : key === "cost" ? u.costPerMonth : key === "initiated" ? (u.initiated ?? "") : key === "key" ? u.key : key === "uploadId" ? u.uploadId : u.stale ? 1 : 0,
+    );
   let job: string | null = null;
   cleanup(() => {
     if (job) api.cancelJob(job);
@@ -96,7 +102,7 @@ export function Multipart() {
               <Card class="min-w-64 flex-[2]" testID="lifecycle-verdict">
                 <View class="flex-row items-center gap-2">
                   <Text class="text-body font-semibold text-foreground">{t("mpu.lifecycle")}</Text>
-                  <Badge label={r().lifecycle.status} tone={tone(r().lifecycle.status)} />
+                  <Badge label={t(`mpu.lifecycle.${r().lifecycle.status}` as Key)} tone={tone(r().lifecycle.status)} />
                 </View>
                 <Text class="text-body text-foreground">{r().lifecycle.message}</Text>
                 <If when={r().lifecycle.status !== "covered"}>
@@ -119,22 +125,23 @@ export function Multipart() {
                 columns={[
                   // fits the detail panel (760pt) without a sideways scroll: the date as a day
                   { key: "flag", title: "", width: 22, resizable: false },
-                  { key: "key", title: t("mpu.key"), width: 196, minWidth: 120 },
-                  { key: "uploadId", title: t("mpu.uploadId"), width: 116, minWidth: 80 },
-                  { key: "initiated", title: t("mpu.initiated"), width: 100 },
-                  { key: "age", title: t("mpu.age"), width: 58, align: "end" },
-                  { key: "parts", title: t("mpu.parts"), width: 50, align: "end" },
-                  { key: "bytes", title: t("mpu.bytes"), width: 78, align: "end" },
-                  { key: "cost", title: t("mpu.costMonth"), width: 72, align: "end" },
+                  { key: "key", title: t("mpu.key"), width: 196, minWidth: 120, sortable: !terminal() },
+                  { key: "uploadId", title: t("mpu.uploadId"), width: 116, minWidth: 80, sortable: !terminal() },
+                  { key: "initiated", title: t("mpu.initiated"), width: 100, sortable: !terminal() },
+                  { key: "age", title: t("mpu.age"), width: 58, align: "end", sortable: !terminal() },
+                  { key: "parts", title: t("mpu.parts"), width: 50, align: "end", sortable: !terminal() },
+                  { key: "bytes", title: t("mpu.bytes"), width: 78, align: "end", sortable: !terminal() },
+                  { key: "cost", title: t("mpu.costMonth"), width: 72, align: "end", sortable: !terminal() },
                 ]}
-                data={r().uploads.map((u) => ({ flag: u.stale ? "!" : "", key: u.key, uploadId: u.uploadId, initiated: day(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
-                rowClasses={r().uploads.map((u) => (u.stale ? "text-warn" : "text-foreground"))}
+                data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "!" : "", key: u.key, uploadId: u.uploadId, initiated: day(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
+                rowClasses={sorted(r().uploads).map((u) => (u.stale ? "text-warn" : "text-foreground"))}
                 fontSize={TYPE.body}
                 rowHeight={rowHeight(30)}
                 classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
-                sort={{ key: "age", direction: "descending" }}
+                sort={uploadSort()}
+                onSortChange={({ sort }) => uploadSort.set(sort)}
               />
-              <KeyValue rows={[["Scanned", r().scannedAt], [t("common.endpoint"), r().endpoint]]} />
+              <KeyValue rows={[[t("mpu.scanned"), date(r().scannedAt)], [t("common.endpoint"), r().endpoint]]} />
             </If>
           </View>
         )}

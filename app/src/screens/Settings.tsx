@@ -17,7 +17,12 @@ export function SettingsScreen() {
   const draft = signal<Settings | null>(settings() ? copyOf(settings()!) : null);
   let saved: Settings | null = settings() ? copyOf(settings()!) : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  cleanup(() => timer && clearTimeout(timer));
+  // a change still waiting to be saved when Settings closes is saved, not dropped
+  let pending: (() => void) | null = null;
+  cleanup(() => {
+    if (timer) clearTimeout(timer);
+    pending?.();
+  });
 
   const write = (next: Settings, undo: Settings | null) => {
     try {
@@ -42,8 +47,15 @@ export function SettingsScreen() {
     draft.set(next);
     if (timer) clearTimeout(timer);
     const undo = saved;
+    pending = null;
     if (now) write(next, undo);
-    else timer = setTimeout(() => write(next, undo), 700);
+    else {
+      pending = () => {
+        pending = null;
+        write(next, undo);
+      };
+      timer = setTimeout(() => pending?.(), 700);
+    }
   };
   const paths = api.paths();
 

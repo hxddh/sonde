@@ -348,6 +348,34 @@ fn har(text: &str) -> Result<Vec<Record>, String> {
                     .collect()
             })
             .unwrap_or_default();
+        // S3's requests only: a browser's HAR holds every page, script and image
+        let names = |v: &Value| -> Vec<String> {
+            v.as_array()
+                .map(|h| {
+                    h.iter()
+                        .filter_map(|x| x["name"].as_str().map(str::to_ascii_lowercase))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let signed = headers.iter().any(|(n, v)| {
+            let n = n.to_ascii_lowercase();
+            n.starts_with("x-amz-")
+                || (n == "authorization"
+                    && (v.starts_with("AWS4-HMAC-SHA256") || v.starts_with("AWS ")))
+        }) || ["X-Amz-Signature", "X-Amz-Credential", "AWSAccessKeyId"]
+            .iter()
+            .any(|k| url.query_pairs().any(|(q, _)| q == *k));
+        let answered_by_s3 = names(&e["response"]["headers"])
+            .iter()
+            .any(|n| n == "x-amz-request-id" || n == "x-amz-id-2");
+        let s3_host = host.contains(".s3.")
+            || host.contains(".s3-")
+            || host.starts_with("s3.")
+            || host.starts_with("s3-");
+        if !(signed || answered_by_s3 || s3_host || e["_sonde"].is_object()) {
+            continue;
+        }
         let status = e["response"]["status"].as_u64().unwrap_or(0) as u16;
         let mut r = record(
             time,
@@ -449,6 +477,37 @@ mod tests {
         assert_eq!(s.records[0].bucket.as_deref(), Some("lake"));
         assert_eq!(s.records[0].key.as_deref(), Some("t/k x"));
         assert_eq!(s.records[0].latency_ms, 7.0);
+    }
+
+    #[test]
+    fn a_browser_har_keeps_only_its_s3_requests() {
+        let entry = |url: &str, req: &str, resp: &str| {
+            format!(
+                r#"{{"startedDateTime":"2026-11-09T10:00:00Z","time":5,"request":{{"method":"GET","url":"{url}","headers":[{req}]}},"response":{{"status":200,"headers":[{resp}],"bodySize":10}}}}"#
+            )
+        };
+        let har = format!(
+            r#"{{"log":{{"version":"1.2","entries":[{},{},{},{}]}}}}"#,
+            entry("https://cdn.example.com/js/app.js", "", ""),
+            entry("https://example.com/", "", ""),
+            entry(
+                "http://127.0.0.1:9000/data/k",
+                r#"{"name":"Authorization","value":"AWS4-HMAC-SHA256 Credential=x"}"#,
+                ""
+            ),
+            entry(
+                "https://minio.local/b/k2",
+                "",
+                r#"{"name":"x-amz-request-id","value":"1"}"#
+            ),
+        );
+        let (_, s) = import(&har, "browser").unwrap();
+        let keys: Vec<_> = s
+            .records
+            .iter()
+            .map(|r| r.key.clone().unwrap_or_default())
+            .collect();
+        assert_eq!(keys, ["k", "k2"], "the page and its script are not S3's");
     }
 
     #[test]

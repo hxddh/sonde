@@ -39,7 +39,7 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
               <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(r().id)} />
             </View>
             <Mono>{`${r().method} ${r().url}`}</Mono>
-            <SimpleTable mono max={30} columns={["header", "value"]} rows={[...r().requestHeaders.map((h) => [`→ ${h.name}`, h.value]), ...r().responseHeaders.map((h) => [`← ${h.name}`, h.value])]} />
+            <SimpleTable mono max={30} columns={[t("probes.header"), t("probes.value")]} rows={[...r().requestHeaders.map((h) => [`→ ${h.name}`, h.value]), ...r().responseHeaders.map((h) => [`← ${h.name}`, h.value])]} />
             <If when={r().errorBody}>{(b) => <Mono class="rounded-(--radius) bg-muted p-2">{b()}</Mono>}</If>
           </Card>
         )}
@@ -216,7 +216,7 @@ export function Probes() {
             <If when={diff()}>
               {(d) => (
                 <If when={d().length > 0} else={<Muted>{t("probes.noChange")}</Muted>}>
-                  <SimpleTable columns={["probe", "A", "B", "now"]} rows={d().map((c) => [c.probe, c.before ?? "—", c.after ?? "—", `${c.afterSummary ?? ""}${c.stepsChanged ? " (responses changed)" : ""}`])} />
+                  <SimpleTable columns={[t("probes.probe"), "A", "B", t("probes.now")]} rows={d().map((c) => [c.probe, c.before ?? "—", c.after ?? "—", `${c.afterSummary ?? ""}${c.stepsChanged ? ` (${t("probes.responsesChanged")})` : ""}`])} />
                 </If>
               )}
             </If>

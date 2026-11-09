@@ -258,11 +258,14 @@ export function ShareGauge(props: { share: number; label: string; tone?: string;
 
 /** What the last few seconds of a session looked like: requests a second,
  * the share that failed, in flight now and the p95, for the live view. */
-export function liveFigures(p: Profile, slices = 5) {
+export function liveFigures(p: Profile, windowMs = 1000) {
+  // the last second (or more, when a slice is longer): a few slices of a
+  // short session are milliseconds, and 4 requests in them are not "200 a second"
+  const slices = Math.max(1, Math.ceil(windowMs / Math.max(p.binMs, 1e-3)));
   const recent = p.rate.slice(-slices);
   const n = recent.reduce((s, b) => s + b.ok + b.miss + b.client + b.server, 0);
   const failed = recent.reduce((s, b) => s + b.client + b.server, 0);
-  const secs = Math.max((recent.length * p.binMs) / 1000, 1e-3);
+  const secs = Math.max(slices * p.binMs, windowMs) / 1000;
   const p95 = Math.max(0, ...recent.map((b) => b.p95Ms));
   const inFlight = p.inFlight.length ? p.inFlight[p.inFlight.length - 1].n : 0;
   return { perSecond: n / secs, failedShare: n ? failed / n : 0, inFlight, p95 };
@@ -271,24 +274,29 @@ export function liveFigures(p: Profile, slices = 5) {
 /** How long requests took over the session: the band from median to p95,
  * the p99 a line above it; slices without requests leave a gap. */
 export function LatencyBand(props: { profile: Profile; class?: string; testID?: string }) {
-  const rows = () => props.profile.rate.filter((b) => b.ok + b.miss + b.client + b.server > 0);
+  // every slice, so one without requests leaves a gap rather than a line across it
+  const rows = () => props.profile.rate;
+  const has = (b: Profile["rate"][number]) => b.ok + b.miss + b.client + b.server > 0;
+  const answered = () => rows().filter(has);
+  const gap = (f: (b: Profile["rate"][number]) => number) => (b: Profile["rate"][number]) => (has(b) ? f(b) : (undefined as unknown as number));
+  const top = () => Math.max(...answered().map((b) => b.p99Ms), 1) * 1.15;
   const hovered = signal<number | null>(null);
   const label = () => {
-    const last = rows()[rows().length - 1];
+    const last = answered()[answered().length - 1];
     return last ? t("band.text", { p50: ms(last.p50Ms), p95: ms(last.p95Ms), p99: ms(last.p99Ms) }) : "";
   };
   const tip = () => {
     const b = hovered() === null ? null : rows()[hovered()!];
-    return b ? { title: `+${offset(b.tMs)}`, lines: [t("band.line", { p50: ms(b.p50Ms), p95: ms(b.p95Ms), p99: ms(b.p99Ms) })] } : null;
+    return b && has(b) ? { title: `+${offset(b.tMs)}`, lines: [t("band.line", { p50: ms(b.p50Ms), p95: ms(b.p95Ms), p99: ms(b.p99Ms) })] } : null;
   };
   return (
-    <If when={!terminal() && rows().length > 1} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{label()}</Text>}>
+    <If when={!terminal() && answered().length > 1} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{label()}</Text>}>
       <Plot
         testID={props.testID ?? "latency-band"}
         data={rows()}
         x="tMs"
         xScale={{ type: "linear", domain: [0, Math.max(props.profile.wallMs, 1)] }}
-        yScale={{ type: "linear", domain: [0, Math.max(...rows().map((b) => b.p99Ms), 1) * 1.15] }}
+        yScale={{ type: "linear", domain: [0, top()] }}
         accessibilityLabel={label()}
         accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
         motion={MOTION}
@@ -302,11 +310,12 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
         }}
         class={props.class ?? "h-24 w-full"}
       >
-        <Area y0="p50Ms" y1="p95Ms" curve="natural" class="fill-chart-1/25" />
-        <Line y="p50Ms" curve="natural" class="stroke-chart-1 stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
-        <Line y="p99Ms" curve="natural" class="stroke-status-client/70 stroke-[1]" style={{ strokeDasharray: "3 3" }} hoverDotClass="hidden" />
-        <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), focusMs()) ? Math.max(...rows().map((b) => b.p99Ms), 1) * 1.15 : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
-        <PlotAxis placement="left" labelPlacement="inside" ticks={3} format={(v) => ms(v)} labelClass="pl-1 tabular-nums text-caption text-muted-foreground" />
+        {/* straight between slices: a curve would show values no request had */}
+        <Area y0={gap((b) => b.p50Ms)} y1={gap((b) => b.p95Ms)} curve="linear" class="fill-chart-1/25" />
+        <Line y={gap((b) => b.p50Ms)} curve="linear" class="stroke-chart-1 stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
+        <Line y={gap((b) => b.p99Ms)} curve="linear" class="stroke-muted-foreground/70 stroke-[1]" style={{ strokeDasharray: "3 3" }} hoverDotClass="hidden" />
+        <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), focusMs()) ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
+        <PlotAxis placement="left" labelPlacement="inside" ticks={3} format={(v) => ms(v)} labelClass="ml-1 rounded-sm bg-card/85 px-1 tabular-nums text-caption text-muted-foreground" />
       </Plot>
     </If>
   );
@@ -421,22 +430,22 @@ export function TimeSpent(props: { profile: Profile; max?: number }) {
   const hovered = signal<number | null>(null);
   const label = () => {
     const top = rows()[0];
-    return top ? t("profile.spentText", { what: top.name, pct: pct(top.share), time: offset(top.busyMs) }) : "";
+    return top ? t("profile.spentText", { what: top.name, pct: pct(top.share), time: offset(top.waitedMs) }) : "";
   };
   const tip = () => {
     const g = hovered() === null ? null : rows()[hovered()!];
-    return g ? { title: g.name, lines: [t("profile.spentLine", { time: offset(g.busyMs), pct: pct(g.share), n: g.requests }), t("profile.latencyLine", { p50: ms(g.p50Ms), p95: ms(g.p95Ms), max: ms(g.maxMs) }), `↑${bytes(g.bytesUp)} ↓${bytes(g.bytesDown)} · ${cost(g.cost, props.profile.cost.currency)}`] } : null;
+    return g ? { title: g.name, lines: [t("profile.spentLine", { time: offset(g.waitedMs), pct: pct(g.share), n: g.requests }), t("profile.latencyLine", { p50: ms(g.p50Ms), p95: ms(g.p95Ms), max: ms(g.maxMs) }), `↑${bytes(g.bytesUp)} ↓${bytes(g.bytesDown)} · ${cost(g.cost, props.profile.cost.currency)}`] } : null;
   };
   return (
     <If
       when={!terminal()}
-      else={<SimpleTable columns={[t("profile.kind"), t("profile.share"), t("profile.time"), t("figure.requests")]} rows={rows().map((g) => [g.name, pct(g.share), offset(g.busyMs), String(g.requests)])} />}
+      else={<SimpleTable columns={[t("profile.kind"), t("profile.share"), t("profile.time"), t("figure.requests")]} rows={rows().map((g) => [g.name, pct(g.share), offset(g.waitedMs), String(g.requests)])} />}
     >
       <Plot
         testID="time-spent"
         data={rows()}
         yScale={{ type: "band", paddingInner: 0.32, paddingOuter: 0.16 }}
-        xScale={{ type: "linear", domain: [0, Math.max(...rows().map((g) => g.busyMs), 1) * 1.18] }}
+        xScale={{ type: "linear", domain: [0, Math.max(...rows().map((g) => g.waitedMs), 1) * 1.18] }}
         accessibilityLabel={label()}
         accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
         appearGeneration={1}
@@ -450,12 +459,12 @@ export function TimeSpent(props: { profile: Profile; max?: number }) {
         style={{ height: rows().length * 30 + 8 }}
       >
         <Bar
-          value="busyMs"
+          value="waitedMs"
           class="fill-chart-1"
           cornerRadii={{ topRight: 3, bottomRight: 3 }}
           inactiveOpacity={0.45}
           stagger={0.3}
-          label={(_, i) => `${pct(rows()[i].share)} · ${offset(rows()[i].busyMs)}`}
+          label={(_, i) => `${pct(rows()[i].share)} · ${offset(rows()[i].waitedMs)}`}
           labelClass="pl-2 tabular-nums text-caption text-muted-foreground"
         />
         <PlotAxis placement="left" format={(i) => rows()[i]?.name ?? ""} labelClass="pr-3 text-small text-foreground" />
@@ -634,7 +643,7 @@ export function Flows(props: { profile: Profile }) {
           nodeWidth={7}
           nodePadding={26}
           nodeCornerRadius={2}
-          valueScale="sqrt"
+          valueScale="linear"
           minLinkWidth={1.5}
           nodeClass={(n) => fill(n)}
           linkBackgroundClass={(l) => `bg-linear-to-r ${from(nodes()[l.source])} ${to(nodes()[l.target])}`}

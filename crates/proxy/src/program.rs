@@ -21,6 +21,44 @@ pub fn program_key(command: Option<&str>) -> Option<String> {
     }
 }
 
+/// A shell word that sets a variable for the command: `NAME=value`.
+fn is_assignment(word: &str) -> bool {
+    match word.split_once('=') {
+        Some((name, _)) => {
+            !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !name.starts_with(|c: char| c.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
+/// The program a command runs, by name (`python` for
+/// `AWS_SECRET_ACCESS_KEY=… /usr/bin/python etl.py`): past the variables it
+/// sets and `env`, never one of their values.
+pub fn program_name(command: &str) -> Option<String> {
+    let word = command
+        .split_whitespace()
+        .find(|w| !is_assignment(w) && *w != "env")?;
+    std::path::Path::new(word)
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .filter(|f| !f.is_empty())
+}
+
+/// The command with the value of every variable it sets hidden
+/// (`AWS_SECRET_ACCESS_KEY=…`): what may leave the machine.
+pub fn scrub_command(command: &str) -> String {
+    command
+        .split_whitespace()
+        .map(|w| match w.split_once('=') {
+            Some((name, _)) if is_assignment(w) => format!("{name}=…"),
+            _ => w.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Each program's baseline run, by file name: `baselines.json` beside the sessions.
 pub fn read_baselines(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
     std::fs::read(dir.join("baselines.json"))
@@ -314,5 +352,24 @@ mod tests {
             c.verdicts.iter().find(|v| v.what == "requests").unwrap().ok,
             "{c:#?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn a_secret_set_for_the_command_never_names_it() {
+        let c = "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI env X=1 /usr/bin/python etl.py --day 1";
+        assert_eq!(program_name(c).as_deref(), Some("python"));
+        let s = scrub_command(c);
+        assert!(!s.contains("wJalr"), "{s}");
+        assert_eq!(
+            s,
+            "AWS_SECRET_ACCESS_KEY=… env X=… /usr/bin/python etl.py --day 1"
+        );
+        assert_eq!(program_name("aws s3 ls").as_deref(), Some("aws"));
+        assert_eq!(program_name("A=1 B=2"), None);
     }
 }

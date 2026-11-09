@@ -477,9 +477,11 @@ fn a_sigv2_presigned_url_with_the_keys_is_admitted_and_one_without_is_not() {
             .replace('/', "%2F")
             .replace('=', "%3D")
     };
-    let request = |sig: &str, key: &str, host: &str, path: &str| {
+    // an hour from now: within the week a presigned URL may last
+    let expires = (Utc::now().timestamp() + 3600).to_string();
+    let request_until = |sig: &str, key: &str, host: &str, path: &str, expires: &str| {
         let uri = format!(
-            "{path}?AWSAccessKeyId={key}&Signature={}&Expires=1900000000",
+            "{path}?AWSAccessKeyId={key}&Signature={}&Expires={expires}",
             enc(sig)
         );
         let (parts, _) = Request::builder()
@@ -490,22 +492,35 @@ fn a_sigv2_presigned_url_with_the_keys_is_admitted_and_one_without_is_not() {
             .into_parts();
         sonde_proxy::admit(&cfg, &parts, host)
     };
+    let request = |sig: &str, key: &str, host: &str, path: &str| {
+        request_until(sig, key, host, path, &expires)
+    };
     // path style, a key with an encoded space
-    let good = sign(&cfg.client_secret, "/data/a%20b.txt", "1900000000");
+    let good = sign(&cfg.client_secret, "/data/a%20b.txt", &expires);
     assert_eq!(
         request(&good, &cfg.client_key, "127.0.0.1:9000", "/data/a%20b.txt"),
         Ok(())
     );
     // virtual-hosted: the bucket is in the Host, and in what was signed
-    let vh = sign(&cfg.client_secret, "/data/k", "1900000000");
+    let vh = sign(&cfg.client_secret, "/data/k", &expires);
     assert_eq!(
         request(&vh, &cfg.client_key, "data.localhost:9000", "/k"),
         Ok(())
     );
     // the right key with another secret, or another key
-    let bad = sign("not-the-secret", "/data/a%20b.txt", "1900000000");
+    let bad = sign("not-the-secret", "/data/a%20b.txt", &expires);
     assert!(request(&bad, &cfg.client_key, "127.0.0.1:9000", "/data/a%20b.txt").is_err());
     assert!(request(&good, "AKIDOTHER", "127.0.0.1:9000", "/data/a%20b.txt").is_err());
+    // rightly signed, but good for years: refused, as SigV4 refuses past a week
+    let forever = sign(&cfg.client_secret, "/data/k", "1900000000");
+    let r = request_until(
+        &forever,
+        &cfg.client_key,
+        "127.0.0.1:9000",
+        "/data/k",
+        "1900000000",
+    );
+    assert!(r.unwrap_err().contains("more than a week"));
 }
 
 #[test]

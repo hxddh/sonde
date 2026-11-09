@@ -4,6 +4,7 @@
 import { signal, Text, View } from "nsh";
 import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, pct } from "../format";
+import { t } from "../i18n";
 import { Legend, SimpleTable, terminal } from "./kit";
 
 const PALETTE = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;
@@ -13,7 +14,7 @@ const MOTION = { appear: { duration: 420, easing: "easeOut" as const }, enter: {
 export function BarChart(props: { items: { label: string; value: number; sub?: string }[]; height?: number; testID?: string; unit?: "bytes" | "count" }) {
   const fmt = (v: number) => (props.unit === "count" ? String(v) : bytes(v));
   const total = () => props.items.reduce((s, i) => s + i.value, 0);
-  const sentence = () => (props.items.length > 0 ? `${props.items[0].label}: ${pct(props.items[0].value, total())} of ${fmt(total())}` : "");
+  const sentence = () => (props.items.length > 0 ? t("chart.shareOf", { what: props.items[0].label, pct: pct(props.items[0].value, total()), of: fmt(total()) }) : "");
   return (
     <If
       when={!terminal()}
@@ -80,7 +81,7 @@ export function StackBar(props: { parts: { label: string; value: number }[]; tes
 export function PrefixMap(props: { items: { label: string; value: number }[]; testID?: string }) {
   const total = () => props.items.reduce((s, i) => s + i.value, 0);
   const hovered = signal<number | null>(null);
-  const sentence = () => (props.items.length > 0 ? `${props.items[0].label}: ${pct(props.items[0].value, total())} of ${bytes(total())}` : "");
+  const sentence = () => (props.items.length > 0 ? t("chart.shareOf", { what: props.items[0].label, pct: pct(props.items[0].value, total()), of: bytes(total()) }) : "");
   // nested: each prefix under its top folder, so a folder reads as the sum of its parts
   const top = (label: string) => label.split("/")[0] || label;
   const groups = () => [...new Set(props.items.map((i) => top(i.label)))];

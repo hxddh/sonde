@@ -442,7 +442,7 @@ fn print_profile(p: &Profile, color: bool, say: &dyn Fn(String)) {
                     g.operation.clone()
                 },
                 format!("{:.0}%", g.share * 100.0),
-                ms_text(g.busy_ms),
+                ms_text(g.waited_ms),
                 g.requests.to_string(),
                 ms_text(g.p50_ms),
                 ms_text(g.p95_ms),
@@ -1217,13 +1217,24 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         observations(&sa.records, &episodes(&sa.records)),
         observations(&sb.records, &episodes(&sb.records)),
     );
-    let c = sonde_proxy::profile::compare_runs((&sa.records, &pa, &oa), (&sb.records, &pb, &ob));
+    let c = sonde_proxy::profile::compare_runs((&sa.records, &pa, &oa), (&sb.records, &pb, &ob))
+        .of_programs(sa.header.command.as_deref(), sb.header.command.as_deref());
     if matches!(a.format, Format::Json) {
         println!("{}", output::json(&c));
         return Ok(0);
     }
     let color = std::io::stdout().is_terminal();
     let n = |v: f64| format!("{v:.0}");
+    if !c.same_program {
+        println!(
+            "{}",
+            paint(
+                "two different programs: their figures compare, their findings do not",
+                "33",
+                color
+            )
+        );
+    }
     println!("{}", paint("before → after", "1", color));
     println!(
         "  requests   {}",

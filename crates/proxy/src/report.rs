@@ -167,15 +167,12 @@ pub fn redact(s: &mut Session) {
     };
     s.header.url = String::new();
     s.header.endpoint = "endpoint".into();
-    s.header.command = s.header.command.as_deref().and_then(|c| {
-        let first = c.split_whitespace().next()?;
-        Some(
-            std::path::Path::new(first)
-                .file_name()
-                .map(|f| f.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-        )
-    });
+    // the program's name only: never a variable set before it (a key, say)
+    s.header.command = s
+        .header
+        .command
+        .as_deref()
+        .map(|c| crate::program::program_name(c).unwrap_or_default());
     s.logs.clear();
     for rec in &mut s.records {
         rec.endpoint = "endpoint".into();
@@ -356,7 +353,7 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
                 "<div class=\"row\"><span>{}</span><div class=\"track\"><div class=\"fill\" style=\"width:{:.1}%\"></div></div><span class=\"num\">{}</span></div>",
                 esc(&name),
                 g.share * 100.0,
-                ms(g.busy_ms)
+                ms(g.waited_ms)
             );
         }
         o.push_str("</div>");

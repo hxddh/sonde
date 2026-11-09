@@ -12,6 +12,9 @@ import { programOf } from "./sessionview";
 import { toast } from "./toast";
 
 /** What a session is called: the user's title, else its program, else its endpoint. */
+/** A path's last part, with either separator (Windows' too). */
+export const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
+
 export const sessionName = (s: Pick<SessionInfo, "title" | "command" | "endpoint">) => s.title || programOf(s.command) || s.endpoint;
 
 /** The session being renamed, while the dialog is open. */
@@ -94,7 +97,8 @@ export async function shareSession(path: string) {
     });
   } catch (e) {
     // a build without the viewer: the command that makes the page
-    const command = `sonde share --serve ${path}`;
+    // quoted: a path with spaces is one argument
+    const command = `sonde share --serve "${path.replace(/(["\\$`])/g, "\\$1")}"`;
     void Clipboard.writeText(command).then(() => notify(t("share.command")), report);
     if (!String(e instanceof Error ? e.message : e).includes("no web viewer")) report(e);
   }

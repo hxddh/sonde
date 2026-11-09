@@ -17,12 +17,30 @@ import { Dot, Empty, InWindowMenu, POPUP, rowHeight, terminal, TYPE } from "./ki
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
 
-/** What a command runs, for lists: its program's name, or the command itself when it starts with the shell's own words. */
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/** The command with the value of every variable it sets hidden
+ * (`AWS_SECRET_ACCESS_KEY=…`): what a list, a tooltip or a notification shows. */
+export function scrubCommand(command: string): string {
+  return command
+    .trim()
+    .split(/\s+/)
+    .map((w) => (ASSIGNMENT.test(w) ? `${w.slice(0, w.indexOf("="))}=…` : w))
+    .join(" ");
+}
+
+/** What a command runs, for lists: its program's name (past the variables
+ * it sets, never one of their values), or the command itself, scrubbed, when
+ * it starts with the shell's own words. */
 export function programOf(command: string | null | undefined): string | null {
   if (!command) return null;
-  const first = command.trim().split(/\s+/)[0] ?? "";
-  if (SHELL.has(first) || first.includes("=")) return command.trim().length > 40 ? `${command.trim().slice(0, 40)}…` : command.trim();
-  return first.split("/").pop() || command;
+  const words = command.trim().split(/\s+/);
+  const first = words.find((w) => !ASSIGNMENT.test(w) && w !== "env") ?? "";
+  if (!first || SHELL.has(first)) {
+    const c = scrubCommand(command);
+    return c.length > 40 ? `${c.slice(0, 40)}…` : c;
+  }
+  return first.split(/[\\/]/).pop() || null;
 }
 
 export const seconds = (s: number) => (s < 10 ? s.toFixed(1) : s.toFixed(0));
@@ -165,7 +183,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
   if (terminal()) {
     return (
       <View class="gap-0">
-        <Text class="font-semibold text-foreground">{command() ? `$ ${command()}` : props.view.header.endpoint}</Text>
+        <Text class="font-semibold text-foreground">{command() ? `$ ${scrubCommand(command()!)}` : props.view.header.endpoint}</Text>
         <Text class="text-muted-foreground" testID="session-summary">
           {line()}
         </Text>
@@ -178,7 +196,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
           <Text class="font-mono text-body font-semibold text-foreground line-clamp-2">
-            {command() ? `$ ${command()}` : props.view.header.endpoint}
+            {command() ? `$ ${scrubCommand(command()!)}` : props.view.header.endpoint}
           </Text>
           <Text class="text-small text-muted-foreground line-clamp-1">{`${props.view.header.endpoint} · ${props.view.header.url} · ${date(props.view.header.created)}`}</Text>
           {/* the session in a sentence: where its time went, and the first thing to do */}

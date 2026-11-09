@@ -19,11 +19,11 @@ import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
 import { Button, Empty, IconButton, Segmented, SessionSkeleton, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
-import { removeSession, rename, RenameDialog, shareSession } from "../ui/manage";
+import { fileName, removeSession, rename, RenameDialog, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
-import { programOf } from "../ui/sessionview";
+import { programOf, scrubCommand } from "../ui/sessionview";
 import { HistoryPane } from "../ui/history";
 import { TimePane } from "../ui/profile";
 import { offset } from "../ui/plots";
@@ -150,8 +150,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const openWindow = () => {
     const v = view();
     Window.open(() => <SessionWindow path={props.path} />, {
-      id: `session-${props.path.split("/").pop()}`,
-      title: v?.header.command ?? props.path.split("/").pop() ?? "sonde",
+      id: `session-${fileName(props.path)}`,
+      title: v?.header.command ? scrubCommand(v.header.command) : fileName(props.path),
       defaultSize: { width: 1100, height: 720 },
       restoreBounds: true,
     });
@@ -180,9 +180,18 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const compareMenu = () => {
     const others = props.others().filter((s) => s.path !== props.path);
     if (!isAvailable) return;
+    // runs of this program first; another program's under its own heading
+    const key = (c: string | null | undefined) => (c ?? "").trim().split(/\s+/).join(" ");
+    const mine = key(info()?.command);
+    const same = others.filter((s) => mine && key(s.command) === mine);
+    const rest = others.filter((s) => !same.includes(s));
+    const item = (s: SessionInfo) => ({ label: `${program(s.command) ?? s.endpoint} · ${hm(s.created)} · ${s.requests}`, onSelect: () => compareWith.set(s.path) });
     void Menu.popup(
       others.length
-        ? others.slice(0, 20).map((s) => ({ label: `${program(s.command) ?? s.endpoint} · ${hm(s.created)} · ${s.requests}`, onSelect: () => compareWith.set(s.path) }))
+        ? [
+            ...(same.length ? same.slice(0, 20).map(item) : [{ label: t("compare.noRuns"), disabled: true }]),
+            ...(rest.length ? ([{ type: "separator" }, { label: t("compare.otherPrograms"), submenu: rest.slice(0, 20).map(item) }] as MenuItem[]) : []),
+          ]
         : [{ label: t("compare.none"), disabled: true }],
     );
   };
@@ -235,7 +244,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     if (pane() === "aligned" && lines().length) {
       if (terminal()) return output();
       return (
-        <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE}>
+        <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeOutput")}>
           <ResizablePanel minSize={240}>
             <View class="flex-1 pr-1.5">{output()}</View>
           </ResizablePanel>
@@ -336,7 +345,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
                     </View>
                   }
                 >
-                  <ResizablePanelGroup axis="horizontal" class="flex-1" handleClass={SPLIT_HANDLE}>
+                  <ResizablePanelGroup axis="horizontal" class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeInspector")}>
                     <ResizablePanel minSize={460}>{main(v())}</ResizablePanel>
                     <If when={inspecting()}>
                       <ResizablePanel size={inspectorWidth.size()} onResize={inspectorWidth.onResize} minSize={320} maxSize={680}>
@@ -437,8 +446,8 @@ export function Sessions() {
   };
   const openInWindow = (path: string) =>
     Window.open(() => <SessionWindow path={path} />, {
-      id: `session-${path.split("/").pop()}`,
-      title: path.split("/").pop() ?? "sonde",
+      id: `session-${fileName(path)}`,
+      title: fileName(path),
       defaultSize: { width: 1100, height: 720 },
       restoreBounds: true,
     });

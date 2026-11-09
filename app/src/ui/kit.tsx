@@ -1,7 +1,7 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { ErrorBoundary, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, Text, token, View, type ViewRef } from "nsh";
-import { Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
+import { ErrorBoundary, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
+import { Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableSort, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
 
@@ -552,22 +552,51 @@ export function Page(props: { children: JSX.Element; testID?: string }) {
   );
 }
 
+/** What a sortable cell sorts by: its number where it reads as one
+ * ("1.5 d", "23 h", "176 MiB", "12%", "3 · 172 MiB" by its first figure, in
+ * the units it names), else its text. */
+export function sortValue(text: string): number | string {
+  const m = /^\s*[<>~+\u2212-]?\s*([\d.,]+)\s*(ms|s|min|h|d|B|KiB|MiB|GiB|TiB|PiB|%|×)?/.exec(text);
+  if (!m) return text.toLowerCase();
+  const n = Number(m[1].replace(/,/g, ""));
+  if (!Number.isFinite(n)) return text.toLowerCase();
+  const unit: Record<string, number> = { ms: 1, s: 1e3, min: 6e4, h: 3.6e6, d: 8.64e7, B: 1, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3, TiB: 1024 ** 4, PiB: 1024 ** 5 };
+  const sign = /^\s*[\u2212-]/.test(text) ? -1 : 1;
+  return sign * n * (unit[m[2] ?? ""] ?? 1);
+}
+
+/** Rows in the order a table's sort says (Native Shell reports the sort; the
+ * app orders the rows): by `value` of the sorted column, numbers before text. */
+export function sortRows<T>(rows: readonly T[], sort: DataTableSort | null, value: (row: T, key: string) => number | string): T[] {
+  if (!sort) return [...rows];
+  const dir = sort.direction === "descending" ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const x = value(a, sort.key);
+    const y = value(b, sort.key);
+    const c = typeof x === "number" && typeof y === "number" ? x - y : typeof x === "number" ? -1 : typeof y === "number" ? 1 : String(x).localeCompare(String(y), undefined, { numeric: true });
+    return c * dir;
+  });
+}
+
 /** Rows of text as a table: Native Shell's DataTable (virtual, so every row,
- * sortable by a press on a title), each column as wide as what it holds.
- * `max` is how many rows show before it scrolls. */
+ * sortable by a press on a title: by number where a cell reads as one), each
+ * column as wide as what it holds. `max` is how many rows show before it scrolls. */
 export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number }) {
+  const sort = signal<DataTableSort | null>(null);
   const per = () => (props.mono ? 7.4 : 6.6);
   const columns = () =>
     props.columns.map((title, c) => {
       const longest = Math.max(title.length, ...props.rows.slice(0, 400).map((r) => (r[c] ?? "").length));
       return { key: `c${c}`, title, width: Math.round(Math.min(360, Math.max(56, longest * per() + 20))), sortable: !terminal() };
     });
-  const data = () => props.rows.map((r) => Object.fromEntries(r.map((cell, c) => [`c${c}`, cell])));
+  const data = () => sortRows(props.rows, sort(), (r, key) => sortValue(r[Number(key.slice(1))] ?? "")).map((r) => Object.fromEntries(r.map((cell, c) => [`c${c}`, cell])));
   const shown = () => Math.min(props.rows.length, props.max ?? 12);
   return (
     <DataTable
       columns={columns()}
       data={data()}
+      sort={sort()}
+      onSortChange={({ sort: next }) => sort.set(next)}
       fontSize={TYPE.small}
       fontFamily={props.mono ? token("font-mono") : undefined}
       rowHeight={rowHeight(26)}

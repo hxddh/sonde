@@ -12,7 +12,17 @@ import { bucket, endpoint, go, prefix, type StoreTab } from "../store";
 import type { Detection, DuReport, MpuReport, VersioningStatus } from "../types";
 import { Icon, type IconName } from "./icon";
 
-export const LAYOUT_LABEL: Record<string, string> = { slatedb: "SlateDB", iceberg: "Apache Iceberg", lakefs: "lakeFS", woodpecker: "Milvus Woodpecker", turbopuffer: "turbopuffer", warpstream: "WarpStream", generic: "Write cadence" };
+export const LAYOUT_LABEL: Record<string, string> = {
+  slatedb: "SlateDB",
+  iceberg: "Apache Iceberg",
+  lakefs: "lakeFS",
+  woodpecker: "Milvus Woodpecker",
+  turbopuffer: "turbopuffer",
+  warpstream: "WarpStream",
+  get generic() {
+    return t("layouts.generic");
+  },
+};
 
 interface Known {
   mpu?: MpuReport | null;

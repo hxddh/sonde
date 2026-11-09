@@ -21,8 +21,9 @@ const WINDOW = 400;
 function Breadcrumbs() {
   const parts = () => {
     const p = prefix();
-    const segs = p.split("/").filter(Boolean);
-    return segs.map((s, i) => ({ name: s, prefix: `${segs.slice(0, i + 1).join("/")}/` }));
+    // every segment, empty ones too (`a//b/` is its own place): each crumb's prefix is the key's own
+    const segs = p.endsWith("/") ? p.slice(0, -1).split("/") : p.split("/");
+    return p ? segs.map((s, i) => ({ name: s || "∅", prefix: `${segs.slice(0, i + 1).join("/")}/` })) : [];
   };
   return (
     <View class="min-w-0 flex-row flex-wrap items-center gap-0.5">
@@ -166,10 +167,10 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               <KeyValue boxed
                 rows={[
                   ["SSE", d().sse.customerAlgorithm ? `SSE-C (${d().sse.customerAlgorithm})` : (d().sse.algorithm ?? t("browse.noEncryption"))],
-                  ...(d().sse.kmsKeyId ? ([["KMS key", d().sse.kmsKeyId]] as [string, string][]) : []),
-                  ...(d().sse.bucketKeyEnabled !== null && d().sse.bucketKeyEnabled !== undefined ? ([["Bucket key", String(d().sse.bucketKeyEnabled)]] as [string, string][]) : []),
-                  ...(d().objectLock ? ([["Object Lock", d().objectLock!]] as [string, string][]) : []),
-                  ...(d().restore ? ([["Restore", d().restore!]] as [string, string][]) : []),
+                  ...(d().sse.kmsKeyId ? ([[t("browse.kmsKey"), d().sse.kmsKeyId]] as [string, string][]) : []),
+                  ...(d().sse.bucketKeyEnabled !== null && d().sse.bucketKeyEnabled !== undefined ? ([[t("browse.bucketKey"), d().sse.bucketKeyEnabled ? t("common.on") : t("common.off")]] as [string, string][]) : []),
+                  ...(d().objectLock ? ([[t("browse.objectLock"), d().objectLock!]] as [string, string][]) : []),
+                  ...(d().restore ? ([[t("browse.restore"), d().restore!]] as [string, string][]) : []),
                 ]}
               />
             </Fold>

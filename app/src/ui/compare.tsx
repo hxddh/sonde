@@ -43,6 +43,12 @@ export function RunChangeView(props: { change: RunChange }) {
   const n = (v: number) => String(Math.round(v));
   return (
     <Scroll testID="run-change" class="min-h-0 flex-1" contentClass="gap-5 pb-4">
+      <If when={!c().sameProgram}>
+        <View testID="other-program" class="flex-row items-center gap-2 rounded-(--radius) border border-warn/40 bg-warn/10 px-3 py-2">
+          <Icon name="triangle-alert" size={14} tint="warn" />
+          <Text class="flex-1 text-body text-foreground">{t("compare.otherProgram")}</Text>
+        </View>
+      </If>
       <View class="flex-row flex-wrap gap-x-8 gap-y-3 rounded-(--radius-card) border border-border bg-card px-4 py-3">
         <Delta testID="run-change-requests" label={t("figure.requests")} a={c().requests[0]} b={c().requests[1]} text={n} />
         <Delta label={t("profile.waiting")} a={c().busyMs[0]} b={c().busyMs[1]} text={offset} />
@@ -126,7 +132,7 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
   };
   // a replay opens on its answers; two runs of a program on before and after
   const mode = signal<"runs" | "answers">(untracked(() => (replayOf() ? "answers" : "runs")));
-  const name = (p: string) => p.split("/").pop() ?? p;
+  const name = (p: string) => p.split(/[\\/]/).pop() || p;
   return (
         <View class="flex-1 gap-3" testID="compare">
           <View class="flex-row items-center gap-2">

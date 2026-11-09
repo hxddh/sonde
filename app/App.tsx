@@ -162,7 +162,7 @@ function Home() {
   return (
     <NavPage title="sonde" header={<TermHeader title="sonde" />}>
       <View class="flex-1 gap-1 p-1">
-        <Text class="text-muted-foreground">{t("app.tagline")} — : search · F10: menu · Tab: next · Esc: back</Text>
+        <Text class="text-muted-foreground">{`${t("app.tagline")} — ${t("app.tuiKeys")}`}</Text>
         <Each of={AREAS}>
           {(a, i) => (
             <View role="button" testID={`nav-${a()}`} onPress={() => open(a())} class="flex-row gap-2 px-1 hover:bg-muted">

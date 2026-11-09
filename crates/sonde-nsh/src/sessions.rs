@@ -789,10 +789,10 @@ impl Sessions {
                 observations(&a.records, &episodes(&a.records)),
                 observations(&b.records, &episodes(&b.records)),
             );
-            Ok(to_json(sonde_proxy::profile::compare_runs(
-                (&a.records, &pa, &oa),
-                (&b.records, &pb, &ob),
-            )))
+            Ok(to_json(
+                sonde_proxy::profile::compare_runs((&a.records, &pa, &oa), (&b.records, &pb, &ob))
+                    .of_programs(a.header.command.as_deref(), b.header.command.as_deref()),
+            ))
         })
         .await
         .map_err(err_msg)?

@@ -411,6 +411,8 @@ impl Sonde {
         let held = std::rc::Rc::new(std::cell::RefCell::new(Some(listener)));
         let task = held.clone();
         let alive = move || task.borrow().clone();
+        // stopping ends the task at once, not at the next change
+        let (stop_tx, mut stop) = tokio::sync::watch::channel(false);
         match event.as_str() {
             "request" => {
                 let mut rx = sonde().log().subscribe();
@@ -420,7 +422,11 @@ impl Sonde {
                         l.post(json!(last));
                     }
                     loop {
-                        let id = match rx.recv().await {
+                        let next = tokio::select! {
+                            _ = stop.changed() => return,
+                            r = rx.recv() => r,
+                        };
+                        let id = match next {
                             Ok(id) => id,
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                                 latest_id() as u64
@@ -445,6 +451,8 @@ impl Sonde {
                 let mut rx = sonde().jobs().changes();
                 cx.start(async move {
                     loop {
+                        // marked seen before counting: a change while counting wakes the next turn
+                        rx.borrow_and_update();
                         let running = sonde()
                             .jobs()
                             .list()
@@ -453,16 +461,19 @@ impl Sonde {
                             .count();
                         let Some(l) = alive() else { return };
                         l.post(json!(running));
-                        rx.borrow_and_update();
-                        if rx.changed().await.is_err() {
-                            return;
+                        tokio::select! {
+                            _ = stop.changed() => return,
+                            r = rx.changed() => if r.is_err() { return },
                         }
                     }
                 });
             }
             other => return Err(err_msg(format!("no Sonde event `{other}`"))),
         }
-        Ok(Stop::new(move || drop(held.take())))
+        Ok(Stop::new(move || {
+            drop(held.take());
+            let _ = stop_tx.send(true);
+        }))
     }
 
     /// The id of the newest record (0 when empty): poll it to refresh.

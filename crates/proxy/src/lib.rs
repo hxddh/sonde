@@ -507,6 +507,10 @@ fn admit_v2(
             if now.timestamp() > at {
                 return Err("its presigned URL has expired".into());
             }
+            // as SigV4's: a week at most, so a URL handed out does not last forever
+            if at - now.timestamp() > 604_800 {
+                return Err("its presigned URL lasts more than a week".into());
+            }
         }
         _ => {
             let date = header("x-amz-date");

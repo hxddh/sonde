@@ -69,7 +69,11 @@ pub struct Group {
     pub busy_ms: f64,
     /// Their latencies added up.
     pub sum_ms: f64,
-    /// `busy_ms` over the session's busy time.
+    /// The program's waiting that was theirs: each moment's waiting split
+    /// evenly among the requests then in flight, so the kinds add up to the
+    /// session's waiting.
+    pub waited_ms: f64,
+    /// `waited_ms` over the session's waiting (the kinds add up to 1).
     pub share: f64,
     pub p50_ms: f64,
     pub p95_ms: f64,
@@ -326,6 +330,43 @@ pub fn busy_ms(records: &[Record]) -> f64 {
     union_us(records.iter().map(|r| (start_us(r), end_us(r))).collect()) as f64 / 1000.0
 }
 
+/// Each kind's part of the waiting, in microseconds: every stretch of time
+/// split evenly among the requests in flight then, so that requests at once
+/// count once and the kinds add up to the time with a request in flight.
+fn waited_us<K: Ord + Clone>(by: &BTreeMap<K, Vec<&Record>>) -> BTreeMap<K, f64> {
+    let keys: Vec<&K> = by.keys().collect();
+    let mut events: Vec<(i64, i32, usize)> = Vec::new();
+    for (k, rs) in by.values().enumerate() {
+        for r in rs {
+            let (s, e) = (start_us(r), end_us(r));
+            if e > s {
+                events.push((s, 1, k));
+                events.push((e, -1, k));
+            }
+        }
+    }
+    // ends before starts at the same moment
+    events.sort_unstable();
+    let mut active = vec![0i64; keys.len()];
+    let mut total = 0i64;
+    let mut out = vec![0f64; keys.len()];
+    let mut last = events.first().map(|e| e.0).unwrap_or(0);
+    for (t, d, k) in events {
+        if total > 0 && t > last {
+            let dt = (t - last) as f64;
+            for (i, n) in active.iter().enumerate() {
+                if *n > 0 {
+                    out[i] += dt * *n as f64 / total as f64;
+                }
+            }
+        }
+        last = t;
+        active[k] += d as i64;
+        total += d as i64;
+    }
+    keys.into_iter().cloned().zip(out).collect()
+}
+
 /// The length of the union of intervals, in microseconds.
 fn union_us(mut iv: Vec<(i64, i64)>) -> i64 {
     iv.sort_unstable();
@@ -422,9 +463,12 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             .or_default()
             .push(r);
     }
+    let waited = waited_us(&by);
     let mut groups: Vec<(Group, Vec<&Record>)> = by
         .into_iter()
-        .map(|((operation, missed), rs)| {
+        .map(|(key, rs)| {
+            let waited_us = waited.get(&key).copied().unwrap_or(0.0);
+            let (operation, missed) = key;
             let mut lat: Vec<f64> = rs.iter().map(|r| r.latency_ms.max(0.0)).collect();
             lat.sort_by(f64::total_cmp);
             let busy = union_us(rs.iter().map(|r| (start_us(r), end_us(r))).collect());
@@ -434,7 +478,8 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
                 requests: rs.len(),
                 busy_ms: ms(busy),
                 sum_ms: lat.iter().sum(),
-                share: busy as f64 / busy_us.max(1) as f64,
+                waited_ms: waited_us / 1000.0,
+                share: waited_us / busy_us.max(1) as f64,
                 p50_ms: percentile(&lat, 0.5),
                 p95_ms: percentile(&lat, 0.95),
                 max_ms: lat.last().copied().unwrap_or(0.0),
@@ -447,8 +492,8 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         })
         .collect();
     groups.sort_by(|a, b| {
-        b.0.busy_ms
-            .total_cmp(&a.0.busy_ms)
+        b.0.waited_ms
+            .total_cmp(&a.0.waited_ms)
             .then(b.0.requests.cmp(&a.0.requests))
     });
     let group_of: HashMap<u64, usize> = groups
@@ -770,6 +815,28 @@ pub struct RunChange {
     pub resolved: Vec<FindingText>,
     /// Findings only the second run has.
     pub appeared: Vec<FindingText>,
+    /// Both are runs of one program. Two programs' figures still compare,
+    /// but their findings do not: one's are not "gone" because the other
+    /// never had them.
+    pub same_program: bool,
+}
+
+impl RunChange {
+    /// Says whether the two runs are of one program (`command`s by
+    /// [`crate::program::program_key`]); across programs the findings
+    /// gone and new are left out.
+    pub fn of_programs(mut self, a: Option<&str>, b: Option<&str>) -> Self {
+        let (ka, kb) = (
+            crate::program::program_key(a),
+            crate::program::program_key(b),
+        );
+        self.same_program = ka.is_some() && ka == kb;
+        if !self.same_program {
+            self.resolved.clear();
+            self.appeared.clear();
+        }
+        self
+    }
 }
 
 /// A finding as it reads: in English, and as phrases for other languages.
@@ -890,6 +957,7 @@ pub fn compare_runs(
             .filter(|(k, _)| !ia.contains_key(*k))
             .map(|(_, t)| t.clone())
             .collect(),
+        same_program: true,
     }
 }
 
@@ -937,6 +1005,23 @@ mod tests {
         assert_eq!(p.groups[0].operation, "PutObject", "most time first");
         assert!((p.groups[0].share - 100.0 / 150.0).abs() < 1e-9);
         assert_eq!(p.rate.iter().map(|b| b.ok).sum::<usize>(), 11);
+    }
+
+    #[test]
+    fn overlapping_kinds_share_the_waiting_and_add_up_to_it() {
+        // a read of 100 ms; a write over its second half and 50 ms more
+        let rs = [
+            rec(1, 0, "GetObject", 200, 100.0),
+            rec(2, 50, "PutObject", 200, 100.0),
+        ];
+        let p = profile(&rs, &RequestPrices::default());
+        assert_eq!(p.busy_ms, 150.0);
+        let by = |op: &str| p.groups.iter().find(|g| g.operation == op).unwrap();
+        // the 50 ms both were in flight count once, half each
+        assert!((by("GetObject").waited_ms - 75.0).abs() < 1e-6);
+        assert!((by("PutObject").waited_ms - 75.0).abs() < 1e-6);
+        let total: f64 = p.groups.iter().map(|g| g.share).sum();
+        assert!((total - 1.0).abs() < 1e-9, "shares add up to {total}");
     }
 
     #[test]

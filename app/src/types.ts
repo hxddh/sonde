@@ -512,6 +512,8 @@ export interface ProfileGroup {
   requests: number;
   busyMs: number;
   sumMs: number;
+  /** The program's waiting that was theirs (each moment split among the requests then in flight). */
+  waitedMs: number;
   share: number;
   p50Ms: number;
   p95Ms: number;
@@ -595,6 +597,8 @@ export interface RunChange {
   groups: { operation: string; missed: boolean; requests: [number, number]; busyMs: [number, number] }[];
   resolved: { text: string; phrases: Phrase[] }[];
   appeared: { text: string; phrases: Phrase[] }[];
+  /** Both are runs of one program; across programs the findings gone and new are left out. */
+  sameProgram: boolean;
 }
 
 export interface SessionView {
