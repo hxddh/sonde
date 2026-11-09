@@ -451,7 +451,8 @@ export function SwitchRow(props: { label: string; checked: boolean; onChange: (v
       accessibilityLabel={props.label}
       onChange={({ checked }) => props.onChange(checked)}
       class={`flex-row items-center gap-3 rounded-(--radius-sm) disabled:opacity-50 ${FOCUS}`}
-      trackClass="h-5 w-9 shrink-0 rounded-full bg-input px-0.5 checked:bg-primary motion-safe:transition-colors"
+      // the thumb centered in its track, top to bottom
+      trackClass="h-5 w-9 shrink-0 justify-center rounded-full bg-input px-0.5 checked:bg-primary motion-safe:transition-colors"
       thumbClass="h-4 w-4 rounded-full bg-background shadow-sm checked:translate-x-4 motion-safe:transition-transform"
     >
       <View class="flex-1">
