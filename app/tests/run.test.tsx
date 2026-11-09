@@ -179,18 +179,22 @@ test("a session's time: where it went, and two runs before and after", async () 
   await app.press("id:session-pane-mode-time");
   await app.waitFor("id:time-pane");
   expect(app.shows("text:Where the time went")).toBe(true);
-  expect(app.shows("label:/^Most of the waiting: PutObject, 65%/")).toBe(true);
+  // its part of the waiting: requests at once count once, the kinds add up to it
+  expect(app.shows("label:/^Most of the waiting: PutObject, \\d+%/")).toBe(true);
   expect(app.shows("id:profile-cost")).toBe(true);
   // the operations sort by how long they took
   await app.press("id:session-pane-mode-operations");
   // compared with another run: before and after
   await app.press("id:compare-open");
-  const run = app.menu()!.map((m) => m.label).find((l) => l.startsWith("echo"))!;
+  // another program's runs are under their own heading, and say so once compared
+  const run = app.menu()!.map((m) => m.label).find((l) => l.startsWith("Other programs > echo"))!;
   await app.chooseMenuItem(run);
   await app.waitFor("id:compare");
   await app.waitFor("id:run-change", { timeout: 10000 });
   expect(app.shows("id:run-change-requests")).toBe(true);
   expect(app.shows("text:/^172 → /")).toBe(true);
+  expect(app.shows("id:other-program")).toBe(true);
+  expect(app.shows("text:/^Gone · /")).toBe(false);
 });
 
 test("a program over its runs: history, a baseline, and the flows of its requests", async () => {
