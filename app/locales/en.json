@@ -643,5 +643,8 @@
  "cost.perThousand": "%{v} %{cur} per 1,000 runs",
  "run.emptyNotKept": "The run made no requests: it will not be kept",
  "run.keepEmpty": "Keep",
- "probes.writes": "A run writes test objects under %{bucket}/sonde-probe/ and deletes them when it ends (with temporary buckets on, it also creates and deletes buckets named sonde-probe-…). Use a bucket you can write to, not one holding data you need."
+ "probes.writes": "A run writes test objects under %{bucket}/sonde-probe/ and deletes them when it ends (with temporary buckets on, it also creates and deletes buckets named sonde-probe-…). Use a bucket you can write to, not one holding data you need.",
+ "fix.copy": "Copy the code",
+ "settings.callers": "Name the code that sent each request (Python)",
+ "settings.callersHint": "A run puts a small hook on PYTHONPATH: boto3 adds the file, line and function to each request, and findings say where to change the program. Nothing else changes; the store never sees it."
 }

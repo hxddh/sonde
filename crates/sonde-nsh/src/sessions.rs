@@ -606,7 +606,13 @@ impl Sessions {
         let (env_set, env_unset, writer, path) = {
             let g = RECORDING.lock();
             let r = g.as_ref().expect("begin started a recording");
-            let (set, unset) = r.proxy.env();
+            let (mut set, unset) = r.proxy.env();
+            // the code that sent each request, when asked (a Python program's)
+            if sonde().settings().name_callers
+                && let Ok(v) = sonde_proxy::callers::python_env(&sonde().paths().python_hook())
+            {
+                set.push(v);
+            }
             (
                 set,
                 unset,
@@ -979,7 +985,9 @@ impl Sessions {
     /// session, read like any program's: its findings, its time, compared.
     /// The newest `limit` requests, oldest first; the path of the new file.
     pub fn from_request_log(limit: u32) -> Result<String, String> {
-        let mut records = sonde().log().list(&reqlog::Filter::default(), limit as usize);
+        let mut records = sonde()
+            .log()
+            .list(&reqlog::Filter::default(), limit as usize);
         if records.is_empty() {
             return Err(err_msg("sonde has made no requests yet"));
         }

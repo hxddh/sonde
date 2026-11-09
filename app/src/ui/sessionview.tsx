@@ -4,8 +4,8 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type ContextMenuEvent, effect, type JSX, List, platform, reduceMotion, Scroll, type ScrollRef, signal, Text, View } from "nsh";
-import { Button as BaseButton, Collapsible, DataTable, type DataTableRef, type DataTableSort, Editor, HoverCard, TextView, Toggle, ToggleGroup } from "nsh/base";
+import { type ContextMenuEvent, effect, type JSX, List, platform, reduceMotion, Scroll, type ScrollRef, signal, Text, untracked, View } from "nsh";
+import { Button as BaseButton, Collapsible, DataTable, type DataTableRef, type DataTableSort, HoverCard, TextView, Toggle, ToggleGroup } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
 import { bytes, date, day, middle, ms } from "../format";
 import { t } from "../i18n";
@@ -242,9 +242,22 @@ const LANG = { python: "python", java: "java", go: "go", js: "javascript", confi
 const fixSdk = signal<keyof typeof SDKS>("python");
 
 /** What to change for a finding: its fix in each SDK, one shown. */
+/** The fix's SDK for the program's own: its user agent named it. */
+const sdkOfAgent = (sdk: string | undefined): keyof typeof SDKS | null => {
+  if (!sdk) return null;
+  const s = sdk.toLowerCase();
+  return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : null;
+};
+
 function FixPanel(props: { o: Observation }) {
   const fixes = () => props.o.fixes ?? [];
-  const shown = () => fixes().find((f) => f.sdk === fixSdk()) ?? fixes()[0];
+  // the program's own SDK first, when its requests said which; else the one last chosen
+  const own = () => sdkOfAgent(props.o.sdk);
+  const shown = () => fixes().find((f) => f.sdk === fixSdk()) ?? fixes().find((f) => f.sdk === own()) ?? fixes()[0];
+  effect(() => {
+    const o = own();
+    if (o && fixes().some((f) => f.sdk === o)) untracked(() => fixSdk.set(o));
+  });
   return (
     <View testID="fix" class="gap-2 rounded-(--radius-card) border border-border bg-card p-3">
       <View class="flex-row flex-wrap items-center gap-2">
@@ -275,10 +288,30 @@ function FixPanel(props: { o: Observation }) {
           />
         )}
       </If>
+      {/* where in the program, when it said: the place to change */}
+      <If when={props.o.callers?.length}>
+        <View testID="fix-callers" class="gap-0.5">
+          <Each of={props.o.callers!}>
+            {(c) => (
+              <View class="flex-row items-center gap-1.5">
+                <Icon name="file" size={12} />
+                <Text class="min-w-0 flex-1 font-mono text-small text-foreground line-clamp-1">{c().place}</Text>
+                <Text class="tabular-nums text-caption text-muted-foreground">{t("run.bandRequests", { n: c().requests })}</Text>
+              </View>
+            )}
+          </Each>
+        </View>
+      </If>
       <If when={shown()}>
         {(f) => (
           <If when={!terminal()} else={<Text class="font-mono text-foreground">{f().code}</Text>}>
-            <Editor testID="fix-code" value={f().code} language={LANG[f().sdk]} readOnly lineNumbers={false} softWrap minRows={2} maxRows={10} fontSize={12} class="rounded-(--radius) border border-border bg-background" />
+            {/* highlighted, with a copy button over it (Native Shell's TextView) */}
+            <TextView
+              testID="fix-code"
+              markdown={`\`\`\`${LANG[f().sdk]}\n${f().code}\n\`\`\``}
+              codeBlockActions={[{ id: "copy", label: t("fix.copy") }]}
+              classes={{ codeBlock: "rounded-(--radius) border border-border bg-background p-2.5 font-mono text-small" }}
+            />
           </If>
         )}
       </If>

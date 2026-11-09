@@ -326,6 +326,14 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
             if let Some(sv) = &f.saving_text {
                 let _ = write!(o, "<div class=\"saving\">{}</div>", esc(sv));
             }
+            for c in &f.callers {
+                let _ = write!(
+                    o,
+                    "<div class=\"caller\"><code>{}</code> · {}</div>",
+                    esc(&c.place),
+                    c.requests
+                );
+            }
             let links: Vec<String> = f
                 .episodes
                 .iter()

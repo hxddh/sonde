@@ -61,6 +61,11 @@ impl Paths {
     pub fn sessions(&self) -> PathBuf {
         self.data_dir.join("sessions")
     }
+    /// The hook that names the code sending each request in a Python
+    /// program (written there when a run asks for it).
+    pub fn python_hook(&self) -> PathBuf {
+        self.data_dir.join("python-hook")
+    }
     /// Sessions shared as web pages from the app.
     pub fn shared(&self) -> PathBuf {
         self.data_dir.join("shared")

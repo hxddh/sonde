@@ -643,5 +643,8 @@
  "cost.perThousand": "每 1,000 次运行 %{v} %{cur}",
  "run.emptyNotKept": "这次运行没有请求：不会保留",
  "run.keepEmpty": "保留",
- "probes.writes": "运行会在 %{bucket}/sonde-probe/ 下写入测试对象，结束时删除（开启临时存储桶时，还会创建并删除名为 sonde-probe-… 的存储桶）。请使用可写入、且不存放重要数据的存储桶。"
+ "probes.writes": "运行会在 %{bucket}/sonde-probe/ 下写入测试对象，结束时删除（开启临时存储桶时，还会创建并删除名为 sonde-probe-… 的存储桶）。请使用可写入、且不存放重要数据的存储桶。",
+ "fix.copy": "复制代码",
+ "settings.callers": "标出发出每个请求的代码位置（Python）",
+ "settings.callersHint": "运行时在 PYTHONPATH 上加一个小钩子：boto3 会在每个请求中附上文件、行号和函数，发现就能指出该改程序的哪里。其他不变，存储端也看不到。"
 }

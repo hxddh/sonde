@@ -41,6 +41,11 @@ pub struct RunArgs {
     /// Print each request on stderr as it happens.
     #[arg(long)]
     live: bool,
+    /// Name the place in a Python program's code that sent each request
+    /// (boto3 / botocore): findings then say where to change it. Also the
+    /// `name-callers` setting.
+    #[arg(long)]
+    callers: bool,
     /// The command, after `--`.
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<String>,
@@ -537,6 +542,14 @@ fn print_summary(
             paint("·", "2", color)
         };
         say(format!("{mark} {}", o.text));
+        // where in the program, when it says
+        for c in &o.callers {
+            say(paint(
+                &format!("    at {} ({} requests)", c.place, c.requests),
+                "2",
+                color,
+            ));
+        }
     }
     // acting on all of them, at once
     if let Some(w) = sonde_proxy::fixes::what_if(records, &prof, &obs) {
@@ -569,7 +582,10 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         false,
     )
     .await?;
-    let (set, unset) = started.proxy.env();
+    let (mut set, unset) = started.proxy.env();
+    if a.callers || s.settings().name_callers {
+        set.push(sonde_proxy::callers::python_env(&s.paths().python_hook())?);
+    }
     let mut child = tokio::process::Command::new(&a.command[0]);
     child.args(&a.command[1..]);
     for k in &unset {

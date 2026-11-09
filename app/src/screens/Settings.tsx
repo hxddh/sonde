@@ -123,6 +123,8 @@ export function SettingsScreen() {
                 <NumberField class="w-64" label={t("settings.rate")} value={d()["rate-limit"]} min={0} step={10} onChange={(v) => change({ ...d(), "rate-limit": v })} />
                 <NumberField class="w-52" label={t("settings.staleDays")} value={d()["stale-upload-days"]} min={1} max={3650} onChange={(v) => change({ ...d(), "stale-upload-days": v ?? 7 })} />
               </View>
+              {/* findings then say where in the program: the place to change */}
+              <Toggle testID="name-callers" label={t("settings.callers")} hint={t("settings.callersHint")} checked={d()["name-callers"] ?? false} onChange={(v) => change({ ...d(), "name-callers": v }, true)} />
             </Section>
 
             <Section title={t("settings.costs")} description={t("settings.costsHint")}>

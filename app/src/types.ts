@@ -39,6 +39,8 @@ export interface Settings {
   "high-contrast"?: boolean;
   language: string;
   "stale-upload-days": number;
+  /** Runs name the place in a Python program's code that sent each request. */
+  "name-callers"?: boolean;
   "exports-dir": string | null;
   "downloads-dir": string | null;
 }
@@ -484,6 +486,10 @@ export interface Observation {
   savesMs?: number;
   /** What to change in the program, by SDK. */
   fixes?: { sdk: "python" | "java" | "go" | "js" | "config"; code: string }[];
+  /** Where in the program its requests came from (`x-sonde-caller`), most first. */
+  callers?: { place: string; requests: number }[];
+  /** The SDK that sent them, from their user agent ("boto3 1.34"). */
+  sdk?: string;
 }
 
 /** A session after acting on every finding that counts a saving: an estimate. */

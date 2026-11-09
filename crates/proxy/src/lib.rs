@@ -7,6 +7,7 @@
 //! [`RequestLog`] with the headers the application sent. Responses stream
 //! back unchanged.
 
+pub mod callers;
 pub mod chunked;
 pub mod episode;
 pub mod fixes;
@@ -605,6 +606,8 @@ fn constant_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Headers not forwarded: hop-by-hop ones, and the client's signature.
 const DROP_REQUEST: &[&str] = &[
+    // where in the program a request came from: sonde's to read, not the store's
+    callers::CALLER_HEADER,
     "host",
     "authorization",
     "x-amz-date",

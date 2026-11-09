@@ -1000,6 +1000,13 @@ pub struct Observation {
     /// What to change in the program, by SDK.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fixes: Vec<crate::fixes::Fix>,
+    /// Where in the program its requests were sent from, most first, when
+    /// the program says (`x-sonde-caller`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub callers: Vec<crate::callers::Caller>,
+    /// The SDK that sent them, from their user agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk: Option<String>,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -1102,6 +1109,8 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             saves_requests: 0,
             saves_ms: 0.0,
             fixes: Vec::new(),
+            callers: Vec::new(),
+            sdk: None,
         });
     }
     let warn = |t: Phrase, episodes: Vec<usize>| Observation {
@@ -1115,6 +1124,8 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         saves_requests: 0,
         saves_ms: 0.0,
         fixes: Vec::new(),
+        callers: Vec::new(),
+        sdk: None,
     };
     let info = |t: Phrase, episodes: Vec<usize>| Observation {
         level: "info",
@@ -1127,6 +1138,8 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         saves_requests: 0,
         saves_ms: 0.0,
         fixes: Vec::new(),
+        callers: Vec::new(),
+        sdk: None,
     };
     let total = records.len().max(1);
     let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
@@ -1566,10 +1579,19 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .cmp(&(a.level == "warn"))
             .then(b.impact.cmp(&a.impact))
     });
+    let by_id: HashMap<u64, &Record> = records.iter().map(|r| (r.id, r)).collect();
     for o in &mut out {
         if let Some(first) = o.phrases.first() {
             o.fixes = crate::fixes::for_key(first.key);
         }
+        // who in the program sent its requests
+        let rs: Vec<&Record> = o
+            .episodes
+            .iter()
+            .filter_map(|&i| episodes.get(i))
+            .flat_map(|e| e.records.iter().filter_map(|id| by_id.get(id).copied()))
+            .collect();
+        (o.callers, o.sdk) = crate::callers::of(&rs);
     }
     out
 }

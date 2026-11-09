@@ -226,6 +226,9 @@ pub struct Settings {
     pub language: String,
     /// Multipart uploads older than this are flagged.
     pub stale_upload_days: u32,
+    /// Runs name the place in a Python program's code that sent each request
+    /// (a hook on PYTHONPATH that adds `x-sonde-caller`; boto3 / botocore).
+    pub name_callers: bool,
     pub exports_dir: Option<PathBuf>,
     pub downloads_dir: Option<PathBuf>,
 }
@@ -243,6 +246,7 @@ impl Default for Settings {
             high_contrast: false,
             language: "auto".into(),
             stale_upload_days: 7,
+            name_callers: false,
             exports_dir: None,
             downloads_dir: None,
         }
