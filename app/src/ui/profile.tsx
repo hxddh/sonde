@@ -9,9 +9,9 @@ import { batch, Scroll, signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { ms } from "../format";
 import type { SessionView } from "../types";
-import { Button, Section, Segmented, SimpleTable, terminal } from "./kit";
+import { Button, Options, Section, terminal } from "./kit";
 import { findingMarks } from "./sessionview";
-import { Chains, cost, Distribution, timed, Flows, Heat, KindsOverTime, offset, PrefixLimits, Pressure, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
+import { Chains, Distribution, timed, Flows, Heat, KindsOverTime, offset, PrefixUse, Pressure, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
 
 /** The Time pane of a session. */
 export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void }) {
@@ -34,7 +34,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
     const z = zoom();
     return z ? [z[0] * p().binMs, (z[1] + 1) * p().binMs] : null;
   };
-  const scatterBy = signal<"time" | "size">("time");
+  const scatterBy = signal<"time" | "size" | "kinds">("time");
   const spentBy = signal<"kind" | "code">("kind");
   const pushedBack = () => p().rate.some((b) => (b.throttled ?? 0) > 0 || (b.retried ?? 0) > 0 || b.client + b.server > 0);
   const showFlows = signal(false);
@@ -74,15 +74,13 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
         <Section
           title={t("scatter.title")}
           plain
-          description={t("scatter.text", { n: shown(), p95: ms(p().p95Ms ?? 0) })}
-          action={<Segmented testID="scatter-by" value={scatterBy()} items={[{ value: "time", title: t("scatter.byTime") }, { value: "size", title: t("scatter.bySize") }]} onChange={(v) => scatterBy.set(v as "time" | "size")} />}
+          description={scatterBy() === "kinds" ? t("kinds.title") : t("scatter.text", { n: shown(), p95: ms(p().p95Ms ?? 0) })}
+          action={<Options testID="scatter-by" value={scatterBy()} items={[{ value: "time", title: t("scatter.byTime") }, { value: "size", title: t("scatter.bySize") }, ...((p().groupRate?.length ?? 0) > 0 ? [{ value: "kinds", title: t("scatter.byKind") }] : [])]} onChange={(v) => scatterBy.set(v as "time" | "size" | "kinds")} />}
         >
-          <RequestScatter profile={p()} by={scatterBy()} domainMs={zoomMs()} onRequest={props.onRequest} />
-        </Section>
-      </If>
-      <If when={!terminal() && timed(p()) && (p().groupRate?.length ?? 0) > 0}>
-        <Section title={t("kinds.title")} plain>
-          <KindsOverTime profile={p()} domainMs={zoomMs()} />
+          {/* every request, or the busiest kinds each over time (their median to p95) */}
+          <If when={scatterBy() === "kinds"} else={<RequestScatter profile={p()} by={scatterBy() === "size" ? "size" : "time"} domainMs={zoomMs()} onRequest={props.onRequest} />}>
+            <KindsOverTime profile={p()} domainMs={zoomMs()} />
+          </If>
         </Section>
       </If>
       <If when={pushedBack()}>
@@ -102,7 +100,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
         description={t("profile.spentHint")}
         action={
           <If when={(p().callers?.length ?? 0) > 0}>
-            <Segmented testID="spent-by" value={spentBy()} items={[{ value: "kind", title: t("spent.byKind") }, { value: "code", title: t("spent.byCode") }]} onChange={(v) => spentBy.set(v as "kind" | "code")} />
+            <Options testID="spent-by" value={spentBy()} items={[{ value: "kind", title: t("spent.byKind") }, { value: "code", title: t("spent.byCode") }]} onChange={(v) => spentBy.set(v as "kind" | "code")} />
           </If>
         }
       >
@@ -114,20 +112,15 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
           <Chains profile={p()} />
         </Section>
       </If>
-      <If when={p().prefixes.some((x) => x.prefix !== "other" && x.peakPerSecond > 0)}>
-        <Section title={t("limits.title")} plain description={t("limits.hint")}>
-          <PrefixLimits profile={p()} />
+      {/* where by prefix: how many, what they cost, how near the limit; then over time */}
+      <If when={p().prefixes.some((x) => x.prefix !== "other")}>
+        <Section title={t("prefixUse.title")} plain description={t("prefixUse.hint")}>
+          <PrefixUse profile={p()} />
         </Section>
       </If>
       <If when={p().heat?.length}>
         <Section title={t("heat.title")} plain description={t("heat.hint")}>
           <Heat profile={p()} />
-        </Section>
-      </If>
-      {/* what it cost, by prefix (by kind is in the header's figure and the bars above) */}
-      <If when={p().prefixes.some((x) => (x.cost ?? 0) > 0)}>
-        <Section title={t("costs.title")} plain description={t("costs.hint")}>
-          <SimpleTable columns={[t("costs.byPrefix"), t("figure.requests"), t("profile.cost")]} rows={p().prefixes.filter((x) => (x.cost ?? 0) > 0).map((x) => [x.prefix === "other" ? t("flows.otherPrefixes") : x.prefix, String(x.requests), cost(x.cost ?? 0, p().cost.currency)])} max={8} />
         </Section>
       </If>
       {/* where requests went, operation → prefix → outcome: on demand */}

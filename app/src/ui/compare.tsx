@@ -11,7 +11,7 @@ import { endpoint, endpoints, go, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange } from "../types";
 import { Icon } from "./icon";
 import { Badge, Button, CARD, Check, Choice, Heading, Loading, Modal, Muted, ROW, rowHeight, Section, Segmented, TABLE, terminal, Title, TYPE } from "./kit";
-import { cost, DistributionCompare, groupName, offset, RunBars, StoreLatency } from "./plots";
+import { cost, DistributionCompare, groupName, offset, PrefixChangeMap, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
   compared: number;
@@ -57,6 +57,12 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
         <Delta label={t("profile.cost")} a={c().cost[0]} b={c().cost[1]} text={(v) => cost(v, c().currency)} />
       </View>
       <RunBars change={c()} />
+      {/* where it changed: each prefix by the later run's requests, colored by how they moved */}
+      <If when={(c().prefixes?.length ?? 0) > 1}>
+        <Section title={t("prefixChange.title")} plain>
+          <PrefixChangeMap prefixes={c().prefixes!} />
+        </Section>
+      </If>
       {/* both runs' latency: where the curves part says for which requests it changed */}
       <If when={c().latency && c().latency![0].length > 1 && c().latency![1].length > 1}>
         <Section title={t("cdf.title")} plain>

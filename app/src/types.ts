@@ -643,7 +643,9 @@ export interface ProgramHistory {
   baseline: string | null;
   baselinePoint?: RunPoint | null;
   limits?: BaselineLimits | null;
-  check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[] } | null;
+  check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[]; expected?: string[] } | null;
+  /** The check as a pull request's comment (`sonde check -f markdown`). */
+  markdown?: string | null;
 }
 
 /** Two runs of a program compared, before and after. */
@@ -662,6 +664,8 @@ export interface RunChange {
   sameProgram: boolean;
   /** Both runs' latency on the same bucket edges. */
   latency?: [{ leMs: number | null; n: number }[], { leMs: number | null; n: number }[]];
+  /** The busiest prefixes of either run, each run's requests to them. */
+  prefixes?: { prefix: string; requests: [number, number] }[];
 }
 
 export interface SessionView {

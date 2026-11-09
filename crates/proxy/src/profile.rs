@@ -1027,6 +1027,17 @@ pub struct RunChange {
     /// Both runs' latency, bucket by bucket on the same edges: their two
     /// distributions side by side.
     pub latency: (Vec<LatencyBucket>, Vec<LatencyBucket>),
+    /// The busiest prefixes of either run, each run's requests to them: where
+    /// the change happened.
+    pub prefixes: Vec<PrefixChange>,
+}
+
+/// One prefix in two runs: its requests in each.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrefixChange {
+    pub prefix: String,
+    pub requests: (usize, usize),
 }
 
 impl RunChange {
@@ -1146,7 +1157,30 @@ pub fn compare_runs(
             .collect()
     };
     let (ia, ib) = (ids(a.2), ids(b.2));
+    // each prefix either run counted (its busiest, not the rest's "other")
+    let named: BTreeSet<&str> =
+        a.1.prefixes
+            .iter()
+            .chain(b.1.prefixes.iter())
+            .map(|x| x.prefix.as_str())
+            .filter(|p| *p != "other")
+            .collect();
+    let count = |p: &Profile, name: &str| {
+        p.prefixes
+            .iter()
+            .find(|x| x.prefix == name)
+            .map_or(0, |x| x.requests)
+    };
+    let mut prefixes: Vec<PrefixChange> = named
+        .into_iter()
+        .map(|name| PrefixChange {
+            prefix: name.to_string(),
+            requests: (count(a.1, name), count(b.1, name)),
+        })
+        .collect();
+    prefixes.sort_by_key(|x| std::cmp::Reverse(x.requests.0.max(x.requests.1)));
     RunChange {
+        prefixes,
         requests: (a.0.len(), b.0.len()),
         wall_ms: (a.1.wall_ms, b.1.wall_ms),
         busy_ms: (a.1.busy_ms, b.1.busy_ms),

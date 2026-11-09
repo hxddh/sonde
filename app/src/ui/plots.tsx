@@ -7,12 +7,12 @@
 
 import { signal, Text, token, View } from "nsh";
 import { Button as BaseButton } from "nsh/base";
-import { Arc, Area, Bar, Cell, Dot, Grid, Line, Pie, Plot, PlotAppearScope, PlotAxis, PlotLabel, Rule, Sankey } from "nsh/base/plot";
+import { Arc, Area, Bar, Cell, Dot, Grid, Line, Pie, Plot, PlotAppearScope, PlotAxis, PlotLabel, Rule, Sankey, Treemap } from "nsh/base/plot";
 import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import type { LatencyChange, Observation, Profile, ProfileGroup, ProgramHistory, RecordSummary, RunChange } from "../types";
 import { observationSaving, observationText } from "../phrases";
-import { CARD, Legend, POPUP, terminal, SimpleTable } from "./kit";
+import { CARD, Legend, Options, POPUP, terminal, textual, SimpleTable } from "./kit";
 
 /** Time from a session's start: 840 ms, 2.35 s, 41.2 s. */
 export const offset = (v: number) => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(v < 10000 ? 2 : 1)} s`);
@@ -327,7 +327,7 @@ export function Chains(props: { profile: Profile; max?: number }) {
   };
   return (
     <If
-      when={!terminal()}
+      when={!textual()}
       else={<SimpleTable columns={[t("chains.chain"), t("chains.from"), t("profile.time"), t("chains.atOnce")]} rows={rows().map((c) => [c.name, `+${offset(c.startMs)}`, offset(c.endMs - c.startMs), offset(c.atOnceMs)])} />}
     >
       <View class="gap-2">
@@ -380,7 +380,7 @@ export function StoreLatency(props: { changes: LatencyChange[]; names: [string, 
   const top = () => Math.max(...rows().flatMap((c) => [c.a95, c.b95]), 1) * 1.6;
   return (
     <If
-      when={!terminal()}
+      when={!textual()}
       else={<SimpleTable columns={[t("profile.kind"), `p50 ${props.names[0]} → ${props.names[1]}`, `p95 ${props.names[0]} → ${props.names[1]}`, "×"]} rows={rows().map((c) => [c.name, `${ms(c.a50)} → ${ms(c.b50)}`, `${ms(c.a95)} → ${ms(c.b95)}`, `${ratio(c).toFixed(1)}×`])} />}
     >
       <View class="gap-2">
@@ -448,7 +448,7 @@ export function TimeSpent(props: { profile: Profile; max?: number; by?: "kind" |
   };
   return (
     <If
-      when={!terminal()}
+      when={!textual()}
       else={<SimpleTable columns={[t("profile.kind"), t("profile.share"), t("profile.time"), t("figure.requests")]} rows={rows().map((g) => [g.name, pct(g.share), offset(g.waitedMs), String(g.requests)])} />}
     >
       <Plot
@@ -577,7 +577,7 @@ export function RunBars(props: { change: RunChange; max?: number }) {
   };
   return (
     <If
-      when={!terminal()}
+      when={!textual()}
       else={<SimpleTable columns={[t("profile.kind"), t("profile.before"), t("profile.after")]} rows={rows().map((r) => [r.name, String(r.before), String(r.after)])} />}
     >
       <If when={rows().length > 0}>
@@ -831,7 +831,7 @@ export function Distribution(props: { profile: Profile }) {
     <If when={buckets().length > 1} else={<Text class="text-small text-muted-foreground">{label()}</Text>}>
       <View class="gap-2">
         <Text testID="dist-figures" class="tabular-nums text-small text-foreground">{label()}</Text>
-        <If when={!terminal()} else={<SimpleTable columns={[t("dist.took"), t("figure.requests"), "%"]} rows={rows().map((r) => [r.name, String(r.n), `${Math.round(r.cum)}%`])} />}>
+        <If when={!textual()} else={<SimpleTable columns={[t("dist.took"), t("figure.requests"), "%"]} rows={rows().map((r) => [r.name, String(r.n), `${Math.round(r.cum)}%`])} />}>
           <Plot
             testID="distribution"
             data={rows()}
@@ -866,50 +866,149 @@ export function Distribution(props: { profile: Profile }) {
 const READS_PER_S = 5500;
 const WRITES_PER_S = 3500;
 
-/** Each busy prefix's busiest second against what S3 serves a prefix: its
- * reads and its writes as a share of the limit, the limit a line. */
-export function PrefixLimits(props: { profile: Profile; max?: number }) {
-  const rows = () =>
-    props.profile.prefixes
-      .filter((x) => x.prefix !== "other" && x.peakPerSecond > 0)
-      .slice(0, props.max ?? 8)
-      .map((x) => ({ name: x.prefix, reads: x.peakReads / READS_PER_S, writes: x.peakWrites / WRITES_PER_S, peakReads: x.peakReads, peakWrites: x.peakWrites }));
-  const top = () => Math.max(1.1, ...rows().map((r) => Math.max(r.reads, r.writes) * 1.15));
+
+/** Where a session's requests went by prefix, one map for three questions:
+ * how many, what they cost, and how near the busiest second came to S3's
+ * per-prefix limit (5,500 reads, 3,500 writes a second). A rectangle per
+ * prefix under its bucket, its area the measure chosen; a prefix past half
+ * its limit in the warning color. */
+export function PrefixUse(props: { profile: Profile }) {
+  const measure = signal<"requests" | "cost" | "peak">("requests");
+  const items = () => props.profile.prefixes.filter((x) => x.prefix !== "other");
+  const share = (x: Profile["prefixes"][number]) => Math.max(x.peakReads / READS_PER_S, x.peakWrites / WRITES_PER_S);
+  const value = (x: Profile["prefixes"][number]) => (measure() === "cost" ? (x.cost ?? 0) : measure() === "peak" ? x.peakPerSecond : x.requests);
+  const shown = (v: number) => (measure() === "cost" ? cost(v, props.profile.cost.currency) : measure() === "peak" ? t("prefixUse.perSecond", { n: Math.round(v) }) : t("prefixUse.requests", { n: v }));
+  const bucketOf = (p: string) => p.split("/")[0] || p;
+  const buckets = () => [...new Set(items().map((x) => bucketOf(x.prefix)))];
+  const nested = () => buckets().length > 1;
+  const rows = () => {
+    const leaves = items()
+      .filter((x) => value(x) > 0)
+      .map((x) => ({ id: x.prefix, parent: nested() ? `b:${bucketOf(x.prefix)}` : "", label: nested() ? x.prefix.slice(bucketOf(x.prefix).length + 1) || x.prefix : x.prefix, value: value(x), hot: share(x) >= 0.5, x }));
+    const groups = nested() ? buckets().map((b) => ({ id: `b:${b}`, parent: "", label: `${b}/`, value: 0, hot: false, x: null })) : [];
+    return [...groups, ...leaves];
+  };
+  const total = () => rows().reduce((n, r) => n + r.value, 0);
   const hovered = signal<number | null>(null);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: r.name, lines: [t("limits.line", { reads: r.peakReads, rpct: Math.round(r.reads * 100), writes: r.peakWrites, wpct: Math.round(r.writes * 100) })] } : null;
+    if (!r?.x) return null;
+    const x = r.x;
+    return {
+      title: x.prefix,
+      lines: [
+        t("prefixUse.requests", { n: x.requests }) + (x.errors ? ` · ${t("timeline.errors", { n: x.errors })}` : ""),
+        t("limits.line", { reads: x.peakReads, rpct: Math.round((x.peakReads / READS_PER_S) * 100), writes: x.peakWrites, wpct: Math.round((x.peakWrites / WRITES_PER_S) * 100) }),
+        ...(x.cost ? [cost(x.cost, props.profile.cost.currency)] : []),
+      ],
+    };
   };
-  const busiest = () => rows().reduce<(ReturnType<typeof rows>[number]) | null>((m, r) => (!m || Math.max(r.reads, r.writes) > Math.max(m.reads, m.writes) ? r : m), null);
-  const label = () => (busiest() ? t("limits.text", { prefix: busiest()!.name, pct: Math.round(Math.max(busiest()!.reads, busiest()!.writes) * 100) }) : "");
+  const top = () => [...items()].sort((a, b) => value(b) - value(a))[0];
+  const label = () => (top() ? t("prefixUse.text", { prefix: top()!.prefix, value: shown(value(top()!)) }) : "");
+  const hasCost = () => items().some((x) => (x.cost ?? 0) > 0);
   return (
-    <If when={rows().length > 0}>
-      <If when={!terminal()} else={<SimpleTable columns={[t("common.prefix"), t("limits.reads"), t("limits.writes")]} rows={rows().map((r) => [r.name, `${r.peakReads}/s · ${Math.round(r.reads * 100)}%`, `${r.peakWrites}/s · ${Math.round(r.writes * 100)}%`])} />}>
-        <View class="gap-1.5">
+    <If when={items().length > 0}>
+      <If
+        when={!textual()}
+        else={<SimpleTable columns={[t("common.prefix"), t("figure.requests"), t("limits.reads"), t("limits.writes"), t("profile.cost")]} rows={items().map((x) => [x.prefix, String(x.requests), `${x.peakReads}/s`, `${x.peakWrites}/s`, cost(x.cost ?? 0, props.profile.cost.currency)])} />}
+      >
+        <View class="gap-2">
+          <Options
+            testID="prefix-measure"
+            value={measure()}
+            items={[{ value: "requests", title: t("prefixUse.byRequests") }, ...(hasCost() ? [{ value: "cost", title: t("prefixUse.byCost") }] : []), { value: "peak", title: t("prefixUse.byPeak") }]}
+            onChange={(v) => measure.set(v as "requests" | "cost" | "peak")}
+            class="self-start"
+          />
           <Plot
-            testID="prefix-limits"
+            testID="prefix-use"
             data={rows()}
-            yScale={{ type: "band", paddingInner: 0.3, paddingOuter: 0.15, groupPadding: 0.12 }}
-            xScale={{ type: "linear", domain: [0, top()] }}
             accessibilityLabel={label()}
-            accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
-            appearGeneration={1}
+            accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines.join(", ")}` : "" }}
+            appearGeneration={total()}
             motion={MOTION}
-            crossLineClass="w-full h-full rounded-sm bg-foreground/5"
             tooltipPlacement="pointer"
             tooltipOffset={10}
             tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
             onHoverChange={({ index }) => hovered.set(index)}
-            class={GUTTER}
-            style={{ height: rows().length * 34 + 8 }}
+            class="h-56"
           >
-            {/* the limit */}
-            <Grid x={[1]} class="stroke-warn" style={{ strokeDasharray: "3 3" }} />
-            <Bar value="reads" class="fill-chart-1" cornerRadii={{ topRight: 2, bottomRight: 2 }} inactiveOpacity={0.45} label={(_, i) => `${Math.round(rows()[i].reads * 100)}%`} labelClass="pl-1.5 tabular-nums text-caption text-muted-foreground" />
-            <Bar value="writes" class="fill-chart-4" cornerRadii={{ topRight: 2, bottomRight: 2 }} inactiveOpacity={0.45} label={(_, i) => `${Math.round(rows()[i].writes * 100)}%`} labelClass="pl-1.5 tabular-nums text-caption text-muted-foreground" />
-            <PlotAxis placement="left" format={(i) => rows()[i]?.name ?? ""} labelClass={AXIS_LABEL} />
+            <Treemap
+              id="id"
+              parent="parent"
+              value="value"
+              paddingInner={2}
+              paddingTop={nested() ? 18 : 0}
+              cornerRadii={4}
+              leafClass={(_, i) => (rows()[i]?.hot ? "fill-warn/60" : "fill-bar/55")}
+              groupClass="fill-muted"
+              groupLabel="label"
+              groupLabelClass="px-1.5 text-caption font-semibold text-foreground"
+              inactiveOpacity={0.55}
+              label="label"
+              valueLabel={(_, v) => shown(v)}
+              labelClass="p-1.5 font-mono text-caption text-foreground"
+              valueLabelClass="font-sans tabular-nums text-caption text-muted-foreground"
+              hoverClass="rounded-[4px] outline-2 outline-foreground"
+            />
           </Plot>
-          <Legend class={GUTTER_PAD} items={[{ label: t("limits.readsOf"), swatch: "bg-chart-1" }, { label: t("limits.writesOf"), swatch: "bg-chart-4" }, { label: t("limits.limit"), swatch: "bg-warn" }]} />
+          <If when={items().some((x) => share(x) >= 0.5)}>
+            <Legend square items={[{ label: t("prefixUse.hot"), swatch: "bg-warn/60" }]} />
+          </If>
+        </View>
+      </If>
+    </If>
+  );
+}
+
+/** Two runs by prefix: a rectangle per prefix, its area the later run's
+ * requests (or the earlier's, for one it left), its color how it changed —
+ * fewer cool, more warm, the same neutral — on one scale either side of none. */
+export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [number, number] }[] }) {
+  // a change as a share of the larger run, from −1 (all gone) to +1 (all new)
+  const change = (a: number, b: number) => (a === b ? 0 : (b - a) / Math.max(a, b));
+  const rows = () =>
+    props.prefixes
+      .filter((x) => x.requests[0] + x.requests[1] > 0)
+      .map((x) => ({ id: x.prefix, parent: "", label: x.prefix, value: Math.max(x.requests[1], x.requests[0] > 0 && x.requests[1] === 0 ? x.requests[0] : 0), change: change(x.requests[0], x.requests[1]), x }));
+  const hovered = signal<number | null>(null);
+  const line = (x: { requests: [number, number] }) => t("prefixChange.line", { a: x.requests[0], b: x.requests[1] });
+  const biggest = () => [...rows()].sort((p, q) => Math.abs(q.x.requests[1] - q.x.requests[0]) - Math.abs(p.x.requests[1] - p.x.requests[0]))[0];
+  const label = () => (biggest() ? t("prefixChange.text", { prefix: biggest()!.label, line: line(biggest()!.x) }) : "");
+  return (
+    <If when={rows().length > 1}>
+      <If when={!textual()} else={<SimpleTable columns={[t("common.prefix"), t("profile.before"), t("profile.after")]} rows={rows().map((r) => [r.label, String(r.x.requests[0]), String(r.x.requests[1])])} />}>
+        <View class="gap-2">
+          <Plot
+            testID="prefix-change"
+            data={rows()}
+            colorScale={{ type: "diverging", domain: [-1, 1], pivot: 0, range: [token("chart-1"), token("muted"), token("warn")] }}
+            accessibilityLabel={label()}
+            accessibilityValue={{ text: hovered() === null ? "" : `${rows()[hovered()!]?.label}: ${line(rows()[hovered()!]!.x)}` }}
+            appearGeneration={rows().length}
+            motion={MOTION}
+            tooltipPlacement="pointer"
+            tooltipOffset={10}
+            tooltipContent={<If when={hovered() !== null ? rows()[hovered()!] : null}>{(r) => <Tip title={r().label} lines={[line(r().x)]} />}</If>}
+            onHoverChange={({ index }) => hovered.set(index)}
+            class="h-48"
+          >
+            <Treemap
+              id="id"
+              parent="parent"
+              value="value"
+              colorValue="change"
+              paddingInner={2}
+              cornerRadii={4}
+              inactiveOpacity={0.55}
+              label="label"
+              valueLabel={(_, __, i) => line(rows()[i]!.x)}
+              labelClass="p-1.5 font-mono text-caption text-foreground"
+              valueLabelClass="font-sans tabular-nums text-caption text-muted-foreground"
+              hoverClass="rounded-[4px] outline-2 outline-foreground"
+            />
+          </Plot>
+          <Legend square items={[{ label: t("prefixChange.fewer"), swatch: "bg-chart-1" }, { label: t("prefixChange.same"), swatch: "bg-muted" }, { label: t("prefixChange.more"), swatch: "bg-warn" }]} />
         </View>
       </If>
     </If>
@@ -1108,11 +1207,13 @@ export function DistributionCompare(props: { latency: [{ leMs: number | null; n:
   return (
     <If when={!terminal() && rows().length > 1}>
       <Plot testID="distribution-compare" data={rows()} x="x" xScale={{ type: "linear", domain: [rows()[0].x, rows()[rows().length - 1].x] }} yScale={{ type: "linear", domain: [0, 100] }} accessibilityLabel={label()} motion={MOTION} class="mb-6 h-36 w-full">
-        <Grid y={[50, 95, 99]} class="stroke-border" />
+        {/* the median and p95: 99 sits on the top edge, its label over 95's */}
+        <Grid y={[50, 95]} class="stroke-border" />
         <Line y="a" curve="stepAfter" class="stroke-muted-foreground/70 stroke-[1.25]" style={{ strokeDasharray: "3 3" }} hoverDotClass="size-1.5 rounded-full bg-muted-foreground" />
         <Line y="b" curve="stepAfter" class="stroke-chart-1 stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
-        <PlotAxis placement="left" labelPlacement="inside" tickValues={[50, 95, 99]} format={(v) => `${v}%`} labelClass={VALUE_TICK} />
-        <PlotAxis ticks={4} format={(v) => ms(10 ** v)} labelClass={TIME_TICK} />
+        <PlotAxis placement="left" labelPlacement="inside" tickValues={[50, 95]} format={(v) => `${v}%`} labelClass={VALUE_TICK} />
+        {/* a log scale ticks at its decades: 1 ms, 10 ms, 100 ms, never 3.16 ms */}
+        <PlotAxis tickValues={decades(rows()[0].x, rows()[rows().length - 1].x)} format={(v) => ms(10 ** v)} labelClass={TIME_TICK} />
       </Plot>
       <Legend items={[{ label: props.names[0], swatch: "bg-muted-foreground/70" }, { label: props.names[1], swatch: "bg-chart-1" }]} />
     </If>

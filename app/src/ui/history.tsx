@@ -1,15 +1,15 @@
 // A program over its runs: the same command run again and again, each run's
 // requests, waiting, cost and warnings, its baseline, and this run held to it.
 
-import { List, resource, Scroll, signal, Text, View } from "nsh";
-import { Button as BaseButton, DatePicker, DiffView } from "nsh/base";
+import { Clipboard, List, resource, Scroll, signal, Text, View } from "nsh";
+import { Button as BaseButton, DatePicker, DiffView, TextView } from "nsh/base";
 import { day, money } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
-import { report, sessionsChanged, sessionsTick } from "../store";
+import { notify, report, sessionsChanged, sessionsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, CONTROL, Disclosure, Empty, ListRow, Loading, Modal, Muted, POPUP, SimpleTable, Title, terminal } from "./kit";
+import { Badge, Button, CARD, CONTROL, Disclosure, Empty, ListRow, Loading, Modal, Muted, POPUP, SimpleTable, Title, terminal, textual } from "./kit";
 import { cost, offset, RunTrend, Sparkline } from "./plots";
 import { programOf } from "./sessionview";
 
@@ -17,6 +17,7 @@ const TOLERANCE = "10%";
 
 function Verdicts(props: { h: ProgramHistory }) {
   const c = () => props.h.check!;
+  const open = signal(false);
   const failed = () => c().verdicts.filter((v) => !v.ok);
   const value = (what: string, v: number) => (what === "waiting" ? offset(v) : what === "cost" ? cost(v, props.h.runs[0]?.currency ?? "USD") : String(Math.round(v)));
   return (
@@ -29,6 +30,23 @@ function Verdicts(props: { h: ProgramHistory }) {
         </Each>
         <Each of={c().newWarnings}>{(w) => <Text class="text-small text-muted-foreground">{`! ${w()}`}</Text>}</Each>
       </View>
+      {/* what CI would comment on the pull request, read here first */}
+      <If when={props.h.markdown && !terminal()}>
+        <Button small variant="ghost" icon="scroll-text" label={t("history.comment")} onPress={() => open.set(true)} testID="history-comment" />
+      </If>
+      <If when={open()}>
+        <Modal open size="wide" onClose={() => open.set(false)} testID="comment-preview">
+          <Title>{t("history.comment")}</Title>
+          <Muted class="text-small">{t("history.commentHint")}</Muted>
+          <Scroll class={`max-h-[520px] ${CARD} p-4`}>
+            <TextView testID="comment-markdown" markdown={props.h.markdown!} class="text-body text-foreground" />
+          </Scroll>
+          <View class="flex-row justify-end gap-2">
+            <Button variant="ghost" label={t("common.close")} onPress={() => open.set(false)} />
+            <Button variant="primary" icon="copy" label={t("history.copyComment")} onPress={() => void Clipboard.writeText(props.h.markdown!).then(() => notify(t("common.copied")), report)} testID="comment-copy" />
+          </View>
+        </Modal>
+      </If>
     </View>
   );
 }
@@ -211,7 +229,7 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
           </If>
           <If when={shown(x()).runs.length > 0 && x().runs.length > 1} else={<Text class="text-small text-muted-foreground">{x().runs.length > 1 ? t("history.noneInRange") : t("history.none")}</Text>}>
             <If
-              when={!terminal()}
+              when={!textual()}
               else={<SimpleTable columns={["", t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={x().runs.map((r) => [r.created.slice(0, 16), n(r.requests), offset(r.busyMs), cost(r.cost, r.currency)])} />}
             >
               <View class="flex-row flex-wrap gap-3">

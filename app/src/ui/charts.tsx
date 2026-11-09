@@ -6,7 +6,7 @@ import { signal, Text, View } from "nsh";
 import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, pct } from "../format";
 import { t } from "../i18n";
-import { Legend, SimpleTable, terminal } from "./kit";
+import { Legend, SimpleTable, terminal, textual } from "./kit";
 
 const PALETTE = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;
 const MOTION = { appear: { duration: 420, easing: "easeOut" as const }, enter: { duration: 100 }, exit: { duration: 160 } };
@@ -97,7 +97,7 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
       : props.items.map((i) => ({ id: i.label, parent: "", label: i.label, value: i.value, group: i.label }));
   const color = (g: string) => PALETTE[groups().indexOf(g) % PALETTE.length];
   return (
-    <If when={!terminal()} else={<BarChart items={props.items} />}>
+    <If when={!textual()} else={<BarChart items={props.items} />}>
       <Plot
         testID={props.testID}
         data={rows()}

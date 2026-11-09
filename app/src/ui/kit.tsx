@@ -1,12 +1,14 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { effect, ErrorBoundary, fontScale, type JSX, keymap, platform, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
+import { effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { middle, separators } from "../format";
 import { Icon, type IconName, type Tint } from "./icon";
 
 export const terminal = () => platform.idiom === "terminal";
+/** Figures as text: a terminal, or a screen reader (a chart's table reads row by row, its picture not at all). */
+export const textual = () => terminal() || screenReaderEnabled();
 
 /** The look of every split's handle (Native Shell's ResizablePanelGroup):
  * a hairline that thickens under the pointer. */

@@ -1,6 +1,7 @@
 //! Recording: `sonde run -- <command>`, `sonde proxy`, `sonde show <session>`.
 
 use sonde_proxy::callers::code_place;
+use sonde_proxy::program::{check_markdown, money_text, ms_text};
 use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -398,35 +399,6 @@ pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
         per_1000_reads: r,
         per_1000_lists: l,
         currency,
-    }
-}
-
-fn ms_text(ms: f64) -> String {
-    if ms >= 1000.0 {
-        format!("{:.1} s", ms / 1000.0)
-    } else {
-        format!("{ms:.0} ms")
-    }
-}
-
-/// Money to two significant digits under a cent: a session's requests often
-/// cost thousandths.
-fn money_text(v: f64, currency: &str) -> String {
-    if !v.is_finite() || v < 0.0 {
-        return format!("— {currency}");
-    }
-    if v > 0.0 && v < 0.01 {
-        // two significant digits, after rounding (0.00996 is 0.010, not 0.0100)
-        let exp = v.log10().floor() as i32;
-        let scale = 10f64.powi(1 - exp);
-        let r = (v * scale).round() / scale;
-        if r < 1e-6 {
-            return format!("<0.000001 {currency}");
-        }
-        let digits = (1 - r.log10().floor() as i32).max(2) as usize;
-        format!("{r:.digits$} {currency}")
-    } else {
-        format!("{v:.2} {currency}")
     }
 }
 
@@ -1561,26 +1533,6 @@ fn gh_property(t: &str) -> String {
     gh_escape(t).replace(':', "%3A").replace(',', "%2C")
 }
 
-/// Text the program controls (a finding names its keys), as Markdown that
-/// shows it as written: no formatting, no HTML, no table cell break, no
-/// @mention.
-fn md_text(t: &str) -> String {
-    let mut out = String::with_capacity(t.len());
-    for c in t.chars() {
-        match c {
-            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '|' | '#' | '~' | '!' => {
-                out.push('\\');
-                out.push(c);
-            }
-            // a word joiner keeps GitHub from reading a mention
-            '@' => out.push_str("@\u{2060}"),
-            '\n' | '\r' => out.push(' '),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// A URL as it may be printed: without its query, which may be a presigned
 /// URL's signature.
 fn url_shown(url: &str) -> &str {
@@ -1875,55 +1827,10 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     // a pull request's comment: the verdicts, what is new, and the run's findings
     if matches!(a.format, Format::Markdown) {
-        let mut md = format!(
-            "### sonde: {}\n\n| | | run | limit | from |\n|---|---|---:|---:|---|\n",
-            if c.passed {
-                "within budget ✅"
-            } else {
-                "over budget ❌"
-            }
+        print!(
+            "{}",
+            check_markdown(&c, &run.0.currency, since_text.as_deref(), &run.3)
         );
-        for v in &c.verdicts {
-            md.push_str(&format!(
-                "| {} | {} | {} | ≤ {} | {} |\n",
-                if v.ok { "pass" } else { "**FAIL**" },
-                v.what,
-                shown(v.what, v.value),
-                shown(v.what, v.limit),
-                v.against
-            ));
-        }
-        if let Some(t) = &since_text {
-            md.push_str(&format!("\n**Since** {}\n", md_text(t)));
-        }
-        if !c.new_warnings.is_empty() {
-            md.push_str("\n**New since the baseline**\n\n");
-            for w in &c.new_warnings {
-                md.push_str(&format!("- {}\n", md_text(w)));
-            }
-        }
-        if !c.expected.is_empty() {
-            md.push_str(&format!(
-                "\n*Expected (sonde.toml): {}*\n",
-                c.expected.len()
-            ));
-        }
-        let findings: Vec<_> = run.3.iter().take(5).collect();
-        if !findings.is_empty() {
-            md.push_str("\n<details><summary>What stands out</summary>\n\n");
-            for f in findings {
-                md.push_str(&format!("- {}", md_text(&f.text)));
-                if let Some(c) = f.callers.first() {
-                    md.push_str(&format!(
-                        " — `{}`",
-                        c.place.replace('`', "'").replace(['\n', '\r'], " ")
-                    ));
-                }
-                md.push('\n');
-            }
-            md.push_str("\n</details>\n");
-        }
-        print!("{md}");
         return Ok(if c.passed { 0 } else { 1 });
     }
     let rows: Vec<Vec<String>> = c
@@ -2597,6 +2504,7 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sonde_proxy::program::md_text;
 
     #[test]
     fn a_findings_text_is_shown_as_written_in_a_pr_comment() {

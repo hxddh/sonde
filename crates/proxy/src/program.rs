@@ -537,6 +537,120 @@ pub fn check(
     }
 }
 
+pub fn ms_text(ms: f64) -> String {
+    if ms >= 1000.0 {
+        format!("{:.1} s", ms / 1000.0)
+    } else {
+        format!("{ms:.0} ms")
+    }
+}
+
+/// Money to two significant digits under a cent: a session's requests often
+/// cost thousandths.
+pub fn money_text(v: f64, currency: &str) -> String {
+    if !v.is_finite() || v < 0.0 {
+        return format!("— {currency}");
+    }
+    if v > 0.0 && v < 0.01 {
+        // two significant digits, after rounding (0.00996 is 0.010, not 0.0100)
+        let exp = v.log10().floor() as i32;
+        let scale = 10f64.powi(1 - exp);
+        let r = (v * scale).round() / scale;
+        if r < 1e-6 {
+            return format!("<0.000001 {currency}");
+        }
+        let digits = (1 - r.log10().floor() as i32).max(2) as usize;
+        format!("{r:.digits$} {currency}")
+    } else {
+        format!("{v:.2} {currency}")
+    }
+}
+
+/// Text the program controls (a finding names its keys), as Markdown that
+/// shows it as written: no formatting, no HTML, no table cell break, no
+/// @mention.
+pub fn md_text(t: &str) -> String {
+    let mut out = String::with_capacity(t.len());
+    for c in t.chars() {
+        match c {
+            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '|' | '#' | '~' | '!' => {
+                out.push('\\');
+                out.push(c);
+            }
+            // a word joiner keeps GitHub from reading a mention
+            '@' => out.push_str("@\u{2060}"),
+            '\n' | '\r' => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// A check as a pull request's comment (`sonde check -f markdown`, and the
+/// app's preview of it): the verdicts, since which run, what is new, what is
+/// expected, and the run's findings with the code that sent their requests.
+pub fn check_markdown(
+    c: &Check,
+    currency: &str,
+    since: Option<&str>,
+    findings: &[Observation],
+) -> String {
+    let shown = |what: &str, v: f64| match what {
+        "waiting" | "p95" => ms_text(v),
+        "cost" => money_text(v, currency),
+        _ => format!("{v:.0}"),
+    };
+    let mut md = format!(
+        "### sonde: {}\n\n| | | run | limit | from |\n|---|---|---:|---:|---|\n",
+        if c.passed {
+            "within budget ✅"
+        } else {
+            "over budget ❌"
+        }
+    );
+    for v in &c.verdicts {
+        md.push_str(&format!(
+            "| {} | {} | {} | ≤ {} | {} |\n",
+            if v.ok { "pass" } else { "**FAIL**" },
+            v.what,
+            shown(v.what, v.value),
+            shown(v.what, v.limit),
+            v.against
+        ));
+    }
+    if let Some(t) = &since {
+        md.push_str(&format!("\n**Since** {}\n", md_text(t)));
+    }
+    if !c.new_warnings.is_empty() {
+        md.push_str("\n**New since the baseline**\n\n");
+        for w in &c.new_warnings {
+            md.push_str(&format!("- {}\n", md_text(w)));
+        }
+    }
+    if !c.expected.is_empty() {
+        md.push_str(&format!(
+            "\n*Expected (sonde.toml): {}*\n",
+            c.expected.len()
+        ));
+    }
+    let findings: Vec<_> = findings.iter().take(5).collect();
+    if !findings.is_empty() {
+        md.push_str("\n<details><summary>What stands out</summary>\n\n");
+        for f in findings {
+            md.push_str(&format!("- {}", md_text(&f.text)));
+            if let Some(c) = f.callers.first() {
+                md.push_str(&format!(
+                    " — `{}`",
+                    c.place.replace('`', "'").replace(['\n', '\r'], " ")
+                ));
+            }
+            md.push('\n');
+        }
+        md.push_str("\n</details>\n");
+    }
+    md
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

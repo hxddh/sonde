@@ -1150,13 +1150,20 @@ impl Sessions {
                         no_new_warnings: true,
                         ..Default::default()
                     };
-                    Some(sonde_proxy::program::check(
+                    let c = sonde_proxy::program::check(
                         (&rp, &rs.records, &rpr, &rob),
                         Some((&bp, &bs.records, &bpr, &bob)),
                         &budget,
-                    ))
+                    );
+                    // the same check as a pull request's comment
+                    let md = sonde_proxy::program::check_markdown(&c, &rp.currency, None, &rob);
+                    Some((c, md))
                 }
                 _ => None,
+            };
+            let (check, markdown) = match check {
+                Some((c, md)) => (Some(c), Some(md)),
+                None => (None, None),
             };
             // the baseline's own figures, though it be older than the runs shown,
             // and what a run may grow to before `sonde check` fails it
@@ -1177,6 +1184,7 @@ impl Sessions {
                 "baselinePoint": base_point,
                 "limits": limits,
                 "check": check,
+                "markdown": markdown,
             }))
         })
         .await

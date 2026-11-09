@@ -185,6 +185,16 @@ test("a session's time: where it went, and two runs before and after", async () 
   // its part of the waiting: requests at once count once, the kinds add up to it
   expect(app.shows("label:/^Most of the waiting: PutObject, \\d+%/")).toBe(true);
   expect(app.shows("id:profile-cost")).toBe(true);
+  // the busiest kinds over time: a mode of the requests' chart, not a chart of its own
+  await app.press("id:scatter-by-kinds");
+  await app.waitFor("id:kinds-over-time");
+  expect(app.shows("id:request-scatter")).toBe(false);
+  await app.press("id:scatter-by-time");
+  // where by prefix: one map, three measures
+  await app.scroll("id:time-pane", 900);
+  await app.waitFor("id:prefix-use");
+  await app.press("id:prefix-measure-peak");
+  expect(app.shows("label:/^Most at .*: \\d+\\/s$/")).toBe(true);
   // the operations sort by how long they took
   await app.press("id:session-pane-mode-operations");
   // compared with another run: before and after
