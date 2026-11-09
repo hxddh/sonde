@@ -265,3 +265,29 @@ test("relative times read in the app's language", async () => {
   await app.waitFor("text:General");
 });
 
+
+test("programs: each with its runs at a glance; one opens on its runs", async () => {
+  const app = await open("../App.tsx", desktop);
+  await place(app, "sessions");
+  await app.press("id:open-example");
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.press("label:Programs");
+  await app.waitFor("id:program-list", { timeout: 10000 });
+  expect(app.shows("text:gen-slatedb")).toBe(true);
+  await app.press("id:program-row >> nth=0");
+  await app.waitFor("id:history-pane", { timeout: 10000 });
+});
+
+test("run again: the program after a change, compared with the run before", async () => {
+  const app = await demo();
+  await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null");
+  await app.press("id:run-start");
+  await app.waitFor("id:run-ended", { timeout: 20000 });
+  await app.press("id:run-open-session");
+  await app.waitFor("id:run-again", { timeout: 10000 });
+  await app.press("id:run-again");
+  // it ran, and opened compared with this one: the same program, so findings compare too
+  await app.waitFor("id:compare", { timeout: 30000 });
+  await app.waitFor("id:run-change", { timeout: 10000 });
+  expect(app.shows("id:other-program")).toBe(false);
+});

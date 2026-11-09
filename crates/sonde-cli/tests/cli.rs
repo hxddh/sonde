@@ -184,3 +184,43 @@ fn a_baseline_set_alone_succeeds_by_name_or_relative_path() {
     // what goes to a file has no colour in it
     assert!(!stdout(&sonde(t.path(), &["show", "--summary"])).contains('\u{1b}'));
 }
+
+#[test]
+fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    let cfg = t.path().join("sonde.toml");
+    // the budget kept with the code: too few requests allowed
+    std::fs::write(&cfg, "[check]\nmax-requests = 1\nmax-waiting = \"60s\"\n").unwrap();
+    let c = sonde(
+        t.path(),
+        &["check", "--config", cfg.to_str().unwrap(), "-f", "markdown"],
+    );
+    assert_eq!(
+        c.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&c.stderr)
+    );
+    let md = stdout(&c);
+    assert!(md.starts_with("### sonde: over budget"), "{md}");
+    assert!(md.contains("| **FAIL** | requests |"), "{md}");
+    assert!(md.contains("| pass | waiting |"), "{md}");
+    // a flag still wins over the file
+    let c = sonde(
+        t.path(),
+        &[
+            "check",
+            "--config",
+            cfg.to_str().unwrap(),
+            "--max-requests",
+            "100000",
+        ],
+    );
+    assert_eq!(c.status.code(), Some(0), "{}", stdout(&c));
+    // a mistake in the file says where
+    std::fs::write(&cfg, "[check]\nmax-requets = 1\n").unwrap();
+    let c = sonde(t.path(), &["check", "--config", cfg.to_str().unwrap()]);
+    assert_ne!(c.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&c.stderr).contains("sonde.toml"));
+}

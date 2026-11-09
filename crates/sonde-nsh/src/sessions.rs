@@ -214,7 +214,10 @@ fn view_of(path: &str) -> Result<Arc<JsonValue>, String> {
         .into_iter()
         .map(|(_, n, _, _)| n)
         .collect();
-    let prof = sonde_proxy::profile::profile(&s.records, &crate::state::request_prices());
+    let prof = sonde_proxy::profile::profile(
+        &s.records,
+        &crate::state::request_prices_for(&s.header.endpoint),
+    );
     let what_if = sonde_proxy::fixes::what_if(&s.records, &prof, &obs);
     let view = Arc::new(json!({
         "path": path,
@@ -323,7 +326,10 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
         return Some(p);
     }
     let s = Session::open(path).ok()?;
-    let pr = sonde_proxy::profile::profile(&s.records, &crate::state::request_prices());
+    let pr = sonde_proxy::profile::profile(
+        &s.records,
+        &crate::state::request_prices_for(&s.header.endpoint),
+    );
     let ob = observations(&s.records, &episodes(&s.records));
     let p = sonde_proxy::program::run_point(
         &path.to_string_lossy(),
@@ -799,6 +805,74 @@ impl Sessions {
                 sonde_proxy::profile::compare_runs((&a.records, &pa, &oa), (&b.records, &pb, &ob))
                     .of_programs(a.header.command.as_deref(), b.header.command.as_deref()),
             ))
+        })
+        .await
+        .map_err(err_msg)?
+    }
+
+    /// The programs run here, newest first: each with its last runs'
+    /// figures (oldest first, for a trend), its baseline, and whether its
+    /// newest run is past it (more than 10% more requests or waiting).
+    pub async fn programs() -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let dir = sonde().paths().sessions();
+            let mut by: std::collections::BTreeMap<String, Vec<(String, PathBuf)>> =
+                Default::default();
+            for p in std::fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
+            {
+                if let Some(h) = header_of(&p)
+                    && let Some(k) = sonde_proxy::program::program_key(h.command.as_deref())
+                {
+                    by.entry(k).or_default().push((h.created.to_rfc3339(), p));
+                }
+            }
+            let bases = baselines();
+            let mut out: Vec<(String, JsonValue)> = by
+                .into_iter()
+                .map(|(key, mut runs)| {
+                    runs.sort();
+                    let n = runs.len();
+                    let points: Vec<_> = runs
+                        .iter()
+                        .rev()
+                        .take(12)
+                        .rev()
+                        .filter_map(|(_, p)| run_point(p))
+                        .collect();
+                    let base = bases.get(&key).and_then(|name| {
+                        let p = dir.join(name);
+                        p.is_file().then(|| run_point(&p)).flatten()
+                    });
+                    let latest = points.last();
+                    let past = |a: f64, b: f64| b > 0.0 && a > b * 1.1;
+                    let regressed = match (latest, &base) {
+                        (Some(l), Some(b)) if l.path != b.path => {
+                            past(l.requests as f64, b.requests as f64) || past(l.busy_ms, b.busy_ms)
+                        }
+                        _ => false,
+                    };
+                    let newest = runs.last().map(|r| r.0.clone()).unwrap_or_default();
+                    (
+                        newest.clone(),
+                        json!({
+                            "program": key,
+                            "runs": n,
+                            "latest": runs.last().map(|r| r.1.to_string_lossy().into_owned()),
+                            "created": newest,
+                            "points": points,
+                            "baseline": base.map(|b| b.path),
+                            "regressed": regressed,
+                        }),
+                    )
+                })
+                .collect();
+            out.sort_by(|a, b| b.0.cmp(&a.0));
+            Ok(JsonValue::Array(out.into_iter().map(|(_, v)| v).collect()))
         })
         .await
         .map_err(err_msg)?

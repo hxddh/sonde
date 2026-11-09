@@ -14,20 +14,21 @@ import { hm } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
-import { away, crumb, go, notify, openSession, openSessionFile, report, sessionsChanged, sessionsTick, shellHeight, shellWidth } from "../store";
+import { away, compareOnOpen, crumb, endpoints, go, notify, openSession, paneOnOpen, openSessionFile, report, sessionsChanged, sessionsTick, shellHeight, shellWidth } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
-import { Button, Empty, IconButton, Segmented, SessionSkeleton, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
+import { Button, Empty, IconButton, Options, Segmented, SessionSkeleton, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
 import { fileName, removeSession, rename, RenameDialog, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
 import { findingsDense, programOf, scrubCommand } from "../ui/sessionview";
-import { HistoryPane } from "../ui/history";
+import { HistoryPane, ProgramList } from "../ui/history";
 import { TimePane } from "../ui/profile";
 import { offset } from "../ui/plots";
 import { RecordDetail } from "./Requests";
+import { running, runAgain } from "../run";
 
 type Pane = "operations" | "aligned" | "time" | "runs";
 
@@ -49,6 +50,11 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const outHighlight = signal<number[]>([]);
   const filter = signal<number | null>(null);
   const compareWith = signal<string | null>(null);
+  // run again from here: the new run opens compared with this one
+  effect(() => {
+    const c = compareOnOpen();
+    if (c && c.after === props.path) untracked(() => batch(() => (compareWith.set(c.before), compareOnOpen.set(null))));
+  });
   const replaying = signal(false);
   let opsRef: DataTableRef | undefined;
   let outRef: DataTableRef | undefined;
@@ -66,6 +72,11 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   });
   // a session with output opens lined up with it
   const pane = signal<Pane>(untracked(() => (lines().length && !terminal() ? "aligned" : "operations")));
+  // a program opened from the Programs list: its runs
+  effect(() => {
+    const o = paneOnOpen();
+    if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), paneOnOpen.set(null))));
+  });
 
   if (!props.inWindow) {
     effect(() => crumb.set(program(view()?.header.command) ?? view()?.header.endpoint ?? null));
@@ -263,6 +274,10 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
 
   const actions = () => (
     <View class="flex-row items-center gap-1.5">
+      {/* the program again, after a change: it opens compared with this run */}
+      <If when={view()?.header.command && !view()!.header.command!.startsWith("replay of ") && endpoints().some((e) => e.id === view()!.header.endpoint)}>
+        <Button small variant="primary" icon="play" label={t("sessions.runAgain")} onPress={() => runAgain(props.path, view()!.header.command!, view()!.header.endpoint)} disabled={!!running()} testID="run-again" />
+      </If>
       <Button small variant="outline" icon="repeat-2" label={t("replay.open")} onPress={() => replaying.set(true)} testID="replay-open" />
       <If when={isAvailable && !terminal()}>
         <Button small variant="outline" icon="git-compare-arrows" label={t("compare.open")} onPress={compareMenu} testID="compare-open" />
@@ -447,6 +462,7 @@ export function Sessions() {
     }
   };
   const query = signal("");
+  const byProgram = signal(false);
   const searchable = () => !terminal() && sessions().length > 4;
   // no field, no filter: a search left over from more sessions cannot hide them
   effect(() => {
@@ -490,14 +506,33 @@ export function Sessions() {
   const list = () => (
     <View class={terminal() ? "flex-1 gap-1" : "flex-1 gap-3"}>
       <View class="flex-row items-center gap-2 px-2">
-        <Text role="header" class="flex-1 text-body font-semibold text-foreground">
-          {t("timeline.sessions")}
-        </Text>
+        {/* a run at a time, or a program over its runs */}
+        <View class="flex-1 flex-row">
+          <Options
+            testID="sessions-by"
+            value={byProgram() ? "programs" : "runs"}
+            items={[
+              { value: "runs", title: t("sessions.byRun") },
+              { value: "programs", title: t("sessions.byProgram") },
+            ]}
+            onChange={(v) => byProgram.set(v === "programs")}
+          />
+        </View>
         <If when={!terminal()}>
           <IconButton icon="folder-open" label={t("sessions.openFile")} shortcut="mod+o" onPress={() => void openSessionFile()} testID="open-file" />
         </If>
         <IconButton icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
       </View>
+      <If when={!byProgram()} else={
+        <ProgramList
+          onOpen={(p) => {
+            batch(() => {
+              paneOnOpen.set({ path: p, pane: "runs" });
+              selected.set(p);
+            });
+          }}
+        />
+      }>
       <If when={searchable()}>
         <View class="px-1">
           <Input
@@ -526,6 +561,7 @@ export function Sessions() {
             ]}
           />
         </If>
+      </If>
       </If>
     </View>
   );

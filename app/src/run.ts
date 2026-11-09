@@ -6,7 +6,7 @@ import { announce, batch, effect, lifecycle, Notifications, platform, signal, St
 import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { area, endpoint, go, notify, openSession, report, sessionsChanged } from "./store";
+import { area, compareOnOpen, endpoint, go, notify, openSession, report, sessionsChanged } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
 import { programOf } from "./ui/sessionview";
@@ -161,6 +161,18 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
 }
 
 /** Runs `cmd` against `endpoint`, its requests recorded. */
+/** Runs a session's command again, on its endpoint; once it ends, the new
+ * run opens compared with the one before: change the program, then see what
+ * the change did. */
+export function runAgain(path: string, cmd: string, endpoint: string) {
+  if (running()) return;
+  command.set(cmd);
+  againOf = path;
+  go("run");
+  start(cmd, endpoint);
+}
+let againOf: string | null = null;
+
 export function start(cmd: string, endpoint: string) {
   askToNotify();
   if (running() || !cmd.trim()) return;
@@ -195,6 +207,16 @@ export function start(cmd: string, endpoint: string) {
         lastRun.set({ ...r, command: cmd, killed });
       });
       sessionsChanged();
+      // run again from a session: this run, compared with the one before it
+      const before = againOf;
+      againOf = null;
+      if (before && !killed && r.path) {
+        batch(() => {
+          compareOnOpen.set({ before, after: r.path });
+          openSession.set(r.path);
+          go("sessions");
+        });
+      }
       // this run's own: a new run may start before the analysis is back
       void tellTheUser(r, cmd, killed);
     })

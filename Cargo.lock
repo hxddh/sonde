@@ -4518,6 +4518,7 @@ dependencies = [
  "sonde-proxy",
  "tempfile",
  "tokio",
+ "toml",
 ]
 
 [[package]]

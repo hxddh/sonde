@@ -77,6 +77,8 @@ export const api = {
   layoutState: (job: string, time: number) => Sonde.layoutState(job, time) as T.Snapshot | null,
   sessions: {
     list: () => Sessions.list() as T.SessionInfo[],
+    /** The programs run here, newest first, with their runs' trend. */
+    programs: async () => (await Sessions.programs()) as unknown,
     /** sonde's own requests (browsing, scans, probes) as a session file: its path. */
     fromRequestLog: (limit = 100000) => Sessions.fromRequestLog(limit) as string,
     open: (path: string) => Sessions.open(path) as T.SessionView,

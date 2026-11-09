@@ -18,6 +18,23 @@ pub enum Vendor {
     Other,
 }
 
+impl Vendor {
+    /// The vendor's own list price per 1,000 writes (and listings) and per
+    /// 1,000 reads, in USD, where it differs from S3 Standard's: R2's, B2's,
+    /// Wasabi's and Tigris's; nothing per request on a store of one's own.
+    /// `None`: S3 Standard's (AWS, GCS's XML API, and the rest).
+    pub fn request_prices(self) -> Option<(f64, f64)> {
+        match self {
+            Vendor::R2 => Some((0.0045, 0.00036)),
+            Vendor::BackblazeB2 => Some((0.0, 0.0004)),
+            Vendor::Wasabi => Some((0.0, 0.0)),
+            Vendor::Tigris => Some((0.005, 0.0005)),
+            Vendor::Minio | Vendor::CephRgw => Some((0.0, 0.0)),
+            _ => None,
+        }
+    }
+}
+
 pub const ALL: [Vendor; 10] = [
     Vendor::Aws,
     Vendor::R2,

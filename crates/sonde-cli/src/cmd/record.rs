@@ -75,6 +75,11 @@ pub struct CheckArgs {
     /// Make this run its program's baseline, for later `--baseline auto` (and the app).
     #[arg(long)]
     set_baseline: bool,
+    /// The project's budget file (default: `sonde.toml` here or in a folder
+    /// above): its `[check]` gives the limits and the baseline the flags
+    /// leave out.
+    #[arg(long)]
+    config: Option<PathBuf>,
     /// At most this many requests.
     #[arg(long)]
     max_requests: Option<usize>,
@@ -87,9 +92,10 @@ pub struct CheckArgs {
     /// At most this many failed requests.
     #[arg(long)]
     max_errors: Option<usize>,
-    /// Against the baseline: requests, waiting and cost may grow this many percent.
-    #[arg(long, default_value_t = 10.0)]
-    tolerance: f64,
+    /// Against the baseline: requests, waiting and cost may grow this many
+    /// percent (10 unless sonde.toml says).
+    #[arg(long)]
+    tolerance: Option<f64>,
     /// Against the baseline: fail on a warning it did not have.
     #[arg(long)]
     no_new_warnings: bool,
@@ -1296,8 +1302,101 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
 }
 
 /// `sonde check`: a run against a budget and a baseline run; exit 1 when it is past either.
+/// A project's budget for `sonde check`: the `[check]` table of its
+/// `sonde.toml`, kept with the code it is about (`max-waiting` in ms, or
+/// "2s"; `baseline` a session, `auto`, or an https URL of one).
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct ProjectCheck {
+    max_requests: Option<usize>,
+    max_waiting: Option<toml::Value>,
+    max_cost: Option<f64>,
+    max_errors: Option<usize>,
+    tolerance: Option<f64>,
+    #[serde(default)]
+    no_new_warnings: bool,
+    baseline: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct ProjectFile {
+    #[serde(default)]
+    check: ProjectCheck,
+}
+
+/// `sonde.toml` here or in a folder above (to the repository's root).
+fn find_project_file() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        let f = dir.join("sonde.toml");
+        if f.is_file() {
+            return Some(f);
+        }
+        if dir.join(".git").exists() || !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// A duration as `sonde.toml` writes it: ms as a number, or "250ms", "2s", "1.5 s".
+fn waiting_ms(v: &toml::Value) -> anyhow::Result<f64> {
+    match v {
+        toml::Value::Integer(n) => Ok(*n as f64),
+        toml::Value::Float(f) => Ok(*f),
+        toml::Value::String(s) => {
+            let t = s.trim();
+            let (n, scale) = if let Some(n) = t.strip_suffix("ms") {
+                (n, 1.0)
+            } else if let Some(n) = t.strip_suffix('s') {
+                (n, 1000.0)
+            } else {
+                (t, 1.0)
+            };
+            Ok(n.trim()
+                .parse::<f64>()
+                .map_err(|_| anyhow::anyhow!("max-waiting: {s:?} is not a duration"))?
+                * scale)
+        }
+        other => anyhow::bail!("max-waiting: {other} is not a duration"),
+    }
+}
+
+/// A baseline at an https URL (a CI artifact, a presigned URL), fetched to a
+/// temporary file.
+async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPath> {
+    let body = reqwest::get(url)
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| anyhow::anyhow!("baseline {url}: {e}"))?
+        .bytes()
+        .await?;
+    let mut f = tempfile::Builder::new().suffix(".sonde").tempfile()?;
+    std::io::Write::write_all(&mut f, &body)?;
+    Ok(f.into_temp_path())
+}
+
 pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     use sonde_proxy::program::{Budget, check, run_point};
+    // the project's budget, which the flags override
+    let project_path = a.config.clone().or_else(find_project_file);
+    let project: ProjectCheck = match &project_path {
+        Some(p) => {
+            let text =
+                std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?;
+            toml::from_str::<ProjectFile>(&text)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?
+                .check
+        }
+        None => ProjectCheck::default(),
+    };
+    let baseline_arg = a.baseline.clone().or(project.baseline.clone());
+    let mut fetched: Option<tempfile::TempPath> = None;
+    if let Some(u) = baseline_arg
+        .as_deref()
+        .filter(|u| u.starts_with("https://") || u.starts_with("http://"))
+    {
+        fetched = Some(fetch_baseline(u).await?);
+    }
     let file = match &a.file {
         Some(f) => super::sessions::resolve(s, f),
         None => newest_session(s)?,
@@ -1347,8 +1446,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         sonde_proxy::program::write_baselines(&dir, &all)?;
         eprintln!("baseline for `{key}`: {}", file.display());
     }
-    let base_path = match a.baseline.as_deref() {
+    let base_path = match baseline_arg.as_deref() {
         None => None,
+        Some(_) if fetched.is_some() => fetched.as_ref().map(|p| p.to_path_buf()),
         Some("auto") => {
             let found = program.as_ref().and_then(|k| {
                 sonde_proxy::program::read_baselines(&dir)
@@ -1379,12 +1479,18 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
     }
     let budget = Budget {
-        max_requests: a.max_requests,
-        max_waiting_ms: a.max_waiting,
-        max_cost: a.max_cost,
-        max_errors: a.max_errors,
-        tolerance: base.as_ref().map(|_| a.tolerance / 100.0),
-        no_new_warnings: a.no_new_warnings,
+        max_requests: a.max_requests.or(project.max_requests),
+        max_waiting_ms: match (a.max_waiting, &project.max_waiting) {
+            (Some(v), _) => Some(v),
+            (None, Some(v)) => Some(waiting_ms(v)?),
+            (None, None) => None,
+        },
+        max_cost: a.max_cost.or(project.max_cost),
+        max_errors: a.max_errors.or(project.max_errors),
+        tolerance: base
+            .as_ref()
+            .map(|_| a.tolerance.or(project.tolerance).unwrap_or(10.0) / 100.0),
+        no_new_warnings: a.no_new_warnings || project.no_new_warnings,
     };
     let c = check(
         (&run.0, &run.1, &run.2, &run.3),
@@ -1398,7 +1504,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // nothing to hold the run to is a mistake in the command, in every format
     if c.verdicts.is_empty() {
         eprintln!(
-            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors) or a --baseline"
+            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors, or sonde.toml's [check]) or a --baseline"
         );
         return Ok(64);
     }
@@ -1415,6 +1521,47 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         "cost" => money_text(v, &run.0.currency),
         _ => format!("{v:.0}"),
     };
+    // a pull request's comment: the verdicts, what is new, and the run's findings
+    if matches!(a.format, Format::Markdown) {
+        let mut md = format!(
+            "### sonde: {}\n\n| | | run | limit | from |\n|---|---|---:|---:|---|\n",
+            if c.passed {
+                "within budget ✅"
+            } else {
+                "over budget ❌"
+            }
+        );
+        for v in &c.verdicts {
+            md.push_str(&format!(
+                "| {} | {} | {} | ≤ {} | {} |\n",
+                if v.ok { "pass" } else { "**FAIL**" },
+                v.what,
+                shown(v.what, v.value),
+                shown(v.what, v.limit),
+                v.against
+            ));
+        }
+        if !c.new_warnings.is_empty() {
+            md.push_str("\n**New since the baseline**\n\n");
+            for w in &c.new_warnings {
+                md.push_str(&format!("- {w}\n"));
+            }
+        }
+        let findings: Vec<_> = run.3.iter().take(5).collect();
+        if !findings.is_empty() {
+            md.push_str("\n<details><summary>What stands out</summary>\n\n");
+            for f in findings {
+                md.push_str(&format!("- {}", f.text));
+                if let Some(c) = f.callers.first() {
+                    md.push_str(&format!(" — `{}`", c.place));
+                }
+                md.push('\n');
+            }
+            md.push_str("\n</details>\n");
+        }
+        print!("{md}");
+        return Ok(if c.passed { 0 } else { 1 });
+    }
     let rows: Vec<Vec<String>> = c
         .verdicts
         .iter()
@@ -1625,6 +1772,55 @@ pub struct WatchArgs {
     /// Start a new session file every this many minutes (the finished one is compressed).
     #[arg(long, default_value_t = 60)]
     rotate: u64,
+    /// Post each new warning, and each finished file over sonde.toml's
+    /// budget, to this webhook as `{"text": …}` (Slack, Teams, Mattermost
+    /// and most chat services take it).
+    #[arg(long)]
+    alert: Option<String>,
+}
+
+/// Posts `text` to a webhook, in the background; a failure is said once on stderr.
+fn post_alert(url: &str, text: String) {
+    let url = url.to_string();
+    tokio::spawn(async move {
+        let r = reqwest::Client::new()
+            .post(&url)
+            .json(&serde_json::json!({ "text": text }))
+            .send()
+            .await
+            .and_then(|r| r.error_for_status());
+        if let Err(e) = r {
+            static SAID: std::sync::Once = std::sync::Once::new();
+            SAID.call_once(|| eprintln!("alert to {url} failed: {e}"));
+        }
+    });
+}
+
+/// A finished file held to the project's budget (`sonde.toml`'s `[check]`):
+/// what went over, when anything did.
+fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
+    use sonde_proxy::program::{Budget, check, run_point};
+    let text = std::fs::read_to_string(find_project_file()?).ok()?;
+    let p: ProjectCheck = toml::from_str::<ProjectFile>(&text).ok()?.check;
+    let budget = Budget {
+        max_requests: p.max_requests,
+        max_waiting_ms: p.max_waiting.as_ref().and_then(|v| waiting_ms(v).ok()),
+        max_cost: p.max_cost,
+        max_errors: p.max_errors,
+        tolerance: None,
+        no_new_warnings: false,
+    };
+    let prof = profile(records, &request_prices(s));
+    let obs = observations(records, &episodes(records));
+    let point = run_point("", "", records, &prof, &obs);
+    let c = check((&point, records, &prof, &obs), None, &budget);
+    let over: Vec<String> = c
+        .verdicts
+        .iter()
+        .filter(|v| !v.ok)
+        .map(|v| format!("{} {:.0} > {:.0}", v.what, v.value, v.limit))
+        .collect();
+    (!over.is_empty()).then(|| over.join(", "))
 }
 
 /// A proxy left running: one status line for the last minute, each new
@@ -1700,6 +1896,9 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                                 eprint!("\r\x1b[2K");
                             }
                             eprintln!("{} {}", paint("!", "33", tty), o.text);
+                            if let Some(url) = &a.alert {
+                                post_alert(url, format!("sonde watch: {}", o.text));
+                            }
                         }
                     }
                 }
@@ -1715,6 +1914,9 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                     let old = std::mem::replace(&mut writer, w);
                     let old_path = std::mem::replace(&mut path, next);
                     finish(old, &old_path);
+                    if let (Some(url), Some(over)) = (&a.alert, over_budget(s, &file_records)) {
+                        post_alert(url, format!("sonde watch: {} is over budget: {over}", old_path.display()));
+                    }
                     if tty {
                         eprint!("\r\x1b[2K");
                     }

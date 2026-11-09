@@ -1,16 +1,17 @@
 // A program over its runs: the same command run again and again, each run's
 // requests, waiting, cost and warnings, its baseline, and this run held to it.
 
-import { resource, Scroll, signal, Text, View } from "nsh";
-import { DatePicker } from "nsh/base";
+import { List, resource, Scroll, signal, Text, View } from "nsh";
+import { Button as BaseButton, DatePicker } from "nsh/base";
 import { day } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
-import { report, sessionsChanged } from "../store";
+import { report, sessionsChanged, sessionsTick } from "../store";
 import type { ProgramHistory } from "../types";
 import { Icon } from "./icon";
-import { Button, Empty, Loading, POPUP, SimpleTable, terminal } from "./kit";
-import { cost, offset, RunTrend } from "./plots";
+import { Badge, Button, Empty, Loading, POPUP, SimpleTable, terminal } from "./kit";
+import { cost, offset, RunTrend, Sparkline } from "./plots";
+import { programOf } from "./sessionview";
 
 const TOLERANCE = "10%";
 
@@ -129,3 +130,62 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
 }
 
 export { TOLERANCE };
+
+/** A program run here: its runs' trend, its baseline, and whether the newest is past it. */
+export interface ProgramSummary {
+  program: string;
+  runs: number;
+  latest: string | null;
+  created: string;
+  points: { requests: number; busyMs: number }[];
+  baseline: string | null;
+  regressed: boolean;
+}
+
+/** The programs run here, newest first: what each did over its runs, at a
+ * glance, and the ones past their baseline marked. A press opens its newest
+ * run on its runs. */
+export function ProgramList(props: { onOpen: (path: string) => void }) {
+  const programs = resource(
+    () => sessionsTick(),
+    async () => {
+      try {
+        return (await api.sessions.programs()) as ProgramSummary[];
+      } catch (e) {
+        report(e);
+        return [] as ProgramSummary[];
+      }
+    },
+  );
+  return (
+    <If when={programs()} else={<Loading class="px-2" />}>
+      {(list) => (
+        <If when={list().length > 0} else={<Text class="px-2 text-small text-muted-foreground">{t("programs.none")}</Text>}>
+          <List testID="program-list" class="flex-1" each={list()} keyExtractor={(p) => p.program} estimatedItemSize={terminal() ? 2 : 52} scrollbar={false}>
+            {(p) => (
+              <BaseButton
+                testID="program-row"
+                accessibilityLabel={`${programOf(p().program) ?? p().program}, ${t("programs.runs", { n: p().runs })}${p().regressed ? `, ${t("programs.regressed")}` : ""}`}
+                onPress={() => p().latest && props.onOpen(p().latest!)}
+                class="gap-1 rounded-(--radius) px-2 py-1.5 hover:bg-muted"
+              >
+                <View class="flex-row items-center gap-2">
+                  <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{programOf(p().program) ?? p().program}</Text>
+                  <If when={p().regressed}>
+                    <View testID="program-regressed"><Badge label={t("programs.regressed")} tone="warn" /></View>
+                  </If>
+                </View>
+                <View class="flex-row items-center gap-2">
+                  <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{`${t("programs.runs", { n: p().runs })} · ${day(p().created)}`}</Text>
+                  <If when={p().points.length > 1}>
+                    <Sparkline shape={p().points.map((x) => x.requests)} id={`program:${p().program}`} class="h-4 w-20" />
+                  </If>
+                </View>
+              </BaseButton>
+            )}
+          </List>
+        </If>
+      )}
+    </If>
+  );
+}

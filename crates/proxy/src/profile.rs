@@ -257,6 +257,8 @@ pub struct PrefixStat {
     /// Of reads and of writes, in any one second.
     pub peak_reads: usize,
     pub peak_writes: usize,
+    /// What its requests cost: where the money went, by part of the key space.
+    pub cost: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -646,6 +648,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             peak_per_second: peak_second(&all),
             peak_reads: peak_second(&reads),
             peak_writes: peak_second(&writes),
+            cost: rs.iter().map(|r| price(class(r))).sum(),
         }
     };
     let mut prefixes: Vec<PrefixStat> = ranked

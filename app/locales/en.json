@@ -646,5 +646,12 @@
  "probes.writes": "A run writes test objects under %{bucket}/sonde-probe/ and deletes them when it ends (with temporary buckets on, it also creates and deletes buckets named sonde-probe-…). Use a bucket you can write to, not one holding data you need.",
  "fix.copy": "Copy the code",
  "settings.callers": "Name the code that sent each request (Python)",
- "settings.callersHint": "A run puts a small hook on PYTHONPATH: boto3 adds the file, line and function to each request, and findings say where to change the program. Nothing else changes; the store never sees it."
+ "settings.callersHint": "A run puts a small hook on PYTHONPATH: boto3 adds the file, line and function to each request, and findings say where to change the program. Nothing else changes; the store never sees it.",
+ "sessions.runAgain": "Run again",
+ "programs.none": "No program has run here yet",
+ "programs.runs": "%{n} runs",
+ "programs.runs.one": "1 run",
+ "programs.regressed": "Past its baseline",
+ "sessions.byRun": "Runs",
+ "sessions.byProgram": "Programs"
 }

@@ -51,6 +51,10 @@ export const activityTab = signal<ActivityTab>("requests");
 export const area = () => areaOf(section());
 /** The session the Sessions area shows (set by Run when a run ends, by the palette, …). */
 export const openSession = signal<string | null>(null);
+/** A comparison to open with a session: the run before it (`Run again`). */
+export const compareOnOpen = signal<{ before: string; after: string } | null>(null);
+/** A pane to show a session on when it opens: a program opens on its runs. */
+export const paneOnOpen = signal<{ path: string; pane: "runs" } | null>(null);
 /** The request record the inspector should show. */
 export const focusRecord = signal<number | null>(null);
 /** The key the versions screen shows. */
