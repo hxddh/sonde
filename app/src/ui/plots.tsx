@@ -193,7 +193,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           {/* full width: when (from the session's start) and how many at once */}
           <If when={props.axis}>
             <PlotAxis tickValues={[0, Math.floor((rows().length - 1) / 2), rows().length - 1]} format={(i) => `+${offset(rows()[i]?.tMs ?? 0)}`} labelClass="pt-1 tabular-nums text-caption text-muted-foreground" />
-            <PlotAxis placement="right" scale="y2" labelPlacement="inside" ticks={2} format={(v) => t("profile.inFlightN", { n: Math.round(v) })} labelClass="mr-1 rounded-sm bg-card/85 px-1 tabular-nums text-caption text-muted-foreground" />
+            <PlotAxis placement="right" scale="y2" labelPlacement="inside" ticks={2} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass="mr-1 rounded-sm bg-card/85 px-1 tabular-nums text-caption text-muted-foreground" />
           </If>
           {/* the moment another chart rests on */}
           <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />

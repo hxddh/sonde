@@ -327,7 +327,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           slice={slice()}
           onSlice={(i) => slice.set(i)}
           // a short window keeps its height for the operations
-          shape={(props.inWindow ? windowSize().height : shellHeight()) >= 700} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || (props.inWindow ? windowSize().width : shellWidth()) < 1180} />
+          shape={pane() !== "time" && (props.inWindow ? windowSize().height : shellHeight()) >= 700} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || (props.inWindow ? windowSize().width : shellWidth()) < 1180} />
         <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} onOpenCode={(place) => api.sessions.openCode(props.path, place).catch(report)} maxHeight={Math.max(96, Math.round((props.inWindow ? windowSize().height : shellHeight()) * 0.28))} />
         <If when={terminal()}>{actions()}</If>
       </View>
