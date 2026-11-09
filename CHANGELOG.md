@@ -4,6 +4,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [10.0.0] - 2026-11-09
+
 A program over its runs, and from a finding to the code that caused it. Fewer places, one thing at a time; the
 Time pane answers in the order an S3 question runs.
 
