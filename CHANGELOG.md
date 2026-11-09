@@ -4,6 +4,50 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [12.0.0] - 2026-11-09
+
+Honesty and fit. What a log can and cannot say, the code that sent each request in Python, Node.js and Java, the
+change between two runs down to the lines, and controls and tables that line up.
+
+### Added
+
+- The Runs pane says since which run (and commit) a program is past its baseline, and opens the code change
+  between the last run within and the first past: file by file, the later run's findings on their lines.
+- Naming the code that sent each request in Node.js (the AWS SDK for JavaScript v3, through `NODE_OPTIONS`) and
+  Java (the AWS SDK for Java 2, a `-javaagent` that adds a global interceptor only when the SDK is on the class
+  path), beside Python's.
+- The time to the first byte: the proxy measures it and the whole exchange (latency now includes the body); the
+  operation's requests show both shades. Access logs keep their turnaround, who sent each request and its user
+  agent; CloudTrail keeps who and with what.
+- `sonde check`: `--max-p95` / `max-p95`, and `expect = [...]` in `sonde.toml` for findings kept on purpose (never
+  a new warning, listed as expected). A finding's "Expected" copies its line.
+- The PR comment `sonde check -f markdown` would write, rendered in the Runs pane, with Copy.
+- Where a run's requests went by prefix as one map (requests, cost, or the busiest second against S3's per-prefix
+  limit), and in Compare where they changed, each prefix colored from fewer to more.
+- Fixes for slow requests, lost races and orphaned files.
+
+### Changed
+
+- A CloudTrail file, which has no request times, shows no latency charts, waiting figures or latency findings.
+- Two control heights (h-8, h-7 with h-6 segments), three row heights, one settings width, one search field, one
+  figure tile (`Stat`) and a middle-cut `Path`; Segmented and Options no longer place themselves; tables fit their
+  own width (the operation's name takes the room, notes and bars go from the end). The lint fails on each drawn by
+  hand.
+- The endpoint form sits in place under its own header in the Settings window; the Sessions inspector has the
+  panels' header. Chart modes are toggles, not tabs; the busiest kinds over time are a mode of the requests' chart.
+  Charts with a table in the terminal show it to screen readers.
+
+### Fixed
+
+- A botocore client without signing (UNSIGNED) no longer fails under the Python hook; code places are read the same
+  way everywhere (paths with spaces, drive letters) and open only plain files of the run's folder.
+- `watch --logs` keeps a watermark and the keys it has seen, so a log written late under an earlier name is read.
+- Windows paths in commands keep their backslashes; `--password=…`-style options and commands given to a shell are
+  scrubbed. Imported and `logs of` sessions get no `$` and no Runs pane.
+- Settings saves only what changed there; an endpoint's test result is forgotten when it changes; its URL and
+  region follow the vendor while untouched; the Time pane's charts follow the zoom; a monthly cost reads as money;
+  "one request at a time"; gzipped imports; and more (see the 12.0 milestones in the commit log).
+
 ## [11.0.0] - 2026-11-09
 
 Order and precision. One kit drawn on Native Shell, one way to show each thing, charts down to every request, and
