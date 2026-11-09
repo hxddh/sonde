@@ -10,7 +10,7 @@ import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Badge, Bar, Button, CARD, Card, Choice, Empty, Field, IconButton, InWindowMenu, KeyValue, Loading, Muted, terminal, rowHeight, SPLIT_HANDLE, SwitchRow, TYPE, TABLE } from "../ui/kit";
+import { Badge, Bar, Button, CARD, Card, Choice, Empty, Field, IconButton, InWindowMenu, KeyValue, Loading, Muted, terminal, rowHeight, SPLIT_HANDLE, SwitchRow, TYPE, TABLE, PanelHeader } from "../ui/kit";
 import { Fold } from "../ui/record";
 import { rememberedSize } from "../ui/sizes";
 import { Overview } from "../ui/overview";
@@ -523,10 +523,8 @@ export function Browse() {
               <If when={selected()}>
                 {(e) => (
                   <View class="flex-1">
-                    <View class="h-10 flex-row items-center border-b border-border px-3">
-                      <Text class="flex-1 text-small font-semibold text-muted-foreground">{t("browse.detail")}</Text>
-                      <IconButton icon="x" label={t("common.close")} onPress={() => selected.set(null)} testID="detail-close" />
-                    </View>
+                    {/* the panel is named for what it shows: the object */}
+                    <PanelHeader title={e().name || e().key} icon="file" onClose={() => selected.set(null)} closeTestID="detail-close" />
                     <Scroll class="flex-1" contentClass="p-4">
                       {/* one object's: what was asked for another never shows here */}
                       <Each of={[e()]} key={(x) => x.key}>
