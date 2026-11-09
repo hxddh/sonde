@@ -468,7 +468,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                   );
                 }
                 // sizes as figures (tabular, at the end, under their title); the rest quiet
-                return c.key === "size" || c.key === "parts" ? <View class="flex-1 items-end"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View> : <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
+                return c.key === "size" || c.key === "parts" ? <View class="flex-1 items-end justify-center"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View> : <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
               }
         }
         onContextMenu={(e) => {

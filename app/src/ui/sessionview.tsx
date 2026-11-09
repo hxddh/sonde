@@ -662,7 +662,7 @@ export function OperationsTable(props: {
       case "requests":
       case "duration":
         // figures line up at their end, under their titles
-        return <View class="flex-1 items-end"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View>;
+        return <View class="flex-1 items-end justify-center"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View>;
       default:
         return <Text class="text-body text-foreground line-clamp-1">{c.text}</Text>;
     }
