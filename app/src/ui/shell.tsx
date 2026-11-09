@@ -261,7 +261,7 @@ export const windowMaterial = () => material && (settings()?.theme ?? "system") 
 export function Sidebar(props: { open: (a: Area) => void }) {
   return (
     <If when={sidebarOpen()}>
-      <View testID="sidebar" class={`w-56 border-r border-sidebar-border ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} px-2 pb-2 pt-3`}>
+      <View testID="sidebar" class={`flex-1 ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} px-2 pb-2 pt-3`}>
         {/* the places: one stop of Tab, ↑ and ↓ between them */}
         <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="gap-0.5">
           <Place area="run" open={props.open} />

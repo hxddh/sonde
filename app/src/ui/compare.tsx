@@ -257,6 +257,8 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
       <DataTable
         columns={columns()}
         data={rows()}
+        // the stores under one heading
+        groups={[[{ label: "", span: 2 }, { label: t("matrix.stores"), span: props.runs.length }]]}
         rowHeight={rowHeight(28)}
         fontSize={TYPE.body}
         // a store's p95 against the recording's: much slower in red, much faster in green

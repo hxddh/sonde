@@ -93,7 +93,10 @@ export const api = {
     import: (name: string, text: string) => Sessions.import(name, text) as string,
     importPath: (path: string) => Sessions.importPath(path) as string,
     rename: (path: string, title: string) => Sessions.rename(path, title) as boolean,
-    remove: (path: string) => Sessions.remove(path) as boolean,
+    /** To the system's trash (deleted where there is none). */
+    remove: (path: string) => Sessions.remove(path) as Promise<boolean>,
+    /** Shows a file or folder in the file manager. */
+    reveal: (path: string) => Sessions.reveal(path) as Promise<void>,
     share: async (path: string) => (await Sessions.share(path)) as { dir: string; url: string },
     run: (command: string, cwd: string | null, endpoint: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.RunEvent) => void) =>
       Sessions.run(command, cwd, endpoint, policy, cols, rows, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,

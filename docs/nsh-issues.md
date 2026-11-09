@@ -58,3 +58,51 @@ screen and the app laid out for the size it got.
 
 **Repro.** `nsh test tests/shots.test.tsx --target macos` on a GitHub `macos-15` runner with
 `SONDE_SHOT_MAX=1024x688`; any screenshot.
+
+## Plot has no press, selection or brush
+
+**What happens.** A Plot reports `onHoverChange` only. Picking a slice needs the plot wrapped in a Button (two focus
+stops; Enter on the plot does nothing), and a range (zoom) needs two presses on that button.
+
+**Expected.** `onPress` with the row under the pointer, a `selectedIndex`, and a brush that reports a range.
+
+## A Plot's value function cannot say "no value"
+
+**What happens.** Marks are typed `(d, i) => number`; the docs say a row without a value draws no line, but
+returning one takes `undefined as unknown as number`.
+
+**Expected.** `number | null | undefined`.
+
+## The Terminal component has no find, links or marks
+
+**What happens.** `TerminalRef` has `write`, `reset`, `text` and `focus` only: no search, no link detection, no way
+to mark a line or scroll to it, so a program's output cannot point at the operation a line belongs to.
+
+## Notifications have no actions
+
+**What happens.** `ShowNotificationOptions` has `id`, `title`, `body` and `silent`: no buttons ("Open session",
+"Run again") and no grouping.
+
+## A view cannot be copied as an image
+
+**What happens.** `Clipboard.writeImage(src)` takes an existing image; there is no snapshot of a view or a Plot, so
+"Copy chart" for a ticket cannot be built.
+
+## Files can be dropped in, not dragged out
+
+**What happens.** `onFileDrop` exists; there is no drag source, so a session or an object cannot be dragged to the
+file manager or a chat.
+
+## No represented file, window tabs or recent documents
+
+**What happens.** `WindowAttributes` has no represented file or tabs, and there is no system recent-documents list,
+so an app keeps its own Open Recent.
+
+## File dialogs and the file manager are Rust-only
+
+**What happens.** `reveal_path`, `move_to_trash`, `pick_save_path` and `open_path` are in `nsh_core::element` for an
+app's Rust; JS has `Picker.pickFiles` only. sonde calls them from its own module (sessions to the trash, a shared
+page's folder shown).
+
+**Expected.** A JS module for them, behind a capability.
+

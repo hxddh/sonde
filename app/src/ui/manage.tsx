@@ -70,7 +70,7 @@ export async function removeSession(s: SessionInfo, removed?: () => void): Promi
   });
   if (action !== "remove") return false;
   try {
-    api.sessions.remove(s.path);
+    await api.sessions.remove(s.path);
     removed?.();
     sessionsChanged();
     notify(t("sessions.removed", { name: sessionName(s) }));
@@ -91,8 +91,9 @@ export async function shareSession(path: string) {
       kind: "success",
       title: t("share.ready"),
       description: t("share.where", { dir: r.dir }),
-      action: t("share.copyFolder"),
-      onAction: () => void Clipboard.writeText(r.dir),
+      // the page's folder in the file manager, where it is a press away
+      action: t("share.showFolder"),
+      onAction: () => void api.sessions.reveal(r.dir).catch(() => Clipboard.writeText(r.dir).then(() => notify(t("common.copied")))),
       duration: 10000,
     });
   } catch (e) {

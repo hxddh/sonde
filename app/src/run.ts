@@ -110,12 +110,12 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
       toast({ id: "run-empty", kind: "info", title: t("run.emptyNotKept"), action: t("run.keepEmpty"), onAction: () => (keep = true), duration: 8000 });
       setTimeout(() => {
         if (keep) return;
-        try {
-          api.sessions.remove(r.path);
-          sessionsChanged();
-        } catch {
-          // already gone
-        }
+        void api.sessions
+          .remove(r.path)
+          .then(() => sessionsChanged())
+          .catch(() => {
+            // already gone
+          });
       }, 8500);
       return;
     }

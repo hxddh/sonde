@@ -1,7 +1,7 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { ErrorBoundary, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
-import { Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableSort, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
+import { effect, ErrorBoundary, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
+import { Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
 
@@ -591,6 +591,14 @@ export function sortRows<T>(rows: readonly T[], sort: DataTableSort | null, valu
  * column as wide as what it holds. `max` is how many rows show before it scrolls. */
 export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number }) {
   const sort = signal<DataTableSort | null>(null);
+  // the widths measured by Native Shell once the rows are in (CJK, mono and proportional alike)
+  let table: DataTableRef | undefined;
+  effect(() => {
+    props.rows;
+    if (terminal() || !table) return;
+    const t = table;
+    setTimeout(() => props.columns.forEach((_, c) => void t.fitColumn(`c${c}`).catch(() => {})), 0);
+  });
   const per = () => (props.mono ? 7.4 : 6.6);
   const columns = () =>
     props.columns.map((title, c) => {
@@ -601,6 +609,7 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
   const shown = () => Math.min(props.rows.length, props.max ?? 12);
   return (
     <DataTable
+      ref={(r) => (table = r)}
       columns={columns()}
       data={data()}
       sort={sort()}

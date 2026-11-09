@@ -1113,19 +1113,30 @@ impl Sessions {
         Ok(true)
     }
 
-    /// Removes a session file (not the one being recorded).
-    pub fn remove(path: String) -> Result<bool, String> {
+    /// Removes a session file (not the one being recorded): to the system's
+    /// trash, so it can come back; deleted where there is none.
+    pub async fn remove(path: String) -> Result<bool, String> {
         let (p, name) = own_session(&path)?;
         if RECORDING.lock().as_ref().is_some_and(|r| r.path == p) {
             return Err(err_msg("this session is being recorded: stop it first"));
         }
-        std::fs::remove_file(&p).map_err(err_msg)?;
+        let abs = std::path::absolute(&p).map_err(err_msg)?;
+        if nsh_core::element::move_to_trash(abs).await.is_err() {
+            std::fs::remove_file(&p).map_err(err_msg)?;
+        }
         forget(&p);
         let mut t = titles();
         if t.remove(&name).is_some() {
             save_titles(&t)?;
         }
         Ok(true)
+    }
+
+    /// Shows `path` (a session, or a folder sonde wrote) selected in the
+    /// file manager.
+    pub async fn reveal(path: String) -> Result<(), String> {
+        let abs = std::path::absolute(Path::new(&path)).map_err(err_msg)?;
+        nsh_core::element::reveal_path(abs).await
     }
 
     /// Writes a session as a web page (`sonde share`'s site) under the data

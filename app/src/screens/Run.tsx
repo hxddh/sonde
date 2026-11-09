@@ -184,6 +184,14 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
 
 /** The run as it goes: requests a second, failures, in flight and the p95
  * now; requests over time beside how long they take. */
+/** What the live view shows: the last half minute. */
+const LIVE_WINDOW_MS = 30_000;
+const liveRange = (p: Profile): [number, number] | null => {
+  const n = p.rate.length;
+  const keep = Math.ceil(LIVE_WINDOW_MS / Math.max(p.binMs, 1));
+  return n > keep ? [n - keep, n - 1] : null;
+};
+
 function LivePanel(props: { profile: Profile }) {
   const f = () => liveFigures(props.profile);
   const figure = (value: string, label: string, testID: string, tone = "text-foreground") => (
@@ -201,9 +209,10 @@ function LivePanel(props: { profile: Profile }) {
         {figure(ms(f().p95), t("live.p95"), "live-p95")}
       </View>
       <View class="flex-row gap-4">
-        <SessionShape profile={props.profile} class="h-16 min-w-0 flex-1" testID="run-shape" />
+        {/* the last 30 seconds, sliding as the run goes */}
+        <SessionShape profile={props.profile} range={liveRange(props.profile)} class="h-16 min-w-0 flex-1" testID="run-shape" />
         <View class="min-w-0 flex-1 gap-0.5">
-          <LatencyBand profile={props.profile} class="h-16 w-full" testID="run-band" />
+          <LatencyBand profile={props.profile} domainMs={[Math.max(0, props.profile.wallMs - LIVE_WINDOW_MS), Math.max(props.profile.wallMs, 1)]} class="h-16 w-full" testID="run-band" />
         </View>
       </View>
     </View>

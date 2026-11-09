@@ -14,6 +14,7 @@ import { groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } f
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
 import { Dot, Empty, InWindowMenu, POPUP, rowHeight, terminal, TYPE } from "./kit";
+import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
 
@@ -468,6 +469,10 @@ const tableClasses = {
 /** A session's operations: outcome, time, family, title, requests, duration,
  * place in the session's time and notes. `rows` (default all) are the
  * episodes shown, by index; events name episodes by index too. */
+/** The operations' columns as the user last sized them (kept with the app's sizes). */
+const opsWidths = { title: rememberedSize("ops.title", 340), bar: rememberedSize("ops.bar", 150), notes: rememberedSize("ops.notes", 320) };
+const kept = (key: keyof typeof opsWidths, fallback: number) => untracked(() => opsWidths[key].size()) || fallback;
+
 export function OperationsTable(props: {
   view: SessionView;
   rows?: number[];
@@ -501,11 +506,11 @@ export function OperationsTable(props: {
     ...(terminal() ? [] : [{ key: "status", title: "", width: 26, resizable: false, selectable: false }]),
     { key: "time", title: t("column.time"), width: 110, sortable: true },
     ...(formats() ? [{ key: "format", title: "", width: 86 }] : []),
-    { key: "title", title: t("column.operation"), width: props.compact ? 220 : 340, minWidth: 160 },
+    { key: "title", title: t("column.operation"), width: props.compact ? 220 : kept("title", 340), minWidth: 160 },
     { key: "requests", title: t("column.requests"), width: 56, align: "end" as const, sortable: true },
     { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: true },
-    ...(terminal() || props.compact ? [] : [{ key: "bar", title: t("column.when"), width: 150, minWidth: 80 }]),
-    ...(props.compact ? [] : [{ key: "notes", title: t("column.notes"), width: 320, minWidth: 120 }]),
+    ...(terminal() || props.compact ? [] : [{ key: "bar", title: t("column.when"), width: kept("bar", 150), minWidth: 80 }]),
+    ...(props.compact ? [] : [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }]),
   ];
   const data = () =>
     shown().map((i) => {
@@ -571,6 +576,9 @@ export function OperationsTable(props: {
       fontSize={TYPE.body}
       rowHeight={rowHeight(30)}
       resizableColumns={!terminal()}
+      onColumnResize={({ key, width }) => {
+        if (!props.compact && key in opsWidths) opsWidths[key as keyof typeof opsWidths].onResize({ size: width });
+      }}
       classes={terminal() ? undefined : tableClasses}
       rowClasses={shown().map((i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
       renderCell={terminal() ? undefined : cell}

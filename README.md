@@ -159,7 +159,8 @@ are in [app/DESIGN.md](app/DESIGN.md).
 
 Every place is screenshotted on a real window in CI on Linux, macOS and Windows (`scripts/shots.sh`: wide and at
 the least size, light and dark, English and Chinese); the images are the build's `sonde-shots-<platform>` artifacts.
-[What changed from 2.1 to 3.0](docs/compare-3.0.md), [from 3.0 to 4.0](docs/compare-4.0.md), [from 4.0 to 5.0](docs/compare-5.0.md), [from 5.0 to 6.0](docs/compare-6.0.md) and [from 6.0 to 7.0](docs/compare-7.0.md), side by side.
+What each version changed is in the [changelog](CHANGELOG.md); [9.0 compared with 8.0](docs/compare-9.0.md) side
+by side, and [the versions before](docs/).
 
 ## Documentation
 

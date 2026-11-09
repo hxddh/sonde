@@ -219,9 +219,11 @@ test("a program over its runs: history, a baseline, and the flows of its request
   // where its requests went
   await app.press("id:session-pane-mode-time");
   await app.waitFor("id:time-pane");
-  expect(app.shows("id:flows")).toBe(true);
+  // how long every request took, and where they went, on demand
+  expect(app.shows("text:/^median .* · p95 .* · p99 /")).toBe(true);
+  await app.press("id:flows-show");
+  await app.waitFor("id:flows");
   expect(app.shows("label:/^2 requests: 50% answered/")).toBe(true);
-  expect(app.shows("id:spread")).toBe(true);
 });
 
 

@@ -98,6 +98,49 @@ pub struct Bin {
     pub p50_ms: f64,
     pub p95_ms: f64,
     pub p99_ms: f64,
+    /// Of them, the store asked to slow down (503 SlowDown, 429).
+    pub throttled: usize,
+    /// Of them, sent more than once (retried by the SDK).
+    pub retried: usize,
+    /// Bytes sent and received by them.
+    pub bytes_up: u64,
+    pub bytes_down: u64,
+}
+
+/// How many requests took up to `le_ms` (and more than the bucket before):
+/// the latency's distribution, on fixed buckets that grow by about 2.5×.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencyBucket {
+    pub le_ms: f64,
+    pub n: usize,
+}
+
+/// The buckets' upper edges, in ms; the last holds everything slower.
+pub const LATENCY_EDGES: [f64; 15] = [
+    0.5,
+    1.0,
+    2.0,
+    5.0,
+    10.0,
+    20.0,
+    50.0,
+    100.0,
+    200.0,
+    500.0,
+    1000.0,
+    2000.0,
+    5000.0,
+    10000.0,
+    f64::INFINITY,
+];
+
+/// The store asked the program to slow down.
+fn throttled(r: &Record) -> bool {
+    matches!(r.status, Some(503 | 429))
+        || r.error_body
+            .as_deref()
+            .is_some_and(|b| b.contains("<Code>SlowDown</Code>"))
 }
 
 /// Requests in flight from `t_ms` on.
@@ -159,6 +202,12 @@ pub struct Profile {
     /// Runs of requests made one after another (each waiting for the one
     /// before), longest first: where requests at once would save time.
     pub chains: Vec<Chain>,
+    /// How long requests took, all of them: a count per bucket
+    /// ([`LATENCY_EDGES`]), and the median, p95 and p99.
+    pub latency: Vec<LatencyBucket>,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub p99_ms: f64,
 }
 
 /// Requests made one at a time, each starting once the one before ended
@@ -444,6 +493,10 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         heat: Vec::new(),
         flows: Vec::new(),
         chains: Vec::new(),
+        latency: Vec::new(),
+        p50_ms: 0.0,
+        p95_ms: 0.0,
+        p99_ms: 0.0,
     };
     let Some(t0) = records.iter().map(start_us).min() else {
         return empty;
@@ -517,6 +570,10 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             p50_ms: 0.0,
             p95_ms: 0.0,
             p99_ms: 0.0,
+            throttled: 0,
+            retried: 0,
+            bytes_up: 0,
+            bytes_down: 0,
         })
         .collect();
     let mut took: Vec<Vec<f64>> = vec![Vec::new(); bins];
@@ -524,6 +581,10 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         let i = ((ms(start_us(r) - t0) / bin) as usize).min(bins - 1);
         took[i].push(r.latency_ms);
         let b = &mut rate[i];
+        b.throttled += usize::from(throttled(r));
+        b.retried += usize::from(r.retries > 0);
+        b.bytes_up += r.request_bytes.unwrap_or(0);
+        b.bytes_down += r.response_bytes.unwrap_or(0);
         match tone(r) {
             0 => b.ok += 1,
             1 => b.miss += 1,
@@ -728,6 +789,25 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         .collect();
 
     let sum_ms: f64 = records.iter().map(|r| r.latency_ms.max(0.0)).sum();
+    // the distribution, every request in it (not a sample)
+    let mut all: Vec<f64> = records.iter().map(|r| r.latency_ms.max(0.0)).collect();
+    all.sort_by(f64::total_cmp);
+    let q = |p: f64| all[((all.len() as f64 * p).ceil() as usize).clamp(1, all.len()) - 1];
+    let mut latency: Vec<LatencyBucket> = LATENCY_EDGES
+        .iter()
+        .map(|&le_ms| LatencyBucket { le_ms, n: 0 })
+        .collect();
+    for v in &all {
+        let i = LATENCY_EDGES
+            .iter()
+            .position(|e| v <= e)
+            .unwrap_or(LATENCY_EDGES.len() - 1);
+        latency[i].n += 1;
+    }
+    // from the first bucket with a request to the last: no empty tails
+    let first = latency.iter().position(|b| b.n > 0).unwrap_or(0);
+    let last = latency.iter().rposition(|b| b.n > 0).unwrap_or(0);
+    let latency: Vec<LatencyBucket> = latency[first..=last].to_vec();
     Profile {
         wall_ms: ms(wall_us),
         busy_ms: ms(busy_us),
@@ -749,6 +829,10 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         heat,
         flows,
         chains: chains(records),
+        latency,
+        p50_ms: q(0.5),
+        p95_ms: q(0.95),
+        p99_ms: q(0.99),
     }
 }
 
@@ -1008,6 +1092,22 @@ mod tests {
         assert_eq!(p.groups[0].operation, "PutObject", "most time first");
         assert!((p.groups[0].share - 100.0 / 150.0).abs() < 1e-9);
         assert_eq!(p.rate.iter().map(|b| b.ok).sum::<usize>(), 11);
+    }
+
+    #[test]
+    fn every_request_is_in_the_distribution_and_a_slow_down_in_its_slice() {
+        let mut rs: Vec<Record> = (0..20).map(|i| rec(i + 1, i as i64, "GetObject", 200, 3.0 + i as f64)).collect();
+        let mut slow = rec(21, 30, "PutObject", 503, 400.0);
+        slow.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+        slow.retries = 2;
+        rs.push(slow);
+        let p = profile(&rs, &RequestPrices::default());
+        assert_eq!(p.latency.iter().map(|b| b.n).sum::<usize>(), 21);
+        assert_eq!(p.latency.first().map(|b| b.le_ms), Some(5.0), "no empty buckets before the first request");
+        assert_eq!(p.rate.iter().map(|b| b.throttled).sum::<usize>(), 1);
+        assert_eq!(p.rate.iter().map(|b| b.retried).sum::<usize>(), 1);
+        assert!(p.p50_ms >= 12.0 && p.p50_ms <= 14.0, "{}", p.p50_ms);
+        assert_eq!(p.p99_ms, 400.0);
     }
 
     #[test]

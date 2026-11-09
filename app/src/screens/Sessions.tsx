@@ -218,6 +218,13 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       { label: t("sessions.window"), icon: iconSvg("app-window"), onSelect: openWindow, disabled: props.inWindow },
       { label: t("sessions.share"), icon: iconSvg("share-2"), onSelect: () => void shareSession(props.path) },
       { label: t("sessions.copyPath"), icon: iconSvg("copy"), onSelect: () => copy(props.path) },
+      // the operations as shown, for a ticket or a spreadsheet (Native Shell's dump)
+      {
+        label: t("sessions.copyTable"),
+        icon: iconSvg("copy"),
+        onSelect: () =>
+          void opsRef?.dump().then((d) => copy([d.headers, ...d.rows].map((r) => r.join("\t")).join("\n"))),
+      },
       ...(me ? ([{ type: "separator" }, { label: t("sessions.rename"), icon: iconSvg("pencil"), onSelect: () => rename(me) }, { label: t("sessions.removeMenu"), icon: iconSvg("trash"), disabled: me.live, onSelect: () => void removeSession(me) }] as MenuItem[]) : []),
     ]);
   };

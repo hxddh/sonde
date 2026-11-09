@@ -11,17 +11,17 @@ job (its requests stop). A session argument is a path or a name in the data dire
 | Command | Does |
 |---|---|
 | `sonde demo [--app]` | A tour: a small program's requests to the built-in store, recorded and explained (`--app` opens it in the app). |
-| `sonde run [--no-delete\|--read-only] [--live] [-o FILE] -- COMMAND…` | Runs a command against a local endpoint that re-signs and records its S3 requests; prints the session's summary (and, when the program sent nothing, how each common SDK is pointed at sonde); exits with the command's status. |
+| `sonde run [--no-delete\|--read-only] [--live] [--callers] [-o FILE] -- COMMAND…` | Runs a command against a local endpoint that re-signs and records its S3 requests; prints the session's summary (and, when the program sent nothing, how each common SDK is pointed at sonde); exits with the command's status. `--callers` names the code that sent each request in a Python program (see below). |
 | `sonde proxy [--listen ADDR] [--allow-remote] [--no-delete\|--read-only] [-o FILE]` | The same endpoint, standing: prints the variables to set, then every request. It listens on loopback only unless `--allow-remote`. |
-| `sonde watch [--listen ADDR] [--rotate MIN] …` | A proxy left running: one status line for the last minute (requests a second, errors, p95), each new warning as it appears, and a new session file every `--rotate` minutes (60), the finished one compressed. |
+| `sonde watch [--listen ADDR] [--rotate MIN] [--alert URL] …` | A proxy left running: one status line for the last minute (requests a second, errors, p95), each new warning as it appears, and a new session file every `--rotate` minutes (60), the finished one compressed. `--alert` posts each new warning, and each finished file over `sonde.toml`'s budget, to a webhook as `{"text": …}` (Slack, Teams, Mattermost). |
 | `sonde sessions [list] [-f json\|csv\|markdown]` / `sonde sessions prune --keep N [--yes]` | The recorded sessions, newest first; prune deletes all but the newest N (baselines kept), a dry run without `--yes`. |
 | `sonde show [FILE] [--requests] [--errors] [--summary] [--app] [-f json]` | A session (default: the newest) as operations (or requests) and observations, and where its time went: the time it waited on its store by kind of request, the peak in flight and the requests' cost; and what acting on every finding would leave (requests, waiting, cost). JSON carries each finding's fixes by SDK. |
 | `sonde replay FILE -e E [-e E2 …] [--bucket A=B] [--prefix P\|--in-place] [--keep] [--yes] [-o FILE]` | Re-enacts a session on another endpoint, cleans up, compares every answer. With several `-e`, replays on each at once and prints them side by side: answers that differ and each kind's p95 against the recording. |
 | `sonde import FILE [-o FILE]` | Production traffic as a session: an S3 server access log, CloudTrail data events (`{"Records": …}` or one a line) or a HAR, with the same operations, findings and figures as a recording. |
 | `sonde export [FILE] --otlp [-o FILE \| --to URL]` | A session as OpenTelemetry traces (OTLP/JSON): each operation a span, its requests under it; `--to` posts it to a collector (`http://localhost:4318/v1/traces`). |
 | `sonde diff ORIGINAL REPLAY [-f json]` | Compares a session with its replay, and each kind's p50 and p95 on both stores (`replay` prints the same table). |
-| `sonde check [FILE] [--baseline FILE\|auto] [--set-baseline] [--max-requests N] [--max-waiting MS] [--max-cost X] [--max-errors N] [--tolerance PCT] [--no-new-warnings] [-f json]` | A run against a budget and a baseline run: exits 1 when it is over either (for CI). `--baseline auto` is the baseline set for the run's program (in the app or with `--set-baseline`; `sessions/baselines.json`, shared with the app); a baseline of another program is named on stderr. Nothing to check is a usage error (64). |
-| `sonde compare BEFORE AFTER [-f json]` | Two runs of a program, before and after a change: requests, waiting, time, errors and request cost, by kind of request, and the findings gone and new. |
+| `sonde check [FILE] [--config sonde.toml] [--baseline FILE\|auto\|URL] [--set-baseline] [--max-requests N] [--max-waiting MS] [--max-cost X] [--max-errors N] [--tolerance PCT] [--no-new-warnings] [-f json\|markdown]` | A run against a budget and a baseline run: exits 1 when it is over either (for CI). The budget may live with the code in `sonde.toml` (here or in a folder above, to the repository's root); flags win over it. `--baseline auto` is the baseline set for the run's program (in the app or with `--set-baseline`; `sessions/baselines.json`, shared with the app); an `https://` baseline (a CI artifact, a presigned URL) is fetched; a baseline of another program is named on stderr. `-f markdown` is a pull request's comment. Nothing to check is a usage error (64). |
+| `sonde compare BEFORE AFTER [-f json]` | Two runs of a program, before and after a change: requests, waiting, time, errors and request cost, by kind of request, and the findings gone and new. Two different programs compare by their figures only (it says so). |
 | `sonde share [FILE] [-o DIR] [--serve [--port N]] [--json] [--html] [--redact]` | A session (default: the newest) as a static web page: sonde's viewer and the computed `session.json`; `--serve` on 127.0.0.1 until Ctrl-C. `--html` writes one self-contained HTML file instead (findings, where the time went, a timeline, every operation at `#op-N`). `--redact` replaces bucket and key names with tokens (the same name, the same token; layout names, numbers and file types kept) and drops headers, bodies, URLs, request ids, the program's output and its arguments. |
 | `sonde probe -e A -e B -b BUCKET [--only checksum.] [--temp-buckets] [--no-slow] [-f json\|markdown\|csv] [-o FILE]` | Runs the probes on each endpoint in parallel; saves the runs. |
 | `sonde probe list` / `sonde probe runs` / `sonde probe diff RUN:EP RUN:EP` | The catalog, saved runs, changes between two runs. |
@@ -59,4 +59,36 @@ sonde share --html --redact -o run.html                          # an artifact a
 ```
 
 A run becomes its program's baseline with `sonde check --set-baseline` (or in the app); keep the data directory
-between jobs (a cache), or point `--baseline` at a session kept as an artifact of the main branch.
+between jobs (a cache), or point `--baseline` at a session kept as an artifact of the main branch (a path, or its
+URL).
+
+The budget can be kept with the code, in `sonde.toml`:
+
+```toml
+[check]
+max-requests = 5000
+max-waiting = "2s"        # or ms as a number
+max-cost = 0.05
+max-errors = 0
+tolerance = 10            # % a run may grow over its baseline
+no-new-warnings = true
+baseline = "auto"         # or a session's path, or an https URL
+```
+
+`sonde check -f markdown` writes the verdicts, what is new since the baseline and the run's findings (with the
+code that sent their requests) as Markdown, for a pull request's comment:
+
+```sh
+sonde check -f markdown > comment.md || status=$?
+gh pr comment "$PR" --body-file comment.md
+exit ${status:-0}
+```
+
+## Which code sent a request
+
+A finding names the place in the program its requests came from when the requests say so: sonde reads a
+`x-sonde-caller: file:line function` header (and never forwards it to the store), the SDK and its version from the
+user agent, and the trace from `traceparent`. For Python (boto3 / botocore), `sonde run --callers` (or the
+"Name the code" setting) adds the header itself: a small `sitecustomize` on `PYTHONPATH` that, before each S3
+request is signed, names the first frame of the program's own code. A program's own `sitecustomize` still runs.
+Other languages add the header with their SDK's request hook.

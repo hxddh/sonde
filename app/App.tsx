@@ -3,8 +3,8 @@
 // sidebar and the place beside it; a terminal gets a home list and a
 // navigation stack, the F10 menu bar and `:` for the palette.
 
-import { batch, effect, keymap, mount, platform, setColorScheme, Text, UrlScheme, View } from "nsh";
-import { createNavStack, NavPage, NavStack } from "nsh/base";
+import { batch, effect, keymap, mount, platform, setColorScheme, signal, Text, UrlScheme, View } from "nsh";
+import { createNavStack, NavPage, NavStack, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { currentWindow, Menu } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
@@ -17,9 +17,10 @@ import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, 
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
-import { Badge, Recoverable, SidePanel, terminal } from "./src/ui/kit";
+import { Badge, Recoverable, SidePanel, SPLIT_HANDLE, terminal } from "./src/ui/kit";
+import { rememberedSize } from "./src/ui/sizes";
 import { Palette, paletteOpen } from "./src/ui/palette";
-import { appMenus, Sidebar, toggleSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
+import { appMenus, Sidebar, sidebarOpen, toggleSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
 import { applyContrast } from "./src/theme";
 
@@ -106,23 +107,37 @@ function DesktopShell() {
       testID="shell"
       class={`flex-1 ${windowMaterial() ? "" : "bg-background"}`}
       onLayout={(e) => batch(() => (shellWidth.set(e.bounds.size.width), shellHeight.set(e.bounds.size.height)))}
-      // a .sonde file dropped anywhere on the window opens it
-      onFileDrop={(e) => openDropped(e.uris)}
+      // a .sonde file dropped anywhere on the window opens it; while one is over it, it says so
+      onFileDrop={(e) => {
+        dragging.set(false);
+        openDropped(e.uris);
+      }}
+      onFileDragEnter={() => dragging.set(true)}
+      onFileDragLeave={() => dragging.set(false)}
     >
       <Toolbar open={open} />
-      <View class="min-h-0 flex-1 flex-row">
-        <Sidebar open={open} />
-        <View class="min-w-0 flex-1 bg-background">
+      {/* the sidebar and the place: a split, the sidebar's width the user's (kept) */}
+      <ResizablePanelGroup class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sidebar.resize")}>
+        <ResizablePanel fixed visible={sidebarOpen()} size={sidebarWidth.size()} minSize={168} maxSize={320} onResize={sidebarWidth.onResize}>
+          <Sidebar open={open} />
+        </ResizablePanel>
+        <ResizablePanel minSize={480} class="min-w-0 bg-background">
           {/* rebuilt per area: screens own their jobs, cancelled when they go */}
           <Each of={[view()]} key={(x) => x}>
             {(x) => <Recoverable>{screen(x().split("|")[0] as Area)}</Recoverable>}
           </Each>
-        </View>
-      </View>
+        </ResizablePanel>
+      </ResizablePanelGroup>
       <SidePanel open={activityOpen()} onClose={() => activityOpen.set(false)} returnFocus={() => activityAnchor}>
         <Activity onClose={() => activityOpen.set(false)} />
       </SidePanel>
       <Palette />
+      <If when={dragging()}>
+        <View testID="drop-hint" class="absolute inset-3 items-center justify-center rounded-(--radius-card) border-2 border-dashed border-ring bg-background/80">
+          <Text class="text-heading font-semibold text-foreground">{t("app.dropHint")}</Text>
+          <Text class="text-small text-muted-foreground">{t("app.dropKinds")}</Text>
+        </View>
+      </If>
       <Toaster />
     </View>
   );
@@ -243,6 +258,12 @@ function installMenus() {
   });
   if (terminal()) keymap.bind({ "shift+;": () => paletteOpen.set(true) }, { when: "notEditing" });
 }
+
+/** The sidebar's width, as the user left it. */
+const sidebarWidth = rememberedSize("sidebar", 224);
+
+/** A file is being dragged over the window. */
+const dragging = signal(false);
 
 function App() {
   init();

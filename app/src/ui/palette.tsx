@@ -13,6 +13,7 @@ import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSessio
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { fill, glass, Kbd, keyLabel, SCRIM, terminal } from "./kit";
+import { scrubCommand } from "./sessionview";
 
 export const paletteOpen = signal(false);
 
@@ -29,6 +30,9 @@ interface Action {
 }
 
 const AREA_ICON = { run: "square-terminal", sessions: "list-clock", store: "database", activity: "activity", settings: "settings" } as const;
+
+/** What is typed in the palette: with a word, every session is searched. */
+const typed = signal("");
 
 function actions(buckets: BucketEntry[]): Action[] {
   const list: Action[] = [];
@@ -52,20 +56,21 @@ function actions(buckets: BucketEntry[]): Action[] {
         },
       }),
     );
-  // the newest sessions
+  // the newest sessions; every one once a word is typed (by its command, title or endpoint)
   sessionsTick();
   let sessions: SessionInfo[] = [];
   try {
-    sessions = api.sessions.list().slice(0, 6);
+    sessions = api.sessions.list().slice(0, typed().trim() ? 1000 : 6);
   } catch {
     // none yet
   }
   sessions.forEach((s) =>
     list.push({
       id: `session:${s.path}`,
-      label: s.command ?? s.name,
+      label: s.title || (s.command ? scrubCommand(s.command) : s.name),
       group: t("palette.sessions"),
       icon: "list-clock",
+      keywords: [s.endpoint, s.name, ...(s.title && s.command ? [scrubCommand(s.command)] : [])],
       hint: `${date(s.created)} · ${s.requests}`,
       run: () => {
         openSession.set(s.path);
@@ -174,7 +179,10 @@ function actions(buckets: BucketEntry[]): Action[] {
 }
 
 export function Palette() {
-  const close = () => paletteOpen.set(false);
+  const close = () => {
+    typed.set("");
+    paletteOpen.set(false);
+  };
   // the endpoint's buckets, fetched when the palette opens
   const buckets = resource(
     () => (paletteOpen() ? endpoint() : null),
@@ -210,6 +218,7 @@ export function Palette() {
           a?.run();
         }}
         onCancel={close}
+        onQueryChange={({ query }) => typed.set(query)}
         searchPrefix={terminal() ? undefined : <Icon name="search" size={16} />}
         searchBarClass={terminal() ? undefined : "h-12 flex-row items-center gap-2.5 border-b border-border px-4"}
         searchClass={terminal() ? "text-foreground" : "flex-1 text-heading text-foreground placeholder:text-muted-foreground"}

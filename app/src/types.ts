@@ -539,16 +539,21 @@ export interface Profile {
   meanInFlight: number;
   groups: ProfileGroup[];
   binMs: number;
-  rate: { tMs: number; ok: number; miss: number; client: number; server: number; p50Ms: number; p95Ms: number; p99Ms: number }[];
+  rate: { tMs: number; ok: number; miss: number; client: number; server: number; p50Ms: number; p95Ms: number; p99Ms: number; throttled?: number; retried?: number; bytesUp?: number; bytesDown?: number }[];
   inFlight: { tMs: number; n: number }[];
   samples: { id: number; group: number; ms: number; tMs: number }[];
   cost: { writes: number; reads: number; free: number; amount: number; currency: string };
   prices: { per1000Writes: number; per1000Reads: number; currency: string };
-  prefixes: { prefix: string; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number }[];
+  prefixes: { prefix: string; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number; cost?: number }[];
   heat: { prefix: number; bin: number; n: number }[];
   flows: { source: string; target: string; value: number }[];
   /** Requests that each waited for the one before, longest first. */
   chains?: { startMs: number; endMs: number; requests: number; ids: number[]; atOnceMs: number }[];
+  /** How long requests took, every one: a count per bucket up to `leMs` (null: slower than the last). */
+  latency?: { leMs: number | null; n: number }[];
+  p50Ms?: number;
+  p95Ms?: number;
+  p99Ms?: number;
 }
 
 /** A kind of request on two stores: the same workload's latency on each. */

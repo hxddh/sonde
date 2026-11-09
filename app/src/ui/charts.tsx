@@ -52,7 +52,8 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
 }
 
 /** One bar of the parts of a whole, with a legend. */
-export function StackBar(props: { parts: { label: string; value: number }[]; testID?: string }) {
+export function StackBar(props: { parts: { label: string; value: number }[]; testID?: string; format?: (v: number) => string }) {
+  const fmt = (v: number) => (props.format ?? bytes)(v);
   const total = () => Math.max(1, props.parts.reduce((s, p) => s + p.value, 0));
   const row = () => [Object.fromEntries(props.parts.map((p, i) => [`p${i}`, p.value]))];
   return (
@@ -64,7 +65,7 @@ export function StackBar(props: { parts: { label: string; value: number }[]; tes
           yScale={{ type: "band" }}
           xScale={{ type: "linear", domain: [0, total()] }}
           interactive={false}
-          accessibilityLabel={props.parts.map((p) => `${p.label} ${bytes(p.value)}`).join(", ")}
+          accessibilityLabel={props.parts.map((p) => `${p.label} ${fmt(p.value)}`).join(", ")}
           appearGeneration={total()}
           motion={MOTION}
           class="h-3.5 overflow-hidden rounded-full bg-muted"
@@ -72,7 +73,7 @@ export function StackBar(props: { parts: { label: string; value: number }[]; tes
           <Each of={props.parts}>{(_, i) => <Bar value={`p${i()}`} stack="parts" class={`fill-${PALETTE[i() % PALETTE.length]}`} />}</Each>
         </Plot>
       </If>
-      <Legend square items={props.parts.map((p, i) => ({ label: `${p.label} ${bytes(p.value)} (${pct(p.value, total())})`, swatch: `bg-${PALETTE[i % PALETTE.length]}` }))} />
+      <Legend square items={props.parts.map((p, i) => ({ label: `${p.label} ${fmt(p.value)} (${pct(p.value, total())})`, swatch: `bg-${PALETTE[i % PALETTE.length]}` }))} />
     </View>
   );
 }

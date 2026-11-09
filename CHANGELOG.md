@@ -4,6 +4,65 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+A program over its runs, and from a finding to the code that caused it. Fewer places, one thing at a time; the
+Time pane answers in the order an S3 question runs.
+
+### Added
+
+- Programs: the sessions list by program, each with its runs' trend and a mark when its newest run is past its
+  baseline; one opens on its runs. "Run again" runs a session's command once more and opens it compared with the
+  run before.
+- Which code sent a request: a finding names its top callers (`x-sonde-caller: file:line function`), its SDK and
+  version (from the user agent) and trace (`traceparent`). For Python, `sonde run --callers` or the "Name the code"
+  setting adds the header itself (an opt-in `sitecustomize`); the header never reaches the store.
+- `sonde.toml`: a project's `[check]` budget and baseline kept with its code; a baseline may be an https URL;
+  `sonde check -f markdown` writes a pull request's comment.
+- `sonde watch --alert URL`: each new warning, and each finished file over budget, posted to a webhook.
+- Time: the session's timeline full width with its axis, the findings marked and two presses to zoom (the charts
+  below follow); what the store pushed back (throttles, failures, retries) over time; how long every request took
+  (a distribution with the median, p95 and p99); each prefix against S3's 5,500 reads and 3,500 writes a second;
+  what the requests cost, by kind and by prefix; throughput.
+- Cost by prefix; request prices by the store's vendor (R2, B2, Wasabi, Tigris, a store of one's own).
+- Activity's requests open as a session; the operations copy as a table; the fix's code has a copy button; a
+  session deleted goes to the trash; a shared page's folder shows in the file manager; the palette searches every
+  session; a file dragged over the window says what dropping it does.
+
+### Changed
+
+- One way in at first launch: the demo, landing on Run with a command ready.
+- The findings take a line each while a pane of its own is open; the sessions list steps aside while an inspector
+  is open; long keys are cut in the middle; Run, once ended, shows the run in a sentence and what stands out.
+- Compare is one view: a replay's answers, before and after, and the transcripts on demand. Two different programs
+  compare by their figures, and say so.
+- Before and after, and two stores' p95, as dumbbells; a run's trend shows its baseline's tolerance band; the live
+  view is the last 30 seconds.
+- Costs of thousandths of a cent read per 1,000 runs; the run policy reads "Allow all / Block deletes / Block
+  writes"; the read-only state is words in the toolbar; Settings puts safety first; number fields look like fields.
+- The sidebar is a split like the others; tables size their columns to what they hold; the operations' column
+  widths are kept.
+- Outcome colors are for outcomes only; answered and not found differ in lightness, not only hue.
+
+### Fixed
+
+- `--redact`, OTLP, the tray, notifications and window titles could show a variable set before the command (a key,
+  say): they show the program's name, and the command with values hidden.
+- A SigV2 presigned URL could last forever; it may last a week, as SigV4's.
+- "Where the time went" could add up past 100%; the live rate extrapolated a few milliseconds to "200 a second";
+  the latency band curved through values no request had and bridged empty slices; the Sankey's widths were not
+  requests.
+- Chinese lacked the singular forms and three words; a CI check now holds every language to English's keys.
+- Tables' sort arrows did nothing; uploads sorted by their age's text.
+- A browser's HAR imported every page and script as S3 requests.
+- The jobs badge could stay at "1 running"; a stopped listener's task waited for the next change; a setting
+  changed just before Settings closed was lost; the run toast opened the wrong run.
+- A shared session's fallback command broke on a path with spaces; Windows paths in window titles; breadcrumbs
+  of keys with `//`; English-only words in Multipart, Layouts, Browse, Probes and the terminal's home.
+
+### Removed
+
+- The floating monitor, the sidebar's Recent, the outcome ring, the failure gauge and the latency spread chart
+  (the distribution answers it); a run that made no request is not kept unless asked.
+
 ## [9.1.0] - 2026-11-08
 
 Native Shell where sonde still had its own: fewer parts of sonde's, and a few slips put right.
