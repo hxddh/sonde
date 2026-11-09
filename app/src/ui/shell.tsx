@@ -2,7 +2,7 @@
 // toolbar), the sidebar with the places and recent sessions, and the
 // application's menus. A terminal has none of this (App.tsx's TerminalShell).
 
-import { type JSX, platform, reduceMotion, signal, Storage, Text, View, windowSize } from "nsh";
+import { type JSX, platform, signal, Storage, Text, View, windowSize } from "nsh";
 import { Button as BaseButton, Combobox, Toolbar as ToolbarGroup } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, titleBar } from "nsh/desktop";
 import { date } from "../format";
@@ -14,7 +14,7 @@ import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, end
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./sessionview";
-import { glass, IconButton, Kbd, material, POPUP, Tip } from "./kit";
+import { FOCUS, glass, IconButton, Kbd, material, POPUP, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { sessionName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -122,7 +122,7 @@ export function EndpointSwitcher(props: { class?: string }) {
         }
       }}
       offset={4}
-      class={`h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-input bg-background pl-2 pr-1 hover:border-ring/60 ${props.class ?? "w-52"}`}
+      class={`h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-input bg-background pl-2 pr-1 hover:border-ring/60 ${FOCUS} ${props.class ?? (shellWidth() >= 1040 ? "w-52" : "w-40")}`}
       inputClass="min-w-0 flex-1 text-body text-foreground placeholder:text-foreground"
       popupClass={`min-w-[260px] ${POPUP}`}
       popupStyle={glass}
@@ -162,9 +162,9 @@ function RunningPill() {
           accessibilityLabel={t("run.running")}
           onPress={() => go("run")}
           tooltip={<Tip text={scrubCommand(r().command)} />}
-          class="h-7 max-w-[220px] flex-row items-center gap-2 rounded-full bg-primary/12 px-3 hover:bg-primary/20"
+          class={`h-7 max-w-[200px] flex-row items-center gap-2 rounded-(--radius) border border-primary/40 bg-primary/10 px-2.5 hover:bg-primary/15 ${FOCUS}`}
         >
-          <View class={`size-1.5 rounded-full bg-primary ${reduceMotion() ? "" : "animate-pulse"}`} />
+          <View class="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />
           <Text class="text-small font-medium text-primary line-clamp-1">{programOf(r().command) ?? ""}</Text>
         </BaseButton>
       )}
@@ -172,19 +172,22 @@ function RunningPill() {
   );
 }
 
-/** The search field's stand-in: opens the command palette. */
+/** The search field's stand-in: opens the command palette; an icon alone
+ * in a narrow window, so the breadcrumb keeps its room. */
 function SearchButton() {
   return (
+    <If when={shellWidth() >= 1040} else={<IconButton testID="palette" icon="search" label={t("palette.open")} shortcut="mod+k" onPress={() => paletteOpen.set(true)} />}>
     <BaseButton
       testID="palette"
       accessibilityLabel={t("palette.open")}
       onPress={() => paletteOpen.set(true)}
-      class="h-7 w-44 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60"
+      class={`h-7 w-44 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${FOCUS}`}
     >
       <Icon name="search" size={14} />
       <Text class="flex-1 text-body text-muted-foreground">{t("palette.open")}</Text>
       <Kbd keys="mod+k" />
     </BaseButton>
+    </If>
   );
 }
 
@@ -213,10 +216,10 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
         accessibilityLabel={readOnly() ? t("common.readOnlyOn") : t("common.readOnlyOff")}
         tooltip={<Tip text={t("settings.readOnlyHint")} />}
         onPress={() => go("settings")}
-        class={`h-7 flex-row items-center gap-1.5 rounded-full px-2.5 ${readOnly() ? "bg-muted hover:bg-accent" : "bg-warn/15 hover:bg-warn/25"}`}
+        class={`h-7 flex-row items-center gap-1.5 rounded-(--radius) border px-2 ${readOnly() ? "border-input hover:bg-muted" : "border-warn/50 bg-warn/10 hover:bg-warn/15"} ${FOCUS}`}
       >
         <Icon name={readOnly() ? "lock" : "lock-open"} size={13} tint={readOnly() ? "muted-foreground" : "warn"} />
-        <Text class={`text-small font-medium ${readOnly() ? "text-muted-foreground" : "text-warn"}`}>{readOnly() ? t("common.readOnlyOn") : t("common.readOnlyOff")}</Text>
+        <Text class={`text-small ${readOnly() ? "text-muted-foreground" : "text-warn"}`}>{readOnly() ? t("common.readOnlyOn") : t("common.readOnlyOff")}</Text>
       </BaseButton>
       <SearchButton />
       <If when={!mac}>
@@ -241,7 +244,7 @@ function Place(props: { area: Area; open: (a: Area) => void }) {
       selected={on()}
       onPress={() => props.open(props.area)}
       tooltip={<Tip text={areaLabel(props.area)} shortcut={AREA_KEY[props.area]} />}
-      class="h-8 flex-row items-center gap-2 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent"
+      class={`h-8 flex-row items-center gap-2 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent ${FOCUS}`}
     >
       <Icon name={AREA_ICON[props.area]} size={16} tint={on() ? "sidebar-accent-foreground" : "muted-foreground"} />
       <Text class={on() ? "flex-1 text-body font-medium text-sidebar-accent-foreground" : "flex-1 text-body text-sidebar-foreground"}>{areaLabel(props.area)}</Text>

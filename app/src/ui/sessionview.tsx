@@ -5,15 +5,15 @@
 // (sonde share) both draw with these.
 
 import { type ContextMenuEvent, effect, type JSX, List, platform, reduceMotion, Scroll, type ScrollRef, signal, Text, untracked, View } from "nsh";
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, HoverCard, TextView } from "nsh/base";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, Popover, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
-import { bytes, date, day, middle, ms } from "../format";
+import { bytes, count, date, day, middle, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
+import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { CARD, Dot, Empty, FOCUS, InWindowMenu, Options, POPUP, rowHeight, TABLE, terminal, TYPE } from "./kit";
+import { CARD, Dot, Empty, FOCUS, InWindowMenu, ListRow, Options, POPUP, rowHeight, TABLE, terminal, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -153,6 +153,19 @@ const TONE_BAR: Record<Tone, string> = {
 };
 export const toneText = (t: Tone) => TONE_TEXT[t];
 
+/** An HTTP status, the same everywhere: a dot in its tone and the code, a
+ * success quiet, anything else in its tone (none: the request never got
+ * an answer). */
+export function StatusMark(props: { status: number | null; text?: string }) {
+  const tone = () => statusTone(props.status);
+  return (
+    <View class="flex-row items-center gap-1.5">
+      <Dot tone={tone()} />
+      <Text class={`font-mono text-caption tabular-nums ${tone() === "ok" ? "text-muted-foreground" : `font-semibold ${TONE_TEXT[tone()]}`}`}>{props.text ?? (props.status === null ? "—" : String(props.status))}</Text>
+    </View>
+  );
+}
+
 const FORMAT_TEXT: Record<string, string> = { SlateDB: "text-fmt-slatedb", Iceberg: "text-fmt-iceberg", Delta: "text-fmt-delta" };
 const KIND_LABEL: Partial<Record<Episode["kind"], string>> = { multipart: "MPU", retry: "retry", listing: "list", probe: "lookup" };
 
@@ -177,30 +190,34 @@ export function span(v: SessionView): [number, number] {
   return [a, Math.max(b, a + 1)];
 }
 
-/** A figure: a number, and what it counts; resting on it can show what it is made of. */
+/** A figure: a number, and what it counts. With `preview`, a press (or
+ * Return) opens what it is made of, and Escape closes it (Native Shell's
+ * Popover): the keyboard, touch and screen readers reach it as the pointer
+ * does. */
 export function Figure(props: { value: string; label: string; tone?: Tone; preview?: JSX.Element; testID?: string }) {
-  const figure = (
-    <View testID={props.testID} class="gap-0.5 pr-4">
+  const body = (
+    <View class="gap-0.5">
       <Text class={`tabular-nums text-heading font-semibold ${props.tone ? TONE_TEXT[props.tone] : "text-foreground"}`}>{props.value}</Text>
       <Text class="text-caption text-muted-foreground">{props.label}</Text>
     </View>
   );
-  if (!props.preview || terminal()) return figure;
-  // resting on a figure shows what it is made of
+  if (!props.preview || terminal()) return <View testID={props.testID} class="px-2 py-1">{body}</View>;
   return (
-    <HoverCard
-      openDelay={450}
-      closeDelay={120}
+    <Popover
       placement="bottom"
       align="start"
       offset={6}
-      trigger={figure}
+      trigger={
+        <BaseButton testID={props.testID} accessibilityLabel={`${props.value} ${props.label}`} class={`rounded-(--radius-sm) px-2 py-1 hover:bg-muted active:bg-muted ${FOCUS}`}>
+          {body}
+        </BaseButton>
+      }
       popupClass={`w-[300px] gap-2 ${POPUP} p-3`}
       popupStartingClass="opacity-0 -translate-y-1"
       popupEndingClass="opacity-0"
     >
       {props.preview}
-    </HoverCard>
+    </Popover>
   );
 }
 
@@ -228,6 +245,12 @@ function KindsPreview(props: { profile: Profile; by: "requests" | "time" }) {
       </Each>
     </View>
   );
+}
+
+/** The commit a run's code was at, as a person reads it: a1b2c3d (main), changed. */
+export function gitText(g: SessionView["header"]["git"]): string {
+  if (!g) return "";
+  return `${g.commit.slice(0, 7)}${g.branch ? ` (${g.branch})` : ""}${g.dirty ? ` · ${t("git.dirty")}` : ""}`;
 }
 
 /** The command and where it ran, then the session's figures. */
@@ -259,7 +282,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           <Text class="font-mono text-body font-semibold text-foreground line-clamp-2">
             {command() ? `$ ${scrubCommand(command()!)}` : props.view.header.endpoint}
           </Text>
-          <Text class="text-small text-muted-foreground line-clamp-1">{`${props.view.header.endpoint} · ${props.view.header.url} · ${date(props.view.header.created)}`}</Text>
+          <Text class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git)].filter(Boolean).join(" · ")}</Text>
           {/* the session in a sentence: where its time went, and the first thing to do */}
           <If when={props.view.profile?.groups.length && props.shape !== false && !props.compact}>
             <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(props.view.profile, props.view.observations)}</Text>
@@ -268,19 +291,22 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
         {props.actions}
       </View>
       <View class={props.compact ? "gap-2" : "flex-row items-center gap-5"}>
-      <View testID="session-summary" accessibilityLabel={line()} class="flex-row overflow-hidden">
-          <Figure testID="figure-requests" value={String(s().requests)} label={t("figure.requests")} preview={props.view.profile?.groups.length ? <KindsPreview profile={props.view.profile} by="requests" /> : undefined} />
-          <Figure value={String(props.view.episodes.length)} label={t("figure.operations")} />
-          <Figure value={`${seconds(s().seconds)} s`} label={t("figure.took")} preview={props.view.profile?.groups.length ? <KindsPreview profile={props.view.profile} by="time" /> : undefined} />
+      <View testID="session-summary" accessibilityLabel={line()} class="-ml-2 flex-row flex-wrap">
+          <Figure testID="figure-requests" value={count(s().requests)} label={t("figure.requests")} preview={props.view.profile?.groups.length ? <KindsPreview profile={props.view.profile} by="requests" /> : undefined} />
+          <Figure value={count(props.view.episodes.length)} label={t("figure.operations")} />
+          <Figure value={offset(s().seconds * 1000)} label={t("figure.took")} />
+          {/* the program's time on S3: one figure, with its share, and what it was made of */}
+          <If when={props.view.profile?.groups.length}>
+            <Figure testID="profile-waiting" value={offset(props.view.profile.busyMs)} label={`${t("profile.waiting")} · ${Math.round((props.view.profile.busyMs * 100) / Math.max(props.view.profile.wallMs, 1e-9))}%`} preview={<KindsPreview profile={props.view.profile} by="time" />} />
+          </If>
+          <If when={props.view.profile && props.view.profile.cost.amount > 0}>
+            <Figure testID="profile-cost" value={cost(props.view.profile.cost.amount, props.view.profile.cost.currency)} label={t("profile.cost")} />
+          </If>
           <If when={s().errors > 0}>
-            <Figure value={String(s().errors)} label={t("figure.errors")} tone="server" />
+            <Figure value={count(s().errors)} label={t("figure.errors")} tone="server" />
           </If>
           <If when={s().misses > 0}>
-            <Figure value={String(s().misses)} label={t("figure.notFound")} tone="miss" />
-          </If>
-          <If when={!props.compact}>
-            <Figure value={`↑${bytes(s().bytesUp)}`} label={t("figure.up")} />
-            <Figure value={`↓${bytes(s().bytesDown)}`} label={t("figure.down")} />
+            <Figure value={count(s().misses)} label={t("figure.notFound")} />
           </If>
         </View>
         {/* the session's shape: requests by outcome over time, and in flight */}
@@ -744,27 +770,23 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
           each={props.rows}
           keyExtractor={(r) => String(r.id)}
           estimatedItemSize={rowHeight(44) ?? 32}
-          class="overflow-hidden rounded-(--radius) border border-border bg-card"
+          class={CARD}
           style={{ height: Math.min(props.rows.length, 10) * (rowHeight(44) ?? 32) + 2 }}
         >
             {(r, i) => (
-              <BaseButton
-                testID={`op-request-${i()}`}
-                accessibilityLabel={`${r().operation} ${r().target}`}
-                onPress={() => props.onRecord(r().id)}
-                style={{ height: rowHeight(44) }}
-                class={`flex-row items-center gap-2 px-2.5 hover:bg-row-hover active:bg-selection ${i() > 0 ? "border-t border-border" : ""}`}
-              >
-                <Text class={`w-8 font-mono text-caption font-semibold ${TONE_TEXT[statusTone(r().status)]}`}>{r().status === null ? "—" : String(r().status)}</Text>
-                <View class="min-w-0 flex-1">
-                  <Text class="text-small font-medium text-foreground line-clamp-1">{r().operation}</Text>
-                  <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{middle(r().target, 40)}</Text>
-                </View>
-                <Text class="font-mono text-caption text-muted-foreground">{ms(r().latencyMs)}</Text>
-                <If when={!terminal()}>
+              <View style={{ height: rowHeight(44) }} class={i() > 0 ? "border-t border-border" : ""}>
+                <ListRow testID={`op-request-${i()}`} label={`${r().operation} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 rounded-none px-3">
+                  <View class="w-12">
+                    <StatusMark status={r().status} />
+                  </View>
+                  <View class="min-w-0 flex-1">
+                    <Text class="text-small text-foreground line-clamp-1">{r().operation}</Text>
+                    <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{middle(r().target, 40)}</Text>
+                  </View>
+                  <Text class="text-small tabular-nums text-muted-foreground">{ms(r().latencyMs)}</Text>
                   <Icon name="chevron-right" size={13} />
-                </If>
-              </BaseButton>
+                </ListRow>
+              </View>
             )}
         </List>
       </View>

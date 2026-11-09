@@ -3,7 +3,7 @@
 // nsh/base's ToastManager, ToastStack and Toast (after Native Shell's
 // gallery); a terminal shows them on its bottom row.
 
-import { computed, Overlay, reduceMotion, signal, Text, View } from "nsh";
+import { computed, Overlay, signal, Text, View } from "nsh";
 import { Toast, type ToastEntry, ToastManager, ToastStack } from "nsh/base";
 import { Icon, type IconName, type Tint } from "./icon";
 import { terminal } from "./kit";
@@ -111,7 +111,7 @@ function Item(props: { entry: ToastEntry }) {
       transitionStatus={props.entry.status}
       accessibilityLabel={[content().title, content().description].filter(Boolean).join(". ")}
       onDismissRequest={() => dismissToast(props.entry.id)}
-      class={`w-[340px] flex-row items-start gap-2 rounded-(--radius-card) border border-border bg-popover px-3 py-3 shadow-lg ${reduceMotion() ? "" : "transition-all duration-200 ease-out"}`}
+      class={`w-[340px] flex-row items-start gap-2 rounded-(--radius-card) border border-border bg-popover px-3 py-3 shadow-lg motion-safe:transition-all motion-safe:duration-200 motion-safe:ease-out`}
       startingClass="opacity-0 translate-y-3"
       endingClass="opacity-0 scale-95"
       swipingClass="transition-none"

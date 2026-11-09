@@ -4,12 +4,11 @@
 // the time and the money went, and whether a prefix ran into its limits.
 
 import { batch, Scroll, signal, Text, View } from "nsh";
-import { bytes } from "../format";
 import { t } from "../i18n";
 import type { SessionView } from "../types";
 import { StackBar } from "./charts";
 import { Button, CARD, terminal, Section, SimpleTable } from "./kit";
-import { Figure, findingMarks } from "./sessionview";
+import { findingMarks } from "./sessionview";
 import { Chains, cost, Distribution, Flows, Heat, LatencyBand, offset, PrefixLimits, Pressure, SessionShape, shapeSentence, TimeSpent } from "./plots";
 
 /** The Time pane of a session. */
@@ -33,10 +32,6 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
     const z = zoom();
     return z ? [z[0] * p().binMs, (z[1] + 1) * p().binMs] : null;
   };
-  const bytesPerSecond = () => {
-    const total = p().rate.reduce((s, b) => s + (b.bytesUp ?? 0) + (b.bytesDown ?? 0), 0);
-    return total / Math.max(p().wallMs / 1000, 1e-3);
-  };
   const costs = () => {
     const c = p().cost;
     return [
@@ -47,13 +42,9 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
   const showFlows = signal(false);
   return (
     <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-6 pb-4 pr-2"}>
-      <If when={!terminal()} else={<Text class="text-foreground">{shapeSentence(p())}</Text>}>
-        <View class={`flex-row flex-wrap gap-x-3 gap-y-2 ${CARD} p-4`}>
-          <Figure testID="profile-waiting" value={offset(p().busyMs)} label={`${t("profile.waiting")} · ${Math.round((p().busyMs * 100) / Math.max(p().wallMs, 1e-9))}%`} />
-          <Figure value={String(p().peakInFlight)} label={t("profile.peak")} />
-          <Figure testID="profile-throughput" value={`${bytes(bytesPerSecond())}/s`} label={t("profile.throughput")} />
-          <Figure testID="profile-cost" value={cost(p().cost.amount, p().cost.currency)} label={t("profile.cost")} />
-        </View>
+      {/* the figures are the session header's; here, a terminal's sentence */}
+      <If when={terminal()}>
+        <Text class="text-foreground">{shapeSentence(p())}</Text>
       </If>
       {/* when: the whole session, its findings marked; two presses zoom the charts below */}
       <If when={!terminal()}>

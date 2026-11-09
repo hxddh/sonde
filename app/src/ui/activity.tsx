@@ -14,7 +14,7 @@ import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, 
 import type { JobInfo, RecordSummary, RequestFilter } from "../types";
 import { Icon, iconSvg } from "./icon";
 import { Bar, Button, CARD, Dot, Empty, IconButton, Options, PanelHeader, terminal, rowHeight, Segmented, Tip, TYPE, TABLE } from "./kit";
-import { statusTone, toneText } from "./sessionview";
+import { clock, StatusMark, statusTone, toneText } from "./sessionview";
 
 export const activityOpen = signal(false);
 
@@ -137,14 +137,14 @@ function Requests() {
         accessibilityLabel={t("activity.requests")}
         class={`min-h-0 flex-1 ${CARD}`}
         columns={[
-          ...(terminal() ? [] : [{ key: "status", title: "", width: 52, resizable: false }]),
+          ...(terminal() ? [] : [{ key: "status", title: "", width: 56, resizable: false }]),
           // fits the panel: no column cut at its edge
-          { key: "operation", title: t("requests.operation"), width: 148 },
-          { key: "target", title: t("activity.target"), width: 172, minWidth: 110 },
-          { key: "latency", title: t("requests.latency"), width: 72, align: "end" as const },
-          { key: "time", title: t("column.time"), width: 66 },
+          { key: "operation", title: t("requests.operation"), width: 164 },
+          { key: "target", title: t("activity.target"), width: 148, minWidth: 100 },
+          { key: "latency", title: t("sessions.took"), width: 64, align: "end" as const },
+          { key: "time", title: t("column.time"), width: 92 },
         ]}
-        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: ms(r.latencyMs), time: hm(r.time) }))}
+        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: ms(r.latencyMs), time: clock(r.time).slice(0, 8) }))}
         fontSize={TYPE.body}
         rowHeight={rowHeight(28)}
         classes={terminal() ? undefined : TABLE}
@@ -153,14 +153,9 @@ function Requests() {
             ? undefined
             : (c) => {
                 const r = rows()[c.row];
-                if (c.key === "status" && r)
-                  return (
-                    <View class="flex-1 flex-row items-center gap-1.5 px-2">
-                      <Dot tone={statusTone(r.status)} />
-                      <Text class={`font-mono text-caption font-semibold ${toneText(statusTone(r.status))}`}>{c.text}</Text>
-                    </View>
-                  );
-                return <Text class={`px-2 line-clamp-1 ${c.key === "target" ? "font-mono text-caption text-muted-foreground" : c.key === "operation" ? "text-body text-foreground" : "font-mono text-caption text-muted-foreground"}`}>{c.text}</Text>;
+                if (c.key === "status" && r) return <StatusMark status={r.status} />;
+                if (c.key === "latency") return <Text class="flex-1 text-right text-small tabular-nums text-foreground">{c.text}</Text>;
+                return <Text class={`line-clamp-1 ${c.key === "operation" ? "text-body text-foreground" : "font-mono text-caption text-muted-foreground"}`}>{c.text}</Text>;
               }
         }
         rowSelectable

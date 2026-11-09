@@ -1,7 +1,7 @@
 // A row of tabs: Store's and Settings' pages. nsh/base's Tabs, an underline
 // sliding to the chosen one.
 
-import { type JSX, reduceMotion, Text, View } from "nsh";
+import { type JSX, Text, View } from "nsh";
 import { Tab, Tabs } from "nsh/base";
 import { Icon, type IconName } from "./icon";
 import { terminal } from "./kit";
@@ -9,7 +9,7 @@ import { terminal } from "./kit";
 export function TabBar<T extends string>(props: { tabs: T[]; value: T; label: (t: T) => string; icon?: (t: T) => IconName; onChange: (t: T) => void; trailing?: JSX.Element }) {
   return (
     <View class="flex-row items-center border-b border-border px-3">
-      <Tabs class="flex-1 flex-row flex-wrap gap-0.5" indicatorClass={`bottom-0 h-0.5 rounded-full bg-primary ${reduceMotion() ? "" : "transition-all duration-200"}`}>
+      <Tabs class="flex-1 flex-row flex-wrap gap-0.5" indicatorClass="bottom-0 h-0.5 rounded-full bg-primary motion-safe:transition-all motion-safe:duration-200">
         <Each of={props.tabs}>
           {(tab) => (
             <Tab

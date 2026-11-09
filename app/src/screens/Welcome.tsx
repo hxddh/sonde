@@ -5,14 +5,12 @@
 // session are a line below, for those who know what they want.
 
 import { platform, signal, Text, View } from "nsh";
-import { Button as BaseButton } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
 import { command } from "../run";
-import { endpointsMode, go, notify, openSession, refreshEndpoints, report, sessionsChanged, startDemo } from "../store";
+import { endpointsMode, go, notify, openSession, openSessionFile, refreshEndpoints, report, sessionsChanged, startDemo } from "../store";
 import type { EndpointView } from "../types";
-import { Icon, type IconName } from "../ui/icon";
-import { Button, CARD, Check, terminal } from "../ui/kit";
+import { Button, Card, CARD, Check, terminal } from "../ui/kit";
 
 /** A first command for the demo: two reads, one of a key that is not there,
  * signed with the keys sonde gives the program (cmd.exe on Windows). */
@@ -22,17 +20,6 @@ export function sampleCommand(): string {
   const sink = win ? "NUL" : "/dev/null";
   const get = (k: string) => `curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u ${v("AWS_ACCESS_KEY_ID")}:${v("AWS_SECRET_ACCESS_KEY")} -o ${sink} ${v("AWS_ENDPOINT_URL")}/demo/${k}`;
   return `${get("README.md")} && ${get("missing.txt")}`;
-}
-
-function Link(props: { icon: IconName; label: string; onPress: () => void; disabled?: boolean; testID?: string }) {
-  return (
-    <BaseButton accessibilityLabel={props.label} onPress={props.onPress} disabled={props.disabled} testID={props.testID} class="flex-row items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-1 hover:bg-muted disabled:opacity-50">
-      <If when={!terminal()}>
-        <Icon name={props.icon} size={14} />
-      </If>
-      <Text class="text-small text-muted-foreground">{props.label}</Text>
-    </BaseButton>
-  );
 }
 
 export function Welcome() {
@@ -85,22 +72,24 @@ export function Welcome() {
           <Text class="text-body leading-5 text-muted-foreground">{t("welcome.text")}</Text>
         </View>
         <View testID="welcome-way-demo" class={`gap-3 ${CARD} p-4`}>
-          <Text class="text-body font-semibold text-card-foreground">{t("welcome.demo")}</Text>
+          <Text class="text-heading font-semibold text-card-foreground">{t("welcome.demo")}</Text>
           <Text class="text-small leading-5 text-muted-foreground">{t("welcome.demoText")}</Text>
           <Button variant="primary" icon="play" label={busy() ? t("common.loading") : t("welcome.demoStart")} onPress={demo} disabled={busy()} testID="welcome-demo" class="self-start" />
         </View>
         {/* the other ways in, for those who know what they want */}
-        <View class="gap-1">
-          <Text class="px-1.5 text-caption font-medium text-muted-foreground">{t("welcome.or")}</Text>
-          <View class="flex-row flex-wrap gap-x-2">
-            <Link
-              icon="key-round"
-              label={profiles.length ? t("welcome.importFound", { n: profiles.length }) : t("welcome.importNone")}
-              onPress={() => showProfiles.set(!showProfiles())}
-              disabled={profiles.length === 0}
-              testID="welcome-import"
-            />
-            <Link
+        <View class="gap-3">
+          <View class="flex-row items-center gap-3">
+            <View class="h-px flex-1 bg-border" />
+            <Text class="text-caption text-muted-foreground">{t("welcome.or")}</Text>
+            <View class="h-px flex-1 bg-border" />
+          </View>
+          <View class="flex-row flex-wrap justify-center gap-2">
+            <If when={profiles.length > 0}>
+              <Button small variant="ghost" icon="key-round" label={t("welcome.importFound", { n: profiles.length })} onPress={() => showProfiles.set(!showProfiles())} testID="welcome-import" />
+            </If>
+            <Button
+              small
+              variant="ghost"
               icon="plus"
               label={t("welcome.addDo")}
               onPress={() => {
@@ -109,15 +98,17 @@ export function Welcome() {
               }}
               testID="welcome-add"
             />
-            <Link icon="scroll-text" label={t("welcome.example")} onPress={example} testID="open-example" />
+            {/* production as it ran: an access log, CloudTrail files, a HAR */}
+            <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openSessionFile()} testID="welcome-open-log" />
+            <Button small variant="ghost" icon="list-clock" label={t("welcome.example")} onPress={example} testID="open-example" />
           </View>
           <If when={showProfiles()}>
-            <View class={`gap-2 ${CARD} p-4`}>
-              <Each of={profiles}>{(p) => <Check label={`${p().name} — ${p().url}`} checked={!!chosen()[p().id]} onChange={(v) => chosen.set({ ...chosen(), [p().id]: v })} />}</Each>
+            <Card>
+              <Each of={profiles} key={(p) => p.id}>{(p) => <Check label={`${p().name} — ${p().url}`} checked={!!chosen()[p().id]} onChange={(v) => chosen.set({ ...chosen(), [p().id]: v })} />}</Each>
               <View class="flex-row">
                 <Button small variant="primary" label={t("welcome.importDo")} onPress={importChosen} disabled={!Object.values(chosen()).some(Boolean)} testID="welcome-import-do" />
               </View>
-            </View>
+            </Card>
           </If>
         </View>
       </View>

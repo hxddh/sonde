@@ -4,12 +4,12 @@
 
 import { type JSX, signal, Text, View } from "nsh";
 import { Editor, type EditorDiagnostic } from "nsh/base";
-import { bytes, ms } from "../format";
+import { bytes, day, ms } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
 import { Icon } from "./icon";
 import { Button, Disclosure, Dot, KeyValue, terminal } from "./kit";
-import { statusTone, toneText } from "./sessionview";
+import { clock, StatusMark, statusTone, toneText } from "./sessionview";
 
 /** A part of the request that folds: its title and count, open or not
  * (the kit's Disclosure: a heading, and a button that says it expands). */
@@ -106,7 +106,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
   const tone = () => statusTone(r().status);
   const facts = (): [string, string][] =>
     [
-      [t("column.time"), r().time],
+      [t("column.time"), `${day(r().time)} ${clock(r().time)}`],
       [t("common.endpoint"), r().endpoint],
       [t("requests.latency"), ms(r().latencyMs)],
       [t("requests.size"), `↑${bytes(r().requestBytes ?? 0)} ↓${bytes(r().responseBytes ?? 0)}`],
@@ -123,8 +123,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
           <If when={props.onBack}>
             <Button small variant="ghost" icon="chevron-left" label={t("common.back")} onPress={() => props.onBack?.()} testID="record-back" />
           </If>
-          <Dot tone={tone()} />
-          <Text class={`font-mono text-small font-semibold ${toneText(tone())}`}>{r().status === null ? t("requests.transport") : String(r().status)}</Text>
+          <StatusMark status={r().status} text={r().status === null ? t("requests.transport") : undefined} />
           <Text class="text-heading font-semibold text-foreground">{r().operation}</Text>
         </View>
         <Text class="font-mono text-caption leading-4 text-muted-foreground">{`${r().method} ${r().url}`}</Text>

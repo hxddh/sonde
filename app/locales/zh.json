@@ -720,5 +720,7 @@
  "replay.writes.one": "%{n} 个写入",
  "replay.deletes": "%{n} 个删除",
  "replay.deletes.one": "%{n} 个删除",
- "common.clear": "清除"
+ "common.clear": "清除",
+ "welcome.openLog": "打开生产环境的日志…",
+ "git.dirty": "含未提交的改动"
 }

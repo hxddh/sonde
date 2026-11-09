@@ -637,7 +637,7 @@
  "sessions.resizeInspector": "Resize the details",
  "run.resizeOperations": "Resize the program and its operations",
  "requests.asSession": "Open as a session",
- "welcome.or": "Or",
+ "welcome.or": "or",
  "cost.perThousand": "%{v} %{cur} per 1,000 runs",
  "run.emptyNotKept": "The run made no requests: it will not be kept",
  "run.keepEmpty": "Keep",
@@ -720,5 +720,7 @@
  "replay.writes.one": "%{n} write",
  "replay.deletes": "%{n} deletes",
  "replay.deletes.one": "%{n} delete",
- "common.clear": "Clear"
+ "common.clear": "Clear",
+ "welcome.openLog": "Open a log of production…",
+ "git.dirty": "with changes not committed"
 }
