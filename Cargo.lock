@@ -4561,6 +4561,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "decoders",
+ "flate2",
  "nsh-core",
  "parking_lot",
  "portable-pty",

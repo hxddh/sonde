@@ -252,22 +252,33 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       listing.set(l);
       start.set(0);
       filter.set("");
+      // a search belongs to its place: its text and state go with it
+      searchText.set("");
+      searchState.set(null);
       searchHits.set(null);
+      loading.set(false);
     });
     untracked(() => void load(l));
     cleanup(() => l.dispose());
   });
   cleanup(stopSearch);
 
+  // the listing a page is being read for: another place's never blocks this one
+  let reading: Listing | null = null;
   async function load(l: Listing) {
-    if (loading() || l.done) return;
+    if (reading === l || l.done) return;
+    reading = l;
     loading.set(true);
     try {
       await l.loadMore();
     } catch (e) {
       report(e);
     }
-    loading.set(false);
+    if (reading === l) {
+      reading = null;
+      // the place shown now is this listing's: its state, not another's
+      if (listing() === l) loading.set(false);
+    }
     version.update((v) => v + 1);
   }
 

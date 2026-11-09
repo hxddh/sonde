@@ -311,7 +311,10 @@ export async function openSessionFile() {
     let path: string | null;
     try {
       path = await api.sessions.pick(t("sessions.fileType"), t("sessions.trafficType"));
-    } catch {
+    } catch (e) {
+      // the picker only where there is no system dialog; any other failure
+      // (a file that is no session) is said
+      if (!/no file dialog|file chooser|not supported|no trash/i.test(String((e as Error)?.message ?? e))) throw e;
       // no system dialog here (the web): the picker hands the file over
       const [picked] = await Picker.pickFiles({
         filters: [

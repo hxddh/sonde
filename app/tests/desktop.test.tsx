@@ -74,7 +74,7 @@ test("a session file opens from Sessions: a picked .sonde, and a refusal for any
   expect(app.shows("text:$ python gen_delta.py s3://lake/delta")).toBe(true);
   app.onPick(() => [{ name: "notes.sonde", data: encode("hello") }]);
   await app.press("id:open-file");
-  await app.waitFor("text:/notes.sonde is not a sonde session/", { timeout: 5000 });
+  await app.waitFor("text:/notes.sonde: not a sonde session/", { timeout: 5000 });
 });
 
 const SESSION = "{\"format\":\"sonde-session\",\"version\":1,\"created\":\"2026-11-07T01:09:10.816413840Z\",\"endpoint\":\"rustfs\",\"url\":\"http://127.0.0.1:9100/\",\"region\":\"us-east-1\",\"command\":\"python gen_delta.py s3://lake/delta\"}\n{\"id\":1,\"time\":\"2026-11-07T01:09:10.924307634Z\",\"endpoint\":\"adhoc\",\"operation\":\"GetObject\",\"method\":\"GET\",\"url\":\"http://127.0.0.1:9100/lake/delta/_delta_log/_last_checkpoint\",\"bucket\":\"lake\",\"key\":\"delta/_delta_log/_last_checkpoint\",\"query\":[],\"status\":404,\"latencyMs\":2.124287,\"retries\":0,\"requestId\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\",\"hostId\":null,\"requestHeaders\":[{\"name\":\"host\",\"value\":\"127.0.0.1:42459\"},{\"name\":\"x-amz-date\",\"value\":\"20261107T010910Z\"},{\"name\":\"x-amz-content-sha256\",\"value\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"name\":\"authorization\",\"value\":\"AWS4-HMAC-SHA256 Credential=\u00abredacted\u00bb/20261107/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=\u00abredacted\u00bb\"},{\"name\":\"accept\",\"value\":\"*/*\"},{\"name\":\"user-agent\",\"value\":\"object_store/0.13.2\"}],\"responseHeaders\":[{\"name\":\"content-type\",\"value\":\"application/xml\"},{\"name\":\"x-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"x-amz-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"content-length\",\"value\":\"127\"},{\"name\":\"date\",\"value\":\"Sat, 07 Nov 2026 01:09:10 GMT\"}],\"requestBytes\":0,\"responseBytes\":127,\"errorBody\":\"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>\",\"transportError\":null,\"region\":\"us-east-1\",\"job\":null}\n";
@@ -87,4 +87,26 @@ test("a dropped file's URL becomes its path on every platform", async () => {
   expect(pathOf("file://server/share/x.sonde")).toBe("\\\\server\\share\\x.sonde");
   expect(pathOf("file:///tmp/100%.sonde")).toBe("/tmp/100%.sonde");
   expect(pathOf("file:///tmp/a%20b%.sonde")).toBe("/tmp/a b%.sonde");
+});
+
+test("a command keeps its secrets out and its Windows paths whole; sonde's own sessions read as its words", async () => {
+  const { commandLine, programOf, ranCommand, scrubCommand } = await import("../src/ui/sessionview");
+  expect(scrubCommand("AWS_SECRET_ACCESS_KEY=abc python x.py")).toBe("AWS_SECRET_ACCESS_KEY=… python x.py");
+  expect(scrubCommand("tool --password=hunter2 --region=eu")).toBe("tool --password=… --region=eu");
+  expect(scrubCommand("sh -c 'TOKEN=abc python x.py'")).toBe("sh -c 'TOKEN=… python x.py'");
+  expect(programOf("C:\\Python\\python.exe C:\\work\\etl.py")).not.toBeNull();
+  expect(scrubCommand("C:\\Python\\python.exe C:\\work\\etl.py")).toBe("C:\\Python\\python.exe C:\\work\\etl.py");
+  expect(ranCommand("python x.py")).toBe(true);
+  expect(ranCommand("logs of s3://demo/logs/")).toBe(false);
+  expect(ranCommand("replay of a.sonde")).toBe(false);
+  expect(ranCommand("  ")).toBe(false);
+  expect(commandLine("logs of s3://demo/logs/")).toBe("logs of s3://demo/logs/");
+  expect(commandLine("python x.py")).toBe("$ python x.py");
+});
+
+test("a month of a program reads as money, not per 1,000 runs", async () => {
+  const { money } = await import("../src/format");
+  const { cost } = await import("../src/ui/plots");
+  expect(money(0.004, "USD")).toBe("<0.01 USD");
+  expect(cost(0.004, "USD")).not.toBe("<0.01 USD");
 });

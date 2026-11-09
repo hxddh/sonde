@@ -22,7 +22,13 @@ export interface Running {
 /** The running program, or null. */
 export const running = signal<Running | null>(null);
 /** How the last run ended. */
-export const lastRun = signal<(RunResult & { command: string; killed: boolean; removed?: boolean }) | null>(null);
+export const lastRun = signal<(RunResult & { command: string; killed: boolean; removed?: boolean; endpoint: string }) | null>(null);
+
+/** A session deleted: if it was the last run's, Run stops offering it. */
+export function forgetRun(path: string) {
+  const last = lastRun();
+  if (last?.path === path) lastRun.set({ ...last, removed: true });
+}
 /** The newest command, for the field. */
 export const command = signal("");
 /** When the running program started (ms since the epoch). */
@@ -179,19 +185,20 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
  * run opens compared with the one before: change the program, then see what
  * the change did. */
 export function runAgain(path: string, cmd: string, endpoint: string, dir?: string | null) {
-  if (running()) return;
+  if (running() || !cmd.trim()) return;
   command.set(cmd);
   // where it ran before, when the session says
   if (dir) cwd.set(dir);
-  againOf = path;
   go("run");
-  start(cmd, endpoint);
+  // compared with the run before only once this one has started
+  if (start(cmd, endpoint)) againOf = path;
 }
 let againOf: string | null = null;
 
-export function start(cmd: string, endpoint: string) {
+/** Starts it; whether it started. */
+export function start(cmd: string, endpoint: string): boolean {
   askToNotify();
-  if (running() || !cmd.trim()) return;
+  if (running() || !cmd.trim()) return false;
   buffer = "";
   killed = false;
   remember(cmd.trim());
@@ -220,7 +227,7 @@ export function start(cmd: string, endpoint: string) {
     .then((r) => {
       batch(() => {
         running.set(null);
-        lastRun.set({ ...r, command: cmd, killed });
+        lastRun.set({ ...r, command: cmd, killed, endpoint });
       });
       sessionsChanged();
       const before = againOf;
@@ -234,6 +241,7 @@ export function start(cmd: string, endpoint: string) {
       running.set(null);
       report(e);
     });
+  return true;
 }
 
 /** Ends the running program. */

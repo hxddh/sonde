@@ -34,11 +34,18 @@ export function SettingsScreen() {
       draft.set(copyOf(now));
     });
   });
-  const write = (next: Settings, undo: Settings | null) => {
+  const write = (draftNext: Settings, undo: Settings | null) => {
+    // only what changed here is written: a field changed elsewhere meanwhile
+    // (the palette's theme, another window) keeps its new value
+    const base = settings();
+    const was = saved ?? base;
+    const changed = Object.fromEntries(Object.entries(draftNext).filter(([k, v]) => !was || JSON.stringify(v) !== JSON.stringify((was as unknown as Record<string, unknown>)[k])));
+    const next = base ? ({ ...copyOf(base), ...changed } as Settings) : draftNext;
     try {
       api.saveSettings({ ...next, "read-only": settings()?.["read-only"] ?? true });
       refreshSettings();
       saved = copyOf(next);
+      draft.set(copyOf(next));
       if (undo)
         notify(t("settings.saved"), {
           action: t("common.undo"),
@@ -165,7 +172,7 @@ export function SettingsScreen() {
             <Updates />
 
             <Section title={t("settings.paths")} description={t("settings.telemetry")}>
-              <KeyValue boxed rows={Object.entries(paths)} />
+              <KeyValue boxed rows={Object.entries(paths).map(([k, v]) => [t(`settings.path.${k}` as "settings.path.data"), String(v)])} />
             </Section>
           </View>
         )}

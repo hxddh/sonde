@@ -1,7 +1,7 @@
 // Two sessions side by side — a recording and its replay on another
 // endpoint, or any two — and the dialog that starts a replay.
 
-import { resource, Scroll, signal, Text, untracked, View } from "nsh";
+import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, DiffView } from "nsh/base";
 import { ms } from "../format";
 import { t } from "../i18n";
@@ -295,16 +295,21 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
   // more stores at once: the same requests on each, side by side
   const also = signal<string[]>([]);
   const runs = signal<StoreRun[] | null>(null);
-  const plan = (): ReplayPlan | null => {
+  // opened again, the dialog starts afresh: an earlier side-by-side is gone
+  effect(() => {
+    if (props.open) untracked(() => runs.set(null));
+  });
+  // the plan reads the session once per store chosen, not once per redraw
+  const plan = computed((): ReplayPlan | null => {
     const ep = target();
-    if (!ep) return null;
+    if (!ep || !props.open) return null;
     try {
-      return api.sessions.replayPlan(props.path, ep) as ReplayPlan;
+      return untracked(() => api.sessions.replayPlan(props.path, ep) as ReplayPlan);
     } catch (e) {
       report(e);
       return null;
     }
-  };
+  });
   const run = async () => {
     const p = plan();
     const ep = target();

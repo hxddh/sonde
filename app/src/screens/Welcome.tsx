@@ -100,7 +100,9 @@ export function Welcome() {
               testID="welcome-add" class="justify-start"
             />
             {/* production as it ran: an access log, CloudTrail files, a HAR */}
-            <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openSessionFile()} testID="welcome-open-log" class="justify-start" />
+            <If when={!terminal()}>
+              <Button small variant="ghost" icon="scroll-text" label={t("welcome.openLog")} onPress={() => void openSessionFile()} testID="welcome-open-log" class="justify-start" />
+            </If>
             <Button small variant="ghost" icon="list-clock" label={t("welcome.example")} onPress={example} testID="open-example" class="justify-start" />
           </View>
           <If when={showProfiles()}>

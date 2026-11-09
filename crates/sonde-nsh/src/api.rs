@@ -120,17 +120,36 @@ impl Sonde {
                     .filter(|p| !p.is_empty())
                     .ok_or_else(|| err_msg("a profile name is required"))?,
             },
-            "env" => CredentialSource::Env {
-                access_key_id_var: i
-                    .access_key_var
-                    .clone()
-                    .unwrap_or_else(|| "AWS_ACCESS_KEY_ID".into()),
-                secret_access_key_var: i
-                    .secret_key_var
-                    .clone()
-                    .unwrap_or_else(|| "AWS_SECRET_ACCESS_KEY".into()),
-                session_token_var: Some("AWS_SESSION_TOKEN".into()),
-            },
+            "env" => {
+                // an edit keeps the variables the configuration names
+                let kept = match existing.as_ref().map(|e| &e.credentials) {
+                    Some(CredentialSource::Env {
+                        access_key_id_var,
+                        secret_access_key_var,
+                        session_token_var,
+                    }) => Some((
+                        access_key_id_var.clone(),
+                        secret_access_key_var.clone(),
+                        session_token_var.clone(),
+                    )),
+                    _ => None,
+                };
+                CredentialSource::Env {
+                    access_key_id_var: i
+                        .access_key_var
+                        .clone()
+                        .or_else(|| kept.as_ref().map(|k| k.0.clone()))
+                        .unwrap_or_else(|| "AWS_ACCESS_KEY_ID".into()),
+                    secret_access_key_var: i
+                        .secret_key_var
+                        .clone()
+                        .or_else(|| kept.as_ref().map(|k| k.1.clone()))
+                        .unwrap_or_else(|| "AWS_SECRET_ACCESS_KEY".into()),
+                    session_token_var: kept
+                        .map(|k| k.2)
+                        .unwrap_or_else(|| Some("AWS_SESSION_TOKEN".into())),
+                }
+            }
             "imds" => CredentialSource::Imds,
             "web-identity" => CredentialSource::WebIdentity {
                 role_arn: i

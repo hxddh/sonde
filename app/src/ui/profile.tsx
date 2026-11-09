@@ -7,6 +7,7 @@
 
 import { batch, Scroll, signal, Text, View } from "nsh";
 import { t } from "../i18n";
+import { ms } from "../format";
 import type { SessionView } from "../types";
 import { Button, Section, Segmented, SimpleTable, terminal } from "./kit";
 import { findingMarks } from "./sessionview";
@@ -37,6 +38,13 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
   const spentBy = signal<"kind" | "code">("kind");
   const pushedBack = () => p().rate.some((b) => (b.throttled ?? 0) > 0 || (b.retried ?? 0) > 0 || b.client + b.server > 0);
   const showFlows = signal(false);
+  // the requests the scatter draws: a zoom's, or every one sampled
+  const shown = () => {
+    const d = zoomMs();
+    return d ? p().samples.filter((x) => x.tMs >= d[0] && x.tMs < d[1]).length : p().samples.length;
+  };
+  // a session of a moment has no shape over time to show
+  const shaped = () => p().rate.length > 2 && p().samples.length > 2;
   return (
     <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-6 pb-4 pr-2"}>
       {/* the figures are the session header's; here, a terminal's sentence */}
@@ -44,7 +52,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
         <Text class="text-foreground">{shapeSentence(p())}</Text>
       </If>
       {/* when: the whole session, its findings marked; two presses zoom the charts over time */}
-      <If when={!terminal()}>
+      <If when={!terminal() && shaped()}>
         <Section title={t("timeline.title")} plain description={t("timeline.hint")}>
           <If when={zoom() || zoomFrom() !== null}>
             <View class="flex-row items-center gap-2">
@@ -62,7 +70,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
         <Section
           title={t("scatter.title")}
           plain
-          description={t("scatter.text", { n: p().samples.length, p95: offset(p().p95Ms ?? 0) })}
+          description={t("scatter.text", { n: shown(), p95: ms(p().p95Ms ?? 0) })}
           action={<Segmented testID="scatter-by" value={scatterBy()} items={[{ value: "time", title: t("scatter.byTime") }, { value: "size", title: t("scatter.bySize") }]} onChange={(v) => scatterBy.set(v as "time" | "size")} />}
         >
           <RequestScatter profile={p()} by={scatterBy()} domainMs={zoomMs()} onRequest={props.onRequest} />

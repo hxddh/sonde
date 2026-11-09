@@ -168,6 +168,10 @@ pub fn redact(s: &mut Session) {
     s.header.url = String::new();
     s.header.endpoint = "endpoint".into();
     s.header.cwd = None;
+    // the commit says which change; a branch's name may say whose
+    if let Some(g) = &mut s.header.git {
+        g.branch = None;
+    }
     // the program's name only: never a variable set before it (a key, say)
     s.header.command = s
         .header

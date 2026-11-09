@@ -3,7 +3,7 @@
 
 import { List, resource, Scroll, signal, Text, View } from "nsh";
 import { Button as BaseButton, DatePicker } from "nsh/base";
-import { day } from "../format";
+import { day, money } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { report, sessionsChanged, sessionsTick } from "../store";
@@ -179,7 +179,7 @@ export function ProgramList(props: { onOpen: (path: string) => void }) {
                 </View>
                 <View class="flex-row items-center gap-2">
                   {/* how often it runs, and what a month of it costs at that pace */}
-                  <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{[t("programs.runs", { n: p().runs }), day(p().created), p().monthly ? t("programs.monthly", { cost: cost(p().monthly!.cost, p().points[0]?.currency ?? "USD") }) : ""].filter(Boolean).join(" · ")}</Text>
+                  <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{[t("programs.runs", { n: p().runs }), day(p().created), p().monthly ? t("programs.monthly", { cost: money(p().monthly!.cost, p().points[0]?.currency ?? "USD") }) : ""].filter(Boolean).join(" · ")}</Text>
                   <If when={p().points.length > 1}>
                     <Sparkline shape={p().points.map((x) => x.requests)} id={`program:${p().program}`} class="h-4 w-20" />
                   </If>

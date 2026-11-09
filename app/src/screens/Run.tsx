@@ -155,7 +155,9 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
     if (c.passed) return t("run.withinBaseline");
     const v = failed()[0];
     if (!v) return t("run.pastBaseline");
-    const grew = v.limit > 0 ? Math.round(((v.value - v.limit) * 100) / v.limit) : 0;
+    // past a limit of nothing: say how many, not "+0%"
+    if (v.limit <= 0) return t("run.pastBaselineN", { what: t(`verdict.${v.what}` as never), n: Math.round(v.value) });
+    const grew = Math.round(((v.value - v.limit) * 100) / v.limit);
     return t("run.pastBaselineBy", { what: t(`verdict.${v.what}` as never), pct: grew });
   };
   return (
@@ -204,7 +206,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
             <Button small variant="outline" icon="plus" label={t("run.nowYours")} tip={t("run.nowYoursHint")} onPress={() => (endpointsMode.set("add"), go("endpoints"))} testID="run-now-yours" />
           </If>
           {/* the loop in one place: change the program, run it again, see what it did */}
-          <Button small variant="outline" icon="play" label={t("sessions.runAgain")} onPress={() => endpoint() && runAgain(r()!.path, r()!.command, running()?.endpoint ?? endpoint()!, cwd() || null)} disabled={!endpoint()} testID="run-again-band" />
+          <Button small variant="outline" icon="play" label={t("sessions.runAgain")} onPress={() => runAgain(r()!.path, r()!.command, r()!.endpoint, cwd() || null)} testID="run-again-band" />
           <Button small variant="outline" icon="list-clock" label={t("run.lineUp")} onPress={() => openLastRun(go)} testID="run-open-session" />
         </View>
       </If>

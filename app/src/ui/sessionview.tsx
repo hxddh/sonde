@@ -42,7 +42,8 @@ function shellWords(command: string): string[] {
     } else if (c === "'" || c === '"') {
       quote = c;
       word += c;
-    } else if (c === "\\") {
+    } else if (c === "\\" && /[\s\\'";|&$`]/.test(command[i + 1] ?? "")) {
+      // an escape only before what it escapes: C:\Python\x.exe is a path
       word += c + (command[++i] ?? "");
     } else if (c === ";" || c === "|" || c === "&") {
       flush();
@@ -55,6 +56,33 @@ function shellWords(command: string): string[] {
 }
 
 const SEPARATOR = new Set([";", "&&", "||", "|", "&"]);
+
+/** A word with any secret in it hidden: a variable's value, an option that
+ * names a secret (`--password=…`), and both inside a quoted command given
+ * to a shell (`sh -c 'KEY=… python x.py'`). */
+function scrubWord(word: string): string {
+  const eq = word.indexOf("=");
+  if (eq > 0) {
+    const name = word.slice(0, eq);
+    if (ASSIGNMENT.test(word)) return `${name}=…`;
+    if (name.startsWith("-") && /secret|password|passwd|token|key|credential/i.test(name)) return `${name}=…`;
+  }
+  for (const q of ["'", '"']) {
+    if (word.length >= 2 && word.startsWith(q) && word.endsWith(q) && word.includes("=")) return `${q}${scrubCommand(word.slice(1, -1))}${q}`;
+  }
+  return word;
+}
+
+/** A command the user ran — not sonde's own `replay of …` or `logs of …`. */
+export function ranCommand(command?: string | null): boolean {
+  const c = command?.trim();
+  return !!c && !c.startsWith("replay of ") && !c.startsWith("logs of ");
+}
+
+/** The session's title line: `$ command` for a run, sonde's own words otherwise. */
+export function commandLine(command: string): string {
+  return ranCommand(command) ? `$ ${scrubCommand(command)}` : command;
+}
 
 /** The command with the value of every variable it sets hidden
  * (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole, the rest as typed: what
@@ -81,8 +109,7 @@ export function scrubCommand(command: string): string {
       else if (/\s/.test(c) || ";|&".includes(c)) break;
       j++;
     }
-    const word = text.slice(i, j);
-    out += ASSIGNMENT.test(word) ? `${word.slice(0, word.indexOf("="))}=…` : word;
+    out += scrubWord(text.slice(i, j));
     i = j;
   }
   return out;
@@ -290,7 +317,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
   if (terminal()) {
     return (
       <View class="gap-0">
-        <Text class="font-semibold text-foreground">{command() ? `$ ${scrubCommand(command()!)}` : props.view.header.endpoint}</Text>
+        <Text class="font-semibold text-foreground">{command() ? commandLine(command()!) : props.view.header.endpoint}</Text>
         <Text class="text-muted-foreground" testID="session-summary">
           {line()}
         </Text>
@@ -303,7 +330,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
           <Text class="font-mono text-body font-semibold text-foreground line-clamp-2">
-            {command() ? `$ ${scrubCommand(command()!)}` : props.view.header.endpoint}
+            {command() ? commandLine(command()!) : props.view.header.endpoint}
           </Text>
           <Text class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git)].filter(Boolean).join(" · ")}</Text>
           {/* the session in a sentence: where its time went, and the first thing to do */}
@@ -343,8 +370,6 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
 
 /** Whether a session's findings are folded away (kept while the app runs). */
 const findingsOpen = signal(true);
-/** The findings a line each (the session shows a pane of its own below them). */
-export const findingsDense = signal(false);
 
 const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3", config: "Bucket" } as const;
 const LANG = { python: "python", java: "java", go: "go", js: "javascript", config: "xml" } as const;
@@ -441,7 +466,7 @@ export function whatIfText(v: SessionView): string | null {
 /** What stands out in a session — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void }) {
+export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   // a finding pressed brings its fixes into view, under the list
   let scroller: ScrollRef | undefined;
@@ -479,7 +504,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
     );
   }
   // a line each, but the one chosen in full
-  const dense = () => props.compact || findingsDense();
+  const dense = () => props.compact || !!props.dense;
   const row = (o: () => Observation, i: () => number) => (
     <BaseButton
       testID={`observation-${i()}`}

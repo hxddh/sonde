@@ -62,7 +62,12 @@ fn shell_words(command: &str) -> Vec<String> {
                     quote = Some(c);
                     word.push(c);
                 }
-                '\\' => {
+                // an escape only before what it escapes: `C:\Python\x.exe`
+                // is a Windows path, not escapes
+                '\\' if chars
+                    .peek()
+                    .is_some_and(|n| n.is_whitespace() || "\\'\";|&$`".contains(*n)) =>
+                {
                     word.push(c);
                     if let Some(n) = chars.next() {
                         word.push(n);
@@ -93,12 +98,16 @@ fn is_separator(word: &str) -> bool {
 fn unquote(word: &str) -> String {
     let mut out = String::new();
     let mut quote: Option<char> = None;
-    let mut chars = word.chars();
+    let mut chars = word.chars().peekable();
     while let Some(c) = chars.next() {
+        // an escape only before what it escapes (a Windows path keeps its backslashes)
+        let escapes = chars
+            .peek()
+            .is_some_and(|n| n.is_whitespace() || "\\'\";|&$`".contains(*n));
         match (quote, c) {
             (None, '\'' | '"') => quote = Some(c),
             (Some(q), c) if c == q => quote = None,
-            (None, '\\') | (Some('"'), '\\') => out.extend(chars.next()),
+            (None, '\\') | (Some('"'), '\\') if escapes => out.extend(chars.next()),
             (_, c) => out.push(c),
         }
     }
@@ -143,9 +152,11 @@ pub fn program_name(command: &str) -> Option<String> {
                 }
                 continue;
             }
-            name = std::path::Path::new(&unquote(w))
-                .file_name()
-                .map(|f| f.to_string_lossy().into_owned())
+            // its file's name, a path written with either separator
+            name = unquote(w)
+                .rsplit(['/', '\\'])
+                .next()
+                .map(String::from)
                 .filter(|f| !f.is_empty());
             break;
         }
@@ -163,12 +174,37 @@ pub fn program_name(command: &str) -> Option<String> {
 pub fn scrub_command(command: &str) -> String {
     shell_words(command)
         .into_iter()
-        .map(|w| match w.split_once('=') {
-            Some((name, _)) if is_assignment(&w) => format!("{name}=…"),
-            _ => w,
-        })
+        .map(|w| scrub_word(&w))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// A word with any secret in it hidden: a variable's value, an option that
+/// names a secret (`--password=…`), and both inside a quoted command
+/// (`sh -c 'KEY=… python x.py'`).
+fn scrub_word(w: &str) -> String {
+    if let Some((name, _)) = w.split_once('=') {
+        if is_assignment(w) {
+            return format!("{name}=…");
+        }
+        let lower = name.to_ascii_lowercase();
+        if name.starts_with('-')
+            && ["secret", "password", "passwd", "token", "key", "credential"]
+                .iter()
+                .any(|s| lower.contains(s))
+        {
+            return format!("{name}=…");
+        }
+    }
+    for q in ['\'', '"'] {
+        if w.len() >= 2 && w.starts_with(q) && w.ends_with(q) {
+            let inner = &w[1..w.len() - 1];
+            if inner.contains('=') {
+                return format!("{q}{}{q}", scrub_command(inner));
+            }
+        }
+    }
+    w.to_string()
 }
 
 /// A command as one line a shell runs as it was given: each argument quoted
@@ -182,7 +218,10 @@ pub fn shell_join(args: &[String]) -> String {
             if plain {
                 a.clone()
             } else if cfg!(windows) {
-                format!("\"{}\"", a.replace('"', "\\\""))
+                // backslashes before the closing quote would escape it
+                let body = a.replace('"', "\\\"");
+                let tail = body.len() - body.trim_end_matches('\\').len();
+                format!("\"{body}{}\"", "\\".repeat(tail))
             } else {
                 format!("'{}'", a.replace('\'', "'\\''"))
             }

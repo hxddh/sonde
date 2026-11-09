@@ -457,7 +457,8 @@
  "share.showFolder": "显示所在文件夹",
  "share.command": "已复制生成网页的命令",
  "profile.notFound": "%{op}（未找到）",
- "profile.shapeText": "等待 S3 %{busy}，共 %{wall}（%{pct}）；同时进行的请求最多 %{peak} 个，在 +%{at}",
+ "profile.shapeText": "等待 S3 %{busy}，共 %{wall}（%{pct}）；同时进行的请求最多 %{n} 个，在 +%{at}",
+ "profile.shapeText.one": "等待 S3 %{busy}，共 %{wall}（%{pct}）；请求逐个进行",
  "profile.missN": "%{n} 个未找到",
  "profile.failedN": "%{n} 个失败",
  "profile.failedN.one": "%{n} 个失败",
@@ -746,5 +747,15 @@
  "programs.monthly": "约每月 %{cost}",
  "run.nowYours": "换成你自己的存储…",
  "run.nowYoursHint": "添加你的端点，然后在这里运行你的程序：sonde 会让它的 SDK 指向自己（AWS_ENDPOINT_URL）",
- "endpoints.addTitle": "添加端点"
+ "endpoints.addTitle": "添加端点",
+ "run.pastBaselineN": "%{what}：%{n}，基线为 0",
+ "endpoints.vendorOther": "其他",
+ "confirm.colKey": "键",
+ "confirm.colVersion": "版本",
+ "confirm.colSize": "大小",
+ "settings.path.config": "设置文件",
+ "settings.path.data": "数据",
+ "settings.path.exports": "导出",
+ "settings.path.downloads": "下载",
+ "settings.path.audit": "审计日志"
 }

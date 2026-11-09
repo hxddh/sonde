@@ -23,7 +23,7 @@ import { fileName, removeSession, rename, RenameDialog, shareSession } from "../
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
-import { findingsDense, programOf, scrubCommand } from "../ui/sessionview";
+import { programOf, ranCommand, scrubCommand } from "../ui/sessionview";
 import { HistoryPane, ProgramList } from "../ui/history";
 import { TimePane } from "../ui/profile";
 import { offset } from "../ui/plots";
@@ -257,7 +257,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     ...(lines().length ? [{ value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const }] : []),
     { value: "time", title: t("profile.pane"), icon: "chart-pie" as const },
     // a run of a program: its runs
-    ...(v0()?.header.command?.trim() && !v0()!.header.command!.trim().startsWith("replay of ") ? [{ value: "runs", title: t("history.pane"), icon: "activity" as const }] : []),
+    ...(ranCommand(v0()?.header.command) ? [{ value: "runs", title: t("history.pane"), icon: "activity" as const }] : []),
   ];
 
   const body = (v: SessionView) => {
@@ -283,7 +283,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     <View class="flex-row items-center gap-1.5">
       {/* the program again, after a change: it opens compared with this run */}
       {/* the built-in demo is not saved: running a demo session again starts it */}
-      <If when={view()?.header.command && !view()!.header.command!.startsWith("replay of ") && !view()!.header.command!.startsWith("logs of ") && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
+      <If when={ranCommand(view()?.header.command) && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
         <Button
           small
           variant="primary"
@@ -328,7 +328,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           onSlice={(i) => slice.set(i)}
           // a short window keeps its height for the operations
           shape={pane() !== "time" && (props.inWindow ? windowSize().height : shellHeight()) >= 700} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || (props.inWindow ? windowSize().width : shellWidth()) < 1180} />
-        <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} onOpenCode={(place) => api.sessions.openCode(props.path, place).catch(report)} maxHeight={Math.max(96, Math.round((props.inWindow ? windowSize().height : shellHeight()) * 0.28))} />
+        <Observations view={v} dense={dense()} filter={filter()} onFilter={(f) => filter.set(f)} onOpenCode={(place) => api.sessions.openCode(props.path, place).catch(report)} maxHeight={Math.max(96, Math.round((props.inWindow ? windowSize().height : shellHeight()) * 0.28))} />
         <If when={terminal()}>{actions()}</If>
       </View>
       <View class={terminal() ? "flex-row items-center gap-2" : "flex-row items-center gap-3 px-5 py-2"}>
@@ -357,12 +357,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     cleanup(() => inspectorOpen.set(false));
   }
   // a pane of its own (time, runs, output), or a short window, gets the room:
-  // the findings a line each, the one chosen in full
-  effect(() => {
-    const p = pane();
-    const short = shellHeight() < 700;
-    untracked(() => findingsDense.set(p !== "operations" || short));
-  });
+  // the findings a line each, the one chosen in full (this window's height)
+  const dense = () => pane() !== "operations" || (props.inWindow ? windowSize().height : shellHeight()) < 700;
 
   const inspector = () => (
     <View testID="inspector" class="flex-1 border-l border-border bg-inspector">

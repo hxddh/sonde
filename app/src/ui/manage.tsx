@@ -5,6 +5,7 @@ import { Clipboard, effect, openUrl, signal, Text, untracked, View } from "nsh";
 import { AlertDialog } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
+import { forgetRun } from "../run";
 import { notify, report, sessionsChanged } from "../store";
 import type { SessionInfo } from "../types";
 import { Button, Field, Modal, Title } from "./kit";
@@ -65,6 +66,8 @@ export async function removeSession(s: SessionInfo, removed?: () => void): Promi
   if (action !== "remove") return false;
   try {
     await api.sessions.remove(s.path);
+    // Run no longer offers to open or run again what is gone
+    forgetRun(s.path);
     removed?.();
     sessionsChanged();
     notify(t("sessions.removed", { name: sessionName(s) }));

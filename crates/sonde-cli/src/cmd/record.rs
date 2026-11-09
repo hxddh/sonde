@@ -1386,24 +1386,42 @@ fn init_project(a: &CheckArgs, run: &sonde_proxy::program::RunPoint) -> anyhow::
     let waiting = (run.busy_ms * grow + 5.0).ceil();
     let cost = if run.cost > 0.0 {
         let c = run.cost * grow;
-        let digits = (-c.log10().floor() as i32 + 1).clamp(2, 8) as usize;
-        format!("{c:.digits$}")
+        let digits = (-c.log10().floor() as i32 + 1).clamp(2, 8);
+        // up, never down: the run it was made from passes it
+        let scale = 10f64.powi(digits);
+        format!("{:.*}", digits as usize, (c * scale).ceil() / scale)
     } else {
         "0.0001".into()
     };
-    let text = format!(
-        "# sonde check: what a run of this program may use against S3.\n         # Made from a run of {} requests; edit freely.\n         [check]\n         max-requests = {}\n         max-waiting = \"{}ms\"\n         max-cost = {}\n         max-errors = {}\n         # against a baseline run: how much more it may use, in percent\n         tolerance = {}\n         # baseline = \"auto\"   # the baseline set for the program (in the app, or --set-baseline)\n         # baseline = \"https://…/main.sonde\"   # or the main branch's run, kept by CI\n",
-        run.requests,
-        (run.requests as f64 * grow).ceil() as u64,
-        waiting,
-        cost,
-        run.errors,
-        tolerance,
-    );
+    let text = [
+        "# sonde check: what a run of this program may use against S3.".to_string(),
+        format!("# Made from a run of {} requests; edit freely.", run.requests),
+        "[check]".into(),
+        format!("max-requests = {}", (run.requests as f64 * grow).ceil() as u64),
+        format!("max-waiting = \"{waiting}ms\""),
+        format!("max-cost = {cost}"),
+        format!("max-errors = {}", run.errors),
+        "# against a baseline run: how much more it may use, in percent".into(),
+        format!("tolerance = {tolerance}"),
+        "# baseline = \"auto\"   # the baseline set for the program (in the app, or --set-baseline)".into(),
+        "# baseline = \"https://…/main.sonde\"   # or the main branch's run, kept by CI".into(),
+        String::new(),
+    ]
+    .join("\n");
     std::fs::write(&path, text)?;
     eprintln!("wrote {}", path.display());
     eprintln!(
-        "\nIn CI (GitHub Actions), run the program through sonde and check it:\n\n         \x20     - run: sonde run -- <your command>\n         \x20     - run: sonde check -f github\n\n         For a comment on the pull request, `sonde check -f markdown`."
+        "{}",
+        [
+            "",
+            "In CI (GitHub Actions), run the program through sonde and check it:",
+            "",
+            "      - run: sonde run -- <your command>",
+            "      - run: sonde check -f github",
+            "",
+            "For a comment on the pull request, `sonde check -f markdown`.",
+        ]
+        .join("\n")
     );
     Ok(0)
 }
@@ -1491,11 +1509,58 @@ fn since_line(s: &sonde_proxy::program::Since) -> String {
     t
 }
 
-/// A finding's code place (`etl/load.py:212 read_manifest`) as a file and line.
+/// A finding's code place (`etl/load.py:212 read_manifest`) as a file and
+/// line: the last `:digits` before a space or the end (a path may hold spaces
+/// and a Windows drive's colon).
 fn code_place(place: &str) -> Option<(String, u32)> {
-    let at = place.split_whitespace().next()?;
-    let (file, line) = at.rsplit_once(':')?;
-    Some((file.to_string(), line.parse().ok()?))
+    let bytes = place.as_bytes();
+    let mut at = None;
+    for (i, c) in place.char_indices() {
+        if c != ':' {
+            continue;
+        }
+        let digits = place[i + 1..]
+            .chars()
+            .take_while(|d| d.is_ascii_digit())
+            .count();
+        let end = i + 1 + digits;
+        if digits > 0 && (end == place.len() || bytes[end] == b' ') {
+            at = Some((i, end));
+        }
+    }
+    let (colon, end) = at?;
+    let file = place[..colon].trim();
+    if file.is_empty() {
+        return None;
+    }
+    Some((file.to_string(), place[colon + 1..end].parse().ok()?))
+}
+
+/// A code place's file as the repository has it: the program ran in `cwd`
+/// (perhaps a folder of the repository), annotations name files from its root.
+fn repo_path(cwd: Option<&str>, file: &str) -> String {
+    let Some(cwd) = cwd else {
+        return file.to_string();
+    };
+    let full = Path::new(cwd).join(file);
+    let root = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["rev-parse", "--show-toplevel"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+        .or_else(|| std::env::var_os("GITHUB_WORKSPACE").map(PathBuf::from));
+    root.and_then(|r| {
+        let r = r.canonicalize().unwrap_or(r);
+        let f = full.canonicalize().unwrap_or(full.clone());
+        f.strip_prefix(&r)
+            .ok()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+    })
+    .unwrap_or_else(|| file.to_string())
 }
 
 /// A workflow command's message: `%`, CR and LF escaped.
@@ -1553,6 +1618,14 @@ async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPath> {
     }
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
+        // a redirect keeps to https
+        .redirect(reqwest::redirect::Policy::custom(|a| {
+            if a.url().scheme() == "https" && a.previous().len() < 10 {
+                a.follow()
+            } else {
+                a.stop()
+            }
+        }))
         .build()?;
     let fail = |e: reqwest::Error| anyhow::anyhow!("baseline {shown}: {}", e.without_url());
     let mut resp = client
@@ -1601,7 +1674,10 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         let path_like = b != "auto" && !b.starts_with("https://") && !b.starts_with("http://");
         match project_path.as_ref().and_then(|p| p.parent()) {
             Some(dir)
-                if path_like && Path::new(&b).is_relative() && !dir.as_os_str().is_empty() =>
+                if path_like
+                    && Path::new(&b).is_relative()
+                    && !dir.as_os_str().is_empty()
+                    && dir.join(&b).exists() =>
             {
                 dir.join(&b).to_string_lossy().into_owned()
             }
@@ -1788,7 +1864,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             match f.callers.first().and_then(|c| code_place(&c.place)) {
                 Some((file, line)) => println!(
                     "::{level} file={},line={line},title=sonde::{}",
-                    gh_property(&file),
+                    gh_property(&repo_path(header.cwd.as_deref(), &file)),
                     gh_escape(&f.text)
                 ),
                 None => println!("::{level} title=sonde::{}", gh_escape(&f.text)),
@@ -2082,6 +2158,14 @@ pub struct WatchArgs {
     once: bool,
 }
 
+/// Where `watch --logs` got to: the newest log file's time read, and the
+/// files read since a little before it.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LogsMark {
+    watermark: chrono::DateTime<chrono::Utc>,
+    seen: std::collections::BTreeSet<String>,
+}
+
 /// The program key of a log source's sessions: its runs make a history and
 /// `sonde check` holds them to a baseline like any program's.
 pub const LOGS_OF: &str = "logs of ";
@@ -2131,43 +2215,81 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
             .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64)
                 .wrapping_mul(0x100_0000_01b3))
     ));
-    let mut after = std::fs::read_to_string(&mark_file)
+    // where it got to: the newest file's time read, and the files read near
+    // it (logs arrive late, and prefixes of regions or days list in any
+    // order, so a time and the files seen, not the last key listed)
+    let mut mark: LogsMark = std::fs::read(&mark_file)
         .ok()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty());
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_else(|| LogsMark {
+            // a first pass reads what arrived in the last interval, not the
+            // whole history under the prefix
+            watermark: chrono::Utc::now() - chrono::Duration::from_std(pause).unwrap_or_default(),
+            seen: Default::default(),
+        });
     let mut warned: HashSet<String> = HashSet::new();
     let mut sent = Vec::new();
     eprintln!("watching {src} every {}s", pause.as_secs());
     loop {
-        // the files written since the last pass, in the order the store lists them
-        let mut keys: Vec<(String, u64)> = Vec::new();
+        // the files written since the mark (less a grace for late ones), not read yet
+        let grace = mark.watermark - chrono::Duration::hours(2);
+        let mut keys: Vec<(String, u64, chrono::DateTime<chrono::Utc>)> = Vec::new();
         let mut token = None;
-        loop {
-            let (page, _) = client
+        let listed = loop {
+            let page = client
                 .list_objects_v2(
                     bucket,
                     &s3raw::ops::ListV2 {
                         prefix: Some(prefix.to_string()),
-                        start_after: if token.is_none() { after.clone() } else { None },
                         continuation_token: token.clone(),
                         url_encoding: true,
                         ..Default::default()
                     },
                 )
-                .await?;
-            keys.extend(page.contents.iter().map(|o| (o.key.clone(), o.size)));
+                .await;
+            let (page, _) = match page {
+                Ok(p) => p,
+                Err(e) => break Err(e),
+            };
+            keys.extend(page.contents.iter().filter_map(|o| {
+                let at = o
+                    .last_modified
+                    .as_deref()
+                    .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())?
+                    .with_timezone(&chrono::Utc);
+                (at > grace && !mark.seen.contains(&o.key)).then(|| (o.key.clone(), o.size, at))
+            }));
             token = page.next_continuation_token.filter(|_| page.is_truncated);
             if token.is_none() {
-                break;
+                break Ok(());
             }
+        };
+        // a store that did not answer this time is asked again next time
+        if let Err(e) = listed {
+            eprintln!(
+                "{} listing {src}: {e}",
+                paint("!", "33", std::io::stderr().is_terminal())
+            );
+            keys.clear();
         }
         let mut records = Vec::new();
-        for (k, size) in &keys {
+        for (k, size, at) in &keys {
             // a log file is small; something this large is not one
             if *size > 256 << 20 {
+                mark.seen.insert(k.clone());
                 continue;
             }
-            let r = client.get_object(bucket, k, None).await?;
+            let r = match client.get_object(bucket, k, None).await {
+                Ok(r) => r,
+                Err(e) => {
+                    // gone (a lifecycle rule) or not reachable now: tried again next pass
+                    eprintln!(
+                        "{} {k}: {e}",
+                        paint("!", "33", std::io::stderr().is_terminal())
+                    );
+                    continue;
+                }
+            };
             let mut bytes = r.body.to_vec();
             if bytes.starts_with(&[0x1f, 0x8b]) {
                 let mut out = Vec::new();
@@ -2184,10 +2306,27 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
             if let Ok((_, session)) = sonde_proxy::import::import(&text, k) {
                 records.extend(session.records);
             }
+            mark.seen.insert(k.clone());
+            if *at > mark.watermark {
+                mark.watermark = *at;
+            }
         }
-        if let Some((last, _)) = keys.last() {
-            after = Some(last.clone());
-            let _ = std::fs::write(&mark_file, last);
+        // the seen files old enough to be past the grace are forgotten
+        let keep_after = mark.watermark - chrono::Duration::hours(2);
+        let recent: std::collections::BTreeSet<String> = keys
+            .iter()
+            .filter(|(_, _, at)| *at > keep_after)
+            .map(|(k, _, _)| k.clone())
+            .collect();
+        if mark.seen.len() > 50_000 {
+            mark.seen.retain(|k| recent.contains(k));
+        }
+        if let Ok(b) = serde_json::to_vec(&mark) {
+            let _ = std::fs::write(&mark_file, b);
+        }
+        // the requests are the endpoint's: priced and checked as its
+        for r in records.iter_mut() {
+            r.endpoint = ep.clone();
         }
         if !records.is_empty() {
             records.sort_by_key(|r| r.time);
@@ -2461,6 +2600,23 @@ mod tests {
     }
 
     #[test]
+    fn a_code_place_is_its_file_and_line_spaces_and_drives_too() {
+        assert_eq!(
+            code_place("etl/load.py:212 read"),
+            Some(("etl/load.py".into(), 212))
+        );
+        assert_eq!(
+            code_place("my dir/x.py:3 f"),
+            Some(("my dir/x.py".into(), 3))
+        );
+        assert_eq!(
+            code_place(r"C:\src\x.py:9 main"),
+            Some((r"C:\src\x.py".into(), 9))
+        );
+        assert_eq!(code_place("no line here"), None);
+    }
+
+    #[test]
     fn a_presigned_url_is_printed_without_its_signature() {
         assert_eq!(
             url_shown("https://b.s3.amazonaws.com/base.sonde?X-Amz-Signature=abc"),
@@ -2527,12 +2683,28 @@ mod tests {
         );
         // a second pass has nothing new: no second session
         assert_eq!(watch_logs(&s, &args, "s3://demo/logs/").await.unwrap(), 0);
-        let n = std::fs::read_dir(s.paths().sessions())
+        let count = || {
+            std::fs::read_dir(s.paths().sessions())
+                .unwrap()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "sonde"))
+                .count()
+        };
+        assert_eq!(count(), 1);
+        // a file that lists before the ones read (another region, a late
+        // delivery) is still read
+        s.client("demo")
             .unwrap()
-            .flatten()
-            .filter(|e| e.path().extension().is_some_and(|x| x == "sonde"))
-            .count();
-        assert_eq!(n, 1);
+            .put_object(
+                "demo",
+                "logs/0-earlier/2026-02-06-00-00-41-CD",
+                bytes::Bytes::from(log),
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(watch_logs(&s, &args, "s3://demo/logs/").await.unwrap(), 0);
+        assert_eq!(count(), 2);
     }
 
     #[tokio::test]

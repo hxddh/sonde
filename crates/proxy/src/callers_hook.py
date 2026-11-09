@@ -21,6 +21,8 @@ def _sonde_place(lib, here):
                 shown = p
             if shown.startswith(".."):
                 shown = p
+            # one separator on every system (Windows' relpath gives backslashes)
+            shown = shown.replace("\\", "/")
             place = "%s:%d %s" % (shown, f.f_lineno, f.f_code.co_name)
             # a header is ASCII: other characters are written as escapes
             return place.encode("ascii", "backslashreplace").decode("ascii")
@@ -66,8 +68,9 @@ def _sonde_install():
             return False
 
     def add(request, signature_version=None, **kwargs):
-        # a presigned URL is used by someone else, without this header
-        if signature_version and ("query" in signature_version or "presign" in signature_version):
+        # a presigned URL is used by someone else, without this header; an
+        # unsigned request (botocore.UNSIGNED, not a string) has nothing to sign
+        if not isinstance(signature_version, str) or "query" in signature_version or "presign" in signature_version:
             return
         if not to_sonde(getattr(request, "url", "")):
             return

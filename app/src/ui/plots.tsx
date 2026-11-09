@@ -101,7 +101,7 @@ export function slices(p: Profile): Slice[] {
 
 /** In words: what the shape shows and what stands out. */
 export function shapeSentence(p: Profile): string {
-  return t("profile.shapeText", { busy: offset(p.busyMs), wall: offset(p.wallMs), pct: pct(p.busyMs / Math.max(p.wallMs, 1e-9)), peak: p.peakInFlight, at: offset(p.peakAtMs) });
+  return t("profile.shapeText", { busy: offset(p.busyMs), wall: offset(p.wallMs), pct: pct(p.busyMs / Math.max(p.wallMs, 1e-9)), n: p.peakInFlight, at: offset(p.peakAtMs) });
 }
 
 /**
@@ -745,14 +745,15 @@ export function Pressure(props: { profile: Profile; range?: [number, number] | n
       return { tMs: b.tMs, throttled, failed: Math.max(0, b.client + b.server - throttled), retried: b.retried ?? 0 };
     });
   const rows = () => (props.range ? all().slice(props.range[0], props.range[1] + 1) : all());
-  const totals = () => all().reduce((s, r) => ({ throttled: s.throttled + r.throttled, failed: s.failed + r.failed, retried: s.retried + r.retried }), { throttled: 0, failed: 0, retried: 0 });
+  // the legend counts what the chart shows: a zoom's slices, or all of them
+  const totals = () => rows().reduce((s, r) => ({ throttled: s.throttled + r.throttled, failed: s.failed + r.failed, retried: s.retried + r.retried }), { throttled: 0, failed: 0, retried: 0 });
   const label = () => t("pressure.text", { throttled: totals().throttled, failed: totals().failed, retried: totals().retried });
   const hovered = signal<number | null>(null);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
     return r ? { title: `+${offset(r.tMs)}`, lines: [t("pressure.line", { throttled: r.throttled, failed: r.failed, retried: r.retried })] } : null;
   };
-  const any = () => totals().throttled + totals().failed + totals().retried > 0;
+  const any = () => all().some((r) => r.throttled + r.failed + r.retried > 0);
   return (
     <If when={any()} else={<Text testID="pressure-none" class="text-small text-muted-foreground">{t("pressure.none")}</Text>}>
       <If when={!terminal()} else={<Text class="text-foreground">{label()}</Text>}>
@@ -977,7 +978,7 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
   const rows = () => {
     const d = props.domainMs;
     return props.profile.samples
-      .filter((x) => props.by === "size" || !d || (x.tMs >= d[0] && x.tMs < d[1]))
+      .filter((x) => !d || (x.tMs >= d[0] && x.tMs < d[1]))
       .map((x) => ({ ...x, y: log10(Math.max(x.ms, 0.1)), x: props.by === "time" ? x.tMs : log10(Math.max(x.bytes ?? 0, 1)), tone: statusTone(x.status ?? null) }));
   };
   const yLo = () => Math.min(...rows().map((r) => r.y), log10(1));

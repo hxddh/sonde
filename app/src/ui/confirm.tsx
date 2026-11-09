@@ -48,7 +48,7 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
             <Heading>{t("confirm.dryRun")}</Heading>
             <Text class="text-body text-popover-foreground">{p().summary}</Text>
             <If when={p().items.length > 0}>
-              <SimpleTable max={12} columns={["key", "id", "bytes", ""]} rows={p().items.map((i) => [i.key, i.id ?? "", i.bytes === null ? "" : bytes(i.bytes), i.detail])} />
+              <SimpleTable max={12} columns={[t("confirm.colKey"), t("confirm.colVersion"), t("confirm.colSize"), ""]} rows={p().items.map((i) => [i.key, i.id ?? "", i.bytes === null ? "" : bytes(i.bytes), i.detail])} />
             </If>
             <If when={p().document}>
               {(doc) => (

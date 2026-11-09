@@ -30,6 +30,66 @@ struct Recording {
 static RECORDING: Mutex<Option<Recording>> = Mutex::new(None);
 static RUNNING: Mutex<Option<crate::run::Running>> = Mutex::new(None);
 
+/// What a press on a code place does with the file it names.
+#[derive(Debug, PartialEq)]
+enum CodeTarget {
+    Open(PathBuf),
+    Reveal(PathBuf),
+}
+
+/// The file `place` names, inside `dir`: opened when it is a regular file
+/// there and not one that runs; shown in the file manager otherwise.
+fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
+    let at = place.split_whitespace().next().unwrap_or_default();
+    // `file:line`: the line is the last colon's (a Windows path has its own)
+    let file = match at.rsplit_once(':') {
+        Some((f, line)) if line.chars().all(|c| c.is_ascii_digit()) && !f.is_empty() => f,
+        _ => at,
+    };
+    if file.is_empty() {
+        return Err(err_msg("the place names no file"));
+    }
+    let root = dir
+        .canonicalize()
+        .map_err(|e| err_msg(format!("{}: {e}", dir.display())))?;
+    let candidate = Path::new(file);
+    let joined = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        root.join(candidate)
+    };
+    let full = joined
+        .canonicalize()
+        .map_err(|_| err_msg(format!("{} is not there", joined.display())))?;
+    const RUNS: &[&str] = &[
+        "exe", "bat", "cmd", "com", "msi", "scr", "ps1", "vbs", "js", "jse", "wsf", "lnk", "app",
+        "command", "sh", "bash", "zsh", "jar", "desktop", "appimage", "url", "reg",
+    ];
+    let runs = full
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| RUNS.contains(&e.to_ascii_lowercase().as_str()));
+    let inside = full.starts_with(&root);
+    let regular = full.metadata().map(|m| m.is_file()).unwrap_or(false);
+    Ok(if inside && regular && !runs {
+        CodeTarget::Open(full)
+    } else {
+        CodeTarget::Reveal(full)
+    })
+}
+
+/// A file's text: a finished session (or a log) is gzip, read for what it
+/// holds rather than its compressed bytes; bytes as a session is read (a
+/// torn last character is a torn line).
+fn file_text(bytes: &[u8]) -> std::io::Result<String> {
+    if bytes.starts_with(&[0x1f, 0x8b]) {
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(bytes), &mut out)?;
+        return Ok(String::from_utf8_lossy(&out).into_owned());
+    }
+    Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
 /// FNV-1a, 64 bits: which file a session was made from.
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
@@ -46,7 +106,12 @@ fn read_imports(dir: &Path) -> std::collections::BTreeMap<String, String> {
 }
 
 fn write_imports(dir: &Path, all: &std::collections::BTreeMap<String, String>) {
-    let tmp = dir.join(format!("imports.json.{}.tmp", std::process::id()));
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tmp = dir.join(format!(
+        "imports.json.{}.{}.tmp",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     if serde_json::to_vec(all)
         .ok()
         .is_some_and(|b| std::fs::write(&tmp, b).is_ok())
@@ -1106,7 +1171,7 @@ impl Sessions {
             std::fs::write(&path, text).map_err(err_msg)?;
             if let Err(e) = Session::open(&path) {
                 let _ = std::fs::remove_file(&path);
-                return Err(format!("{name} is not a sonde session: {e}"));
+                return Err(format!("{name}: {e}"));
             }
         }
         if let Some(n) = path.file_name() {
@@ -1177,10 +1242,8 @@ impl Sessions {
             return Ok(own.to_string_lossy().into_owned());
         }
         let p = Path::new(&path);
-        // bytes, as a session is read: a torn last character is a torn line
-        let text = std::fs::read(p)
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .map_err(|e| format!("{path}: {e}"))?;
+        let bytes = std::fs::read(p).map_err(|e| format!("{path}: {e}"))?;
+        let text = file_text(&bytes).map_err(|e| format!("{path}: {e}"))?;
         let name = p
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -1226,32 +1289,19 @@ impl Sessions {
         Ok(true)
     }
 
-    /// Opens the file a finding's code place names (`etl/load.py:212 read`)
-    /// in the app the system opens it with: found in the folder the session
-    /// ran in, or as written when absolute. Refused for what is not a file.
+    /// Opens the file a finding's code place names (`etl/load.py:212 read`):
+    /// the place is text the recorded program (or whoever shared the session)
+    /// wrote, so only a regular file inside the folder the session ran in,
+    /// and not one that runs, is opened; anything else is shown in the file
+    /// manager, never run.
     pub async fn open_code(session: String, place: String) -> Result<(), String> {
-        let file = place
-            .split_whitespace()
-            .next()
-            .and_then(|at| at.rsplit_once(':').map(|(f, _)| f).or(Some(at)))
-            .unwrap_or_default()
-            .to_string();
-        if file.is_empty() {
-            return Err(err_msg("the place names no file"));
+        let dir = header_of(Path::new(&session))
+            .and_then(|h| h.cwd)
+            .ok_or_else(|| err_msg("the session does not say which folder it ran in"))?;
+        match code_target(Path::new(&dir), &place)? {
+            CodeTarget::Open(p) => nsh_core::element::open_path(p).await,
+            CodeTarget::Reveal(p) => nsh_core::element::reveal_path(p).await,
         }
-        let dir = header_of(Path::new(&session)).and_then(|h| h.cwd);
-        let candidate = Path::new(&file);
-        let full = if candidate.is_absolute() {
-            candidate.to_path_buf()
-        } else {
-            dir.map(PathBuf::from)
-                .ok_or_else(|| err_msg("the session does not say which folder it ran in"))?
-                .join(candidate)
-        };
-        if !full.is_file() {
-            return Err(err_msg(format!("{} is not there", full.display())));
-        }
-        nsh_core::element::open_path(full).await
     }
 
     /// Shows `path` (a session, or a folder sonde wrote) selected in the
@@ -1333,6 +1383,51 @@ impl Sessions {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn a_code_place_opens_only_a_file_of_the_run_and_never_one_that_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("etl")).unwrap();
+        std::fs::write(root.join("etl/load.py"), "x").unwrap();
+        std::fs::write(root.join("run.sh"), "x").unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(
+            code_target(&root, "etl/load.py:212 read").unwrap(),
+            CodeTarget::Open(root.join("etl/load.py"))
+        );
+        assert_eq!(
+            code_target(&root, "run.sh:1 main").unwrap(),
+            CodeTarget::Reveal(root.join("run.sh"))
+        );
+        let o = outside.path().canonicalize().unwrap();
+        assert_eq!(
+            code_target(&root, &format!("{}:3 f", o.display())).unwrap(),
+            CodeTarget::Reveal(o)
+        );
+        assert!(code_target(&root, "../../nothing-here.py:1 f").is_err());
+    }
+
+    #[test]
+    fn a_finished_session_from_elsewhere_reads_as_its_text() {
+        use reqlog::Sink;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ci.sonde");
+        let w =
+            SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        w.write(&reqlog::Record {
+            id: 1,
+            operation: "GetObject".into(),
+            ..Default::default()
+        });
+        drop(w);
+        sonde_proxy::session::compress(&path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.starts_with(&[0x1f, 0x8b]));
+        let text = file_text(&bytes).unwrap();
+        assert!(text.starts_with("{\"format\":\"sonde-session\""), "{text}");
+        assert_eq!(file_text(b"plain").unwrap(), "plain");
+    }
 
     #[test]
     fn counts_requests_not_output_and_follows_appends() {

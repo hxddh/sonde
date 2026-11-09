@@ -28,7 +28,7 @@ const blank = (): Draft => ({ id: "", name: "", url: "", region: "us-east-1", pa
 
 const fromView = (e: EndpointView): Draft => ({ id: e.id, name: e.name, url: e.url, region: e.region, pathStyle: e.pathStyle, caFile: e.caFile ?? "", vendor: e.vendor, credentials: "keep", profile: "", buckets: e.buckets.join(", ") });
 
-function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
+function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onSaved?: (id: string) => void }) {
   const d = signal<Draft>(props.initial);
   const set = (k: keyof Draft, v: string | boolean) => d.update((x) => ({ ...x, [k]: v }));
   const vendors = api.vendors();
@@ -46,10 +46,11 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
   };
   const save = () => {
     const x = d();
+    const id = idFor(x);
     try {
       api.saveEndpoint({
         adding: !props.editing,
-        id: idFor(x),
+        id,
         name: x.name.trim() || x.id,
         url: x.url.trim(),
         region: x.region.trim(),
@@ -61,6 +62,7 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
         profile: x.profile.trim() || null,
       });
       refreshEndpoints();
+      props.onSaved?.(id);
       props.onDone();
     } catch (e) {
       report(e);
@@ -87,16 +89,20 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
           class="min-w-48 flex-1"
           label={t("endpoints.field.vendor")}
           value={d().vendor}
-          items={vendors.map((v) => ({ value: v.id, title: v.label }))}
+          items={vendors.map((v) => ({ value: v.id, title: v.id === "other" ? t("endpoints.vendorOther") : v.label }))}
           onChange={(v) => {
             const info = vendors.find((x) => x.id === v);
             batch(() => {
-              set("vendor", v);
               if (info) {
-                if (!d().url) set("url", info.urlTemplate.replace("{region}", d().region || info.region));
+                // the old vendor's address and region, untouched, follow the vendor
+                const was = vendors.find((x) => x.id === d().vendor);
+                const wasUrl = was ? was.urlTemplate.replace("{region}", d().region || was.region) : "";
+                const region = !d().region || d().region === "us-east-1" || d().region === was?.region ? info.region : d().region;
+                if (!d().url || d().url === wasUrl) set("url", info.urlTemplate.replace("{region}", region));
                 set("pathStyle", info.pathStyle);
-                if (!d().region || d().region === "us-east-1") set("region", info.region);
+                set("region", region);
               }
+              set("vendor", v);
             });
           }}
         />
@@ -206,6 +212,11 @@ export function Endpoints() {
       });
     }
   };
+  const forget = (id: string) =>
+    tests.update((x) => {
+      const { [id]: _, ...rest } = x;
+      return rest;
+    });
   const remove = async (e: EndpointView) => {
     const { action } = await AlertDialog.show({
       title: t("endpoints.removeTitle", { name: e.name }),
@@ -218,6 +229,7 @@ export function Endpoints() {
     if (action !== "remove") return;
     try {
       api.removeEndpoint(e.id);
+      forget(e.id);
       refreshEndpoints();
       notify(t("endpoints.removed", { name: e.name }));
     } catch (err) {
@@ -228,8 +240,8 @@ export function Endpoints() {
     const m = mode();
     if (m === "list") return null;
     if (m === "import") return <Import onDone={() => mode.set("list")} />;
-    if (m === "add") return <Form initial={blank()} editing={false} onDone={() => mode.set("list")} />;
-    return <Form initial={fromView(m.edit)} editing onDone={() => mode.set("list")} />;
+    if (m === "add") return <Form initial={blank()} editing={false} onDone={() => mode.set("list")} onSaved={forget} />;
+    return <Form initial={fromView(m.edit)} editing onDone={() => mode.set("list")} onSaved={forget} />;
   };
   const row = (e: EndpointView) => {
     const r = () => tests()[e.id];

@@ -457,7 +457,8 @@
  "share.showFolder": "Show the folder",
  "share.command": "Copied the command that makes the web page",
  "profile.notFound": "%{op}, not found",
- "profile.shapeText": "Waiting on S3 %{busy} of %{wall} (%{pct}); up to %{peak} requests in flight, at +%{at}",
+ "profile.shapeText": "Waiting on S3 %{busy} of %{wall} (%{pct}); up to %{n} requests in flight, at +%{at}",
+ "profile.shapeText.one": "Waiting on S3 %{busy} of %{wall} (%{pct}); one request at a time",
  "profile.missN": "%{n} not found",
  "profile.failedN": "%{n} failed",
  "profile.failedN.one": "1 failed",
@@ -746,5 +747,15 @@
  "programs.monthly": "≈ %{cost} a month",
  "run.nowYours": "Now your own store…",
  "run.nowYoursHint": "Add your endpoint, then run your program here: sonde points its SDK at itself (AWS_ENDPOINT_URL)",
- "endpoints.addTitle": "Add an endpoint"
+ "endpoints.addTitle": "Add an endpoint",
+ "run.pastBaselineN": "%{what}: %{n}, past its baseline's none",
+ "endpoints.vendorOther": "Other",
+ "confirm.colKey": "Key",
+ "confirm.colVersion": "Version",
+ "confirm.colSize": "Size",
+ "settings.path.config": "Settings file",
+ "settings.path.data": "Data",
+ "settings.path.exports": "Exports",
+ "settings.path.downloads": "Downloads",
+ "settings.path.audit": "Audit log"
 }

@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+flate2.workspace = true
 sonde-core.workspace = true
 probes.workspace = true
 decoders.workspace = true
