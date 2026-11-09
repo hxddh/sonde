@@ -112,6 +112,7 @@ export const api = {
     history: async (path: string) => (await Sessions.history(path)) as T.ProgramHistory | null,
     setBaseline: (path: string, on: boolean) => Sessions.setBaseline(path, on) as boolean,
     compareRuns: async (before: string, after: string) => (await Sessions.compareRuns(before, after)) as T.RunChange,
+    codeChange: async (before: string, after: string) => (await Sessions.codeChange(before, after)) as T.CodeChange,
   },
 };
 

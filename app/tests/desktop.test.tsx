@@ -99,6 +99,7 @@ test("a command keeps its secrets out and its Windows paths whole; sonde's own s
   expect(ranCommand("python x.py")).toBe(true);
   expect(ranCommand("logs of s3://demo/logs/")).toBe(false);
   expect(ranCommand("replay of a.sonde")).toBe(false);
+  expect(ranCommand("imported from CloudTrail")).toBe(false);
   expect(ranCommand("  ")).toBe(false);
   expect(commandLine("logs of s3://demo/logs/")).toBe("logs of s3://demo/logs/");
   expect(commandLine("python x.py")).toBe("$ python x.py");

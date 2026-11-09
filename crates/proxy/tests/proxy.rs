@@ -278,6 +278,11 @@ async fn put_get_list_are_resigned_and_recorded() {
         .unwrap();
     assert!(!auth.value.contains("dummy"));
     assert!(up.calls.lock().len() == 3);
+    // a body read to its end: logged with its first byte inside its whole time
+    let get = records.iter().find(|r| r.operation == "GetObject").unwrap();
+    let first = get.first_byte_ms.expect("first byte measured");
+    assert!(first <= get.latency_ms, "{first} > {}", get.latency_ms);
+    assert_eq!(get.response_bytes, Some(19));
 }
 
 #[tokio::test]

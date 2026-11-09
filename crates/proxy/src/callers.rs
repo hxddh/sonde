@@ -121,6 +121,17 @@ pub fn trace(r: &Record) -> Option<String> {
 /// the `sitecustomize` module Python loads at start.
 pub const PYTHON_HOOK: &str = include_str!("callers_hook.py");
 
+/// The hook for a Node.js program (the AWS SDK for JavaScript v3), loaded
+/// with `NODE_OPTIONS=--require`.
+pub const NODE_HOOK: &str = include_str!("callers_hook.cjs");
+
+/// The Java agent (`-javaagent`) that adds [`JAVA_CALLER`] to a program's
+/// class path when the AWS SDK for Java 2 is on it. Built from `hooks/java`.
+pub const JAVA_AGENT: &[u8] = include_bytes!("hooks/sonde-agent.jar");
+
+/// The AWS SDK for Java 2 interceptor that names callers.
+pub const JAVA_CALLER: &[u8] = include_bytes!("hooks/sonde-caller.jar");
+
 /// The environment that loads [`PYTHON_HOOK`] into a Python program: the
 /// hook written into `dir`, which goes first on `PYTHONPATH`.
 pub fn python_env(dir: &std::path::Path) -> std::io::Result<(String, String)> {
@@ -134,6 +145,39 @@ pub fn python_env(dir: &std::path::Path) -> std::io::Result<(String, String)> {
         path = format!("{path}{sep}{rest}");
     }
     Ok(("PYTHONPATH".into(), path))
+}
+
+/// The environment that names callers in a Python, Node.js or Java program:
+/// each language's hook written into `dir`, and the variable that loads it,
+/// after what the variable held. A program of another language, or one
+/// without its SDK, runs as it would.
+pub fn caller_env(dir: &std::path::Path) -> std::io::Result<Vec<(String, String)>> {
+    let mut env = vec![python_env(dir)?];
+    std::fs::write(dir.join("sonde-caller.cjs"), NODE_HOOK)?;
+    std::fs::write(dir.join("sonde-agent.jar"), JAVA_AGENT)?;
+    std::fs::write(dir.join("sonde-caller.jar"), JAVA_CALLER)?;
+    // both read their options split at spaces, a quoted one whole
+    let quoted = |p: std::path::PathBuf| {
+        let p = p.to_string_lossy().into_owned();
+        (!p.contains('"')).then(|| format!("\"{p}\""))
+    };
+    let after = |var: &str, add: String| match std::env::var(var) {
+        Ok(rest) if !rest.trim().is_empty() => format!("{} {add}", rest.trim()),
+        _ => add,
+    };
+    if let Some(p) = quoted(dir.join("sonde-caller.cjs")) {
+        env.push((
+            "NODE_OPTIONS".into(),
+            after("NODE_OPTIONS", format!("--require {p}")),
+        ));
+    }
+    if let Some(p) = quoted(dir.join("sonde-agent.jar")) {
+        env.push((
+            "JAVA_TOOL_OPTIONS".into(),
+            after("JAVA_TOOL_OPTIONS", format!("-javaagent:{p}")),
+        ));
+    }
+    Ok(env)
 }
 
 /// A place in the program, with how many of a finding's requests it sent.
@@ -169,8 +213,73 @@ pub fn of(records: &[&Record]) -> (Vec<Caller>, Option<String>) {
     (callers, sdk)
 }
 
+/// A finding's code place (`etl/load.py:212 read_manifest`) as a file and
+/// line: the last `:digits` before a space or the end (a path may hold spaces
+/// and a Windows drive's colon).
+pub fn code_place(place: &str) -> Option<(String, u32)> {
+    let bytes = place.as_bytes();
+    let mut at = None;
+    for (i, c) in place.char_indices() {
+        if c != ':' {
+            continue;
+        }
+        let digits = place[i + 1..]
+            .chars()
+            .take_while(|d| d.is_ascii_digit())
+            .count();
+        let end = i + 1 + digits;
+        if digits > 0 && (end == place.len() || bytes[end] == b' ') {
+            at = Some((i, end));
+        }
+    }
+    let (colon, end) = at?;
+    let file = place[..colon].trim();
+    if file.is_empty() {
+        return None;
+    }
+    Some((file.to_string(), place[colon + 1..end].parse().ok()?))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_language_gets_its_hook_and_keeps_its_own_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("with space");
+        let env = caller_env(&hooks).unwrap();
+        for f in [
+            "sitecustomize.py",
+            "sonde-caller.cjs",
+            "sonde-agent.jar",
+            "sonde-caller.jar",
+        ] {
+            assert!(hooks.join(f).is_file(), "{f}");
+        }
+        let get = |k: &str| {
+            env.iter()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
+        // a path with a space is one option, quoted
+        assert!(get("NODE_OPTIONS").ends_with(&format!(
+            "--require \"{}\"",
+            hooks.join("sonde-caller.cjs").display()
+        )));
+        assert!(get("JAVA_TOOL_OPTIONS").ends_with(&format!(
+            "-javaagent:\"{}\"",
+            hooks.join("sonde-agent.jar").display()
+        )));
+        assert!(get("PYTHONPATH").starts_with(&hooks.to_string_lossy().into_owned()));
+        // the agent says how it starts; the interceptor how the SDK finds it
+        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        assert!(JAVA_AGENT.starts_with(b"PK"));
+        assert!(
+            text(JAVA_CALLER)
+                .contains("software/amazon/awssdk/global/handlers/execution.interceptors")
+        );
+    }
+
     use super::*;
     use reqlog::Header;
 

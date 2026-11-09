@@ -159,9 +159,13 @@ export interface RecordSummary {
   latencyMs: number;
   retries: number;
   requestId: string | null;
+  /** Time to the response's first byte, when measured (the proxy, an access log's turnaround). */
+  firstByteMs?: number;
 }
 
 export interface RequestRecord extends RecordSummary {
+  /** Who sent it, as the store's log names them (an imported log only). */
+  requester?: string;
   url: string;
   bucket: string | null;
   key: string | null;
@@ -491,6 +495,8 @@ export interface Observation {
   callers?: { place: string; requests: number }[];
   /** The SDK that sent them, from their user agent ("boto3 1.34"). */
   sdk?: string;
+  /** The same finding across runs: what sonde.toml's `expect` names. */
+  identity?: string;
 }
 
 /** A session after acting on every finding that counts a saving: an estimate. */
@@ -547,6 +553,8 @@ export interface Profile {
   groupRate?: { group: number; bin: number; n: number; p50Ms: number; p95Ms: number }[];
   /** The places in the program's code that sent requests (x-sonde-caller). */
   callers?: { place: string; requests: number; waitedMs: number; errors: number; cost: number }[];
+  /** Whether the requests' times are known (a CloudTrail file has none); absent in older shares. */
+  timed?: boolean;
   cost: { writes: number; reads: number; free: number; amount: number; currency: string };
   prices: { per1000Writes: number; per1000Reads: number; currency: string };
   prefixes: { prefix: string; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number; cost?: number }[];
@@ -593,7 +601,6 @@ export interface BudgetVerdict {
   ok: boolean;
 }
 
-/** A program over its runs, its baseline and this run checked against it. */
 /** The commit a run's code was at. */
 export interface GitStamp {
   commit: string;
@@ -609,9 +616,30 @@ export interface BaselineLimits {
   errors: number;
 }
 
+/** Where a program went past its baseline: the run, and the commits on either side. */
+export interface Since {
+  runsAgo: number;
+  firstPast: string;
+  firstPastCommit?: GitStamp;
+  lastWithin?: string;
+  lastWithinCommit?: GitStamp;
+}
+
+/** What changed in a program's code between two runs, file by file, with the later run's findings on their lines. */
+export interface CodeChange {
+  from: string;
+  to: string;
+  files: { path: string; old: string; new: string; notes: { line: number; text: string }[] }[];
+  more: number;
+}
+
+/** A program over its runs, its baseline and this run checked against it. */
 export interface ProgramHistory {
   program: string;
   runs: RunPoint[];
+  /** Each run's commit, as `runs`. */
+  commits?: (GitStamp | null)[];
+  since?: Since | null;
   baseline: string | null;
   baselinePoint?: RunPoint | null;
   limits?: BaselineLimits | null;

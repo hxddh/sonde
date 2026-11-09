@@ -316,14 +316,16 @@ export function Path(props: { path: string; max?: number; class?: string; testID
 }
 
 /** A modal dialog: one surface, one width per size, over the scrim. */
-export function Modal(props: { open: boolean; onClose: () => void; size?: "narrow" | "default"; children: JSX.Element; testID?: string }) {
+const MODAL = { narrow: "w-[420px]", default: "w-[560px]", wide: "w-[880px]" } as const;
+
+export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string }) {
   return (
     <Dialog
       open={props.open}
       onOpenChange={(e) => !e.open && props.onClose()}
       backdropClass={SCRIM}
       testID={props.testID}
-      class={`m-auto ${props.size === "narrow" ? "w-[420px]" : "w-[560px]"} max-w-[94%] gap-4 ${CARD} bg-popover p-5 shadow-xl`}
+      class={`m-auto ${MODAL[props.size ?? "default"]} max-w-[94%] gap-4 ${CARD} bg-popover p-5 shadow-xl`}
     >
       {props.children}
     </Dialog>

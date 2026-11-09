@@ -109,6 +109,8 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
       [t("column.time"), `${day(r().time)} ${clock(r().time)}`],
       [t("common.endpoint"), r().endpoint],
       [t("requests.latency"), ms(r().latencyMs)],
+      ...(r().firstByteMs != null ? [[t("requests.firstByte"), ms(r().firstByteMs!)] as [string, string]] : []),
+      ...(r().requester ? [[t("requests.requester"), r().requester!] as [string, string]] : []),
       [t("requests.size"), `↑${bytes(r().requestBytes ?? 0)} ↓${bytes(r().responseBytes ?? 0)}`],
       [t("requests.retries"), String(r().retries)],
       ["x-amz-request-id", r().requestId ?? "—"],

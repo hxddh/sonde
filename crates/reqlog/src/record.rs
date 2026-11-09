@@ -65,6 +65,14 @@ pub struct Record {
     pub region: Option<String>,
     /// The job this request belongs to, if any.
     pub job: Option<String>,
+    /// How long until the response's first byte: the proxy's measure, or the
+    /// turnaround an access log gives (S3's time to its first byte).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_byte_ms: Option<f64>,
+    /// Who sent it, as the store's own log names them (an IAM ARN or a
+    /// canonical user id); only an imported log knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requester: Option<String>,
 }
 
 /// A compact view for list rows.
@@ -81,6 +89,9 @@ pub struct RecordSummary {
     pub latency_ms: f64,
     pub retries: u32,
     pub request_id: Option<String>,
+    /// Time to the response's first byte, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_byte_ms: Option<f64>,
 }
 
 /// Operations whose body is a small control document (XML or JSON) rather
@@ -184,6 +195,7 @@ impl Record {
             latency_ms: self.latency_ms,
             retries: self.retries,
             request_id: self.request_id.clone(),
+            first_byte_ms: self.first_byte_ms,
         }
     }
 }

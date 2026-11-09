@@ -40,11 +40,11 @@ enum CodeTarget {
 /// The file `place` names, inside `dir`: opened when it is a regular file
 /// there and not one that runs; shown in the file manager otherwise.
 fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
-    let at = place.split_whitespace().next().unwrap_or_default();
-    // `file:line`: the line is the last colon's (a Windows path has its own)
-    let file = match at.rsplit_once(':') {
-        Some((f, line)) if line.chars().all(|c| c.is_ascii_digit()) && !f.is_empty() => f,
-        _ => at,
+    // `file:line function`: a path may hold spaces and a drive's colon
+    let named = sonde_proxy::callers::code_place(place);
+    let file = match &named {
+        Some((f, _)) => f.as_str(),
+        None => place.trim(),
     };
     if file.is_empty() {
         return Err(err_msg("the place names no file"));
@@ -574,6 +574,105 @@ fn header_line(path: &Path) -> Option<String> {
     Some(first)
 }
 
+/// [`Sessions::code_change`]'s work: two runs' commits, the files between
+/// them, the later run's findings on their lines.
+fn code_change_of(before: &str, after: &str) -> Result<JsonValue, String> {
+    let a = header_of(Path::new(&before)).ok_or_else(|| err_msg("not a session"))?;
+    let b = header_of(Path::new(&after)).ok_or_else(|| err_msg("not a session"))?;
+    let (Some(ga), Some(gb)) = (a.git, b.git) else {
+        return Err(err_msg(
+            "a run without its commit: run it again in a git repository",
+        ));
+    };
+    let hex = |c: &str| (7..=64).contains(&c.len()) && c.chars().all(|x| x.is_ascii_hexdigit());
+    if !hex(&ga.commit) || !hex(&gb.commit) {
+        return Err(err_msg("not a commit"));
+    }
+    let cwd = b
+        .cwd
+        .ok_or_else(|| err_msg("the run's folder is not known"))?;
+    let dir = PathBuf::from(&cwd);
+    if !dir.is_dir() {
+        return Err(err_msg(format!("{cwd} is not there")));
+    }
+    let git = |args: &[&str]| -> Result<String, String> {
+        let o = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            // nothing of the repository's own config runs (a session
+            // names the folder; it may be a file someone shared)
+            .args(["-c", "core.quotepath=off", "-c", "core.fsmonitor=false"])
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| err_msg(format!("git: {e}")))?;
+        if !o.status.success() {
+            return Err(err_msg(
+                String::from_utf8_lossy(&o.stderr).trim().to_string(),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    let root = git(&["rev-parse", "--show-toplevel"])?.trim().to_string();
+    let names = git(&[
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-only",
+        &ga.commit,
+        &gb.commit,
+        "--",
+    ])?;
+    // the later run's findings, by the file and line their requests came from
+    let s = open_session(after)?;
+    let obs = observations(&s.records, &episodes(&s.records));
+    let rel = |file: &str| -> String {
+        let full = dir.join(file);
+        let full = full.canonicalize().unwrap_or(full);
+        let r = PathBuf::from(&root);
+        let r = r.canonicalize().unwrap_or(r);
+        full.strip_prefix(&r)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| file.replace('\\', "/"))
+    };
+    let mut notes: std::collections::BTreeMap<String, Vec<(u32, String)>> = Default::default();
+    for o in &obs {
+        for c in &o.callers {
+            if let Some((file, line)) = sonde_proxy::callers::code_place(&c.place) {
+                notes
+                    .entry(rel(&file))
+                    .or_default()
+                    .push((line, o.text.clone()));
+            }
+        }
+    }
+    let mut changed: Vec<&str> = names.lines().filter(|l| !l.is_empty()).collect();
+    changed.sort_by_key(|f| !notes.contains_key(*f));
+    let show = |rev: &str, f: &str| -> String {
+        git(&["show", "--no-textconv", &format!("{rev}:{f}")])
+            .map(|t| t.chars().take(200_000).collect())
+            .unwrap_or_default()
+    };
+    let files: Vec<JsonValue> = changed
+        .iter()
+        .take(6)
+        .map(|f| {
+            json!({
+                "path": f,
+                "old": show(&ga.commit, f),
+                "new": show(&gb.commit, f),
+                "notes": notes.get(*f).map(|n| n.iter().map(|(l, t)| json!({ "line": l, "text": t })).collect::<Vec<_>>()).unwrap_or_default(),
+            })
+        })
+        .collect();
+    Ok(json!({
+        "from": ga.commit,
+        "to": gb.commit,
+        "files": files,
+        "more": changed.len().saturating_sub(6),
+    }))
+}
+
 fn header_of(path: &Path) -> Option<SessionHeader> {
     serde_json::from_str(&header_line(path)?).ok()
 }
@@ -709,11 +808,12 @@ impl Sessions {
             let g = RECORDING.lock();
             let r = g.as_ref().expect("begin started a recording");
             let (mut set, unset) = r.proxy.env();
-            // the code that sent each request, when asked (a Python program's)
+            // the code that sent each request, when asked (a Python, Node.js
+            // or Java program's)
             if sonde().settings().name_callers
-                && let Ok(v) = sonde_proxy::callers::python_env(&sonde().paths().python_hook())
+                && let Ok(v) = sonde_proxy::callers::caller_env(&sonde().paths().python_hook())
             {
-                set.push(v);
+                set.extend(v);
             }
             (
                 set,
@@ -1008,13 +1108,19 @@ impl Sessions {
                 })
                 .collect();
             runs.sort();
-            let runs: Vec<_> = runs
+            // each run with the commit its code was at
+            let dated: Vec<(
+                sonde_proxy::program::RunPoint,
+                Option<sonde_proxy::session::GitStamp>,
+            )> = runs
                 .into_iter()
                 .rev()
                 .take(30)
                 .rev()
-                .filter_map(|(_, p)| run_point(&p))
+                .filter_map(|(_, p)| Some((run_point(&p)?, header_of(&p).and_then(|h| h.git))))
                 .collect();
+            let commits: Vec<_> = dated.iter().map(|(_, g)| g.clone()).collect();
+            let runs: Vec<_> = dated.iter().map(|(r, _)| r.clone()).collect();
             let base = baselines()
                 .get(&key)
                 .map(|name| dir.join(name))
@@ -1058,9 +1164,15 @@ impl Sessions {
             let limits = base_point.as_ref().map(|b| {
                 sonde_proxy::program::baseline_limits(b, sonde_proxy::program::DEFAULT_TOLERANCE)
             });
+            // where it went past the baseline, and the commits on either side
+            let since = base_point.as_ref().and_then(|b| {
+                sonde_proxy::program::since(&dated, b, sonde_proxy::program::DEFAULT_TOLERANCE)
+            });
             Ok(json!({
                 "program": key,
                 "runs": runs,
+                "commits": commits,
+                "since": since,
                 "baseline": base.map(|b| b.to_string_lossy().into_owned()),
                 "baselinePoint": base_point,
                 "limits": limits,
@@ -1069,6 +1181,17 @@ impl Sessions {
         })
         .await
         .map_err(err_msg)?
+    }
+
+    /// What changed in the program's code between two of its runs: the files
+    /// `git diff` names between their commits (at most 6, the ones its
+    /// findings' requests came from first), each before and after, with the
+    /// lines of the later run's findings. `{ from, to, files: [{ path, old,
+    /// new, notes: [{ line, text }] }], more }`.
+    pub async fn code_change(before: String, after: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || code_change_of(&before, &after))
+            .await
+            .map_err(err_msg)?
     }
 
     /// Makes a session its program's baseline (`on`), or no longer.
@@ -1406,6 +1529,101 @@ mod tests {
             CodeTarget::Reveal(o)
         );
         assert!(code_target(&root, "../../nothing-here.py:1 f").is_err());
+    }
+
+    #[test]
+    fn the_code_between_two_runs_with_the_later_findings_on_their_lines() {
+        use reqlog::Sink;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(repo.join("etl")).unwrap();
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                ok.status.success(),
+                "{}",
+                String::from_utf8_lossy(&ok.stderr)
+            );
+            String::from_utf8_lossy(&ok.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(repo.join("etl/load.py"), "a = 1\nread()\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-qm", "one"]);
+        let one = git(&["rev-parse", "HEAD"]);
+        std::fs::write(
+            repo.join("etl/load.py"),
+            "a = 1\nfor k in keys:\n    read(k)\n",
+        )
+        .unwrap();
+        git(&["commit", "-qam", "two"]);
+        let two = git(&["rev-parse", "HEAD"]);
+        let run = |name: &str, commit: &str, n: u64| {
+            let path = dir.path().join(name);
+            let mut h =
+                SessionHeader::new("ep", "http://s3", "", Some("python etl/load.py".into()));
+            h.cwd = Some(repo.to_string_lossy().into_owned());
+            h.git = Some(sonde_proxy::session::GitStamp {
+                commit: commit.into(),
+                branch: None,
+                dirty: false,
+            });
+            let w = SessionWriter::create(&path, &h).unwrap();
+            for i in 0..n {
+                w.write(&reqlog::Record {
+                    id: i + 1,
+                    time: chrono::Utc::now(),
+                    operation: "GetObject".into(),
+                    method: "GET".into(),
+                    bucket: Some("b".into()),
+                    key: Some("hot".into()),
+                    status: Some(200),
+                    latency_ms: 2.0,
+                    request_headers: vec![reqlog::Header::new(
+                        "x-sonde-caller",
+                        "etl/load.py:3 main",
+                    )],
+                    ..Default::default()
+                });
+            }
+            drop(w);
+            path.to_string_lossy().into_owned()
+        };
+        let a = run("a.sonde", &one, 1);
+        let b = run("b.sonde", &two, 30);
+        let c = code_change_of(&a, &b).unwrap();
+        assert_eq!(c["files"][0]["path"], "etl/load.py");
+        assert!(
+            c["files"][0]["new"]
+                .as_str()
+                .unwrap()
+                .contains("for k in keys")
+        );
+        assert_eq!(c["files"][0]["notes"][0]["line"], 3, "{c:#}");
+        // a commit that is not one is never handed to git
+        let mut bad = SessionHeader::new("ep", "http://s3", "", None);
+        bad.git = Some(sonde_proxy::session::GitStamp {
+            commit: "--output=/tmp/x".into(),
+            branch: None,
+            dirty: false,
+        });
+        bad.cwd = Some(repo.to_string_lossy().into_owned());
+        let p = dir.path().join("bad.sonde");
+        drop(SessionWriter::create(&p, &bad).unwrap());
+        assert!(code_change_of(&a, &p.to_string_lossy()).is_err());
     }
 
     #[test]

@@ -11,7 +11,7 @@ import { ms } from "../format";
 import type { SessionView } from "../types";
 import { Button, Section, Segmented, SimpleTable, terminal } from "./kit";
 import { findingMarks } from "./sessionview";
-import { Chains, cost, Distribution, Flows, Heat, KindsOverTime, offset, PrefixLimits, Pressure, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
+import { Chains, cost, Distribution, timed, Flows, Heat, KindsOverTime, offset, PrefixLimits, Pressure, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
 
 /** The Time pane of a session. */
 export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void }) {
@@ -48,8 +48,12 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
   return (
     <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-6 pb-4 pr-2"}>
       {/* the figures are the session header's; here, a terminal's sentence */}
-      <If when={terminal()}>
+      <If when={terminal() && timed(p())}>
         <Text class="text-foreground">{shapeSentence(p())}</Text>
+      </If>
+      {/* a log without times (CloudTrail): when and what, never how long */}
+      <If when={!timed(p())}>
+        <Text testID="untimed" class="text-small text-muted-foreground">{t("profile.untimed")}</Text>
       </If>
       {/* when: the whole session, its findings marked; two presses zoom the charts over time */}
       <If when={!terminal() && shaped()}>
@@ -66,7 +70,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
         </Section>
       </If>
       {/* how long: every request, when it ran or how large it was; a press opens it */}
-      <If when={!terminal() && p().samples.length > 1}>
+      <If when={!terminal() && timed(p()) && p().samples.length > 1}>
         <Section
           title={t("scatter.title")}
           plain
@@ -76,7 +80,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
           <RequestScatter profile={p()} by={scatterBy()} domainMs={zoomMs()} onRequest={props.onRequest} />
         </Section>
       </If>
-      <If when={!terminal() && (p().groupRate?.length ?? 0) > 0}>
+      <If when={!terminal() && timed(p()) && (p().groupRate?.length ?? 0) > 0}>
         <Section title={t("kinds.title")} plain>
           <KindsOverTime profile={p()} domainMs={zoomMs()} />
         </Section>
@@ -91,6 +95,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
           <Distribution profile={p()} />
         </Section>
       </If>
+      <If when={timed(p())}>
       <Section
         title={t("profile.spentTitle")}
         plain
@@ -103,6 +108,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       >
         <TimeSpent profile={p()} by={spentBy()} />
       </Section>
+      </If>
       <If when={p().chains?.length}>
         <Section title={t("chains.title")} plain description={t("chains.hint")}>
           <Chains profile={p()} />

@@ -2,14 +2,14 @@
 // requests, waiting, cost and warnings, its baseline, and this run held to it.
 
 import { List, resource, Scroll, signal, Text, View } from "nsh";
-import { Button as BaseButton, DatePicker } from "nsh/base";
+import { Button as BaseButton, DatePicker, DiffView } from "nsh/base";
 import { day, money } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { report, sessionsChanged, sessionsTick } from "../store";
-import type { ProgramHistory } from "../types";
+import type { CodeChange, GitStamp, ProgramHistory } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, CONTROL, Empty, ListRow, Loading, POPUP, SimpleTable, terminal } from "./kit";
+import { Badge, Button, CONTROL, Disclosure, Empty, ListRow, Loading, Modal, Muted, POPUP, SimpleTable, Title, terminal } from "./kit";
 import { cost, offset, RunTrend, Sparkline } from "./plots";
 import { programOf } from "./sessionview";
 
@@ -30,6 +30,96 @@ function Verdicts(props: { h: ProgramHistory }) {
         <Each of={c().newWarnings}>{(w) => <Text class="text-small text-muted-foreground">{`! ${w()}`}</Text>}</Each>
       </View>
     </View>
+  );
+}
+
+const commitText = (g?: GitStamp | null) => (g ? `${g.commit.slice(0, 7)}${g.dirty ? "+" : ""}` : "");
+
+/** Where the program went past its baseline: the run, its commit, the last
+ * within; and the code that changed between them, a press away. */
+function SinceRow(props: { h: ProgramHistory; onOpen?: (path: string) => void }) {
+  const s = () => props.h.since!;
+  const open = signal(false);
+  const text = () =>
+    t("history.since", {
+      n: s().runsAgo + 1,
+      commit: commitText(s().firstPastCommit) || t("history.noCommit"),
+      last: commitText(s().lastWithinCommit) || t("history.noCommit"),
+    });
+  const canDiff = () => !!(s().lastWithin && s().firstPastCommit && s().lastWithinCommit && s().firstPastCommit!.commit !== s().lastWithinCommit!.commit);
+  return (
+    <View testID="history-since" class="flex-row items-center gap-2">
+      <Icon name="git-compare-arrows" size={14} tint="warn" />
+      <Text class="min-w-0 flex-1 tabular-nums text-small text-foreground">{text()}</Text>
+      <If when={!terminal() && canDiff()}>
+        <Button small variant="outline" icon="git-compare-arrows" label={t("history.codeChange")} onPress={() => open.set(true)} testID="history-code-change" />
+      </If>
+      <If when={open()}>
+        <CodeChangeDialog before={s().lastWithin!} after={s().firstPast} onClose={() => open.set(false)} />
+      </If>
+    </View>
+  );
+}
+
+/** The code between two runs, file by file (the ones whose lines sent the
+ * later run's findings' requests first), those findings on their lines. */
+function CodeChangeDialog(props: { before: string; after: string; onClose: () => void }) {
+  const change = resource(
+    () => [props.before, props.after] as const,
+    async ([a, b]): Promise<CodeChange | { error: string }> => {
+      try {
+        return await api.sessions.codeChange(a, b);
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  );
+  const ext = (p: string) => p.split(".").pop() ?? "";
+  return (
+    <Modal open size="wide" onClose={props.onClose} testID="code-change">
+      <Title>{t("history.codeChange")}</Title>
+      <If when={change()} else={<Loading />}>
+        {(c) => (
+          <If when={"files" in c() ? (c() as CodeChange) : null} else={<Muted>{(c() as { error: string }).error}</Muted>}>
+            {(x) => (
+              <Scroll class="max-h-[560px]" contentClass="gap-3">
+                <Muted class="font-mono text-small">{`${x().from.slice(0, 7)} → ${x().to.slice(0, 7)}`}</Muted>
+                <If when={x().files.length} else={<Muted>{t("history.noCodeChange")}</Muted>}>
+                  <Each of={x().files} key={(f) => f.path}>
+                    {(f, i) => (
+                      <Disclosure title={f().path} count={f().notes.length || undefined} open={i() === 0}>
+                        <DiffView
+                          oldValue={f().old}
+                          newValue={f().new}
+                          language={ext(f().path)}
+                          layout="unified"
+                          inline="word"
+                          contextLines={3}
+                          annotations={f().notes.map((n, k) => ({ id: String(k), side: "new" as const, line: Math.max(0, n.line - 1) }))}
+                          renderAnnotation={(a) => (
+                            <View class="mx-2 my-1 flex-row items-center gap-2 rounded-(--radius-sm) border border-warn/40 bg-warn/10 px-2 py-1">
+                              <Icon name="radio" size={12} tint="warn" />
+                              <Text class="text-small text-foreground">{f().notes[Number(a.id)]?.text ?? ""}</Text>
+                            </View>
+                          )}
+                          class="h-[320px] rounded-(--radius) border border-border"
+                        />
+                      </Disclosure>
+                    )}
+                  </Each>
+                </If>
+                <If when={x().more > 0}>
+                  <Muted class="text-small">{t("history.moreFiles", { n: x().more })}</Muted>
+                </If>
+              </Scroll>
+            )}
+          </If>
+        )}
+      </If>
+      <View class="flex-row justify-end">
+        <Button label={t("common.close")} onPress={props.onClose} testID="code-change-close" />
+      </View>
+    </Modal>
   );
 }
 
@@ -64,7 +154,11 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
     const d = created.slice(0, 10);
     return !r || ((!r[0] || d >= r[0]) && (!r[1] || d <= r[1]));
   };
-  const shown = (x: ProgramHistory): ProgramHistory => ({ ...x, runs: x.runs.filter((r) => within(r.created)) });
+  // the runs of the range, each still with its commit
+  const shown = (x: ProgramHistory): ProgramHistory => {
+    const keep = x.runs.map((r) => within(r.created));
+    return { ...x, runs: x.runs.filter((_, i) => keep[i]), commits: x.commits?.filter((_, i) => keep[i]) };
+  };
   const daysAgo = (k: number) => new Date(Date.now() - k * 86400000).toISOString().slice(0, 10);
   const rangeText = () => {
     const r = range();
@@ -111,6 +205,9 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
           </View>
           <If when={x().check}>
             <Verdicts h={x()} />
+          </If>
+          <If when={x().since}>
+            <SinceRow h={x()} onOpen={props.onOpen} />
           </If>
           <If when={shown(x()).runs.length > 0 && x().runs.length > 1} else={<Text class="text-small text-muted-foreground">{x().runs.length > 1 ? t("history.noneInRange") : t("history.none")}</Text>}>
             <If

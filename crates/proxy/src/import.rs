@@ -225,6 +225,13 @@ fn access_log(text: &str) -> Result<Vec<Record>, String> {
             num(&f[13]).unwrap_or(0) as f64,
         );
         r.request_id = (f[5] != "-").then(|| f[5].clone());
+        // who sent it, how long S3 took to its first byte, and with what
+        r.requester = f.get(4).filter(|v| *v != "-").cloned();
+        r.first_byte_ms = f.get(14).and_then(|v| v.parse::<f64>().ok());
+        if let Some(ua) = f.get(16).filter(|v| *v != "-" && !v.is_empty()) {
+            r.request_headers
+                .push(reqlog::Header::new("user-agent", ua));
+        }
         r.response_bytes = num(&f[11]);
         if method == "PUT" || method == "POST" {
             r.request_bytes = num(&f[12]);
@@ -290,6 +297,15 @@ fn cloudtrail(text: &str) -> Result<Vec<Record>, String> {
         // CloudTrail names the operation itself
         r.operation = name.to_string();
         r.request_id = e["requestID"].as_str().map(String::from);
+        let who = &e["userIdentity"];
+        r.requester = who["arn"]
+            .as_str()
+            .or_else(|| who["principalId"].as_str())
+            .map(String::from);
+        if let Some(ua) = e["userAgent"].as_str().filter(|v| !v.is_empty()) {
+            r.request_headers
+                .push(reqlog::Header::new("user-agent", ua));
+        }
         let extra = &e["additionalEventData"];
         r.request_bytes = extra["bytesTransferredIn"].as_f64().map(|v| v as u64);
         r.response_bytes = extra["bytesTransferredOut"].as_f64().map(|v| v as u64);
@@ -456,6 +472,18 @@ mod tests {
         assert_eq!(ops, ["GetObject", "HeadObject", "ListObjectsV2"]);
         assert_eq!(s.records[0].latency_ms, 12.0);
         assert_eq!(s.records[0].response_bytes, Some(4096));
+        // who, with what, and S3's own time to its first byte
+        assert_eq!(
+            s.records[0].requester.as_deref(),
+            Some("arn:aws:iam::1:user/etl")
+        );
+        assert_eq!(s.records[0].first_byte_ms, Some(10.0));
+        assert_eq!(s.records[1].first_byte_ms, None);
+        let ua = s.records[0]
+            .request_headers
+            .iter()
+            .find(|h| h.name == "user-agent");
+        assert_eq!(ua.map(|h| h.value.as_str()), Some("aws-sdk-java/2.21"));
         assert!(crate::summary::is_miss(&s.records[1]));
         assert_eq!(s.records[2].query[1], ("prefix".into(), "t/".into()));
         assert_eq!(
@@ -468,13 +496,23 @@ mod tests {
     fn cloudtrail_events_and_a_har_read_as_requests() {
         let ct = r#"{"Records":[
           {"eventTime":"2026-02-06T00:00:02Z","eventSource":"s3.amazonaws.com","eventName":"PutObject","requestParameters":{"bucketName":"lake","key":"a"},"additionalEventData":{"bytesTransferredIn":10.0}},
-          {"eventTime":"2026-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"b"},"errorCode":"NoSuchKey"},
+          {"eventTime":"2026-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"b"},"errorCode":"NoSuchKey","userIdentity":{"arn":"arn:aws:iam::1:role/etl"},"userAgent":"[aws-cli/2.15]"},
           {"eventTime":"2026-02-06T00:00:01Z","eventSource":"ec2.amazonaws.com","eventName":"RunInstances"}]}"#;
         let (src, s) = import(ct, "trail").unwrap();
         assert_eq!(src, Source::CloudTrail);
         assert_eq!(s.records.len(), 2);
         assert_eq!(s.records[0].operation, "GetObject");
         assert_eq!(s.records[0].status, Some(404));
+        assert_eq!(
+            s.records[0].requester.as_deref(),
+            Some("arn:aws:iam::1:role/etl")
+        );
+        assert!(
+            s.records[0]
+                .request_headers
+                .iter()
+                .any(|h| h.name == "user-agent" && h.value == "[aws-cli/2.15]")
+        );
         assert_eq!(s.records[1].request_bytes, Some(10));
 
         let har = serde_json::to_string(&reqlog::export::to_har(&[Record {

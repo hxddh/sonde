@@ -246,6 +246,9 @@ pub struct Profile {
     pub group_rate: Vec<GroupBin>,
     /// The places in the program's code that sent requests, most waiting first.
     pub callers: Vec<CallerStat>,
+    /// Whether the requests' times are known: a CloudTrail file has none, and
+    /// what took how long is not said of it.
+    pub timed: bool,
 }
 
 /// Requests made one at a time, each starting once the one before ended
@@ -542,6 +545,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         p99_ms: 0.0,
         group_rate: Vec::new(),
         callers: Vec::new(),
+        timed: false,
     };
     let Some(t0) = records.iter().map(start_us).min() else {
         return empty;
@@ -916,6 +920,9 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let first = latency.iter().position(|b| b.n > 0).unwrap_or(0);
     let last = latency.iter().rposition(|b| b.n > 0).unwrap_or(0);
     let latency: Vec<LatencyBucket> = latency[first..=last].to_vec();
+    // a log without times (CloudTrail) says what was asked and when, not how
+    // long it took: no chains, no distribution
+    let timed = records.iter().any(|r| r.latency_ms > 0.0);
     Profile {
         wall_ms: ms(wall_us),
         busy_ms: ms(busy_us),
@@ -938,11 +945,12 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         prefixes,
         heat,
         flows,
-        chains: chains(records),
-        latency,
+        chains: if timed { chains(records) } else { Vec::new() },
+        latency: if timed { latency } else { Vec::new() },
         p50_ms: q(0.5),
         p95_ms: q(0.95),
         p99_ms: q(0.99),
+        timed,
     }
 }
 

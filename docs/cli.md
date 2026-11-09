@@ -11,7 +11,7 @@ job (its requests stop). A session argument is a path or a name in the data dire
 | Command | Does |
 |---|---|
 | `sonde demo [--app]` | A tour: a small program's requests to the built-in store, recorded and explained (`--app` opens it in the app). |
-| `sonde run [--no-delete\|--read-only] [--live] [--callers] [-o FILE] -- COMMAND…` | Runs a command against a local endpoint that re-signs and records its S3 requests; prints the session's summary (and, when the program sent nothing, how each common SDK is pointed at sonde); exits with the command's status. `--callers` names the code that sent each request in a Python program (see below). |
+| `sonde run [--no-delete\|--read-only] [--live] [--callers] [-o FILE] -- COMMAND…` | Runs a command against a local endpoint that re-signs and records its S3 requests; prints the session's summary (and, when the program sent nothing, how each common SDK is pointed at sonde); exits with the command's status. `--callers` names the code that sent each request in a Python, Node.js or Java program (see below). |
 | `sonde proxy [--listen ADDR] [--allow-remote] [--no-delete\|--read-only] [-o FILE]` | The same endpoint, standing: prints the variables to set, then every request. It listens on loopback only unless `--allow-remote`. |
 | `sonde watch [--listen ADDR] [--rotate MIN] [--alert URL] …` | A proxy left running: one status line for the last minute (requests a second, errors, p95), each new warning as it appears, and a new session file every `--rotate` minutes (60), the finished one compressed. `--alert` posts each new warning, and each finished file over `sonde.toml`'s budget (the last one at Ctrl-C too), to a webhook as `{"text": …}` (Slack, Teams, Mattermost). |
 | `sonde watch --logs s3://BUCKET/PREFIX [--every 15m] [--once] [-e ENDPOINT] [--alert URL]` | Production through its logs, no proxy in the path: the S3 server access logs or CloudTrail files written under the prefix are read as they arrive (GET and LIST only), each pass kept as a session of the program `logs of s3://…` (so it has a history, a baseline and `sonde check`), its new warnings said and posted, the pass held to `sonde.toml`'s budget. Where it got to is kept; `--once` reads what is new and exits (cron, CI). |
@@ -21,7 +21,7 @@ job (its requests stop). A session argument is a path or a name in the data dire
 | `sonde import FILE [-o FILE]` | Production traffic as a session: an S3 server access log, CloudTrail data events (`{"Records": …}` or one a line) or a HAR, with the same operations, findings and figures as a recording. |
 | `sonde export [FILE] --otlp [-o FILE \| --to URL]` | A session as OpenTelemetry traces (OTLP/JSON): each operation a span, its requests under it; `--to` posts it to a collector (`http://localhost:4318/v1/traces`). |
 | `sonde diff ORIGINAL REPLAY [-f json]` | Compares a session with its replay, and each kind's p50 and p95 on both stores (`replay` prints the same table). |
-| `sonde check [FILE] [--config sonde.toml] [--baseline FILE\|auto\|URL] [--set-baseline] [--max-requests N] [--max-waiting MS] [--max-cost X] [--max-errors N] [--tolerance PCT] [--no-new-warnings] [--init] [-f json\|markdown\|github]` | A run against a budget and a baseline run: exits 1 when it is over either (for CI). The budget may live with the code in `sonde.toml` (here or in a folder above, to the repository's root); flags win over it. `--baseline auto` is the baseline set for the run's program (in the app or with `--set-baseline`; `sessions/baselines.json`, shared with the app); an `https://` baseline (a CI artifact, a presigned URL) is fetched; a baseline of another program is named on stderr. `-f markdown` is a pull request's comment; `-f github` writes GitHub Actions annotations (failed verdicts as errors, findings on the line of code that sent their requests). Past a baseline, it says since which run and the commits around it. `--init` writes a `sonde.toml` this run passes. Nothing to check is a usage error (64). |
+| `sonde check [FILE] [--config sonde.toml] [--baseline FILE\|auto\|URL] [--set-baseline] [--max-requests N] [--max-waiting MS] [--max-cost X] [--max-errors N] [--max-p95 MS] [--tolerance PCT] [--no-new-warnings] [--init] [-f json\|markdown\|github]` | A run against a budget and a baseline run: exits 1 when it is over either (for CI). The budget may live with the code in `sonde.toml` (here or in a folder above, to the repository's root); flags win over it. `--baseline auto` is the baseline set for the run's program (in the app or with `--set-baseline`; `sessions/baselines.json`, shared with the app); an `https://` baseline (a CI artifact, a presigned URL) is fetched; a baseline of another program is named on stderr. `-f markdown` is a pull request's comment; `-f github` writes GitHub Actions annotations (failed verdicts as errors, findings on the line of code that sent their requests). Past a baseline, it says since which run and the commits around it. `--init` writes a `sonde.toml` this run passes. Nothing to check is a usage error (64). |
 | `sonde compare BEFORE AFTER [-f json]` | Two runs of a program, before and after a change: requests, waiting, time, errors and request cost, by kind of request, and the findings gone and new. Two different programs compare by their figures only (it says so). |
 | `sonde share [FILE] [-o DIR] [--serve [--port N]] [--json] [--html] [--redact]` | A session (default: the newest) as a static web page: sonde's viewer and the computed `session.json`; `--serve` on 127.0.0.1 until Ctrl-C. `--html` writes one self-contained HTML file instead (findings, where the time went, a timeline, every operation at `#op-N`). `--redact` replaces bucket and key names with tokens (the same name, the same token; layout names, numbers and file types kept) and drops headers, bodies, URLs, request ids, the program's output and its arguments. |
 | `sonde probe -e A -e B -b BUCKET [--only checksum.] [--temp-buckets] [--no-slow] [-f json\|markdown\|csv] [-o FILE]` | Runs the probes on each endpoint in parallel; saves the runs. |
@@ -71,9 +71,13 @@ max-requests = 5000
 max-waiting = "2s"        # or ms as a number
 max-cost = 0.05
 max-errors = 0
+max-p95 = "250ms"         # 95% of the requests within it
 tolerance = 10            # % a run may grow over its baseline
 no-new-warnings = true
 baseline = "auto"         # or a session's path, or an https URL
+# findings kept on purpose: never a new warning (a finding's identity, as the
+# app's "Expected" copies it, its kind, or words of its text)
+expect = ["obs.hot|slate/db/gc/manifest.boundary", "obs.listed"]
 ```
 
 `sonde check -f markdown` writes the verdicts, what is new since the baseline and the run's findings (with the
@@ -108,7 +112,15 @@ new warning and each pass over `sonde.toml`'s budget; `--once` reads what is new
 
 A finding names the place in the program its requests came from when the requests say so: sonde reads a
 `x-sonde-caller: file:line function` header (and never forwards it to the store), the SDK and its version from the
-user agent, and the trace from `traceparent`. For Python (boto3 / botocore), `sonde run --callers` (or the
-"Name the code" setting) adds the header itself: a small `sitecustomize` on `PYTHONPATH` that, before each S3
-request is signed, names the first frame of the program's own code. A program's own `sitecustomize` still runs.
-Other languages add the header with their SDK's request hook.
+user agent, and the trace from `traceparent`. `sonde run --callers` (or the "Name the code" setting) adds the
+header itself, before each request to sonde is signed, naming the first frame of the program's own code:
+
+| Language | SDK | How |
+|---|---|---|
+| Python | boto3 / botocore | a `sitecustomize` first on `PYTHONPATH` (a program's own still runs) |
+| Node.js | AWS SDK for JavaScript v3 | `NODE_OPTIONS=--require …/sonde-caller.cjs`: a middleware on each client |
+| Java | AWS SDK for Java 2 | `JAVA_TOOL_OPTIONS=-javaagent:…/sonde-agent.jar`: a global `ExecutionInterceptor` |
+
+A Java program whose SDK comes from a class loader of its own (a Spring Boot jar) is left as it is: the agent adds
+the interceptor only when the SDK is on the class path. The Java hook's sources are in `hooks/java` (`build.sh`
+rebuilds its two jars). Other SDKs add the header with their own request hook.

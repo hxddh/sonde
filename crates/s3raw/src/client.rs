@@ -757,6 +757,8 @@ impl S3Client {
             transport_error: None,
             region: Some(self.cfg.region.clone()),
             job: self.job.clone(),
+            first_byte_ms: None,
+            requester: None,
         }
     }
 

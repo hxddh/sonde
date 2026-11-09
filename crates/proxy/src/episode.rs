@@ -1007,6 +1007,9 @@ pub struct Observation {
     /// The SDK that sent them, from their user agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sdk: Option<String>,
+    /// The same finding across runs (`sonde.toml`'s `expect` names it so).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub identity: String,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -1111,6 +1114,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             fixes: Vec::new(),
             callers: Vec::new(),
             sdk: None,
+            identity: String::new(),
         });
     }
     let warn = |t: Phrase, episodes: Vec<usize>| Observation {
@@ -1126,6 +1130,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         fixes: Vec::new(),
         callers: Vec::new(),
         sdk: None,
+        identity: String::new(),
     };
     let info = |t: Phrase, episodes: Vec<usize>| Observation {
         level: "info",
@@ -1140,6 +1145,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         fixes: Vec::new(),
         callers: Vec::new(),
         sdk: None,
+        identity: String::new(),
     };
     let total = records.len().max(1);
     let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
@@ -1592,6 +1598,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .flat_map(|e| e.records.iter().filter_map(|id| by_id.get(id).copied()))
             .collect();
         (o.callers, o.sdk) = crate::callers::of(&rs);
+        o.identity = crate::profile::finding_identity(o);
     }
     out
 }

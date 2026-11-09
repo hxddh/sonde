@@ -501,14 +501,17 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
     // the first 24, in the order the list below has them: a bar is its row
     props.records.slice(0, 24).map((r) => {
       const s = new Date(r.time).getTime() - t0();
-      return { id: r.id, op: r.operation, target: r.target, start: s, end: s + Math.max(r.latencyMs, 0.3), tone: statusTone(r.status), status: r.status, ms: r.latencyMs };
+      // the wait for the first byte, then the body: one bar in two shades
+      const first = r.firstByteMs != null && r.firstByteMs < r.latencyMs ? r.firstByteMs : null;
+      return { id: r.id, op: r.operation, target: r.target, start: s, firstEnd: s + (first ?? Math.max(r.latencyMs, 0.3)), end: s + Math.max(r.latencyMs, 0.3), tone: statusTone(r.status), status: r.status, ms: r.latencyMs, first };
     });
   const hovered = signal<number | null>(null);
   const end = () => Math.max(...rows().map((r) => r.end), 1);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: `${r.status ?? "—"} ${r.op}`, lines: [r.target, `+${offset(r.start)} · ${ms(r.ms)}`] } : null;
+    return r ? { title: `${r.status ?? "—"} ${r.op}`, lines: [r.target, `+${offset(r.start)} · ${ms(r.ms)}`, ...(r.first != null ? [t("waterfall.firstByte", { ms: ms(r.first) })] : [])] } : null;
   };
+  const anyFirst = () => rows().some((r) => r.first != null);
   return (
     <If when={!terminal() && props.records.length > 1}>
       <BaseButton
@@ -537,10 +540,17 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
           class={`mb-5 ${GUTTER}`}
           style={{ height: rows().length * 16 + 6 }}
         >
-          <Bar base="start" value="end" color="tone" cornerRadii={2} inactiveOpacity={0.4} stagger={0.4} />
+          {/* the body's part a lighter shade of the bar, the wait for its first byte the full one */}
+          <Bar base="start" value="end" color="tone" cornerRadii={2} inactiveOpacity={0.4} stagger={0.4} style={anyFirst() ? { opacity: 0.45 } : undefined} />
+          <If when={anyFirst()}>
+            <Bar base="start" value="firstEnd" color="tone" cornerRadii={2} inactiveOpacity={0.4} stagger={0.4} />
+          </If>
           <PlotAxis placement="left" format={(i) => short(rows()[i]?.target ?? "")} labelClass={`${AXIS_LABEL} font-mono text-caption`} />
           <PlotAxis ticks={4} format={(v) => (v === 0 ? "0" : offset(v))} labelClass={TIME_TICK} />
         </Plot>
+        <If when={anyFirst()}>
+          <Legend class={GUTTER_PAD} items={[{ label: t("waterfall.firstByteKey"), swatch: "bg-bar" }, { label: t("waterfall.bodyKey"), swatch: "bg-bar/45" }]} />
+        </If>
         <If when={props.records.length > 24}>
           <Text class={`${GUTTER_PAD} text-caption text-muted-foreground`}>{t("waterfall.more", { n: props.records.length - 24 })}</Text>
         </If>
@@ -604,10 +614,21 @@ export function RunBars(props: { change: RunChange; max?: number }) {
 
 // --- what a session comes to, in a sentence ------------------------------------------
 
+/** Whether a session's requests have times (a CloudTrail file's have none). */
+export const timed = (p: Profile | null | undefined) => p?.timed !== false;
+
 /** A session in a sentence: where its time went and what the first finding would save. */
 export function sessionStory(p: Profile, findings: Observation[]): string {
   const top = p.groups[0];
-  const parts = top ? [t("story.time", { busy: offset(p.busyMs), wall: offset(p.wallMs), what: groupName(top), pct: pct(top.share) })] : [];
+  const busiest = [...p.groups].sort((a, b) => b.requests - a.requests)[0];
+  const total = p.groups.reduce((n, g) => n + g.requests, 0) || 1;
+  const parts = !timed(p)
+    ? busiest
+      ? [t("story.untimed", { what: groupName(busiest), pct: pct(busiest.requests / total) })]
+      : []
+    : top
+      ? [t("story.time", { busy: offset(p.busyMs), wall: offset(p.wallMs), what: groupName(top), pct: pct(top.share) })]
+      : [];
   const first = findings.find((o) => o.saving) ?? findings[0];
   if (first) {
     const saving = observationSaving(first);

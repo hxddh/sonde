@@ -780,6 +780,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         transport_error: None,
         region: Some(cfg.region.clone()),
         job: shared.cfg.tag.clone(),
+        first_byte_ms: None,
+        requester: None,
     };
     if presigned {
         record.request_headers.push(Header::new(
@@ -1021,14 +1023,62 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         return Ok(builder.body(full(body)).expect("valid response"));
     }
     record.response_bytes = resp.content_length();
-    shared.log.push(record);
+    // the headers are the first byte; the record is logged once the body has
+    // gone through (or the program stopped reading it), its time the whole
+    // exchange's
+    record.first_byte_ms = Some(record.latency_ms);
+    let mut pending = Pending {
+        record: Some(record),
+        log: shared.clone(),
+        received,
+        fetched,
+        read: 0,
+    };
     let stream = resp
         .bytes_stream()
-        .map_ok(Frame::data)
+        // the closure owns the whole of `pending` (a method, not a field): it
+        // goes, and the record is logged, when the body does
+        .map_ok(move |chunk| {
+            pending.count(chunk.len());
+            Frame::data(chunk)
+        })
         .map_err(std::io::Error::other);
     Ok(builder
         .body(BodyExt::boxed(StreamBody::new(stream)))
         .expect("valid response"))
+}
+
+/// A record waiting for its response body to go through: logged when the
+/// stream is done with, read to its end or dropped early.
+struct Pending {
+    record: Option<Record>,
+    log: Arc<Shared>,
+    received: Instant,
+    fetched: std::time::Duration,
+    read: u64,
+}
+
+impl Pending {
+    fn count(&mut self, n: usize) {
+        self.read += n as u64;
+    }
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        if let Some(mut r) = self.record.take() {
+            r.latency_ms = self
+                .received
+                .elapsed()
+                .saturating_sub(self.fetched)
+                .as_secs_f64()
+                * 1000.0;
+            if r.response_bytes.is_none() || self.read > 0 {
+                r.response_bytes = Some(self.read);
+            }
+            self.log.log.push(r);
+        }
+    }
 }
 
 #[cfg(test)]

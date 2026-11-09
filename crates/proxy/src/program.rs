@@ -11,10 +11,11 @@ use crate::summary::is_miss;
 use reqlog::Record;
 
 /// The program a session ran, as runs of it are grouped: its command with
-/// spaces collapsed. A replay or a recording without a command has none.
+/// spaces collapsed. A replay, an imported log or a recording without a
+/// command has none.
 pub fn program_key(command: Option<&str>) -> Option<String> {
     let c = command?.split_whitespace().collect::<Vec<_>>().join(" ");
-    if c.is_empty() || c.starts_with("replay of ") {
+    if c.is_empty() || c.starts_with("replay of ") || c.starts_with("imported from ") {
         None
     } else {
         Some(c)
@@ -269,6 +270,10 @@ pub struct RunPoint {
     pub errors: usize,
     pub warnings: usize,
     pub findings: usize,
+    /// How long 95% of its requests took at most (0 when unknown, as in runs
+    /// kept before 12.0).
+    #[serde(default)]
+    pub p95_ms: f64,
 }
 
 pub fn run_point(
@@ -284,6 +289,7 @@ pub fn run_point(
         requests: records.len(),
         busy_ms: profile.busy_ms,
         wall_ms: profile.wall_ms,
+        p95_ms: profile.p95_ms,
         cost: profile.cost.amount,
         currency: profile.cost.currency.clone(),
         errors: records
@@ -304,6 +310,12 @@ pub struct Budget {
     pub max_waiting_ms: Option<f64>,
     pub max_cost: Option<f64>,
     pub max_errors: Option<usize>,
+    /// How long 95% of the requests may take at most, in ms.
+    pub max_p95_ms: Option<f64>,
+    /// Findings the project expects (a habit it keeps on purpose): never a
+    /// new warning. Each matches a finding's identity, its kind
+    /// (`obs.hot`) or a part of its text.
+    pub expect: Vec<String>,
     /// Against the baseline: requests, waiting and cost may grow this much.
     pub tolerance: Option<f64>,
     /// Against the baseline: no warning it did not have.
@@ -314,7 +326,7 @@ pub struct Budget {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Verdict {
-    /// `requests`, `waiting`, `cost`, `errors` or `warnings`.
+    /// `requests`, `waiting`, `cost`, `errors`, `p95` or `warnings`.
     pub what: &'static str,
     pub value: f64,
     pub limit: f64,
@@ -330,6 +342,24 @@ pub struct Check {
     pub verdicts: Vec<Verdict>,
     /// Warnings the baseline did not have, as they read.
     pub new_warnings: Vec<String>,
+    /// Findings of the run the project expects (`expect`), as they read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expected: Vec<String>,
+}
+
+/// Whether the project expects finding `o`: an entry of `expect` is its
+/// identity, its kind, or a part of its text.
+pub fn expected(o: &Observation, expect: &[String]) -> bool {
+    if expect.is_empty() {
+        return false;
+    }
+    let id = crate::profile::finding_identity(o);
+    let kind = id.split('|').next().unwrap_or("");
+    let text = o.text.to_lowercase();
+    expect.iter().any(|e| {
+        let e = e.trim();
+        !e.is_empty() && (e == id || e == kind || text.contains(&e.to_lowercase()))
+    })
 }
 
 /// A run against a budget, and against a baseline run when there is one.
@@ -461,6 +491,9 @@ pub fn check(
     if let Some(n) = budget.max_errors {
         limit("errors", r.errors as f64, n as f64, "budget");
     }
+    if let Some(ms) = budget.max_p95_ms {
+        limit("p95", r.p95_ms, ms, "budget");
+    }
     let mut new_warnings = Vec::new();
     if let Some(b) = baseline {
         let base = b.0;
@@ -482,7 +515,9 @@ pub fn check(
                 .3
                 .iter()
                 .filter(|o| {
-                    o.level == "warn" && !was_warning.contains(&crate::profile::finding_identity(o))
+                    o.level == "warn"
+                        && !was_warning.contains(&crate::profile::finding_identity(o))
+                        && !expected(o, &budget.expect)
                 })
                 .map(|o| o.text.clone())
                 .collect();
@@ -493,6 +528,12 @@ pub fn check(
         passed: v.iter().all(|x| x.ok),
         verdicts: v,
         new_warnings,
+        expected: run
+            .3
+            .iter()
+            .filter(|o| expected(o, &budget.expect))
+            .map(|o| o.text.clone())
+            .collect(),
     }
 }
 
@@ -536,6 +577,7 @@ mod tests {
             errors: 0,
             warnings: 0,
             findings: 0,
+            p95_ms: 0.0,
         };
         // every hour, a cent a run: 24 runs a day, $7.20 a month
         let (month, per_day) = monthly_cost(&[pt(0, 0.01), pt(1, 0.01), pt(2, 0.01)]).unwrap();
@@ -557,6 +599,7 @@ mod tests {
             errors: 0,
             warnings: 0,
             findings: 0,
+            p95_ms: 0.0,
         };
         let git = |c: &str| {
             Some(crate::session::GitStamp {
@@ -585,12 +628,58 @@ mod tests {
     }
 
     #[test]
+    fn an_expected_finding_is_never_new_and_p95_has_its_limit() {
+        let base: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
+        let mut grown = base.clone();
+        grown.extend((0..12).map(|i| rec(100 + i, "hot")));
+        let (pb, prb, ob) = point(&base);
+        let (pg, prg, og) = point(&grown);
+        let new = |expect: Vec<String>| {
+            check(
+                (&pg, &grown, &prg, &og),
+                Some((&pb, &base, &prb, &ob)),
+                &Budget {
+                    no_new_warnings: true,
+                    expect,
+                    ..Default::default()
+                },
+            )
+        };
+        assert!(new(Vec::new()).expected.is_empty());
+        // the finding, expected by its identity, its kind or its words
+        let hot = og.iter().find(|o| o.text.contains("hot")).unwrap();
+        let id = crate::profile::finding_identity(hot);
+        for e in [
+            id.clone(),
+            id.split('|').next().unwrap().to_string(),
+            "HOT".to_string(),
+        ] {
+            let c = new(vec![e.clone()]);
+            assert!(c.new_warnings.is_empty(), "{e}: {c:#?}");
+            assert!(!c.expected.is_empty());
+            assert!(c.passed);
+        }
+        // 95% of the requests within a limit
+        let c = check(
+            (&pg, &grown, &prg, &og),
+            None,
+            &Budget {
+                max_p95_ms: Some(pg.p95_ms - 0.5),
+                ..Default::default()
+            },
+        );
+        let v = c.verdicts.iter().find(|v| v.what == "p95").unwrap();
+        assert!(!v.ok && !c.passed);
+    }
+
+    #[test]
     fn programs_are_their_commands_and_replays_are_none() {
         assert_eq!(
             program_key(Some("  python  etl.py  --day 1 ")).as_deref(),
             Some("python etl.py --day 1")
         );
         assert_eq!(program_key(Some("replay of etl")), None);
+        assert_eq!(program_key(Some("imported from CloudTrail")), None);
         assert_eq!(program_key(None), None);
     }
 

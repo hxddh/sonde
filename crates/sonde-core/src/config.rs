@@ -226,8 +226,10 @@ pub struct Settings {
     pub language: String,
     /// Multipart uploads older than this are flagged.
     pub stale_upload_days: u32,
-    /// Runs name the place in a Python program's code that sent each request
-    /// (a hook on PYTHONPATH that adds `x-sonde-caller`; boto3 / botocore).
+    /// Runs name the place in a program's code that sent each request (hooks
+    /// that add `x-sonde-caller`: Python's boto3 on PYTHONPATH, the AWS SDK
+    /// for JavaScript v3 with NODE_OPTIONS, the AWS SDK for Java 2 with
+    /// JAVA_TOOL_OPTIONS).
     pub name_callers: bool,
     pub exports_dir: Option<PathBuf>,
     pub downloads_dir: Option<PathBuf>,

@@ -10,10 +10,10 @@ import { isAvailable } from "nsh/desktop";
 import { bytes, count, date, day, middle, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
+import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, timed, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { CARD, Dot, Empty, FOCUS, InWindowMenu, ListRow, Options, POPUP, ROW, rowHeight, TABLE, terminal, TYPE } from "./kit";
+import { Button, CARD, Dot, Empty, FOCUS, InWindowMenu, ListRow, Options, POPUP, ROW, rowHeight, TABLE, terminal, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -73,10 +73,13 @@ function scrubWord(word: string): string {
   return word;
 }
 
-/** A command the user ran — not sonde's own `replay of …` or `logs of …`. */
+/** sonde's own words where a command would be: a replay, a watch of logs, an import. */
+const OWN_WORDS = ["replay of ", "logs of ", "imported from "];
+
+/** A command the user ran — not sonde's own `replay of …`, `logs of …` or `imported from …`. */
 export function ranCommand(command?: string | null): boolean {
   const c = command?.trim();
-  return !!c && !c.startsWith("replay of ") && !c.startsWith("logs of ");
+  return !!c && !OWN_WORDS.some((w) => c.startsWith(w));
 }
 
 /** The session's title line: `$ command` for a run, sonde's own words otherwise. */
@@ -346,7 +349,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           <Figure value={count(props.view.episodes.length)} label={t("figure.operations")} />
           <Figure value={offset(s().seconds * 1000)} label={t("figure.took")} />
           {/* the program's time on S3: one figure, with its share, and what it was made of */}
-          <If when={props.view.profile?.groups.length}>
+          <If when={props.view.profile?.groups.length && timed(props.view.profile)}>
             <Figure testID="profile-waiting" value={offset(props.view.profile.busyMs)} label={`${t("profile.waiting")} · ${Math.round((props.view.profile.busyMs * 100) / Math.max(props.view.profile.wallMs, 1e-9))}%`} preview={<KindsPreview profile={props.view.profile} by="time" />} />
           </If>
           <If when={props.view.profile && props.view.profile.cost.amount > 0}>
@@ -384,7 +387,16 @@ const sdkOfAgent = (sdk: string | undefined): keyof typeof SDKS | null => {
   return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : null;
 };
 
-function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void }) {
+/** "Expected": the finding's line for sonde.toml's `expect`, copied (the app's own; not in a shared page). */
+function ExpectButton(props: { o: Observation; onExpect?: (o: Observation) => void }) {
+  return (
+    <If when={props.onExpect && props.o.identity && !terminal()}>
+      <Button small variant="ghost" icon="check" label={t("expect.copy")} tip={t("expect.hint")} onPress={() => props.onExpect?.(props.o)} testID="finding-expect" />
+    </If>
+  );
+}
+
+function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
   const fixes = () => props.o.fixes ?? [];
   // the program's own SDK first, when its requests said which; else the one last chosen
   const own = () => sdkOfAgent(props.o.sdk);
@@ -399,6 +411,8 @@ function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void 
         <Icon name="sparkles" size={13} />
         <Text role="header" class="flex-1 text-small font-semibold text-foreground">{t("fix.title")}</Text>
         <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: SDKS[f.sdk] }))} onChange={(v) => fixSdk.set(v as keyof typeof SDKS)} />
+        {/* or no change: a habit kept on purpose, which sonde check then expects */}
+        <ExpectButton o={props.o} onExpect={props.onExpect} />
       </View>
       {/* why it matters and what it saves, written out */}
       <If when={observationWhy(props.o)}>
@@ -460,13 +474,15 @@ export function whatIfText(v: SessionView): string | null {
   if (!w) return null;
   // the cost as what changes: amounts of thousandths of a cent read as nothing
   const cut = w.cost[0] > 0 ? `${w.cost[1] <= w.cost[0] ? "−" : "+"}${Math.round((Math.abs(w.cost[0] - w.cost[1]) * 100) / w.cost[0])}%` : "—";
+  // a log without times says nothing of waiting
+  if (!timed(v.profile)) return t("whatIf.untimed", { n: w.findings, a: w.requests[0], b: w.requests[1], cut });
   return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: offset(w.waitingMs[0]), wb: offset(w.waitingMs[1]), cut });
 }
 
 /** What stands out in a session — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void }) {
+export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   // a finding pressed brings its fixes into view, under the list
   let scroller: ScrollRef | undefined;
@@ -561,10 +577,20 @@ export function Observations(props: { view: SessionView; filter?: number | null;
             <Scroll ref={(r) => (scroller = r)} class={`overflow-hidden ${CARD}`} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
               <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
               {/* the finding pressed: what to change, in the findings' own room */}
-              <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
+              <If when={!props.compact && props.filter != null && props.view.observations[props.filter!] && (props.view.observations[props.filter!].fixes?.length || (props.onExpect && props.view.observations[props.filter!].identity)) ? props.view.observations[props.filter!] : null}>
                 {(o) => (
                   <View class="border-t border-border p-3">
-                    <FixPanel o={o()} onOpenCode={props.onOpenCode} />
+                    <If
+                      when={o().fixes?.length}
+                      else={
+                        <View class="flex-row items-center gap-2">
+                          <Text class="min-w-0 flex-1 text-small text-muted-foreground">{t("expect.hint")}</Text>
+                          <ExpectButton o={o()} onExpect={props.onExpect} />
+                        </View>
+                      }
+                    >
+                      <FixPanel o={o()} onOpenCode={props.onOpenCode} onExpect={props.onExpect} />
+                    </If>
                   </View>
                 )}
               </If>

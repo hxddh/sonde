@@ -1,5 +1,6 @@
 //! Recording: `sonde run -- <command>`, `sonde proxy`, `sonde show <session>`.
 
+use sonde_proxy::callers::code_place;
 use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -41,9 +42,9 @@ pub struct RunArgs {
     /// Print each request on stderr as it happens.
     #[arg(long)]
     live: bool,
-    /// Name the place in a Python program's code that sent each request
-    /// (boto3 / botocore): findings then say where to change it. Also the
-    /// `name-callers` setting.
+    /// Name the place in a program's code that sent each request (Python's
+    /// boto3, the AWS SDK for JavaScript v3, the AWS SDK for Java 2):
+    /// findings then say where to change it. Also the `name-callers` setting.
     #[arg(long)]
     callers: bool,
     /// The command, after `--`.
@@ -92,6 +93,9 @@ pub struct CheckArgs {
     /// At most this many failed requests.
     #[arg(long)]
     max_errors: Option<usize>,
+    /// 95% of the requests within this many ms.
+    #[arg(long)]
+    max_p95: Option<f64>,
     /// Against the baseline: requests, waiting and cost may grow this many
     /// percent (10 unless sonde.toml says).
     #[arg(long)]
@@ -593,7 +597,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     .await?;
     let (mut set, unset) = started.proxy.env();
     if a.callers || s.settings().name_callers {
-        set.push(sonde_proxy::callers::python_env(&s.paths().python_hook())?);
+        set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
     let mut child = tokio::process::Command::new(&a.command[0]);
     child.args(&a.command[1..]);
@@ -1317,6 +1321,10 @@ struct ProjectCheck {
     max_waiting: Option<toml::Value>,
     max_cost: Option<f64>,
     max_errors: Option<usize>,
+    max_p95: Option<toml::Value>,
+    /// Findings kept on purpose: never a new warning.
+    #[serde(default)]
+    expect: Vec<String>,
     tolerance: Option<f64>,
     #[serde(default)]
     no_new_warnings: bool,
@@ -1343,8 +1351,13 @@ fn find_project_file() -> Option<PathBuf> {
     }
 }
 
-/// A duration as `sonde.toml` writes it: ms as a number, or "250ms", "2s", "1.5 s".
+/// `max-waiting` as `sonde.toml` writes it.
 fn waiting_ms(v: &toml::Value) -> anyhow::Result<f64> {
+    duration_ms("max-waiting", v)
+}
+
+/// A duration as `sonde.toml` writes it: ms as a number, or "250ms", "2s", "1.5 s".
+fn duration_ms(name: &str, v: &toml::Value) -> anyhow::Result<f64> {
     match v {
         toml::Value::Integer(n) => Ok(*n as f64),
         toml::Value::Float(f) => Ok(*f),
@@ -1359,10 +1372,10 @@ fn waiting_ms(v: &toml::Value) -> anyhow::Result<f64> {
             };
             Ok(n.trim()
                 .parse::<f64>()
-                .map_err(|_| anyhow::anyhow!("max-waiting: {s:?} is not a duration"))?
+                .map_err(|_| anyhow::anyhow!("{name}: {s:?} is not a duration"))?
                 * scale)
         }
-        other => anyhow::bail!("max-waiting: {other} is not a duration"),
+        other => anyhow::bail!("{name}: {other} is not a duration"),
     }
 }
 
@@ -1507,33 +1520,6 @@ fn since_line(s: &sonde_proxy::program::Since) -> String {
         ));
     }
     t
-}
-
-/// A finding's code place (`etl/load.py:212 read_manifest`) as a file and
-/// line: the last `:digits` before a space or the end (a path may hold spaces
-/// and a Windows drive's colon).
-fn code_place(place: &str) -> Option<(String, u32)> {
-    let bytes = place.as_bytes();
-    let mut at = None;
-    for (i, c) in place.char_indices() {
-        if c != ':' {
-            continue;
-        }
-        let digits = place[i + 1..]
-            .chars()
-            .take_while(|d| d.is_ascii_digit())
-            .count();
-        let end = i + 1 + digits;
-        if digits > 0 && (end == place.len() || bytes[end] == b' ') {
-            at = Some((i, end));
-        }
-    }
-    let (colon, end) = at?;
-    let file = place[..colon].trim();
-    if file.is_empty() {
-        return None;
-    }
-    Some((file.to_string(), place[colon + 1..end].parse().ok()?))
 }
 
 /// A code place's file as the repository has it: the program ran in `cwd`
@@ -1787,6 +1773,12 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         },
         max_cost: a.max_cost.or(project.max_cost),
         max_errors: a.max_errors.or(project.max_errors),
+        max_p95_ms: match (a.max_p95, &project.max_p95) {
+            (Some(v), _) => Some(v),
+            (None, Some(v)) => Some(duration_ms("max-p95", v)?),
+            (None, None) => None,
+        },
+        expect: project.expect.clone(),
         tolerance: base
             .as_ref()
             .map(|_| a.tolerance.or(project.tolerance).unwrap_or(10.0) / 100.0),
@@ -1804,7 +1796,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // nothing to hold the run to is a mistake in the command, in every format
     if c.verdicts.is_empty() {
         eprintln!(
-            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors, or sonde.toml's [check]) or a --baseline"
+            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors, --max-p95, or sonde.toml's [check]) or a --baseline"
         );
         return Ok(64);
     }
@@ -1826,7 +1818,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     let color = std::io::stdout().is_terminal();
     let shown = |what: &str, v: f64| match what {
-        "waiting" => ms_text(v),
+        "waiting" | "p95" => ms_text(v),
         "cost" => money_text(v, &run.0.currency),
         _ => format!("{v:.0}"),
     };
@@ -1856,7 +1848,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             );
         }
         for f in run.3.iter().take(10) {
-            let level = if f.level == "warn" {
+            // what the project expects is said, never warned of
+            let level = if f.level == "warn" && !sonde_proxy::program::expected(f, &budget.expect) {
                 "warning"
             } else {
                 "notice"
@@ -1909,6 +1902,12 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 md.push_str(&format!("- {}\n", md_text(w)));
             }
         }
+        if !c.expected.is_empty() {
+            md.push_str(&format!(
+                "\n*Expected (sonde.toml): {}*\n",
+                c.expected.len()
+            ));
+        }
         let findings: Vec<_> = run.3.iter().take(5).collect();
         if !findings.is_empty() {
             md.push_str("\n<details><summary>What stands out</summary>\n\n");
@@ -1950,6 +1949,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     );
     for w in &c.new_warnings {
         println!("{} {w}", paint("!", "33", color));
+    }
+    for w in &c.expected {
+        println!("{} {w} (expected)", paint("·", "2", color));
     }
     if let Some(t) = &since_text {
         println!("{}", paint(t, "33", color));
@@ -2432,6 +2434,11 @@ fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
         max_waiting_ms: p.max_waiting.as_ref().and_then(|v| waiting_ms(v).ok()),
         max_cost: p.max_cost,
         max_errors: p.max_errors,
+        max_p95_ms: p
+            .max_p95
+            .as_ref()
+            .and_then(|v| duration_ms("max-p95", v).ok()),
+        expect: p.expect.clone(),
         tolerance: None,
         no_new_warnings: false,
     };
@@ -2450,7 +2457,7 @@ fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
                 money_text(v.value, &prof.cost.currency),
                 money_text(v.limit, &prof.cost.currency)
             ),
-            "waiting" => format!("waiting {} > {}", ms_text(v.value), ms_text(v.limit)),
+            "waiting" | "p95" => format!("{} {} > {}", v.what, ms_text(v.value), ms_text(v.limit)),
             what => format!("{what} {:.0} > {:.0}", v.value, v.limit),
         })
         .collect();
