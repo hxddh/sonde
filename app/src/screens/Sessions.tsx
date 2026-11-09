@@ -328,7 +328,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           onSlice={(i) => slice.set(i)}
           // a short window keeps its height for the operations
           shape={(props.inWindow ? windowSize().height : shellHeight()) >= 700} actions={terminal() ? undefined : actions()} compact={(inspecting() && roomy()) || (props.inWindow ? windowSize().width : shellWidth()) < 1180} />
-        <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(96, Math.round((props.inWindow ? windowSize().height : shellHeight()) * 0.28))} />
+        <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} onOpenCode={(place) => api.sessions.openCode(props.path, place).catch(report)} maxHeight={Math.max(96, Math.round((props.inWindow ? windowSize().height : shellHeight()) * 0.28))} />
         <If when={terminal()}>{actions()}</If>
       </View>
       <View class={terminal() ? "flex-row items-center gap-2" : "flex-row items-center gap-3 px-5 py-2"}>

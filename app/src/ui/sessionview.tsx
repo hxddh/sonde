@@ -4,13 +4,11 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type ContextMenuEvent, effect, type JSX, List, platform, reduceMotion, Scroll, type ScrollRef, signal, Text, untracked, View } from "nsh";
+import { type ContextMenuEvent, effect, type JSX, List, platform, reduceMotion, Scroll, type ScrollRef, signal, Text, untracked, View, windowSize } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, Popover, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
 import { bytes, count, date, day, middle, ms } from "../format";
 import { t } from "../i18n";
-import { api } from "../native";
-import { report, shellWidth } from "../store";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
 import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
@@ -361,7 +359,7 @@ const sdkOfAgent = (sdk: string | undefined): keyof typeof SDKS | null => {
   return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : null;
 };
 
-function FixPanel(props: { o: Observation; path?: string }) {
+function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void }) {
   const fixes = () => props.o.fixes ?? [];
   // the program's own SDK first, when its requests said which; else the one last chosen
   const own = () => sdkOfAgent(props.o.sdk);
@@ -394,7 +392,7 @@ function FixPanel(props: { o: Observation; path?: string }) {
             {(c) => (
               <ListRow
                 label={t("fix.openCode", { place: c().place })}
-                onPress={() => props.path && api.sessions.openCode(props.path, c().place).catch(report)}
+                onPress={() => props.onOpenCode?.(c().place)}
                 class="py-1"
               >
                 <Icon name="file" size={12} />
@@ -443,7 +441,7 @@ export function whatIfText(v: SessionView): string | null {
 /** What stands out in a session — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; max?: number; maxHeight?: number }) {
+export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   // a finding pressed brings its fixes into view, under the list
   let scroller: ScrollRef | undefined;
@@ -541,7 +539,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
               <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
                 {(o) => (
                   <View class="border-t border-border p-3">
-                    <FixPanel o={o()} path={props.view.path} />
+                    <FixPanel o={o()} onOpenCode={props.onOpenCode} />
                   </View>
                 )}
               </If>
@@ -604,7 +602,7 @@ export function OperationsTable(props: {
     { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: true },
     ...(terminal() || props.compact ? [] : [{ key: "bar", title: t("column.when"), width: kept("bar", 150), minWidth: 80 }]),
     // notes need room: a narrow window keeps the operation's name whole instead
-    ...(props.compact || shellWidth() < 1100 ? [] : [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }]),
+    ...(props.compact || windowSize().width < 1100 ? [] : [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }]),
   ];
   const data = () =>
     shown().map((i) => {
