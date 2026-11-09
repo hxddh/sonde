@@ -8,7 +8,7 @@
 // session, and opens in a window of its own. In a terminal the levels stack.
 
 import { batch, cleanup, Clipboard, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, type ViewRef, windowSize } from "nsh";
-import { Button as BaseButton, createNavStack, Input, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
+import { Button as BaseButton, createNavStack, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { hm } from "../format";
 import { t } from "../i18n";
@@ -18,7 +18,7 @@ import { away, compareOnOpen, crumb, endpoints, go, notify, openSession, paneOnO
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
-import { Button, Empty, IconButton, Options, Segmented, SessionSkeleton, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
+import { Button, Empty, IconButton, Options, PanelHeader, SearchField, Segmented, SessionSkeleton, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
 import { fileName, removeSession, rename, RenameDialog, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
@@ -362,10 +362,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
 
   const inspector = () => (
     <View testID="inspector" class="flex-1 border-l border-border bg-inspector">
-      <View class="h-10 flex-row items-center gap-2 border-b border-border px-3">
-        <Text class="flex-1 text-small font-semibold text-muted-foreground">{record() ? t("inspector.request") : t("inspector.operation")}</Text>
-        <IconButton icon="x" label={t("common.close")} onPress={closeInspector} testID="inspector-close" />
-      </View>
+      <PanelHeader icon={record() ? "radio" : "layers"} title={record() ? t("inspector.request") : t("inspector.operation")} onClose={closeInspector} closeTestID="inspector-close" />
       <Scroll class="flex-1" contentClass="p-4">
         {detail(false)}
       </Scroll>
@@ -553,15 +550,7 @@ export function Sessions() {
       }>
       <If when={searchable()}>
         <View class="px-1">
-          <Input
-            testID="session-search"
-            value={query()}
-            placeholder={t("sessions.search")}
-            accessibilityLabel={t("sessions.search")}
-            autoCorrect={false}
-            onChange={({ value }) => query.set(value)}
-            class="h-7 rounded-(--radius) border border-input bg-background px-2 text-body text-foreground focus:border-ring"
-          />
+          <SearchField small testID="session-search" value={query()} placeholder={t("sessions.search")} onChange={(v) => query.set(v)} />
         </View>
       </If>
       <If when={sessions().length > 0} else={<Text class="px-2 text-small text-muted-foreground">{t("timeline.empty")}</Text>}>

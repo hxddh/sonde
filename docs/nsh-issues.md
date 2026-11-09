@@ -132,3 +132,33 @@ with one value.
 
 **What happens.** `onContextMenu` is on views and tables, not on `Button`; a pressable row that also offers a menu
 wraps the button in a view.
+
+## A Plot's tooltip is kept inside the plot
+
+**What happens.** `tooltipContent` is placed inside the plot's edges; on a short chart (a 56-point pressure strip)
+a tooltip of two lines is taller than the plot and is cut, and near the top it covers the marks it describes.
+
+**Expected.** A tooltip in the window's overlay layer, flipped and shifted to stay inside the window, as `Tooltip`
+and `Popover` are.
+
+## A sortable title cannot keep its sort button beside it
+
+**What happens.** The title text of a `DataTable` column is `flex-1`, so the sort chevrons sit at the column's far
+end; a wide name column has its title at the start and its button a long way off.
+
+**Expected.** The button right after the title (start-aligned), before it (end-aligned), or a `headerContent` part
+whose title the app can size.
+
+## A DataTable column taken from the middle leaves the titles a column off
+
+**What happens.** When `columns` loses one that is not last (a narrow table dropping a column), the cells follow the
+new columns but the titles keep the old places for a frame or more: "Operation" over the requests.
+
+**Expected.** Column state kept by `key`, not by place.
+
+## Icons in a Sheet in a second window do not paint
+
+**What happens.** A `Sheet` opened in a window other than the main one (Settings) draws its text and controls but
+not its SVG icons: no close button, no chevrons on a `Select`. The same components paint in the window itself.
+
+**Expected.** The sheet's layer paints icons as its window does; and a way to place it below the window's own bar.

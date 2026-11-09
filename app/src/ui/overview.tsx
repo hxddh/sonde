@@ -3,14 +3,14 @@
 // whose layouts it recognises, the size when it is known. Each card shows
 // only when it has something to say, and opens its detail in a sheet.
 
-import { batch, cleanup, createMotion, effect, signal, Text, untracked, View } from "nsh";
+import { batch, cleanup, createMotion, effect, signal, untracked, View } from "nsh";
 import { bytes, day, money } from "../format";
 import { t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, go, prefix, type StoreTab } from "../store";
 import type { Detection, DuReport, MpuReport, VersioningStatus } from "../types";
-import { Icon, type IconName } from "./icon";
-import { Card } from "./kit";
+import { type IconName } from "./icon";
+import { Stat } from "./kit";
 
 export const LAYOUT_LABEL: Record<string, string> = {
   slatedb: "SlateDB",
@@ -104,19 +104,7 @@ function Tile(props: { id: StoreTab; icon: IconName; title: string; value: strin
   const motion = createMotion({ enter: "fadeInUp", duration: 220 });
   return (
     <View class="min-w-44 flex-1" style={motion.style}>
-      <Card pad="tile" testID={`overview-${props.id}`} label={`${props.title}: ${props.value}`} onPress={() => go(props.id)}>
-        <View class="flex-row items-center gap-1.5">
-          <Icon name={props.icon} size={13} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
-          <Text class="flex-1 text-caption text-muted-foreground line-clamp-1">{props.title}</Text>
-          <Icon name="chevron-right" size={12} />
-        </View>
-        <If when={!props.pending} else={<View class="my-1 h-4 w-24 rounded-(--radius-sm) bg-muted" />}>
-          <Text class={`text-heading font-semibold tabular-nums line-clamp-1 ${props.tone === "warn" ? "text-warn" : "text-foreground"}`}>{props.value}</Text>
-        </If>
-        <If when={!props.pending} else={<View class="h-3 w-32 rounded-(--radius-sm) bg-muted/70" />}>
-          <Text class="text-caption text-muted-foreground line-clamp-2">{props.detail ?? ""}</Text>
-        </If>
-      </Card>
+      <Stat testID={`overview-${props.id}`} icon={props.icon} label={props.title} value={props.value} detail={props.detail} tone={props.tone} pending={props.pending} onPress={() => go(props.id)} />
     </View>
   );
 }

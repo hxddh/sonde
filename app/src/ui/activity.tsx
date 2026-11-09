@@ -4,7 +4,7 @@
 // its own in a terminal.
 
 import { batch, cleanup, effect, Scroll, signal, Text, View, type ViewRef } from "nsh";
-import { Button as BaseButton, DataTable, Input } from "nsh/base";
+import { Button as BaseButton, DataTable } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { ago, date, hm, middle, ms } from "../format";
 import { t } from "../i18n";
@@ -13,7 +13,7 @@ import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, openSession, report, sessionsChanged } from "../store";
 import type { JobInfo, RecordSummary, RequestFilter } from "../types";
 import { Icon, iconSvg } from "./icon";
-import { Bar, Button, CARD, Dot, Empty, IconButton, Options, PanelHeader, terminal, rowHeight, Segmented, Tip, TYPE, TABLE } from "./kit";
+import { Bar, Button, CARD, Dot, Empty, IconButton, Options, PanelHeader, terminal, ROW, rowHeight, SearchField, Segmented, Tip, TYPE, TABLE } from "./kit";
 import { clock, StatusMark, statusTone, toneText } from "./sessionview";
 
 export const activityOpen = signal(false);
@@ -111,12 +111,7 @@ function Requests() {
   const list = () => (
     <View class="min-h-0 flex-1 gap-2">
       <View class="flex-row items-center gap-2">
-        <View class="h-8 min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring">
-          <If when={!terminal()}>
-            <Icon name="search" size={14} />
-          </If>
-          <Input value={text()} placeholder={t("activity.search")} onChange={({ value }) => text.set(value)} accessibilityLabel={t("common.search")} autoCapitalize="none" autoCorrect={false} class="min-w-0 flex-1 text-body text-foreground placeholder:text-muted-foreground" />
-        </View>
+        <SearchField class="min-w-0 flex-1" value={text()} placeholder={t("activity.search")} label={t("common.search")} onChange={(v) => text.set(v)} />
         <Options
           testID="requests-filter"
           value={errors() ? "errors" : "all"}
@@ -146,7 +141,7 @@ function Requests() {
         ]}
         data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: ms(r.latencyMs), time: clock(r.time).slice(0, 8) }))}
         fontSize={TYPE.body}
-        rowHeight={rowHeight(28)}
+        rowHeight={rowHeight(ROW.table)}
         classes={terminal() ? undefined : TABLE}
         renderCell={
           terminal()

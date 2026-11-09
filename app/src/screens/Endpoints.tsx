@@ -1,6 +1,6 @@
 // Endpoints: add, edit, import from AWS profiles, test connectivity, demo.
 
-import { batch, effect, Scroll, signal, Text, untracked, View } from "nsh";
+import { batch, effect, signal, Text, untracked, View } from "nsh";
 import { AlertDialog } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
@@ -8,7 +8,7 @@ import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, s
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Icon } from "../ui/icon";
 import { openCompatWindow } from "./CompatWindow";
-import { Badge, Button, CARD, Card, Check, Choice, Dot, Empty, Field, IconButton, KeyValue, Muted, Page, terminal, Section, SidePanel, SwitchRow, Title } from "../ui/kit";
+import { Badge, Button, CARD, Card, Check, Choice, Dot, Empty, Field, FORM, IconButton, PanelHeader, KeyValue, Muted, Page, terminal, Section, SwitchRow, Title } from "../ui/kit";
 import { ms as fmtMs } from "../format";
 
 type Draft = {
@@ -78,7 +78,10 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
   ];
   return (
     <View testID="endpoint-form" class="gap-4">
-      <Title>{props.editing ? t("endpoints.edit") : t("endpoints.addTitle")}</Title>
+      {/* the side panel's header names it on the desktops */}
+      <If when={terminal()}>
+        <Title>{props.editing ? t("endpoints.edit") : t("endpoints.addTitle")}</Title>
+      </If>
       <View class="flex-row flex-wrap gap-3">
         <Field class="min-w-48 flex-1" label={t("endpoints.field.name")} value={d().name} onChange={(v) => set("name", v)} testID="ep-name" />
         {/* an endpoint's id names it in sessions and settings: set once */}
@@ -177,7 +180,9 @@ function Import(props: { onDone: () => void }) {
   };
   return (
     <View class="gap-4">
-      <Title>{t("endpoints.import")}</Title>
+      <If when={terminal()}>
+        <Title>{t("endpoints.import")}</Title>
+      </If>
       <If when={items.length > 0} else={<Muted>{t("endpoints.importNone")}</Muted>}>
         <Each of={items}>
           {(e) => <Check label={`${e().name} — ${e().url}`} checked={!!chosen()[e().id]} onChange={(v) => chosen.update((c) => ({ ...c, [e().id]: v }))} />}
@@ -273,7 +278,7 @@ export function Endpoints() {
   };
   return (
     <Page testID="screen-endpoints">
-      <View class={terminal() ? "gap-2" : "w-full max-w-[860px] gap-5"}>
+      <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
         <View class="flex-row flex-wrap items-center gap-2">
           <View class="flex-1">
             <Title>{t("endpoints.title")}</Title>
@@ -282,7 +287,24 @@ export function Endpoints() {
           <Button variant="outline" icon="key-round" label={t("endpoints.import")} onPress={() => mode.set("import")} />
           <Button variant="outline" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
         </View>
-        <If when={terminal() && form()}>{(f) => <Card>{f()}</Card>}</If>
+        {/* the form in place, in a card with its own header: a sheet in the
+            Settings window would cover its tabs and lose its icons (nsh-issues) */}
+        <If when={form()}>
+          {(f) => (
+            <If when={!terminal()} else={<Card>{f()}</Card>}>
+              <Card pad="none" testID="endpoint-form-card">
+                <PanelHeader
+                  icon={mode() === "import" ? "key-round" : "server"}
+                  title={mode() === "import" ? t("endpoints.import") : mode() === "add" ? t("endpoints.addTitle") : t("endpoints.edit")}
+                  subtitle={typeof mode() === "object" ? (mode() as { edit: EndpointView }).edit.id : undefined}
+                  onClose={() => mode.set("list")}
+                  closeTestID="endpoint-form-close"
+                />
+                <View class="p-4">{f()}</View>
+              </Card>
+            </If>
+          )}
+        </If>
         <If when={endpoints().length > 0} else={<Empty icon="server" text={t("endpoints.noneYet")} />}>
           <View class={`overflow-hidden ${CARD}`}>
             <Each of={endpoints()} key={(e) => e.id}>
@@ -302,13 +324,6 @@ export function Endpoints() {
         </If>
         <Text class="text-small text-muted-foreground">{t("settings.telemetry")}</Text>
       </View>
-      <If when={!terminal()}>
-        <SidePanel open={mode() !== "list"} onClose={() => mode.set("list")}>
-          <Scroll class="flex-1" contentClass="p-6">
-            {form()}
-          </Scroll>
-        </SidePanel>
-      </If>
     </Page>
   );
 }

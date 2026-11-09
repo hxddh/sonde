@@ -10,7 +10,7 @@ import { Icon } from "../ui/icon";
 import { api, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
-import { Badge, Bar, Button, CARD, Card, Empty, Field, KeyValue, Muted, NumberField, Page, terminal, rowHeight, sortRows, Title, TYPE, TABLE } from "../ui/kit";
+import { Badge, Bar, Button, CARD, Card, Empty, Stat, Field, KeyValue, NumberField, Page, terminal, ROW, rowHeight, sortRows, TYPE, TABLE } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
@@ -91,16 +91,8 @@ export function Multipart() {
           <View class="gap-4">
             {/* the figures side by side, the lifecycle's verdict and rule under them, full width */}
             <View class="flex-row flex-wrap items-start gap-3">
-              <Card class="min-w-48 flex-1">
-                <Muted>{t("mpu.uploads", { n: r().totalUploads })}</Muted>
-                <Title>{bytes(r().totalBytes)}</Title>
-                <Text class={r().staleUploads ? "text-body text-warn" : "text-body text-muted-foreground"}>{t("mpu.stale", { n: r().staleUploads, age: t("common.days", { n: r().thresholdDays }) })}</Text>
-              </Card>
-              <Card class="min-w-48 flex-1">
-                <Muted>{t("mpu.costMonth")}</Muted>
-                <Title>{money(r().costPerMonth, r().currency)}</Title>
-                <Muted>{`${t("mpu.costSoFar")}: ${money(r().costSoFar, r().currency)}`}</Muted>
-              </Card>
+              <Stat class="min-w-44 flex-1" label={t("mpu.uploads", { n: r().totalUploads })} value={bytes(r().totalBytes)} detail={t("mpu.stale", { n: r().staleUploads, age: t("common.days", { n: r().thresholdDays }) })} tone={r().staleUploads ? "warn" : "plain"} testID="mpu-size" />
+              <Stat class="min-w-44 flex-1" label={t("mpu.costMonth")} value={money(r().costPerMonth, r().currency)} detail={`${t("mpu.costSoFar")}: ${money(r().costSoFar, r().currency)}`} testID="mpu-cost" />
             </View>
             <View>
               <Card testID="lifecycle-verdict">
@@ -140,7 +132,7 @@ export function Multipart() {
                 data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "stale" : "", key: u.key, initiated: day(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
                 rowClasses={sorted(r().uploads).map((u) => (u.stale ? "text-warn" : "text-foreground"))}
                 fontSize={TYPE.body}
-                rowHeight={rowHeight(30)}
+                rowHeight={rowHeight(ROW.table)}
                 classes={terminal() ? undefined : TABLE}
                 // an old upload is marked, not shouted
                 renderCell={terminal() ? undefined : (c) => (c.key === "flag" ? (c.text ? <Icon name="triangle-alert" size={13} tint="warn" /> : <View />) : c.key === "key" || c.key === "initiated" ? <Text class="text-body text-foreground line-clamp-1">{c.text}</Text> : <View class="flex-1 items-end justify-center"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View>)}

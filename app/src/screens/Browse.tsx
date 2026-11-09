@@ -2,7 +2,7 @@
 // page and kept in Rust), and an object's details.
 
 import { batch, cleanup, Clipboard, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
-import { Button as BaseButton, DataTable, Input, Link, ResizablePanel, ResizablePanelGroup } from "nsh/base";
+import { Button as BaseButton, DataTable, Link, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { bytes, count, date } from "../format";
 import { t } from "../i18n";
@@ -10,7 +10,7 @@ import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Badge, Bar, Button, CARD, Card, Choice, Empty, Field, IconButton, InWindowMenu, KeyValue, Loading, Muted, terminal, rowHeight, SPLIT_HANDLE, SwitchRow, TYPE, TABLE, PanelHeader } from "../ui/kit";
+import { Badge, Bar, Button, CARD, Card, Choice, Empty, Field, IconButton, InWindowMenu, KeyValue, Loading, Muted, SearchField, terminal, ROW, rowHeight, SPLIT_HANDLE, SwitchRow, TYPE, TABLE, PanelHeader } from "../ui/kit";
 import { Fold } from "../ui/record";
 import { rememberedSize } from "../ui/sizes";
 import { Overview } from "../ui/overview";
@@ -399,26 +399,11 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={() => reload.update((n) => n + 1)} testID="listing-refresh" />
       </View>
       <View class="flex-row flex-wrap items-center gap-2">
-        <View class="h-8 min-w-[240px] flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring">
-          <If when={!terminal()}>
-            <Icon name="search" size={14} />
-          </If>
-          <Input
-            testID="listing-filter"
-            value={filter()}
-            placeholder={t("browse.filterOrSearch")}
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChange={({ value }) => applyFilter(value)}
-            onSubmit={search}
-            submitBehavior="submit"
-            accessibilityLabel={t("common.filter")}
-            class="min-w-0 flex-1 text-body text-foreground placeholder:text-muted-foreground"
-          />
+        <SearchField class="min-w-[240px] flex-1" testID="listing-filter" value={filter()} placeholder={t("browse.filterOrSearch")} label={t("common.filter")} onChange={applyFilter} onSubmit={search}>
           <If when={filter()}>
-            <Button small variant="ghost" label={t("browse.searchAll")} onPress={search} testID="search" />
+            <Button small variant="ghost" label={t("browse.searchAll")} onPress={search} testID="search" class="h-6 shrink-0" />
           </If>
-        </View>
+        </SearchField>
         <SwitchRow label={t("browse.flat")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
         {/* nothing to load once every row is here */}
         <If when={!done()}>
@@ -464,7 +449,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         rowSelectable
         resizableColumns
         fontSize={TYPE.body}
-        rowHeight={rowHeight(30)}
+        rowHeight={rowHeight(ROW.table)}
         renderCell={
           terminal()
             ? undefined

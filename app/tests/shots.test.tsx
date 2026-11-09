@@ -104,8 +104,6 @@ for (const v of variants) {
     await app.press("id:session-pane-mode-time");
     await app.waitFor("id:time-pane");
     await shot("03g-time");
-    // the flows on demand: where the button is in view (a small window has it further down)
-    if (app.shows("id:flows-show")) await app.press("id:flows-show").catch(() => {});
     // further down the Time pane, a window at a time: every request and each
     // kind over time; pushback and the distribution; time spent and chains;
     // limits, heat and costs; the flows
@@ -118,6 +116,8 @@ for (const v of variants) {
     await app.scroll("id:time-pane", 400);
     await shot("03k-prefixes");
     await app.scroll("id:time-pane", 600);
+    // the flows on demand, pressed last: the shots above show the pane as it opens
+    if (app.shows("id:flows-show")) await app.press("id:flows-show").catch(() => {});
     await shot("03l-flows");
     // the same program run twice: before and after
     await app.press("id:compare-open");
@@ -168,6 +168,9 @@ for (const v of variants) {
     await app.window("compat").pressClose();
     await app.press("id:add-endpoint");
     await app.waitFor("id:endpoint-form");
+    // the panel's slide done: its icons paint once it rests
+    await app.waitFor("id:endpoint-form-close");
+    await new Promise((r) => setTimeout(r, 500));
     await settings("05d-endpoint-form");
     await app.keyboard.press("Escape");
     await app.window("settings").pressClose();

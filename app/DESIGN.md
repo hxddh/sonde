@@ -63,13 +63,29 @@ piece wraps one nsh export with the theme's tokens:
 | `Segmented`, `Options` | `Tabs`, `ToggleGroup` | what a place shows; a value of a few |
 | `Disclosure` | `Accordion` | a section that opens under its heading |
 | `SidePanel` + `PanelHeader`, `Modal` | `Sheet`, `Dialog` | supplementary work; short decisions |
-| `TABLE`, `SimpleTable` | `DataTable` | every table's classes; rows of text |
+| `Stat` | `Card` (`tile`) | a figure in a row of them: label, figure, a line; tiles in a row share a height |
+| `Path` | `Text` | a path or key cut in its middle, heard whole |
+| `TABLE`, `ROW`, `SimpleTable` | `DataTable` | every table's classes and row heights; rows of text |
 | `Badge`, `Dot`, `Legend`, `KeyValue`, `Kbd`, `Empty`, `Loading` | — | display only |
 
 Rules: a page passes no classes of its own to an `nsh/base` control; a class string a second page would repeat
 belongs in the kit; `FOCUS` is on everything that takes the keyboard; `selected:bg-selection` is the one selection,
 `active:bg-muted` the press. `scripts/lint-kit.py` fails CI on a card, a table's classes or a gutter drawn by hand,
-and on spacing off the scale.
+on spacing off the scale, and on a control, a row height, a search field or a settings width drawn by hand.
+
+Sizes (`CONTROL`, `ROW`, `FORM`):
+
+- **Two control heights.** h-8 for a field, a choice, a button; h-7 for a small button, an icon button, a picker's
+  trigger and a row of segments (each segment h-6 in its track). Nothing between.
+- **One middle.** Controls in a row share their vertical middle (`items-center`); no control sets its own
+  `self-start` — a column that wants it left says so where it places it.
+- **Three row heights.** 30 for a table of rows to press, 26 for a short summary table or program output, 44 for a
+  row of two lines.
+- **Baseline.** Text in one row shares a baseline: one type size per row where it can, figures at the end of their
+  cell in a `flex-1 items-end justify-center` box, an icon in a `shrink-0` box beside its text.
+- **One settings width.** Settings and Endpoints are `FORM` wide, so their edges line up across the tabs.
+- **Tables fit their own width.** The operation's name takes the room the others leave; notes, then bars go as
+  the table (not the window) narrows — from the end only: DataTable keeps a column's state by its place.
 
 ## One rendering per concept
 

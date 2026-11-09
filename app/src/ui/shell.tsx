@@ -14,7 +14,7 @@ import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, end
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./sessionview";
-import { FOCUS, glass, IconButton, Kbd, material, POPUP, Tip } from "./kit";
+import { CONTROL, FOCUS, glass, IconButton, Kbd, material, POPUP, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { sessionName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -122,7 +122,7 @@ export function EndpointSwitcher(props: { class?: string }) {
         }
       }}
       offset={4}
-      class={`h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-input bg-background pl-2 pr-1 hover:border-ring/60 ${FOCUS} ${props.class ?? (shellWidth() >= 1040 ? "w-52" : "w-40")}`}
+      class={`${CONTROL.trigger} ${FOCUS} ${props.class ?? (shellWidth() >= 1040 ? "w-52" : "w-40")}`}
       inputClass="min-w-0 flex-1 text-body text-foreground placeholder:text-foreground"
       popupClass={`min-w-[260px] ${POPUP}`}
       popupStyle={glass}
@@ -181,7 +181,7 @@ function SearchButton() {
       testID="palette"
       accessibilityLabel={t("palette.open")}
       onPress={() => paletteOpen.set(true)}
-      class={`h-7 w-44 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${FOCUS}`}
+      class={`${CONTROL.trigger} w-44 ${FOCUS}`}
     >
       <Icon name="search" size={14} />
       <Text class="flex-1 text-body text-muted-foreground">{t("palette.open")}</Text>

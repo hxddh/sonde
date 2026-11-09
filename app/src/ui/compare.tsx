@@ -10,7 +10,7 @@ import { api } from "../native";
 import { endpoint, endpoints, go, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, CARD, Check, Choice, Heading, Loading, Modal, Muted, rowHeight, Section, Segmented, TABLE, terminal, Title, TYPE } from "./kit";
+import { Badge, Button, CARD, Check, Choice, Heading, Loading, Modal, Muted, ROW, rowHeight, Section, Segmented, TABLE, terminal, Title, TYPE } from "./kit";
 import { cost, DistributionCompare, groupName, offset, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
@@ -265,7 +265,7 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
         data={rows()}
         // the stores under one heading
         groups={[[{ label: "", span: 2 }, { label: t("matrix.stores"), span: props.runs.length }]]}
-        rowHeight={rowHeight(28)}
+        rowHeight={rowHeight(ROW.table)}
         fontSize={TYPE.body}
         // a store's p95 against the recording's: much slower in red, much faster in green
         renderCell={

@@ -9,7 +9,7 @@ import { api } from "../native";
 import { report, sessionsChanged, sessionsTick } from "../store";
 import type { ProgramHistory } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Empty, ListRow, Loading, POPUP, SimpleTable, terminal } from "./kit";
+import { Badge, Button, CONTROL, Empty, ListRow, Loading, POPUP, SimpleTable, terminal } from "./kit";
 import { cost, offset, RunTrend, Sparkline } from "./plots";
 import { programOf } from "./sessionview";
 
@@ -98,9 +98,11 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                 presetClass="rounded-(--radius-sm) px-2 py-1 text-small text-foreground hover:bg-muted"
                 itemClass="size-8 items-center justify-center rounded-(--radius-sm) text-small text-foreground hover:bg-muted selected:bg-primary selected:text-primary-foreground"
                 trigger={
-                  <View testID="history-range" class="h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-border px-2 hover:bg-muted">
-                    <Icon name="calendar-clock" size={13} />
+                  // a small outline button, as the baseline's beside it
+                  <View testID="history-range" class={CONTROL.trigger}>
+                    <Icon name="calendar-clock" size={14} />
                     <Text class="text-small text-foreground">{rangeText()}</Text>
+                    <Icon name="chevron-down" size={12} />
                   </View>
                 }
               />

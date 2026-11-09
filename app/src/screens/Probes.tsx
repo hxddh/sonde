@@ -10,7 +10,7 @@ import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
 import { bucket, endpoint, endpoints, notify, report, showRequest } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
-import { Badge, Bar, Button, Card, Check, Choice, Empty, Field, Heading, Mono, Muted, Page, rowHeight, SimpleTable, terminal, Title, SwitchRow, TYPE, TABLE } from "../ui/kit";
+import { Badge, Bar, Button, Card, Check, Choice, Empty, Field, Heading, Mono, Muted, Page, ROW, rowHeight, SimpleTable, terminal, Title, SwitchRow, TYPE, TABLE } from "../ui/kit";
 
 function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName: string; onBack: () => void }) {
   return (
@@ -67,7 +67,7 @@ function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: num
         columns={columns()}
         data={data()}
         fontSize={TYPE.small}
-        rowHeight={rowHeight(44)}
+        rowHeight={rowHeight(ROW.twoLine)}
         renderCell={
           terminal()
             ? undefined
@@ -99,7 +99,7 @@ function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: num
         } : undefined}
         classes={terminal() ? undefined : TABLE}
         class="rounded-(--radius) border border-border"
-        style={terminal() ? { flexGrow: 1 } : { height: Math.min(props.matrix.rows.length + 1, 12) * (rowHeight(44) ?? 44) + 2 }}
+        style={terminal() ? { flexGrow: 1 } : { height: Math.min(props.matrix.rows.length + 1, 12) * (rowHeight(ROW.twoLine) ?? 44) + 2 }}
       />
     </If>
   );

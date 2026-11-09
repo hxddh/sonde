@@ -13,7 +13,7 @@ import { episodeNotes, episodeTitle, observationSaving, observationText, observa
 import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { CARD, Dot, Empty, FOCUS, InWindowMenu, ListRow, Options, POPUP, rowHeight, TABLE, terminal, TYPE } from "./kit";
+import { CARD, Dot, Empty, FOCUS, InWindowMenu, ListRow, Options, POPUP, ROW, rowHeight, TABLE, terminal, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -618,17 +618,46 @@ export function OperationsTable(props: {
   const formats = () => props.view.episodes.some((e) => family(e).label);
   const range = () => span(props.view);
   const ep = (row: number) => props.view.episodes[shown()[row]];
-  const columns = () => [
-    ...(terminal() ? [] : [{ key: "status", title: "", width: 26, resizable: false, selectable: false }]),
-    { key: "time", title: t("column.time"), width: 110, sortable: true },
-    ...(formats() ? [{ key: "format", title: "", width: 86 }] : []),
-    { key: "title", title: t("column.operation"), width: props.compact ? 220 : kept("title", 340), minWidth: 160 },
-    { key: "requests", title: t("column.requests"), width: 68, align: "end" as const, sortable: true },
-    { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: true },
-    ...(terminal() || props.compact ? [] : [{ key: "bar", title: t("column.when"), width: kept("bar", 150), minWidth: 80 }]),
-    // notes need room: a narrow window keeps the operation's name whole instead
-    ...(props.compact || windowSize().width < 1100 ? [] : [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }]),
-  ];
+  // the table's own width decides what it shows: the notes, then the bars,
+  // then the families go as it narrows; the operation's name takes the rest
+  const width = signal(0);
+  // the operation's name keeps at least this much; the others give way to it
+  const NAME = 240;
+  const columns = () => {
+    const w = terminal() ? 0 : width();
+    const wanted = {
+      format: formats(),
+      bar: !terminal() && !props.compact,
+      notes: !props.compact,
+    };
+    const make = (on: typeof wanted) => {
+      const fixed = [
+        ...(terminal() ? [] : [{ key: "status", title: "", width: 26, resizable: false, selectable: false }]),
+        { key: "time", title: t("column.time"), width: 110, sortable: true },
+        ...(on.format ? [{ key: "format", title: "", width: 86 }] : []),
+      ];
+      const after = [
+        { key: "requests", title: t("column.requests"), width: 68, align: "end" as const, sortable: true },
+        { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: true },
+        ...(on.bar ? [{ key: "bar", title: t("column.when"), width: kept("bar", 150), minWidth: 80 }] : []),
+        ...(on.notes ? [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }] : []),
+      ];
+      return { fixed, after, used: [...fixed, ...after].reduce((n, c) => n + c.width, 0) };
+    };
+    // the notes, then the bars go while the name lacks room: only columns at
+    // the end (DataTable keeps a column's state by its place, so one taken
+    // from the middle would leave the titles a column off)
+    let on = { ...wanted };
+    let m = make(on);
+    for (const drop of ["notes", "bar"] as const) {
+      if (!w || w - m.used - 2 >= NAME) break;
+      on = { ...on, [drop]: false };
+      m = make(on);
+    }
+    const own = props.compact ? 220 : kept("title", 340);
+    const fill = w ? Math.max(160, w - m.used - 2) : own;
+    return [...m.fixed, { key: "title", title: t("column.operation"), width: fill, minWidth: 160 }, ...m.after];
+  };
   const data = () =>
     shown().map((i) => {
       const e = props.view.episodes[i];
@@ -693,15 +722,16 @@ export function OperationsTable(props: {
     }
   };
   return (
+    <View class={`min-h-0 flex-1 ${CARD}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
     <DataTable
       ref={props.ref}
       testID="operations"
       accessibilityLabel={t("sessions.operations")}
-      class={`min-h-0 flex-1 ${CARD}`}
+      class="min-h-0 flex-1"
       columns={columns()}
       data={data()}
       fontSize={TYPE.body}
-      rowHeight={rowHeight(30)}
+      rowHeight={rowHeight(ROW.table)}
       resizableColumns={!terminal()}
       onColumnResize={({ key, width }) => {
         if (!props.compact && key in opsWidths) opsWidths[key as keyof typeof opsWidths].onResize({ size: width });
@@ -716,6 +746,7 @@ export function OperationsTable(props: {
       onContextMenu={props.onContextMenu ? (e) => { if (e.row !== undefined && e.row !== null) props.onContextMenu?.(shown()[e.row]); } : undefined}
       empty={<Empty text={t("common.empty")} />}
     />
+    </View>
   );
 }
 
@@ -734,7 +765,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
       fontSize={TYPE.small}
       fontFamily={platform.idiom === "terminal" ? undefined : "monospace"}
-      rowHeight={rowHeight(24)}
+      rowHeight={rowHeight(ROW.dense)}
       classes={terminal() ? undefined : tableClasses}
       rowClasses={props.lines.map((_, i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
       rowSelectable
@@ -822,12 +853,12 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
           testID="op-requests"
           each={props.rows}
           keyExtractor={(r) => String(r.id)}
-          estimatedItemSize={rowHeight(44) ?? 32}
+          estimatedItemSize={rowHeight(ROW.twoLine) ?? 32}
           class={CARD}
-          style={{ height: Math.min(props.rows.length, 10) * (rowHeight(44) ?? 32) + 2 }}
+          style={{ height: Math.min(props.rows.length, 10) * (rowHeight(ROW.twoLine) ?? 32) + 2 }}
         >
             {(r, i) => (
-              <View style={{ height: rowHeight(44) }} class={i() > 0 ? "border-t border-border" : ""}>
+              <View style={{ height: rowHeight(ROW.twoLine) }} class={i() > 0 ? "border-t border-border" : ""}>
                 <ListRow testID={`op-request-${i()}`} label={`${r().operation} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 rounded-none px-3">
                   <View class="w-12">
                     <StatusMark status={r().status} />

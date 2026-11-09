@@ -3,7 +3,7 @@
 import { effect, ErrorBoundary, fontScale, type JSX, keymap, platform, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
 import { t } from "../i18n";
-import { separators } from "../format";
+import { middle, separators } from "../format";
 import { Icon, type IconName, type Tint } from "./icon";
 
 export const terminal = () => platform.idiom === "terminal";
@@ -28,6 +28,9 @@ export const TYPE = { caption: 11, small: 12, body: 13, heading: 15, title: 20 }
 
 /** A table row's height for the user's text size: rows grow with their
  * text instead of clipping it; a terminal's rows are one cell. */
+/** Every table's rows, three heights: a table of rows to press (30), a short
+ * summary table or program output (26), a row of two lines (44). */
+export const ROW = { table: 30, dense: 26, twoLine: 44 } as const;
 export const rowHeight = (points: number) => (terminal() ? undefined : Math.round(points * Math.max(1, fontScale())));
 
 /** Floating surfaces (the palette, sheets, cards on hover, menus): on macOS a
@@ -49,6 +52,17 @@ export const SCRIM = "bg-scrim";
 export const FOCUS = "focus:ring-2 focus:ring-ring/50";
 /** The one surface of a group: a hairline card. Cards never nest. */
 export const CARD = "rounded-(--radius-card) border border-border bg-card";
+/** Two control heights, and nothing between: h-8 for a field, a choice or a
+ * button; h-7 for a small button, an icon button or a row of segments (each
+ * segment h-6 inside its track). Controls in one row share their middle. */
+export const CONTROL = {
+  field: "h-8",
+  small: "h-7",
+  track: "h-7 shrink-0 flex-row items-center rounded-(--radius) bg-muted p-0.5",
+  segment: "h-6 flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5",
+  /** A small outline button drawn by a component of its own (a picker's trigger). */
+  trigger: "h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-input bg-background px-2.5 hover:bg-muted",
+} as const;
 /** Every DataTable's look: a hairline header, cells with one inset that
  * lines up with their titles, a hover and a selection, no stripes. */
 export const TABLE = {
@@ -59,6 +73,8 @@ export const TABLE = {
   rowSelected: "bg-selection",
   fixedEdge: "border-r border-border",
 } as const;
+/** The one width of a settings page, its forms and lists: Settings and Endpoints line up. */
+export const FORM = "w-full max-w-[720px]";
 /** The title bar's height: sheets start below it, so it stays a title bar. */
 export const TITLE_BAR = 44;
 
@@ -97,7 +113,7 @@ export function PanelHeader(props: { title: string; icon?: IconName; subtitle?: 
       <Text role="header" class="text-heading font-semibold text-foreground">
         {props.title}
       </Text>
-      <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{props.subtitle ?? ""}</Text>
+      <Path path={props.subtitle ?? ""} max={56} class="min-w-0 flex-1 text-muted-foreground" />
       {props.children}
       <If when={props.onClose}>
         <IconButton icon="x" label={t("common.close")} onPress={() => props.onClose?.()} testID={props.closeTestID} />
@@ -246,7 +262,7 @@ export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD
 
 /** A row of a list a press opens: hover, pressed, selected and focus, one
  * look in every list (sessions, programs, requests, hits). */
-export function ListRow(props: { children: JSX.Element; onPress: () => void; selected?: boolean; label?: string; testID?: string; class?: string }) {
+export function ListRow(props: { children: JSX.Element; onPress: () => void; selected?: boolean; label?: string; testID?: string; class?: string; trailing?: JSX.Element }) {
   return (
     <BaseButton
       testID={props.testID}
@@ -256,7 +272,46 @@ export function ListRow(props: { children: JSX.Element; onPress: () => void; sel
       class={`flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 hover:bg-muted active:bg-muted selected:bg-selection ${FOCUS} ${props.class ?? ""}`}
     >
       {props.children}
+      {/* what ends the row (a count, a time) keeps its width and the row's middle */}
+      <If when={props.trailing}>
+        <View class="ms-auto shrink-0 flex-row items-center gap-1.5">{props.trailing}</View>
+      </If>
     </BaseButton>
+  );
+}
+
+/** A figure in a row of them, the one tile: what it counts, the figure, a
+ * line about it; with `onPress`, the tile is a button and says where it goes.
+ * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
+ * height of its own, which collapses it in a column. */
+export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string }) {
+  const tint = () => (props.tone === "warn" ? "text-warn" : props.tone === "ok" ? "text-status-ok" : "text-foreground");
+  return (
+    <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress ? `${props.label}: ${props.value}` : undefined} onPress={props.onPress}>
+      <View class="flex-row items-center gap-1.5">
+        <If when={props.icon}>{(i) => <Icon name={i()} size={13} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />}</If>
+        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
+        <If when={props.onPress}>
+          <Icon name="chevron-right" size={12} />
+        </If>
+      </View>
+      <If when={!props.pending} else={<View class="my-1 h-4 w-24 rounded-(--radius-sm) bg-muted" />}>
+        <Text class={`text-heading font-semibold tabular-nums line-clamp-1 ${tint()}`}>{props.value}</Text>
+      </If>
+      <If when={!props.pending} else={<View class="h-3 w-32 rounded-(--radius-sm) bg-muted/70" />}>
+        <Text class="text-caption text-muted-foreground line-clamp-2">{props.detail ?? ""}</Text>
+      </If>
+    </Card>
+  );
+}
+
+/** A path or key too long for its place, cut in its middle so both its
+ * start and the end that tells it apart stay; screen readers hear it whole. */
+export function Path(props: { path: string; max?: number; class?: string; testID?: string }) {
+  return (
+    <Text testID={props.testID} accessibilityLabel={props.path} class={`font-mono text-caption line-clamp-1 ${props.class ?? "text-foreground"}`}>
+      {middle(props.path, props.max ?? 48)}
+    </Text>
   );
 }
 
@@ -381,10 +436,14 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
 
 /** The one search field: a magnifier, the text, a clear button while it
  * holds any, and what the place puts after it (a "search everywhere"). */
-export function SearchField(props: { value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder: string; label?: string; testID?: string; class?: string; children?: JSX.Element }) {
+export function SearchField(props: { value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder: string; label?: string; small?: boolean; testID?: string; class?: string; children?: JSX.Element }) {
   return (
-    <View class={`h-8 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50 ${props.class ?? ""}`}>
-      <Icon name="search" size={14} tint="muted-foreground" />
+    <View class={terminal() ? `flex-row items-center gap-1 ${props.class ?? ""}` : `${props.small ? CONTROL.small : CONTROL.field} flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50 ${props.class ?? ""}`}>
+      <If when={!terminal()}>
+        <View class="shrink-0">
+          <Icon name="search" size={14} tint="muted-foreground" />
+        </View>
+      </If>
       <Input
         testID={props.testID}
         value={props.value}
@@ -397,8 +456,8 @@ export function SearchField(props: { value: string; onChange: (v: string) => voi
         accessibilityLabel={props.label ?? props.placeholder}
         class="min-w-0 flex-1 text-body text-foreground placeholder:text-muted-foreground"
       />
-      <If when={props.value}>
-        <IconButton icon="x" label={t("common.clear")} onPress={() => props.onChange("")} class="size-5" />
+      <If when={props.value && !terminal()}>
+        <IconButton icon="x" label={t("common.clear")} onPress={() => props.onChange("")} class="size-5 shrink-0" />
       </If>
       {props.children}
     </View>
@@ -453,7 +512,7 @@ export function SwitchRow(props: { label: string; checked: boolean; onChange: (v
       class={`flex-row items-center gap-3 rounded-(--radius-sm) disabled:opacity-50 ${FOCUS}`}
       // the thumb centered in its track, top to bottom
       trackClass="h-5 w-9 shrink-0 justify-center rounded-full bg-input px-0.5 checked:bg-primary motion-safe:transition-colors"
-      thumbClass="h-4 w-4 rounded-full bg-background shadow-sm checked:translate-x-4 motion-safe:transition-transform"
+      thumbClass="h-4 w-4 rounded-full bg-switch-thumb shadow-sm checked:translate-x-4 motion-safe:transition-transform"
     >
       <View class="flex-1">
         <Text class="text-body text-foreground">{props.label}</Text>
@@ -500,10 +559,12 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         itemClass="rounded-sm px-2 py-1.5 text-body text-popover-foreground focus:bg-accent selected:font-semibold"
         trigger={
           <View class="h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2.5 hover:border-ring/60">
-            <Text class="text-body text-foreground line-clamp-1">
+            <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">
               {title()}
             </Text>
-            <Icon name="chevrons-up-down" size={13} />
+            <View class="shrink-0">
+              <Icon name="chevrons-up-down" size={13} />
+            </View>
           </View>
         }
       />
@@ -514,7 +575,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
 /** One of a few views or modes: Tabs, a pill sliding behind the chosen one. */
 export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
-    <Tabs testID={props.testID} class={`flex-row rounded-(--radius) bg-muted p-0.5 ${props.class ?? "self-start"}`} indicatorClass="inset-y-0.5 rounded-(--radius-sm) bg-background shadow-sm motion-safe:transition-all motion-safe:duration-200">
+    <Tabs testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`} indicatorClass="inset-y-0.5 rounded-(--radius-sm) bg-background shadow-sm motion-safe:transition-all motion-safe:duration-200">
       <Each of={props.items} key={(i) => i.value}>
         {(item) => (
           <Tab
@@ -522,7 +583,7 @@ export function Segmented(props: { value: string; items: { value: string; title:
             accessibilityLabel={item().title}
             selected={props.value === item().value}
             onPress={() => props.onChange(item().value)}
-            class={`group flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5 py-1 ${FOCUS}`}
+            class={`group ${CONTROL.segment} ${FOCUS}`}
           >
             <If when={item().icon}>
               <Icon name={item().icon!} size={13} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
@@ -540,7 +601,7 @@ export function Segmented(props: { value: string; items: { value: string; title:
  * value; `Segmented` (tabs) switches what a place shows. */
 export function Options(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
-    <ToggleGroup testID={props.testID} class={`flex-row rounded-(--radius) bg-muted p-0.5 ${props.class ?? "self-start"}`}>
+    <ToggleGroup testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`}>
       <Each of={props.items} key={(i) => i.value}>
         {(item) => (
           <BaseToggle
@@ -548,7 +609,7 @@ export function Options(props: { value: string; items: { value: string; title: s
             accessibilityLabel={item().title}
             pressed={props.value === item().value}
             onChange={() => props.onChange(item().value)}
-            class={`group flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5 py-1 aria-pressed:bg-background aria-pressed:shadow-sm ${FOCUS}`}
+            class={`group ${CONTROL.segment} aria-pressed:bg-background aria-pressed:shadow-sm ${FOCUS}`}
           >
             <If when={item().icon}>
               <Icon name={item().icon!} size={13} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
@@ -734,10 +795,10 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
       onSortChange={({ sort: next }) => sort.set(next)}
       fontSize={TYPE.small}
       fontFamily={props.mono ? token("font-mono") : undefined}
-      rowHeight={rowHeight(26)}
+      rowHeight={rowHeight(ROW.dense)}
       classes={terminal() ? undefined : TABLE}
       class={CARD}
-      style={terminal() ? undefined : { height: (shown() + 1) * (rowHeight(26) ?? 26) + 2 }}
+      style={terminal() ? undefined : { height: (shown() + 1) * (rowHeight(ROW.dense) ?? 26) + 2 }}
     />
   );
 }

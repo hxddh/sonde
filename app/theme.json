@@ -59,7 +59,8 @@
       "fmt-other": "oklch(0.65 0.02 255)",
       "bar": "oklch(0.6 0.13 256)",
       "bar-track": "oklch(0.93 0.005 250)",
-      "scrim": "oklch(0.2 0.01 255 / 18%)"
+      "scrim": "oklch(0.2 0.01 255 / 18%)",
+      "switch-thumb": "oklch(1 0 0)"
     },
     "dark": {
       "background": "oklch(0.18 0.006 255)",
@@ -113,7 +114,8 @@
       "fmt-other": "oklch(0.6 0.01 255)",
       "bar": "oklch(0.68 0.13 256)",
       "bar-track": "oklch(0.26 0.008 255)",
-      "scrim": "oklch(0 0 0 / 45%)"
+      "scrim": "oklch(0 0 0 / 45%)",
+      "switch-thumb": "oklch(0.97 0.003 250)"
     }
   }
 }

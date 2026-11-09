@@ -50,7 +50,7 @@ function CommandBar() {
             <Button variant="destructive" label={t("run.stop")} onPress={stop} testID="run-stop" />
           </If>
         </View>
-        <Options value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
+        <Options class="self-start" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
       </View>
     );
   }

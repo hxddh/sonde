@@ -7,7 +7,7 @@ import { language, t } from "../i18n";
 import { api } from "../native";
 import { notify, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Choice, Field, KeyValue, NumberField, Options, Page, Section, terminal, SwitchRow } from "../ui/kit";
+import { Choice, Field, FORM, KeyValue, NumberField, Options, Page, Section, terminal, SwitchRow } from "../ui/kit";
 import { Fold } from "../ui/record";
 import { Updates } from "../ui/updates";
 
@@ -80,7 +80,7 @@ export function SettingsScreen() {
     <Page testID="screen-settings">
       <If when={draft()}>
         {(d) => (
-          <View class={terminal() ? "gap-2" : "w-full max-w-[720px] gap-6"}>
+          <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
             <Section title={t("settings.safety")}>
               <SwitchRow
                 testID="read-only"
@@ -103,6 +103,7 @@ export function SettingsScreen() {
                 <View class="gap-1.5">
                   <Text class="text-small font-medium text-muted-foreground">{t("settings.themeLabel")}</Text>
                   <Options
+                    class="self-start"
                     testID="theme"
                     value={d().theme}
                     items={[

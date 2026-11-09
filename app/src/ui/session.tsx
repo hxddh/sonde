@@ -65,6 +65,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
               <Text class="text-small text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
               <If when={!props.policy}>
                 <Options
+                  class="self-start"
                   value={policy()}
                   items={[
                     { value: "allow", title: t("timeline.allow") },
