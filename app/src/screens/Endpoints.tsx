@@ -76,15 +76,15 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
   ];
   return (
     <View testID="endpoint-form" class="gap-4">
-      <Title>{props.editing ? t("endpoints.edit") : t("endpoints.add")}</Title>
+      <Title>{props.editing ? t("endpoints.edit") : t("endpoints.addTitle")}</Title>
       <View class="flex-row flex-wrap gap-3">
-        <Field class="w-56" label={t("endpoints.field.name")} value={d().name} onChange={(v) => set("name", v)} testID="ep-name" />
+        <Field class="min-w-48 flex-1" label={t("endpoints.field.name")} value={d().name} onChange={(v) => set("name", v)} testID="ep-name" />
         {/* an endpoint's id names it in sessions and settings: set once */}
         <If when={!props.editing} else={<KeyValue rows={[[t("endpoints.field.id"), d().id]]} />}>
-          <Field class="w-40" label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} testID="ep-id" mono />
+          <Field class="min-w-48 flex-1" label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} testID="ep-id" mono />
         </If>
         <Choice
-          class="w-48"
+          class="min-w-48 flex-1"
           label={t("endpoints.field.vendor")}
           value={d().vendor}
           items={vendors.map((v) => ({ value: v.id, title: v.label }))}
@@ -102,15 +102,15 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
         />
       </View>
       <View class="flex-row flex-wrap gap-3">
-        <Field class="flex-1" label={t("endpoints.field.url")} value={d().url} onChange={(v) => set("url", v)} placeholder="https://s3.eu-west-1.amazonaws.com" testID="ep-url" mono />
-        <Field class="w-36" label={t("endpoints.field.region")} value={d().region} onChange={(v) => set("region", v)} testID="ep-region" mono />
+        <Field class="min-w-48 flex-[2]" label={t("endpoints.field.url")} value={d().url} onChange={(v) => set("url", v)} placeholder="https://s3.eu-west-1.amazonaws.com" testID="ep-url" mono />
+        <Field class="min-w-48 flex-1" label={t("endpoints.field.region")} value={d().region} onChange={(v) => set("region", v)} testID="ep-region" mono />
       </View>
       <SwitchRow label={t("endpoints.field.pathStyle")} checked={d().pathStyle} onChange={(v) => set("pathStyle", v)} testID="ep-path-style" />
       <Field label={t("endpoints.field.ca")} value={d().caFile} onChange={(v) => set("caFile", v)} placeholder="/etc/ssl/my-ca.pem" mono />
       <View class="flex-row flex-wrap gap-3">
-        <Choice class="w-64" label={t("endpoints.field.credentials")} value={d().credentials} items={creds} onChange={(v) => set("credentials", v)} testID="ep-creds" />
+        <Choice class="min-w-48 flex-1" label={t("endpoints.field.credentials")} value={d().credentials} items={creds} onChange={(v) => set("credentials", v)} testID="ep-creds" />
         <If when={d().credentials === "profile"}>
-          <Field class="w-48" label={t("endpoints.field.profile")} value={d().profile} onChange={(v) => set("profile", v)} mono />
+          <Field class="min-w-48 flex-1" label={t("endpoints.field.profile")} value={d().profile} onChange={(v) => set("profile", v)} mono />
         </If>
       </View>
       <Muted>{t("endpoints.cred.note")}</Muted>

@@ -745,5 +745,6 @@
  "fix.openCode": "打开 %{place}",
  "programs.monthly": "约每月 %{cost}",
  "run.nowYours": "换成你自己的存储…",
- "run.nowYoursHint": "添加你的端点，然后在这里运行你的程序：sonde 会让它的 SDK 指向自己（AWS_ENDPOINT_URL）"
+ "run.nowYoursHint": "添加你的端点，然后在这里运行你的程序：sonde 会让它的 SDK 指向自己（AWS_ENDPOINT_URL）",
+ "endpoints.addTitle": "添加端点"
 }

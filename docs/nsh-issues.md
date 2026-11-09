@@ -106,3 +106,29 @@ page's folder shown).
 
 **Expected.** A JS module for them, behind a capability.
 
+
+## An Input cannot be disabled
+
+**What happens.** `Input` has no `disabled` (or `editable`) prop; `NumberInput`, `Select` and `Combobox` do. A field
+that may not change once set (an endpoint's id while editing) is shown as text instead.
+
+**Expected.** `disabled` on `Input`, with `disabled:` styles and screen readers saying it is dimmed.
+
+## Plot has no log scale, and no horizontal rule
+
+**What happens.** Scales are `point`, `linear` and `band`; latencies spread over decades are drawn as their logs and
+the ticks format `10 ** v`. `Rule` is drawn per row (vertical); a horizontal reference line (a p95) is a `Grid`
+with one value.
+
+**Expected.** `{ type: "log" }` for x and y, and `Rule` (or `Grid`) taking a label for a reference line.
+
+## A Sankey's labels cannot sit beside its nodes
+
+**What happens.** `nodeLabel` draws on the node; on a middle column it overlaps the ribbons. There is no placement.
+
+**Expected.** `nodeLabelPlacement`: `inside`, `outside` (left of the first column, right of the others), `auto`.
+
+## A Button has no context menu event
+
+**What happens.** `onContextMenu` is on views and tables, not on `Button`; a pressable row that also offers a menu
+wraps the button in a view.

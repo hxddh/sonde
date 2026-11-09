@@ -10,7 +10,7 @@ import { isAvailable } from "nsh/desktop";
 import { bytes, count, date, day, middle, ms } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
-import { report } from "../store";
+import { report, shellWidth } from "../store";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
 import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
@@ -480,6 +480,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       </If>
     );
   }
+  // a line each, but the one chosen in full
   const dense = () => props.compact || findingsDense();
   const row = (o: () => Observation, i: () => number) => (
     <BaseButton
@@ -488,16 +489,15 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       selected={props.filter === i()}
       disabled={!props.onFilter || !o().episodes?.length}
       onPress={() => press(i())}
-      class={`group flex-row items-start gap-2 px-3 ${dense() ? "py-1.5" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${i() > 0 ? "border-t border-border" : ""}`}
+      class={`group flex-row items-start gap-2 px-3 ${dense() ? "py-1.5" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${FOCUS} ${i() > 0 ? "border-t border-border" : ""}`}
     >
-      {/* its number: where it stands on the session's shape */}
-      <Text class={`h-5 w-3 text-right tabular-nums text-caption font-semibold ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{String(i() + 1)}</Text>
-      <View class="h-5 w-4 items-center justify-center">
-        <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={14} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
+      {/* its number, in its level's tone: where it stands on the session's shape */}
+      <View class={`mt-0.5 size-4 items-center justify-center rounded-full ${o().level === "warn" ? "bg-warn/15" : "bg-muted"}`}>
+        <Text class={`tabular-nums text-caption font-semibold ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{String(i() + 1)}</Text>
       </View>
       <View class="min-w-0 flex-1 gap-0.5">
-        <Text class={`text-body text-foreground ${dense() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
-        <If when={!dense() && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
+        <Text class={`text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
+        <If when={(!dense() || props.filter === i()) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
         <If when={!dense() && observationSaving(o())}>
           {(v) => (
             <View class="flex-row items-center gap-1 pt-0.5">
@@ -603,7 +603,8 @@ export function OperationsTable(props: {
     { key: "requests", title: t("column.requests"), width: 56, align: "end" as const, sortable: true },
     { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: true },
     ...(terminal() || props.compact ? [] : [{ key: "bar", title: t("column.when"), width: kept("bar", 150), minWidth: 80 }]),
-    ...(props.compact ? [] : [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }]),
+    // notes need room: a narrow window keeps the operation's name whole instead
+    ...(props.compact || shellWidth() < 1100 ? [] : [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }]),
   ];
   const data = () =>
     shown().map((i) => {

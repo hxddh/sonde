@@ -356,10 +356,12 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     effect(() => inspectorOpen.set(inspecting()));
     cleanup(() => inspectorOpen.set(false));
   }
-  // a pane of its own (time, runs, output) gets the room: the findings a line each
+  // a pane of its own (time, runs, output), or a short window, gets the room:
+  // the findings a line each, the one chosen in full
   effect(() => {
     const p = pane();
-    untracked(() => findingsDense.set(p !== "operations"));
+    const short = shellHeight() < 700;
+    untracked(() => findingsDense.set(p !== "operations" || short));
   });
 
   const inspector = () => (

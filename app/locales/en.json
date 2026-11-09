@@ -745,5 +745,6 @@
  "fix.openCode": "Open %{place}",
  "programs.monthly": "≈ %{cost} a month",
  "run.nowYours": "Now your own store…",
- "run.nowYoursHint": "Add your endpoint, then run your program here: sonde points its SDK at itself (AWS_ENDPOINT_URL)"
+ "run.nowYoursHint": "Add your endpoint, then run your program here: sonde points its SDK at itself (AWS_ENDPOINT_URL)",
+ "endpoints.addTitle": "Add an endpoint"
 }
