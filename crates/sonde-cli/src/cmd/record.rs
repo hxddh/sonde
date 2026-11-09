@@ -157,13 +157,7 @@ async fn start(
             std::fs::create_dir_all(&dir)?;
             let name = command
                 .as_deref()
-                .and_then(|c| c.split_whitespace().next())
-                .map(|c| {
-                    Path::new(c)
-                        .file_name()
-                        .map(|f| f.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                })
+                .and_then(sonde_proxy::program::program_name)
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| "proxy".into());
             sonde_proxy::session::fresh_path(
@@ -172,7 +166,11 @@ async fn start(
             )
         }
     };
-    let header = SessionHeader::new(&ep, cfg.endpoint.as_str(), &cfg.region, command);
+    let ran = command.is_some();
+    let mut header = SessionHeader::new(&ep, cfg.endpoint.as_str(), &cfg.region, command);
+    if ran && let Ok(dir) = std::env::current_dir() {
+        header = header.ran_in(&dir);
+    }
     let writer = Arc::new(SessionWriter::create(&path, &header)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
@@ -384,13 +382,14 @@ pub fn episode_line(
     line
 }
 
-/// The request prices the settings give.
-pub fn request_prices(s: &Sonde) -> RequestPrices {
-    let p = s.settings().prices;
+/// The request prices of a session on `endpoint`: the ones the app shows.
+pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
+    let (w, r, l, currency) = s.request_prices_for(endpoint);
     RequestPrices {
-        per_1000_writes: p.per_1000_writes,
-        per_1000_reads: p.per_1000_reads,
-        currency: p.currency,
+        per_1000_writes: w,
+        per_1000_reads: r,
+        per_1000_lists: l,
+        currency,
     }
 }
 
@@ -579,7 +578,7 @@ fn print_summary(
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
-    let command = a.command.join(" ");
+    let command = sonde_proxy::program::shell_join(&a.command);
     let started = start(
         s,
         &a.rec,
@@ -622,7 +621,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         &session.header.endpoint,
         &started.path,
         color,
-        &request_prices(s),
+        &request_prices_for(s, &session.header.endpoint),
         false,
     );
     if session.records.is_empty() {
@@ -691,7 +690,7 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
         &session.header.endpoint,
         &started.path,
         std::io::stderr().is_terminal(),
-        &request_prices(s),
+        &request_prices_for(s, &session.header.endpoint),
         false,
     );
     // finished: compressed to a tenth or less, still a .sonde file
@@ -746,7 +745,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "summary": summarize(all),
                     "episodes": eps,
                     "observations": observations(all, &eps),
-                    "whatIf": sonde_proxy::fixes::what_if(all, &profile(all, &request_prices(s)), &observations(all, &eps)),
+                    "whatIf": sonde_proxy::fixes::what_if(all, &profile(all, &request_prices_for(s, &session.header.endpoint)), &observations(all, &eps)),
                     "records": all,
                 }))
             );
@@ -788,7 +787,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 &session.header.endpoint,
                 &file,
                 std::io::stdout().is_terminal(),
-                &request_prices(s),
+                &request_prices_for(s, &session.header.endpoint),
                 true,
             );
         }
@@ -1001,7 +1000,7 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
                     &original.records,
                     &replayed.records,
                     (&original.header.endpoint, &replayed.header.endpoint),
-                    &request_prices(s),
+                    &request_prices_for(s, &original.header.endpoint),
                 );
             }
             eprintln!(
@@ -1073,7 +1072,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         }
     }))
     .await;
-    let prices = request_prices(s);
+    let prices = request_prices_for(s, &original.header.endpoint);
     let before = profile(&original.records, &prices);
     let mut columns = vec![original.header.endpoint.clone()];
     let mut stores = Vec::new();
@@ -1198,7 +1197,7 @@ pub async fn diff(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
     let original = Session::open(&a.original).map_err(|e| anyhow::anyhow!(e))?;
     let replay = Session::open(&a.replay).map_err(|e| anyhow::anyhow!(e))?;
     let c = sonde_proxy::replay::compare(&original.records, &replay.records, &[]);
-    let prices = request_prices(s);
+    let prices = request_prices_for(s, &original.header.endpoint);
     match a.format {
         Format::Json => println!(
             "{}",
@@ -1233,8 +1232,10 @@ fn change(a: f64, b: f64, text: impl Fn(f64) -> String) -> String {
 pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     let open = |p: &PathBuf| Session::open(p).map_err(|e| anyhow::anyhow!(e));
     let (sa, sb) = (open(&a.before)?, open(&a.after)?);
-    let prices = request_prices(s);
-    let (pa, pb) = (profile(&sa.records, &prices), profile(&sb.records, &prices));
+    let (pa, pb) = (
+        profile(&sa.records, &request_prices_for(s, &sa.header.endpoint)),
+        profile(&sb.records, &request_prices_for(s, &sb.header.endpoint)),
+    );
     let (oa, ob) = (
         observations(&sa.records, &episodes(&sa.records)),
         observations(&sb.records, &episodes(&sb.records)),
@@ -1361,17 +1362,69 @@ fn waiting_ms(v: &toml::Value) -> anyhow::Result<f64> {
     }
 }
 
+/// Text the program controls (a finding names its keys), as Markdown that
+/// shows it as written: no formatting, no HTML, no table cell break, no
+/// @mention.
+fn md_text(t: &str) -> String {
+    let mut out = String::with_capacity(t.len());
+    for c in t.chars() {
+        match c {
+            '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '|' | '#' | '~' | '!' => {
+                out.push('\\');
+                out.push(c);
+            }
+            // a word joiner keeps GitHub from reading a mention
+            '@' => out.push_str("@\u{2060}"),
+            '\n' | '\r' => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// A URL as it may be printed: without its query, which may be a presigned
+/// URL's signature.
+fn url_shown(url: &str) -> &str {
+    url.split(['?', '#']).next().unwrap_or(url)
+}
+
 /// A baseline at an https URL (a CI artifact, a presigned URL), fetched to a
-/// temporary file.
+/// temporary file: in a minute at most, and 1 GiB at most.
 async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPath> {
-    let body = reqwest::get(url)
+    const MAX: u64 = 1 << 30;
+    let shown = url_shown(url);
+    let local = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| {
+            u.host_str()
+                .map(|h| h == "127.0.0.1" || h == "localhost" || h == "[::1]")
+        })
+        .unwrap_or(false);
+    if !url.starts_with("https://") && !local {
+        anyhow::bail!("baseline {shown}: only https URLs are fetched");
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?;
+    let fail = |e: reqwest::Error| anyhow::anyhow!("baseline {shown}: {}", e.without_url());
+    let mut resp = client
+        .get(url)
+        .send()
         .await
         .and_then(|r| r.error_for_status())
-        .map_err(|e| anyhow::anyhow!("baseline {url}: {e}"))?
-        .bytes()
-        .await?;
+        .map_err(fail)?;
+    if resp.content_length().is_some_and(|n| n > MAX) {
+        anyhow::bail!("baseline {shown}: larger than 1 GiB");
+    }
     let mut f = tempfile::Builder::new().suffix(".sonde").tempfile()?;
-    std::io::Write::write_all(&mut f, &body)?;
+    let mut got = 0u64;
+    while let Some(chunk) = resp.chunk().await.map_err(fail)? {
+        got += chunk.len() as u64;
+        if got > MAX {
+            anyhow::bail!("baseline {shown}: larger than 1 GiB");
+        }
+        std::io::Write::write_all(&mut f, &chunk)?;
+    }
     Ok(f.into_temp_path())
 }
 
@@ -1389,7 +1442,20 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         None => ProjectCheck::default(),
     };
-    let baseline_arg = a.baseline.clone().or(project.baseline.clone());
+    // a path in sonde.toml is the project's: relative to the file, not to
+    // the folder `sonde check` runs in
+    let project_baseline = project.baseline.clone().map(|b| {
+        let path_like = b != "auto" && !b.starts_with("https://") && !b.starts_with("http://");
+        match project_path.as_ref().and_then(|p| p.parent()) {
+            Some(dir)
+                if path_like && Path::new(&b).is_relative() && !dir.as_os_str().is_empty() =>
+            {
+                dir.join(&b).to_string_lossy().into_owned()
+            }
+            _ => b,
+        }
+    });
+    let baseline_arg = a.baseline.clone().or(project_baseline);
     let mut fetched: Option<tempfile::TempPath> = None;
     if let Some(u) = baseline_arg
         .as_deref()
@@ -1401,10 +1467,12 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         Some(f) => super::sessions::resolve(s, f),
         None => newest_session(s)?,
     };
-    let prices = request_prices(s);
     let read = |p: &PathBuf| -> anyhow::Result<_> {
         let session = Session::open(p).map_err(|e| anyhow::anyhow!(e))?;
-        let pr = profile(&session.records, &prices);
+        let pr = profile(
+            &session.records,
+            &request_prices_for(s, &session.header.endpoint),
+        );
         let ob = observations(&session.records, &episodes(&session.records));
         let point = run_point(
             &p.to_string_lossy(),
@@ -1544,16 +1612,19 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         if !c.new_warnings.is_empty() {
             md.push_str("\n**New since the baseline**\n\n");
             for w in &c.new_warnings {
-                md.push_str(&format!("- {w}\n"));
+                md.push_str(&format!("- {}\n", md_text(w)));
             }
         }
         let findings: Vec<_> = run.3.iter().take(5).collect();
         if !findings.is_empty() {
             md.push_str("\n<details><summary>What stands out</summary>\n\n");
             for f in findings {
-                md.push_str(&format!("- {}", f.text));
+                md.push_str(&format!("- {}", md_text(&f.text)));
                 if let Some(c) = f.callers.first() {
-                    md.push_str(&format!(" — `{}`", c.place));
+                    md.push_str(&format!(
+                        " — `{}`",
+                        c.place.replace('`', "'").replace(['\n', '\r'], " ")
+                    ));
                 }
                 md.push('\n');
             }
@@ -1780,7 +1851,7 @@ pub struct WatchArgs {
 }
 
 /// Posts `text` to a webhook, in the background; a failure is said once on stderr.
-fn post_alert(url: &str, text: String) {
+fn post_alert(url: &str, text: String) -> tokio::task::JoinHandle<()> {
     let url = url.to_string();
     tokio::spawn(async move {
         let r = reqwest::Client::new()
@@ -1791,9 +1862,11 @@ fn post_alert(url: &str, text: String) {
             .and_then(|r| r.error_for_status());
         if let Err(e) = r {
             static SAID: std::sync::Once = std::sync::Once::new();
-            SAID.call_once(|| eprintln!("alert to {url} failed: {e}"));
+            SAID.call_once(|| {
+                eprintln!("alert to {} failed: {}", url_shown(&url), e.without_url())
+            });
         }
-    });
+    })
 }
 
 /// A finished file held to the project's budget (`sonde.toml`'s `[check]`):
@@ -1810,7 +1883,8 @@ fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
         tolerance: None,
         no_new_warnings: false,
     };
-    let prof = profile(records, &request_prices(s));
+    let endpoint = records.first().map(|r| r.endpoint.as_str()).unwrap_or("");
+    let prof = profile(records, &request_prices_for(s, endpoint));
     let obs = observations(records, &episodes(records));
     let point = run_point("", "", records, &prof, &obs);
     let c = check((&point, records, &prof, &obs), None, &budget);
@@ -1818,7 +1892,15 @@ fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
         .verdicts
         .iter()
         .filter(|v| !v.ok)
-        .map(|v| format!("{} {:.0} > {:.0}", v.what, v.value, v.limit))
+        .map(|v| match v.what {
+            "cost" => format!(
+                "cost {} > {}",
+                money_text(v.value, &prof.cost.currency),
+                money_text(v.limit, &prof.cost.currency)
+            ),
+            "waiting" => format!("waiting {} > {}", ms_text(v.value), ms_text(v.limit)),
+            what => format!("{what} {:.0} > {:.0}", v.value, v.limit),
+        })
         .collect();
     (!over.is_empty()).then(|| over.join(", "))
 }
@@ -1848,6 +1930,8 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut rotated = Instant::now();
     let mut seconds = 0u64;
+    // alerts on their way: waited for (a little) before sonde exits
+    let mut sent: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let finish = |w: Arc<SessionWriter>, p: &Path| {
         let _ = w.flush();
         drop(w);
@@ -1897,7 +1981,7 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                             }
                             eprintln!("{} {}", paint("!", "33", tty), o.text);
                             if let Some(url) = &a.alert {
-                                post_alert(url, format!("sonde watch: {}", o.text));
+                                sent.push(post_alert(url, format!("sonde watch: {}", o.text)));
                             }
                         }
                     }
@@ -1915,8 +1999,9 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                     let old_path = std::mem::replace(&mut path, next);
                     finish(old, &old_path);
                     if let (Some(url), Some(over)) = (&a.alert, over_budget(s, &file_records)) {
-                        post_alert(url, format!("sonde watch: {} is over budget: {over}", old_path.display()));
+                        sent.push(post_alert(url, format!("sonde watch: {} is over budget: {over}", old_path.display())));
                     }
+                    sent.retain(|h| !h.is_finished());
                     if tty {
                         eprint!("\r\x1b[2K");
                     }
@@ -1935,6 +2020,44 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
     let Started { proxy, .. } = started;
     drop(proxy);
     finish(writer, &path);
+    // the last file is held to the budget too
+    if let (Some(url), Some(over)) = (&a.alert, over_budget(s, &file_records)) {
+        sent.push(post_alert(
+            url,
+            format!("sonde watch: {} is over budget: {over}", path.display()),
+        ));
+    }
+    let _ = tokio::time::timeout(Duration::from_secs(10), futures::future::join_all(sent)).await;
     eprintln!("{}", path.display());
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_findings_text_is_shown_as_written_in_a_pr_comment() {
+        assert_eq!(
+            md_text("key `a|b` <b>x</b> @team *hot*"),
+            "key \\`a\\|b\\` \\<b\\>x\\</b\\> @\u{2060}team \\*hot\\*"
+        );
+    }
+
+    #[test]
+    fn a_presigned_url_is_printed_without_its_signature() {
+        assert_eq!(
+            url_shown("https://b.s3.amazonaws.com/base.sonde?X-Amz-Signature=abc"),
+            "https://b.s3.amazonaws.com/base.sonde"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_baseline_is_fetched_over_https_only() {
+        let e = fetch_baseline("http://example.com/base.sonde?sig=1")
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("only https"), "{e}");
+        assert!(!e.to_string().contains("sig=1"));
+    }
 }

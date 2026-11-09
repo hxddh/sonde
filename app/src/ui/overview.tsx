@@ -171,7 +171,7 @@ export function Overview() {
           pending={pending("mpu")}
           tone={mpu() && mpu()!.staleUploads > 0 ? "warn" : "plain"}
           value={mpu() ? (mpu()!.totalUploads > 0 ? `${mpu()!.totalUploads} · ${bytes(mpu()!.totalBytes)}` : t("overview.noUploads")) : ""}
-          detail={mpu() ? (mpu()!.totalUploads > 0 ? `${t("mpu.stale", { n: mpu()!.staleUploads, days: mpu()!.thresholdDays })} · ${money(mpu()!.costPerMonth, mpu()!.currency)}/${t("overview.month")}` : t("overview.noRule")) : ""}
+          detail={mpu() ? (mpu()!.totalUploads > 0 ? `${t("mpu.stale", { n: mpu()!.staleUploads, age: t("common.days", { n: mpu()!.thresholdDays }) })} · ${money(mpu()!.costPerMonth, mpu()!.currency)}/${t("overview.month")}` : t("overview.noRule")) : ""}
         />
       </If>
       <If when={fail("versioning")}>{(e) => <Tile id="versions" icon="file-clock" title={t("overview.versioning")} tone="warn" value={t("overview.failed")} detail={e()} />}</If>

@@ -23,7 +23,41 @@ fn header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
 
 /// The place in the program's code that sent `r`, when it says.
 pub fn caller(r: &Record) -> Option<String> {
-    header(r, CALLER_HEADER).map(|v| v.chars().take(200).collect())
+    header(r, CALLER_HEADER).map(|v| unescape(v).chars().take(200).collect())
+}
+
+/// A header is ASCII: the hook writes other characters of a path or a
+/// function name as `\uXXXX` (or `\xXX`, `\UXXXXXXXX`); they read as written.
+fn unescape(v: &str) -> String {
+    let mut out = String::with_capacity(v.len());
+    let mut rest = v;
+    while let Some(i) = rest.find('\\') {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i + 1..];
+        let width = match tail.as_bytes().first() {
+            Some(b'x') => 2,
+            Some(b'u') => 4,
+            Some(b'U') => 8,
+            _ => 0,
+        };
+        let code = (width > 0)
+            .then(|| tail.get(1..1 + width))
+            .flatten()
+            .and_then(|h| u32::from_str_radix(h, 16).ok())
+            .and_then(char::from_u32);
+        match code {
+            Some(c) => {
+                out.push(c);
+                rest = &tail[1 + width..];
+            }
+            None => {
+                out.push('\\');
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The SDK that sent `r` and its version, from its user agent: `boto3 1.34`,
@@ -145,6 +179,15 @@ mod tests {
             request_headers: headers.iter().map(|(k, v)| Header::new(*k, *v)).collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_place_outside_ascii_reads_as_written() {
+        let r = rec(&[(
+            "x-sonde-caller",
+            r"数\u636e/load.py:3 \u8bfb\u53d6 caf\xe9 \q",
+        )]);
+        assert_eq!(caller(&r).as_deref(), Some(r"数据/load.py:3 读取 café \q"));
     }
 
     #[test]

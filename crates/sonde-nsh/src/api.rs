@@ -45,6 +45,9 @@ struct EndpointInput {
     /// `default`, `profile`, `env`, `imds`, `web-identity`, `process`,
     /// `anonymous`, or `keep` (the configured source, unchanged).
     credentials: String,
+    /// A new endpoint: refused when its id is taken, never replacing one.
+    #[serde(default)]
+    adding: bool,
     #[serde(default)]
     profile: Option<String>,
     #[serde(default)]
@@ -89,6 +92,16 @@ impl Sonde {
     pub fn save_endpoint(input: JsonValue) -> Result<JsonValue, String> {
         let i: EndpointInput = parse(input, "endpoint")?;
         let s = sonde();
+        if i.id.trim().is_empty() {
+            return Err(err_msg("an endpoint needs an id"));
+        }
+        let existing = s.endpoint_config(&i.id);
+        if i.adding && existing.is_some() {
+            return Err(err_msg(format!(
+                "an endpoint with the id \"{}\" exists: choose another id",
+                i.id
+            )));
+        }
         let vendor = i
             .vendor
             .as_deref()
@@ -140,7 +153,18 @@ impl Sonde {
             "anonymous" => CredentialSource::Anonymous,
             other => return Err(err_msg(format!("unknown credential source {other}"))),
         };
-        let mut e = EndpointConfig::new(&i.id, &i.name, &i.url, &i.region, vendor);
+        // an edit changes what the form shows and keeps the rest of the
+        // configuration (static keys, settings the form has no field for)
+        let mut e = match existing {
+            Some(mut e) => {
+                e.name = i.name.clone();
+                e.url = i.url.clone();
+                e.region = i.region.clone();
+                e.vendor = vendor;
+                e
+            }
+            None => EndpointConfig::new(&i.id, &i.name, &i.url, &i.region, vendor),
+        };
         e.path_style = i.path_style;
         e.ca_file = i.ca_file.filter(|c| !c.is_empty()).map(Into::into);
         e.buckets = i.buckets;

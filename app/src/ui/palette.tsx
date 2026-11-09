@@ -9,6 +9,7 @@ import { language, t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { command, history, lastRun, openLastRun, running, stop } from "../run";
+import { checkRequested } from "./updates";
 import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
@@ -38,7 +39,7 @@ function actions(buckets: BucketEntry[]): Action[] {
   const list: Action[] = [];
   AREAS.forEach((a, i) => list.push({ id: `area:${a}`, label: areaLabel(a), group: t("palette.go"), icon: AREA_ICON[a], shortcut: a === "settings" ? "mod+," : a === "activity" ? "mod+shift+a" : `mod+${i + 1}`, run: () => go(a) }));
   if (running()) list.push({ id: "run:stop", label: t("run.stop"), group: t("palette.actions"), icon: "square", run: stop });
-  if (lastRun()) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: lastRun()!.command, run: () => openLastRun(go) });
+  if (lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: lastRun()!.command, run: () => openLastRun(go) });
 
   // the commands run before: the field filled, ready to run again
   history()
@@ -126,7 +127,7 @@ function actions(buckets: BucketEntry[]): Action[] {
     },
   });
   if (!terminal()) list.push({ id: "open-file", label: t("sessions.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "session", "import"], run: () => void openSessionFile() });
-  list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => go("settings") });
+  list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => (checkRequested.update((n) => n + 1), go("settings")) });
   list.push({
     id: "read-only",
     label: t("palette.readOnly"),

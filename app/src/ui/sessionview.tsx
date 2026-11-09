@@ -16,32 +16,92 @@ import { Icon } from "./icon";
 import { Dot, Empty, InWindowMenu, POPUP, rowHeight, terminal, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
-const SHELL = new Set(["for", "while", "until", "if", "case", "cd", "env", "export", "sh", "bash", "zsh", "time", "sudo", "nohup", "exec", "(", "{"]);
+const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
+// steps that set the stage for the program rather than being it
+const STAGE = new Set(["cd", "sleep", "echo", "export", "set", "source", ".", "true", "time", "nice", "exec", "printf", "wait", "nohup"]);
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
+/** A command's shell words as typed, quotes kept (`TOKEN="ab cd"` is one
+ * word), and `;`, `&&`, `||`, `|`, `&` as words of their own: as sonde's
+ * own reading of a command (program.rs) has them. */
+function shellWords(command: string): string[] {
+  const words: string[] = [];
+  let word = "";
+  let quote: string | null = null;
+  const flush = () => {
+    if (word) words.push(word);
+    word = "";
+  };
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (quote) {
+      word += c;
+      if (c === "\\" && quote === '"' && i + 1 < command.length) word += command[++i];
+      else if (c === quote) quote = null;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      word += c;
+    } else if (c === "\\") {
+      word += c + (command[++i] ?? "");
+    } else if (c === ";" || c === "|" || c === "&") {
+      flush();
+      words.push(c !== ";" && command[i + 1] === c ? c + command[++i] : c);
+    } else if (/\s/.test(c)) flush();
+    else word += c;
+  }
+  flush();
+  return words;
+}
+
+const SEPARATOR = new Set([";", "&&", "||", "|", "&"]);
+
 /** The command with the value of every variable it sets hidden
- * (`AWS_SECRET_ACCESS_KEY=…`): what a list, a tooltip or a notification shows. */
+ * (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole: what a list, a tooltip
+ * or a notification shows. */
 export function scrubCommand(command: string): string {
-  return command
-    .trim()
-    .split(/\s+/)
+  return shellWords(command)
     .map((w) => (ASSIGNMENT.test(w) ? `${w.slice(0, w.indexOf("="))}=…` : w))
     .join(" ");
 }
 
 /** What a command runs, for lists: its program's name (past the variables
- * it sets, never one of their values), or the command itself, scrubbed, when
- * it starts with the shell's own words. */
+ * it sets, `env` and its options, never one of their values; of a compound
+ * command the first that is not a step setting the stage), or the command
+ * itself, scrubbed, when it starts with the shell's own words. */
 export function programOf(command: string | null | undefined): string | null {
   if (!command) return null;
-  const words = command.trim().split(/\s+/);
-  const first = words.find((w) => !ASSIGNMENT.test(w) && w !== "env") ?? "";
-  if (!first || SHELL.has(first)) {
-    const c = scrubCommand(command);
-    return c.length > 40 ? `${c.slice(0, 40)}…` : c;
+  const words = shellWords(command);
+  let first: string | null = null;
+  let part: string[] = [];
+  const parts: string[][] = [];
+  for (const w of words) {
+    if (SEPARATOR.has(w)) {
+      parts.push(part);
+      part = [];
+    } else part.push(w);
   }
-  return first.split(/[\\/]/).pop() || null;
+  parts.push(part);
+  for (const p of parts) {
+    let i = 0;
+    while (i < p.length) {
+      if (ASSIGNMENT.test(p[i])) i++;
+      else if (p[i] === "env") {
+        i++;
+        while (i < p.length && (ASSIGNMENT.test(p[i]) || p[i].startsWith("-"))) i += ["-u", "-C", "--unset", "--chdir"].includes(p[i]) ? 2 : 1;
+      } else break;
+    }
+    const w = p[i];
+    if (!w) continue;
+    if (SHELL.has(w)) {
+      const c = scrubCommand(command);
+      return c.length > 40 ? `${c.slice(0, 40)}…` : c;
+    }
+    const name = w.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() || null;
+    if (name && !STAGE.has(name)) return name;
+    first ??= name;
+  }
+  return first;
 }
 
 export const seconds = (s: number) => (s < 10 ? s.toFixed(1) : s.toFixed(0));
@@ -174,7 +234,7 @@ function KindsPreview(props: { profile: Profile; by: "requests" | "time" }) {
 export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; compact?: boolean; slice?: number | null; onSlice?: (i: number | null) => void; shape?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
-    const parts = [t("timeline.operations", { n: s().requests, ops: props.view.episodes.length, secs: seconds(s().seconds) })];
+    const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: seconds(s().seconds) })];
     if (s().errors) parts.push(t("timeline.errors", { n: s().errors }));
     if (s().misses) parts.push(t("timeline.notFound", { n: s().misses }));
     parts.push(`↑${bytes(s().bytesUp)} ↓${bytes(s().bytesDown)}`);
@@ -763,7 +823,7 @@ export function SessionList(props: {
   // where the system has no menus to pop up (a terminal, the web): the
   // same commands in Native Shell's own, on a right press or Shift+F10
   const inWindowMenu = (x: () => { s: SessionInfo; i: number }, body: JSX.Element) => (
-    <InWindowMenu enabled={!props.onContextMenu && !!props.actions && (terminal() || !isAvailable)} actions={() => (props.actions?.(x().s) ?? []).filter((a) => a.name !== "window")}>
+    <InWindowMenu enabled={!props.onContextMenu && !!props.actions && !isAvailable} actions={() => (props.actions?.(x().s) ?? []).filter((a) => a.name !== "window")}>
       {body}
     </InWindowMenu>
   );

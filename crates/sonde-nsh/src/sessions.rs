@@ -30,11 +30,43 @@ struct Recording {
 static RECORDING: Mutex<Option<Recording>> = Mutex::new(None);
 static RUNNING: Mutex<Option<crate::run::Running>> = Mutex::new(None);
 
+/// FNV-1a, 64 bits: which file a session was made from.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// The files opened into sessions, by their contents' digest: `imports.json`.
+fn read_imports(dir: &Path) -> std::collections::BTreeMap<String, String> {
+    std::fs::read(dir.join("imports.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn write_imports(dir: &Path, all: &std::collections::BTreeMap<String, String>) {
+    let tmp = dir.join(format!("imports.json.{}.tmp", std::process::id()));
+    if serde_json::to_vec(all)
+        .ok()
+        .is_some_and(|b| std::fs::write(&tmp, b).is_ok())
+    {
+        let _ = std::fs::rename(&tmp, dir.join("imports.json"));
+    }
+}
+
+/// The platform has no trash (as opposed to moving there failing).
+fn no_trash(e: &str) -> bool {
+    let e = e.to_ascii_lowercase();
+    e.contains("not supported") || e.contains("no trash") || e.contains("or trash")
+}
+
 /// Starts a recording: a local endpoint forwarding to `endpoint`.
 async fn begin(
     endpoint: String,
     policy: String,
     command: Option<String>,
+    cwd: Option<std::path::PathBuf>,
 ) -> Result<JsonValue, String> {
     // a recording starting counts as running: two starts at once would both
     // pass the check below before either set RECORDING
@@ -60,19 +92,17 @@ async fn begin(
     std::fs::create_dir_all(&dir).map_err(err_msg)?;
     let name = command
         .as_deref()
-        .and_then(|c| c.split_whitespace().next())
-        .and_then(|c| {
-            Path::new(c)
-                .file_name()
-                .map(|f| f.to_string_lossy().into_owned())
-        })
+        .and_then(sonde_proxy::program::program_name)
         .unwrap_or_else(|| "recording".into());
     let path = sonde_proxy::session::fresh_path(
         &dir,
         &format!("{}-{name}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
     );
     let cfg = client.config();
-    let header = SessionHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
+    let mut header = SessionHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
+    if let Some(dir) = &cwd {
+        header = header.ran_in(dir);
+    }
     let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
@@ -589,7 +619,7 @@ impl Sessions {
     /// what `policy` (`allow`, `no-delete`, `read-only`) forbids. What to
     /// point an application at, and the session file.
     pub async fn start(endpoint: String, policy: String) -> Result<JsonValue, String> {
-        begin(endpoint, policy, None).await
+        begin(endpoint, policy, None, None).await
     }
 
     /// Runs `command` in a pseudo-terminal with its S3 requests recorded:
@@ -608,7 +638,8 @@ impl Sessions {
         if RUNNING.lock().is_some() {
             return Err(err_msg("a program is running: stop it first"));
         }
-        let view = begin(endpoint, policy, Some(command.clone())).await?;
+        let dir = crate::run::folder(cwd.as_deref());
+        let view = begin(endpoint, policy, Some(command.clone()), dir).await?;
         let (env_set, env_unset, writer, path) = {
             let g = RECORDING.lock();
             let r = g.as_ref().expect("begin started a recording");
@@ -770,10 +801,10 @@ impl Sessions {
     pub async fn compare(a: String, b: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
             let (sa, sb) = (open_session(&a)?, open_session(&b)?);
-            let prices = crate::state::request_prices();
+            let price = |s: &Session| crate::state::request_prices_for(&s.header.endpoint);
             let latency = sonde_proxy::profile::latency_changes(
-                &sonde_proxy::profile::profile(&sa.records, &prices),
-                &sonde_proxy::profile::profile(&sb.records, &prices),
+                &sonde_proxy::profile::profile(&sa.records, &price(&sa)),
+                &sonde_proxy::profile::profile(&sb.records, &price(&sb)),
             );
             Ok(json!({
                 "latency": latency,
@@ -792,10 +823,10 @@ impl Sessions {
     pub async fn compare_runs(before: String, after: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
             let (a, b) = (open_session(&before)?, open_session(&after)?);
-            let prices = crate::state::request_prices();
+            let price = |s: &Session| crate::state::request_prices_for(&s.header.endpoint);
             let (pa, pb) = (
-                sonde_proxy::profile::profile(&a.records, &prices),
-                sonde_proxy::profile::profile(&b.records, &prices),
+                sonde_proxy::profile::profile(&a.records, &price(&a)),
+                sonde_proxy::profile::profile(&b.records, &price(&b)),
             );
             let (oa, ob) = (
                 observations(&a.records, &episodes(&a.records)),
@@ -849,13 +880,17 @@ impl Sessions {
                         p.is_file().then(|| run_point(&p)).flatten()
                     });
                     let latest = points.last();
-                    let past = |a: f64, b: f64| b > 0.0 && a > b * 1.1;
+                    // the limits `sonde check` holds the run to, the default tolerance
+                    let tolerance = sonde_proxy::program::DEFAULT_TOLERANCE;
                     let regressed = match (latest, &base) {
                         (Some(l), Some(b)) if l.path != b.path => {
-                            past(l.requests as f64, b.requests as f64) || past(l.busy_ms, b.busy_ms)
+                            sonde_proxy::program::past_baseline(l, b, tolerance)
                         }
                         _ => false,
                     };
+                    let limits = base
+                        .as_ref()
+                        .map(|b| sonde_proxy::program::baseline_limits(b, tolerance));
                     let newest = runs.last().map(|r| r.0.clone()).unwrap_or_default();
                     (
                         newest.clone(),
@@ -865,7 +900,9 @@ impl Sessions {
                             "latest": runs.last().map(|r| r.1.to_string_lossy().into_owned()),
                             "created": newest,
                             "points": points,
-                            "baseline": base.map(|b| b.path),
+                            "baseline": base.as_ref().map(|b| b.path.clone()),
+                            "baselinePoint": base,
+                            "limits": limits,
                             "regressed": regressed,
                         }),
                     )
@@ -921,7 +958,7 @@ impl Sessions {
                         let s = open_session(p)?;
                         let pr = sonde_proxy::profile::profile(
                             &s.records,
-                            &crate::state::request_prices(),
+                            &crate::state::request_prices_for(&s.header.endpoint),
                         );
                         let ob = observations(&s.records, &episodes(&s.records));
                         let pt = sonde_proxy::program::run_point(
@@ -948,10 +985,18 @@ impl Sessions {
                 }
                 _ => None,
             };
+            // the baseline's own figures, though it be older than the runs shown,
+            // and what a run may grow to before `sonde check` fails it
+            let base_point = base.as_ref().and_then(|b| run_point(b));
+            let limits = base_point.as_ref().map(|b| {
+                sonde_proxy::program::baseline_limits(b, sonde_proxy::program::DEFAULT_TOLERANCE)
+            });
             Ok(json!({
                 "program": key,
                 "runs": runs,
                 "baseline": base.map(|b| b.to_string_lossy().into_owned()),
+                "baselinePoint": base_point,
+                "limits": limits,
                 "check": check,
             }))
         })
@@ -1040,17 +1085,31 @@ impl Sessions {
         } else {
             stem
         };
+        // the same file opened again is the session it made, not a copy
+        let digest = format!("{:016x}", fnv1a(text.as_bytes()));
+        let mut imported = read_imports(&dir);
+        if let Some(p) = imported
+            .get(&digest)
+            .map(|n| dir.join(n))
+            .filter(|p| p.is_file())
+        {
+            return Ok(p.to_string_lossy().into_owned());
+        }
         let path = sonde_proxy::session::fresh_path(&dir, &stem);
         // production traffic: an access log, CloudTrail events, a HAR
         if sonde_proxy::import::detect(&text).is_some() {
             let (_, session) = sonde_proxy::import::import(&text, &stem)?;
             sonde_proxy::import::save(&session, &path).map_err(err_msg)?;
-            return Ok(path.to_string_lossy().into_owned());
+        } else {
+            std::fs::write(&path, text).map_err(err_msg)?;
+            if let Err(e) = Session::open(&path) {
+                let _ = std::fs::remove_file(&path);
+                return Err(format!("{name} is not a sonde session: {e}"));
+            }
         }
-        std::fs::write(&path, text).map_err(err_msg)?;
-        if let Err(e) = Session::open(&path) {
-            let _ = std::fs::remove_file(&path);
-            return Err(format!("{name} is not a sonde session: {e}"));
+        if let Some(n) = path.file_name() {
+            imported.insert(digest, n.to_string_lossy().into_owned());
+            write_imports(&dir, &imported);
         }
         Ok(path.to_string_lossy().into_owned())
     }
@@ -1079,6 +1138,34 @@ impl Sessions {
         };
         sonde_proxy::import::save(&session, &path).map_err(err_msg)?;
         Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// The system's open dialog for a session or a log of traffic (`kinds`:
+    /// the two file types' names, as the app says them), the file added as
+    /// [`Sessions::import_path`]: read here, never through the app's script
+    /// engine, however large. `None` when cancelled.
+    pub async fn pick(
+        sessions_kind: String,
+        traffic_kind: String,
+    ) -> Result<Option<String>, String> {
+        use nsh_core::file_dialog::{FileFilter, OpenDialog};
+        let dialog = OpenDialog::files()
+            .filter(FileFilter::new(sessions_kind, ["sonde"]))
+            .filter(FileFilter::new(
+                traffic_kind,
+                ["log", "txt", "json", "jsonl", "har"],
+            ));
+        let Some(paths) = nsh_core::element::pick_paths(dialog).await? else {
+            return Ok(None);
+        };
+        let Some(path) = paths.into_iter().next() else {
+            return Ok(None);
+        };
+        let path = path.to_string_lossy().into_owned();
+        tokio::task::spawn_blocking(move || Self::import_path(path))
+            .await
+            .map_err(err_msg)?
+            .map(Some)
     }
 
     /// Adds a session file at `path` (dropped on the window) to the sessions
@@ -1121,7 +1208,12 @@ impl Sessions {
             return Err(err_msg("this session is being recorded: stop it first"));
         }
         let abs = std::path::absolute(&p).map_err(err_msg)?;
-        if nsh_core::element::move_to_trash(abs).await.is_err() {
+        // to the trash, which gives it back; deleted only where there is
+        // no trash at all (a terminal, a test host), never because moving failed
+        if let Err(e) = nsh_core::element::move_to_trash(abs).await {
+            if !no_trash(&e) {
+                return Err(err_msg(format!("could not move it to the trash: {e}")));
+            }
             std::fs::remove_file(&p).map_err(err_msg)?;
         }
         forget(&p);
@@ -1161,7 +1253,7 @@ impl Sessions {
         let dir = sonde().paths().shared().join(format!("{stem}-{hash:08x}"));
         let doc = serde_json::to_vec(&sonde_proxy::share::session_json(
             &session,
-            &crate::state::request_prices(),
+            &crate::state::request_prices_for(&session.header.endpoint),
         ))
         .map_err(err_msg)?;
         let site = dir.clone();

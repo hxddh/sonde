@@ -2,7 +2,7 @@
 // markers, incomplete uploads, by storage class, prefix and size.
 
 import { cleanup, signal, Text, View } from "nsh";
-import { bytes, count, money } from "../format";
+import { bytes, count, date, money } from "../format";
 import { t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, notify, prefix, report } from "../store";
@@ -79,7 +79,7 @@ export function Capacity() {
             <Card>
               <View class="flex-row items-baseline gap-3">
                 <Title>{bytes(r().totalBytes)}</Title>
-                <Muted>{`${t("du.cost")}: ${money(r().costPerMonth, r().currency)}/month · ${r().source} · ${count(r().requests)} requests · ${r().scannedAt}`}</Muted>
+                <Muted>{`${t("du.cost")}: ${t("du.perMonth", { cost: money(r().costPerMonth, r().currency) })} · ${r().source} · ${t("du.requests", { n: count(r().requests) })} · ${date(r().scannedAt)}`}</Muted>
               </View>
               <StackBar
                 testID="du-stack"
@@ -91,10 +91,10 @@ export function Capacity() {
               />
               <KeyValue
                 rows={[
-                  [t("du.current"), `${count(r().current.objects)} objects · ${bytes(r().current.bytes)}`],
-                  [t("du.noncurrent"), `${count(r().noncurrent.objects)} versions · ${bytes(r().noncurrent.bytes)}`],
+                  [t("du.current"), `${t("du.objects", { n: count(r().current.objects) })} · ${bytes(r().current.bytes)}`],
+                  [t("du.noncurrent"), `${t("du.versions", { n: count(r().noncurrent.objects) })} · ${bytes(r().noncurrent.bytes)}`],
                   [t("du.markers"), count(r().deleteMarkers)],
-                  [t("du.multipart"), `${count(r().multipart.objects)} uploads · ${bytes(r().multipart.bytes)}`],
+                  [t("du.multipart"), `${t("du.uploads", { n: count(r().multipart.objects) })} · ${bytes(r().multipart.bytes)}`],
                 ]}
               />
             </Card>

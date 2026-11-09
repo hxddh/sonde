@@ -40,7 +40,8 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
     <Dialog
       open={props.plan !== null}
       onOpenChange={(e) => {
-        if (!e.open) close(null);
+        // while it runs it stays: what it did is shown, and the lists rescanned
+        if (!e.open && !running()) close(null);
       }}
       class="m-auto w-[560px] max-w-[95%] gap-3 rounded-(--radius-card) border border-border bg-popover p-5"
       backdropClass={SCRIM}
@@ -57,7 +58,7 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
             <If when={p().document}>
               {(doc) => (
                 <View class="gap-1">
-                  <Muted>new lifecycle document</Muted>
+                  <Muted>{t("confirm.newDocument")}</Muted>
                   <Document text={doc()} testID="confirm-document" />
                 </View>
               )}
@@ -74,7 +75,7 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
               <Field label={t("confirm.type", { hint: p().confirmHint, value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} testID="confirm-input" mono />
             </If>
             <View class="flex-row justify-end gap-2">
-              <Button variant="ghost" label={t("common.cancel")} onPress={() => close(null)} testID="confirm-cancel" />
+              <Button variant="ghost" label={t("common.cancel")} onPress={() => close(null)} disabled={running()} testID="confirm-cancel" />
               <Button variant="destructive" label={t("confirm.run")} disabled={readOnly() || running() || typed().trim() !== p().confirm} onPress={run} testID="confirm-run" />
             </View>
           </View>

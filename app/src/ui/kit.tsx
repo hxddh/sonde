@@ -3,6 +3,7 @@
 import { effect, ErrorBoundary, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
 import { Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
 import { t } from "../i18n";
+import { separators } from "../format";
 import { Icon, type IconName, type Tint } from "./icon";
 
 export const terminal = () => platform.idiom === "terminal";
@@ -564,11 +565,14 @@ export function Page(props: { children: JSX.Element; testID?: string }) {
  * ("1.5 d", "23 h", "176 MiB", "12%", "3 · 172 MiB" by its first figure, in
  * the units it names), else its text. */
 export function sortValue(text: string): number | string {
-  const m = /^\s*[<>~+\u2212-]?\s*([\d.,]+)\s*(ms|s|min|h|d|B|KiB|MiB|GiB|TiB|PiB|%|×)?/.exec(text);
+  // numbers as this locale writes them (1.234,5 in German, 1 234,5 in French)
+  const { group, decimal } = separators();
+  const m = /^\s*[<>~+\u2212-]?\s*([\d.,\u00a0\u202f' ]*\d)\s*(ms|s|min|h|d|B|KiB|MiB|GiB|TiB|PiB|%|×|毫秒|秒|分钟|小时|天)?/.exec(text);
   if (!m) return text.toLowerCase();
-  const n = Number(m[1].replace(/,/g, ""));
+  const digits = m[1].split(group).join("").replace(/[\u00a0\u202f' ]/g, "").split(decimal).join(".");
+  const n = Number(digits);
   if (!Number.isFinite(n)) return text.toLowerCase();
-  const unit: Record<string, number> = { ms: 1, s: 1e3, min: 6e4, h: 3.6e6, d: 8.64e7, B: 1, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3, TiB: 1024 ** 4, PiB: 1024 ** 5 };
+  const unit: Record<string, number> = { ms: 1, s: 1e3, min: 6e4, h: 3.6e6, d: 8.64e7, 毫秒: 1, 秒: 1e3, 分钟: 6e4, 小时: 3.6e6, 天: 8.64e7, B: 1, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3, TiB: 1024 ** 4, PiB: 1024 ** 5 };
   const sign = /^\s*[\u2212-]/.test(text) ? -1 : 1;
   return sign * n * (unit[m[2] ?? ""] ?? 1);
 }

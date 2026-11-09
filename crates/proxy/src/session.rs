@@ -27,6 +27,62 @@ pub struct SessionHeader {
     /// The recorded command line, when sonde started it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The folder the command ran in: running it again runs it there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// The commit the program's code was at, when that folder is a git
+    /// repository (or CI says): a run is tied to the change that made it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitStamp>,
+}
+
+/// The commit a run's code was at.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitStamp {
+    pub commit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Changes not committed yet: the run is of more than the commit.
+    #[serde(default)]
+    pub dirty: bool,
+}
+
+/// The commit `dir` is at: git's own answer, or CI's (`GITHUB_SHA`) where
+/// git is not there to ask.
+pub fn git_stamp(dir: &Path) -> Option<GitStamp> {
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    if let Some(commit) = git(&["rev-parse", "HEAD"]).filter(|c| c.len() >= 7) {
+        let branch =
+            git(&["rev-parse", "--abbrev-ref", "HEAD"]).filter(|b| !b.is_empty() && b != "HEAD");
+        let dirty =
+            git(&["status", "--porcelain", "--untracked-files=no"]).is_some_and(|s| !s.is_empty());
+        return Some(GitStamp {
+            commit,
+            branch,
+            dirty,
+        });
+    }
+    let commit = std::env::var("GITHUB_SHA").ok().filter(|c| c.len() >= 7)?;
+    let branch = ["GITHUB_HEAD_REF", "GITHUB_REF_NAME"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|b| !b.is_empty()));
+    Some(GitStamp {
+        commit,
+        branch,
+        dirty: false,
+    })
 }
 
 /// A session's header alone, from its first line (compressed or not).
@@ -46,7 +102,16 @@ impl SessionHeader {
             url: url.into(),
             region: region.into(),
             command,
+            cwd: None,
+            git: None,
         }
+    }
+
+    /// The folder the program runs in, and the commit its code is at there.
+    pub fn ran_in(mut self, dir: &Path) -> Self {
+        self.cwd = Some(dir.to_string_lossy().into_owned());
+        self.git = git_stamp(dir);
+        self
     }
 }
 

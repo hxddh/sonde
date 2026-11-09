@@ -26,17 +26,29 @@ type Draft = {
 
 const blank = (): Draft => ({ id: "", name: "", url: "", region: "us-east-1", pathStyle: false, caFile: "", vendor: "other", credentials: "default", profile: "", buckets: "" });
 
-const fromView = (e: EndpointView): Draft => ({ id: e.id, name: e.name, url: e.url, region: e.region, pathStyle: e.pathStyle, caFile: "", vendor: e.vendor, credentials: "keep", profile: "", buckets: e.buckets.join(", ") });
+const fromView = (e: EndpointView): Draft => ({ id: e.id, name: e.name, url: e.url, region: e.region, pathStyle: e.pathStyle, caFile: e.caFile ?? "", vendor: e.vendor, credentials: "keep", profile: "", buckets: e.buckets.join(", ") });
 
 function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
   const d = signal<Draft>(props.initial);
   const set = (k: keyof Draft, v: string | boolean) => d.update((x) => ({ ...x, [k]: v }));
   const vendors = api.vendors();
+  // an id from the name: its letters and digits (any script), made unique
+  // among the endpoints there are, so adding never replaces one
+  const idFor = (x: Draft) => {
+    const typed = x.id.trim();
+    if (typed || props.editing) return typed;
+    const base = x.name.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "endpoint";
+    const taken = new Set(endpoints().map((e) => e.id));
+    let id = base;
+    for (let i = 2; taken.has(id); i++) id = `${base}-${i}`;
+    return id;
+  };
   const save = () => {
     const x = d();
     try {
       api.saveEndpoint({
-        id: x.id.trim() || x.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        adding: !props.editing,
+        id: idFor(x),
         name: x.name.trim() || x.id,
         url: x.url.trim(),
         region: x.region.trim(),
@@ -66,7 +78,10 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
       <Title>{props.editing ? t("endpoints.edit") : t("endpoints.add")}</Title>
       <View class="flex-row flex-wrap gap-3">
         <Field class="w-56" label={t("endpoints.field.name")} value={d().name} onChange={(v) => set("name", v)} testID="ep-name" />
-        <Field class="w-40" label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} testID="ep-id" mono />
+        {/* an endpoint's id names it in sessions and settings: set once */}
+        <If when={!props.editing} else={<KeyValue rows={[[t("endpoints.field.id"), d().id]]} />}>
+          <Field class="w-40" label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} testID="ep-id" mono />
+        </If>
         <Choice
           class="w-48"
           label={t("endpoints.field.vendor")}
@@ -113,8 +128,8 @@ function TestResult(props: { report: ConnectivityReport }) {
     const out: [string, string][] = [];
     if (r().credentialsSource) out.push([t("endpoints.credentials"), r().credentialsSource!]);
     if (r().bucketCount !== null) out.push([t("browse.buckets"), String(r().bucketCount)]);
-    if (r().owner) out.push(["Owner", r().owner!]);
-    if (r().server) out.push(["Server", r().server!]);
+    if (r().owner) out.push([t("endpoints.owner"), r().owner!]);
+    if (r().server) out.push([t("endpoints.server"), r().server!]);
     if (r().identity) out.push([t("endpoints.identity"), `${r().identity!.arn ?? ""} (${r().identity!.account ?? ""})`]);
     if (r().identityNote) out.push([t("endpoints.identity"), r().identityNote!]);
     return out;

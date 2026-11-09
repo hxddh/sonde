@@ -25,6 +25,9 @@ pub struct EndpointView {
     pub vendor: String,
     pub vendor_label: String,
     pub has_ca: bool,
+    /// The CA bundle's path (a path, never a secret): an edit keeps it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ca_file: Option<String>,
     /// How credentials are obtained (`profile dev`, `instance role`), not what they are.
     pub credentials: String,
     pub buckets: Vec<String>,
@@ -41,6 +44,7 @@ impl From<&EndpointConfig> for EndpointView {
             vendor: e.vendor.id().into(),
             vendor_label: e.vendor.label().into(),
             has_ca: e.ca_file.is_some(),
+            ca_file: e.ca_file.as_ref().map(|p| p.to_string_lossy().into_owned()),
             credentials: e.credentials.describe(),
             buckets: e.buckets.clone(),
         }
@@ -160,6 +164,26 @@ impl Sonde {
             .iter()
             .map(EndpointView::from)
             .collect()
+    }
+
+    /// Request prices for a session on `endpoint`: writes, reads, lists
+    /// (when other than a write) and the currency. The settings', unless they
+    /// are still S3 Standard's and the endpoint's vendor charges otherwise
+    /// (R2, B2, Wasabi, a store of one's own). Every view prices this way.
+    pub fn request_prices_for(&self, endpoint: &str) -> (f64, f64, Option<f64>, String) {
+        let p = self.settings().prices;
+        let standard = crate::config::Prices::default();
+        let untouched = p.per_1000_writes == standard.per_1000_writes
+            && p.per_1000_reads == standard.per_1000_reads
+            && p.currency == standard.currency;
+        match self
+            .endpoint_config(endpoint)
+            .and_then(|e| e.vendor.request_prices())
+            .filter(|_| untouched)
+        {
+            Some((w, r, l)) => (w, r, l, p.currency),
+            None => (p.per_1000_writes, p.per_1000_reads, None, p.currency),
+        }
     }
 
     pub fn endpoint_config(&self, id: &str) -> Option<EndpointConfig> {

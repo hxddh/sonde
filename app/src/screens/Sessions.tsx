@@ -14,7 +14,7 @@ import { hm } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
-import { away, compareOnOpen, crumb, endpoints, go, notify, openSession, paneOnOpen, openSessionFile, report, sessionsChanged, sessionsTick, shellHeight, shellWidth } from "../store";
+import { away, compareOnOpen, crumb, endpoints, go, notify, openSession, paneOnOpen, openSessionFile, report, sessionsChanged, sessionsTick, shellHeight, shellWidth, startDemo } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
@@ -246,7 +246,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   let opsOrder: (() => number[]) | undefined;
   const operations = (v: SessionView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-    <OperationsTable view={v} rows={rows()} order={(o) => (opsOrder = o)} onSelect={chooseOperation} onContextMenu={isAvailable && !terminal() ? operationMenu : undefined} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || (inspecting() && roomy())} />
+    <OperationsTable view={v} rows={rows()} order={(o) => (opsOrder = o)} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || (inspecting() && roomy())} />
     </View>
   );
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
@@ -282,11 +282,24 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const actions = () => (
     <View class="flex-row items-center gap-1.5">
       {/* the program again, after a change: it opens compared with this run */}
-      <If when={view()?.header.command && !view()!.header.command!.startsWith("replay of ") && endpoints().some((e) => e.id === view()!.header.endpoint)}>
-        <Button small variant="primary" icon="play" label={t("sessions.runAgain")} onPress={() => runAgain(props.path, view()!.header.command!, view()!.header.endpoint)} disabled={!!running()} testID="run-again" />
+      {/* the built-in demo is not saved: running a demo session again starts it */}
+      <If when={view()?.header.command && !view()!.header.command!.startsWith("replay of ") && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
+        <Button
+          small
+          variant="primary"
+          icon="play"
+          label={t("sessions.runAgain")}
+          onPress={async () => {
+            const h = view()!.header;
+            if (!endpoints().some((e) => e.id === h.endpoint) && !(await startDemo())) return;
+            runAgain(props.path, h.command!, h.endpoint, h.cwd);
+          }}
+          disabled={!!running()}
+          testID="run-again"
+        />
       </If>
       <Button small variant="outline" icon="repeat-2" label={t("replay.open")} onPress={() => replaying.set(true)} testID="replay-open" />
-      <If when={isAvailable && !terminal()}>
+      <If when={isAvailable}>
         <Button small variant="outline" icon="git-compare-arrows" label={t("compare.open")} onPress={compareMenu} testID="compare-open" />
         <IconButton icon="ellipsis" label={t("common.more")} onPress={moreMenu} testID="session-more" />
       </If>
@@ -559,7 +572,7 @@ export function Sessions() {
             sessions={shown()}
             selected={selected()}
             onSelect={(p) => selected.set(p)}
-            onContextMenu={isAvailable && !terminal() ? rowMenu : undefined}
+            onContextMenu={isAvailable ? rowMenu : undefined}
             actions={(s) => [
               { name: "window", label: t("sessions.window"), run: () => openInWindow(s.path) },
               { name: "share", label: t("sessions.share"), run: () => void shareSession(s.path) },

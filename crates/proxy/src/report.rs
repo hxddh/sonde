@@ -167,6 +167,7 @@ pub fn redact(s: &mut Session) {
     };
     s.header.url = String::new();
     s.header.endpoint = "endpoint".into();
+    s.header.cwd = None;
     // the program's name only: never a variable set before it (a key, say)
     s.header.command = s
         .header
@@ -279,7 +280,8 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
     let title = s
         .header
         .command
-        .clone()
+        .as_deref()
+        .map(crate::program::scrub_command)
         .unwrap_or_else(|| format!("Session on {}", s.header.endpoint));
     let mut o = String::new();
     let _ = write!(

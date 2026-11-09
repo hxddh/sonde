@@ -2,7 +2,7 @@
 // safety, requests, costs, the request log, updates, files — and saved as
 // they change: a toast says so, with Undo.
 
-import { cleanup, signal, Text, View } from "nsh";
+import { cleanup, effect, signal, Text, untracked, View } from "nsh";
 import { language, t } from "../i18n";
 import { api } from "../native";
 import { notify, refreshSettings, report, settings } from "../store";
@@ -24,6 +24,16 @@ export function SettingsScreen() {
     pending?.();
   });
 
+  // changed elsewhere (the palette's theme or language, another window):
+  // the draft follows, so a later change here never writes the old value back
+  effect(() => {
+    const now = settings();
+    untracked(() => {
+      if (!now || pending || JSON.stringify(now) === JSON.stringify(saved)) return;
+      saved = copyOf(now);
+      draft.set(copyOf(now));
+    });
+  });
   const write = (next: Settings, undo: Settings | null) => {
     try {
       api.saveSettings({ ...next, "read-only": settings()?.["read-only"] ?? true });

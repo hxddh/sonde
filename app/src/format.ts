@@ -5,7 +5,7 @@ import { localeSettings } from "nsh";
 import { lang, t } from "./i18n";
 
 /** The locale to write dates and numbers in: the app's language, the user's region where it matches. */
-function locale(): string {
+export function locale(): string {
   const want = lang();
   const own = localeSettings().languages.find((l) => l.toLowerCase().startsWith(want));
   return own ?? (want === "zh" ? "zh-CN" : "en-US");
@@ -113,4 +113,13 @@ export function middle(text: string, max = 48): string {
   if (text.length <= max) return text;
   const tail = Math.ceil((max - 1) * 0.55);
   return `${text.slice(0, max - 1 - tail)}…${text.slice(-tail)}`;
+}
+
+/** The characters this locale groups thousands with and marks decimals with. */
+export function separators(): { group: string; decimal: string } {
+  const parts = new Intl.NumberFormat(locale()).formatToParts(12345.6);
+  return {
+    group: parts.find((p) => p.type === "group")?.value ?? ",",
+    decimal: parts.find((p) => p.type === "decimal")?.value ?? ".",
+  };
 }

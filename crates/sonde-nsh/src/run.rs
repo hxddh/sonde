@@ -43,6 +43,15 @@ type Spawned = (
     Running,
 );
 
+/// The folder a program runs in: the one asked for, else the home folder.
+pub fn folder(cwd: Option<&str>) -> Option<std::path::PathBuf> {
+    cwd.filter(|d| !d.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(Into::into))
+        .or_else(|| std::env::var_os("USERPROFILE").map(Into::into))
+        .or_else(|| std::env::current_dir().ok())
+}
+
 /// Starts `command` through the platform's shell in a new terminal of
 /// `cols`×`rows`, with `set` added to and `unset` removed from the
 /// environment. Output arrives on the channel, which closes when the
@@ -72,12 +81,7 @@ pub fn spawn(
         c.args(["-c", command]);
         c
     };
-    let dir = cwd
-        .filter(|d| !d.trim().is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(Into::into))
-        .or_else(|| std::env::current_dir().ok());
-    if let Some(d) = dir {
+    if let Some(d) = folder(cwd) {
         cmd.cwd(d);
     }
     for k in unset {

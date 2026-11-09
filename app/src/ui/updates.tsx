@@ -3,7 +3,7 @@
 // GitHub Releases); elsewhere — a system install, the terminal binary — it
 // links to the release.
 
-import { openUrl, signal, Text, View } from "nsh";
+import { effect, openUrl, signal, Text, untracked, View } from "nsh";
 import { type AppUpdate, checkForPackage, checkForUpdate, downloadPackage, downloadUpdate, installAndRestart, type PackageUpdate, restartToPackage, shellInfo } from "nsh/updater";
 import { t } from "../i18n";
 import { report } from "../store";
@@ -17,6 +17,10 @@ type State =
   | { kind: "downloading"; update: AppUpdate; share: number }
   // the app's code alone, signed: no new app to install, a restart runs it
   | { kind: "package"; update: PackageUpdate; share: number | null };
+
+/** Asks the Updates section to check now (the palette's "Check for updates"). */
+export const checkRequested = signal(0);
+let answered = 0;
 
 export function Updates() {
   const state = signal<State>({ kind: "idle" });
@@ -43,6 +47,14 @@ export function Updates() {
       report(e);
     }
   };
+  // asked from elsewhere: Settings opens on this section, and it checks
+  effect(() => {
+    const asked = checkRequested();
+    if (asked > answered) {
+      answered = asked;
+      untracked(() => void check());
+    }
+  });
   const install = async (u: AppUpdate) => {
     if (!u.canInstall) return void openUrl(u.url);
     state.set({ kind: "downloading", update: u, share: 0 });

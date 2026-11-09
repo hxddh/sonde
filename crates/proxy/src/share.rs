@@ -41,10 +41,16 @@ pub fn session_json(s: &Session, prices: &crate::profile::RequestPrices) -> Valu
             v
         })
         .collect();
+    // a page meant for others: a variable set before the program (a key,
+    // say) never reaches it
+    let mut header = s.header.clone();
+    header.command = header.command.as_deref().map(crate::program::scrub_command);
+    // the folder names this machine's user
+    header.cwd = None;
     json!({
         "format": "sonde-share",
         "version": 1,
-        "header": s.header,
+        "header": header,
         "summary": summarize(&s.records),
         "episodes": eps,
         "observations": observations(&s.records, &eps),
@@ -147,6 +153,30 @@ pub async fn serve(listener: tokio::net::TcpListener, dir: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::inside;
+
+    #[test]
+    fn a_shared_page_never_carries_a_secret_set_before_the_program() {
+        let s = crate::session::Session {
+            header: crate::session::SessionHeader {
+                format: "sonde-session".into(),
+                version: 1,
+                created: chrono::Utc::now(),
+                endpoint: "e".into(),
+                url: String::new(),
+                region: String::new(),
+                command: Some("AWS_SECRET_ACCESS_KEY=hunter2 python etl.py".into()),
+                cwd: None,
+                git: None,
+            },
+            records: vec![],
+            logs: vec![],
+        };
+        let doc = super::session_json(&s, &Default::default()).to_string();
+        assert!(!doc.contains("hunter2"), "{doc}");
+        assert!(doc.contains("AWS_SECRET_ACCESS_KEY=… python etl.py"));
+        let page = crate::report::html(&s, &Default::default());
+        assert!(!page.contains("hunter2"));
+    }
 
     #[test]
     fn only_the_sites_own_files_are_served() {

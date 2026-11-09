@@ -21,13 +21,16 @@ def _sonde_place(lib, here):
                 shown = p
             if shown.startswith(".."):
                 shown = p
-            return "%s:%d %s" % (shown, f.f_lineno, f.f_code.co_name)
+            place = "%s:%d %s" % (shown, f.f_lineno, f.f_code.co_name)
+            # a header is ASCII: other characters are written as escapes
+            return place.encode("ascii", "backslashreplace").decode("ascii")
         f = f.f_back
     return None
 
 
 def _sonde_install():
     import importlib.util
+    import site
     import sysconfig
 
     if importlib.util.find_spec("botocore") is None:
@@ -36,15 +39,38 @@ def _sonde_install():
 
     here = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
     paths = sysconfig.get_paths()
-    lib = tuple(
-        sorted(
-            {paths[k].replace("\\", "/") for k in ("stdlib", "platstdlib", "purelib", "platlib") if paths.get(k)},
-            key=len,
-            reverse=True,
-        )
-    )
+    dirs = {paths[k] for k in ("stdlib", "platstdlib", "purelib", "platlib") if paths.get(k)}
+    # installed packages live in more places than sysconfig names (Debian's
+    # dist-packages, the user's site)
+    try:
+        dirs.update(site.getsitepackages())
+    except Exception:
+        pass
+    try:
+        dirs.add(site.getusersitepackages())
+    except Exception:
+        pass
+    dirs.update(p for p in sys.path if p and ("site-packages" in p or "dist-packages" in p))
+    lib = tuple(sorted({d.replace("\\", "/") for d in dirs if d}, key=len, reverse=True))
+    # only requests to sonde carry the header: never one to another store
+    from urllib.parse import urlsplit
 
-    def add(request, **kwargs):
+    endpoint = urlsplit(os.environ.get("AWS_ENDPOINT_URL", ""))
+
+    def to_sonde(url):
+        try:
+            u = urlsplit(str(url))
+            host = u.hostname or ""
+            return bool(endpoint.hostname) and u.port == endpoint.port and (host == endpoint.hostname or host.endswith("." + endpoint.hostname))
+        except ValueError:
+            return False
+
+    def add(request, signature_version=None, **kwargs):
+        # a presigned URL is used by someone else, without this header
+        if signature_version and ("query" in signature_version or "presign" in signature_version):
+            return
+        if not to_sonde(getattr(request, "url", "")):
+            return
         place = _sonde_place(lib, here)
         if place:
             request.headers["x-sonde-caller"] = place[:200]

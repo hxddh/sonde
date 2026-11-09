@@ -57,11 +57,13 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         None => super::record::newest_session(s)?,
     };
     let mut session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    // priced before redaction hides the endpoint
+    let prices = super::record::request_prices_for(s, &session.header.endpoint);
     if a.redact {
         sonde_proxy::report::redact(&mut session);
     }
     if a.html {
-        let page = sonde_proxy::report::html(&session, &super::record::request_prices(s));
+        let page = sonde_proxy::report::html(&session, &prices);
         match &a.out {
             Some(p) => {
                 std::fs::write(p, page)?;
@@ -71,10 +73,7 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         }
         return Ok(0);
     }
-    let doc = serde_json::to_vec(&share::session_json(
-        &session,
-        &super::record::request_prices(s),
-    ))?;
+    let doc = serde_json::to_vec(&share::session_json(&session, &prices))?;
     if a.json {
         match &a.out {
             Some(p) => std::fs::write(p, &doc)?,

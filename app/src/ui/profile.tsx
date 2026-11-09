@@ -19,8 +19,10 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
   const zoomFrom = signal<number | null>(null);
   const zoom = signal<[number, number] | null>(null);
   const pick = (i: number | null) => {
-    if (i === null) return;
+    // pressing the first slice again lets it go
+    if (i === null) return zoomFrom.set(null);
     const from = zoomFrom();
+    if (from === i && !zoom()) return zoomFrom.set(null);
     if (from === null) return zoomFrom.set(i);
     batch(() => {
       zoom.set([Math.min(from, i), Math.max(from, i)]);

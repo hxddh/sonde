@@ -9,6 +9,7 @@ export interface EndpointView {
   vendor: string;
   vendorLabel: string;
   hasCa: boolean;
+  caFile?: string | null;
   credentials: string;
   buckets: string[];
 }
@@ -589,10 +590,27 @@ export interface BudgetVerdict {
 }
 
 /** A program over its runs, its baseline and this run checked against it. */
+/** The commit a run's code was at. */
+export interface GitStamp {
+  commit: string;
+  branch?: string | null;
+  dirty: boolean;
+}
+
+/** What a run may use against its baseline before `sonde check` fails it. */
+export interface BaselineLimits {
+  requests: number;
+  waitingMs: number;
+  cost: number;
+  errors: number;
+}
+
 export interface ProgramHistory {
   program: string;
   runs: RunPoint[];
   baseline: string | null;
+  baselinePoint?: RunPoint | null;
+  limits?: BaselineLimits | null;
   check: { passed: boolean; verdicts: BudgetVerdict[]; newWarnings: string[] } | null;
 }
 
@@ -614,7 +632,7 @@ export interface RunChange {
 
 export interface SessionView {
   path: string;
-  header: { endpoint: string; url: string; region: string; created: string; command?: string | null };
+  header: { endpoint: string; url: string; region: string; created: string; command?: string | null; cwd?: string | null; git?: GitStamp | null };
   summary: SessionSummary;
   profile: Profile;
   whatIf?: WhatIf | null;

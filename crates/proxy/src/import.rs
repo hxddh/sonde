@@ -334,7 +334,8 @@ fn har(text: &str) -> Result<Vec<Record>, String> {
                 None => ((!path.is_empty()).then_some(path), None),
             },
         };
-        let query = url.query().map(query_of).unwrap_or_default();
+        let mut query = url.query().map(query_of).unwrap_or_default();
+        query.retain(|(k, _)| !crate::PRESIGN_PARAMS.contains(&k.as_str()));
         let headers: Vec<(String, String)> = req["headers"]
             .as_array()
             .map(|h| {
@@ -397,7 +398,21 @@ fn har(text: &str) -> Result<Vec<Record>, String> {
         if let Some(op) = e["_sonde"]["operation"].as_str() {
             r.operation = op.to_string();
         }
-        r.url = url.to_string();
+        // a presigned URL's signature, key and token never reach the session
+        let mut shown = url.clone();
+        if url.query().is_some() {
+            let kept: Vec<(String, String)> = url
+                .query_pairs()
+                .filter(|(k, _)| !crate::PRESIGN_PARAMS.contains(&k.as_ref()))
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
+            if kept.is_empty() {
+                shown.set_query(None);
+            } else {
+                shown.query_pairs_mut().clear().extend_pairs(kept);
+            }
+        }
+        r.url = shown.to_string();
         let size = |v: &Value| v.as_i64().filter(|n| *n >= 0).map(|n| n as u64);
         r.request_bytes = size(&req["bodySize"]);
         r.response_bytes = size(&e["response"]["bodySize"]);
@@ -487,7 +502,7 @@ mod tests {
             )
         };
         let har = format!(
-            r#"{{"log":{{"version":"1.2","entries":[{},{},{},{}]}}}}"#,
+            r#"{{"log":{{"version":"1.2","entries":[{},{},{},{},{}]}}}}"#,
             entry("https://cdn.example.com/js/app.js", "", ""),
             entry("https://example.com/", "", ""),
             entry(
@@ -500,14 +515,33 @@ mod tests {
                 "",
                 r#"{"name":"x-amz-request-id","value":"1"}"#
             ),
+            entry(
+                "https://b.s3.amazonaws.com/k3?versionId=7&X-Amz-Credential=AKIAX&X-Amz-Security-Token=TOK&X-Amz-Signature=SIG",
+                "",
+                ""
+            ),
         );
         let (_, s) = import(&har, "browser").unwrap();
+        // a presigned URL's credentials never reach the session
+        let text = serde_json::to_string(&s.records).unwrap();
+        for secret in ["AKIAX", "TOK", "SIG"] {
+            assert!(!text.contains(secret), "{secret} kept: {text}");
+        }
+        assert!(
+            s.records[2].url.ends_with("/k3?versionId=7"),
+            "{}",
+            s.records[2].url
+        );
         let keys: Vec<_> = s
             .records
             .iter()
             .map(|r| r.key.clone().unwrap_or_default())
             .collect();
-        assert_eq!(keys, ["k", "k2"], "the page and its script are not S3's");
+        assert_eq!(
+            keys,
+            ["k", "k2", "k3"],
+            "the page and its script are not S3's"
+        );
     }
 
     #[test]

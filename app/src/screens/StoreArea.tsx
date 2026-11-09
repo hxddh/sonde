@@ -46,12 +46,13 @@ const bucketId = (b: string) => `b:${b}`;
 const prefixId = (b: string, p: string) => `p:${b}/${p}`;
 const LOADING = "loading";
 
-/** The prefixes directly under `p` in a bucket: its first page of a delimited listing. */
+/** The prefixes directly under `p` in a bucket, from its delimited listing:
+ * past the first page too (folders sort among the keys), five pages at most. */
 async function prefixesOf(ep: string, b: string, p: string): Promise<Entry[]> {
   const l = new Listing(ep, b, p, "/");
   try {
-    await l.loadMore();
-    return (l.rows(0, 1000) as Entry[]).filter((e) => e.isPrefix);
+    for (let page = 0; page < 5 && !l.done; page++) await l.loadMore();
+    return (l.rows(0, l.count) as Entry[]).filter((e) => e.isPrefix);
   } finally {
     l.dispose();
   }

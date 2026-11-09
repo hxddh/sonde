@@ -22,6 +22,9 @@ pub struct RequestPrices {
     pub per_1000_writes: f64,
     pub per_1000_reads: f64,
     pub currency: String,
+    /// Lists, when they cost other than a write (B2's class C).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_1000_lists: Option<f64>,
 }
 
 impl Default for RequestPrices {
@@ -31,6 +34,7 @@ impl Default for RequestPrices {
             per_1000_writes: 0.005,
             per_1000_reads: 0.0004,
             currency: "USD".into(),
+            per_1000_lists: None,
         }
     }
 }
@@ -505,7 +509,10 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let wall_us = (t1 - t0).max(1);
     let busy_us = union_us(records.iter().map(|r| (start_us(r), end_us(r))).collect());
     let ms = |us: i64| us as f64 / 1000.0;
-    let price = |c: Class| match c {
+    let price = |r: &Record| match class(r) {
+        Class::Write if r.operation.starts_with("List") => {
+            prices.per_1000_lists.unwrap_or(prices.per_1000_writes) / 1000.0
+        }
         Class::Write => prices.per_1000_writes / 1000.0,
         Class::Read => prices.per_1000_reads / 1000.0,
         Class::Free => 0.0,
@@ -541,7 +548,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
                 errors: rs.iter().filter(|r| r.is_error() && !is_miss(r)).count(),
                 bytes_up: rs.iter().map(|r| r.request_bytes.unwrap_or(0)).sum(),
                 bytes_down: rs.iter().map(|r| r.response_bytes.unwrap_or(0)).sum(),
-                cost: rs.iter().map(|r| price(class(r))).sum(),
+                cost: rs.iter().map(|r| price(r)).sum(),
             };
             (g, rs)
         })
@@ -675,7 +682,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         writes: count(Class::Write),
         reads: count(Class::Read),
         free: count(Class::Free),
-        amount: records.iter().map(|r| price(class(r))).sum(),
+        amount: records.iter().map(&price).sum(),
         currency: prices.currency.clone(),
     };
     // prefixes: their requests, their busiest second, and when
@@ -709,7 +716,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             peak_per_second: peak_second(&all),
             peak_reads: peak_second(&reads),
             peak_writes: peak_second(&writes),
-            cost: rs.iter().map(|r| price(class(r))).sum(),
+            cost: rs.iter().map(|r| price(r)).sum(),
         }
     };
     let mut prefixes: Vec<PrefixStat> = ranked

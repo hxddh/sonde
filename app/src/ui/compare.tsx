@@ -7,7 +7,7 @@ import { ms } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
-import { endpoint, endpoints, go, report } from "../store";
+import { endpoint, endpoints, go, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange } from "../types";
 import { Icon } from "./icon";
 import { Badge, Button, Check, Choice, Heading, Loading, Muted, rowHeight, SCRIM, Segmented, terminal, TYPE } from "./kit";
@@ -308,18 +308,24 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
       const stores = [ep, ...also().filter((x) => x !== ep)];
       if (stores.length === 1) {
         const r = (await api.sessions.replay(props.path, ep, p.prefix)) as { path: string };
+        sessionsChanged();
         props.onClose();
         props.onDone(r.path);
         return;
       }
-      const done = await Promise.all(
+      // each store's replay on its own: one that fails leaves the others' results
+      const settled = await Promise.allSettled(
         stores.map(async (id) => {
           const r = (await api.sessions.replay(props.path, id, p.prefix)) as { path: string; comparison: { compared: number; differences: { count: number }[] } };
           const c = (await api.sessions.compare(props.path, r.path)) as { latency?: LatencyChange[] };
           return { endpoint: endpoints().find((e) => e.id === id)?.name ?? id, path: r.path, compared: r.comparison.compared, differ: r.comparison.differences.reduce((s, d) => s + d.count, 0), latency: c.latency ?? [] };
         }),
       );
+      for (const x of settled) if (x.status === "rejected") report(x.reason);
+      const done = settled.flatMap((x) => (x.status === "fulfilled" ? [x.value] : []));
       runs.set(done);
+      // the replays are sessions: the list shows them
+      sessionsChanged();
     } catch (e) {
       report(e);
     } finally {
@@ -345,7 +351,7 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
       <If when={plan()}>
         {(p) => (
           <View class="gap-1" testID="replay-plan">
-            <Text class="text-body text-foreground">{t("replay.plan", { n: p().plan.requests, writes: p().plan.writes, deletes: p().plan.deletes, prefix: p().prefix, buckets: p().buckets.join(", ") })}</Text>
+            <Text class="text-body text-foreground">{t("replay.plan", { n: p().plan.requests, writes: t("replay.writes", { n: p().plan.writes }), deletes: t("replay.deletes", { n: p().plan.deletes }), prefix: p().prefix, buckets: p().buckets.join(", ") })}</Text>
             <Muted class="text-small">{t("replay.cleanup", { prefix: p().prefix })}</Muted>
             <Each of={Object.entries(p().plan.skipped)}>{(e) => <Muted class="text-small">{`${e()[1]} × ${e()[0]}`}</Muted>}</Each>
             <If when={p().readOnly}>

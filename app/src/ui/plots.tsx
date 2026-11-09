@@ -111,7 +111,8 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     // numbers a few slices apart would print over each other: they share the first one's place
     const near = Math.max(2, Math.round(rows().length / 40));
     const at = (props.marks ?? [])
-      .map((k) => ({ n: k.n, i: Math.floor(k.tMs / props.profile.binMs) - from() }))
+      // a finding at the session's last instant is in its last slice
+      .map((k) => ({ n: k.n, i: Math.min(Math.floor(k.tMs / props.profile.binMs), slices(props.profile).length - 1) - from() }))
       .filter((k) => k.i >= 0 && k.i < rows().length)
       .sort((a, b) => a.i - b.i || a.n - b.n);
     let last = -Infinity;
@@ -249,7 +250,12 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
   const has = (b: Profile["rate"][number]) => b.ok + b.miss + b.client + b.server > 0;
   const answered = () => rows().filter(has);
   const gap = (f: (b: Profile["rate"][number]) => number) => (b: Profile["rate"][number]) => (has(b) ? f(b) : (undefined as unknown as number));
-  const top = () => Math.max(...answered().map((b) => b.p99Ms), 1) * 1.15;
+  // the scale of what is shown: the zoomed stretch's slices only
+  const inView = () => {
+    const d = props.domainMs;
+    return d ? answered().filter((b) => b.tMs >= d[0] && b.tMs < d[1]) : answered();
+  };
+  const top = () => Math.max(...inView().map((b) => b.p99Ms), 1) * 1.15;
   const hovered = signal<number | null>(null);
   const label = () => {
     const last = answered()[answered().length - 1];
@@ -857,10 +863,16 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
   const runs = () => props.history.runs;
   const values = () => runs().map((r) => r[props.measure] as number);
   const base = () => {
-    const b = runs().find((r) => r.path === props.history.baseline);
+    const b = props.history.baselinePoint ?? runs().find((r) => r.path === props.history.baseline);
     return b ? (b[props.measure] as number) : null;
   };
-  const hi = () => Math.max(...values(), base() ?? 0, 1e-9) * 1.25;
+  // what a run may grow to before sonde check fails it (no band for warnings)
+  const limit = () => {
+    const l = props.history.limits;
+    if (!l) return null;
+    return props.measure === "requests" ? l.requests : props.measure === "busyMs" ? l.waitingMs : props.measure === "cost" ? l.cost : null;
+  };
+  const hi = () => Math.max(...values(), base() ?? 0, limit() ?? 0, 1e-9) * 1.25;
   const hovered = signal<number | null>(null);
   const shown = () => runs()[hovered() ?? runs().length - 1];
   const last = () => runs().length - 1;
@@ -890,8 +902,10 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
           class="mr-1 h-16"
         >
           <If when={base() !== null}>
-            {/* the baseline and what a run may grow to before sonde check fails it (10%) */}
-            <Area y0={() => base()! * 0.9} y1={() => base()! * 1.1} curve="linear" class="fill-muted-foreground/12" />
+            {/* the baseline, and up to what sonde check allows */}
+            <If when={limit() !== null}>
+              <Area y0={() => base()!} y1={() => limit()!} curve="linear" class="fill-muted-foreground/12" />
+            </If>
             <Grid y={[base()!]} class="stroke-muted-foreground/60" style={{ strokeDasharray: "3 3" }} />
           </If>
           <Line curve="linear" class="stroke-chart-1 stroke-2" dot dotClass="size-1.5 rounded-full bg-chart-1" hoverDotClass="size-2.5 rounded-full border-2 border-card bg-chart-1" />

@@ -69,7 +69,11 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
   const progress = signal<string | null>(null);
   let downloadJob: string | null = null;
   cleanup(() => {
-    if (downloadJob) api.cancelJob(downloadJob);
+    // another object chosen, or the panel closed: the download stops, and says so
+    if (downloadJob) {
+      api.cancelJob(downloadJob);
+      notify(t("browse.downloadStopped"));
+    }
   });
   const download = async () => {
     try {
@@ -187,10 +191,10 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                     label={t("browse.expires")}
                     value={presignSecs()}
                     items={[
-                      { value: "300", title: "5 min" },
-                      { value: "3600", title: "1 h" },
-                      { value: "86400", title: "1 day" },
-                      { value: "604800", title: "7 days" },
+                      { value: "300", title: t("browse.expires5m") },
+                      { value: "3600", title: t("browse.expires1h") },
+                      { value: "86400", title: t("browse.expires1d") },
+                      { value: "604800", title: t("browse.expires7d") },
                     ]}
                     onChange={(v) => presignSecs.set(v)}
                   />
@@ -229,12 +233,21 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   const searchState = signal<string | null>(null);
   const flat = signal(false);
   const loadingAll = signal(false);
+  // a press on Refresh lists the same place again
+  const reload = signal(0);
   let searchJob: string | null = null;
+  const stopSearch = () => {
+    if (searchJob) api.cancelJob(searchJob);
+    searchJob = null;
+  };
 
   effect(() => {
     const ep = endpoint();
     const b = bucket();
     const p = prefix();
+    reload();
+    // a search of the place before ends with it
+    untracked(stopSearch);
     if (!ep || !b) return;
     const l = new Listing(ep, b, p, flat() ? null : "/");
     batch(() => {
@@ -246,9 +259,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     untracked(() => void load(l));
     cleanup(() => l.dispose());
   });
-  cleanup(() => {
-    if (searchJob) api.cancelJob(searchJob);
-  });
+  cleanup(stopSearch);
 
   async function load(l: Listing) {
     if (loading() || l.done) return;
@@ -309,22 +320,28 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     const ep = endpoint();
     const b = bucket();
     if (!ep || !b || !searchText()) return;
-    if (searchJob) api.cancelJob(searchJob);
+    stopSearch();
     searchHits.set([]);
+    const where = `${ep}|${b}|${prefix()}`;
+    const here = () => `${endpoint()}|${bucket()}|${prefix()}` === where;
     try {
-      searchJob = await api.search(ep, b, prefix(), searchText());
-      const r = await watch<{ matches: Entry[]; scanned: number }>(searchJob, (ev) => {
+      const job = await api.search(ep, b, prefix(), searchText());
+      searchJob = job;
+      const r = await watch<{ matches: Entry[]; scanned: number }>(job, (ev) => {
+        if (!here() || searchJob !== job) return;
         if (ev.type === "Progress") searchState.set(ev.progress.message);
         if (ev.type === "Partial") searchHits.update((h) => [...(h ?? []), ...(ev.data as Entry[])]);
       });
+      // what another place's search found is not shown here
+      if (!here() || searchJob !== job) return;
       batch(() => {
         searchHits.set(r.matches);
-        searchState.set(`${count(r.scanned)} scanned`);
+        searchState.set(t("browse.scanned", { n: count(r.scanned) }));
       });
+      searchJob = null;
     } catch (e) {
-      report(e);
+      if (here()) report(e);
     }
-    searchJob = null;
   };
 
   const applyFilter = (v: string) => {
@@ -353,7 +370,8 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       : [{ label: t("browse.detail"), icon: "info", run: () => props.onSelect(e) }, ...copies, { label: t("browse.versions"), icon: "file-clock", run: () => batch(() => (versionKey.set(e.key), go("versions"))) }];
   };
   const menuRow = signal<number | null>(null);
-  const systemMenus = isAvailable && !terminal();
+  // the system's menus, a framed box in a terminal; the in-window one on the web
+  const systemMenus = isAvailable;
   const menu = (row: number) => {
     menuRow.set(row);
     if (!systemMenus) return;
@@ -369,7 +387,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           {t("browse.objects", { n: count(total()) })}
           {done() ? "" : ` · ${t("browse.more")}`}
         </Text>
-        <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={() => prefix.set(prefix())} />
+        <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={() => reload.update((n) => n + 1)} testID="listing-refresh" />
       </View>
       <View class="flex-row flex-wrap items-center gap-2">
         <View class="h-8 min-w-[240px] flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2.5 focus-within:border-ring">
@@ -393,14 +411,17 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           </If>
         </View>
         <Toggle label={t("browse.flat")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
-        <Button small variant="outline" label={loadingAll() ? t("common.loading") : t("browse.loadAll")} onPress={loadAll} disabled={done() || loadingAll()} testID="load-all" />
+        {/* nothing to load once every row is here */}
+        <If when={!done()}>
+          <Button small variant="outline" label={t("browse.loadAll")} onPress={loadAll} disabled={loadingAll()} testID="load-all" class="min-w-24" />
+        </If>
       </View>
       <If when={searchHits()}>
         {(hits) => (
           <Card>
             <View class="flex-row items-center gap-2">
               <Text class="flex-1 text-body font-medium text-foreground">
-                {t("browse.matches", { n: hits().length })} {searchState() ? `· ${searchState()}` : ""}
+                {hits().length > 50 ? t("browse.matchesShown", { shown: 50, n: count(hits().length) }) : t("browse.matches", { n: hits().length })} {searchState() ? `· ${searchState()}` : ""}
               </Text>
               <IconButton icon="x" label={t("common.close")} onPress={() => searchHits.set(null)} />
             </View>
@@ -507,7 +528,10 @@ export function Browse() {
                       <IconButton icon="x" label={t("common.close")} onPress={() => selected.set(null)} testID="detail-close" />
                     </View>
                     <Scroll class="flex-1" contentClass="p-4">
-                      <Detail entry={e()} />
+                      {/* one object's: what was asked for another never shows here */}
+                      <Each of={[e()]} key={(x) => x.key}>
+                        {(x) => <Detail entry={x()} />}
+                      </Each>
                     </Scroll>
                   </View>
                 )}

@@ -22,7 +22,7 @@ export interface Running {
 /** The running program, or null. */
 export const running = signal<Running | null>(null);
 /** How the last run ended. */
-export const lastRun = signal<(RunResult & { command: string; killed: boolean }) | null>(null);
+export const lastRun = signal<(RunResult & { command: string; killed: boolean; removed?: boolean }) | null>(null);
 /** The newest command, for the field. */
 export const command = signal("");
 /** When the running program started (ms since the epoch). */
@@ -101,9 +101,18 @@ export function resize(cols: number, rows: number) {
   if (running()) api.sessions.resize(cols, rows);
 }
 
-async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
+async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: string | null) {
   try {
     const v = await api.sessions.analyse(r.path);
+    // run again from a session: this run, compared with the one before it
+    // (a run that made no request has nothing to compare)
+    if (before && !killed && v.summary.requests > 0) {
+      batch(() => {
+        compareOnOpen.set({ before, after: r.path });
+        openSession.set(r.path);
+        go("sessions");
+      });
+    }
     // a run that made no request leaves nothing to read: it is not kept, unless asked
     if (v.summary.requests === 0) {
       let keep = false;
@@ -112,7 +121,12 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
         if (keep) return;
         void api.sessions
           .remove(r.path)
-          .then(() => sessionsChanged())
+          .then(() => {
+            // nothing left to open from Run
+            const last = lastRun();
+            if (last?.path === r.path) lastRun.set({ ...last, removed: true });
+            sessionsChanged();
+          })
           .catch(() => {
             // already gone
           });
@@ -164,9 +178,11 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
 /** Runs a session's command again, on its endpoint; once it ends, the new
  * run opens compared with the one before: change the program, then see what
  * the change did. */
-export function runAgain(path: string, cmd: string, endpoint: string) {
+export function runAgain(path: string, cmd: string, endpoint: string, dir?: string | null) {
   if (running()) return;
   command.set(cmd);
+  // where it ran before, when the session says
+  if (dir) cwd.set(dir);
   againOf = path;
   go("run");
   start(cmd, endpoint);
@@ -207,20 +223,14 @@ export function start(cmd: string, endpoint: string) {
         lastRun.set({ ...r, command: cmd, killed });
       });
       sessionsChanged();
-      // run again from a session: this run, compared with the one before it
       const before = againOf;
       againOf = null;
-      if (before && !killed && r.path) {
-        batch(() => {
-          compareOnOpen.set({ before, after: r.path });
-          openSession.set(r.path);
-          go("sessions");
-        });
-      }
       // this run's own: a new run may start before the analysis is back
-      void tellTheUser(r, cmd, killed);
+      void tellTheUser(r, cmd, killed, r.path ? before : null);
     })
     .catch((e) => {
+      // a run that never started compares with nothing
+      againOf = null;
       running.set(null);
       report(e);
     });
@@ -240,7 +250,7 @@ export function input(data: string) {
 /** Opens the last run in Sessions, lined up with its output. */
 export function openLastRun(go: (s: "sessions") => void) {
   const r = lastRun();
-  if (!r) return;
+  if (!r || r.removed) return;
   openSession.set(r.path);
   go("sessions");
 }

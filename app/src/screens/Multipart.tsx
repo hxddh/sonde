@@ -92,7 +92,7 @@ export function Multipart() {
               <Card class="min-w-48 flex-1">
                 <Muted>{t("mpu.uploads", { n: r().totalUploads })}</Muted>
                 <Title>{bytes(r().totalBytes)}</Title>
-                <Text class={r().staleUploads ? "text-body text-warn" : "text-body text-muted-foreground"}>{t("mpu.stale", { n: r().staleUploads, days: r().thresholdDays })}</Text>
+                <Text class={r().staleUploads ? "text-body text-warn" : "text-body text-muted-foreground"}>{t("mpu.stale", { n: r().staleUploads, age: t("common.days", { n: r().thresholdDays }) })}</Text>
               </Card>
               <Card class="min-w-48 flex-1">
                 <Muted>{t("mpu.costMonth")}</Muted>

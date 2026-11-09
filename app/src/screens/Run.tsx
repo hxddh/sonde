@@ -29,7 +29,8 @@ const POLICIES = (): { value: Policy; title: string; icon: "shield-check" | "ban
 
 /** The command: the one field that matters, with what it needs around it. */
 function CommandBar() {
-  const ep = () => endpoints().find((e) => e.id === endpoint());
+  // while a program runs, the endpoint it talks to, whatever is chosen since
+  const ep = () => endpoints().find((e) => e.id === (running()?.endpoint ?? endpoint()));
   const run = () => {
     const id = endpoint();
     if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
@@ -175,7 +176,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
         )}
       </If>
       <View class="flex-1" />
-      <If when={r()}>
+      <If when={r() && !r()!.removed}>
         <Button small variant="outline" icon="list-clock" label={t("run.lineUp")} onPress={() => openLastRun(go)} testID="run-open-session" />
       </If>
     </View>

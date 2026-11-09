@@ -636,7 +636,7 @@ const DROP_RESPONSE: &[&str] = &[
 ];
 
 /// Query parameters of a presigned URL's own signature (SigV4 and SigV2).
-const PRESIGN_PARAMS: &[&str] = &[
+pub(crate) const PRESIGN_PARAMS: &[&str] = &[
     "X-Amz-Algorithm",
     "X-Amz-Credential",
     "X-Amz-Date",

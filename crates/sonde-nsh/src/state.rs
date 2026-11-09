@@ -59,31 +59,13 @@ where
     }
 }
 
-/// The request prices the settings give, for a session's cost.
-pub fn request_prices() -> sonde_proxy::profile::RequestPrices {
-    let p = sonde().settings().prices;
-    sonde_proxy::profile::RequestPrices {
-        per_1000_writes: p.per_1000_writes,
-        per_1000_reads: p.per_1000_reads,
-        currency: p.currency,
-    }
-}
-
-/// The prices for a session on `endpoint`: the settings', unless they are
-/// still S3 Standard's and the endpoint's vendor charges otherwise (R2, B2,
-/// Wasabi, a store of one's own).
+/// The prices for a session on `endpoint` (see `Sonde::request_prices_for`).
 pub fn request_prices_for(endpoint: &str) -> sonde_proxy::profile::RequestPrices {
-    let mut p = request_prices();
-    let standard = sonde_proxy::profile::RequestPrices::default();
-    if p.per_1000_writes == standard.per_1000_writes
-        && p.per_1000_reads == standard.per_1000_reads
-        && p.currency == standard.currency
-        && let Some((w, r)) = sonde()
-            .endpoint_config(endpoint)
-            .and_then(|e| e.vendor.request_prices())
-    {
-        p.per_1000_writes = w;
-        p.per_1000_reads = r;
+    let (w, r, l, currency) = sonde().request_prices_for(endpoint);
+    sonde_proxy::profile::RequestPrices {
+        per_1000_writes: w,
+        per_1000_reads: r,
+        per_1000_lists: l,
+        currency,
     }
-    p
 }

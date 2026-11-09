@@ -79,12 +79,22 @@ export const lastError = signal<SondeError | null>(null);
 /** A short notice (copied, exported). */
 export const notice = signal<string | null>(null);
 
+/** Makes `id` the endpoint; a bucket of another endpoint is no longer chosen. */
+function useEndpoint(id: string | null) {
+  if (id === endpoint()) return;
+  batch(() => {
+    endpoint.set(id);
+    bucket.set(null);
+    prefix.set("");
+  });
+}
+
 export function refreshEndpoints() {
   const list = api.endpoints();
   batch(() => {
     endpoints.set(list);
-    if (endpoint() && !list.some((e) => e.id === endpoint())) endpoint.set(null);
-    if (!endpoint() && list.length > 0) endpoint.set(list[0].id);
+    if (endpoint() && !list.some((e) => e.id === endpoint())) useEndpoint(null);
+    if (!endpoint() && list.length > 0) useEndpoint(list[0].id);
   });
 }
 
@@ -165,7 +175,7 @@ export async function startDemo(): Promise<boolean> {
   try {
     const e = await api.startDemo();
     refreshEndpoints();
-    endpoint.set(e.id);
+    useEndpoint(e.id);
     return true;
   } catch (e) {
     report(e);
@@ -296,16 +306,25 @@ export function openPaths(paths: string[]) {
 
 export async function openSessionFile() {
   try {
-    const [picked] = await Picker.pickFiles({
-      filters: [
-        { name: t("sessions.fileType"), extensions: ["sonde"] },
-        { name: t("sessions.trafficType"), extensions: ["log", "txt", "json", "jsonl", "har"] },
-      ],
-    });
-    if (!picked) return;
-    const path = api.sessions.import(picked.file.name, await picked.file.text());
+    // the file is read by sonde, never by the app's script engine: a large
+    // CloudTrail dump opens as a small one does
+    let path: string | null;
+    try {
+      path = await api.sessions.pick(t("sessions.fileType"), t("sessions.trafficType"));
+    } catch {
+      // no system dialog here (the web): the picker hands the file over
+      const [picked] = await Picker.pickFiles({
+        filters: [
+          { name: t("sessions.fileType"), extensions: ["sonde"] },
+          { name: t("sessions.trafficType"), extensions: ["log", "txt", "json", "jsonl", "har"] },
+        ],
+      });
+      path = picked ? api.sessions.import(picked.file.name, await picked.file.text()) : null;
+    }
+    if (!path) return;
+    const opened = path;
     batch(() => {
-      openSession.set(path);
+      openSession.set(opened);
       sessionsChanged();
       go("sessions");
     });

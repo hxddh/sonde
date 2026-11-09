@@ -128,7 +128,7 @@ function Requests() {
         />
         {/* sonde's own requests read as any program's: findings, time, compared */}
         <Button small variant="outline" icon="list-clock" label={t("requests.asSession")} onPress={asSession} testID="requests-as-session" />
-        <If when={isAvailable && !terminal()}>
+        <If when={isAvailable}>
           <IconButton icon="ellipsis" label={t("common.more")} onPress={more} testID="requests-more" />
         </If>
       </View>

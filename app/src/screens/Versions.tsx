@@ -61,7 +61,7 @@ export function Versions() {
           <BucketPicker />
         </If>
         <Field class="flex-1" label={t("versions.key")} value={keyDraft()} onChange={(v) => keyDraft.set(v)} mono testID="version-key" />
-        <Button variant="primary" label={t("common.refresh")} onPress={() => versionKey.set(keyDraft())} disabled={!bucket()} testID="load-versions" />
+        <Button variant="primary" label={t("common.refresh")} onPress={() => (versionKey() === keyDraft() ? timeline.refetch() : versionKey.set(keyDraft()))} disabled={!bucket()} testID="load-versions" />
       </View>
       <If when={status()}>
         {(s) => (
@@ -87,7 +87,7 @@ export function Versions() {
               <Muted>{`${t("versions.noncurrent")}: ${bytes(tl().noncurrentBytes)}`}</Muted>
             </View>
             {/* a key may hold thousands: only the rows in view are drawn */}
-            <List testID="versions" each={tl().versions} keyExtractor={(v) => v.versionId} estimatedItemSize={62} style={{ height: Math.min(tl().versions.length * 62, 620) }}>
+            <List testID="versions" each={tl().versions} keyExtractor={(v) => v.versionId} estimatedItemSize={62} viewport="parent">
               {(v) => (
                 <View class={`mb-1.5 flex-row items-center gap-3 rounded-(--radius) border px-3 py-2 ${v().isDeleteMarker ? "border-warn/50 bg-warn/10" : "border-border bg-card"}`}>
                   <View class={`h-2.5 w-2.5 rounded-full ${v().isDeleteMarker ? "bg-warn" : v().isLatest ? "bg-primary" : "bg-muted-foreground/40"}`} />

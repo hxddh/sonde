@@ -23,13 +23,15 @@ impl Vendor {
     /// 1,000 reads, in USD, where it differs from S3 Standard's: R2's, B2's,
     /// Wasabi's and Tigris's; nothing per request on a store of one's own.
     /// `None`: S3 Standard's (AWS, GCS's XML API, and the rest).
-    pub fn request_prices(self) -> Option<(f64, f64)> {
+    /// Writes, reads and (when other than a write) lists, per thousand.
+    pub fn request_prices(self) -> Option<(f64, f64, Option<f64>)> {
         match self {
-            Vendor::R2 => Some((0.0045, 0.00036)),
-            Vendor::BackblazeB2 => Some((0.0, 0.0004)),
-            Vendor::Wasabi => Some((0.0, 0.0)),
-            Vendor::Tigris => Some((0.005, 0.0005)),
-            Vendor::Minio | Vendor::CephRgw => Some((0.0, 0.0)),
+            Vendor::R2 => Some((0.0045, 0.00036, None)),
+            // B2: uploads free (class A), reads class B, lists class C
+            Vendor::BackblazeB2 => Some((0.0, 0.0004, Some(0.004))),
+            Vendor::Wasabi => Some((0.0, 0.0, None)),
+            Vendor::Tigris => Some((0.005, 0.0005, None)),
+            Vendor::Minio | Vendor::CephRgw => Some((0.0, 0.0, None)),
             _ => None,
         }
     }

@@ -110,7 +110,7 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
           <If when={x().check}>
             <Verdicts h={x()} />
           </If>
-          <If when={x().runs.length > 1} else={<Text class="text-small text-muted-foreground">{t("history.none")}</Text>}>
+          <If when={shown(x()).runs.length > 0 && x().runs.length > 1} else={<Text class="text-small text-muted-foreground">{x().runs.length > 1 ? t("history.noneInRange") : t("history.none")}</Text>}>
             <If
               when={!terminal()}
               else={<SimpleTable columns={["", t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={x().runs.map((r) => [r.created.slice(0, 16), n(r.requests), offset(r.busyMs), cost(r.cost, r.currency)])} />}

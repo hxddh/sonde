@@ -33,27 +33,159 @@ fn is_assignment(word: &str) -> bool {
     }
 }
 
+/// A command's shell words as typed, quotes kept (`TOKEN="ab cd"` is one
+/// word), and `;`, `&&`, `||`, `|`, `&` as words of their own.
+fn shell_words(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = command.chars().peekable();
+    let flush = |word: &mut String, words: &mut Vec<String>| {
+        if !word.is_empty() {
+            words.push(std::mem::take(word));
+        }
+    };
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                word.push(c);
+                if c == '\\' && q == '"' {
+                    if let Some(n) = chars.next() {
+                        word.push(n);
+                    }
+                } else if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '\'' | '"' => {
+                    quote = Some(c);
+                    word.push(c);
+                }
+                '\\' => {
+                    word.push(c);
+                    if let Some(n) = chars.next() {
+                        word.push(n);
+                    }
+                }
+                ';' | '|' | '&' => {
+                    flush(&mut word, &mut words);
+                    let mut op = c.to_string();
+                    if chars.peek() == Some(&c) && c != ';' {
+                        op.push(chars.next().unwrap());
+                    }
+                    words.push(op);
+                }
+                c if c.is_whitespace() => flush(&mut word, &mut words),
+                c => word.push(c),
+            },
+        }
+    }
+    flush(&mut word, &mut words);
+    words
+}
+
+fn is_separator(word: &str) -> bool {
+    matches!(word, ";" | "&&" | "||" | "|" | "&")
+}
+
+/// The word without its quotes and escapes.
+fn unquote(word: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = word.chars();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (None, '\'' | '"') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, '\\') | (Some('"'), '\\') => out.extend(chars.next()),
+            (_, c) => out.push(c),
+        }
+    }
+    out
+}
+
+/// Commands that set the stage for the program rather than being it.
+const STAGE: &[&str] = &[
+    "cd", "sleep", "echo", "export", "set", "source", ".", "true", "time", "nice", "exec",
+    "printf", "wait", "nohup",
+];
+
 /// The program a command runs, by name (`python` for
 /// `AWS_SECRET_ACCESS_KEY=… /usr/bin/python etl.py`): past the variables it
-/// sets and `env`, never one of their values.
+/// sets, `env` and its options, never one of their values. Of a compound
+/// command (`cd etl && python load.py`), the first that is not a step
+/// setting the stage.
 pub fn program_name(command: &str) -> Option<String> {
-    let word = command
-        .split_whitespace()
-        .find(|w| !is_assignment(w) && *w != "env")?;
-    std::path::Path::new(word)
-        .file_name()
-        .map(|f| f.to_string_lossy().into_owned())
-        .filter(|f| !f.is_empty())
+    let words = shell_words(command);
+    let mut first = None;
+    for part in words.split(|w| is_separator(w)) {
+        let mut it = part.iter().peekable();
+        let mut name = None;
+        while let Some(w) = it.next() {
+            if is_assignment(w) {
+                continue;
+            }
+            if w == "env" {
+                // env's own options; -u and -C take a value
+                while let Some(o) = it.peek() {
+                    if is_assignment(o) {
+                        it.next();
+                    } else if o.starts_with('-') {
+                        let takes = matches!(o.as_str(), "-u" | "-C" | "--unset" | "--chdir");
+                        it.next();
+                        if takes {
+                            it.next();
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                continue;
+            }
+            name = std::path::Path::new(&unquote(w))
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .filter(|f| !f.is_empty());
+            break;
+        }
+        let Some(name) = name else { continue };
+        if !STAGE.contains(&name.as_str()) {
+            return Some(name);
+        }
+        first.get_or_insert(name);
+    }
+    first
 }
 
 /// The command with the value of every variable it sets hidden
-/// (`AWS_SECRET_ACCESS_KEY=…`): what may leave the machine.
+/// (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole: what may leave the machine.
 pub fn scrub_command(command: &str) -> String {
-    command
-        .split_whitespace()
+    shell_words(command)
+        .into_iter()
         .map(|w| match w.split_once('=') {
-            Some((name, _)) if is_assignment(w) => format!("{name}=…"),
-            _ => w.to_string(),
+            Some((name, _)) if is_assignment(&w) => format!("{name}=…"),
+            _ => w,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A command as one line a shell runs as it was given: each argument quoted
+/// when it needs to be (how `sonde run -- prog "my file.py"` is kept).
+pub fn shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|a| {
+            let plain = !a.is_empty()
+                && a.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c));
+            if plain {
+                a.clone()
+            } else if cfg!(windows) {
+                format!("\"{}\"", a.replace('"', "\\\""))
+            } else {
+                format!("'{}'", a.replace('\'', "'\\''"))
+            }
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -71,7 +203,15 @@ pub fn write_baselines(
     dir: &std::path::Path,
     all: &std::collections::BTreeMap<String, String>,
 ) -> std::io::Result<()> {
-    let tmp = dir.join("baselines.json.tmp");
+    // a name of its own: the app and the CLI may write at the same time
+    let tmp = dir.join(format!(
+        "baselines.json.{}.{}.tmp",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    ));
     std::fs::write(&tmp, serde_json::to_vec_pretty(all)?)?;
     std::fs::rename(&tmp, dir.join("baselines.json"))
 }
@@ -154,6 +294,44 @@ pub struct Check {
 }
 
 /// A run against a budget, and against a baseline run when there is one.
+/// What a run may use against its baseline with `tolerance` more (0.1 is
+/// 10%): the limits `sonde check` holds a run to, and the app marks a
+/// program "past its baseline" by.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaselineLimits {
+    pub requests: f64,
+    pub waiting_ms: f64,
+    pub cost: f64,
+    pub errors: f64,
+}
+
+pub const DEFAULT_TOLERANCE: f64 = 0.1;
+
+pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
+    let grow = 1.0 + tolerance;
+    BaselineLimits {
+        // a hair over, so 100 × 1.57 is 157 and not 156.99…
+        requests: (base.requests as f64 * grow + 1e-9)
+            .floor()
+            .max(base.requests as f64),
+        // a run this short varies more than its tolerance: a few ms of slack
+        waiting_ms: base.busy_ms * grow + 5.0,
+        // a free baseline (deletes only) still lets a run cost a hundredth of a cent
+        cost: (base.cost * grow).max(base.cost + 0.0001),
+        errors: base.errors as f64,
+    }
+}
+
+/// The run is past what its baseline allows (see [`baseline_limits`]).
+pub fn past_baseline(run: &RunPoint, base: &RunPoint, tolerance: f64) -> bool {
+    let l = baseline_limits(base, tolerance);
+    run.requests as f64 > l.requests
+        || run.busy_ms > l.waiting_ms
+        || run.cost > l.cost
+        || run.errors as f64 > l.errors
+}
+
 pub fn check(
     run: (&RunPoint, &[Record], &Profile, &[Observation]),
     baseline: Option<(&RunPoint, &[Record], &Profile, &[Observation])>,
@@ -186,26 +364,11 @@ pub fn check(
     if let Some(b) = baseline {
         let base = b.0;
         if let Some(t) = budget.tolerance {
-            let grow = 1.0 + t;
-            limit(
-                "requests",
-                r.requests as f64,
-                // a hair over, so 100 × 1.57 is 157 and not 156.99…
-                (base.requests as f64 * grow + 1e-9)
-                    .floor()
-                    .max(base.requests as f64),
-                "baseline",
-            );
-            // a run this short varies more than its tolerance: a few ms of slack
-            limit("waiting", r.busy_ms, base.busy_ms * grow + 5.0, "baseline");
-            // a free baseline (deletes only) still lets a run cost a hundredth of a cent
-            limit(
-                "cost",
-                r.cost,
-                (base.cost * grow).max(base.cost + 0.0001),
-                "baseline",
-            );
-            limit("errors", r.errors as f64, base.errors as f64, "baseline");
+            let l = baseline_limits(base, t);
+            limit("requests", r.requests as f64, l.requests, "baseline");
+            limit("waiting", r.busy_ms, l.waiting_ms, "baseline");
+            limit("cost", r.cost, l.cost, "baseline");
+            limit("errors", r.errors as f64, l.errors, "baseline");
         }
         if budget.no_new_warnings {
             // a warning the baseline did not have as a warning: new, or grown from a note
@@ -371,5 +534,35 @@ mod command_tests {
         );
         assert_eq!(program_name("aws s3 ls").as_deref(), Some("aws"));
         assert_eq!(program_name("A=1 B=2"), None);
+        // quoted values are one word, and stay hidden whole
+        let q = r#"TOKEN="ab cd" SECRET='x y' ./app --flag "my file""#;
+        assert_eq!(program_name(q).as_deref(), Some("app"));
+        assert_eq!(
+            scrub_command(q),
+            r#"TOKEN=… SECRET=… ./app --flag "my file""#
+        );
+        assert_eq!(
+            program_name("env -i X=1 python a.py").as_deref(),
+            Some("python")
+        );
+        assert_eq!(
+            program_name("env -u HOME python a.py").as_deref(),
+            Some("python")
+        );
+        // a compound command: the program, not the step before it
+        assert_eq!(program_name("sleep 4; curl -s x").as_deref(), Some("curl"));
+        assert_eq!(
+            program_name("cd etl && A=1 python load.py").as_deref(),
+            Some("python")
+        );
+        assert_eq!(program_name("cd etl").as_deref(), Some("cd"));
+        assert_eq!(
+            shell_join(&["python".into(), "my script.py".into(), "it's".into()]),
+            if cfg!(windows) {
+                r#"python "my script.py" "it's""#
+            } else {
+                r#"python 'my script.py' 'it'\''s'"#
+            }
+        );
     }
 }

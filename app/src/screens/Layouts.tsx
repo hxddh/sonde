@@ -184,7 +184,7 @@ export function Layouts() {
             </Each>
             <Card>
               <Heading>{t("layouts.timeline")}</Heading>
-              <List each={l().layout.timeline} estimatedItemSize={26} initialScrollIndex={Math.max(0, l().layout.timeline.length - 1)} style={{ height: Math.min(l().layout.timeline.length * 26, 420) }}>
+              <List each={l().layout.timeline} estimatedItemSize={26} viewport="parent">
                 {(e) => (
                   <View class="h-[26px] flex-row items-center gap-3">
                     <Text class="w-36 text-small text-muted-foreground">{date(e().time)}</Text>
