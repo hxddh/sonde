@@ -2,7 +2,7 @@
 // endpoint, or any two — and the dialog that starts a replay.
 
 import { resource, Scroll, signal, Text, untracked, View } from "nsh";
-import { DataTable, Dialog, DiffView } from "nsh/base";
+import { DataTable, DiffView } from "nsh/base";
 import { ms } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
@@ -10,7 +10,7 @@ import { api } from "../native";
 import { endpoint, endpoints, go, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Check, Choice, Heading, Loading, Muted, rowHeight, SCRIM, Segmented, terminal, TYPE } from "./kit";
+import { Badge, Button, CARD, Check, Choice, Heading, Loading, Modal, Muted, terminal, rowHeight, Segmented, TABLE, Title, TYPE } from "./kit";
 import { cost, groupName, offset, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
@@ -49,7 +49,7 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
           <Text class="flex-1 text-body text-foreground">{t("compare.otherProgram")}</Text>
         </View>
       </If>
-      <View class="flex-row flex-wrap gap-x-8 gap-y-3 rounded-(--radius-card) border border-border bg-card px-4 py-3">
+      <View class={`flex-row flex-wrap gap-x-8 gap-y-3 ${CARD} p-4`}>
         <Delta testID="run-change-requests" label={t("figure.requests")} a={c().requests[0]} b={c().requests[1]} text={n} />
         <Delta label={t("profile.waiting")} a={c().busyMs[0]} b={c().busyMs[1]} text={offset} />
         <Delta label={t("figure.took")} a={c().wallMs[0]} b={c().wallMs[1]} text={offset} />
@@ -140,7 +140,7 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
         {d.comparison.differences.length ? ` · ${t("compare.differ", { n: d.comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
       </Text>
       <If when={d.latency?.length}>
-        <View class="gap-2 rounded-(--radius-card) border border-border bg-card p-4">
+        <View class={`gap-2 ${CARD} p-4`}>
           <Text role="header" class="text-body font-semibold text-foreground">{t("latency.title")}</Text>
           <Text class="text-small text-muted-foreground">{t("latency.hint")}</Text>
           <StoreLatency changes={d.latency!} names={d.endpoints ?? ["A", "B"]} />
@@ -273,7 +273,7 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
                 return <Text class={`flex-1 px-2 tabular-nums text-body ${c.key === "what" ? "" : "text-right"} ${tone}`}>{c.text}</Text>;
               }
         }
-        classes={terminal() ? undefined : { cell: "px-0", fixedEdge: "bg-border" }}
+        classes={terminal() ? undefined : { ...TABLE, cell: "px-0" }}
         class="h-[220px] rounded-(--radius) border border-border bg-card"
       />
       <View class="flex-row flex-wrap gap-2">
@@ -333,8 +333,8 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
     }
   };
   return (
-    <Dialog open={props.open} onOpenChange={({ open }) => !open && props.onClose()} backdropClass={SCRIM} class="w-[520px] max-w-[95%] gap-3 self-center rounded-(--radius-card) border border-border bg-popover p-5 shadow-xl" testID="replay-dialog">
-      <Text class="text-heading font-semibold text-foreground">{t("replay.title")}</Text>
+    <Modal open={props.open} onClose={props.onClose} testID="replay-dialog">
+      <Title>{t("replay.title")}</Title>
       <Muted class="text-body">{t("replay.hint")}</Muted>
       <Choice label={t("common.endpoint")} value={target()} placeholder={t("replay.choose")} items={endpoints().map((e) => ({ value: e.id, title: e.name }))} onChange={(v) => target.set(v)} testID="replay-endpoint" />
       <If when={endpoints().length > 1}>
@@ -367,6 +367,6 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
         <Button variant="ghost" label={t("common.cancel")} onPress={props.onClose} />
         <Button label={busy() ? t("replay.running") : t("replay.run")} onPress={run} disabled={busy() || !plan() || plan()!.readOnly} testID="replay-run" />
       </View>
-    </Dialog>
+    </Modal>
   );
 }

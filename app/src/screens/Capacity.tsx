@@ -8,7 +8,7 @@ import { api, watch } from "../native";
 import { bucket, endpoint, notify, prefix, report } from "../store";
 import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
-import { Bar, Button, Card, Empty, Field, Heading, KeyValue, Muted, Page, terminal, Title, Toggle } from "../ui/kit";
+import { Bar, Button, Card, Empty, Field, Heading, KeyValue, Muted, Page, terminal, Title, SwitchRow } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, PrefixMap, StackBar } from "../ui/charts";
 
@@ -62,7 +62,7 @@ export function Capacity() {
         <If when={terminal()}>
           <Field class="w-56" label={t("common.prefix")} value={pfx()} onChange={(v) => (pfx.set(v), load())} mono />
         </If>
-        <Toggle label={t("du.includeMultipart")} checked={mpu()} onChange={(v) => mpu.set(v)} />
+        <SwitchRow label={t("du.includeMultipart")} checked={mpu()} onChange={(v) => mpu.set(v)} />
         <Button variant={terminal() ? "primary" : "outline"} label={terminal() || !result() ? t("common.scan") : t("overview.rescan")} onPress={scan} disabled={!bucket() || !!progress()} testID="du-scan" />
         <If when={progress()}>
           <Button label={t("common.cancel")} onPress={() => job && api.cancelJob(job)} />

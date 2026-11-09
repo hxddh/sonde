@@ -2,12 +2,12 @@
 // as a web page. Each is in the session's context menu and its ⋯ menu.
 
 import { Clipboard, effect, openUrl, signal, Text, untracked, View } from "nsh";
-import { AlertDialog, Dialog } from "nsh/base";
+import { AlertDialog } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
 import { notify, report, sessionsChanged } from "../store";
 import type { SessionInfo } from "../types";
-import { Button, Field, SCRIM } from "./kit";
+import { Button, Field, Modal, Title } from "./kit";
 import { programOf } from "./sessionview";
 import { toast } from "./toast";
 
@@ -41,20 +41,14 @@ export function RenameDialog() {
     }
   };
   return (
-    <Dialog
-      open={renaming() !== null}
-      onOpenChange={(e) => !e.open && renaming.set(null)}
-      backdropClass={SCRIM}
-      class="w-[420px] max-w-[95%] gap-3 self-center rounded-(--radius-card) border border-border bg-popover p-5 shadow-xl"
-      testID="rename-dialog"
-    >
-      <Text class="text-heading font-semibold text-popover-foreground">{t("sessions.renameTitle")}</Text>
+    <Modal open={renaming() !== null} onClose={() => renaming.set(null)} size="narrow" testID="rename-dialog">
+      <Title>{t("sessions.renameTitle")}</Title>
       <Field label={t("sessions.renameLabel")} value={draft()} onChange={(v) => draft.set(v)} onSubmit={save} placeholder={renaming() ? (programOf(renaming()!.command) ?? renaming()!.endpoint) : ""} testID="rename-input" />
-      <View class="flex-row justify-end gap-2 pt-1">
+      <View class="flex-row justify-end gap-2">
         <Button variant="ghost" label={t("common.cancel")} onPress={() => renaming.set(null)} />
         <Button variant="primary" label={t("common.save")} onPress={save} testID="rename-save" />
       </View>
-    </Dialog>
+    </Modal>
   );
 }
 

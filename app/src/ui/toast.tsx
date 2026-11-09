@@ -111,7 +111,7 @@ function Item(props: { entry: ToastEntry }) {
       transitionStatus={props.entry.status}
       accessibilityLabel={[content().title, content().description].filter(Boolean).join(". ")}
       onDismissRequest={() => dismissToast(props.entry.id)}
-      class={`w-[340px] flex-row items-start gap-2.5 rounded-(--radius-card) border border-border bg-popover px-3.5 py-3 shadow-lg ${reduceMotion() ? "" : "transition-all duration-200 ease-out"}`}
+      class={`w-[340px] flex-row items-start gap-2 rounded-(--radius-card) border border-border bg-popover px-3 py-3 shadow-lg ${reduceMotion() ? "" : "transition-all duration-200 ease-out"}`}
       startingClass="opacity-0 translate-y-3"
       endingClass="opacity-0 scale-95"
       swipingClass="transition-none"

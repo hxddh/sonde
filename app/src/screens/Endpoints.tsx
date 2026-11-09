@@ -8,7 +8,7 @@ import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, s
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Icon } from "../ui/icon";
 import { openCompatWindow } from "./CompatWindow";
-import { Badge, Button, Card, Check, Choice, Dot, Empty, Field, IconButton, KeyValue, Muted, Page, Section, SidePanel, terminal, Title, Toggle } from "../ui/kit";
+import { Badge, Button, CARD, Card, Check, Choice, Dot, Empty, Field, IconButton, KeyValue, Muted, Page, terminal, Section, SidePanel, SwitchRow, Title } from "../ui/kit";
 import { ms as fmtMs } from "../format";
 
 type Draft = {
@@ -105,7 +105,7 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void }) {
         <Field class="flex-1" label={t("endpoints.field.url")} value={d().url} onChange={(v) => set("url", v)} placeholder="https://s3.eu-west-1.amazonaws.com" testID="ep-url" mono />
         <Field class="w-36" label={t("endpoints.field.region")} value={d().region} onChange={(v) => set("region", v)} testID="ep-region" mono />
       </View>
-      <Toggle label={t("endpoints.field.pathStyle")} checked={d().pathStyle} onChange={(v) => set("pathStyle", v)} testID="ep-path-style" />
+      <SwitchRow label={t("endpoints.field.pathStyle")} checked={d().pathStyle} onChange={(v) => set("pathStyle", v)} testID="ep-path-style" />
       <Field label={t("endpoints.field.ca")} value={d().caFile} onChange={(v) => set("caFile", v)} placeholder="/etc/ssl/my-ca.pem" mono />
       <View class="flex-row flex-wrap gap-3">
         <Choice class="w-64" label={t("endpoints.field.credentials")} value={d().credentials} items={creds} onChange={(v) => set("credentials", v)} testID="ep-creds" />
@@ -234,7 +234,7 @@ export function Endpoints() {
   const row = (e: EndpointView) => {
     const r = () => tests()[e.id];
     return (
-      <View testID={`endpoint-${e.id}`} class="gap-2.5 px-4 py-3">
+      <View testID={`endpoint-${e.id}`} class="gap-2 px-4 py-3">
         <View class="flex-row items-center gap-3">
           <If when={!terminal()}>
             <View class="size-8 items-center justify-center rounded-(--radius) bg-muted">
@@ -272,14 +272,14 @@ export function Endpoints() {
         </View>
         <If when={terminal() && form()}>{(f) => <Card>{f()}</Card>}</If>
         <If when={endpoints().length > 0} else={<Empty icon="server" text={t("endpoints.noneYet")} />}>
-          <View class="overflow-hidden rounded-(--radius-card) border border-border bg-card">
+          <View class={`overflow-hidden ${CARD}`}>
             <Each of={endpoints()} key={(e) => e.id}>
               {(e, i) => <View class={i() > 0 ? "border-t border-border" : ""}>{row(e())}</View>}
             </Each>
           </View>
         </If>
         <If when={!terminal() && endpoints().length > 0}>
-          <View class="flex-row items-center gap-3 rounded-(--radius-card) border border-border bg-card px-4 py-3">
+          <View class={`flex-row items-center gap-3 ${CARD} p-4`}>
             <Icon name="flask-conical" size={16} tint="muted-foreground" />
             <View class="min-w-0 flex-1 gap-0.5">
               <Text class="text-body font-medium text-foreground">{t("compat.title")}</Text>

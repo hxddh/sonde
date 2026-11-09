@@ -9,7 +9,7 @@ import { type Key, t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
-import { Badge, Bar, Button, Card, Empty, Field, KeyValue, NumberField, Muted, Page, rowHeight, sortRows, terminal, Title, TYPE } from "../ui/kit";
+import { Badge, Bar, Button, CARD, Card, Empty, Field, KeyValue, Muted, NumberField, Page, terminal, rowHeight, sortRows, Title, TYPE, TABLE } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
@@ -121,7 +121,7 @@ export function Multipart() {
               </View>
               <DataTable
                 testID="uploads"
-                class="h-[420px] rounded-(--radius-card) border border-border bg-card"
+                class={`h-[420px] ${CARD}`}
                 columns={[
                   // fits the detail panel (760pt) without a sideways scroll: the date as a day
                   { key: "flag", title: "", width: 22, resizable: false },
@@ -137,7 +137,7 @@ export function Multipart() {
                 rowClasses={sorted(r().uploads).map((u) => (u.stale ? "text-warn" : "text-foreground"))}
                 fontSize={TYPE.body}
                 rowHeight={rowHeight(30)}
-                classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
+                classes={terminal() ? undefined : TABLE}
                 sort={uploadSort()}
                 onSortChange={({ sort }) => uploadSort.set(sort)}
               />

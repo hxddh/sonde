@@ -241,7 +241,7 @@ function Place(props: { area: Area; open: (a: Area) => void }) {
       selected={on()}
       onPress={() => props.open(props.area)}
       tooltip={<Tip text={areaLabel(props.area)} shortcut={AREA_KEY[props.area]} />}
-      class="h-8 flex-row items-center gap-2.5 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent"
+      class="h-8 flex-row items-center gap-2 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent"
     >
       <Icon name={AREA_ICON[props.area]} size={16} tint={on() ? "sidebar-accent-foreground" : "muted-foreground"} />
       <Text class={on() ? "flex-1 text-body font-medium text-sidebar-accent-foreground" : "flex-1 text-body text-sidebar-foreground"}>{areaLabel(props.area)}</Text>

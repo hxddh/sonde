@@ -719,5 +719,6 @@
  "replay.writes": "%{n} 个写入",
  "replay.writes.one": "%{n} 个写入",
  "replay.deletes": "%{n} 个删除",
- "replay.deletes.one": "%{n} 个删除"
+ "replay.deletes.one": "%{n} 个删除",
+ "common.clear": "清除"
 }

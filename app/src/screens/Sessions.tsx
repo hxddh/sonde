@@ -318,7 +318,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
 
   const main = (v: SessionView) => (
     <View class="min-h-0 flex-1">
-      <View class={terminal() ? "gap-1" : "gap-3.5 border-b border-border px-5 pb-3.5 pt-4"}>
+      <View class={terminal() ? "gap-1" : "gap-3 border-b border-border px-5 pb-3.5 pt-4"}>
         <If when={props.onBack}>
           <Button small variant="ghost" icon="chevron-left" label={t("timeline.sessions")} onPress={() => props.onBack?.()} testID="sessions-back" class="self-start" />
         </If>

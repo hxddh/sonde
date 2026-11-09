@@ -7,7 +7,7 @@ import { language, t } from "../i18n";
 import { api } from "../native";
 import { notify, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Choice, Field, KeyValue, NumberField, Options, Page, Section, terminal, Toggle } from "../ui/kit";
+import { Choice, Field, KeyValue, NumberField, Options, Page, Section, terminal, SwitchRow } from "../ui/kit";
 import { Fold } from "../ui/record";
 import { Updates } from "../ui/updates";
 
@@ -73,9 +73,9 @@ export function SettingsScreen() {
     <Page testID="screen-settings">
       <If when={draft()}>
         {(d) => (
-          <View class={terminal() ? "gap-2" : "w-full max-w-[720px] gap-7"}>
+          <View class={terminal() ? "gap-2" : "w-full max-w-[720px] gap-6"}>
             <Section title={t("settings.safety")}>
-              <Toggle
+              <SwitchRow
                 testID="read-only"
                 label={t("settings.readOnly")}
                 hint={t("settings.readOnlyHint")}
@@ -107,7 +107,7 @@ export function SettingsScreen() {
                   />
                 </View>
                 <If when={!terminal()}>
-                  <Toggle label={t("settings.contrast")} hint={t("settings.contrastHint")} checked={d()["high-contrast"] ?? false} onChange={(v) => change({ ...d(), "high-contrast": v }, true)} testID="high-contrast" />
+                  <SwitchRow label={t("settings.contrast")} hint={t("settings.contrastHint")} checked={d()["high-contrast"] ?? false} onChange={(v) => change({ ...d(), "high-contrast": v }, true)} testID="high-contrast" />
                 </If>
                 <Choice
                   class="w-44"
@@ -134,7 +134,7 @@ export function SettingsScreen() {
                 <NumberField class="w-52" label={t("settings.staleDays")} value={d()["stale-upload-days"]} min={1} max={3650} onChange={(v) => change({ ...d(), "stale-upload-days": v ?? 7 })} />
               </View>
               {/* findings then say where in the program: the place to change */}
-              <Toggle testID="name-callers" label={t("settings.callers")} hint={t("settings.callersHint")} checked={d()["name-callers"] ?? false} onChange={(v) => change({ ...d(), "name-callers": v }, true)} />
+              <SwitchRow testID="name-callers" label={t("settings.callers")} hint={t("settings.callersHint")} checked={d()["name-callers"] ?? false} onChange={(v) => change({ ...d(), "name-callers": v }, true)} />
             </Section>
 
             <Section title={t("settings.costs")} description={t("settings.costsHint")}>
@@ -159,7 +159,7 @@ export function SettingsScreen() {
 
             <Section title={t("settings.log")}>
               <NumberField class="w-52" label={t("settings.reqlog")} value={d()["reqlog-capacity"]} min={100} step={1000} onChange={(v) => change({ ...d(), "reqlog-capacity": v ?? 5000 })} />
-              <Toggle label={t("settings.persist")} checked={d()["reqlog-persist"]} onChange={(v) => change({ ...d(), "reqlog-persist": v }, true)} />
+              <SwitchRow label={t("settings.persist")} checked={d()["reqlog-persist"]} onChange={(v) => change({ ...d(), "reqlog-persist": v }, true)} />
             </Section>
 
             <Updates />

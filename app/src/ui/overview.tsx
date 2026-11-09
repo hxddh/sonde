@@ -4,13 +4,13 @@
 // only when it has something to say, and opens its detail in a sheet.
 
 import { batch, cleanup, createMotion, effect, signal, Text, untracked, View } from "nsh";
-import { Button as BaseButton } from "nsh/base";
-import { bytes, money } from "../format";
+import { bytes, day, money } from "../format";
 import { t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, go, prefix, type StoreTab } from "../store";
 import type { Detection, DuReport, MpuReport, VersioningStatus } from "../types";
 import { Icon, type IconName } from "./icon";
+import { Card } from "./kit";
 
 export const LAYOUT_LABEL: Record<string, string> = {
   slatedb: "SlateDB",
@@ -99,35 +99,24 @@ function useFacts() {
 
 type Tone = "plain" | "warn" | "ok";
 
-/** The cards' width: the row split into equal columns of 176 points or more,
- * so a second row lines up with the first instead of stretching. */
-const tileWidth = signal<number | null>(null);
-const GAP = 10;
-const MIN = 176;
-
 function Tile(props: { id: StoreTab; icon: IconName; title: string; value: string; detail?: string; tone?: Tone; pending?: boolean }) {
   // a card rises into place as it appears (not with reduced motion)
   const motion = createMotion({ enter: "fadeInUp", duration: 220 });
   return (
-    <View class={tileWidth() ? "" : "min-w-44 flex-1"} style={[motion.style, tileWidth() ? { width: tileWidth()! } : {}]}>
-      <BaseButton
-        testID={`overview-${props.id}`}
-        accessibilityLabel={`${props.title}: ${props.value}`}
-        onPress={() => go(props.id)}
-        class="gap-1 rounded-(--radius-card) border border-border bg-card px-3.5 py-2.5 hover:bg-row-hover active:bg-muted"
-      >
+    <View class="min-w-44 flex-1" style={motion.style}>
+      <Card pad="tile" testID={`overview-${props.id}`} label={`${props.title}: ${props.value}`} onPress={() => go(props.id)} class="flex-1">
         <View class="flex-row items-center gap-1.5">
           <Icon name={props.icon} size={13} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
-          <Text class="flex-1 text-caption font-medium text-muted-foreground line-clamp-1">{props.title}</Text>
+          <Text class="flex-1 text-caption text-muted-foreground line-clamp-1">{props.title}</Text>
           <Icon name="chevron-right" size={12} />
         </View>
         <If when={!props.pending} else={<View class="my-1 h-4 w-24 rounded-(--radius-sm) bg-muted" />}>
           <Text class={`text-heading font-semibold tabular-nums line-clamp-1 ${props.tone === "warn" ? "text-warn" : "text-foreground"}`}>{props.value}</Text>
         </If>
         <If when={!props.pending} else={<View class="h-3 w-32 rounded-(--radius-sm) bg-muted/70" />}>
-          <Text class="text-caption text-muted-foreground line-clamp-1">{props.detail ?? ""}</Text>
+          <Text class="text-caption text-muted-foreground line-clamp-2">{props.detail ?? ""}</Text>
         </If>
-      </BaseButton>
+      </Card>
     </View>
   );
 }
@@ -146,21 +135,14 @@ export function Overview() {
   const fail = (what: "mpu" | "versioning" | "layouts") => k().failed?.[what];
   const pending = (what: "mpu" | "versioning" | "layouts") => k()[what] === undefined && !fail(what);
   return (
-    <View
-      testID="overview"
-      class="flex-row flex-wrap gap-2.5"
-      onLayout={(e) => {
-        const w = e.bounds.size.width;
-        const cols = Math.max(1, Math.floor((w + GAP) / (MIN + GAP)));
-        tileWidth.set(Math.floor((w - GAP * (cols - 1)) / cols));
-      }}
-    >
+    <View testID="overview" class="flex-row flex-wrap gap-3">
       <Tile
         id="capacity"
         icon="chart-pie"
         title={t("overview.size")}
-        value={size() ? bytes(size()!.totalBytes) : t("overview.measure")}
-        detail={size() ? `${money(size()!.costPerMonth, size()!.currency)}/${t("overview.month")} · ${size()!.scannedAt.slice(0, 10)}` : t("overview.measureHint")}
+        // not measured yet: no figure, and the card says how it is measured
+        value={size() ? bytes(size()!.totalBytes) : "—"}
+        detail={size() ? `${money(size()!.costPerMonth, size()!.currency)}/${t("overview.month")} · ${day(size()!.scannedAt)}` : `${t("overview.measure")}: ${t("overview.measureHint")}`}
       />
       <If when={fail("mpu")}>{(e) => <Tile id="multipart" icon="layers" title={t("overview.uploads")} tone="warn" value={t("overview.failed")} detail={e()} />}</If>
       <If when={!fail("mpu") && (pending("mpu") || (mpu() && (mpu()!.totalUploads > 0 || mpu()!.lifecycle.status !== "covered")))}>

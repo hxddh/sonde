@@ -901,6 +901,8 @@ impl Sessions {
                             "created": newest,
                             "points": points,
                             "baseline": base.as_ref().map(|b| b.path.clone()),
+                            "monthly": sonde_proxy::program::monthly_cost(&points)
+                                .map(|(cost, per_day)| json!({ "cost": cost, "perDay": per_day })),
                             "baselinePoint": base,
                             "limits": limits,
                             "regressed": regressed,

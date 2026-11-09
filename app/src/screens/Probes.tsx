@@ -10,7 +10,7 @@ import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
 import { bucket, endpoint, endpoints, notify, report, showRequest } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
-import { Badge, Bar, Button, Card, Check, Choice, Empty, Field, Heading, Mono, Muted, Page, rowHeight, SimpleTable, terminal, Title, Toggle, TYPE } from "../ui/kit";
+import { Badge, Bar, Button, Card, Check, Choice, Empty, Field, Heading, Mono, Muted, Page, rowHeight, SimpleTable, terminal, Title, SwitchRow, TYPE, TABLE } from "../ui/kit";
 
 function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName: string; onBack: () => void }) {
   return (
@@ -76,14 +76,14 @@ function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: num
                 if (!row) return <Text>{cell.text}</Text>;
                 if (cell.key === "probe")
                   return (
-                    <View class="flex-1 justify-center px-2">
+                    <View class="flex-1 justify-center">
                       <Text class="line-clamp-1 text-small text-foreground">{row.probe.title}</Text>
                       <Text class="line-clamp-1 font-mono text-caption text-muted-foreground">{row.probe.id}</Text>
                     </View>
                   );
                 const i = Number(cell.key.slice(1));
                 const c = row.cells[i];
-                if (!c) return <Text class="px-2 text-small text-muted-foreground">—</Text>;
+                if (!c) return <Text class="text-small text-muted-foreground">—</Text>;
                 return (
                   <BaseButton testID={`cell-${row.probe.id}-${i}`} accessibilityLabel={`${row.probe.id} ${props.matrix.columns[i].name} ${c.verdict}`} onPress={() => props.onOpen(row.probe, i)} class="mx-1 self-start rounded-sm px-1 py-0.5 hover:bg-muted">
                     <Badge label={`${SYMBOL[c.verdict]} ${verdictLabel(c.verdict)}`} tone={verdictTone(c.verdict)} />
@@ -97,7 +97,7 @@ function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: num
           const i = r?.cells.findIndex((c) => c) ?? -1;
           if (r && i >= 0) props.onOpen(r.probe, i);
         } : undefined}
-        classes={terminal() ? { header: "bg-muted", rowSelected: "bg-accent" } : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-0", rowHover: "bg-row-hover", fixedEdge: "bg-border" }}
+        classes={terminal() ? undefined : TABLE}
         class="rounded-(--radius) border border-border"
         style={terminal() ? { flexGrow: 1 } : { height: Math.min(props.matrix.rows.length + 1, 12) * (rowHeight(44) ?? 44) + 2 }}
       />
@@ -182,8 +182,8 @@ export function Probes() {
             <View class="flex-row flex-wrap items-end gap-3">
               <Field class="w-56" label={t("probes.scratch")} value={scratch()} onChange={(v) => scratch.set(v)} mono testID="probe-bucket" />
               <Field class="w-72" label={t("probes.only")} value={only()} onChange={(v) => only.set(v)} placeholder="checksum., range." mono testID="probe-only" />
-              <Toggle label={t("probes.tempBuckets")} checked={temp()} onChange={(v) => temp.set(v)} />
-              <Toggle label={t("probes.slow")} checked={slow()} onChange={(v) => slow.set(v)} />
+              <SwitchRow label={t("probes.tempBuckets")} checked={temp()} onChange={(v) => temp.set(v)} />
+              <SwitchRow label={t("probes.slow")} checked={slow()} onChange={(v) => slow.set(v)} />
               <Button variant="primary" label={t("common.run")} onPress={run} disabled={!scratch() || Object.keys(running()).length > 0} testID="probe-run" />
             </View>
             {/* what a run does to the bucket, before it runs */}

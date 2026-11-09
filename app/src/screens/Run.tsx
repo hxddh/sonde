@@ -15,7 +15,7 @@ import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, p
 import { away, endpoint, endpoints, go, openSession, report, sessionsChanged } from "../store";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Button, Dot, Empty, IconButton, KeyValue, Options, SPLIT_HANDLE, terminal } from "../ui/kit";
+import { Button, CARD, Dot, Empty, IconButton, KeyValue, Options, terminal, SPLIT_HANDLE } from "../ui/kit";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { LatencyBand, liveFigures, SessionShape, sessionStory } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
@@ -55,7 +55,7 @@ function CommandBar() {
     );
   }
   return (
-    <View class="gap-2.5">
+    <View class="gap-2">
       <View class="h-11 flex-row items-center gap-2 rounded-(--radius-card) border border-input bg-card pl-3.5 pr-1.5 shadow-sm focus-within:border-ring">
         <Text class="font-mono text-heading font-semibold text-muted-foreground">$</Text>
         <Input
@@ -138,7 +138,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   const r = () => lastRun();
   const warnings = () => props.view?.observations.filter((o) => o.level === "warn").length ?? 0;
   return (
-    <View testID={r() ? "run-ended" : "run-status"} class={terminal() ? "flex-row gap-2" : "min-h-11 flex-row flex-wrap items-center gap-x-4 gap-y-1 rounded-(--radius-card) border border-border bg-card px-3.5 py-2"}>
+    <View testID={r() ? "run-ended" : "run-status"} class={terminal() ? "flex-row gap-2" : "min-h-11 flex-row flex-wrap items-center gap-x-4 gap-y-1 rounded-(--radius-card) border border-border bg-card px-3 py-2"}>
       <If
         when={r()}
         else={
@@ -202,7 +202,7 @@ function LivePanel(props: { profile: Profile }) {
     </View>
   );
   return (
-    <View testID="live" class="gap-2 rounded-(--radius-card) border border-border bg-card px-3.5 py-2.5">
+    <View testID="live" class={`gap-2 ${CARD} px-3 py-2.5`}>
       <View class="flex-row items-center gap-6">
         {figure(f().perSecond.toFixed(f().perSecond < 10 ? 1 : 0), t("live.perSecond"), "live-rate")}
         {figure(`${Math.round(f().failedShare * 100)}%`, t("live.failed"), "live-failed", f().failedShare > 0 ? "text-status-server" : "text-foreground")}
@@ -238,7 +238,7 @@ function LiveOperations() {
   const view = analysis(path, () => (tick(), lastRun())).view;
 
   return (
-    <View class="min-h-0 flex-1 gap-2.5" testID="run-operations">
+    <View class="min-h-0 flex-1 gap-2" testID="run-operations">
       <StatusBand view={view()} now={now} />
       <If when={view() && view()!.episodes.length > 0} else={<If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}>
             {/* the SDK hints only for a program that ran and still sent nothing */}
@@ -249,7 +249,7 @@ function LiveOperations() {
               <NoRequests />
             </If>
           </If>}>
-        <View class="min-h-0 flex-1 gap-2.5">
+        <View class="min-h-0 flex-1 gap-2">
           {/* while it runs: its requests over time, growing as they arrive */}
           <If when={!terminal() && !lastRun() && view()!.profile}>
             <LivePanel profile={view()!.profile} />
@@ -274,7 +274,7 @@ function NoRequests() {
     <View testID="run-no-requests" class={terminal() ? "gap-1" : "flex-1 items-center justify-center gap-3 p-6"}>
       <Text class={terminal() ? "font-semibold text-foreground" : "text-center text-heading font-semibold text-foreground"}>{t("run.noneTitle")}</Text>
       <Text class={terminal() ? "text-muted-foreground" : "max-w-[520px] text-center text-body text-muted-foreground"}>{t("run.noneText")}</Text>
-      <View class={terminal() ? "" : "w-full max-w-[640px] rounded-(--radius-card) border border-border bg-card px-4 py-3"}>
+      <View class={`w-full max-w-[640px] ${CARD} p-4`}>
         <KeyValue
           mono
           rows={[
@@ -318,7 +318,7 @@ function Intro() {
             </Text>
             <Each of={history().slice(0, 5)}>
               {(c) => (
-                <BaseButton accessibilityLabel={c()} onPress={() => command.set(c())} class="flex-row items-center gap-2.5 rounded-(--radius) px-2 py-1.5 hover:bg-muted">
+                <BaseButton accessibilityLabel={c()} onPress={() => command.set(c())} class="flex-row items-center gap-2 rounded-(--radius) px-2 py-1.5 hover:bg-muted">
                   <If when={!terminal()}>
                     <Icon name="square-terminal" size={14} />
                   </If>

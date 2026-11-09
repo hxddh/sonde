@@ -8,7 +8,7 @@ import { bytes } from "../format";
 import { t } from "../i18n";
 import type { SessionView } from "../types";
 import { StackBar } from "./charts";
-import { Button, Section, SimpleTable, terminal } from "./kit";
+import { Button, CARD, terminal, Section, SimpleTable } from "./kit";
 import { Figure, findingMarks } from "./sessionview";
 import { Chains, cost, Distribution, Flows, Heat, LatencyBand, offset, PrefixLimits, Pressure, SessionShape, shapeSentence, TimeSpent } from "./plots";
 
@@ -46,9 +46,9 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
   };
   const showFlows = signal(false);
   return (
-    <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-7 pb-4 pr-2"}>
+    <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-6 pb-4 pr-2"}>
       <If when={!terminal()} else={<Text class="text-foreground">{shapeSentence(p())}</Text>}>
-        <View class="flex-row flex-wrap gap-x-3 gap-y-2 rounded-(--radius-card) border border-border bg-card px-4 py-3">
+        <View class={`flex-row flex-wrap gap-x-3 gap-y-2 ${CARD} p-4`}>
           <Figure testID="profile-waiting" value={offset(p().busyMs)} label={`${t("profile.waiting")} · ${Math.round((p().busyMs * 100) / Math.max(p().wallMs, 1e-9))}%`} />
           <Figure value={String(p().peakInFlight)} label={t("profile.peak")} />
           <Figure testID="profile-throughput" value={`${bytes(bytesPerSecond())}/s`} label={t("profile.throughput")} />

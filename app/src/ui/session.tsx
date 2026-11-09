@@ -8,7 +8,7 @@ import { api } from "../native";
 import { endpoint, endpoints, notify, report } from "../store";
 import type { Episode, RecordingView } from "../types";
 import { Icon } from "./icon";
-import { Button, Dot, Options, terminal } from "./kit";
+import { Button, Dot, Options, terminal, CARD } from "./kit";
 import { OperationView } from "./sessionview";
 
 export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, operationsAt, seconds, SessionHeader, SessionList, statusTone } from "./sessionview";
@@ -45,7 +45,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
     <If
       when={props.recording}
       else={
-        <View class={terminal() ? "gap-1" : "gap-3 rounded-(--radius-card) border border-border bg-card px-4 py-3.5"} testID={open() ? "record-form" : undefined}>
+        <View class={`gap-3 ${CARD} p-4`} testID={open() ? "record-form" : undefined}>
           <View class="flex-row items-center gap-3">
             <If when={!terminal()}>
               <View class="size-9 items-center justify-center rounded-(--radius) bg-muted">
@@ -61,7 +61,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
             </If>
           </View>
           <If when={open()}>
-            <View class="gap-2.5 border-t border-border pt-3">
+            <View class="gap-2 border-t border-border pt-3">
               <Text class="text-small text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
               <If when={!props.policy}>
                 <Options
@@ -84,7 +84,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
       }
     >
       {(r) => (
-        <View class={terminal() ? "gap-1" : "gap-3 rounded-(--radius-card) border border-primary/40 bg-card px-4 py-3.5"} testID="recording">
+        <View class={terminal() ? "gap-1" : "gap-3 rounded-(--radius-card) border border-primary/40 bg-card px-4 py-3"} testID="recording">
           <View class="flex-row items-center gap-2">
             <Dot tone="live" />
             <Text class="flex-1 text-body font-semibold text-foreground line-clamp-1">{t("timeline.recording", { url: r().url })}</Text>

@@ -1,7 +1,7 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { effect, ErrorBoundary, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
-import { Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
+import { effect, ErrorBoundary, fontScale, type JSX, keymap, platform, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { separators } from "../format";
 import { Icon, type IconName, type Tint } from "./icon";
@@ -45,6 +45,20 @@ export const fill = (translucent: string, opaque: string) => (material ? translu
 export const POPUP = `rounded-(--radius-card) border border-border ${fill("bg-popover/90", "bg-popover")} p-1 shadow-lg`;
 /** The scrim under a modal layer, from the theme (`scrim`, light and dark). */
 export const SCRIM = "bg-scrim";
+/** Where the keyboard is: one ring on every control that takes focus. */
+export const FOCUS = "focus:ring-2 focus:ring-ring/50";
+/** The one surface of a group: a hairline card. Cards never nest. */
+export const CARD = "rounded-(--radius-card) border border-border bg-card";
+/** Every DataTable's look: a hairline header, cells with one inset that
+ * lines up with their titles, a hover and a selection, no stripes. */
+export const TABLE = {
+  header: "bg-card border-b border-border",
+  headerCell: "px-2 text-caption font-medium text-muted-foreground",
+  cell: "px-2",
+  rowHover: "bg-row-hover",
+  rowSelected: "bg-selection",
+  fixedEdge: "border-r border-border",
+} as const;
 /** The title bar's height: sheets start below it, so it stays a title bar. */
 export const TITLE_BAR = 44;
 
@@ -92,27 +106,26 @@ export function PanelHeader(props: { title: string; icon?: IconName; subtitle?: 
   );
 }
 
-type Variant = "primary" | "secondary" | "outline" | "ghost" | "destructive";
+/** Four kinds of button: one primary per area, outline by default, ghost in
+ * dense rows and toolbars, destructive for what removes data. */
+type Variant = "primary" | "outline" | "ghost" | "destructive";
 
 const buttonClass: Record<Variant, string> = {
   primary: "bg-primary hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50",
-  secondary: "bg-secondary border border-border hover:bg-muted active:bg-accent disabled:opacity-50",
-  outline: "border border-input bg-background hover:bg-muted active:bg-accent disabled:opacity-50",
-  ghost: "hover:bg-muted active:bg-accent disabled:opacity-50",
+  outline: "border border-input bg-background hover:bg-muted active:bg-muted disabled:opacity-50",
+  ghost: "hover:bg-muted active:bg-muted disabled:opacity-50",
   destructive: "bg-destructive hover:bg-destructive/90 active:bg-destructive/80 disabled:opacity-50",
 };
 
 const buttonText: Record<Variant, string> = {
-  primary: "text-primary-foreground",
-  secondary: "text-secondary-foreground",
+  primary: "font-medium text-primary-foreground",
   outline: "text-foreground",
   ghost: "text-foreground",
-  destructive: "text-destructive-foreground",
+  destructive: "font-medium text-destructive-foreground",
 };
 
 const iconTint: Record<Variant, Tint> = {
   primary: "primary-foreground",
-  secondary: "foreground",
   outline: "foreground",
   ghost: "muted-foreground",
   destructive: "primary-foreground",
@@ -136,7 +149,7 @@ export function Kbd(props: { keys: string; class?: string }) {
 export function Button(props: {
   label: string;
   onPress?: () => void;
-  variant?: Variant;
+  variant?: Variant | "secondary";
   disabled?: boolean;
   small?: boolean;
   icon?: IconName;
@@ -146,7 +159,7 @@ export function Button(props: {
   testID?: string;
   class?: string;
 }) {
-  const v = () => props.variant ?? "secondary";
+  const v = (): Variant => (props.variant === "secondary" || !props.variant ? "outline" : props.variant);
   return (
     <BaseButton
       testID={props.testID}
@@ -154,19 +167,19 @@ export function Button(props: {
       disabled={props.disabled}
       accessibilityLabel={props.label}
       tooltip={props.tip || props.shortcut ? <Tip text={props.tip ?? props.label} shortcut={props.shortcut} /> : undefined}
-      class={`flex-row items-center justify-center gap-1.5 rounded-(--radius) ${props.small ? "h-7 px-2.5" : "h-8 px-3"} ${buttonClass[v()]} ${props.class ?? ""}`}
+      class={`flex-row items-center justify-center gap-1.5 rounded-(--radius) ${props.small ? "h-7 px-2.5" : "h-8 px-3"} ${buttonClass[v()]} ${FOCUS} ${props.class ?? ""}`}
     >
-      <If when={props.icon && !terminal()}>
+      <If when={props.icon}>
         <Icon name={props.icon!} size={props.small ? 14 : 15} tint={iconTint[v()]} />
       </If>
-      <Text class={`${props.small ? "text-small" : "text-body"} font-medium ${buttonText[v()]}`}>{props.label}</Text>
+      <Text class={`${props.small ? "text-small" : "text-body"} ${buttonText[v()]}`}>{props.label}</Text>
     </BaseButton>
   );
 }
 
-/** A button that shows only its icon (its label in a terminal), named for screen readers, explained by its tooltip. */
+/** A button that shows only its icon, named for screen readers (a terminal
+ * shows the name in its place), explained by its tooltip. */
 export function IconButton(props: { icon: IconName; label: string; onPress?: () => void; shortcut?: string; disabled?: boolean; selected?: boolean; tint?: Tint; testID?: string; class?: string }) {
-  if (terminal()) return <Button small variant="ghost" label={props.label} onPress={props.onPress} disabled={props.disabled} testID={props.testID} />;
   return (
     <BaseButton
       testID={props.testID}
@@ -175,21 +188,30 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
       selected={props.selected}
       accessibilityLabel={props.label}
       tooltip={<Tip text={props.label} shortcut={props.shortcut} />}
-      class={`size-7 items-center justify-center rounded-(--radius) hover:bg-muted active:bg-accent selected:bg-accent disabled:opacity-40 ${props.class ?? ""}`}
+      class={`size-7 items-center justify-center rounded-(--radius) hover:bg-muted active:bg-muted selected:bg-selection disabled:opacity-40 ${FOCUS} ${props.class ?? ""}`}
     >
       <Icon name={props.icon} size={16} tint={props.tint ?? (props.selected ? "foreground" : "muted-foreground")} />
     </BaseButton>
   );
 }
 
+/** A panel's or a page's title: the first of the two heading levels. */
 export function Title(props: { children: JSX.Element; class?: string }) {
-  return <Text class={`text-heading font-semibold text-foreground ${props.class ?? ""}`}>{props.children}</Text>;
+  return (
+    <Text role="header" class={`text-heading font-semibold text-foreground ${props.class ?? ""}`}>
+      {props.children}
+    </Text>
+  );
 }
 
-export function Heading(props: { children: JSX.Element }) {
+/** A section's title: the second and last heading level (as `Section`'s). */
+export function Heading(props: { children: JSX.Element; count?: number }) {
   return (
-    <Text role="header" class="text-small font-semibold text-muted-foreground">
+    <Text role="header" class="text-body font-semibold text-foreground">
       {props.children}
+      <If when={props.count !== undefined}>
+        <Text class="font-normal text-muted-foreground">{` · ${props.count}`}</Text>
+      </If>
     </Text>
   );
 }
@@ -206,11 +228,78 @@ export function Mono(props: { children: JSX.Element; class?: string }) {
   );
 }
 
-export function Card(props: { children: JSX.Element; class?: string; testID?: string }) {
+const CARD_PAD = { panel: "gap-3 p-4", tile: "gap-1 px-3 py-2.5", none: "overflow-hidden" } as const;
+
+/** The one card: `panel` for a group (the default), `tile` for a figure in a
+ * row of them, `none` for a list that draws its own rows. With `onPress` the
+ * whole card is a button (hover, focus, a press). Never one inside another. */
+export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD; class?: string; testID?: string; onPress?: () => void; label?: string; selected?: boolean }) {
+  const cls = () => `${CARD} ${CARD_PAD[props.pad ?? "panel"]} ${props.class ?? ""}`;
   return (
-    <View testID={props.testID} class={`gap-2 rounded-(--radius-card) border border-border bg-card p-4 ${props.class ?? ""}`}>
+    <If when={props.onPress} else={<View testID={props.testID} class={cls()}>{props.children}</View>}>
+      <BaseButton testID={props.testID} accessibilityLabel={props.label} selected={props.selected} onPress={() => props.onPress?.()} class={`${cls()} items-stretch hover:border-ring/40 hover:bg-muted/40 active:bg-muted selected:border-ring/60 ${FOCUS}`}>
+        {props.children}
+      </BaseButton>
+    </If>
+  );
+}
+
+/** A row of a list a press opens: hover, pressed, selected and focus, one
+ * look in every list (sessions, programs, requests, hits). */
+export function ListRow(props: { children: JSX.Element; onPress: () => void; selected?: boolean; label?: string; testID?: string; class?: string }) {
+  return (
+    <BaseButton
+      testID={props.testID}
+      accessibilityLabel={props.label}
+      selected={props.selected}
+      onPress={props.onPress}
+      class={`flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 hover:bg-muted active:bg-muted selected:bg-selection ${FOCUS} ${props.class ?? ""}`}
+    >
       {props.children}
-    </View>
+    </BaseButton>
+  );
+}
+
+/** A modal dialog: one surface, one width per size, over the scrim. */
+export function Modal(props: { open: boolean; onClose: () => void; size?: "narrow" | "default"; children: JSX.Element; testID?: string }) {
+  return (
+    <Dialog
+      open={props.open}
+      onOpenChange={(e) => !e.open && props.onClose()}
+      backdropClass={SCRIM}
+      testID={props.testID}
+      class={`m-auto ${props.size === "narrow" ? "w-[420px]" : "w-[560px]"} max-w-[94%] gap-4 ${CARD} bg-popover p-5 shadow-xl`}
+    >
+      {props.children}
+    </Dialog>
+  );
+}
+
+/** A section that opens and closes under its title (Native Shell's
+ * Accordion of one item: a heading, a button that says whether it is
+ * expanded, the panel revealed). */
+export function Disclosure(props: { title: string; count?: number; open?: boolean; children: JSX.Element; testID?: string; level?: number; trailing?: JSX.Element }) {
+  const value = signal<string[]>(props.open ? ["x"] : []);
+  return (
+    <Accordion value={value()} onChange={(e) => value.set(e.value)}>
+      <AccordionItem value="x" class="gap-2">
+        <AccordionHeader level={props.level ?? 3} class="flex-row items-center gap-2">
+          <AccordionTrigger testID={props.testID} class={`group flex-1 flex-row items-center gap-1.5 rounded-(--radius-sm) py-0.5 ${FOCUS}`}>
+            <View class="group-aria-expanded:rotate-90 motion-safe:transition-transform motion-safe:duration-150">
+              <Icon name="chevron-right" size={13} tint="muted-foreground" />
+            </View>
+            <Text class="text-body font-semibold text-foreground">{props.title}</Text>
+            <If when={props.count !== undefined}>
+              <Text class="text-body text-muted-foreground">{`· ${props.count}`}</Text>
+            </If>
+          </AccordionTrigger>
+          {props.trailing}
+        </AccordionHeader>
+        <AccordionPanel reveal accessibilityLabel={props.title}>
+          {props.children}
+        </AccordionPanel>
+      </AccordionItem>
+    </Accordion>
   );
 }
 
@@ -284,8 +373,34 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
         onChange={({ value }) => props.onChange(value)}
         onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
         submitBehavior={props.onSubmit ? "submit" : undefined}
-        class={`h-8 rounded-(--radius) border border-input bg-background px-2.5 text-body text-foreground focus:border-ring ${props.mono ? "font-mono" : ""}`}
+        class={`h-8 rounded-(--radius) border border-input bg-background px-2.5 text-body text-foreground focus:border-ring ${FOCUS} ${props.mono ? "font-mono" : ""}`}
       />
+    </View>
+  );
+}
+
+/** The one search field: a magnifier, the text, a clear button while it
+ * holds any, and what the place puts after it (a "search everywhere"). */
+export function SearchField(props: { value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder: string; label?: string; testID?: string; class?: string; children?: JSX.Element }) {
+  return (
+    <View class={`h-8 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50 ${props.class ?? ""}`}>
+      <Icon name="search" size={14} tint="muted-foreground" />
+      <Input
+        testID={props.testID}
+        value={props.value}
+        placeholder={props.placeholder}
+        autoCapitalize="none"
+        autoCorrect={false}
+        onChange={({ value }) => props.onChange(value)}
+        onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
+        submitBehavior={props.onSubmit ? "submit" : undefined}
+        accessibilityLabel={props.label ?? props.placeholder}
+        class="min-w-0 flex-1 text-body text-foreground placeholder:text-muted-foreground"
+      />
+      <If when={props.value}>
+        <IconButton icon="x" label={t("common.clear")} onPress={() => props.onChange("")} class="size-5" />
+      </If>
+      {props.children}
     </View>
   );
 }
@@ -325,27 +440,27 @@ export function NumberField(props: { label: string; value: number | null; onChan
   );
 }
 
-export function Toggle(props: { label: string; checked: boolean; onChange: (v: boolean) => void; hint?: string; testID?: string; disabled?: boolean }) {
+/** A setting that is on or off, its label (and hint) the switch's own: a
+ * press on the words turns it too, and screen readers say them with it. */
+export function SwitchRow(props: { label: string; checked: boolean; onChange: (v: boolean) => void; hint?: string; testID?: string; disabled?: boolean }) {
   return (
-    <View class="flex-row items-center gap-3">
-      <Switch
-        testID={props.testID}
-        checked={props.checked}
-        disabled={props.disabled}
-        accessibilityLabel={props.label}
-        onChange={({ checked }) => props.onChange(checked)}
-        class="h-5 w-9 justify-center rounded-full bg-input px-0.5"
-        checkedStyle={{}}
-        trackClass="h-5 w-9 rounded-full bg-input checked:bg-primary"
-        thumbClass="h-4 w-4 rounded-full bg-background shadow-sm checked:translate-x-4"
-      />
+    <Switch
+      testID={props.testID}
+      checked={props.checked}
+      disabled={props.disabled}
+      accessibilityLabel={props.label}
+      onChange={({ checked }) => props.onChange(checked)}
+      class={`flex-row items-center gap-3 rounded-(--radius-sm) disabled:opacity-50 ${FOCUS}`}
+      trackClass="h-5 w-9 shrink-0 rounded-full bg-input px-0.5 checked:bg-primary motion-safe:transition-colors"
+      thumbClass="h-4 w-4 rounded-full bg-background shadow-sm checked:translate-x-4 motion-safe:transition-transform"
+    >
       <View class="flex-1">
         <Text class="text-body text-foreground">{props.label}</Text>
         <If when={props.hint}>
           <Text class="text-small text-muted-foreground">{props.hint}</Text>
         </If>
       </View>
-    </View>
+    </Switch>
   );
 }
 
@@ -356,7 +471,7 @@ export function Check(props: { label: string; checked: boolean; onChange: (v: bo
       checked={props.checked}
       accessibilityLabel={props.label}
       onChange={({ checked }) => props.onChange(checked)}
-      class="flex-row items-center gap-2"
+      class={`flex-row items-center gap-2 rounded-(--radius-sm) ${FOCUS}`}
       indicatorClass="h-4 w-4 items-center justify-center rounded-sm border border-input checked:bg-primary checked:border-primary"
       indicator={<Text class="text-small text-primary-foreground">✓</Text>}
     >
@@ -387,7 +502,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
             <Text class="text-body text-foreground line-clamp-1">
               {title()}
             </Text>
-            {terminal() ? <Text class="text-small text-muted-foreground">⌄</Text> : <Icon name="chevrons-up-down" size={13} />}
+            <Icon name="chevrons-up-down" size={13} />
           </View>
         }
       />
@@ -398,17 +513,17 @@ export function Choice(props: { label?: string; value: string | null; items: { v
 /** One of a few views or modes: Tabs, a pill sliding behind the chosen one. */
 export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
-    <Tabs testID={props.testID} class={`flex-row rounded-(--radius) bg-muted p-0.5 ${props.class ?? "self-start"}`} indicatorClass={`inset-y-0.5 rounded-(--radius-sm) bg-background shadow-sm ${reduceMotion() ? "" : "transition-all duration-200"}`}>
-      <Each of={props.items}>
+    <Tabs testID={props.testID} class={`flex-row rounded-(--radius) bg-muted p-0.5 ${props.class ?? "self-start"}`} indicatorClass="inset-y-0.5 rounded-(--radius-sm) bg-background shadow-sm motion-safe:transition-all motion-safe:duration-200">
+      <Each of={props.items} key={(i) => i.value}>
         {(item) => (
           <Tab
             testID={props.testID ? `${props.testID}-${item().value}` : undefined}
             accessibilityLabel={item().title}
             selected={props.value === item().value}
             onPress={() => props.onChange(item().value)}
-            class="group flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5 py-1"
+            class={`group flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5 py-1 ${FOCUS}`}
           >
-            <If when={item().icon && !terminal()}>
+            <If when={item().icon}>
               <Icon name={item().icon!} size={13} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
             <Text class="text-small text-muted-foreground group-selected:font-medium group-selected:text-foreground">{item().title}</Text>
@@ -425,16 +540,16 @@ export function Segmented(props: { value: string; items: { value: string; title:
 export function Options(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
     <ToggleGroup testID={props.testID} class={`flex-row rounded-(--radius) bg-muted p-0.5 ${props.class ?? "self-start"}`}>
-      <Each of={props.items}>
+      <Each of={props.items} key={(i) => i.value}>
         {(item) => (
           <BaseToggle
             testID={props.testID ? `${props.testID}-${item().value}` : undefined}
             accessibilityLabel={item().title}
             pressed={props.value === item().value}
             onChange={() => props.onChange(item().value)}
-            class="group flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5 py-1 aria-pressed:bg-background aria-pressed:shadow-sm"
+            class={`group flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5 py-1 aria-pressed:bg-background aria-pressed:shadow-sm ${FOCUS}`}
           >
-            <If when={item().icon && !terminal()}>
+            <If when={item().icon}>
               <Icon name={item().icon!} size={13} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
             <Text class="text-small text-muted-foreground group-aria-pressed:font-medium group-aria-pressed:text-foreground">{item().title}</Text>
@@ -469,7 +584,7 @@ export function Section(props: { title?: string; description?: string; children:
         </View>
       </If>
       <If when={!props.plain} else={props.children}>
-        <View class="gap-3 rounded-(--radius-card) border border-border bg-card p-4">{props.children}</View>
+        <View class={`gap-3 ${CARD} p-4`}>{props.children}</View>
       </If>
     </View>
   );
@@ -497,7 +612,7 @@ export function Bar(props: { value: number | null; label?: string }) {
 export function Empty(props: { text: string; title?: string; icon?: IconName; children?: JSX.Element; testID?: string }) {
   return (
     <View testID={props.testID} class="flex-1 items-center justify-center gap-3 p-8">
-      <If when={props.icon && !terminal()}>
+      <If when={props.icon}>
         <View class="mb-1 size-11 items-center justify-center rounded-full bg-muted">
           <Icon name={props.icon!} size={20} />
         </View>
@@ -518,9 +633,7 @@ export function Empty(props: { text: string; title?: string; icon?: IconName; ch
 export function Loading(props: { text?: string; class?: string; testID?: string }) {
   return (
     <View testID={props.testID ?? "loading"} class={`flex-row items-center gap-2 ${props.class ?? ""}`}>
-      <If when={!terminal()}>
-        <View class={`size-2 rounded-full bg-muted-foreground/60 ${reduceMotion() ? "" : "animate-pulse"}`} />
-      </If>
+      <View class="size-2 rounded-full bg-muted-foreground/60 motion-safe:animate-pulse" />
       <Text class="text-small text-muted-foreground">{props.text ?? t("common.loading")}</Text>
     </View>
   );
@@ -530,13 +643,13 @@ export function Loading(props: { text?: string; class?: string; testID?: string 
 export function SessionSkeleton(props: { rows?: number }) {
   const bar = (w: string, h = "h-3") => <View class={`${h} ${w} rounded-(--radius-sm) bg-muted`} />;
   return (
-    <View testID="session-reading" accessibilityLabel={t("sessions.reading")} class="flex-1 gap-3.5 px-5 pt-4">
+    <View testID="session-reading" accessibilityLabel={t("sessions.reading")} class="flex-1 gap-3 px-5 pt-4">
       <View class="gap-2">
         {bar("w-56", "h-4")}
         {bar("w-80")}
       </View>
       <View class="h-16 rounded-(--radius-card) bg-muted/60" />
-      <View class="gap-2.5 pt-1">
+      <View class="gap-2 pt-1">
         <Each of={Array.from({ length: props.rows ?? 8 }, (_, i) => i)} key={(i) => i}>
           {(i) => (
             <View class="flex-row items-center gap-3">
@@ -607,7 +720,7 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
   const columns = () =>
     props.columns.map((title, c) => {
       const longest = Math.max(title.length, ...props.rows.slice(0, 400).map((r) => (r[c] ?? "").length));
-      return { key: `c${c}`, title, width: Math.round(Math.min(360, Math.max(56, longest * per() + 20))), sortable: !terminal() };
+      return { key: `c${c}`, title, width: Math.round(Math.min(360, Math.max(56, longest * per() + 20))), sortable: true };
     });
   const data = () => sortRows(props.rows, sort(), (r, key) => sortValue(r[Number(key.slice(1))] ?? "")).map((r) => Object.fromEntries(r.map((cell, c) => [`c${c}`, cell])));
   const shown = () => Math.min(props.rows.length, props.max ?? 12);
@@ -621,8 +734,8 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
       fontSize={TYPE.small}
       fontFamily={props.mono ? token("font-mono") : undefined}
       rowHeight={rowHeight(26)}
-      classes={terminal() ? undefined : { header: "bg-muted border-b border-border", headerCell: "pl-2 pr-1 text-small font-semibold text-muted-foreground", rowHover: "bg-row-hover" }}
-      class="rounded-(--radius) border border-border"
+      classes={terminal() ? undefined : TABLE}
+      class={CARD}
       style={terminal() ? undefined : { height: (shown() + 1) * (rowHeight(26) ?? 26) + 2 }}
     />
   );
@@ -649,7 +762,7 @@ export function Recoverable(props: { children: JSX.Element }) {
 export function Legend(props: { items: { label: string; swatch: string }[]; class?: string; square?: boolean }) {
   return (
     <View class={`flex-row flex-wrap gap-x-4 gap-y-1 ${props.class ?? ""}`}>
-      <Each of={props.items}>
+      <Each of={props.items} key={(it) => it.label}>
         {(it) => (
           <View class="flex-row items-center gap-1.5">
             <View class={`size-2 ${props.square ? "rounded-sm" : "rounded-full"} ${it().swatch}`} />
@@ -671,8 +784,8 @@ export function InWindowMenu(props: { enabled: boolean; actions: () => { label: 
       <ContextMenu class={props.class} trigger={props.children} popupClass={`${POPUP} min-w-48`}>
         <Each of={props.actions()}>
           {(a) => (
-            <MenuItem onSelect={a().run} class="flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1 focus:bg-muted">
-              <If when={a().icon && !terminal()}>{(_) => <Icon name={a().icon!} size={14} tint="muted-foreground" />}</If>
+            <MenuItem onSelect={a().run} class="flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1 focus:bg-accent">
+              <If when={a().icon}>{(_) => <Icon name={a().icon!} size={14} tint="muted-foreground" />}</If>
               <Text class="text-body text-foreground">{a().label}</Text>
             </MenuItem>
           )}

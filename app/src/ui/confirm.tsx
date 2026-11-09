@@ -2,13 +2,12 @@
 // typed confirmation (the number of items, or the bucket name).
 
 import { signal, Text, View } from "nsh";
-import { Dialog } from "nsh/base";
 import { bytes } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { go, notify, readOnly, report } from "../store";
 import type { Outcome, Plan } from "../types";
-import { Button, Field, Heading, Muted, SCRIM, SimpleTable } from "./kit";
+import { Button, Field, Heading, Modal, Muted, SimpleTable, Title } from "./kit";
 import { Document } from "./record";
 
 export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outcome | null) => void }) {
@@ -37,19 +36,15 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
     }
   };
   return (
-    <Dialog
+    <Modal
       open={props.plan !== null}
-      onOpenChange={(e) => {
-        // while it runs it stays: what it did is shown, and the lists rescanned
-        if (!e.open && !running()) close(null);
-      }}
-      class="m-auto w-[560px] max-w-[95%] gap-3 rounded-(--radius-card) border border-border bg-popover p-5"
-      backdropClass={SCRIM}
+      // while it runs it stays: what it did is shown, and the lists rescanned
+      onClose={() => !running() && close(null)}
     >
       <If when={props.plan}>
         {(p) => (
           <View class="gap-3" testID="confirm-dialog">
-            <Text class="text-heading font-semibold text-popover-foreground">{t("confirm.title")}</Text>
+            <Title>{t("confirm.title")}</Title>
             <Heading>{t("confirm.dryRun")}</Heading>
             <Text class="text-body text-popover-foreground">{p().summary}</Text>
             <If when={p().items.length > 0}>
@@ -81,6 +76,6 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
           </View>
         )}
       </If>
-    </Dialog>
+    </Modal>
   );
 }

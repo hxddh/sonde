@@ -221,7 +221,7 @@ export function Palette() {
         onCancel={close}
         onQueryChange={({ query }) => typed.set(query)}
         searchPrefix={terminal() ? undefined : <Icon name="search" size={16} />}
-        searchBarClass={terminal() ? undefined : "h-12 flex-row items-center gap-2.5 border-b border-border px-4"}
+        searchBarClass={terminal() ? undefined : "h-12 flex-row items-center gap-2 border-b border-border px-4"}
         searchClass={terminal() ? "text-foreground" : "flex-1 text-heading text-foreground placeholder:text-muted-foreground"}
         listClass={terminal() ? "max-h-[360px]" : "max-h-[400px] p-1.5"}
         itemClass={terminal() ? "px-1 text-foreground focus:bg-accent checked:font-semibold" : "group h-9 rounded-(--radius) px-2.5 focus:bg-selection"}
@@ -233,7 +233,7 @@ export function Palette() {
             : (entry) => {
                 const a = byId().get(entry.id);
                 return (
-                  <View class="h-9 flex-row items-center gap-2.5">
+                  <View class="h-9 flex-row items-center gap-2">
                     <Icon name={a?.icon ?? "chevron-right"} size={15} tint={a?.checked ? "primary" : "muted-foreground"} />
                     <Text class={`min-w-0 shrink text-body line-clamp-1 ${a?.id.startsWith("cmd:") ? "font-mono text-small" : ""} ${a?.checked ? "font-medium text-primary" : "text-popover-foreground"}`}>{entry.label}</Text>
                     <If when={a?.hint}>

@@ -294,6 +294,25 @@ pub struct Check {
 }
 
 /// A run against a budget, and against a baseline run when there is one.
+/// What a program's request cost comes to in a month at the pace it runs:
+/// its runs' average cost times how often it ran (runs a day, from the
+/// span of `runs`' start times). None with fewer than three runs or less
+/// than an hour between the first and the last: no pace to go by.
+pub fn monthly_cost(runs: &[RunPoint]) -> Option<(f64, f64)> {
+    if runs.len() < 3 {
+        return None;
+    }
+    let at = |r: &RunPoint| chrono::DateTime::parse_from_rfc3339(&r.created).ok();
+    let (first, last) = (at(runs.first()?)?, at(runs.last()?)?);
+    let days = (last - first).num_seconds() as f64 / 86_400.0;
+    if days < 1.0 / 24.0 {
+        return None;
+    }
+    let per_day = (runs.len() - 1) as f64 / days;
+    let average = runs.iter().map(|r| r.cost).sum::<f64>() / runs.len() as f64;
+    Some((average * per_day * 30.0, per_day))
+}
+
 /// What a run may use against its baseline with `tolerance` more (0.1 is
 /// 10%): the limits `sonde check` holds a run to, and the app marks a
 /// program "past its baseline" by.
@@ -463,6 +482,27 @@ mod tests {
         let p = profile(rs, &RequestPrices::default());
         let o = observations(rs, &episodes(rs));
         (run_point("x", "", rs, &p, &o), p, o)
+    }
+
+    #[test]
+    fn a_month_at_the_pace_a_program_runs() {
+        let pt = |h: u32, cost: f64| RunPoint {
+            path: String::new(),
+            created: format!("2026-11-01T{h:02}:00:00Z"),
+            requests: 1,
+            busy_ms: 1.0,
+            wall_ms: 1.0,
+            cost,
+            currency: "USD".into(),
+            errors: 0,
+            warnings: 0,
+            findings: 0,
+        };
+        // every hour, a cent a run: 24 runs a day, $7.20 a month
+        let (month, per_day) = monthly_cost(&[pt(0, 0.01), pt(1, 0.01), pt(2, 0.01)]).unwrap();
+        assert!((per_day - 24.0).abs() < 1e-9);
+        assert!((month - 7.2).abs() < 1e-9);
+        assert_eq!(monthly_cost(&[pt(0, 0.01), pt(1, 0.01)]), None);
     }
 
     #[test]

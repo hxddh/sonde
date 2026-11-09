@@ -10,7 +10,7 @@ import { api, Listing, watch } from "../native";
 import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Badge, Bar, Button, Card, Choice, Empty, Field, IconButton, InWindowMenu, KeyValue, Loading, Muted, rowHeight, SPLIT_HANDLE, terminal, Toggle, TYPE } from "../ui/kit";
+import { Badge, Bar, Button, CARD, Card, Choice, Empty, Field, IconButton, InWindowMenu, KeyValue, Loading, Muted, terminal, rowHeight, SPLIT_HANDLE, SwitchRow, TYPE, TABLE } from "../ui/kit";
 import { Fold } from "../ui/record";
 import { rememberedSize } from "../ui/sizes";
 import { Overview } from "../ui/overview";
@@ -379,7 +379,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   };
 
   return (
-    <View class="min-h-0 flex-1 gap-2.5">
+    <View class="min-h-0 flex-1 gap-2">
       <View class="flex-row flex-wrap items-center gap-2">
         <Breadcrumbs />
         <View class="flex-1" />
@@ -410,7 +410,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             <Button small variant="ghost" label={t("browse.searchAll")} onPress={search} testID="search" />
           </If>
         </View>
-        <Toggle label={t("browse.flat")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
+        <SwitchRow label={t("browse.flat")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
         {/* nothing to load once every row is here */}
         <If when={!done()}>
           <Button small variant="outline" label={t("browse.loadAll")} onPress={loadAll} disabled={loadingAll()} testID="load-all" class="min-w-24" />
@@ -439,7 +439,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       <DataTable
         testID="objects"
         accessibilityLabel={t("nav.objects")}
-        class="min-h-0 flex-1 rounded-(--radius-card) border border-border bg-card"
+        class={`min-h-0 flex-1 ${CARD}`}
         columns={[
           { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : 380, minWidth: 120 },
           { key: "size", title: t("browse.size"), width: 96, align: "end" },
@@ -453,7 +453,6 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         hasMore={!done()}
         loading={loading()}
         rowSelectable
-        stripe
         resizableColumns
         fontSize={TYPE.body}
         rowHeight={rowHeight(30)}
@@ -464,13 +463,14 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                 if (c.key === "name") {
                   const folder = c.text.startsWith("▸ ");
                   return (
-                    <View class="flex-1 flex-row items-center gap-2 px-2">
+                    <View class="flex-1 flex-row items-center gap-2">
                       <Icon name={folder ? "folder" : "file"} size={14} tint={folder ? "foreground" : "muted-foreground"} />
                       <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${folder ? "font-medium text-foreground" : "text-foreground"}`}>{folder ? c.text.slice(2) : c.text}</Text>
                     </View>
                   );
                 }
-                return <Text class={`px-2 text-small ${c.key === "size" || c.key === "parts" ? "font-mono text-foreground" : "text-muted-foreground"}`}>{c.text}</Text>;
+                // sizes as figures (tabular, at the end, under their title); the rest quiet
+                return c.key === "size" || c.key === "parts" ? <Text class="flex-1 text-right text-small tabular-nums text-foreground">{c.text}</Text> : <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
               }
         }
         onContextMenu={(e) => {
@@ -485,7 +485,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           if (want < start() || range.end > start() + WINDOW - 50) start.set(want);
         }}
         onRowPress={({ row }) => open(row)}
-        classes={terminal() ? { header: "bg-muted", rowSelected: "bg-accent" } : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-0", rowOdd: "bg-muted/30", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
+        classes={terminal() ? undefined : TABLE}
         empty={<Empty icon="folder" text={loading() ? t("common.loading") : t("common.empty")} />}
       />
       </InWindowMenu>

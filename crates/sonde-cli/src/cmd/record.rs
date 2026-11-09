@@ -2069,6 +2069,153 @@ pub struct WatchArgs {
     /// and most chat services take it).
     #[arg(long)]
     alert: Option<String>,
+    /// Watch production through its logs instead of a proxy: the S3 server
+    /// access logs or CloudTrail files written under this `s3://bucket/prefix`,
+    /// read through the endpoint (read only) as they arrive.
+    #[arg(long, value_name = "S3_URL")]
+    logs: Option<String>,
+    /// With --logs: look for new log files this often ("15m", "1h", "30s").
+    #[arg(long, default_value = "15m")]
+    every: String,
+    /// With --logs: read what is new once, then exit (for cron or CI).
+    #[arg(long)]
+    once: bool,
+}
+
+/// The program key of a log source's sessions: its runs make a history and
+/// `sonde check` holds them to a baseline like any program's.
+pub const LOGS_OF: &str = "logs of ";
+
+/// A duration as `--every` writes it: "15m", "1h", "30s", "90" (seconds).
+fn every(v: &str) -> anyhow::Result<std::time::Duration> {
+    let t = v.trim();
+    let (n, unit) = t.split_at(t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len()));
+    let n: u64 = n.parse().map_err(|_| anyhow::anyhow!("--every {v:?}: say 30s, 15m or 1h"))?;
+    let secs = match unit.trim() {
+        "" | "s" => n,
+        "m" | "min" => n * 60,
+        "h" => n * 3600,
+        _ => anyhow::bail!("--every {v:?}: say 30s, 15m or 1h"),
+    };
+    Ok(std::time::Duration::from_secs(secs.max(10)))
+}
+
+/// `sonde watch --logs s3://bucket/prefix`: production seen through its
+/// logs. Each pass reads the log files written since the last one (through
+/// the endpoint's credentials, GET and LIST only), keeps their requests as a
+/// session of the program `logs of s3://…`, says each new warning, and holds
+/// the pass to sonde.toml's budget; `--alert` posts both. Where it got to is
+/// kept, so a restart goes on from there.
+async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<i32> {
+    use std::collections::HashSet;
+    let Some((bucket, prefix)) = src
+        .strip_prefix("s3://")
+        .map(|r| r.split_once('/').unwrap_or((r, "")))
+        .filter(|(b, _)| !b.is_empty())
+    else {
+        eprintln!("--logs takes s3://bucket/prefix");
+        return Ok(64);
+    };
+    let ep = super::endpoint(s, a.proxy.rec.endpoint.as_deref())?;
+    let client = s.client(&ep)?;
+    let pause = every(&a.every)?;
+    let dir = s.paths().sessions();
+    std::fs::create_dir_all(&dir)?;
+    let key = format!("{LOGS_OF}s3://{bucket}/{prefix}");
+    // where the last pass got to, per source
+    let mark_file = dir.join(format!(
+        "logs-{:016x}.mark",
+        key.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+    ));
+    let mut after = std::fs::read_to_string(&mark_file).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let mut warned: HashSet<String> = HashSet::new();
+    let mut sent = Vec::new();
+    eprintln!("watching {src} every {}s", pause.as_secs());
+    loop {
+        // the files written since the last pass, in the order the store lists them
+        let mut keys: Vec<(String, u64)> = Vec::new();
+        let mut token = None;
+        loop {
+            let (page, _) = client
+                .list_objects_v2(
+                    bucket,
+                    &s3raw::ops::ListV2 {
+                        prefix: Some(prefix.to_string()),
+                        start_after: if token.is_none() { after.clone() } else { None },
+                        continuation_token: token.clone(),
+                        url_encoding: true,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            keys.extend(page.contents.iter().map(|o| (o.key.clone(), o.size)));
+            token = page.next_continuation_token.filter(|_| page.is_truncated);
+            if token.is_none() {
+                break;
+            }
+        }
+        let mut records = Vec::new();
+        for (k, size) in &keys {
+            // a log file is small; something this large is not one
+            if *size > 256 << 20 {
+                continue;
+            }
+            let r = client.get_object(bucket, k, None).await?;
+            let mut bytes = r.body.to_vec();
+            if bytes.starts_with(&[0x1f, 0x8b]) {
+                let mut out = Vec::new();
+                if std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(&bytes[..]), &mut out).is_ok() {
+                    bytes = out;
+                }
+            }
+            let text = String::from_utf8_lossy(&bytes);
+            if let Ok((_, session)) = sonde_proxy::import::import(&text, k) {
+                records.extend(session.records);
+            }
+        }
+        if let Some((last, _)) = keys.last() {
+            after = Some(last.clone());
+            let _ = std::fs::write(&mark_file, last);
+        }
+        if !records.is_empty() {
+            records.sort_by_key(|r| r.time);
+            for (i, r) in records.iter_mut().enumerate() {
+                r.id = i as u64 + 1;
+            }
+            let mut header = SessionHeader::new(&ep, "", "", Some(key.clone()));
+            header.created = chrono::Utc::now();
+            let path = sonde_proxy::session::fresh_path(
+                &dir,
+                &format!("{}-logs-{bucket}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+            );
+            let session = Session { header, records, logs: Vec::new() };
+            sonde_proxy::import::save(&session, &path)?;
+            let records = &session.records;
+            eprintln!("{} {} requests · {}", paint("·", "2", std::io::stderr().is_terminal()), records.len(), path.display());
+            for o in observations(records, &episodes(records)) {
+                if o.level == "warn" && warned.insert(sonde_proxy::profile::finding_identity(&o)) {
+                    let place = o.callers.first().map(|c| format!(" — {}", c.place)).unwrap_or_default();
+                    eprintln!("{} {}{place}", paint("!", "33", std::io::stderr().is_terminal()), o.text);
+                    if let Some(url) = &a.alert {
+                        sent.push(post_alert(url, format!("sonde watch ({src}): {}{place}", o.text)));
+                    }
+                }
+            }
+            if let (Some(url), Some(over)) = (&a.alert, over_budget(s, records)) {
+                sent.push(post_alert(url, format!("sonde watch ({src}): {} is over budget: {over}", path.display())));
+            }
+        }
+        sent.retain(|h: &tokio::task::JoinHandle<()>| !h.is_finished());
+        if a.once {
+            break;
+        }
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break,
+            _ = tokio::time::sleep(pause) => {}
+        }
+    }
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), futures::future::join_all(sent)).await;
+    Ok(0)
 }
 
 /// Posts `text` to a webhook, in the background; a failure is said once on stderr.
@@ -2131,6 +2278,9 @@ fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
 pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
     use std::collections::{HashSet, VecDeque};
     use std::time::{Duration, Instant};
+    if let Some(src) = &a.logs {
+        return watch_logs(s, a, src).await;
+    }
     check_listen(&a.proxy)?;
     let started = start(s, &a.proxy.rec, a.proxy.listen, None, a.proxy.allow_remote).await?;
     print_env(&started.proxy);
@@ -2271,6 +2421,60 @@ mod tests {
             url_shown("https://b.s3.amazonaws.com/base.sonde?X-Amz-Signature=abc"),
             "https://b.s3.amazonaws.com/base.sonde"
         );
+    }
+
+    #[test]
+    fn every_reads_seconds_minutes_and_hours() {
+        assert_eq!(every("15m").unwrap().as_secs(), 900);
+        assert_eq!(every("1h").unwrap().as_secs(), 3600);
+        assert_eq!(every("90").unwrap().as_secs(), 90);
+        assert!(every("soon").is_err());
+    }
+
+    #[tokio::test]
+    async fn watching_logs_keeps_each_pass_as_a_run_of_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Arc::new(Sonde::open(sonde_core::Paths::rooted(dir.path())).unwrap());
+        sonde_core::demo::install(&s).await.unwrap();
+        // an access log written into the bucket
+        let log = "79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be demo [06/Feb/2026:00:00:38 +0000] 192.0.2.3 - 3E57427F3EXAMPLE REST.GET.OBJECT data/a.csv \"GET /demo/data/a.csv HTTP/1.1\" 200 - 113 113 7 6 \"-\" \"boto3/1.34\" - x SigV4 ECDHE TLSv1.2 - -\n\
+                   79a59df900b949e55d96a1e698fbacedfd6e09d98eacf8f8d5218e7cd47ef2be demo [06/Feb/2026:00:00:39 +0000] 192.0.2.3 - 3E57427F3EXAMPLF REST.HEAD.OBJECT data/missing \"HEAD /demo/data/missing HTTP/1.1\" 404 NoSuchKey - - 4 4 \"-\" \"boto3/1.34\" - x SigV4 ECDHE TLSv1.2 - -\n";
+        s.client("demo")
+            .unwrap()
+            .put_object("demo", "logs/2026-02-06-00-00-40-AB", bytes::Bytes::from(log), &[])
+            .await
+            .unwrap();
+        let args = WatchArgs {
+            proxy: ProxyArgs {
+                rec: Recording { endpoint: Some("demo".into()), no_delete: false, read_only: true, out: None },
+                listen: "127.0.0.1:0".parse().unwrap(),
+                allow_remote: false,
+            },
+            rotate: 60,
+            alert: None,
+            logs: Some("s3://demo/logs/".into()),
+            every: "15m".into(),
+            once: true,
+        };
+        assert_eq!(watch_logs(&s, &args, "s3://demo/logs/").await.unwrap(), 0);
+        let sessions: Vec<_> = std::fs::read_dir(s.paths().sessions())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "sonde"))
+            .collect();
+        assert_eq!(sessions.len(), 1);
+        let session = Session::open(&sessions[0]).unwrap();
+        assert_eq!(session.records.len(), 2);
+        assert_eq!(session.header.command.as_deref(), Some("logs of s3://demo/logs/"));
+        // a second pass has nothing new: no second session
+        assert_eq!(watch_logs(&s, &args, "s3://demo/logs/").await.unwrap(), 0);
+        let n = std::fs::read_dir(s.paths().sessions())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "sonde"))
+            .count();
+        assert_eq!(n, 1);
     }
 
     #[tokio::test]

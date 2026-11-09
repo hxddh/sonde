@@ -719,5 +719,6 @@
  "replay.writes": "%{n} writes",
  "replay.writes.one": "%{n} write",
  "replay.deletes": "%{n} deletes",
- "replay.deletes.one": "%{n} delete"
+ "replay.deletes.one": "%{n} delete",
+ "common.clear": "Clear"
 }

@@ -13,7 +13,7 @@ import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, openSession, report, sessionsChanged } from "../store";
 import type { JobInfo, RecordSummary, RequestFilter } from "../types";
 import { Icon, iconSvg } from "./icon";
-import { Bar, Button, Dot, Empty, IconButton, PanelHeader, Options, rowHeight, Segmented, terminal, Tip, TYPE } from "./kit";
+import { Bar, Button, CARD, Dot, Empty, IconButton, Options, PanelHeader, terminal, rowHeight, Segmented, Tip, TYPE, TABLE } from "./kit";
 import { statusTone, toneText } from "./sessionview";
 
 export const activityOpen = signal(false);
@@ -109,7 +109,7 @@ function Requests() {
     ]);
   };
   const list = () => (
-    <View class="min-h-0 flex-1 gap-2.5">
+    <View class="min-h-0 flex-1 gap-2">
       <View class="flex-row items-center gap-2">
         <View class="h-8 min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2.5 focus-within:border-ring">
           <If when={!terminal()}>
@@ -135,7 +135,7 @@ function Requests() {
       <DataTable
         testID="requests"
         accessibilityLabel={t("activity.requests")}
-        class="min-h-0 flex-1 rounded-(--radius-card) border border-border bg-card"
+        class={`min-h-0 flex-1 ${CARD}`}
         columns={[
           ...(terminal() ? [] : [{ key: "status", title: "", width: 52, resizable: false }]),
           // fits the panel: no column cut at its edge
@@ -147,7 +147,7 @@ function Requests() {
         data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: ms(r.latencyMs), time: hm(r.time) }))}
         fontSize={TYPE.body}
         rowHeight={rowHeight(28)}
-        classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-2", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}
+        classes={terminal() ? undefined : TABLE}
         renderCell={
           terminal()
             ? undefined
@@ -191,7 +191,7 @@ function Jobs() {
       <Scroll class="flex-1" contentClass="gap-2 pb-4">
         <Each of={jobs()} key={(j) => j.id}>
           {(j) => (
-            <View class="gap-2 rounded-(--radius-card) border border-border bg-card px-3.5 py-3">
+            <View class={`gap-2 ${CARD} p-4`}>
               <View class="flex-row items-center gap-2">
                 <Dot tone={tone(j().state)} label={j().state} />
                 <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{j().title}</Text>
@@ -219,7 +219,7 @@ function Changes() {
       <Scroll class="flex-1" contentClass="gap-2 pb-4">
         <Each of={entries}>
           {(e) => (
-            <View class="gap-1.5 rounded-(--radius-card) border border-border bg-card px-3.5 py-3">
+            <View class={`gap-2 ${CARD} p-4`}>
               <View class="flex-row items-center gap-2">
                 <Dot tone={e().failed ? "client" : "ok"} />
                 <Text class="min-w-0 flex-1 text-body font-medium text-foreground">{`${e().action} · ${e().endpoint}/${e().bucket}`}</Text>

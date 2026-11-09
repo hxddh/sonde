@@ -5,7 +5,7 @@
 // (sonde share) both draw with these.
 
 import { type ContextMenuEvent, effect, type JSX, List, platform, reduceMotion, Scroll, type ScrollRef, signal, Text, untracked, View } from "nsh";
-import { Button as BaseButton, Collapsible, DataTable, type DataTableRef, type DataTableSort, HoverCard, TextView, Toggle, ToggleGroup } from "nsh/base";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, HoverCard, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
 import { bytes, date, day, middle, ms } from "../format";
 import { t } from "../i18n";
@@ -13,7 +13,7 @@ import { episodeNotes, episodeTitle, observationSaving, observationText, observa
 import { groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Dot, Empty, InWindowMenu, POPUP, rowHeight, terminal, TYPE } from "./kit";
+import { CARD, Dot, Empty, FOCUS, InWindowMenu, Options, POPUP, rowHeight, TABLE, terminal, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -180,7 +180,7 @@ export function span(v: SessionView): [number, number] {
 /** A figure: a number, and what it counts; resting on it can show what it is made of. */
 export function Figure(props: { value: string; label: string; tone?: Tone; preview?: JSX.Element; testID?: string }) {
   const figure = (
-    <View testID={props.testID} class="gap-0.5 pr-5">
+    <View testID={props.testID} class="gap-0.5 pr-4">
       <Text class={`tabular-nums text-heading font-semibold ${props.tone ? TONE_TEXT[props.tone] : "text-foreground"}`}>{props.value}</Text>
       <Text class="text-caption text-muted-foreground">{props.label}</Text>
     </View>
@@ -320,24 +320,11 @@ function FixPanel(props: { o: Observation }) {
     if (o && fixes().some((f) => f.sdk === o)) untracked(() => fixSdk.set(o));
   });
   return (
-    <View testID="fix" class="gap-2 rounded-(--radius-card) border border-border bg-card p-3">
+    <View testID="fix" class="gap-2">
       <View class="flex-row flex-wrap items-center gap-2">
         <Icon name="sparkles" size={13} />
         <Text role="header" class="flex-1 text-small font-semibold text-foreground">{t("fix.title")}</Text>
-        <ToggleGroup class="flex-row rounded-(--radius) bg-muted p-0.5">
-          <Each of={fixes()}>
-            {(f) => (
-              <Toggle
-                testID={`fix-${f().sdk}`}
-                pressed={shown()?.sdk === f().sdk}
-                onChange={() => fixSdk.set(f().sdk)}
-                class="group rounded-(--radius-sm) px-2 py-0.5 aria-pressed:bg-background aria-pressed:shadow-sm"
-              >
-                <Text class="text-caption text-muted-foreground group-aria-pressed:font-medium group-aria-pressed:text-foreground">{SDKS[f().sdk]}</Text>
-              </Toggle>
-            )}
-          </Each>
-        </ToggleGroup>
+        <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: SDKS[f.sdk] }))} onChange={(v) => fixSdk.set(v as keyof typeof SDKS)} />
       </View>
       {/* why it matters and what it saves, written out */}
       <If when={observationWhy(props.o)}>
@@ -446,7 +433,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       selected={props.filter === i()}
       disabled={!props.onFilter || !o().episodes?.length}
       onPress={() => press(i())}
-      class={`group flex-row items-start gap-2.5 px-3 ${dense() ? "py-1.5" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${i() > 0 ? "border-t border-border" : ""}`}
+      class={`group flex-row items-start gap-2 px-3 ${dense() ? "py-1.5" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${i() > 0 ? "border-t border-border" : ""}`}
     >
       {/* its number: where it stands on the session's shape */}
       <Text class={`h-5 w-3 text-right tabular-nums text-caption font-semibold ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{String(i() + 1)}</Text>
@@ -475,53 +462,44 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   );
   return (
     <If when={props.view.observations.length > 0}>
-      {/* the findings open and close with a springing height (Native Shell's Collapsible) */}
-      <Collapsible
-        testID="observations"
-        class="gap-1.5"
-        open={props.compact || findingsOpen()}
-        reveal={!reduceMotion()}
-        content={
-          /* a short window keeps room for the operations: the findings scroll */
-          <Scroll ref={(r) => (scroller = r)} class="overflow-hidden rounded-(--radius-card) border border-border bg-card" style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
-            <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
-            {/* the finding pressed: what to change, in the findings' own room */}
-            <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
-              {(o) => (
-                <View class="border-t border-border p-2">
-                  <FixPanel o={o()} />
+      {/* the findings open and close under their heading (Native Shell's Accordion) */}
+      <Accordion value={props.compact || findingsOpen() ? ["findings"] : []} onChange={(e) => findingsOpen.set(e.value.includes("findings"))}>
+        <AccordionItem value="findings" testID="observations" class="gap-2">
+          <If when={!props.compact}>
+            <AccordionHeader level={3} class="flex-row flex-wrap items-center gap-x-3 gap-y-1">
+              <AccordionTrigger testID="observations-toggle" class={`group flex-row items-center gap-1.5 rounded-(--radius-sm) py-0.5 pr-1 ${FOCUS}`}>
+                <View class="group-aria-expanded:rotate-90 motion-safe:transition-transform motion-safe:duration-150">
+                  <Icon name="chevron-right" size={13} tint="muted-foreground" />
                 </View>
-              )}
-            </If>
-          </Scroll>
-        }
-      >
-        <If when={!props.compact}>
-          <BaseButton testID="observations-toggle" accessibilityLabel={t("obs.title")} selected={findingsOpen()} onPress={() => findingsOpen.set(!findingsOpen())} class="flex-row items-center gap-1 self-start rounded-(--radius-sm) px-1 hover:bg-muted">
-            <Icon name={findingsOpen() ? "chevron-down" : "chevron-right"} size={12} />
-            <Text role="header" class="text-caption font-medium text-muted-foreground">{`${t("obs.title")} · ${props.view.observations.length}`}</Text>
-          </BaseButton>
-        </If>
-        <If when={!props.compact && whatIfText(props.view)}>
-          {(w) => (
-            <View class="flex-row items-center gap-1.5 px-1">
-              <Icon name="trending-down" size={12} tint="info" />
-              <Text testID="what-if" class="tabular-nums text-small text-info">{w()}</Text>
-            </View>
-          )}
-        </If>
-      </Collapsible>
+                <Text class="text-body font-semibold text-foreground">{t("obs.title")}</Text>
+                <Text class="text-body text-muted-foreground">{`· ${props.view.observations.length}`}</Text>
+              </AccordionTrigger>
+              {/* what acting on them saves: the section's subtitle, not a third voice */}
+              <If when={whatIfText(props.view)}>{(w) => <Text testID="what-if" class="min-w-0 flex-1 tabular-nums text-small text-muted-foreground line-clamp-1">{w()}</Text>}</If>
+            </AccordionHeader>
+          </If>
+          <AccordionPanel reveal accessibilityLabel={t("obs.title")}>
+            {/* a short window keeps room for the operations: the findings scroll */}
+            <Scroll ref={(r) => (scroller = r)} class={`overflow-hidden ${CARD}`} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
+              <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
+              {/* the finding pressed: what to change, in the findings' own room */}
+              <If when={!props.compact && props.filter != null && props.view.observations[props.filter!]?.fixes?.length ? props.view.observations[props.filter!] : null}>
+                {(o) => (
+                  <View class="border-t border-border p-3">
+                    <FixPanel o={o()} />
+                  </View>
+                )}
+              </If>
+            </Scroll>
+          </AccordionPanel>
+        </AccordionItem>
+      </Accordion>
     </If>
   );
 }
 
 const tableClasses = {
-  header: "bg-card border-b border-border",
-  headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground",
-  cell: "px-2",
-  rowOdd: "bg-muted/30",
-  rowHover: "bg-row-hover",
-  rowSelected: "bg-selection",
+  ...TABLE,
   rowActive: "bg-row-hover",
   resizeHandle: "bg-transparent group-hover:bg-border",
 };
@@ -589,7 +567,7 @@ export function OperationsTable(props: {
     });
   const cell = (c: { row: number; key: string; text: string }) => {
     const e = ep(c.row);
-    if (!e) return <Text class="px-2 text-body">{c.text}</Text>;
+    if (!e) return <Text class="text-body">{c.text}</Text>;
     switch (c.key) {
       case "status":
         return (
@@ -598,16 +576,22 @@ export function OperationsTable(props: {
           </View>
         );
       case "format":
-        return <Text class={`px-2 text-small font-medium ${family(e).class}`}>{c.text}</Text>;
+        // what wrote it, as a tag: a mark in its color and its name, quiet
+        return (
+          <View class="flex-1 flex-row items-center gap-1.5">
+            <View class={`size-1.5 rounded-full ${family(e).class.replace("text-", "bg-")}`} />
+            <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{c.text}</Text>
+          </View>
+        );
       case "title":
-        return <Text class={`px-2 text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e)]}`}>{c.text}</Text>;
+        return <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e)]}`}>{c.text}</Text>;
       case "bar": {
         const [a, b] = range();
         const total = b - a;
         const left = Math.max(0, (time(e.start) - a) / total);
         const width = Math.max(0.006, duration(e) / total);
         return (
-          <View class="flex-1 flex-row items-center px-2">
+          <View class="flex-1 flex-row items-center">
             <View class="h-1.5 flex-1 flex-row overflow-hidden rounded-full bg-bar-track">
               <View style={{ flex: left }} />
               <View class={`rounded-full ${TONE_BAR[episodeTone(e)]}`} style={{ flex: width, minWidth: 3 }} />
@@ -617,12 +601,16 @@ export function OperationsTable(props: {
         );
       }
       case "notes":
-        return <Text class="px-2 text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
+        return <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
       case "time":
         // from the episode, not the cell's text: DataTable fits that to the column with its own font
-        return <Text class="px-2 font-mono text-caption text-foreground">{clock(e.start)}</Text>;
+        return <Text class="font-mono text-caption tabular-nums text-muted-foreground">{clock(e.start)}</Text>;
+      case "requests":
+      case "duration":
+        // figures line up at their end, under their titles
+        return <Text class="flex-1 text-right text-small tabular-nums text-foreground">{c.text}</Text>;
       default:
-        return <Text class={`px-2 text-foreground ${c.key === "time" || c.key === "requests" || c.key === "duration" ? "font-mono text-caption" : "text-body line-clamp-1"}`}>{c.text}</Text>;
+        return <Text class="text-body text-foreground line-clamp-1">{c.text}</Text>;
     }
   };
   return (
@@ -630,7 +618,7 @@ export function OperationsTable(props: {
       ref={props.ref}
       testID="operations"
       accessibilityLabel={t("sessions.operations")}
-      class="min-h-0 flex-1 rounded-(--radius-card) border border-border bg-card"
+      class={`min-h-0 flex-1 ${CARD}`}
       columns={columns()}
       data={data()}
       fontSize={TYPE.body}
@@ -659,7 +647,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       ref={props.ref}
       testID="output"
       accessibilityLabel={t("sessions.output")}
-      class="min-h-0 flex-1 rounded-(--radius-card) border border-border bg-card"
+      class={`min-h-0 flex-1 ${CARD}`}
       columns={[
         { key: "time", title: t("column.time"), width: 110 },
         { key: "line", title: t("sessions.output"), width: 520, minWidth: 160 },

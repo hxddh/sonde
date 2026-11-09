@@ -12,7 +12,7 @@ import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import type { LatencyChange, Observation, Profile, ProfileGroup, ProgramHistory, RecordSummary, RunChange } from "../types";
 import { observationSaving, observationText } from "../phrases";
-import { Legend, POPUP, SimpleTable, terminal } from "./kit";
+import { CARD, Legend, POPUP, terminal, SimpleTable } from "./kit";
 
 /** Time from a session's start: 840 ms, 2.35 s, 41.2 s. */
 export const offset = (v: number) => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(v < 10000 ? 2 : 1)} s`);
@@ -877,7 +877,7 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
   const shown = () => runs()[hovered() ?? runs().length - 1];
   const last = () => runs().length - 1;
   return (
-    <View testID={`trend-${props.measure}`} class="min-w-[220px] flex-1 gap-1.5 rounded-(--radius-card) border border-border bg-card px-3.5 py-3">
+    <View testID={`trend-${props.measure}`} class={`min-w-[220px] flex-1 gap-2 ${CARD} p-4`}>
       <View class="flex-row items-baseline gap-2">
         <Text class="flex-1 text-caption font-medium text-muted-foreground">{props.title}</Text>
         <Text class="tabular-nums text-heading font-semibold text-foreground">{props.format(shown()[props.measure] as number)}</Text>

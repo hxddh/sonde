@@ -12,7 +12,7 @@ import { command } from "../run";
 import { endpointsMode, go, notify, openSession, refreshEndpoints, report, sessionsChanged, startDemo } from "../store";
 import type { EndpointView } from "../types";
 import { Icon, type IconName } from "../ui/icon";
-import { Button, Check, terminal } from "../ui/kit";
+import { Button, CARD, Check, terminal } from "../ui/kit";
 
 /** A first command for the demo: two reads, one of a key that is not there,
  * signed with the keys sonde gives the program (cmd.exe on Windows). */
@@ -79,12 +79,12 @@ export function Welcome() {
 
   return (
     <View testID="welcome" class="flex-1 items-center justify-center p-8">
-      <View class={terminal() ? "w-full gap-2" : "w-full max-w-[520px] gap-7"}>
+      <View class={terminal() ? "w-full gap-2" : "w-full max-w-[520px] gap-6"}>
         <View class="gap-2">
           <Text class="text-title font-semibold text-foreground">{t("welcome.title")}</Text>
           <Text class="text-body leading-5 text-muted-foreground">{t("welcome.text")}</Text>
         </View>
-        <View testID="welcome-way-demo" class={terminal() ? "gap-1" : "gap-3 rounded-(--radius-card) border border-border bg-card px-5 py-4"}>
+        <View testID="welcome-way-demo" class={`gap-3 ${CARD} p-4`}>
           <Text class="text-body font-semibold text-card-foreground">{t("welcome.demo")}</Text>
           <Text class="text-small leading-5 text-muted-foreground">{t("welcome.demoText")}</Text>
           <Button variant="primary" icon="play" label={busy() ? t("common.loading") : t("welcome.demoStart")} onPress={demo} disabled={busy()} testID="welcome-demo" class="self-start" />
@@ -112,7 +112,7 @@ export function Welcome() {
             <Link icon="scroll-text" label={t("welcome.example")} onPress={example} testID="open-example" />
           </View>
           <If when={showProfiles()}>
-            <View class="gap-2 rounded-(--radius-card) border border-border bg-card px-4 py-3">
+            <View class={`gap-2 ${CARD} p-4`}>
               <Each of={profiles}>{(p) => <Check label={`${p().name} — ${p().url}`} checked={!!chosen()[p().id]} onChange={(v) => chosen.set({ ...chosen(), [p().id]: v })} />}</Each>
               <View class="flex-row">
                 <Button small variant="primary" label={t("welcome.importDo")} onPress={importChosen} disabled={!Object.values(chosen()).some(Boolean)} testID="welcome-import-do" />

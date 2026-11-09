@@ -1,36 +1,23 @@
 // A request in full, with no state of the app's own: the inspector's view,
-// in the app and in the web viewer. Its parts fold away (Collapsible); an
+// in the app and in the web viewer. Its parts fold away (Accordion); an
 // error body is highlighted as the XML it is (TextView).
 
 import { type JSX, signal, Text, View } from "nsh";
-import { Button as BaseButton, Collapsible, Editor, type EditorDiagnostic } from "nsh/base";
+import { Editor, type EditorDiagnostic } from "nsh/base";
 import { bytes, ms } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
 import { Icon } from "./icon";
-import { Button, Dot, KeyValue, terminal } from "./kit";
+import { Button, Disclosure, Dot, KeyValue, terminal } from "./kit";
 import { statusTone, toneText } from "./sessionview";
 
-/** A part of the request that folds: its title and count, open or not. */
+/** A part of the request that folds: its title and count, open or not
+ * (the kit's Disclosure: a heading, and a button that says it expands). */
 export function Fold(props: { title: string; count?: number; open?: boolean; children: JSX.Element; testID?: string }) {
-  const open = signal(props.open ?? true);
   return (
-    <Collapsible
-      testID={props.testID}
-      open={open()}
-      reveal={!terminal()}
-      class="gap-1.5"
-      content={<View class="pb-1">{props.children}</View>}
-    >
-      <BaseButton accessibilityLabel={props.title} onPress={() => open.set(!open())} class="flex-row items-center gap-1.5 self-start rounded-(--radius-sm) py-0.5 pr-1 hover:bg-muted">
-        <If when={!terminal()} else={<Text class="text-muted-foreground">{open() ? "▾" : "▸"}</Text>}>
-          <Icon name={open() ? "chevron-down" : "chevron-right"} size={13} />
-        </If>
-        <Text role="header" class="text-small font-semibold text-muted-foreground">
-          {props.count === undefined ? props.title : `${props.title} (${props.count})`}
-        </Text>
-      </BaseButton>
-    </Collapsible>
+    <Disclosure title={props.title} count={props.count} open={props.open ?? true} testID={props.testID}>
+      <View class="pb-1">{props.children}</View>
+    </Disclosure>
   );
 }
 
