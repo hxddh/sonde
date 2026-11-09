@@ -38,11 +38,11 @@ function Delta(props: { label: string; a: number; b: number; text: (v: number) =
 }
 
 /** Two runs of a program, before and after a change: the figures, by kind of request, and the findings gone and new. */
-export function RunChangeView(props: { change: RunChange }) {
+export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
   const c = () => props.change;
   const n = (v: number) => String(Math.round(v));
   return (
-    <Scroll testID="run-change" class="min-h-0 flex-1" contentClass="gap-5 pb-4">
+    <Scroll testID="run-change" class={props.inline ? "" : "min-h-0 flex-1"} contentClass="gap-5 pb-4" scrollable={!props.inline}>
       <If when={!c().sameProgram}>
         <View testID="other-program" class="flex-row items-center gap-2 rounded-(--radius) border border-warn/40 bg-warn/10 px-3 py-2">
           <Icon name="triangle-alert" size={14} tint="warn" />
@@ -130,80 +130,87 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
       return line < 0 ? [] : [{ id: `d${i}`, line, text: t("compare.note", { op: x.operation, a: x.original, b: x.replay, n: x.count }) }];
     });
   };
-  // a replay opens on its answers; two runs of a program on before and after
-  const mode = signal<"runs" | "answers">(untracked(() => (replayOf() ? "answers" : "runs")));
   const name = (p: string) => p.split(/[\\/]/).pop() || p;
-  return (
-        <View class="flex-1 gap-3" testID="compare">
-          <View class="flex-row items-center gap-2">
-            <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={props.onClose} testID="compare-back" />
-            <Text class="flex-1 text-body font-semibold text-foreground line-clamp-1">{`${name(props.a)} → ${name(props.b)}`}</Text>
-            <Segmented
-              testID="compare-mode"
-              value={mode()}
-              items={[
-                { value: "runs", title: t("profile.runsTitle") },
-                { value: "answers", title: t("compare.transcripts") },
-              ]}
-              onChange={(v) => mode.set(v as "runs" | "answers")}
-            />
-          </View>
-          <If
-            when={mode() === "answers"}
-            else={
-              <If when={runs()} else={<Loading />}>
-                {(r) => <RunChangeView change={r()} />}
-              </If>
-            }
-          >
-            <If when={answers()} else={<Loading />}>
-            {(d) => (
-            <View class="min-h-0 flex-1 gap-2">
-              <Text class="text-body text-foreground" testID="compare-summary">
-                {t("compare.summary", { n: d().comparison.compared, same: d().comparison.same })}
-                {d().comparison.differences.length ? ` · ${t("compare.differ", { n: d().comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
-              </Text>
-              <If when={d().latency?.length}>
-                <View class="gap-2 rounded-(--radius-card) border border-border bg-card p-4">
-                  <Text role="header" class="text-body font-semibold text-foreground">{t("latency.title")}</Text>
-                  <Text class="text-small text-muted-foreground">{t("latency.hint")}</Text>
-                  <StoreLatency changes={d().latency!} names={d().endpoints ?? ["A", "B"]} />
-                </View>
-              </If>
-              <Each of={d().comparison.differences}>
-                {(x) => (
-                  <View class="flex-row flex-wrap items-center gap-2 rounded-(--radius) bg-muted px-2 py-1">
-                    <Badge label={`×${x().count}`} tone="fail" />
-                    <Text class="text-body text-foreground">{`${x().operation}  ${x().original} → ${x().replay}`}</Text>
-                    <Muted class="text-small">{`${x().example}${x().conditions.length ? `  (${x().conditions.join(", ")})` : ""}`}</Muted>
-                  </View>
-                )}
-              </Each>
-              <DiffView
-                testID="compare-diff"
-                oldValue={d().a}
-                newValue={d().b}
-                layout="split"
-                inline="word"
-                contextLines={2}
-                lineNumbers
-                annotations={notes(d()).map((n) => ({ id: n.id, side: "new" as const, line: n.line }))}
-                renderAnnotation={(a) => {
-                  const n = notes(d()).find((x) => x.id === a.id);
-                  return (
-                    <View class="mx-2 my-1 flex-row items-center gap-2 rounded-(--radius-sm) border border-status-server/40 bg-status-server/10 px-2 py-1">
-                      <Icon name="circle-alert" size={12} tint="status-server" />
-                      <Text class="text-small text-foreground">{n?.text ?? ""}</Text>
-                    </View>
-                  );
-                }}
-                class="flex-1 rounded-(--radius) border border-border"
-              />
-            </View>
-            )}
-            </If>
-          </If>
+  // one view: a replay's answers first, then before and after; the transcripts, request by request, on demand
+  const transcripts = signal(false);
+  const answersPart = (d: NonNullable<ReturnType<typeof answers>>) => (
+    <View class="gap-2">
+      <Text class="text-body text-foreground" testID="compare-summary">
+        {t("compare.summary", { n: d.comparison.compared, same: d.comparison.same })}
+        {d.comparison.differences.length ? ` · ${t("compare.differ", { n: d.comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
+      </Text>
+      <If when={d.latency?.length}>
+        <View class="gap-2 rounded-(--radius-card) border border-border bg-card p-4">
+          <Text role="header" class="text-body font-semibold text-foreground">{t("latency.title")}</Text>
+          <Text class="text-small text-muted-foreground">{t("latency.hint")}</Text>
+          <StoreLatency changes={d.latency!} names={d.endpoints ?? ["A", "B"]} />
         </View>
+      </If>
+      <Each of={d.comparison.differences}>
+        {(x) => (
+          <View class="flex-row flex-wrap items-center gap-2 rounded-(--radius) bg-muted px-2 py-1">
+            <Badge label={`×${x().count}`} tone="fail" />
+            <Text class="text-body text-foreground">{`${x().operation}  ${x().original} → ${x().replay}`}</Text>
+            <Muted class="text-small">{`${x().example}${x().conditions.length ? `  (${x().conditions.join(", ")})` : ""}`}</Muted>
+          </View>
+        )}
+      </Each>
+    </View>
+  );
+  const diff = (d: NonNullable<ReturnType<typeof answers>>) => (
+    <DiffView
+      testID="compare-diff"
+      oldValue={d.a}
+      newValue={d.b}
+      layout="split"
+      inline="word"
+      contextLines={2}
+      lineNumbers
+      annotations={notes(d).map((n) => ({ id: n.id, side: "new" as const, line: n.line }))}
+      renderAnnotation={(a) => {
+        const n = notes(d).find((x) => x.id === a.id);
+        return (
+          <View class="mx-2 my-1 flex-row items-center gap-2 rounded-(--radius-sm) border border-status-server/40 bg-status-server/10 px-2 py-1">
+            <Icon name="circle-alert" size={12} tint="status-server" />
+            <Text class="text-small text-foreground">{n?.text ?? ""}</Text>
+          </View>
+        );
+      }}
+      class="h-[440px] rounded-(--radius) border border-border"
+    />
+  );
+  return (
+    <View class="flex-1 gap-3" testID="compare">
+      <View class="flex-row items-center gap-2">
+        <Button small variant="ghost" label={`‹ ${t("common.back")}`} onPress={props.onClose} testID="compare-back" />
+        <Text class="flex-1 text-body font-semibold text-foreground line-clamp-1">{`${name(props.a)} → ${name(props.b)}`}</Text>
+      </View>
+      <Scroll class="min-h-0 flex-1" contentClass="gap-5 pb-4">
+        <If when={replayOf() && answers()}>{(d) => answersPart(d())}</If>
+        <If when={runs()} else={<Loading />}>
+          {(r) => <RunChangeView change={r()} inline />}
+        </If>
+        <If when={answers()}>
+          {(d) => (
+            <View class="gap-2">
+              <Button
+                small
+                variant="ghost"
+                icon={transcripts() ? "chevron-down" : "chevron-right"}
+                label={t("compare.transcripts")}
+                onPress={() => transcripts.set(!transcripts())}
+                testID="compare-transcripts"
+                class="self-start"
+              />
+              <If when={transcripts()}>
+                <If when={!replayOf()}>{answersPart(d())}</If>
+                {diff(d())}
+              </If>
+            </View>
+          )}
+        </If>
+      </Scroll>
+    </View>
   );
 }
 

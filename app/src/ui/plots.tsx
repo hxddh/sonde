@@ -17,12 +17,14 @@ import { Legend, POPUP, SimpleTable, terminal } from "./kit";
 /** Time from a session's start: 840 ms, 2.35 s, 41.2 s. */
 export const offset = (v: number) => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(v < 10000 ? 2 : 1)} s`);
 
-/** Small amounts to two significant digits: a session's requests often cost thousandths of a cent. */
+/** An amount as people read it: a session's requests often cost thousandths
+ * of a cent, which read as a thousand runs' worth ("0.28 USD per 1,000 runs"). */
 export function cost(v: number, currency: string): string {
   if (!Number.isFinite(v) || v < 0) return `— ${currency}`;
   if (v > 0 && v < 0.01) {
-    const s = Number(v.toPrecision(2));
-    return `${s < 1e-6 ? "<0.000001" : s.toFixed(Math.max(2, Math.ceil(-Math.log10(s)) + 1))} ${currency}`;
+    const k = v * 1000;
+    const s = k < 0.01 ? Number(k.toPrecision(2)).toString() : k.toFixed(2);
+    return t("cost.perThousand", { v: s, cur: currency });
   }
   return `${v.toFixed(2)} ${currency}`;
 }
@@ -206,55 +208,9 @@ export function Sparkline(props: { shape: number[]; id: string; class?: string }
 
 // --- how requests were answered ---------------------------------------------------
 
-/** The session's answers as a ring: answered, not found, refused or failed by
- * the client's fault, failed by the store's. */
-export function OutcomeRing(props: { profile: Profile; class?: string }) {
-  const sum = (k: Tone) => props.profile.rate.reduce((s, b) => s + b[k], 0);
-  const rows = () => TONES.map((k) => ({ k, n: sum(k) })).filter((r) => r.n > 0);
-  const total = () => rows().reduce((s, r) => s + r.n, 0);
-  const names: Record<Tone, () => string> = { ok: () => t("ring.ok"), miss: () => t("ring.miss"), client: () => t("ring.client"), server: () => t("ring.server") };
-  const label = () => rows().map((r) => `${names[r.k]()} ${pct(r.n / Math.max(total(), 1))}`).join(", ");
-  const hovered = signal<number | null>(null);
-  return (
-    <If when={!terminal() && total() > 0}>
-      <Plot
-        testID="outcome-ring"
-        data={rows()}
-        colorScale={tones()}
-        accessibilityLabel={label()}
-        accessibilityValue={{ text: hovered() !== null && rows()[hovered()!] ? `${names[rows()[hovered()!].k]()}: ${rows()[hovered()!].n}` : "" }}
-        motion={MOTION}
-        tooltipPlacement="pointer"
-        tooltipOffset={10}
-        tooltipContent={<If when={hovered() !== null ? rows()[hovered()!] : null}>{(r) => <Tip title={names[r().k]()} lines={[`${r().n} · ${pct(r().n / Math.max(total(), 1))}`]} />}</If>}
-        onHoverChange={({ index }) => hovered.set(index)}
-        class={props.class ?? "size-12"}
-      >
-        <Pie value="n" color="k" innerRadius="62%" padAngle={0.03} cornerRadius={2} hoverDim={0.4} />
-      </Plot>
-    </If>
-  );
-}
 
 // --- the live view ----------------------------------------------------------------
 
-/** A share as a gauge: a three-quarter track, the share swept round it
- * (it sweeps to a new value as it changes). */
-export function ShareGauge(props: { share: number; label: string; tone?: string; class?: string; testID?: string }) {
-  const START = -0.75 * Math.PI;
-  const SWEEP = 1.5 * Math.PI;
-  const v = () => Math.max(0, Math.min(1, props.share));
-  return (
-    <If when={!terminal()}>
-      <Plot testID={props.testID} data={[{ v: v() }]} interactive={false} accessibilityLabel={props.label} motion={MOTION} appearGeneration={1} class={props.class ?? "size-7"}>
-        <Arc startAngle={START} endAngle={START + SWEEP} innerRadius="70%" cornerRadius={4} class="fill-muted" />
-        <If when={v() > 0}>
-          <Arc startAngle={START} endAngle={START + SWEEP * Math.max(v(), 0.02)} innerRadius="70%" cornerRadius={4} class={props.tone ?? "fill-status-server"} />
-        </If>
-      </Plot>
-    </If>
-  );
-}
 
 /** What the last few seconds of a session looked like: requests a second,
  * the share that failed, in flight now and the p95, for the live view. */
@@ -360,13 +316,13 @@ export function Chains(props: { profile: Profile; max?: number }) {
           style={{ height: rows().length * 34 + 30 }}
         >
           {/* as it ran: one after another */}
-          <Bar base="startMs" value="endMs" class="fill-status-client" cornerRadii={3} inactiveOpacity={0.45} label={(_, i) => offset(rows()[i].endMs - rows()[i].startMs)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
+          <Bar base="startMs" value="endMs" class="fill-muted-foreground/45" cornerRadii={3} inactiveOpacity={0.45} label={(_, i) => offset(rows()[i].endMs - rows()[i].startMs)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
           {/* the same requests eight at once */}
           <Bar base="startMs" value="soon" class="fill-chart-1" cornerRadii={3} inactiveOpacity={0.45} label={(_, i) => t("chains.bar", { fast: offset(rows()[i].atOnceMs) })} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
           <PlotAxis placement="left" format={(i) => rows()[i]?.name ?? ""} labelClass="pr-3 text-small text-foreground" />
           <PlotAxis placement="bottom" ticks={4} format={(v) => offset(v)} labelClass="pt-1 tabular-nums text-caption text-muted-foreground" />
         </Plot>
-        <Legend class="pl-32" items={[{ label: t("chains.asRan"), swatch: "bg-status-client" }, { label: t("chains.atOnce"), swatch: "bg-chart-1" }]} />
+        <Legend class="pl-32" items={[{ label: t("chains.asRan"), swatch: "bg-muted-foreground/45" }, { label: t("chains.atOnce"), swatch: "bg-chart-1" }]} />
       </View>
     </If>
   );
@@ -616,9 +572,9 @@ export function Flows(props: { profile: Profile }) {
   const oneBucket = () => new Set(props.profile.prefixes.filter((x) => x.prefix !== "other").map((x) => bucketOf(x.prefix))).size === 1;
   const short = (n: string) => (oneBucket() && n.includes("/") && n.indexOf("/") < n.length - 1 ? n.slice(n.indexOf("/") + 1) : n);
   const name = (n: { name: string }) => (n.name === "other operations" ? t("flows.otherOps") : n.name === "other prefixes" ? t("flows.otherPrefixes") : OUTCOME_FILL[n.name] ? t(`flows.${n.name.replace(" ", "")}` as never) : short(n.name));
-  const fill = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FILL[n.name] : n.stage === 0 ? "fill-chart-1" : "fill-chart-2");
-  const from = (n: { stage: number }) => (n.stage === 0 ? "from-chart-1/35" : "from-chart-2/35");
-  const to = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FROM[n.name] : "to-chart-2/35");
+  const fill = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FILL[n.name] : n.stage === 0 ? "fill-chart-1" : "fill-chart-4");
+  const from = (n: { stage: number }) => (n.stage === 0 ? "from-chart-1/35" : "from-chart-4/35");
+  const to = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FROM[n.name] : "to-chart-4/35");
   const hovered = signal<number | null>(null);
   const label = () => {
     const ok = props.profile.flows.filter((f) => f.target === "ok").reduce((s, f) => s + f.value, 0);

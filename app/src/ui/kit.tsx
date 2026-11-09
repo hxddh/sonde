@@ -304,6 +304,14 @@ export function NumberField(props: { label: string; value: number | null; onChan
       placeholder={props.placeholder}
       onChange={({ value }) => props.onChange(value)}
       controlsRight
+      // a field like every other: a border, a ring when focused, steppers at its end
+      class={terminal() ? undefined : "h-8 flex-row items-center overflow-hidden rounded-(--radius) border border-input bg-background focus-within:border-ring"}
+      inputClass={terminal() ? undefined : "min-w-0 flex-1 px-2.5 text-body tabular-nums text-foreground placeholder:text-muted-foreground"}
+      controlsClass={terminal() ? undefined : "h-full border-l border-input"}
+      incrementButtonClass={terminal() ? undefined : "flex-1 items-center justify-center px-1.5 hover:bg-muted active:bg-accent"}
+      decrementButtonClass={terminal() ? undefined : "flex-1 items-center justify-center px-1.5 hover:bg-muted active:bg-accent"}
+      incrementButton={terminal() ? undefined : <View style={{ transform: [{ rotate: "180deg" }] }}><Icon name="chevron-down" size={11} /></View>}
+      decrementButton={terminal() ? undefined : <Icon name="chevron-down" size={11} />}
       suffix={props.suffix ? <Text class="pr-2 text-small text-muted-foreground">{props.suffix}</Text> : undefined}
     />
   );

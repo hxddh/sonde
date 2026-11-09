@@ -106,3 +106,11 @@ export function ms(v: number): string {
 export function pct(part: number, whole: number): string {
   return whole === 0 ? "0%" : `${((part * 100) / whole).toFixed(1)}%`;
 }
+
+/** A long key cut in its middle, so the end that tells keys apart stays:
+ * `slate/db/wal/…0000127.wal`. */
+export function middle(text: string, max = 48): string {
+  if (text.length <= max) return text;
+  const tail = Math.ceil((max - 1) * 0.55);
+  return `${text.slice(0, max - 1 - tail)}…${text.slice(-tail)}`;
+}

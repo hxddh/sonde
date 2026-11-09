@@ -17,8 +17,7 @@ import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
 import { Button, Dot, Empty, IconButton, KeyValue, Options, SPLIT_HANDLE, terminal } from "../ui/kit";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
-import { LatencyBand, liveFigures, SessionShape, ShareGauge } from "../ui/plots";
-import { openMonitor } from "./MonitorWindow";
+import { LatencyBand, liveFigures, SessionShape, sessionStory } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
 import { seconds } from "../ui/sessionview";
 
@@ -80,12 +79,6 @@ function CommandBar() {
           <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
         </If>
       </View>
-      {/* a command longer than the field, whole: the field scrolls, this wraps */}
-      <If when={command().length > 72}>
-        <View selectable class="px-1">
-          <Text testID="run-command-full" class="font-mono text-small leading-5 text-muted-foreground">{`$ ${command()}`}</Text>
-        </View>
-      </If>
       <View class="flex-row flex-wrap items-center gap-x-4 gap-y-2 px-1">
         <View class="h-7 w-64 flex-row items-center gap-1.5 rounded-(--radius) px-1.5 hover:bg-muted">
           <Icon name="folder" size={14} />
@@ -169,7 +162,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
               <Text class="tabular-nums text-small text-status-server">{t("run.bandErrors", { n: x().errors })}</Text>
             </If>
             <If when={x().misses > 0}>
-              <Text class="tabular-nums text-small text-status-miss">{t("run.bandMisses", { n: x().misses })}</Text>
+              <Text class="tabular-nums text-small text-muted-foreground">{t("run.bandMisses", { n: x().misses })}</Text>
             </If>
             <Text class="tabular-nums text-small text-muted-foreground">{`↑${bytes(x().bytesUp)} ↓${bytes(x().bytesDown)}`}</Text>
             <If when={r() && warnings() > 0}>
@@ -203,16 +196,9 @@ function LivePanel(props: { profile: Profile }) {
     <View testID="live" class="gap-2 rounded-(--radius-card) border border-border bg-card px-3.5 py-2.5">
       <View class="flex-row items-center gap-6">
         {figure(f().perSecond.toFixed(f().perSecond < 10 ? 1 : 0), t("live.perSecond"), "live-rate")}
-        <View class="flex-row items-center gap-2">
-          <ShareGauge share={f().failedShare} label={`${t("live.failed")} ${Math.round(f().failedShare * 100)}%`} testID="live-failed-gauge" />
-          {figure(`${Math.round(f().failedShare * 100)}%`, t("live.failed"), "live-failed", f().failedShare > 0 ? "text-status-server" : "text-foreground")}
-        </View>
+        {figure(`${Math.round(f().failedShare * 100)}%`, t("live.failed"), "live-failed", f().failedShare > 0 ? "text-status-server" : "text-foreground")}
         {figure(String(f().inFlight), t("live.inFlight"), "live-in-flight")}
         {figure(ms(f().p95), t("live.p95"), "live-p95")}
-        <View class="flex-1" />
-        <If when={isAvailable}>
-          <IconButton icon="app-window" label={t("live.monitor")} onPress={openMonitor} testID="open-monitor" />
-        </If>
       </View>
       <View class="flex-row gap-4">
         <SessionShape profile={props.profile} class="h-16 min-w-0 flex-1" testID="run-shape" />
@@ -254,11 +240,15 @@ function LiveOperations() {
             </If>
           </If>}>
         <View class="min-h-0 flex-1 gap-2.5">
-          {/* the run's requests over time, growing as they arrive */}
-          <If when={!terminal() && view()!.profile}>
+          {/* while it runs: its requests over time, growing as they arrive */}
+          <If when={!terminal() && !lastRun() && view()!.profile}>
             <LivePanel profile={view()!.profile} />
           </If>
+          {/* once it ended: the run in a sentence and what stands out, where the user already looks */}
           <If when={lastRun() && view()}>
+            <If when={view()!.profile?.groups.length}>
+              <Text testID="run-story" class="px-1 text-body leading-5 text-foreground">{sessionStory(view()!.profile, view()!.observations)}</Text>
+            </If>
             <Observations view={view()!} compact max={3} />
           </If>
           <OperationsTable view={view()!} onSelect={() => lastRun() && openLastRun(go)} compact />

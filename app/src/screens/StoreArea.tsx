@@ -76,6 +76,14 @@ function Buckets() {
     endpoint();
     untracked(() => batch(() => (children.set({}), expanded.set([]))));
   });
+  // no bucket open yet: the first, rather than a page asking for one
+  effect(() => {
+    const list = buckets();
+    if (!list?.length) return;
+    untracked(() => {
+      if (!bucket() || !list.some((b) => b.name === bucket())) chooseBucket(list[0].name);
+    });
+  });
 
   const load = async (id: string) => {
     const ep = endpoint();

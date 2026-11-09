@@ -7,10 +7,10 @@
 import { type ContextMenuEvent, effect, type JSX, List, platform, reduceMotion, Scroll, type ScrollRef, signal, Text, View } from "nsh";
 import { Button as BaseButton, Collapsible, DataTable, type DataTableRef, type DataTableSort, Editor, HoverCard, TextView, Toggle, ToggleGroup } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
-import { bytes, date, day, ms } from "../format";
+import { bytes, date, day, middle, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { groupName, offset, OutcomeRing, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
+import { groupName, offset, sessionStory, SessionShape, Sparkline, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
 import { Dot, Empty, InWindowMenu, POPUP, rowHeight, terminal, TYPE } from "./kit";
@@ -78,7 +78,7 @@ export function statusTone(s: number | null): Tone {
 
 const TONE_TEXT: Record<Tone, string> = {
   ok: "text-status-ok",
-  miss: "text-status-miss",
+  miss: "text-muted-foreground",
   client: "text-status-client",
   server: "text-status-server",
   refused: "text-status-refused",
@@ -222,10 +222,6 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
             <Figure value={`↓${bytes(s().bytesDown)}`} label={t("figure.down")} />
           </If>
         </View>
-        {/* how the requests were answered, at a glance */}
-        <If when={!props.compact && props.view.profile}>
-          <OutcomeRing profile={props.view.profile} class="mt-2 size-12 shrink-0" />
-        </If>
         {/* the session's shape: requests by outcome over time, and in flight */}
         <If when={props.view.profile && props.shape !== false}>
           <SessionShape profile={props.view.profile} slice={props.slice} onSlice={props.onSlice} annotate={!props.compact} marks={findingMarks(props.view)} class={props.compact ? "h-10 w-full" : "mt-3 h-12 min-w-[200px] flex-1"} />
@@ -237,6 +233,8 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
 
 /** Whether a session's findings are folded away (kept while the app runs). */
 const findingsOpen = signal(true);
+/** The findings a line each (the session shows a pane of its own below them). */
+export const findingsDense = signal(false);
 
 const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3", config: "Bucket" } as const;
 const LANG = { python: "python", java: "java", go: "go", js: "javascript", config: "xml" } as const;
@@ -301,8 +299,9 @@ export function findingMarks(v: SessionView): { tMs: number; n: number }[] {
 export function whatIfText(v: SessionView): string | null {
   const w = v.whatIf;
   if (!w) return null;
-  const money = (x: number) => (x < 0.01 ? x.toPrecision(2) : x.toFixed(2));
-  return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: offset(w.waitingMs[0]), wb: offset(w.waitingMs[1]), ca: money(w.cost[0]), cb: money(w.cost[1]), cur: w.currency });
+  // the cost as what changes: amounts of thousandths of a cent read as nothing
+  const cut = w.cost[0] > 0 ? `${w.cost[1] <= w.cost[0] ? "−" : "+"}${Math.round((Math.abs(w.cost[0] - w.cost[1]) * 100) / w.cost[0])}%` : "—";
+  return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: offset(w.waitingMs[0]), wb: offset(w.waitingMs[1]), cut });
 }
 
 /** What stands out in a session — its core result. Each finding says what
@@ -345,6 +344,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       </If>
     );
   }
+  const dense = () => props.compact || findingsDense();
   const row = (o: () => Observation, i: () => number) => (
     <BaseButton
       testID={`observation-${i()}`}
@@ -352,7 +352,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       selected={props.filter === i()}
       disabled={!props.onFilter || !o().episodes?.length}
       onPress={() => press(i())}
-      class={`group flex-row items-start gap-2.5 px-3 ${props.compact ? "py-1.5" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${i() > 0 ? "border-t border-border" : ""}`}
+      class={`group flex-row items-start gap-2.5 px-3 ${dense() ? "py-1.5" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${i() > 0 ? "border-t border-border" : ""}`}
     >
       {/* its number: where it stands on the session's shape */}
       <Text class={`h-5 w-3 text-right tabular-nums text-caption font-semibold ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{String(i() + 1)}</Text>
@@ -360,9 +360,9 @@ export function Observations(props: { view: SessionView; filter?: number | null;
         <Icon name={o().level === "warn" ? "triangle-alert" : "info"} size={14} tint={o().level === "warn" ? "warn" : "muted-foreground"} />
       </View>
       <View class="min-w-0 flex-1 gap-0.5">
-        <Text class={`text-body text-foreground ${props.compact ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
-        <If when={!props.compact && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
-        <If when={!props.compact && observationSaving(o())}>
+        <Text class={`text-body text-foreground ${dense() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
+        <If when={!dense() && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
+        <If when={!dense() && observationSaving(o())}>
           {(v) => (
             <View class="flex-row items-center gap-1 pt-0.5">
               <Icon name="trending-down" size={12} tint="info" />
@@ -481,7 +481,8 @@ export function OperationsTable(props: {
         status: episodeTone(e),
         time: clock(e.start),
         format: family(e).label,
-        title: terminal() && e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e),
+        // cut in the middle: the end of a key is what tells two apart
+        title: middle(terminal() && e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72),
         requests: String(e.records.length),
         duration: ms(duration(e)),
         bar: "",
@@ -668,7 +669,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
                 <Text class={`w-8 font-mono text-caption font-semibold ${TONE_TEXT[statusTone(r().status)]}`}>{r().status === null ? "—" : String(r().status)}</Text>
                 <View class="min-w-0 flex-1">
                   <Text class="text-small font-medium text-foreground line-clamp-1">{r().operation}</Text>
-                  <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{r().target}</Text>
+                  <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{middle(r().target, 40)}</Text>
                 </View>
                 <Text class="font-mono text-caption text-muted-foreground">{ms(r().latencyMs)}</Text>
                 <If when={!terminal()}>

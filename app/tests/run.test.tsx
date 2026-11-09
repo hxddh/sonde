@@ -21,11 +21,9 @@ test("run a command: its requests become operations, the session lines them up w
   await app.waitFor("id:run-ended", { timeout: 20000 });
   expect(app.shows("text:exited with 0")).toBe(true);
   await app.waitFor("text:/GetObject demo\\/README\\.md/", { timeout: 5000 });
-  // the run as it went: rate, failures, in flight, p95; and a monitor that floats
-  expect(app.shows("id:live")).toBe(true);
-  expect(app.shows("id:live-p95")).toBe(true);
-  await app.press("id:open-monitor");
-  await app.waitUntil(() => app.window("monitor").state() !== null);
+  // once it ended: the run in a sentence where the live figures were
+  await app.waitFor("id:run-story", { timeout: 5000 });
+  expect(app.shows("id:live")).toBe(false);
   await app.press("id:run-open-session");
   await app.waitFor("id:screen-sessions");
   await app.waitFor("id:output", { timeout: 5000 });
@@ -68,8 +66,6 @@ test("an example session reads as operations, each opening on its requests", asy
   await app.waitFor("id:session-summary", { timeout: 10000 });
   expect(app.shows("label:/172 requests · 34 operations/")).toBe(true);
   expect(app.shows("label:/116 not found/")).toBe(true);
-  // how the requests were answered, at a glance
-  expect(app.shows("id:outcome-ring")).toBe(true);
   expect(app.shows("text:/27 SlateDB writes: conditional create/")).toBe(true);
   expect(app.shows("text:looked for the newest WAL: probed ids 1…128")).toBe(true);
   // acting on the findings, estimated; a finding pressed says what to change, by SDK
@@ -122,7 +118,11 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   await app.press("id:replay-run");
   await app.waitFor("id:compare", { timeout: 20000 });
   await app.waitFor("text:2 requests compared: 2 the same");
-  expect(app.shows("id:compare-diff")).toBe(true);
+  // one view: the answers, before and after, and the transcripts on demand
+  expect(app.shows("id:run-change")).toBe(true);
+  expect(app.shows("id:compare-diff")).toBe(false);
+  await app.press("id:compare-transcripts");
+  await app.waitFor("id:compare-diff");
   // the same workload's latency on both stores, kind by kind
   expect(app.shows("id:store-latency")).toBe(true);
   expect(app.shows("text:The same requests on both stores")).toBe(true);

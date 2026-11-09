@@ -975,6 +975,30 @@ impl Sessions {
         Ok(path.to_string_lossy().into_owned())
     }
 
+    /// sonde's own requests (the request log: browsing, scans, probes) as a
+    /// session, read like any program's: its findings, its time, compared.
+    /// The newest `limit` requests, oldest first; the path of the new file.
+    pub fn from_request_log(limit: u32) -> Result<String, String> {
+        let mut records = sonde().log().list(&reqlog::Filter::default(), limit as usize);
+        if records.is_empty() {
+            return Err(err_msg("sonde has made no requests yet"));
+        }
+        records.reverse();
+        let dir = sonde().paths().sessions();
+        std::fs::create_dir_all(&dir).map_err(err_msg)?;
+        let path = sonde_proxy::session::fresh_path(&dir, "sonde-self");
+        let endpoint = records[0].endpoint.clone();
+        let mut header = SessionHeader::new(&endpoint, "", "", None);
+        header.created = records[0].time;
+        let session = Session {
+            header,
+            records,
+            logs: Vec::new(),
+        };
+        sonde_proxy::import::save(&session, &path).map_err(err_msg)?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+
     /// Adds a session file at `path` (dropped on the window) to the sessions
     /// directory, as [`Sessions::import`]; one already there is opened as it is.
     pub fn import_path(path: String) -> Result<String, String> {

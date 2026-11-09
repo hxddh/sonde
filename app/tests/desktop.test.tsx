@@ -8,7 +8,9 @@ test("a first launch welcomes; its demo makes Run ready; the sidebar hides and c
   expect(app.shows("id:welcome")).toBe(true);
   await app.press("id:welcome-demo");
   await app.waitFor("id:screen-run", { timeout: 10000 });
-  await app.waitFor("text:The demo endpoint is ready");
+  await app.waitFor("text:/^The demo is ready/");
+  // Run has a command ready on the demo: the first result is a press away
+  expect(app.shows("text:/curl -s --aws-sigv4/")).toBe(true);
   expect(app.shows("id:sidebar")).toBe(true);
   await app.press("id:toggle-sidebar");
   expect(app.shows("id:sidebar")).toBe(false);

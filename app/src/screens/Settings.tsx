@@ -64,6 +64,23 @@ export function SettingsScreen() {
       <If when={draft()}>
         {(d) => (
           <View class={terminal() ? "gap-2" : "w-full max-w-[720px] gap-7"}>
+            <Section title={t("settings.safety")}>
+              <Toggle
+                testID="read-only"
+                label={t("settings.readOnly")}
+                hint={t("settings.readOnlyHint")}
+                checked={settings()?.["read-only"] ?? true}
+                onChange={(v) => {
+                  try {
+                    api.setReadOnly(v);
+                    refreshSettings();
+                  } catch (e) {
+                    report(e);
+                  }
+                }}
+              />
+            </Section>
+
             <Section title={t("settings.appearance")}>
               <View class="flex-row flex-wrap items-center gap-x-8 gap-y-3">
                 <View class="gap-1.5">
@@ -98,23 +115,6 @@ export function SettingsScreen() {
                   testID="language"
                 />
               </View>
-            </Section>
-
-            <Section title={t("settings.safety")}>
-              <Toggle
-                testID="read-only"
-                label={t("settings.readOnly")}
-                hint={t("settings.readOnlyHint")}
-                checked={settings()?.["read-only"] ?? true}
-                onChange={(v) => {
-                  try {
-                    api.setReadOnly(v);
-                    refreshSettings();
-                  } catch (e) {
-                    report(e);
-                  }
-                }}
-              />
             </Section>
 
             <Section title={t("settings.requests")} description={t("settings.requestsHint")}>

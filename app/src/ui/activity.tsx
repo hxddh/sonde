@@ -6,11 +6,11 @@
 import { batch, cleanup, effect, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { Button as BaseButton, DataTable, Input } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
-import { ago, date, hm, ms } from "../format";
+import { ago, date, hm, middle, ms } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { RecordDetail } from "../screens/Requests";
-import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, notify, report } from "../store";
+import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, openSession, report, sessionsChanged } from "../store";
 import type { JobInfo, RecordSummary, RequestFilter } from "../types";
 import { Icon, iconSvg } from "./icon";
 import { Bar, Button, Dot, Empty, IconButton, PanelHeader, Options, rowHeight, Segmented, terminal, Tip, TYPE } from "./kit";
@@ -79,6 +79,19 @@ function Requests() {
     const id = selected();
     return id === null ? null : api.request(id);
   };
+  const asSession = () => {
+    try {
+      const path = api.sessions.fromRequestLog();
+      sessionsChanged();
+      batch(() => {
+        openSession.set(path);
+        activityOpen.set(false);
+        go("sessions");
+      });
+    } catch (e) {
+      report(e);
+    }
+  };
   const more = () => {
     if (!isAvailable) return;
     const exportAs = (f: "json" | "har") => {
@@ -113,6 +126,8 @@ function Requests() {
           ]}
           onChange={(v) => errors.set(v === "errors")}
         />
+        {/* sonde's own requests read as any program's: findings, time, compared */}
+        <Button small variant="outline" icon="list-clock" label={t("requests.asSession")} onPress={asSession} testID="requests-as-session" />
         <If when={isAvailable && !terminal()}>
           <IconButton icon="ellipsis" label={t("common.more")} onPress={more} testID="requests-more" />
         </If>
@@ -123,12 +138,13 @@ function Requests() {
         class="min-h-0 flex-1 rounded-(--radius-card) border border-border bg-card"
         columns={[
           ...(terminal() ? [] : [{ key: "status", title: "", width: 52, resizable: false }]),
-          { key: "operation", title: t("requests.operation"), width: 190 },
-          { key: "target", title: t("activity.target"), width: 200, minWidth: 120 },
-          { key: "latency", title: t("requests.latency"), width: 76, align: "end" as const },
-          { key: "time", title: t("column.time"), width: 70 },
+          // fits the panel: no column cut at its edge
+          { key: "operation", title: t("requests.operation"), width: 148 },
+          { key: "target", title: t("activity.target"), width: 172, minWidth: 110 },
+          { key: "latency", title: t("requests.latency"), width: 72, align: "end" as const },
+          { key: "time", title: t("column.time"), width: 66 },
         ]}
-        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: r.target, latency: ms(r.latencyMs), time: hm(r.time) }))}
+        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: ms(r.latencyMs), time: hm(r.time) }))}
         fontSize={TYPE.body}
         rowHeight={rowHeight(28)}
         classes={terminal() ? undefined : { header: "bg-card border-b border-border", headerCell: "pl-2 pr-1 text-small font-medium text-muted-foreground", cell: "px-2", rowHover: "bg-row-hover", rowSelected: "bg-selection" }}

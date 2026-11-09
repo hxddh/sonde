@@ -106,9 +106,9 @@ function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: num
 }
 
 export function Probes() {
-  // the endpoint in use, and the bucket open, to start from
+  // the endpoint in use to start from; the bucket probes write to is chosen on purpose
   const chosen = signal<Record<string, boolean>>(endpoint() ? { [endpoint()!]: true } : {});
-  const scratch = signal(bucket() ?? "");
+  const scratch = signal("");
   const temp = signal(false);
   const slow = signal(true);
   const only = signal("");
@@ -186,12 +186,14 @@ export function Probes() {
               <Toggle label={t("probes.slow")} checked={slow()} onChange={(v) => slow.set(v)} />
               <Button variant="primary" label={t("common.run")} onPress={run} disabled={!scratch() || Object.keys(running()).length > 0} testID="probe-run" />
             </View>
+            {/* what a run does to the bucket, before it runs */}
+            <Text testID="probe-writes" class="text-small text-muted-foreground">{t("probes.writes", { bucket: scratch() || "…" })}</Text>
             <Each of={Object.entries(running())}>{(r) => <Bar value={null} label={`${r()[0]}: ${r()[1]}`} />}</Each>
           </Card>
           <View class="flex-row items-center gap-2">
             <Title class="flex-1">{t("probes.title")}</Title>
-            <Button small label={t("probes.exportMd")} onPress={() => exportAs("markdown")} />
-            <Button small label={t("probes.exportJson")} onPress={() => exportAs("json")} />
+            <Button small label={t("probes.exportMd")} onPress={() => exportAs("markdown")} disabled={matrix().columns.length === 0} />
+            <Button small label={t("probes.exportJson")} onPress={() => exportAs("json")} disabled={matrix().columns.length === 0} />
           </View>
           <View class={terminal() ? "h-[640px]" : "h-[520px]"}>
             <MatrixView matrix={matrix()} onOpen={(probe, col) => open.set({ probe, col })} />

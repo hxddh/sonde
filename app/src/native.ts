@@ -77,6 +77,8 @@ export const api = {
   layoutState: (job: string, time: number) => Sonde.layoutState(job, time) as T.Snapshot | null,
   sessions: {
     list: () => Sessions.list() as T.SessionInfo[],
+    /** sonde's own requests (browsing, scans, probes) as a session file: its path. */
+    fromRequestLog: (limit = 100000) => Sessions.fromRequestLog(limit) as string,
     open: (path: string) => Sessions.open(path) as T.SessionView,
     analyse: async (path: string) => (await Sessions.analyse(path)) as T.SessionView,
     records: (path: string, ids: number[]) => Sessions.records(path, ids) as T.RecordSummary[],

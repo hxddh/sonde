@@ -6,7 +6,6 @@ import { announce, batch, effect, lifecycle, Notifications, platform, signal, St
 import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { openMonitor } from "./screens/MonitorWindow";
 import { area, endpoint, go, notify, openSession, report, sessionsChanged } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
@@ -54,7 +53,6 @@ if (isAvailable && platform.idiom !== "terminal") {
               onClick: () => Window.get("main")?.show(),
               menu: [
                 { label: t("run.trayShow"), onSelect: () => Window.get("main")?.show() },
-                { label: t("live.monitor"), onSelect: openMonitor },
                 { label: t("run.stop"), onSelect: stop },
               ],
             }
@@ -106,6 +104,21 @@ export function resize(cols: number, rows: number) {
 async function tellTheUser(r: RunResult, cmd: string, killed: boolean) {
   try {
     const v = await api.sessions.analyse(r.path);
+    // a run that made no request leaves nothing to read: it is not kept, unless asked
+    if (v.summary.requests === 0) {
+      let keep = false;
+      toast({ id: "run-empty", kind: "info", title: t("run.emptyNotKept"), action: t("run.keepEmpty"), onAction: () => (keep = true), duration: 8000 });
+      setTimeout(() => {
+        if (keep) return;
+        try {
+          api.sessions.remove(r.path);
+          sessionsChanged();
+        } catch {
+          // already gone
+        }
+      }, 8500);
+      return;
+    }
     const warnings = v.observations.filter((o) => o.level === "warn").length;
     const body = [t("run.bandRequests", { n: v.summary.requests }), t("figure.operationsN", { n: v.episodes.length }), ...(warnings ? [t("run.toLook", { n: warnings })] : [])].join(" · ");
     const title = killed ? t("run.toastStopped", { command: programOf(cmd) ?? cmd }) : t("run.toastEnded", { command: programOf(cmd) ?? cmd, code: String(r.exit ?? "?") });

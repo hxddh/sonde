@@ -23,7 +23,7 @@ import { fileName, removeSession, rename, RenameDialog, shareSession } from "../
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
 import { episodeTitle } from "../phrases";
-import { programOf, scrubCommand } from "../ui/sessionview";
+import { findingsDense, programOf, scrubCommand } from "../ui/sessionview";
 import { HistoryPane } from "../ui/history";
 import { TimePane } from "../ui/profile";
 import { offset } from "../ui/plots";
@@ -38,6 +38,10 @@ const inspectorWidth = rememberedSize("sessions.inspector", 420);
 const listWidth = rememberedSize("sessions.list", 256);
 
 /** One session: its figures, its operations (and output), the inspector, and what can be done with it. */
+/** The main window's session has its inspector open: the sessions list
+ * gives it the room (three columns at most). */
+const inspectorOpen = signal(false);
+
 export function SessionPane(props: { path: string; others: () => SessionInfo[]; tick: () => number; onBack?: () => void; onOpen?: (p: string) => void; inWindow?: boolean }) {
   const op = signal<number | null>(null);
   const rec = signal<number | null>(null);
@@ -313,6 +317,15 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   // room for the inspector beside the operations, or it comes in from the edge
   const roomy = () => (props.inWindow ? windowSize().width : shellWidth()) >= (props.inWindow ? 980 : 1240);
   const inspecting = () => !!(episode() || record());
+  if (!props.inWindow) {
+    effect(() => inspectorOpen.set(inspecting()));
+    cleanup(() => inspectorOpen.set(false));
+  }
+  // a pane of its own (time, runs, output) gets the room: the findings a line each
+  effect(() => {
+    const p = pane();
+    untracked(() => findingsDense.set(p !== "operations"));
+  });
 
   const inspector = () => (
     <View testID="inspector" class="flex-1 border-l border-border bg-inspector">
@@ -566,7 +579,7 @@ export function Sessions() {
         else={
           <If when={sessions().length > 0} else={nothing()}>
             <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeList")}>
-              <ResizablePanel fixed size={listWidth.size()} minSize={200} maxSize={440} onResize={listWidth.onResize} class="px-2 pt-4">
+              <ResizablePanel fixed visible={!inspectorOpen()} size={listWidth.size()} minSize={200} maxSize={440} onResize={listWidth.onResize} class="px-2 pt-4">
                 {list()}
               </ResizablePanel>
               <ResizablePanel minSize={480} class="min-w-0">
