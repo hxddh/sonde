@@ -4,17 +4,18 @@
 // The numbers are recorded in docs/performance.md.
 
 import { expect, open, test } from "nsh/test";
-import { place } from "./helpers";
+import { desktop, place } from "./helpers";
 
 test("100 000 rows: load and scroll", async () => {
-  const app = await open("../App.tsx", { width: 960, height: 640 });
+  const app = await open("../App.tsx", { ...desktop, width: 960, height: 640 });
   await place(app, "endpoints");
   await app.press("id:open-demo");
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await place(app, "browse");
-  await app.press("label:Choose a bucket");
-  await app.press("text:demo-large");
-  await app.waitFor("text:▸ logs/", { timeout: 10000 });
+  // Buckets opens on the first; the large one is a press in the tree
+  await app.press("id:bucket-demo-large");
+  await app.waitFor("text:demo-large · Objects", { timeout: 10000 });
+  await app.waitFor("text:1 item", { timeout: 10000 });
   await app.press("id:flat");
   const loadStart = Date.now();
   await app.press("id:load-all");

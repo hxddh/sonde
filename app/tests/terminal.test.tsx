@@ -26,7 +26,13 @@ test("home lists the places; digits open them", async () => {
   // with no endpoint yet, Store welcomes, and its demo opens the store
   await app.keyboard.press("3");
   await app.wait(300);
-  if (app.shows("id:welcome")) await app.press("id:welcome-demo");
+  if (app.shows("id:welcome")) {
+    // the demo lands on Run with a command ready; Buckets is a place away
+    await app.press("id:welcome-demo");
+    await app.waitFor("id:screen-run", { timeout: 10000 });
+    await app.back();
+    await app.keyboard.press("3");
+  }
   await app.waitFor("id:screen-store", { timeout: 10000 });
   await app.press("id:tab-layouts");
   await app.waitFor("id:screen-layouts");

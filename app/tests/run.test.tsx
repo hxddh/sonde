@@ -49,7 +49,7 @@ test("record without a program: a local endpoint to point an application at", as
   const app = await demo();
   await app.press("id:record");
   await app.waitFor("id:record-form");
-  await app.press("label:No deletes");
+  await app.press("label:Block deletes");
   await app.press("id:record-start");
   await app.waitFor("id:recording", { timeout: 10000 });
   expect(app.shows("text:/Recording on http:\\/\\/127\\.0\\.0\\.1:/")).toBe(true);
@@ -119,7 +119,7 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   await app.waitFor("id:compare", { timeout: 20000 });
   await app.waitFor("text:2 requests compared: 2 the same");
   // one view: the answers, before and after, and the transcripts on demand
-  expect(app.shows("id:run-change")).toBe(true);
+  await app.waitFor("id:run-change", { timeout: 10000 });
   expect(app.shows("id:compare-diff")).toBe(false);
   await app.press("id:compare-transcripts");
   await app.waitFor("id:compare-diff");
@@ -244,16 +244,19 @@ test("a shared session opens in the browser, on a local address", async () => {
 });
 
 test("relative times read in the app's language", async () => {
-  const app = await open("../App.tsx", desktop);
-  await app.press("id:open-example");
-  await app.waitFor("id:session-summary", { timeout: 10000 });
+  const app = await demo();
+  // a job of sonde's own: a bucket's multipart scan, listed with its age
+  await place(app, "multipart");
+  await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
+  await place(app, "jobs");
   await app.waitUntil(() => app.texts().some((x) => /^(\d+ (min|h|d)|now)$/.test(x)), { timeout: 5000 });
   await place(app, "settings");
   await app.press("label:Language");
   await app.press("text:中文");
   await app.waitFor("text:通用");
-  await app.press("id:nav-sessions");
-  // a session's age, in Chinese, and no longer in English
+  await app.keyboard.press("mod+w");
+  await place(app, "jobs");
+  // its age, in Chinese, and no longer in English
   await app.waitUntil(() => app.texts().some((x) => /^(\d+ (分钟|小时|天)|刚刚)$/.test(x)), { timeout: 5000 });
   expect(app.texts().some((x) => /^(\d+ (min|h|d)|now)$/.test(x))).toBe(false);
   await place(app, "settings");
@@ -261,3 +264,4 @@ test("relative times read in the app's language", async () => {
   await app.press("text:English");
   await app.waitFor("text:General");
 });
+

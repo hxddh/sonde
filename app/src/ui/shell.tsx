@@ -252,13 +252,6 @@ function Place(props: { area: Area; open: (a: Area) => void }) {
   );
 }
 
-function ago(iso: string): string {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return t("time.now");
-  if (s < 3600) return t("time.minutes", { n: Math.floor(s / 60) });
-  if (s < 86400) return t("time.hours", { n: Math.floor(s / 3600) });
-  return t("time.days", { n: Math.floor(s / 86400) });
-}
 
 /** Whether the window's own material (macOS's sidebar backdrop) shows through
  * the shell: it follows the system's appearance, so only while the app does

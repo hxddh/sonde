@@ -30,6 +30,8 @@ export async function place(app: App, where: string) {
   // a bucket's details open in a sheet over its objects, from its cards
   if (window && area === "store") {
     if (app.shows("id:store-sheet")) await app.press("id:sheet-close");
+    // a narrow window folds the sidebar away
+    if (!app.shows("id:nav-store")) await app.keyboard.press("mod+b");
     await app.press("id:nav-store");
     if (where !== "browse") {
       await app.press(`id:overview-${where}`);
