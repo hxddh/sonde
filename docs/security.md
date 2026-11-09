@@ -45,6 +45,13 @@ and the like are removed from its environment). Its output is kept in the sessio
 that prints secrets puts them there; records stay redacted. Only the app process can start commands: there is no
 listening socket for it, and the TSX VM reaches it through `sonde/native` only.
 
+With "Name the code" (`--callers`) on, a run also gets one small hook per language: `PYTHONPATH`, `NODE_OPTIONS`
+and `JAVA_TOOL_OPTIONS` are extended (never replaced). Each hook only adds an `x-sonde-caller` header to requests
+going to sonde, which sonde reads and never forwards; a hook that fails leaves the program as it was.
+
+The Runs pane's code change runs `git diff` and `git show` in the run's folder, with commits checked as hex and the
+repository's fsmonitor turned off, so a shared session cannot make it run anything else.
+
 ## Shared sessions
 
 `sonde share` writes a static site: the viewer and the session's computed document. It holds what the session file

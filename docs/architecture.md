@@ -15,6 +15,7 @@ crates/probes             40 probes, runner, run store, diff, matrix, reports �
 crates/decoders           SlateDB, Iceberg, lakeFS, Woodpecker, cadence       │
 crates/s3raw              SigV4, addressing, retries, throttle, XML, ops      │
 crates/reqlog             records, redaction, ring buffer, SQLite, HAR        ─┘
+hooks/java                the Java caller hook's sources (its jars are built into sonde-proxy)
 ```
 
 Dependencies point down: `reqlog ← s3raw ← sonde-core ← probes`, `reqlog ← s3raw ← sonde-proxy`, `decoders ← sonde-core`, and only `sonde-nsh` and

@@ -25,64 +25,65 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 · 21 files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do
 ```
 
-- **Record.** The application talks to a local endpoint with throwaway keys; sonde signs each request with the real
-  credentials (profiles, SSO, IMDS, IRSA — they never reach the application), forwards it, and writes a redacted
-  session file. `--no-delete` and `--read-only` refuse what you do not want it to do. Checked with boto3, the AWS SDKs
-  for JavaScript, Go and Java, and object_store; +0.2 ms per request.
-- **Understand.** Requests become operations: multipart uploads, retries, bursts of lookups, paged listings, and the
-  steps of SlateDB, Apache Iceberg and Delta Lake, each with the reads and files that led to it. Findings name
-  what deserves a look — unfinished uploads, files no commit references, retries, throttling and how many requests
-  were in flight, lost conditional races, hot keys, HEAD before GET, requests far slower than the rest — ranked by
-  the requests they bear on, with what acting on them would save.
-- **Replay.** The session re-enacted on another endpoint under a fresh prefix — upload ids, ETags and tokens mapped,
-  payloads synthetic, cleaned up afterwards — and every answer compared. A store that ignores `If-None-Match`
-  shows up as `PutObject recorded 412 → replay 200`.
+## What it does
 
-The app has three places. **Run** is its home: type a command and press Return. The program runs in a real terminal
-on the left; its requests appear on the right as operations while it works, and when it ends the session holds both,
-lined up in time: choose an operation and the lines it printed light up, choose a line and the operations running
-then do. **Sessions** keep every run — and any `.sonde` file, access log, CloudTrail file or HAR you open (⌘O) or drop on the window: as
-operations placed in time, what stands out first and why, replayed on another endpoint, compared with another session side by
-side, opened in a window of their own, renamed, searched, or shared as a web page from the app (or `sonde share`). **Buckets** browse 100 000+ objects under an
-overview of what sonde noticed — incomplete uploads and their cost, versioning, the SlateDB, Iceberg, lakeFS or
-Woodpecker layout it recognises, the size once measured — each a sheet of detail away. Settings open in a window of
-their own, with the endpoints and their compatibility (40 probes); sonde's own requests, jobs and changes are in
-Activity, behind the toolbar. Everything is one ⌘K away in the command palette, in English or 中文.
+**Record and understand**
 
-One codebase, three forms: a **desktop app** for macOS, Linux and Windows (it updates itself from GitHub Releases), a
-**terminal UI** in one static-libc binary for the host next to your data, and a **headless CLI** for scripts and CI.
-The UI is [Native Shell](https://github.com/longbridge/nsh) (TSX on QuickJS); everything else is Rust. Read-only by
-default, no telemetry.
+- `sonde run -- <command>` (or **Run** in the app) records every S3 request through a local endpoint. sonde signs
+  with the real credentials, which never reach the program; `--no-delete` and `--read-only` limit what it may do.
+- Requests are read as **operations**: multipart uploads, retries, listings, and the steps of SlateDB, Iceberg and
+  Delta Lake.
+- **Findings** say what deserves a look (hot keys, HEAD before GET, throttling, unfinished uploads, orphaned files,
+  slow requests…), what fixing them would save, a fix in Python, Java, Go or JavaScript, and, with `--callers`,
+  the line of your code that sent the requests (Python, Node.js and Java).
+- **Where the time and money went**: waiting by kind of request, requests in flight, each request on a log scale,
+  prefixes against S3's per-prefix limit, the request cost.
+- **Production traffic**: `sonde import` reads S3 access logs, CloudTrail and HAR files the same way.
 
-## Features
+**Programs and CI**
+
+- Runs of one command are tracked against a **baseline**. `sonde check` fails a CI job when a run is over its
+  budget (requests, waiting, cost, errors, p95) or past its baseline; findings you keep on purpose can be
+  `expect`ed.
+- The app says since which run and commit a program got worse, and shows the code that changed in between.
+- `sonde check -f markdown` writes a pull request comment; `-f github` annotates the lines that sent the requests.
+
+**Compare, replay, share**
+
+- `sonde compare` shows what a change did: requests, waiting, cost, findings, and where by prefix.
+- `sonde replay` re-enacts a session on another store and compares every answer.
+- `sonde share` turns a session into a web page or a single HTML file (`--redact` to send outside).
+
+**Your stores**
+
+- Browse 100 000+ objects with every header, checksum and version; find incomplete uploads and their cost; see why
+  a bucket is this big.
+- 40 compatibility probes across endpoints (AWS, R2, MinIO, Ceph, OSS, …) as one matrix.
+- Decode SlateDB, Iceberg, lakeFS and Woodpecker layouts.
+
+**Safe by default**: read-only until you turn it off; anything destructive needs a dry run and a typed
+confirmation, and goes to an audit log. Credentials stay in Rust, logs are redacted, and there is no telemetry.
+
+One codebase, three forms: a **desktop app** (macOS, Linux, Windows), a **terminal UI** in one static binary, and a
+**CLI** for scripts and CI. The UI is [Native Shell](https://github.com/longbridge/nsh); everything else is Rust.
+English and 中文.
+
+## The app
+
+**Run** is the home: type a command, and its terminal and its requests appear side by side. **Sessions** keeps every
+run and every file you open or drop on the window. **Buckets** browses your stores. ⌘K opens everything; Settings
+are a window of their own (⌘,). The terminal UI (`sonde tui`) has the same places: `:` for the palette, Esc to go
+back. Design standards: [app/DESIGN.md](app/DESIGN.md).
 
 | | |
 |---|---|
-| **Run** | A command run in the app's terminal (a real PTY: colours, progress bars, input) with its S3 traffic recorded; the output and the operations lined up in time; a notification when it ends. |
-| **Recording** | `sonde run -- <command>` or `sonde proxy`, or a recording endpoint started in the app: a local S3 endpoint that re-signs, forwards and records every request; signed aws-chunked bodies, presigned URLs and multipart uploads handled; policies `--no-delete`, `--read-only`. Only the program given the recording's keys can use the endpoint's
-credentials (loopback only, SigV4 verified). `sonde watch` keeps it running with a live status. Sessions are redacted,
-compressed JSON lines ([docs/recording.md](docs/recording.md)). |
-| **Live** | A run as it goes: requests a second, failures, in flight and the p95, requests over time beside how long they take (median to p95 as a band, p99 dashed); a small floating monitor above other windows, and ⌘⌥R / Ctrl+Alt+R to run the last command again from anywhere. `sonde watch` in a terminal. |
-| **Production traffic** | `sonde import` reads S3 server access logs, CloudTrail data events and HAR files as sessions (who sent each request and with what SDK; a CloudTrail file, which has no times, says nothing of how long); `sonde export --otlp` sends a session to an OpenTelemetry collector as traces. |
-| **What to change** | Each finding with its fix in Python, Java, Go and JavaScript (or the bucket rule), the line of the program that sent its requests (`sonde run --callers`: Python's boto3, the AWS SDK for JavaScript v3, the AWS SDK for Java 2), and an estimate of what acting on all of them would leave: requests, waiting, cost. |
-| **Operations** | Sessions read as operations (multipart uploads, retries, lookups, listings; SlateDB, Iceberg and Delta steps) with observations; `sonde show`, or Sessions — the session's shape (requests by outcome and in flight over time, a slice a press away), a table with each operation's outcome and place in time, narrowed by what stands out, and an inspector down to each request and its waterfall. |
-| **Time and cost** | Where a session's time went: the time the program waited on its store by kind of request (requests at once counted once), the peak in flight, the slowest requests, the requests' cost at S3's prices (configurable), and chains of requests that each waited for the one before, with
-how much sooner they would finish eight at once. `sonde compare` and the app's Before and after: what a change did to requests, waiting, cost and findings. |
-| **Programs and CI** | Runs of one command tracked over time against a baseline (the app's Runs pane), and `sonde check` to fail a CI job when a run is over its budget (requests, waiting, cost, errors, p95) or past its baseline, with findings kept on purpose `expect`ed; since which run and commit, and the code change between them, in the app. Where requests went (operation → prefix → outcome), when and where (a heat map by prefix), and prefixes near S3's per-prefix rate. |
-| **Replay** | `sonde replay <session> -e <endpoint>`: the traffic re-enacted on another store under a fresh prefix and compared request by request, with each kind's p50 and p95 on both stores, or on several stores at once side by side; `sonde diff` for two files. In the app: Replay from a session, then the differences grouped and both sessions as transcripts side by side. |
-| **Share** | `sonde share`: a session as a static web page (operations, observations, output, every request) for anyone with a browser — write it to a folder, host it anywhere (S3 static website hosting works), or `--serve` it; or `--html` as one file,
-`--redact`ed to send outside. |
-| **Endpoints** | Many endpoints, from AWS profiles or by hand (URL, region, path-style, CA file, vendor: AWS, R2, MinIO, Ceph RGW, Alibaba OSS, Tigris, Backblaze B2, Wasabi, GCS XML, other). Connectivity test with STS `GetCallerIdentity` where the vendor has it. |
-| **Browse** | Buckets, prefixes and objects (`ListObjectsV2`, paged, 100 000+ rows kept in Rust and scrolled smoothly), HEAD details: every header, user metadata, ETag analysis (`-N` = N parts, consistent part sizes), full-object vs composite checksums, storage class, SSE. Download (streamed, cancellable), presigned URLs, filter and search. |
-| **Request inspector** | Every request (ring buffer, 5000 by default, optional SQLite): time, operation, target, status, latency, retries, `x-amz-request-id` / `x-amz-id-2`, redacted headers, raw error body. Filters by status, operation, endpoint. Copy as `aws s3api` or as (unsigned) curl; export JSON or HAR. |
-| **Multipart health** | Every incomplete upload with its bytes (summed from ListParts), age and cost at your prices; stale ones flagged (7 days by default); lifecycle `AbortIncompleteMultipartUpload` verdict; generate or apply the rule; abort in bulk. |
-| **Versions** | A key's timeline with delete markers highlighted; restore (remove the marker), delete a version; versioning, MFA delete and Object Lock state. |
-| **Capacity** | Current vs noncurrent bytes and objects, delete markers, incomplete uploads, by storage class, top-level prefix and size band — and findings that answer "why is it this big". Cached, exportable. |
-| **Compatibility matrix** | 40 probes (conditional writes, consistency, CRC32/CRC32C/CRC64NVME/SHA1/SHA256 in full-object and composite modes and as trailers, multipart edge cases, Range, presign expiry and clock skew, metadata limits, Unicode keys, pagination tokens, StartAfter, DeleteObjects limits, version ids, Object Lock, SSE-C, S3 Express append), run on several endpoints in parallel, as a vendor × probe matrix whose cells open on the raw exchanges. Runs are saved; diff two runs to catch silent vendor changes. JSON and Markdown reports. |
-| **Layout lens** | Detects and decodes SlateDB (manifests v1/v2: WAL timeline, gaps, writer/compactor epochs and fencing, L0 and sorted runs, GC lag, orphans), Apache Iceberg (snapshots, manifests, live and orphan files, expirable snapshots), lakeFS (metaranges, ranges, path → object mapping) and Milvus Woodpecker (segments, blocks, footers, LAC). turbopuffer and WarpStream formats are not published: sonde measures their prefixes and write cadence only. Replay the logical state at any time. |
-| **Command palette** | ⌘K (`:` in the terminal): every place, tab and action — stop the run, open the last session, read-only, theme, language, check for updates. |
-| **Safety** | Read-only by default. A destructive operation needs read-only mode off, a dry run, and a typed confirmation (the item count or the bucket name); each run is written to an audit log. Credentials are resolved in Rust and never reach the UI's JavaScript; every log and export is redacted. No telemetry: sonde makes no request you did not ask for. |
-| **Languages** | English and 中文. |
+| ![A session: its figures, what stands out and why, operations with outcome and time](docs/images/session.png) | ![Where the time went, dark](docs/images/time-dark.png) |
+| ![Buckets: the overview over the objects, an object's details](docs/images/store.png) | ![Incomplete uploads, a sheet from the overview](docs/images/uploads.png) |
+| ![Where requests went: operation, prefix, outcome](docs/images/flows.png) | ![When and where, and how long requests took](docs/images/spread.png) |
+| ![Where the time went, the peak in flight, the request cost](docs/images/time.png) | ![Two runs, before and after](docs/images/runs.png) |
+| ![Settings and endpoints in a window of their own](docs/images/endpoints.png) | ![The command palette](docs/images/palette.png) |
+
+What each version changed is in the [changelog](CHANGELOG.md).
 
 ## Install
 
@@ -92,26 +93,22 @@ brew install hxddh/sonde/sonde                                                  
 brew install --cask hxddh/sonde/sonde-app                                        # the macOS app
 ```
 
-Or download a release: `sonde-linux-x86_64.tar.gz` (or the static `sonde-linux-x86_64-musl.tar.gz`), `sonde-linux-aarch64.tar.gz`, `sonde-macos-aarch64.tar.gz`,
-`sonde-macos-x86_64.tar.gz`, `sonde-macos.dmg`, the desktop app for Linux (`sonde-<version>-linux-x86_64.tar.gz`,
-GTK 4) and Windows (`sonde-<version>-windows-x86_64.zip`), with `SHA256SUMS`. The Linux binary needs only libc
-(`ldd` in [docs/packaging.md](docs/packaging.md)), so it runs on minimal server images.
+Or download from [Releases](https://github.com/hxddh/sonde/releases) (checksums in `SHA256SUMS`):
+
+- terminal binary: `sonde-{linux,macos}-{x86_64,aarch64}.tar.gz` (Linux also as static `…-musl`), needs only libc;
+- desktop app: `sonde-macos.dmg`, `sonde-<version>-linux-x86_64.tar.gz` (GTK 4), `sonde-<version>-windows-x86_64.zip`.
 
 ## Quick start
 
 ```sh
-sonde demo                            # a tour: a small program's requests to a built-in store, explained
-sonde import access.log               # production traffic (S3 access logs, CloudTrail, HAR) as a session
-sonde run -- python etl.py            # record an application's S3 traffic (endpoint from --url or the config)
-sonde show                            # the newest session, as operations
-sonde share --serve                   # … as a web page
-sonde share --html --redact -o run.html   # … as one HTML file, names replaced, safe to send
-sonde export --otlp --to http://localhost:4318/v1/traces   # … as OpenTelemetry traces
-sonde watch                           # a proxy left running: live status, new warnings, rotating files
-sonde tui --demo                      # the terminal UI on a built-in demo server (no account needed)
-sonde endpoints import                # endpoints for your ~/.aws/config profiles
-sonde endpoints test prod             # reachability, credentials source, STS identity
-sonde tui                             # the terminal UI on your endpoints
+sonde demo                              # a tour on a built-in store, no account needed
+sonde endpoints import                  # your ~/.aws/config profiles as endpoints
+sonde run --callers -- python etl.py    # record a program's S3 traffic, naming the code that sent it
+sonde show                              # the newest session, as operations and findings
+sonde check --init                      # a sonde.toml budget this run passes, for CI
+sonde import access.log                 # production traffic (access logs, CloudTrail, HAR)
+sonde share --html --redact -o run.html # one HTML file, names replaced, safe to send
+sonde tui                               # the terminal UI
 ```
 
 Headless, for scripts and CI ([docs/cli.md](docs/cli.md), with exit codes):
@@ -124,43 +121,6 @@ sonde layout inspect -e prod -b lake -p warehouse/db/events/                  # 
 sonde --url http://127.0.0.1:9000 --path-style probe -b scratch --only checksum.
 ```
 
-### The terminal UI
-
-```text
-  sonde  File  Edit  View
-‹ Back Browse Demo (built-in) › demo-large                                                    Read-only
- Demo (built-in) ▾            demo-large ▾
-demo-large                                                         100,000 items  [ ] Flat  Load all  Refresh
- Name                                              Size  Modified         Class            MPU
-▸ logs/
-```
-
-The home list holds every place: Run, Sessions, Buckets, Activity, Settings (`1`–`5`). Run works there too — the program
-in a terminal inside the terminal. `:` opens the command palette, F10 the menu bar; Tab and the arrows move between
-controls, Esc goes back, Ctrl+C copies a selection (OSC 52, over SSH too) or quits.
-
-### The desktop app
-
-A first launch offers the built-in demo, the AWS profiles it finds, or an endpoint by hand. Then it opens on Run.
-The toolbar is the window's title bar: where you are, the program running, the endpoint (searchable), Activity
-(⌘⇧A), the read-only lock and search (⌘K / Ctrl+K). The sidebar holds the places and recent sessions (⌘1 Run,
-⌘2 Sessions, ⌘3 Buckets; ⌘B hides it); Settings are a window (⌘,). On macOS the sidebar sits on the window's own
-material and session windows gather as tabs; a run in progress shows on the Dock's icon. Light and dark, English and
-中文, the window's size, place and splits remembered, updates checked only when you ask. The app's design standards
-are in [app/DESIGN.md](app/DESIGN.md).
-
-| | |
-|---|---|
-| ![A session: its figures, what stands out and why, operations with outcome and time](docs/images/session.png) | ![Where the time went, dark](docs/images/time-dark.png) |
-| ![Buckets: the overview over the objects, an object's details](docs/images/store.png) | ![Incomplete uploads, a sheet from the overview](docs/images/uploads.png) |
-| ![Where requests went: operation, prefix, outcome](docs/images/flows.png) | ![When and where, and how long requests took](docs/images/spread.png) |
-| ![Where the time went, the peak in flight, the request cost](docs/images/time.png) | ![Two runs, before and after](docs/images/runs.png) |
-| ![Settings and endpoints in a window of their own](docs/images/endpoints.png) | ![The command palette](docs/images/palette.png) |
-
-Every place is screenshotted on a real window in CI on Linux, macOS and Windows (`scripts/shots.sh`: wide and at
-the least size, light and dark, English and Chinese); the images are the build's `sonde-shots-<platform>` artifacts.
-What each version changed is in the [changelog](CHANGELOG.md); [9.0 compared with 8.0](docs/compare-9.0.md) side
-by side, and [the versions before](docs/).
 
 ## Documentation
 

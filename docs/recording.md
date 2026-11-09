@@ -88,8 +88,12 @@ object_store (Rust) — `scripts/sdk-smoke.sh` runs them in CI.
    the record.
 
 What a record holds: the headers **the application sent** (signatures
-redacted, as everywhere in sonde), the URL sonde sent to, status, latency to the
-response headers, bytes each way, request ids and the error body.
+redacted, as everywhere in sonde), the URL sonde sent to, status, bytes each
+way, request ids, the error body, and two times:
+
+- **latency**: the whole exchange, until the body has gone through (or the
+  program stopped reading it);
+- **first byte**: until the response headers arrived.
 
 The overhead measured against a local RustFS: +0.2 ms at p50 for a 1 KiB GET
 (`cargo run --release -p sonde-proxy --example overhead`; docs/performance.md).
@@ -122,9 +126,16 @@ sonde import browser.har           # a HAR (a browser's, or sonde's own --log-ou
 ```
 
 Each becomes a session in the data directory (or `-o FILE`), read like a recording: operations, findings, where
-the time went. The app opens them too (Open, or drop the file on the window). What a source does not carry stays
-empty: CloudTrail has no latency, an access log no request headers; a 404 whose code is `NoSuchBucket` counts as an
-error, a missing key as a lookup.
+the time went. The app opens them too (Open, or drop the file on the window).
+
+| Source | Times | Who sent it | SDK (user agent) |
+|---|---|---|---|
+| Access log | total and turnaround (first byte) | requester | yes |
+| CloudTrail | none | IAM identity | yes |
+| HAR | total | — | yes |
+
+CloudTrail has no request times, so its sessions show no latency charts, waiting or latency findings. A 404 whose
+code is `NoSuchBucket` counts as an error, a missing key as a lookup.
 
 ## Operations, not requests
 

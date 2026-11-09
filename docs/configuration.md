@@ -22,6 +22,7 @@ reqlog-persist = false    # also keep them in <data>/requests.sqlite
 theme = "system"          # system, light, dark
 language = "auto"         # auto, en, zh
 stale-upload-days = 7     # uploads older than this are flagged
+name-callers = false      # runs name the code that sent each request (Python, Node.js, Java)
 # exports-dir = "/srv/sonde/exports"
 # downloads-dir = "/srv/sonde/downloads"
 
