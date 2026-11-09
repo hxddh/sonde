@@ -331,12 +331,12 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         <Observations view={v} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(96, Math.round((props.inWindow ? windowSize().height : shellHeight()) * 0.28))} />
         <If when={terminal()}>{actions()}</If>
       </View>
-      <View class={terminal() ? "flex-row items-center gap-2" : "flex-row items-center gap-3 px-5 py-2.5"}>
+      <View class={terminal() ? "flex-row items-center gap-2" : "flex-row items-center gap-3 px-5 py-2"}>
         <Segmented testID="session-pane-mode" value={pane()} items={panes()} onChange={(p) => pane.set(p as Pane)} />
         <View class="flex-1" />
         <If when={filterNote()}>
           {(n) => (
-            <BaseButton testID="clear-filter" accessibilityLabel={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), slice.set(null)))} class="flex-row items-center gap-1.5 rounded-full bg-selection px-2.5 py-1 hover:bg-accent">
+            <BaseButton testID="clear-filter" accessibilityLabel={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), slice.set(null)))} class="flex-row items-center gap-1.5 rounded-full bg-selection px-2 py-1 hover:bg-accent">
               <Text class="text-small text-foreground">{n()}</Text>
               <If when={!terminal()}>
                 <Icon name="x" size={12} />

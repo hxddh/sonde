@@ -49,6 +49,43 @@ Theme tokens only (`theme.json`, light and dark). Status has its own roles —
 scrim under modal layers is `bg-scrim`. Color never carries meaning alone: a dot sits
 next to a status code, a warning has its icon and its words.
 
+## The kit
+
+Native Shell's base components have behavior and no look; the look is `src/ui/kit.tsx`'s, and only there. Each kit
+piece wraps one nsh export with the theme's tokens:
+
+| Piece | Over | Use |
+|---|---|---|
+| `Button`, `IconButton` | `Button` | primary (one per area), outline (default), ghost (dense rows, toolbars), destructive |
+| `Card` | `View` / `Button` | `panel` (p-4, a group), `tile` (a figure in a row), `none` (a list drawing its rows); `onPress` makes the card the button |
+| `ListRow` | `Button` | a row a press opens: hover, pressed, selected, focus |
+| `Field`, `SearchField`, `NumberField`, `Choice`, `Check`, `SwitchRow` | `Input`, `NumberInput`, `Select`, `Checkbox`, `Switch` | forms; a switch's label is its own |
+| `Segmented`, `Options` | `Tabs`, `ToggleGroup` | what a place shows; a value of a few |
+| `Disclosure` | `Accordion` | a section that opens under its heading |
+| `SidePanel` + `PanelHeader`, `Modal` | `Sheet`, `Dialog` | supplementary work; short decisions |
+| `TABLE`, `SimpleTable` | `DataTable` | every table's classes; rows of text |
+| `Badge`, `Dot`, `Legend`, `KeyValue`, `Kbd`, `Empty`, `Loading` | — | display only |
+
+Rules: a page passes no classes of its own to an `nsh/base` control; a class string a second page would repeat
+belongs in the kit; `FOCUS` is on everything that takes the keyboard; `selected:bg-selection` is the one selection,
+`active:bg-muted` the press. `scripts/lint-kit.py` fails CI on a card, a table's classes or a gutter drawn by hand,
+and on spacing off the scale.
+
+## One rendering per concept
+
+| Concept | Rule |
+|---|---|
+| HTTP status | `StatusMark`: a dot and the code in mono; success quiet, anything else in its tone |
+| Count | `count()`, tabular, never mono; a section's count is "Title · n" |
+| Size | `bytes()`, tabular, at the end of its column |
+| Duration | `offset()` (840 ms, 2.35 s); a column of them is titled "Took" |
+| Time | clock time in lists (`14:02:11.204`), `date()` in headers, never raw ISO |
+| Cost | `cost()` with its currency |
+| Key or path | mono, cut in the middle, once |
+| Command | mono, `$ ` before it, variables' values hidden |
+| Opening | "Open …", a chevron on rows |
+| Removing | "Delete", the trash icon, a confirmation |
+
 ## Surfaces
 
 - **Base**: `bg-background`, regions separated by hairlines (`border-border`), no
@@ -90,8 +127,12 @@ pointer, tooltips and fading followed in Rust, never a hand-drawn canvas.
 - **One question per chart**, said in words beside it and in its `accessibilityLabel`: what it shows and what stands
   out ("Most of the waiting: PutObject, 65%"). A terminal gets the sentence and a table.
 - **Colors are roles.** Outcomes in their status tokens (`bar` for ok, `status-miss`, `status-client`,
-  `status-server`); a quantity in `chart-1`; before is `muted-foreground/30`, after its outcome (`status-ok` fewer,
-  `status-server` more). What a selection leaves out turns `muted`, it does not disappear.
+  `status-server`); a quantity in `chart-1`, a second in `chart-4`; tails and percentiles in a quiet
+  `muted-foreground` (dashed for a line), never an error's color; retries in `info`; before is
+  `muted-foreground/30`, after its outcome (`status-ok` fewer, `status-server` more). What a selection leaves out
+  turns `bar-track`, it does not disappear.
+- **One frame**: rows' names in one gutter (`GUTTER`, `AXIS_LABEL`), time ticks `TIME_TICK` (three), value ticks
+  inside on a chip (`VALUE_TICK`) with their unit; latencies on a log scale drawn as logs, the ticks saying times.
 - **Quiet frames**: hairline grids (`stroke-border`), no axis lines, small tabular labels in `text-caption`
   `muted-foreground`; bars' tips rounded, their bases square; labels at the bars' ends rather than a value axis.
 - **The tooltip** is the popup surface (`Tip`): a title and one or two lines of figures, beside the pointer.
@@ -100,7 +141,7 @@ pointer, tooltips and fading followed in Rust, never a hand-drawn canvas.
 - **Motion**: an appear of 420 ms ease-out per new data (`appearGeneration`), updates gliding in 260 ms; nothing
   moves with reduced motion.
 - **Flows and grids**: a Sankey shows few nodes (top operations and prefixes, the rest "other"), outcomes in their
-  status colors, ribbons a gradient from source to target; a heat map ramps from `muted` to `chart-1`.
+  status colors, ribbons a gradient from source to target; a heat map ramps from `bar-track` to `chart-1` by the square root of its counts.
 - **Annotations over legends**: a chart names its notable point in place (`PlotLabel`), a baseline is a dashed line.
 - Times read from the session's start (`+230 ms`, `2.35 s`); costs to two significant digits under a cent.
 

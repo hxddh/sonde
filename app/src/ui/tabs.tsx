@@ -17,7 +17,7 @@ export function TabBar<T extends string>(props: { tabs: T[]; value: T; label: (t
               accessibilityLabel={props.label(tab())}
               selected={props.value === tab()}
               onPress={() => props.onChange(tab())}
-              class="group flex-row items-center gap-1.5 rounded-t-(--radius-sm) px-2.5 py-2.5 hover:bg-muted/60"
+              class="group flex-row items-center gap-1.5 rounded-t-(--radius-sm) px-2 py-2 hover:bg-muted/60"
             >
               <If when={props.icon && !terminal()}>
                 <Icon name={props.icon!(tab())} size={14} tint={props.value === tab() ? "foreground" : "muted-foreground"} />

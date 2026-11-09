@@ -121,7 +121,7 @@ function ProgramTerminal() {
       onResize={({ cols, rows }) => resize(cols, rows)}
       accessibilityLabel={running()?.command ?? lastRun()?.command ?? "Program"}
       cursorClass="bg-foreground/50"
-      class={terminal() ? "flex-1 border border-border" : "flex-1 rounded-(--radius-card) border border-border bg-card px-2.5 py-2"}
+      class={terminal() ? "flex-1 border border-border" : `flex-1 ${CARD} p-2`}
       testID="run-terminal"
     />
   );
@@ -231,7 +231,7 @@ function LivePanel(props: { profile: Profile }) {
     </View>
   );
   return (
-    <View testID="live" class={`gap-2 ${CARD} px-3 py-2.5`}>
+    <View testID="live" class={`gap-2 ${CARD} px-3 py-2`}>
       <View class="flex-row items-center gap-6">
         {figure(f().perSecond.toFixed(f().perSecond < 10 ? 1 : 0), t("live.perSecond"), "live-rate")}
         {figure(`${Math.round(f().failedShare * 100)}%`, t("live.failed"), "live-failed", f().failedShare > 0 ? "text-status-server" : "text-foreground")}

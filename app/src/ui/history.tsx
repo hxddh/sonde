@@ -20,7 +20,7 @@ function Verdicts(props: { h: ProgramHistory }) {
   const failed = () => c().verdicts.filter((v) => !v.ok);
   const value = (what: string, v: number) => (what === "waiting" ? offset(v) : what === "cost" ? cost(v, props.h.runs[0]?.currency ?? "USD") : String(Math.round(v)));
   return (
-    <View testID="history-check" class={`flex-row items-start gap-2 rounded-(--radius-card) border px-3 py-2.5 ${c().passed ? "border-border bg-card" : "border-warn/40 bg-warn/10"}`}>
+    <View testID="history-check" class={`flex-row items-start gap-2 rounded-(--radius-card) border px-3 py-2 ${c().passed ? "border-border bg-card" : "border-warn/40 bg-warn/10"}`}>
       <Icon name={c().passed ? "circle-check" : "triangle-alert"} size={16} tint={c().passed ? "status-ok" : "warn"} />
       <View class="flex-1 gap-0.5">
         <Text class="text-body font-medium text-foreground">{c().passed ? t("history.passed") : t("history.failed")}</Text>

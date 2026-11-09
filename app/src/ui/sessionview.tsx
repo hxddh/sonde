@@ -59,12 +59,35 @@ function shellWords(command: string): string[] {
 const SEPARATOR = new Set([";", "&&", "||", "|", "&"]);
 
 /** The command with the value of every variable it sets hidden
- * (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole: what a list, a tooltip
- * or a notification shows. */
+ * (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole, the rest as typed: what
+ * a list, a tooltip or a notification shows. */
 export function scrubCommand(command: string): string {
-  return shellWords(command)
-    .map((w) => (ASSIGNMENT.test(w) ? `${w.slice(0, w.indexOf("="))}=…` : w))
-    .join(" ");
+  let out = "";
+  let i = 0;
+  const text = command.trim();
+  while (i < text.length) {
+    // a word starts here: an assignment's value runs to the word's end, quotes included
+    if (/\s/.test(text[i]) || ";|&".includes(text[i])) {
+      out += text[i++];
+      continue;
+    }
+    let j = i;
+    let quote: string | null = null;
+    while (j < text.length) {
+      const c = text[j];
+      if (quote) {
+        if (c === "\\" && quote === '"') j++;
+        else if (c === quote) quote = null;
+      } else if (c === "'" || c === '"') quote = c;
+      else if (c === "\\") j++;
+      else if (/\s/.test(c) || ";|&".includes(c)) break;
+      j++;
+    }
+    const word = text.slice(i, j);
+    out += ASSIGNMENT.test(word) ? `${word.slice(0, word.indexOf("="))}=…` : word;
+    i = j;
+  }
+  return out;
 }
 
 /** What a command runs, for lists: its program's name (past the variables
@@ -390,7 +413,7 @@ function FixPanel(props: { o: Observation; path?: string }) {
               testID="fix-code"
               markdown={`\`\`\`${LANG[f().sdk]}\n${f().code}\n\`\`\``}
               codeBlockActions={[{ id: "copy", label: t("fix.copy") }]}
-              classes={{ codeBlock: "rounded-(--radius) border border-border bg-background p-2.5 font-mono text-small" }}
+              classes={{ codeBlock: "rounded-(--radius) border border-border bg-background p-2 font-mono text-small" }}
             />
           </If>
         )}

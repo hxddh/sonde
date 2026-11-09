@@ -162,7 +162,7 @@ function RunningPill() {
           accessibilityLabel={t("run.running")}
           onPress={() => go("run")}
           tooltip={<Tip text={scrubCommand(r().command)} />}
-          class={`h-7 max-w-[200px] flex-row items-center gap-2 rounded-(--radius) border border-primary/40 bg-primary/10 px-2.5 hover:bg-primary/15 ${FOCUS}`}
+          class={`h-7 max-w-[200px] flex-row items-center gap-2 rounded-(--radius) border border-primary/40 bg-primary/10 px-2 hover:bg-primary/15 ${FOCUS}`}
         >
           <View class="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />
           <Text class="text-small font-medium text-primary line-clamp-1">{programOf(r().command) ?? ""}</Text>

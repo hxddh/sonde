@@ -4,6 +4,57 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [11.0.0] - 2026-11-09
+
+Order and precision. One kit drawn on Native Shell, one way to show each thing, charts down to every request, and
+the loop from a run to its baseline, its commit and the code that sent its requests.
+
+### Added
+
+- Every request as a dot: when it ran (or how large it was) across, how long it took on a log scale, in its
+  outcome's color, the p95 dashed; a press opens the request. Each busy kind of request over time, as small charts
+  on one time axis. Time spent by kind or by the code that sent it. Two runs' latency as cumulative curves in
+  Compare.
+- Runs record the folder they ran in and the commit their code was at (or CI's `GITHUB_SHA`); Run again runs there.
+- `sonde check` says since which run a program went past its baseline, and the commits around it.
+- `sonde check -f github`: failed verdicts as errors, findings as annotations on the line of code that sent their
+  requests. `sonde check --init` writes a `sonde.toml` the run passes, with room, and prints the CI steps.
+- `sonde watch --logs s3://bucket/prefix`: production seen through its access logs or CloudTrail files, read as they
+  arrive (`--every`, `--once`), each pass a run of `logs of s3://…` with findings, a budget and alerts.
+- What a month of a program costs at the pace it runs, in Programs.
+- Run's ended band: the run against its baseline, Run again, and after the demo a way to one's own store. A
+  finding's code places open the file in the editor. Open (⌘O) uses the system's dialog and reads the file in sonde,
+  however large; a file opened twice is the same session. Welcome opens a log of production.
+
+### Changed
+
+- One kit: one card (panel, tile, list), one table look (cells line up with their titles, figures at the end, no
+  stripes), two heading levels, four buttons, a focus ring on every control, selection in one color, spacing on
+  4/8/12/16/24; dialogs, disclosures and switches from Native Shell (Dialog, Accordion, Switch with its label);
+  a lint keeps pages from drawing their own.
+- One rendering per concept: an HTTP status is a dot and its code (success quiet), times are clock times, durations
+  have one format, counts are grouped.
+- The session header's figures open their breakdown with a press, and carry waiting and cost; the Time pane's
+  duplicate figures are gone. The findings' heading says what acting on them saves.
+- Charts share one gutter, tick style and color roles: tails in a quiet tone, retries in info, 404s readable in both
+  themes, heat by its square root; the waterfall names its rows.
+- Menus pop up in the terminal too; the toolbar keeps one control shape and folds search into an icon when narrow.
+
+### Fixed
+
+- The Python caller hook: paths and names outside ASCII, presigned URLs, requests to other endpoints, Debian's
+  `dist-packages`. HAR imports keep no presigned credentials; shared pages and reports show no variable's value
+  set before the command; commands read as shell words (quoted values, `env` options, compound commands).
+- Costs agree in every view (and B2 prices lists as class C). `sonde check` resolves a `sonde.toml` baseline
+  against the file, fetches https only, within a minute, never printing a signature; Markdown comments escape what
+  the program wrote. `watch --alert` checks the last file and waits for its alerts.
+- Adding an endpoint never replaces another; an edit keeps its CA file and settings. An object's detail is its own;
+  Refresh lists again; a search stays with its place; the bucket tree reads past its first page.
+- A run with no requests neither opens a comparison nor leaves a button to another session; a session deleted
+  goes to the trash, or says why not. Settings follow changes made elsewhere; a confirmation stays while it runs;
+  a replay to several stores keeps the ones that worked. Zoom lets go on a second press, and the last instant's
+  findings are marked. Sorting reads numbers and durations in the app's language. Strings and plurals in Chinese.
+
 ## [10.0.0] - 2026-11-09
 
 A program over its runs, and from a finding to the code that caused it. Fewer places, one thing at a time; the

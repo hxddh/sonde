@@ -111,7 +111,7 @@ function Requests() {
   const list = () => (
     <View class="min-h-0 flex-1 gap-2">
       <View class="flex-row items-center gap-2">
-        <View class="h-8 min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2.5 focus-within:border-ring">
+        <View class="h-8 min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring">
           <If when={!terminal()}>
             <Icon name="search" size={14} />
           </If>

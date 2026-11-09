@@ -106,11 +106,19 @@ for (const v of variants) {
     await shot("03g-time");
     // the flows on demand: where the button is in view (a small window has it further down)
     if (app.shows("id:flows-show")) await app.press("id:flows-show").catch(() => {});
-    // further down the Time pane: where requests went, when and where, how long
-    await app.scroll("id:time-pane", 380);
-    await shot("03i-flows");
-    await app.scroll("id:time-pane", 420);
-    await shot("03j-spread");
+    // further down the Time pane, a window at a time: every request and each
+    // kind over time; pushback and the distribution; time spent and chains;
+    // limits, heat and costs; the flows
+    await app.scroll("id:time-pane", 300);
+    await shot("03h-requests");
+    await app.scroll("id:time-pane", 400);
+    await shot("03i-distribution");
+    await app.scroll("id:time-pane", 400);
+    await shot("03j-spent");
+    await app.scroll("id:time-pane", 400);
+    await shot("03k-prefixes");
+    await app.scroll("id:time-pane", 600);
+    await shot("03l-flows");
     // the same program run twice: before and after
     await app.press("id:compare-open");
     const run = app.menu()?.map((m) => m.label).find((l) => l.startsWith("curl"));

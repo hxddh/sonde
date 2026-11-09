@@ -133,7 +133,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
       </If>
       <If when={r().transportError}>
         {(e) => (
-          <View class="flex-row gap-2 rounded-(--radius) border border-destructive/30 bg-destructive/10 px-2.5 py-2">
+          <View class="flex-row gap-2 rounded-(--radius) border border-destructive/30 bg-destructive/10 px-2 py-2">
             <Icon name="circle-x" size={14} tint="destructive" />
             <Text class="flex-1 text-small text-destructive">
               {e()}

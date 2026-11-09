@@ -152,7 +152,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                 <View class="gap-1.5">
                   <Each of={d().checksums}>
                     {(c) => (
-                      <View class="gap-0.5 rounded-(--radius) border border-border bg-card px-2.5 py-1.5">
+                      <View class="gap-0.5 rounded-(--radius) border border-border bg-card px-2 py-1.5">
                         <View class="flex-row items-center gap-2">
                           <Badge label={c().algorithm} tone="info" />
                           <Text class="text-caption text-muted-foreground">
@@ -202,7 +202,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                 </View>
                 <If when={url()}>
                   {(u) => (
-                    <View class="gap-1.5 rounded-(--radius) border border-border bg-card px-2.5 py-2">
+                    <View class="gap-1.5 rounded-(--radius) border border-border bg-card px-2 py-2">
                       <Text class="font-mono text-caption text-foreground">{u()}</Text>
                       <View class="flex-row">
                         <Button small variant="ghost" icon="copy" label={t("common.copy")} onPress={() => Clipboard.writeText(u()).then(() => notify(t("common.copied")), report)} />
@@ -390,7 +390,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={() => reload.update((n) => n + 1)} testID="listing-refresh" />
       </View>
       <View class="flex-row flex-wrap items-center gap-2">
-        <View class="h-8 min-w-[240px] flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2.5 focus-within:border-ring">
+        <View class="h-8 min-w-[240px] flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring">
           <If when={!terminal()}>
             <Icon name="search" size={14} />
           </If>

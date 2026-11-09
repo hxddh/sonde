@@ -224,8 +224,8 @@ export function Palette() {
         searchBarClass={terminal() ? undefined : "h-12 flex-row items-center gap-2 border-b border-border px-4"}
         searchClass={terminal() ? "text-foreground" : "flex-1 text-heading text-foreground placeholder:text-muted-foreground"}
         listClass={terminal() ? "max-h-[360px]" : "max-h-[400px] p-1.5"}
-        itemClass={terminal() ? "px-1 text-foreground focus:bg-accent checked:font-semibold" : "group h-9 rounded-(--radius) px-2.5 focus:bg-selection"}
-        groupClass={terminal() ? "px-1 text-muted-foreground" : "px-2.5 pb-1 pt-2.5 text-caption font-medium text-muted-foreground"}
+        itemClass={terminal() ? "px-1 text-foreground focus:bg-accent checked:font-semibold" : "group h-9 rounded-(--radius) px-2 focus:bg-selection"}
+        groupClass={terminal() ? "px-1 text-muted-foreground" : "px-2 pb-1 pt-2.5 text-caption font-medium text-muted-foreground"}
         separatorClass="my-1 h-px bg-border"
         renderItem={
           terminal()

@@ -58,7 +58,7 @@ const tones = () => ({ type: "ordinal" as const, domain: [...TONES, "dim"], rang
 /** A tooltip's card: the app's one popup surface. */
 function Tip(props: { title: string; lines: string[] }) {
   return (
-    <View class={`max-w-[280px] gap-0.5 ${POPUP} px-2.5 py-1.5`}>
+    <View class={`max-w-[280px] gap-0.5 ${POPUP} px-2 py-1.5`}>
       <Text class="text-small font-medium text-popover-foreground line-clamp-2">{props.title}</Text>
       <Each of={props.lines}>{(l) => <Text class="tabular-nums text-caption text-muted-foreground">{l()}</Text>}</Each>
     </View>
