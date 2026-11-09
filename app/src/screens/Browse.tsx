@@ -107,15 +107,13 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
   return (
     <View selectable class="gap-4" testID="object-detail">
       <View class="gap-1.5">
-        <View class="flex-row items-center gap-2">
-          <If when={props.onBack}>
+        {/* in the panel, its header names the object; on its own (a terminal), this does */}
+        <If when={props.onBack}>
+          <View class="flex-row items-center gap-2">
             <Button small variant="ghost" icon="chevron-left" label={t("common.back")} onPress={() => props.onBack?.()} testID="detail-back" />
-          </If>
-          <If when={!terminal()}>
-            <Icon name="file" size={16} tint="foreground" />
-          </If>
-          <Text class="min-w-0 flex-1 text-heading font-semibold text-foreground line-clamp-2">{props.entry.name}</Text>
-        </View>
+            <Text class="min-w-0 flex-1 text-heading font-semibold text-foreground line-clamp-2">{props.entry.name}</Text>
+          </View>
+        </If>
         <Text class="font-mono text-caption text-muted-foreground line-clamp-2">{`s3://${b}/${props.entry.key}`}</Text>
       </View>
       <If when={detail()} else={<Loading />}>
@@ -470,7 +468,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                   );
                 }
                 // sizes as figures (tabular, at the end, under their title); the rest quiet
-                return c.key === "size" || c.key === "parts" ? <Text class="flex-1 text-right text-small tabular-nums text-foreground">{c.text}</Text> : <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
+                return c.key === "size" || c.key === "parts" ? <View class="flex-1 items-end"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View> : <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
               }
         }
         onContextMenu={(e) => {

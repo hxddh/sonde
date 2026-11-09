@@ -598,7 +598,7 @@ export function OperationsTable(props: {
     { key: "time", title: t("column.time"), width: 110, sortable: true },
     ...(formats() ? [{ key: "format", title: "", width: 86 }] : []),
     { key: "title", title: t("column.operation"), width: props.compact ? 220 : kept("title", 340), minWidth: 160 },
-    { key: "requests", title: t("column.requests"), width: 56, align: "end" as const, sortable: true },
+    { key: "requests", title: t("column.requests"), width: 68, align: "end" as const, sortable: true },
     { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: true },
     ...(terminal() || props.compact ? [] : [{ key: "bar", title: t("column.when"), width: kept("bar", 150), minWidth: 80 }]),
     // notes need room: a narrow window keeps the operation's name whole instead
@@ -662,7 +662,7 @@ export function OperationsTable(props: {
       case "requests":
       case "duration":
         // figures line up at their end, under their titles
-        return <Text class="flex-1 text-right text-small tabular-nums text-foreground">{c.text}</Text>;
+        return <View class="flex-1 items-end"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View>;
       default:
         return <Text class="text-body text-foreground line-clamp-1">{c.text}</Text>;
     }

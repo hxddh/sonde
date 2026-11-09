@@ -104,7 +104,7 @@ function Tile(props: { id: StoreTab; icon: IconName; title: string; value: strin
   const motion = createMotion({ enter: "fadeInUp", duration: 220 });
   return (
     <View class="min-w-44 flex-1" style={motion.style}>
-      <Card pad="tile" testID={`overview-${props.id}`} label={`${props.title}: ${props.value}`} onPress={() => go(props.id)} class="flex-1">
+      <Card pad="tile" testID={`overview-${props.id}`} label={`${props.title}: ${props.value}`} onPress={() => go(props.id)}>
         <View class="flex-row items-center gap-1.5">
           <Icon name={props.icon} size={13} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
           <Text class="flex-1 text-caption text-muted-foreground line-clamp-1">{props.title}</Text>

@@ -143,7 +143,7 @@ export function Multipart() {
                 rowHeight={rowHeight(30)}
                 classes={terminal() ? undefined : TABLE}
                 // an old upload is marked, not shouted
-                renderCell={terminal() ? undefined : (c) => (c.key === "flag" ? (c.text ? <Icon name="triangle-alert" size={13} tint="warn" /> : <View />) : <Text class={`line-clamp-1 ${c.key === "key" ? "text-body text-foreground" : "flex-1 text-right text-small tabular-nums text-foreground"} ${c.key === "initiated" ? "text-left" : ""}`}>{c.text}</Text>)}
+                renderCell={terminal() ? undefined : (c) => (c.key === "flag" ? (c.text ? <Icon name="triangle-alert" size={13} tint="warn" /> : <View />) : c.key === "key" || c.key === "initiated" ? <Text class="text-body text-foreground line-clamp-1">{c.text}</Text> : <View class="flex-1 items-end"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View>)}
                 sort={uploadSort()}
                 onSortChange={({ sort }) => uploadSort.set(sort)}
               />

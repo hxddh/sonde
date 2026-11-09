@@ -154,7 +154,7 @@ function Requests() {
             : (c) => {
                 const r = rows()[c.row];
                 if (c.key === "status" && r) return <StatusMark status={r.status} />;
-                if (c.key === "latency") return <Text class="flex-1 text-right text-small tabular-nums text-foreground">{c.text}</Text>;
+                if (c.key === "latency") return <View class="flex-1 items-end"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View>;
                 return <Text class={`line-clamp-1 ${c.key === "operation" ? "text-body text-foreground" : "font-mono text-caption text-muted-foreground"}`}>{c.text}</Text>;
               }
         }
