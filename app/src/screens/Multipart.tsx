@@ -6,6 +6,7 @@ import { cleanup, signal, Text, View } from "nsh";
 import { DataTable, type DataTableSort } from "nsh/base";
 import { bytes, count, date, day, days, money } from "../format";
 import { type Key, t } from "../i18n";
+import { Icon } from "../ui/icon";
 import { api, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
@@ -88,7 +89,8 @@ export function Multipart() {
       <If when={report_()} else={<Empty text={bucket() ? t("mpu.title") : t("common.chooseBucket")} />}>
         {(r) => (
           <View class="gap-4">
-            <View class="flex-row flex-wrap gap-3">
+            {/* the figures side by side, the lifecycle's verdict and rule under them, full width */}
+            <View class="flex-row flex-wrap items-start gap-3">
               <Card class="min-w-48 flex-1">
                 <Muted>{t("mpu.uploads", { n: r().totalUploads })}</Muted>
                 <Title>{bytes(r().totalBytes)}</Title>
@@ -99,7 +101,9 @@ export function Multipart() {
                 <Title>{money(r().costPerMonth, r().currency)}</Title>
                 <Muted>{`${t("mpu.costSoFar")}: ${money(r().costSoFar, r().currency)}`}</Muted>
               </Card>
-              <Card class="min-w-64 flex-[2]" testID="lifecycle-verdict">
+            </View>
+            <View>
+              <Card testID="lifecycle-verdict">
                 <View class="flex-row items-center gap-2">
                   <Text class="text-body font-semibold text-foreground">{t("mpu.lifecycle")}</Text>
                   <Badge label={t(`mpu.lifecycle.${r().lifecycle.status}` as Key)} tone={tone(r().lifecycle.status)} />
@@ -124,20 +128,22 @@ export function Multipart() {
                 class={`h-[420px] ${CARD}`}
                 columns={[
                   // fits the detail panel (760pt) without a sideways scroll: the date as a day
-                  { key: "flag", title: "", width: 22, resizable: false },
-                  { key: "key", title: t("mpu.key"), width: 196, minWidth: 120, sortable: !terminal() },
-                  { key: "uploadId", title: t("mpu.uploadId"), width: 116, minWidth: 80, sortable: !terminal() },
-                  { key: "initiated", title: t("mpu.initiated"), width: 100, sortable: !terminal() },
-                  { key: "age", title: t("mpu.age"), width: 58, align: "end", sortable: !terminal() },
-                  { key: "parts", title: t("mpu.parts"), width: 50, align: "end", sortable: !terminal() },
-                  { key: "bytes", title: t("mpu.bytes"), width: 78, align: "end", sortable: !terminal() },
-                  { key: "cost", title: t("mpu.costMonth"), width: 72, align: "end", sortable: !terminal() },
+                  // the upload's id is the request inspector's: the columns that decide stay whole
+                  { key: "flag", title: "", width: 24, resizable: false },
+                  { key: "key", title: t("mpu.key"), width: 220, minWidth: 120, sortable: true },
+                  { key: "initiated", title: t("mpu.initiated"), width: 104, sortable: true },
+                  { key: "age", title: t("mpu.age"), width: 72, align: "end", sortable: true },
+                  { key: "parts", title: t("mpu.parts"), width: 64, align: "end", sortable: true },
+                  { key: "bytes", title: t("mpu.bytes"), width: 88, align: "end", sortable: true },
+                  { key: "cost", title: t("mpu.costMonth"), width: 104, align: "end", sortable: true },
                 ]}
-                data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "!" : "", key: u.key, uploadId: u.uploadId, initiated: day(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
+                data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "stale" : "", key: u.key, initiated: day(u.initiated), age: days(u.ageDays), parts: String(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
                 rowClasses={sorted(r().uploads).map((u) => (u.stale ? "text-warn" : "text-foreground"))}
                 fontSize={TYPE.body}
                 rowHeight={rowHeight(30)}
                 classes={terminal() ? undefined : TABLE}
+                // an old upload is marked, not shouted
+                renderCell={terminal() ? undefined : (c) => (c.key === "flag" ? (c.text ? <Icon name="triangle-alert" size={13} tint="warn" /> : <View />) : <Text class={`line-clamp-1 ${c.key === "key" ? "text-body text-foreground" : "flex-1 text-right text-small tabular-nums text-foreground"} ${c.key === "initiated" ? "text-left" : ""}`}>{c.text}</Text>)}
                 sort={uploadSort()}
                 onSortChange={({ sort }) => uploadSort.set(sort)}
               />
