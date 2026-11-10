@@ -119,7 +119,10 @@ async fn browse_mpu_versions_du() {
             .unwrap();
         let o = exec::execute(s, &plan.id, &b).await.unwrap();
         assert_eq!(o.succeeded, 1, "{}: {:?}", t.name, o.errors);
-        assert_eq!(s.guard().audit_entries(10).len(), 3);
+        // each run is on record twice: before its first request, then its outcome
+        let audit = s.guard().audit_entries(10);
+        assert_eq!(audit.len(), 6);
+        assert_eq!(audit.iter().filter(|e| e.stage.is_some()).count(), 3);
         cleanup(&c, &b).await;
     }
 }
