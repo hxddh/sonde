@@ -4,8 +4,26 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [14.0.0] - 2026-11-10
+
+Run your program against an S3 that misbehaves, and sonde says whether it survived. Thirteen versions observed;
+this one makes the failures happen. The review this came from is [docs/review-13.0.md](docs/review-13.0.md).
+
 ### Added
 
+- **Trials.** `sonde run --trial -- <command>` runs the command once clean, then once per fault scenario chosen
+  from what it did, and says of each whether the program **survived**, was **degraded** or **broke**: the faults
+  and how many were retried, the wait before a retry and whether the waits are jittered, how much the load grew,
+  writes made twice, uploads left unfinished, the exit. See [docs/trials.md](docs/trials.md).
+- **Faults in the proxy**: a status on each request's first attempt (`slowdown`, `error`), a write whose answer is
+  lost after the store acted (`lost-answer`), a failed completion (`fail-complete`), a delay (`slow`), S3's
+  per-prefix rate (`s3-limits`). Rules match by operation and key and count attempts at one request, never the
+  order of arrival. `--fault NAME` picks scenarios; `[[scenario]]` in `sonde.toml` defines a project's own.
+- `{trial}` in an argument, and `SONDE_TRIAL`, give each run of a trial a place of its own.
+- A trial is a session: its first finding says how many requests met a fault sonde injected, records carry
+  `injected`, and a replay skips them.
+- **`sonde check`** prints a run's trials as rows and fails when the program broke (`-f markdown` and `-f github`
+  too). **The app** shows them on a run's Runs pane, each opening its trial's session.
 - **Lance is read as versions.** A commit (`_versions/<n>.manifest`, written with `If-None-Match: *`) is one
   operation with the listings, the transaction file and what it wrote: `version 6 committed · 1 data file
   (439.4 KiB)`, `· an index`, `· rows deleted`; the ranged reads of a scan are one `read version 7 · 3 ranges of 1
@@ -26,6 +44,12 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   `slate/db/compactions/` read the same. Prefixes are now whole folders, folded into the one above only when there
   are more than a chart can hold (and the row says how many it holds); a label says the shared start once and keeps
   its end; the tooltip has the whole prefix.
+- **The interface, from the 13.0 review**: an empty run is no longer deleted under its reader, however it was
+  opened; with the sidebar hidden a place that needs its list shows it, and a list that fails says so; Sessions
+  keeps its session, search and Runs/Programs when left and come back to; a lane's cell shows the worst of the
+  requests it holds and says how many, a sampled view says it is a sample, the legend has client errors; the heat
+  map follows the chosen stretch and an empty stretch says so; flow labels no longer sit on their nodes; the rename
+  dialog opens in the window that asked; "Copy table" copies plain numbers.
 
 ## [13.0.0] - 2026-11-10
 

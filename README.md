@@ -9,6 +9,7 @@ another endpoint and see where the two disagree.
 ```sh
 sonde run -- ./my-app                    # record every S3 request my-app makes
 sonde show                               # … as operations, with what stands out and where the time went
+sonde run --trial -- ./my-app            # … then again while S3 misbehaves: did it survive?
 sonde compare before.sonde after.sonde   # what a change did: requests, waiting, cost, findings
 sonde check --baseline auto             # in CI: exit 1 when a run is over its budget or past its program's baseline
 sonde replay session.sonde -e ceph       # the same traffic on another store: what differs?
@@ -39,6 +40,14 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 - **Where the time and money went**, on one board under one timeline: waiting by kind of request, every request
   on a log scale, what ran at once lane by lane, prefixes against S3's per-prefix limit, the request cost.
 - **Production traffic**: `sonde import` reads S3 access logs, CloudTrail and HAR files the same way.
+
+**When the store fails**
+
+- `sonde run --trial` runs the command again while sonde answers in the store's place — a 503 on each request's
+  first attempt, a write whose answer is lost, a failed CompleteMultipartUpload — and says whether the program
+  **survived**: whether it retried, how long it waited and whether the waits are jittered, how much it multiplied
+  the load, what it left behind. `[[scenario]]` in `sonde.toml` adds a project's own;
+  `sonde check` fails when the program broke. See [docs/trials.md](docs/trials.md).
 
 **Programs and CI**
 
@@ -106,6 +115,7 @@ sonde demo                              # a tour on a built-in store, no account
 sonde endpoints import                  # your ~/.aws/config profiles as endpoints
 sonde run --callers -- python etl.py    # record a program's S3 traffic, naming the code that sent it
 sonde show                              # the newest session, as operations and findings
+sonde run --trial -- python etl.py 's3://scratch/etl-{trial}/'   # the same run under faults: survived, degraded or broke
 sonde check --init                      # a sonde.toml budget this run passes, for CI
 sonde import access.log                 # production traffic (access logs, CloudTrail, HAR)
 sonde share --html --redact -o run.html # one HTML file, names replaced, safe to send
@@ -130,6 +140,7 @@ sonde --url http://127.0.0.1:9000 --path-style probe -b scratch --only checksum.
 | [Configuration](docs/configuration.md) | `config.toml`: settings and endpoints |
 | [Credentials](docs/credentials.md) | Where credentials come from, and how they stay out of the UI |
 | [Recording](docs/recording.md) | Run, `sonde run`, `sonde proxy`, `sonde show`, `sonde share`, session files |
+| [Trials](docs/trials.md) | `sonde run --trial`: fault scenarios, what is read from a run under them, `[[scenario]]` |
 | [CLI](docs/cli.md) | Subcommands, formats, exit codes |
 | [Probes](docs/probes.md) | Every probe and the AWS behavior it checks |
 | [Decoders](docs/decoders.md) | The layouts and format versions each lens decodes |
