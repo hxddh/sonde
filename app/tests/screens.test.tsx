@@ -114,6 +114,8 @@ test("browse: an object's detail is its own, never the one chosen before", async
   await app.waitFor("text:README.md", { timeout: 10000 });
   await app.press("text:README.md");
   await app.waitFor("text:s3://demo/README.md", { timeout: 10000 });
+  // its sections are there once the object has been read
+  await app.waitFor("text:Presigned URL", { timeout: 10000 });
   await app.press("text:Presigned URL");
   await app.press("id:presign");
   await app.waitFor("text:/README\\.md\\?X-Amz-/", { timeout: 10000 });
@@ -121,6 +123,7 @@ test("browse: an object's detail is its own, never the one chosen before", async
   await app.waitFor("text:images/logo.png", { timeout: 10000 });
   await app.press("text:images/logo.png");
   await app.waitFor("text:s3://demo/images/logo.png", { timeout: 10000 });
+  await app.waitFor("text:Presigned URL", { timeout: 10000 });
   // the URL asked for README.md went with it
   expect(app.shows("text:/README\\.md\\?X-Amz-/")).toBe(false);
   // Refresh lists the same place again
