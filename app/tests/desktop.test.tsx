@@ -111,3 +111,30 @@ test("a month of a program reads as money, not per 1,000 runs", async () => {
   expect(money(0.004, "USD")).toBe("<0.01 USD");
   expect(cost(0.004, "USD")).not.toBe("<0.01 USD");
 });
+
+test("prefixes are named by what tells them apart: the shared start once, the end kept", async () => {
+  const { prefixNames, tail } = await import("../src/ui/plots");
+  // cut at the start, on a folder's edge: the end is what differs
+  expect(tail("slate/db/compactions/", 18)).toBe("…/db/compactions/");
+  expect(tail("slate/db/compacted/", 18)).toBe("…/db/compacted/");
+  expect(tail("short/", 18)).toBe("short/");
+  // what all share is said once; one that stands for the folders under it is marked
+  const table = [
+    { prefix: "lake/warehouse/db/events/data/dt=2026-11-01/" },
+    { prefix: "lake/warehouse/db/events/data/", folders: 24 },
+    { prefix: "lake/warehouse/db/events/metadata/" },
+    { prefix: "other" },
+  ];
+  const n = prefixNames(table, 20);
+  expect(n.common).toBe("lake/warehouse/db/events/");
+  expect(n.name("lake/warehouse/db/events/data/dt=2026-11-01/")).toBe("data/dt=2026-11-01/");
+  expect(n.name("lake/warehouse/db/events/data/")).toBe("data/…");
+  expect(n.name("lake/warehouse/db/events/metadata/")).toBe("metadata/");
+  // a prefix that is the others' parent keeps a name of its own
+  const nested = prefixNames([{ prefix: "b/a/" }, { prefix: "b/a/x/" }], 20);
+  expect(nested.name("b/a/")).toBe("a/");
+  expect(nested.name("b/a/x/")).toBe("a/x/");
+  // two never get one name
+  const twins = prefixNames([{ prefix: "aaaaaaaaaaaaaaaaaaaaaaaa/same-ending/" }, { prefix: "bbbbbbbbbbbbbbbbbbbbbbbb/same-ending/" }], 16);
+  expect(twins.name("aaaaaaaaaaaaaaaaaaaaaaaa/same-ending/")).not.toBe(twins.name("bbbbbbbbbbbbbbbbbbbbbbbb/same-ending/"));
+});

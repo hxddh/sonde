@@ -463,7 +463,7 @@ export interface Phrase {
 
 export interface Episode {
   kind: "request" | "multipart" | "retry" | "probe" | "listing" | "step";
-  format: "SlateDB" | "Iceberg" | "Delta" | null;
+  format: "SlateDB" | "Iceberg" | "Delta" | "Lance" | null;
   title: string;
   start: string;
   end: string;
@@ -561,7 +561,7 @@ export interface Profile {
   timed?: boolean;
   cost: { writes: number; reads: number; free: number; amount: number; currency: string };
   prices: { per1000Writes: number; per1000Reads: number; currency: string };
-  prefixes: { prefix: string; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number; cost?: number }[];
+  prefixes: { prefix: string; /** Folders under it shown with it (absent: this folder alone). */ folders?: number; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number; cost?: number }[];
   heat: { prefix: number; bin: number; n: number }[];
   flows: { source: string; target: string; value: number }[];
   /** Requests that each waited for the one before, longest first. */

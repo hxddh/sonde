@@ -183,6 +183,39 @@ fn delta_rs_run_reads_as_commits() {
     );
 }
 
+/// A recording of pylance (`tools/gen_lance.py`): three appends, a delete, an
+/// index, a compaction and two reads are eight operations, not 63 requests.
+#[test]
+fn lance_run_reads_as_versions() {
+    let s = load("lance.sonde");
+    assert_eq!(s.records.len(), 63);
+    let eps = episodes(&s.records);
+    let titles: Vec<&str> = eps.iter().map(|e| e.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "version 1 committed · 1 data file (126.4 KiB)",
+            "version 2 committed · 1 data file (142.0 KiB)",
+            "version 3 committed · 1 data file (135.1 KiB)",
+            "version 4 committed · rows deleted",
+            "version 5 committed · an index (33.5 KiB)",
+            "version 6 committed · 1 data file (439.4 KiB)",
+            "version 7 committed · an index (36.6 KiB)",
+            "read version 7 · 3 ranges of 1 file (111.9 KiB)"
+        ]
+    );
+    assert!(
+        eps.iter()
+            .all(|e| e.format == Some(Format::Lance) && e.outcome == Outcome::Ok)
+    );
+    let obs = observations(&s.records, &eps);
+    assert!(
+        obs.iter()
+            .any(|o| o.text == "7 Lance writes: conditional create (If-None-Match: *)"),
+        "{obs:?}"
+    );
+}
+
 /// Every title, note and observation of the recorded sessions is said by
 /// phrases with an English template, and those phrases say exactly the
 /// English text (the app says them in Chinese from the same keys).
@@ -193,6 +226,7 @@ fn every_text_is_phrases() {
         "slatedb.sonde",
         "iceberg.sonde",
         "delta.sonde",
+        "lance.sonde",
         "sdk-python.sonde",
         "sdk-java.sonde",
     ] {

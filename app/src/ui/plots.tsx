@@ -775,6 +775,59 @@ export function sessionStory(p: Profile, findings: Observation[]): string {
   return parts.join(" ");
 }
 
+// --- prefixes, named ---------------------------------------------------------------
+
+/** A path too long for its place, cut at its start on a folder's edge: the
+ * end is what tells two prefixes apart (`…/compactions/`, `…/compacted/`). */
+export function tail(path: string, max: number): string {
+  if (path.length <= max) return path;
+  const keep = path.slice(-(max - 1));
+  const edge = keep.indexOf("/");
+  // from a folder's edge where one is near the cut, else mid-name
+  return `…${edge >= 0 && edge < keep.length - 1 && edge <= 8 ? keep.slice(edge) : keep}`;
+}
+
+/** How a chart names a set of prefixes: what they all start with is said
+ * once (`common`), and each is named by the rest — whole where it fits, cut
+ * at its start where it does not, with `…` after one that stands for the
+ * folders under it. No two get the same name. */
+export function prefixNames(prefixes: { prefix: string; folders?: number }[], max = 20): { common: string; name: (prefix: string) => string } {
+  const real = prefixes.filter((x) => x.prefix !== "other" && x.prefix !== "/");
+  let common = "";
+  if (real.length > 1) {
+    const parts = real.map((x) => x.prefix.split("/").filter(Boolean));
+    let n = 0;
+    while (parts.every((p) => p.length > n + 1 && p[n] === parts[0][n])) n++;
+    common = n > 0 ? `${parts[0].slice(0, n).join("/")}/` : "";
+  }
+  const names = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const x of real) {
+    const own = `${x.prefix.slice(common.length)}${x.folders ? "…" : ""}`;
+    let shown = tail(own, max);
+    // two cut to the same name: the whole of it rather than a name that lies
+    if (taken.has(shown)) shown = own;
+    taken.add(shown);
+    names.set(x.prefix, shown);
+  }
+  return { common, name: (prefix) => names.get(prefix) ?? prefix };
+}
+
+/** Under a chart of prefixes: what they all start with, and that `…` marks one shown with the folders under it. */
+function PrefixNote(props: { prefixes: { prefix: string; folders?: number }[]; common: string; class?: string }) {
+  const folded = () => props.prefixes.some((x) => (x.folders ?? 0) > 0);
+  return (
+    <If when={props.common || folded()}>
+      <Text testID="prefix-note" class={`text-caption text-muted-foreground ${props.class ?? ""}`}>
+        {[props.common ? t("prefix.under", { path: props.common }) : "", folded() ? t("prefix.foldedNote") : ""].filter(Boolean).join(" · ")}
+      </Text>
+    </If>
+  );
+}
+
+/** A prefix in full, for a tooltip: its whole path, and the folders it stands for. */
+const prefixTitle = (x: { prefix: string; folders?: number }) => (x.folders ? `${x.prefix} ${t("prefix.folders", { n: x.folders })}` : x.prefix);
+
 // --- where requests went -----------------------------------------------------------
 
 const OUTCOME_FILL: Record<string, string> = { ok: "fill-bar", "not found": "fill-status-miss", "client error": "fill-status-client", "server error": "fill-status-server" };
@@ -795,9 +848,9 @@ export function Flows(props: { profile: Profile }) {
     const at = new Map(nodes().map((n, i) => [n.name, i]));
     return props.profile.flows.map((f) => ({ source: at.get(f.source)!, target: at.get(f.target)!, value: f.value }));
   };
-  const bucketOf = (p: string) => p.split("/")[0];
-  const oneBucket = () => new Set(props.profile.prefixes.filter((x) => x.prefix !== "other").map((x) => bucketOf(x.prefix))).size === 1;
-  const short = (n: string) => (oneBucket() && n.includes("/") && n.indexOf("/") < n.length - 1 ? n.slice(n.indexOf("/") + 1) : n);
+  // prefixes by what tells them apart; what they share is said once under the chart
+  const named = () => prefixNames(props.profile.prefixes, 22);
+  const short = (n: string) => named().name(n);
   const name = (n: { name: string }) => (n.name === "other operations" ? t("flows.otherOps") : n.name === "other prefixes" ? t("flows.otherPrefixes") : OUTCOME_FILL[n.name] ? t(`flows.${n.name.replace(" ", "")}` as never) : short(n.name));
   const fill = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FILL[n.name] : n.stage === 0 ? "fill-chart-1" : "fill-chart-4");
   const from = (n: { stage: number }) => (n.stage === 0 ? "from-chart-1/35" : "from-chart-4/35");
@@ -811,6 +864,7 @@ export function Flows(props: { profile: Profile }) {
   };
   return (
     <If when={!terminal() && props.profile.flows.length > 0} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{label()}</Text>}>
+      <View class="gap-1">
       <Plot
         testID="flows"
         data={nodes()}
@@ -837,6 +891,8 @@ export function Flows(props: { profile: Profile }) {
           valueLabelClass="tabular-nums text-caption text-muted-foreground"
         />
       </Plot>
+      <PrefixNote prefixes={props.profile.prefixes} common={named().common} class="px-28" />
+      </View>
     </If>
   );
 }
@@ -847,13 +903,19 @@ export function Flows(props: { profile: Profile }) {
 export function Heat(props: { profile: Profile }) {
   const p = () => props.profile;
   const bins = () => p().rate.map((_, i) => String(i));
-  const names = () => p().prefixes.map((x) => (x.prefix === "other" ? t("flows.otherPrefixes") : x.prefix));
-  const rows = () => p().heat.map((c) => ({ x: String(c.bin), y: names()[c.prefix] ?? "", n: c.n, bin: c.bin }));
+  // a row's name keeps its end (what tells two prefixes apart); the tooltip has it whole
+  const named = () => prefixNames(p().prefixes, 18);
+  const names = () => p().prefixes.map((x) => (x.prefix === "other" ? t("flows.otherPrefixes") : named().name(x.prefix)));
+  const whole = (i: number) => {
+    const x = p().prefixes[i];
+    return !x ? "" : x.prefix === "other" ? t("flows.otherPrefixes") : prefixTitle(x);
+  };
+  const rows = () => p().heat.map((c) => ({ x: String(c.bin), y: names()[c.prefix] ?? "", n: c.n, bin: c.bin, prefix: c.prefix }));
   const hovered = signal<number | null>(null);
   const max = () => rows().reduce((m, r) => Math.max(m, r.n), 1);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: r.y, lines: [`+${offset(r.bin * p().binMs)} – +${offset((r.bin + 1) * p().binMs)}`, t("sessions.requestsN", { n: r.n })] } : null;
+    return r ? { title: whole(r.prefix), lines: [`+${offset(r.bin * p().binMs)} – +${offset((r.bin + 1) * p().binMs)}`, t("sessions.requestsN", { n: r.n })] } : null;
   };
   const last = () => Math.max(0, bins().length - 1);
   const label = () => {
@@ -864,8 +926,9 @@ export function Heat(props: { profile: Profile }) {
     <If
       when={!terminal() && rows().length > 0 && bins().length > 1}
       // a terminal: each prefix's requests and its busiest second, as figures
-      else={<If when={p().prefixes.length > 0}><SimpleTable columns={[t("common.prefix"), t("heat.requests"), t("heat.peak"), t("heat.errors")]} rows={p().prefixes.map((x, i) => [names()[i], String(x.requests), String(x.peakPerSecond), String(x.errors)])} /></If>}
+      else={<If when={p().prefixes.length > 0}><SimpleTable columns={[t("common.prefix"), t("heat.requests"), t("heat.peak"), t("heat.errors")]} rows={p().prefixes.map((x, i) => [whole(i), count(x.requests), count(x.peakPerSecond), count(x.errors)])} /></If>}
     >
+      <View class="gap-1">
       <Plot
         testID="heat"
         data={rows()}
@@ -888,6 +951,8 @@ export function Heat(props: { profile: Profile }) {
         <PlotAxis placement="left" labelClass={AXIS_LABEL} />
         <PlotAxis tickValues={[0, Math.round(last() / 2), last()]} format={(i) => `+${offset(i * p().binMs)}`} labelClass={TIME_TICK} />
       </Plot>
+      <PrefixNote prefixes={p().prefixes} common={named().common} class={GUTTER_PAD} />
+      </View>
     </If>
   );
 }
@@ -1033,10 +1098,12 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
   const bucketOf = (p: string) => p.split("/")[0] || p;
   const buckets = () => [...new Set(items().map((x) => bucketOf(x.prefix)))];
   const nested = () => buckets().length > 1;
+  // under several buckets each is named within its bucket's box; under one, by what tells them apart
+  const named = () => (nested() ? { common: "", name: (p: string) => tail(`${p.slice(bucketOf(p).length + 1) || p}${items().find((x) => x.prefix === p)?.folders ? "…" : ""}`, 28) } : prefixNames(items(), 28));
   const rows = () => {
     const leaves = items()
       .filter((x) => value(x) > 0)
-      .map((x) => ({ id: x.prefix, parent: nested() ? `b:${bucketOf(x.prefix)}` : "", label: nested() ? x.prefix.slice(bucketOf(x.prefix).length + 1) || x.prefix : x.prefix, value: value(x), hot: share(x) >= 0.5, x }));
+      .map((x) => ({ id: x.prefix, parent: nested() ? `b:${bucketOf(x.prefix)}` : "", label: named().name(x.prefix), value: value(x), hot: share(x) >= 0.5, x }));
     const groups = nested() ? buckets().map((b) => ({ id: `b:${b}`, parent: "", label: `${b}/`, value: 0, hot: false, x: null })) : [];
     return [...groups, ...leaves];
   };
@@ -1047,7 +1114,7 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
     if (!r?.x) return null;
     const x = r.x;
     return {
-      title: x.prefix,
+      title: prefixTitle(x),
       lines: [
         t("prefixUse.requests", { n: x.requests }) + (x.errors ? ` · ${t("timeline.errors", { n: x.errors })}` : ""),
         t("limits.line", { reads: x.peakReads, rpct: Math.round((x.peakReads / READS_PER_S) * 100), writes: x.peakWrites, wpct: Math.round((x.peakWrites / WRITES_PER_S) * 100) }),
@@ -1099,6 +1166,7 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
           <If when={items().some((x) => share(x) >= 0.5)}>
             <Legend square items={[{ label: t("prefixUse.hot"), swatch: "bg-warn/60" }]} />
           </If>
+          <PrefixNote prefixes={items()} common={named().common} />
         </View>
       </If>
     </If>
@@ -1111,10 +1179,11 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
 export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [number, number] }[] }) {
   // a change as a share of the larger run, from −1 (all gone) to +1 (all new)
   const change = (a: number, b: number) => (a === b ? 0 : (b - a) / Math.max(a, b));
+  const named = () => prefixNames(props.prefixes, 28);
   const rows = () =>
     props.prefixes
       .filter((x) => x.requests[0] + x.requests[1] > 0)
-      .map((x) => ({ id: x.prefix, parent: "", label: x.prefix, value: Math.max(x.requests[1], x.requests[0] > 0 && x.requests[1] === 0 ? x.requests[0] : 0), change: change(x.requests[0], x.requests[1]), x }));
+      .map((x) => ({ id: x.prefix, parent: "", label: named().name(x.prefix), value: Math.max(x.requests[1], x.requests[0] > 0 && x.requests[1] === 0 ? x.requests[0] : 0), change: change(x.requests[0], x.requests[1]), x }));
   const hovered = signal<number | null>(null);
   const line = (x: { requests: [number, number] }) => t("prefixChange.line", { a: x.requests[0], b: x.requests[1] });
   const biggest = () => [...rows()].sort((p, q) => Math.abs(q.x.requests[1] - q.x.requests[0]) - Math.abs(p.x.requests[1] - p.x.requests[0]))[0];
@@ -1133,7 +1202,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
             motion={MOTION}
             tooltipPlacement="pointer"
             tooltipOffset={10}
-            tooltipContent={<If when={hovered() !== null ? rows()[hovered()!] : null}>{(r) => <Tip title={r().label} lines={[line(r().x)]} />}</If>}
+            tooltipContent={<If when={hovered() !== null ? rows()[hovered()!] : null}>{(r) => <Tip title={r().x.prefix} lines={[line(r().x)]} />}</If>}
             onHoverChange={({ index }) => hovered.set(index)}
             class="h-48"
           >

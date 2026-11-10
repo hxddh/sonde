@@ -31,8 +31,8 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 
 - `sonde run -- <command>` (or **Run** in the app) records every S3 request through a local endpoint. sonde signs
   with the real credentials, which never reach the program; `--no-delete` and `--read-only` limit what it may do.
-- Requests are read as **operations**: multipart uploads, retries, listings, and the steps of SlateDB, Iceberg and
-  Delta Lake.
+- Requests are read as **operations**: multipart uploads, retries, listings, and the steps of SlateDB, Iceberg,
+  Delta Lake and Lance.
 - **Findings** say what deserves a look (hot keys, HEAD before GET, throttling, unfinished uploads, orphaned files,
   slow requests…), what fixing them would save, a fix in Python, Java, Go or JavaScript, and, with `--callers`,
   the line of your code that sent the requests (Python, Node.js and Java).

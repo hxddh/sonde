@@ -168,7 +168,8 @@ one line per request instead.
 
 **Storage formats** are recognized from keys. Some writes are *commit points*:
 a SlateDB manifest, WAL, SST or compaction-state file; an Iceberg
-`*.metadata.json`; a Delta `_delta_log/<n>.json`. The format's other requests —
+`*.metadata.json`; a Delta `_delta_log/<n>.json`; a Lance
+`_versions/<n>.manifest`. The format's other requests —
 reads, listings, data files, Iceberg manifests — are folded into the next
 commit point (a completed multipart upload counts as one write). Lookups
 across several numbered files, like SlateDB searching for its newest WAL, are

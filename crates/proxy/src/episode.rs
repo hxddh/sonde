@@ -23,6 +23,7 @@ pub enum Format {
     SlateDB,
     Iceberg,
     Delta,
+    Lance,
 }
 
 impl Format {
@@ -31,6 +32,7 @@ impl Format {
             Format::SlateDB => "SlateDB",
             Format::Iceberg => "Iceberg",
             Format::Delta => "Delta",
+            Format::Lance => "Lance",
         }
     }
 }
@@ -52,6 +54,16 @@ pub enum Part {
     DeltaCheckpoint,
     DeltaLastCheckpoint,
     DeltaData,
+    /// A dataset's version: `_versions/<n>.manifest`, written if absent.
+    LanceManifest(u64),
+    /// What a commit did, written before its manifest: `_transactions/*.txn`.
+    LanceTransaction,
+    /// A fragment's file: `data/*.lance`.
+    LanceData,
+    /// An index's file: `_indices/<uuid>/…`.
+    LanceIndex,
+    /// Rows marked deleted in a fragment: `_deletions/*`.
+    LanceDeletion,
 }
 
 impl Part {
@@ -64,6 +76,9 @@ impl Part {
             IcebergMetadata(_) | IcebergVersionHint | IcebergManifestList | IcebergManifest
             | IcebergData => Format::Iceberg,
             DeltaCommit(_) | DeltaCheckpoint | DeltaLastCheckpoint | DeltaData => Format::Delta,
+            LanceManifest(_) | LanceTransaction | LanceData | LanceIndex | LanceDeletion => {
+                Format::Lance
+            }
         }
     }
 
@@ -81,6 +96,7 @@ impl Part {
                 | DeltaCommit(_)
                 | DeltaCheckpoint
                 | DeltaLastCheckpoint
+                | LanceManifest(_)
         )
     }
 }
@@ -96,6 +112,10 @@ pub fn part_of(key: &str) -> Option<Part> {
     let mut segs = key.rsplit('/');
     let name = segs.next()?;
     let dir = segs.next().unwrap_or("");
+    // an index's files are a folder deeper: _indices/<uuid>/<file>
+    if segs.next() == Some("_indices") {
+        return Some(Part::LanceIndex);
+    }
     let stem = |ext: &str| name.strip_suffix(ext);
     match dir {
         "manifest" => stem(".manifest")
@@ -107,6 +127,19 @@ pub fn part_of(key: &str) -> Option<Part> {
             .and_then(|s| digits(s, 20))
             .map(Part::SlateCompactions),
         "gc" if name.ends_with(".boundary") => Some(Part::SlateGcBoundary),
+        // newer datasets name a version by what is left to u64's end, so the
+        // newest lists first; older ones by the version itself
+        "_versions" => stem(".manifest").and_then(|s| {
+            digits(s, 20)
+                .map(|n| u64::MAX - n)
+                .or_else(|| s.parse().ok())
+                .map(Part::LanceManifest)
+        }),
+        "_transactions" if name.ends_with(".txn") => Some(Part::LanceTransaction),
+        "_deletions" if name.ends_with(".arrow") || name.ends_with(".bin") => {
+            Some(Part::LanceDeletion)
+        }
+        "data" if name.ends_with(".lance") => Some(Part::LanceData),
         "_delta_log" => {
             if let Some(n) = stem(".json").and_then(|s| digits(s, 20)) {
                 Some(Part::DeltaCommit(n))
@@ -162,6 +195,7 @@ pub fn listed_format(prefix: &str) -> Option<(Format, &str)> {
         "manifest" | "wal" | "compacted" | "compactions" | "checkpoints" => Format::SlateDB,
         "_delta_log" => Format::Delta,
         "metadata" => Format::Iceberg,
+        "_versions" | "_transactions" | "_indices" | "_deletions" => Format::Lance,
         _ => return None,
     };
     Some((f, dir))
@@ -853,6 +887,7 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         (Part::DeltaCommit(n), _) => p("delta.commit", &[("n", n.to_string())]),
         (Part::DeltaCheckpoint, _) => p("delta.checkpoint", &[]),
         (Part::DeltaLastCheckpoint, _) => p("delta.last", &[]),
+        (Part::LanceManifest(v), _) => p("lance.commit", &[("v", v.to_string())]),
         _ => p(
             "step.other",
             &[
@@ -868,7 +903,45 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         .filter(|r| r.key.is_none())
         .filter_map(|r| listed_format(query(r, "prefix").unwrap_or("")).map(|(_, d)| d))
         .next();
-    if !files.is_empty() {
+    if f == Format::Lance {
+        // what the commit brought, by what its files are (the transaction
+        // file says it too, but its body is not kept)
+        let of = |want: fn(&Part) -> bool| {
+            let mut keys: Vec<&str> = before
+                .iter()
+                .filter(|r| is_write(r) && !r.is_error())
+                .filter(|r| r.key.as_deref().and_then(part_of).is_some_and(|p| want(&p)))
+                .filter_map(|r| r.key.as_deref())
+                .collect();
+            keys.sort_unstable();
+            keys.dedup();
+            let bytes: u64 = before
+                .iter()
+                .filter(|r| is_write(r) && r.key.as_deref().is_some_and(|k| keys.contains(&k)))
+                .map(|r| data_bytes(r))
+                .sum();
+            (keys.len(), bytes)
+        };
+        let (data, data_bytes) = of(|p| matches!(p, Part::LanceData));
+        let (index, index_bytes) = of(|p| matches!(p, Part::LanceIndex));
+        let (deletions, _) = of(|p| matches!(p, Part::LanceDeletion));
+        if data > 0 {
+            title.push(p(
+                "lance.data",
+                &[
+                    ("n", data.to_string()),
+                    ("s", plural(data)),
+                    ("size", human(data_bytes)),
+                ],
+            ));
+        }
+        if index > 0 {
+            title.push(p("lance.index", &[("size", human(index_bytes))]));
+        }
+        if deletions > 0 {
+            title.push(p("lance.deletions", &[]));
+        }
+    } else if !files.is_empty() {
         title.push(p(
             "step.files",
             &[
@@ -932,7 +1005,50 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
         .filter(|r| r.key.is_none())
         .filter_map(|r| listed_format(query(r, "prefix").unwrap_or("")).map(|(_, d)| d))
         .collect();
-    let title = if wal_probe.len() >= 3 {
+    // a Lance read: ranges of its data and index files, after the version was found
+    let lance_reads: Vec<&&Record> = rs
+        .iter()
+        .filter(|r| r.method == "GET" && !r.is_error())
+        .filter(|r| {
+            matches!(
+                r.key.as_deref().and_then(part_of),
+                Some(Part::LanceData | Part::LanceIndex | Part::LanceDeletion)
+            )
+        })
+        .collect();
+    let title = if f == Format::Lance && !lance_reads.is_empty() {
+        let mut files: Vec<&str> = lance_reads
+            .iter()
+            .filter_map(|r| r.key.as_deref())
+            .collect();
+        files.sort_unstable();
+        files.dedup();
+        let bytes: u64 = lance_reads
+            .iter()
+            .map(|r| r.response_bytes.unwrap_or(0))
+            .sum();
+        let version = rs
+            .iter()
+            .rev()
+            .find_map(|r| match r.key.as_deref().and_then(part_of) {
+                Some(Part::LanceManifest(v)) if r.method == "GET" && !r.is_error() => Some(v),
+                _ => None,
+            });
+        let mut t = vec![match version {
+            Some(v) => p("lance.read.v", &[("v", v.to_string())]),
+            None => p("lance.read", &[]),
+        }];
+        t.push(p(
+            "lance.ranges",
+            &[
+                ("n", lance_reads.len().to_string()),
+                ("files", files.len().to_string()),
+                ("s", plural(files.len())),
+                ("size", human(bytes)),
+            ],
+        ));
+        t
+    } else if wal_probe.len() >= 3 {
         let lo = wal_probe.iter().min().unwrap();
         let hi = wal_probe.iter().max().unwrap();
         vec![p(
@@ -949,6 +1065,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
             Some(Part::SlateCompactions(c)) => p("read.compactions", &[("n", c.to_string())]),
             Some(Part::IcebergMetadata(Some(v))) => p("read.metadata", &[("v", v.to_string())]),
             Some(Part::DeltaCommit(c)) => p("read.commit", &[("n", c.to_string())]),
+            Some(Part::LanceManifest(v)) => p("lance.read.v", &[("v", v.to_string())]),
             _ => p(
                 "read.file",
                 &[(
@@ -1047,7 +1164,12 @@ impl Observation {
 /// steps of the format).
 pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)> {
     let mut out = Vec::new();
-    for f in [Format::SlateDB, Format::Iceberg, Format::Delta] {
+    for f in [
+        Format::SlateDB,
+        Format::Iceberg,
+        Format::Delta,
+        Format::Lance,
+    ] {
         let of_f: Vec<&Episode> = episodes.iter().filter(|e| e.format == Some(f)).collect();
         let mut notes: Vec<&String> = of_f.iter().flat_map(|e| e.notes.iter()).collect();
         notes.sort();
@@ -1855,5 +1977,33 @@ mod tests {
             None,
             "SlateDB ids are 20 digits"
         );
+    }
+
+    #[test]
+    fn lance_parts() {
+        // a version is stored as u64::MAX - v, so the newest lists first
+        assert_eq!(
+            part_of("d.lance/_versions/18446744073709551608.manifest"),
+            Some(Part::LanceManifest(7))
+        );
+        assert_eq!(
+            part_of("d.lance/_versions/3.manifest"),
+            Some(Part::LanceManifest(3)),
+            "the older naming"
+        );
+        assert_eq!(
+            part_of("d.lance/_transactions/6-0a1b.txn"),
+            Some(Part::LanceTransaction)
+        );
+        assert_eq!(part_of("d.lance/data/0a1b.lance"), Some(Part::LanceData));
+        assert_eq!(
+            part_of("d.lance/_indices/0a1b/page_data.lance"),
+            Some(Part::LanceIndex)
+        );
+        assert_eq!(
+            part_of("d.lance/_deletions/0-4-99.arrow"),
+            Some(Part::LanceDeletion)
+        );
+        assert_eq!(part_of("d/data/a.parquet"), Some(Part::IcebergData));
     }
 }

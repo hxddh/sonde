@@ -4,6 +4,21 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+### Added
+
+- **Lance is read as versions.** A commit (`_versions/<n>.manifest`, written with `If-None-Match: *`) is one
+  operation with the listings, the transaction file and what it wrote: `version 6 committed · 1 data file
+  (439.4 KiB)`, `· an index`, `· rows deleted`; the ranged reads of a scan are one `read version 7 · 3 ranges of 1
+  file`. A recorded pylance run of 63 requests is eight operations (`tools/gen_lance.py` makes the recording).
+
+### Fixed
+
+- **Prefixes were cut short, twice.** The analysis kept three folder levels, so `db/wal/2026/11/` and
+  `db/wal/2026/12/` were one row; the charts then clipped a label at its end, so `slate/db/compacted/` and
+  `slate/db/compactions/` read the same. Prefixes are now whole folders, folded into the one above only when there
+  are more than a chart can hold (and the row says how many it holds); a label says the shared start once and keeps
+  its end; the tooltip has the whole prefix.
+
 ## [13.0.0] - 2026-11-10
 
 Still and true. Every state says what it is, nothing moves under the hand, each thing is drawn one way — and a

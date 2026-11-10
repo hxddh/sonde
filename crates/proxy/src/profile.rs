@@ -338,6 +338,10 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
 #[serde(rename_all = "camelCase")]
 pub struct PrefixStat {
     pub prefix: String,
+    /// The folders under it shown with it (0: this folder alone). A prefix
+    /// that stands for deeper folders says so wherever it is named.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub folders: usize,
     pub requests: usize,
     pub reads: usize,
     pub writes: usize,
@@ -371,7 +375,12 @@ pub struct Flow {
 pub const READS_PER_PREFIX: usize = 5_500;
 pub const WRITES_PER_PREFIX: usize = 3_500;
 
-/// A key's prefix: its bucket and folder, three levels at most ("b/logs/2026/").
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// A key's prefix for S3's rate limits: its bucket and folder, three levels
+/// at most ("b/logs/2026/"). What a session is *shown* by is [`prefix_groups`].
 pub fn prefix_of(r: &Record) -> String {
     let b = r.bucket.as_deref().unwrap_or("");
     let k = r.key.as_deref().unwrap_or("");
@@ -385,6 +394,79 @@ pub fn prefix_of(r: &Record) -> String {
         (true, false) => short,
         _ => format!("{b}/{short}"),
     }
+}
+
+/// A key's whole folder with its bucket ("b/warehouse/db/events/data/"),
+/// however deep: what the prefixes shown are chosen from.
+pub fn folder_of(r: &Record) -> String {
+    let b = r.bucket.as_deref().unwrap_or("");
+    let k = r.key.as_deref().unwrap_or("");
+    let dir = match k.rfind('/') {
+        Some(i) => &k[..=i],
+        None => "",
+    };
+    match (b.is_empty(), dir.is_empty()) {
+        (true, true) => "/".into(),
+        (true, false) => dir.to_string(),
+        _ => format!("{b}/{dir}"),
+    }
+}
+
+/// The folder above `folder` ("a/b/c/" → "a/b/"), if it has one.
+fn parent_of(folder: &str) -> Option<&str> {
+    let inner = folder.strip_suffix('/')?;
+    inner.rfind('/').map(|i| &folder[..=i])
+}
+
+/// The prefixes a session is shown by: its folders at the depth that tells
+/// them apart, not cut at a fixed level. With more folders than `max`, the
+/// quietest of the deepest is folded into the folder above it, again and
+/// again, so what stays apart is what carried the requests. Each name with
+/// how many folders were folded into it (0: that folder alone).
+pub fn prefix_groups<'a>(
+    folders: impl Iterator<Item = &'a str>,
+    max: usize,
+) -> Vec<(String, usize)> {
+    // each group: its requests, and the folders folded into it
+    let mut groups: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for f in folders {
+        groups.entry(f.to_string()).or_default().0 += 1;
+    }
+    while groups.len() > max {
+        // the quietest of the deepest folders goes into the folder above it:
+        // one at a time, so the busy ones of a family stay apart
+        let depth = |f: &str| f.matches('/').count();
+        let deepest = groups.keys().map(|f| depth(f)).max().unwrap_or(0);
+        let Some(quietest) = groups
+            .iter()
+            .filter(|(f, _)| depth(f) == deepest && parent_of(f).is_some())
+            .min_by(|a, b| a.1.0.cmp(&b.1.0).then(a.0.cmp(b.0)))
+            .map(|(f, _)| f.clone())
+        else {
+            // nothing left to fold (buckets, keys with no folder): the caller keeps the busiest
+            break;
+        };
+        let (n, under) = groups.remove(&quietest).unwrap_or_default();
+        let parent = parent_of(&quietest).unwrap_or("/").to_string();
+        let g = groups.entry(parent).or_default();
+        g.0 += n;
+        g.1 += under + 1;
+    }
+    let mut out: Vec<(String, usize, usize)> = groups
+        .into_iter()
+        .map(|(f, (n, under))| (f, n, under))
+        .collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    out.into_iter().map(|(f, _, under)| (f, under)).collect()
+}
+
+/// Which of `groups` a folder belongs to: the longest that holds it.
+pub fn prefix_for<'g>(groups: &'g [(String, usize)], folder: &str) -> Option<&'g str> {
+    groups
+        .iter()
+        .map(|(g, _)| g.as_str())
+        .filter(|g| folder.starts_with(g))
+        .max_by_key(|g| g.len())
 }
 
 pub fn is_read(r: &Record) -> bool {
@@ -814,11 +896,18 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         currency: prices.currency.clone(),
     };
     // prefixes: their requests, their busiest second, and when
-    let mut per: HashMap<String, Vec<&Record>> = HashMap::new();
-    for r in records {
-        per.entry(prefix_of(r)).or_default().push(r);
+    // at the depth that tells the folders apart, the quiet ones folded into the folder above
+    let folders: Vec<String> = records.iter().map(folder_of).collect();
+    let shown = prefix_groups(folders.iter().map(String::as_str), MAX_PREFIXES);
+    let mut per: HashMap<&str, Vec<&Record>> = HashMap::new();
+    for (r, f) in records.iter().zip(&folders) {
+        per.entry(prefix_for(&shown, f).unwrap_or("/"))
+            .or_default()
+            .push(r);
     }
-    let mut ranked: Vec<(String, Vec<&Record>)> = per.into_iter().collect();
+    let under: HashMap<&str, usize> = shown.iter().map(|(g, n)| (g.as_str(), *n)).collect();
+    let mut ranked: Vec<(String, Vec<&Record>)> =
+        per.into_iter().map(|(g, rs)| (g.to_string(), rs)).collect();
     ranked.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     let stat = |prefix: String, rs: &[&Record]| {
         let mut all: Vec<i64> = rs.iter().map(|r| start_us(r)).collect();
@@ -836,6 +925,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         reads.sort_unstable();
         writes.sort_unstable();
         PrefixStat {
+            folders: under.get(prefix.as_str()).copied().unwrap_or(0),
             prefix,
             requests: rs.len(),
             reads: reads.len(),
@@ -861,7 +951,8 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         prefixes.push(stat("other".into(), &rest));
     }
     let prefix_index = |r: &Record| {
-        let p = prefix_of(r);
+        let f = folder_of(r);
+        let p = prefix_for(&shown, &f).unwrap_or("/");
         prefixes
             .iter()
             .take(MAX_PREFIXES)
@@ -1181,21 +1272,26 @@ pub fn compare_runs(
     };
     let (ia, ib) = (ids(a.2), ids(b.2));
     // each prefix either run counted (its busiest, not the rest's "other")
-    let named: BTreeSet<&str> =
-        a.1.prefixes
-            .iter()
-            .chain(b.1.prefixes.iter())
-            .map(|x| x.prefix.as_str())
-            .filter(|p| *p != "other")
-            .collect();
-    // from the records: a prefix among one run's busiest may be in the
-    // other's "other"
-    let count = |rs: &[Record], name: &str| rs.iter().filter(|r| prefix_of(r) == name).count();
-    let mut prefixes: Vec<PrefixChange> = named
-        .into_iter()
-        .map(|name| PrefixChange {
-            prefix: name.to_string(),
-            requests: (count(a.0, name), count(b.0, name)),
+    // one set of prefixes for both runs, chosen from the folders of both:
+    // each run's own choice would name the same folder at two depths
+    let (fa, fb): (Vec<String>, Vec<String>) = (
+        a.0.iter().map(folder_of).collect(),
+        b.0.iter().map(folder_of).collect(),
+    );
+    let shared = prefix_groups(
+        fa.iter().chain(fb.iter()).map(String::as_str),
+        MAX_PREFIXES * 2,
+    );
+    let count = |fs: &[String], name: &str| {
+        fs.iter()
+            .filter(|f| prefix_for(&shared, f) == Some(name))
+            .count()
+    };
+    let mut prefixes: Vec<PrefixChange> = shared
+        .iter()
+        .map(|(name, _)| PrefixChange {
+            prefix: name.clone(),
+            requests: (count(&fa, name), count(&fb, name)),
         })
         .collect();
     prefixes.sort_by_key(|x| std::cmp::Reverse(x.requests.0.max(x.requests.1)));
@@ -1509,6 +1605,104 @@ mod tests {
         assert_eq!(p.cost.writes, 1);
     }
 
+    fn at(id: u64, key: &str) -> Record {
+        Record {
+            bucket: Some("lake".into()),
+            key: Some(key.into()),
+            ..rec(id, id as i64, "GetObject", 200, 1.0)
+        }
+    }
+
+    #[test]
+    fn folders_below_the_third_level_are_told_apart() {
+        // a table's data and its metadata: one prefix when cut at three levels
+        let records = vec![
+            at(1, "warehouse/db/events/metadata/v1.json"),
+            at(2, "warehouse/db/events/data/dt=2026-11-01/a.parquet"),
+            at(3, "warehouse/db/events/data/dt=2026-11-01/b.parquet"),
+            at(4, "warehouse/db/events/data/dt=2026-11-02/a.parquet"),
+        ];
+        let p = profile(&records, &RequestPrices::default());
+        let names: Vec<&str> = p.prefixes.iter().map(|x| x.prefix.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "lake/warehouse/db/events/data/dt=2026-11-01/",
+                "lake/warehouse/db/events/data/dt=2026-11-02/",
+                "lake/warehouse/db/events/metadata/",
+            ]
+        );
+        assert!(p.prefixes.iter().all(|x| x.folders == 0));
+        // S3's rate limit still goes by three levels
+        assert_eq!(prefix_of(&records[1]), "lake/warehouse/db/events/");
+    }
+
+    #[test]
+    fn the_quiet_folders_fold_into_the_one_above_and_it_says_how_many() {
+        // thirty partitions, the later the busier, and the table's metadata
+        let mut records = Vec::new();
+        let mut id = 0;
+        for day in 1..=30u64 {
+            for _ in 0..day {
+                id += 1;
+                records.push(at(id, &format!("t/data/dt={day:02}/x.parquet")));
+            }
+        }
+        for _ in 0..40 {
+            id += 1;
+            records.push(at(id, "t/metadata/v.json"));
+        }
+        let p = profile(&records, &RequestPrices::default());
+        assert!(p.prefixes.len() <= MAX_PREFIXES, "{:?}", p.prefixes.len());
+        // nothing is "other": every request is under a prefix that names where it went
+        assert!(p.prefixes.iter().all(|x| x.prefix != "other"));
+        assert_eq!(
+            p.prefixes.iter().map(|x| x.requests).sum::<usize>(),
+            records.len()
+        );
+        // the busiest partitions stay apart, the metadata too
+        assert!(
+            p.prefixes
+                .iter()
+                .any(|x| x.prefix == "lake/t/data/dt=30/" && x.folders == 0)
+        );
+        assert!(
+            p.prefixes
+                .iter()
+                .any(|x| x.prefix == "lake/t/metadata/" && x.requests == 40)
+        );
+        // the quiet ones are in the folder above, which says how many it stands for
+        let folded = p
+            .prefixes
+            .iter()
+            .find(|x| x.prefix == "lake/t/data/")
+            .unwrap();
+        assert_eq!(folded.folders, 30 - (MAX_PREFIXES - 2));
+    }
+
+    #[test]
+    fn two_runs_are_compared_by_one_set_of_prefixes() {
+        // the second run reads one partition more: both are named at the same depth
+        let before = vec![at(1, "t/data/dt=01/a"), at(2, "t/metadata/v")];
+        let after = vec![
+            at(1, "t/data/dt=01/a"),
+            at(2, "t/data/dt=02/a"),
+            at(3, "t/metadata/v"),
+        ];
+        let prices = RequestPrices::default();
+        let (pa, pb) = (profile(&before, &prices), profile(&after, &prices));
+        let c = compare_runs((&before, &pa, &[]), (&after, &pb, &[]));
+        let of = |name: &str| {
+            c.prefixes
+                .iter()
+                .find(|x| x.prefix == name)
+                .map(|x| x.requests)
+        };
+        assert_eq!(of("lake/t/data/dt=01/"), Some((1, 1)));
+        assert_eq!(of("lake/t/data/dt=02/"), Some((0, 1)));
+        assert_eq!(of("lake/t/metadata/"), Some((1, 1)));
+    }
+
     #[test]
     fn a_prefix_one_run_counts_under_other_is_still_counted_in_the_comparison() {
         let at = |id: u64, key: String| Record {
@@ -1529,7 +1723,7 @@ mod tests {
         let after: Vec<Record> = (1..=5).map(|i| at(i, "p0/k".into())).collect();
         let prices = RequestPrices::default();
         let (pa, pb) = (profile(&before, &prices), profile(&after, &prices));
-        let name = prefix_of(&after[0]);
+        let name = folder_of(&after[0]);
         assert!(
             !pa.prefixes.iter().any(|x| x.prefix == name),
             "the test needs {name} outside the first run's busiest"
