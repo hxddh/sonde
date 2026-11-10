@@ -13,6 +13,14 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ### Fixed
 
+- **The app's own downloads were still cut at 60 s** (13.0 fixed the proxy only). The timeout is now for the
+  headers and for each stretch of silence, never for the whole download.
+- **`sonde probe -e A -e B` left the other endpoint's objects** when one run failed or was interrupted: it returned
+  on the first. Every run is now waited to its end; an interrupt cancels them all and each cleans up.
+- **A replay confined to a prefix still sent `PUT /bucket?inventory…`** from a session recorded before 13.0, which
+  stored it as CreateBucket. What is skipped is decided by the request, not by the stored name.
+- **After an outside edit of `config.toml`, the app sent to the old address until restart**: a save that took the
+  edit in kept the cached clients.
 - **Prefixes were cut short, twice.** The analysis kept three folder levels, so `db/wal/2026/11/` and
   `db/wal/2026/12/` were one row; the charts then clipped a label at its end, so `slate/db/compacted/` and
   `slate/db/compactions/` read the same. Prefixes are now whole folders, folded into the one above only when there

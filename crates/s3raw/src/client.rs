@@ -305,6 +305,32 @@ impl std::fmt::Debug for S3Client {
     }
 }
 
+/// A response body being read: each chunk has the client's timeout to
+/// arrive, the whole has none.
+pub struct Download {
+    resp: reqwest::Response,
+    idle: Duration,
+}
+
+impl Download {
+    pub fn content_length(&self) -> Option<u64> {
+        self.resp.content_length()
+    }
+
+    /// The next chunk; `None` at the end. A body silent for the timeout is an
+    /// error, as is one that breaks off.
+    pub async fn chunk(&mut self) -> Result<Option<bytes::Bytes>, S3Error> {
+        match tokio::time::timeout(self.idle, self.resp.chunk()).await {
+            Ok(Ok(c)) => Ok(c),
+            Ok(Err(e)) => Err(S3Error::new(ErrorKind::Transport, e.to_string())),
+            Err(_) => Err(S3Error::new(
+                ErrorKind::Transport,
+                format!("the download stopped for {} s", self.idle.as_secs_f32()),
+            )),
+        }
+    }
+}
+
 /// Whether `bucket` can be a DNS label under the endpoint host.
 pub fn dns_compatible(bucket: &str, https: bool) -> bool {
     let len_ok = (3..=63).contains(&bucket.len());
@@ -614,9 +640,10 @@ impl S3Client {
         self.send_raw(req).await?.ok()
     }
 
-    /// Sends a GET and returns the response with its body unread, for
-    /// streaming downloads. Logged when the headers arrive.
-    pub async fn send_stream(&self, req: S3Request) -> Result<(reqwest::Response, u64), S3Error> {
+    /// Sends a GET and returns its body unread, for downloads of any size:
+    /// the timeout is for the headers and then for each stretch of silence,
+    /// never for the whole. Logged when the headers arrive.
+    pub async fn send_stream(&self, req: S3Request) -> Result<(Download, u64), S3Error> {
         let _permit = match &self.throttle {
             Some(t) => Some(t.acquire().await),
             None => None,
@@ -631,7 +658,19 @@ impl S3Client {
             headers: sent_headers,
         };
         let start = Instant::now();
-        let sent = self.http.execute(request).await;
+        let idle = self.cfg.timeout;
+        let sent = match tokio::time::timeout(idle, self.streaming.execute(request)).await {
+            Ok(sent) => sent,
+            Err(_) => {
+                let msg = format!("no answer in {} s", idle.as_secs_f32());
+                let mut record =
+                    self.record(&req, &prepared.url, &prepared.headers, 0, start.elapsed());
+                record.transport_error = Some(msg.clone());
+                let mut err = S3Error::new(ErrorKind::Transport, msg);
+                err.record_id = Some(self.log.push(record));
+                return Err(err);
+            }
+        };
         let latency = start.elapsed();
         match sent {
             Ok(resp) => {
@@ -651,7 +690,7 @@ impl S3Client {
                     return Err(S3Error::from_response(status, &body, rid, hid, id));
                 }
                 let id = self.log.push(record);
-                Ok((resp, id))
+                Ok((Download { resp, idle }, id))
             }
             Err(e) => Err(self.transport_error(&req, &prepared, 0, latency, e)),
         }
@@ -964,6 +1003,64 @@ mod tests {
         let mut cfg = ClientConfig::new("t", endpoint, "us-east-1").unwrap();
         cfg.addressing = addressing;
         S3Client::new(cfg, Arc::new(StaticProvider(None)), RequestLog::new(10)).unwrap()
+    }
+
+    /// A store that answers a GET with `chunks` chunks, `gap` apart.
+    async fn dribble(chunks: usize, gap: Duration) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut c, _) = l.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = c.read(&mut buf).await;
+            let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", chunks * 4);
+            c.write_all(head.as_bytes()).await.unwrap();
+            for _ in 0..chunks {
+                tokio::time::sleep(gap).await;
+                if c.write_all(b"data").await.is_err() {
+                    return;
+                }
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    async fn download(url: &str, timeout: Duration) -> Result<usize, S3Error> {
+        let mut cfg = ClientConfig::new("t", url, "us-east-1").unwrap();
+        cfg.timeout = timeout;
+        let c = S3Client::new(cfg, Arc::new(StaticProvider(None)), RequestLog::new(10)).unwrap();
+        let (mut body, _) = c
+            .send_stream(
+                S3Request::new("GetObject", http::Method::GET)
+                    .bucket("b")
+                    .key("k"),
+            )
+            .await?;
+        let mut n = 0;
+        while let Some(chunk) = body.chunk().await? {
+            n += chunk.len();
+        }
+        Ok(n)
+    }
+
+    #[tokio::test]
+    async fn a_download_longer_than_the_timeout_is_whole() {
+        // 8 chunks 100 ms apart: 800 ms through a 300 ms timeout
+        let url = dribble(8, Duration::from_millis(100)).await;
+        assert_eq!(
+            download(&url, Duration::from_millis(300)).await.unwrap(),
+            32
+        );
+    }
+
+    #[tokio::test]
+    async fn a_download_that_goes_quiet_is_an_error() {
+        let url = dribble(2, Duration::from_millis(600)).await;
+        let e = download(&url, Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("stopped"), "{e}");
     }
 
     #[test]

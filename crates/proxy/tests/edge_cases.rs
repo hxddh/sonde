@@ -283,6 +283,31 @@ fn a_copy_of_a_version_and_a_cut_body_are_not_replayed() {
     );
 }
 
+/// A session recorded before 13.0 names `PUT /bucket?inventory` CreateBucket:
+/// a replay confined to a prefix goes by the request, not by that name.
+#[test]
+fn an_old_sessions_bucket_configuration_is_not_replayed_under_a_prefix() {
+    use sonde_proxy::replay::{ReplayOptions, plan};
+    let old = q(
+        rec(1, 0, "PUT", "CreateBucket", None, 200),
+        &[("inventory", ""), ("id", "daily")],
+    );
+    let p = plan(
+        &[old],
+        &ReplayOptions {
+            prefix: "p/".into(),
+            buckets: Vec::new(),
+        },
+    );
+    assert_eq!(p.requests, 0);
+    assert_eq!(
+        p.skipped.get("changes the bucket itself"),
+        Some(&1),
+        "{:?}",
+        p.skipped
+    );
+}
+
 #[test]
 fn throttling_counts_never_underflow() {
     let mut a = rec(1, 0, "GET", "GetObject", Some("k"), 503);

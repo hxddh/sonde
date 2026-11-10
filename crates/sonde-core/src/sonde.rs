@@ -271,16 +271,24 @@ impl Sonde {
             let st = self.state.read();
             (st.disk.clone(), st.base.clone())
         };
-        if known.is_some_and(|k| k != current) {
+        let outside = known.is_some_and(|k| k != current);
+        if outside {
             next = current;
         }
         change(&mut next)?;
         next.validate()?;
         next.save(&file)?;
-        let mut st = self.state.write();
-        st.base = next.clone();
-        st.disk = Some(next);
-        st.refresh();
+        {
+            let mut st = self.state.write();
+            st.base = next.clone();
+            st.disk = Some(next);
+            st.refresh();
+        }
+        // an edit made outside may have changed any endpoint: no client
+        // made from the old file is kept
+        if outside {
+            self.clients.write().clear();
+        }
         Ok(())
     }
 
@@ -737,6 +745,22 @@ mod tests {
         assert_eq!(s.endpoints().len(), 1);
         s.upsert_endpoint(ep("a")).unwrap();
         assert_eq!(Config::load(&file).unwrap().endpoints.len(), 2);
+    }
+
+    #[test]
+    fn a_save_that_takes_in_an_outside_edit_sends_to_the_new_address() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::rooted(dir.path());
+        let file = paths.config_file();
+        let s = Sonde::open(paths).unwrap();
+        s.upsert_endpoint(ep("a")).unwrap();
+        let url = |s: &Sonde| s.client("a").unwrap().config().endpoint.to_string();
+        assert!(url(&s).contains("127.0.0.1:1"));
+        // the endpoint's address is edited in the file; then the app saves something else
+        let text = std::fs::read_to_string(&file).unwrap();
+        std::fs::write(&file, text.replace("127.0.0.1:1", "127.0.0.1:2")).unwrap();
+        s.upsert_endpoint(ep("b")).unwrap();
+        assert!(url(&s).contains("127.0.0.1:2"), "{}", url(&s));
     }
 
     #[test]

@@ -142,14 +142,23 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
     };
     let jobs = probes::runner::spawn(s, &endpoints, opts);
     let mut runs = vec![];
-    for (j, ep) in jobs.iter().zip(&endpoints) {
-        match super::wait(s, j, false).await {
+    // every endpoint's run is waited to its end, so that each cleans up
+    let mut failed = false;
+    for (r, ep) in super::wait_all(s.jobs(), &jobs, false)
+        .await
+        .into_iter()
+        .zip(&endpoints)
+    {
+        match r {
             Ok(v) => runs.push(serde_json::from_value::<Run>(v)?),
             Err(e) => {
                 eprintln!("sonde: probes on {ep}: {e}");
-                return Ok(70);
+                failed = true;
             }
         }
+    }
+    if failed {
+        return Ok(70);
     }
     let text = match a.format {
         Format::Json => output::json(&runs),
