@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { sectionLabel } from "../labels";
 import { SETTINGS_TABS, type SettingsTab, settingsTab } from "../store";
 import type { IconName } from "../ui/icon";
-import { TabBar } from "../ui/tabs";
+import { Segmented, terminal } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { Endpoints } from "./Endpoints";
 import { SettingsScreen } from "./Settings";
@@ -18,7 +18,10 @@ const TAB_ICON: Record<SettingsTab, IconName> = { settings: "sliders-horizontal"
 export function SettingsBody() {
   return (
     <View class="flex-1 bg-background" testID="screen-settings-area">
-      <TabBar tabs={SETTINGS_TABS} value={settingsTab()} icon={(s) => TAB_ICON[s]} label={sectionLabel} onChange={(s) => settingsTab.set(s)} />
+      {/* the window's two pages, switched as every place switches what it shows */}
+      <View class={terminal() ? "flex-row" : "h-12 shrink-0 flex-row items-center border-b border-border px-5"}>
+        <Segmented testID="tab" value={settingsTab()} items={SETTINGS_TABS.map((s) => ({ value: s, title: sectionLabel(s), icon: TAB_ICON[s] }))} onChange={(s) => settingsTab.set(s as SettingsTab)} />
+      </View>
       <View class="flex-1">{settingsTab() === "settings" ? <SettingsScreen /> : <Endpoints />}</View>
     </View>
   );

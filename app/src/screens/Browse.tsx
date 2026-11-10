@@ -1,19 +1,18 @@
 // Browse: prefixes and objects of a bucket (ListObjectsV2, loaded page by
 // page and kept in Rust), and an object's details.
 
-import { batch, cleanup, Clipboard, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
-import { Button as BaseButton, DataTable, Link, ResizablePanel, ResizablePanelGroup } from "nsh/base";
+import { batch, cleanup, computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
+import { DataTable, type DataTableRef, Link, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { bytes, count, date } from "../format";
 import { t } from "../i18n";
 import { api, Listing, watch } from "../native";
-import { bucket, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
+import { bucket, copy, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Badge, Bar, Button, CARD, Card, Choice, Empty, Field, IconButton, InWindowMenu, KeyValue, Loading, Muted, SearchField, terminal, ROW, rowHeight, SPLIT_HANDLE, SwitchRow, TYPE, TABLE, PanelHeader } from "../ui/kit";
-import { Fold } from "../ui/record";
+import { Await, Back, Badge, Bar, Button, Card, Choice, Disclosure, Empty, FOCUS, IconButton, InWindowMenu, KeyValue, ListRow, PanelHeader, Path, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
-import { Overview } from "../ui/overview";
+import { invalidate, Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const WINDOW = 400;
@@ -26,9 +25,9 @@ function Breadcrumbs() {
     return p ? segs.map((s, i) => ({ name: s || "∅", prefix: `${segs.slice(0, i + 1).join("/")}/` })) : [];
   };
   return (
-    <View class="min-w-0 flex-row flex-wrap items-center gap-0.5">
+    <View class="min-w-0 flex-row flex-wrap items-center gap-1">
       {/* links of the path (the last one the place shown): screen readers hear them so */}
-      <Link testID="crumb-root" href={`s3://${bucket()}/`} openWith="app" onOpen={() => prefix.set("")} current={parts().length === 0} accessibilityLabel={bucket() ?? ""} class="flex-row items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-0.5 hover:bg-muted">
+      <Link testID="crumb-root" href={`s3://${bucket()}/`} openWith="app" onOpen={() => prefix.set("")} current={parts().length === 0} accessibilityLabel={bucket() ?? ""} class={`flex-row items-center gap-1 rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted ${FOCUS}`}>
         <If when={!terminal()}>
           <Icon name="database" size={14} tint="foreground" />
         </If>
@@ -36,11 +35,11 @@ function Breadcrumbs() {
       </Link>
       <Each of={parts()}>
         {(p, i) => (
-          <View class="flex-row items-center gap-0.5">
+          <View class="flex-row items-center gap-1">
             <If when={!terminal()} else={<Text class="text-muted-foreground">/</Text>}>
               <Icon name="chevron-right" size={12} />
             </If>
-            <Link href={`s3://${bucket()}/${p().prefix}`} openWith="app" onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} accessibilityLabel={p().name} class="rounded-(--radius-sm) px-1.5 py-0.5 hover:bg-muted">
+            <Link href={`s3://${bucket()}/${p().prefix}`} openWith="app" onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} accessibilityLabel={p().name} class={`rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted ${FOCUS}`}>
               <Text class={i() === parts().length - 1 ? "text-body font-medium text-foreground" : "text-body text-muted-foreground"}>{p().name}</Text>
             </Link>
           </View>
@@ -53,22 +52,18 @@ function Breadcrumbs() {
 function Detail(props: { entry: Entry; onBack?: () => void }) {
   const ep = endpoint()!;
   const b = bucket()!;
+  // a failure shows in the panel, with Try again: not a wait that never ends
   const detail = resource(
     () => props.entry.key,
-    async (key) => {
-      try {
-        return await api.objectDetail(ep, b, key);
-      } catch (e) {
-        report(e);
-        throw e;
-      }
-    },
+    (key) => api.objectDetail(ep, b, key),
   );
   const presignSecs = signal("3600");
   const url = signal<string | null>(null);
   const progress = signal<string | null>(null);
   let downloadJob: string | null = null;
+  let gone = false;
   cleanup(() => {
+    gone = true;
     // another object chosen, or the panel closed: the download stops, and says so
     if (downloadJob) {
       api.cancelJob(downloadJob);
@@ -76,19 +71,24 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
     }
   });
   const download = async () => {
+    // busy from the press, not from the job's start: a second press starts nothing
+    if (progress() !== null) return;
+    progress.set(t("common.loading"));
     try {
-      downloadJob = await api.download(ep, b, props.entry.key);
-      progress.set(t("common.loading"));
-      const r = await watch<{ path: string; bytes: number }>(downloadJob, (e) => {
+      const job = await api.download(ep, b, props.entry.key);
+      // started after the panel went: stopped at once, nothing left running
+      if (gone) return void api.cancelJob(job);
+      downloadJob = job;
+      const r = await watch<{ path: string; bytes: number }>(job, (e) => {
         if (e.type === "Progress") progress.set(`${bytes(e.progress.done)}${e.progress.total ? ` / ${bytes(e.progress.total)}` : ""}`);
       });
-      progress.set(null);
-      downloadJob = null;
       notify(t("common.exportedTo", { path: r.path }));
     } catch (e) {
-      progress.set(null);
       report(e);
     }
+    // ended either way: nothing left to stop when the panel closes
+    downloadJob = null;
+    progress.set(null);
   };
   const presign = async () => {
     try {
@@ -104,127 +104,143 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
     if (k.kind === "md5") return t("browse.singlePart");
     return t("browse.opaqueEtag");
   };
+  // said once: "512 B", "1.5 KiB (1,536 B)", "—" for a size not reported
+  const sizeText = (n: number | null) => (n === null || n === undefined ? "—" : n < 1024 ? bytes(n) : `${bytes(n)} (${count(n)} B)`);
+  const uri = () => `s3://${b}/${props.entry.key}`;
   return (
     <View selectable class="gap-4" testID="object-detail">
-      <View class="gap-1.5">
+      <View class="gap-1">
         {/* in the panel, its header names the object; on its own (a terminal), this does */}
         <If when={props.onBack}>
           <View class="flex-row items-center gap-2">
-            <Button small variant="ghost" icon="chevron-left" label={t("common.back")} onPress={() => props.onBack?.()} testID="detail-back" />
+            <Back onPress={() => props.onBack?.()} testID="detail-back" />
             <Text class="min-w-0 flex-1 text-heading font-semibold text-foreground line-clamp-2">{props.entry.name}</Text>
           </View>
         </If>
-        <Text class="font-mono text-caption text-muted-foreground line-clamp-2">{`s3://${b}/${props.entry.key}`}</Text>
+        <Text class="font-mono text-caption text-muted-foreground line-clamp-2">{uri()}</Text>
       </View>
-      <If when={detail()} else={<Loading />}>
-        {(d) => (
-          <View class="gap-4">
-            <View class="flex-row flex-wrap gap-1.5">
-              <Button small variant="outline" icon="download" label={t("browse.download")} onPress={download} disabled={!!progress()} testID="download" />
-              <Button small variant="outline" icon="file-clock" label={t("browse.versions")} onPress={() => batch(() => (versionKey.set(d().key), go("versions")))} />
-              <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(d().recordId)} />
-            </View>
-            <If when={progress()}>{(p) => <Bar value={null} label={p()} />}</If>
-            <KeyValue boxed
-              rows={[
-                [t("browse.size"), `${bytes(d().size)} (${count(d().size ?? 0)} B)`],
-                ["Content-Type", d().contentType ?? "—"],
-                [t("browse.modified"), date(d().lastModified)],
-                ["Version", d().versionId ?? "null"],
-                [t("browse.storageClass"), d().storageClass],
-              ]}
-            />
-            <Fold title={t("browse.etag")}>
-              <View class="gap-1.5">
-                <Text class="font-mono text-caption text-foreground">{d().etag?.value ?? "—"}</Text>
-                <Text class="text-small text-muted-foreground">{etagText(d())}</Text>
-                <If when={d().partSizeGuesses.length > 0}>
-                  <Text class="text-small text-muted-foreground">
-                    {t("browse.partSizes")}: {d().partSizeGuesses.map((s) => bytes(s)).join(", ")}
-                  </Text>
-                </If>
+      <Await loading={detail.loading() || !detail()} error={detail.error()} retry={() => detail.refetch()} waiting={t("browse.readingObject")} testID="object">
+        <If when={detail()}>
+          {(d) => (
+            <View class="gap-4">
+              {/* one order: what takes the object, what copies it, what opens elsewhere */}
+              <View class="flex-row flex-wrap items-center gap-2">
+                <Button small variant="outline" icon="download" label={t("browse.download")} onPress={download} disabled={progress() !== null} testID="download" />
+                <Button small variant="outline" icon="copy" label={t("store.copyUri")} onPress={() => copy(uri())} testID="copy-uri" />
+                <Button small variant="outline" icon="file-clock" label={t("browse.versionsOpen")} onPress={() => batch(() => (versionKey.set(d().key), go("versions")))} />
+                <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(d().recordId)} />
               </View>
-            </Fold>
-            <Fold title={t("browse.checksums")} count={d().checksums.length}>
-              <If when={d().checksums.length > 0} else={<Text class="text-small text-muted-foreground">{t("browse.noChecksum")}</Text>}>
-                <View class="gap-1.5">
-                  <Each of={d().checksums}>
-                    {(c) => (
-                      <View class="gap-0.5 rounded-(--radius) border border-border bg-card px-2 py-1.5">
-                        <View class="flex-row items-center gap-2">
-                          <Badge label={c().algorithm} tone="info" />
-                          <Text class="text-caption text-muted-foreground">
-                            {c().kind === "composite" ? t("browse.composite", { n: c().parts ?? "?" }) : t("browse.fullObject")}
-                            {c().kindFromHeader ? "" : ` · ${t("browse.inferred")}`}
-                          </Text>
-                        </View>
-                        <Text class="font-mono text-caption text-foreground">{c().value}</Text>
-                      </View>
-                    )}
-                  </Each>
-                </View>
-              </If>
-            </Fold>
-            <Fold title={t("browse.encryption")}>
-              <KeyValue boxed
+              <If when={progress()}>{(p) => <Bar value={null} label={p()} />}</If>
+              <KeyValue
+                boxed
                 rows={[
-                  ["SSE", d().sse.customerAlgorithm ? `SSE-C (${d().sse.customerAlgorithm})` : (d().sse.algorithm ?? t("browse.noEncryption"))],
-                  ...(d().sse.kmsKeyId ? ([[t("browse.kmsKey"), d().sse.kmsKeyId]] as [string, string][]) : []),
-                  ...(d().sse.bucketKeyEnabled !== null && d().sse.bucketKeyEnabled !== undefined ? ([[t("browse.bucketKey"), d().sse.bucketKeyEnabled ? t("common.on") : t("common.off")]] as [string, string][]) : []),
-                  ...(d().objectLock ? ([[t("browse.objectLock"), d().objectLock!]] as [string, string][]) : []),
-                  ...(d().restore ? ([[t("browse.restore"), d().restore!]] as [string, string][]) : []),
+                  [t("browse.size"), sizeText(d().size)],
+                  ["Content-Type", d().contentType ?? "—"],
+                  [t("browse.modified"), date(d().lastModified)],
+                  [t("browse.version"), d().versionId ?? "—"],
+                  [t("browse.storageClass"), d().storageClass],
                 ]}
               />
-            </Fold>
-            <Fold title={t("browse.metadata")} count={d().metadata.length} open={d().metadata.length > 0}>
-              <If when={d().metadata.length > 0} else={<Text class="text-small text-muted-foreground">{t("common.none")}</Text>}>
-                <KeyValue boxed rows={d().metadata} />
-              </If>
-            </Fold>
-            <Fold title={t("browse.presign")} open={false}>
-              <View class="gap-2">
-                <View class="flex-row items-end gap-2">
-                  <Choice
-                    class="w-36"
-                    label={t("browse.expires")}
-                    value={presignSecs()}
-                    items={[
-                      { value: "300", title: t("browse.expires5m") },
-                      { value: "3600", title: t("browse.expires1h") },
-                      { value: "86400", title: t("browse.expires1d") },
-                      { value: "604800", title: t("browse.expires7d") },
-                    ]}
-                    onChange={(v) => presignSecs.set(v)}
-                  />
-                  <Button small variant="outline" icon="link" label={t("browse.presign")} onPress={presign} testID="presign" />
+              <Disclosure title={t("browse.etag")} open>
+                <View class="gap-1">
+                  <Text class="font-mono text-caption text-foreground">{d().etag?.value ?? "—"}</Text>
+                  <Text class="text-small text-muted-foreground">{etagText(d())}</Text>
+                  <If when={d().partSizeGuesses.length > 0}>
+                    <Text class="text-small text-muted-foreground">
+                      {t("browse.partSizes")}: {d().partSizeGuesses.map((s) => bytes(s)).join(", ")}
+                    </Text>
+                  </If>
                 </View>
-                <If when={url()}>
-                  {(u) => (
-                    <View class="gap-1.5 rounded-(--radius) border border-border bg-card px-2 py-2">
-                      <Text class="font-mono text-caption text-foreground">{u()}</Text>
-                      <View class="flex-row">
-                        <Button small variant="ghost" icon="copy" label={t("common.copy")} onPress={() => Clipboard.writeText(u()).then(() => notify(t("common.copied")), report)} />
-                      </View>
-                    </View>
-                  )}
+              </Disclosure>
+              <Disclosure title={t("browse.checksums")} count={d().checksums.length} open>
+                <If when={d().checksums.length > 0} else={<Text class="text-small text-muted-foreground">{t("browse.noChecksum")}</Text>}>
+                  <View class="gap-2">
+                    <Each of={d().checksums}>
+                      {(c) => (
+                        <Card pad="tile">
+                          <View class="flex-row items-center gap-2">
+                            <Badge label={c().algorithm} tone="info" />
+                            <Text class="min-w-0 flex-1 text-caption text-muted-foreground">
+                              {c().kind === "composite" ? t("browse.composite", { n: c().parts ?? "?" }) : t("browse.fullObject")}
+                              {c().kindFromHeader ? "" : ` · ${t("browse.inferred")}`}
+                            </Text>
+                          </View>
+                          <Text class="font-mono text-caption text-foreground">{c().value}</Text>
+                        </Card>
+                      )}
+                    </Each>
+                  </View>
                 </If>
-              </View>
-            </Fold>
-            <Fold title={t("browse.headers")} count={d().headers.length}>
-              <KeyValue boxed rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
-            </Fold>
-          </View>
-        )}
-      </If>
+              </Disclosure>
+              <Disclosure title={t("browse.encryption")} open>
+                <KeyValue
+                  boxed
+                  rows={[
+                    ["SSE", d().sse.customerAlgorithm ? `SSE-C (${d().sse.customerAlgorithm})` : (d().sse.algorithm ?? t("browse.noEncryption"))],
+                    ...(d().sse.kmsKeyId ? ([[t("browse.kmsKey"), d().sse.kmsKeyId]] as [string, string][]) : []),
+                    ...(d().sse.bucketKeyEnabled !== null && d().sse.bucketKeyEnabled !== undefined ? ([[t("browse.bucketKey"), d().sse.bucketKeyEnabled ? t("common.on") : t("common.off")]] as [string, string][]) : []),
+                    ...(d().objectLock ? ([[t("browse.objectLock"), d().objectLock!]] as [string, string][]) : []),
+                    ...(d().restore ? ([[t("browse.restore"), d().restore!]] as [string, string][]) : []),
+                  ]}
+                />
+              </Disclosure>
+              <Disclosure title={t("browse.metadata")} count={d().metadata.length} open={d().metadata.length > 0}>
+                <If when={d().metadata.length > 0} else={<Text class="text-small text-muted-foreground">{t("common.none")}</Text>}>
+                  <KeyValue boxed rows={d().metadata} />
+                </If>
+              </Disclosure>
+              {/* the section is the thing (a presigned URL); its button the act (create one) */}
+              <Disclosure title={t("browse.presign")}>
+                <View class="gap-2">
+                  <View class="flex-row flex-wrap items-center gap-2">
+                    <Text class="text-small text-muted-foreground">{t("browse.expires")}</Text>
+                    <Choice
+                      class="w-36"
+                      placeholder={t("browse.expires")}
+                      value={presignSecs()}
+                      items={[
+                        { value: "300", title: t("browse.expires5m") },
+                        { value: "3600", title: t("browse.expires1h") },
+                        { value: "86400", title: t("browse.expires1d") },
+                        { value: "604800", title: t("browse.expires7d") },
+                      ]}
+                      onChange={(v) => presignSecs.set(v)}
+                    />
+                    <Button variant="outline" icon="link" label={t("browse.presignCreate")} onPress={presign} testID="presign" />
+                  </View>
+                  <If when={url()}>
+                    {(u) => (
+                      <Card pad="tile">
+                        <Text class="font-mono text-caption text-foreground">{u()}</Text>
+                        <View class="flex-row">
+                          <Button small variant="outline" icon="copy" label={t("browse.copyUrl")} onPress={() => copy(u())} testID="presign-copy" />
+                        </View>
+                      </Card>
+                    )}
+                  </If>
+                </View>
+              </Disclosure>
+              <Disclosure title={t("browse.headers")} count={d().headers.length} open>
+                <KeyValue boxed rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
+              </Disclosure>
+            </View>
+          )}
+        </If>
+      </Await>
     </View>
   );
 }
+
+/** How many search hits the list holds; past them, a line says how many more. */
+const HITS = 50;
 
 function Objects(props: { onSelect: (e: Entry) => void; selected: string | null }) {
   const listing = signal<Listing | null>(null);
   const version = signal(0);
   const start = signal(0);
   const loading = signal(false);
+  // why the last page could not be read: nothing more is asked for until Refresh
+  const failure = signal<string | null>(null);
   const filter = signal("");
   const searchText = signal("");
   const searchHits = signal<Entry[] | null>(null);
@@ -233,6 +249,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   const loadingAll = signal(false);
   // a press on Refresh lists the same place again
   const reload = signal(0);
+  let table: DataTableRef | undefined;
   let searchJob: string | null = null;
   const stopSearch = () => {
     if (searchJob) api.cancelJob(searchJob);
@@ -257,11 +274,18 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       searchState.set(null);
       searchHits.set(null);
       loading.set(false);
+      failure.set(null);
     });
+    // the row chosen was the place before's
+    table?.select(null);
     untracked(() => void load(l));
     cleanup(() => l.dispose());
   });
   cleanup(stopSearch);
+  // the open object's row stays chosen while its panel is open, and no longer
+  effect(() => {
+    if (props.selected === null) table?.select(null);
+  });
 
   // the listing a page is being read for: another place's never blocks this one
   let reading: Listing | null = null;
@@ -269,25 +293,31 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     if (reading === l || l.done) return;
     reading = l;
     loading.set(true);
+    let failed: string | null = null;
     try {
       await l.loadMore();
     } catch (e) {
-      report(e);
+      failed = report(e).message;
     }
     if (reading === l) {
       reading = null;
       // the place shown now is this listing's: its state, not another's
-      if (listing() === l) loading.set(false);
+      if (listing() === l)
+        batch(() => {
+          loading.set(false);
+          failure.set(failed);
+        });
     }
     version.update((v) => v + 1);
   }
 
-  const rows = () => {
+  // the rows held: read once per change, whatever asks (the table, its cells)
+  const rows = computed(() => {
     version();
     const l = listing();
     if (!l) return [] as Entry[];
     return l.rows(start(), WINDOW) as Entry[];
-  };
+  });
   const total = () => {
     version();
     return listing()?.count ?? 0;
@@ -298,16 +328,17 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   };
   const tableData = () =>
     rows().map((e) => ({
-      name: e.isPrefix ? `▸ ${e.name}` : e.name,
+      // a terminal has no icons: a folder says so with a mark of its own (what a row is, is the entry's `isPrefix`)
+      name: terminal() && e.isPrefix ? `▸ ${e.name}` : e.name,
       size: e.isPrefix ? "" : bytes(e.size),
       modified: e.isPrefix ? "" : date(e.lastModified),
       class: e.storageClass ?? "",
-      parts: e.parts ? String(e.parts) : "",
+      parts: e.parts ? count(e.parts) : "",
     }));
 
   const loadAll = async () => {
     const l = listing();
-    if (!l) return;
+    if (!l || loadingAll()) return;
     loadingAll.set(true);
     try {
       await l.loadAll(1_000_000);
@@ -316,6 +347,11 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     }
     loadingAll.set(false);
     version.update((v) => v + 1);
+  };
+  const refresh = () => {
+    // the listing again, and what the tiles over it say
+    invalidate();
+    reload.update((n) => n + 1);
   };
 
   const open = (index: number) => {
@@ -363,7 +399,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     });
   };
   const entryAt = (row: number) => listing()?.row(row) as Entry | null;
-  const copy = (text: string) => void Clipboard.writeText(text).then(() => notify(t("common.copied")), report);
+  const versionsOf = (key: string) => batch(() => (versionKey.set(key), go("versions")));
   type Action = { label: string; icon: IconName; run: () => void };
   /** What a row offers: in the system's menu, or Native Shell's own where there is none. */
   const actions = (row: number | null): Action[] => {
@@ -376,7 +412,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     ];
     return e.isPrefix
       ? [{ label: t("browse.open"), icon: "folder-open", run: () => prefix.set(e.key) }, ...copies]
-      : [{ label: t("browse.detail"), icon: "info", run: () => props.onSelect(e) }, ...copies, { label: t("browse.versions"), icon: "file-clock", run: () => batch(() => (versionKey.set(e.key), go("versions"))) }];
+      : [{ label: t("browse.detail"), icon: "info", run: () => props.onSelect(e) }, ...copies, { label: t("browse.versionsOpen"), icon: "file-clock", run: () => versionsOf(e.key) }];
   };
   const menuRow = signal<number | null>(null);
   // the system's menus, a framed box in a terminal; the in-window one on the web
@@ -389,100 +425,129 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
 
   return (
     <View class="min-h-0 flex-1 gap-2">
+      {/* one row, one middle: where this is, then how much of it, finding in it, how it lists, and again.
+          A pane too narrow for both breaks between them, never inside either. */}
       <View class="flex-row flex-wrap items-center gap-2">
-        <Breadcrumbs />
-        <View class="flex-1" />
-        <Text class="font-mono text-small text-muted-foreground" testID="listing-count">
-          {t("browse.objects", { n: count(total()) })}
-          {done() ? "" : ` · ${t("browse.more")}`}
-        </Text>
-        <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={() => reload.update((n) => n + 1)} testID="listing-refresh" />
-      </View>
-      <View class="flex-row flex-wrap items-center gap-2">
-        <SearchField class="min-w-[240px] flex-1" testID="listing-filter" value={filter()} placeholder={t("browse.filterOrSearch")} label={t("common.filter")} onChange={applyFilter} onSubmit={search}>
-          <If when={filter()}>
-            <Button small variant="ghost" label={t("browse.searchAll")} onPress={search} testID="search" class="h-6 shrink-0" />
+        <View class="min-w-48 flex-1">
+          <Breadcrumbs />
+        </View>
+        <View class="ms-auto min-w-0 flex-row items-center gap-2">
+          <Text class="shrink-0 text-small tabular-nums text-muted-foreground" testID="listing-count">
+            {t("browse.objects", { n: count(total()) })}
+            {done() ? "" : ` · ${t("browse.more")}`}
+          </Text>
+          <SearchField small class="w-72 min-w-0 shrink" testID="listing-filter" value={filter()} placeholder={t("browse.filterHint")} label={t("browse.filterOrSearch")} onChange={applyFilter} onSubmit={search}>
+            <If when={filter()}>
+              <IconButton icon="corner-down-left" label={t("browse.searchAll")} onPress={search} testID="search" class="size-5 shrink-0" />
+            </If>
+          </SearchField>
+          <SwitchRow label={t("browse.flatListing")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
+          {/* nothing to load once every row is here */}
+          <If when={!done()}>
+            <Button small variant="outline" label={t("browse.loadAll")} onPress={loadAll} disabled={loadingAll()} testID="load-all" />
           </If>
-        </SearchField>
-        <SwitchRow label={t("browse.flat")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
-        {/* nothing to load once every row is here */}
-        <If when={!done()}>
-          <Button small variant="outline" label={t("browse.loadAll")} onPress={loadAll} disabled={loadingAll()} testID="load-all" class="min-w-24" />
-        </If>
+          <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={refresh} testID="listing-refresh" />
+        </View>
       </View>
       <If when={searchHits()}>
         {(hits) => (
-          <Card>
-            <View class="flex-row items-center gap-2">
-              <Text class="flex-1 text-body font-medium text-foreground">
-                {hits().length > 50 ? t("browse.matchesShown", { shown: 50, n: count(hits().length) }) : t("browse.matches", { n: hits().length })} {searchState() ? `· ${searchState()}` : ""}
-              </Text>
-              <IconButton icon="x" label={t("common.close")} onPress={() => searchHits.set(null)} />
+          <Card pad="none" testID="search-hits">
+            <View class="flex-row items-center gap-2 py-1 ps-3 pe-1">
+              <Text class="text-body font-medium text-foreground">{t("browse.matches", { n: count(hits().length) })}</Text>
+              <Text class="min-w-0 flex-1 text-small text-muted-foreground line-clamp-1">{searchState() ?? ""}</Text>
+              <IconButton icon="x" label={t("common.close")} onPress={() => (stopSearch(), searchHits.set(null))} />
             </View>
-            <Each of={hits().slice(0, 50)} key={(h) => h.key}>
-              {(h) => (
-                <BaseButton accessibilityLabel={h().key} onPress={() => props.onSelect(h())} class="flex-row items-center gap-2 rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted">
-                  <Text class="font-mono text-small text-primary">{h().key}</Text>
-                </BaseButton>
-              )}
-            </Each>
+            {/* six rows show; the rest scroll under them, so the table keeps its room */}
+            <If when={hits().length > 0}>
+              <Scroll class="max-h-44 border-t border-border" contentClass="p-1">
+                <Each of={hits().slice(0, HITS)} key={(h) => h.key}>
+                  {(h) => (
+                    <ListRow label={h().key} selected={props.selected === h().key} onPress={() => props.onSelect(h())}>
+                      <View class="shrink-0">
+                        <Icon name={h().isPrefix ? "folder" : "file"} size={14} tint="muted-foreground" />
+                      </View>
+                      <Path path={h().key} max={96} class="min-w-0 flex-1 text-foreground" />
+                    </ListRow>
+                  )}
+                </Each>
+                <If when={hits().length > HITS}>
+                  <Text class="px-2 py-1 text-caption text-muted-foreground">{t("browse.moreMatches", { n: count(hits().length - HITS) })}</Text>
+                </If>
+              </Scroll>
+            </If>
           </Card>
         )}
       </If>
-      <InWindowMenu class="min-h-0 flex-1" enabled={!systemMenus} actions={() => actions(menuRow())}>
-      <DataTable
-        testID="objects"
-        accessibilityLabel={t("nav.objects")}
-        class={`min-h-0 flex-1 ${CARD}`}
-        columns={[
-          { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : 380, minWidth: 120 },
-          { key: "size", title: t("browse.size"), width: 96, align: "end" },
-          { key: "modified", title: t("browse.modified"), width: 150 },
-          { key: "class", title: t("browse.class"), width: 124 },
-          { key: "parts", title: "MPU", width: 56, align: "end" },
-        ]}
-        data={tableData()}
-        dataStart={start()}
-        rowCount={total()}
-        hasMore={!done()}
-        loading={loading()}
-        rowSelectable
-        resizableColumns
-        fontSize={TYPE.body}
-        rowHeight={rowHeight(ROW.table)}
-        renderCell={
-          terminal()
-            ? undefined
-            : (c) => {
-                if (c.key === "name") {
-                  const folder = c.text.startsWith("▸ ");
-                  return (
-                    <View class="flex-1 flex-row items-center gap-2">
-                      <Icon name={folder ? "folder" : "file"} size={14} tint={folder ? "foreground" : "muted-foreground"} />
-                      <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${folder ? "font-medium text-foreground" : "text-foreground"}`}>{folder ? c.text.slice(2) : c.text}</Text>
-                    </View>
-                  );
-                }
-                // sizes as figures (tabular, at the end, under their title); the rest quiet
-                return c.key === "size" || c.key === "parts" ? <View class="flex-1 items-end justify-center"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View> : <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
-              }
-        }
-        onContextMenu={(e) => {
-          if (e.row !== undefined && e.row !== null) menu(e.row);
-        }}
-        onLoadMore={() => {
-          const l = listing();
-          if (l) void load(l);
-        }}
-        onVisibleRowsChange={({ range }) => {
-          const want = Math.max(0, range.start - 100);
-          if (want < start() || range.end > start() + WINDOW - 50) start.set(want);
-        }}
-        onRowPress={({ row }) => open(row)}
-        classes={terminal() ? undefined : TABLE}
-        empty={<Empty icon="folder" text={loading() ? t("common.loading") : t("common.empty")} />}
-      />
-      </InWindowMenu>
+      <Card pad="none" class="min-h-0 flex-1">
+        <InWindowMenu class="min-h-0 flex-1" enabled={!systemMenus} actions={() => actions(menuRow())}>
+          <DataTable
+            ref={(r) => (table = r)}
+            testID="objects"
+            accessibilityLabel={t("nav.objects")}
+            class="min-h-0 flex-1"
+            columns={[
+              { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : 380, minWidth: 120 },
+              { key: "size", title: t("browse.size"), width: 96, align: "end" },
+              { key: "modified", title: t("browse.modified"), width: 150 },
+              { key: "class", title: t("browse.class"), width: 124 },
+              { key: "parts", title: t("mpu.parts"), width: 56, align: "end" },
+            ]}
+            data={tableData()}
+            dataStart={start()}
+            rowCount={total()}
+            // a page that failed is not asked for again and again: Refresh asks
+            hasMore={!done() && failure() === null}
+            loading={loading()}
+            rowSelectable
+            resizableColumns
+            fontSize={TYPE.body}
+            rowHeight={rowHeight(ROW.table)}
+            renderCell={
+              terminal()
+                ? undefined
+                : (c) => {
+                    if (c.key === "name") {
+                      // what the row is comes from its entry, not from its text
+                      const folder = rows()[c.row - start()]?.isPrefix ?? false;
+                      return (
+                        <View class="flex-1 flex-row items-center gap-2">
+                          <Icon name={folder ? "folder" : "file"} size={14} tint={folder ? "foreground" : "muted-foreground"} />
+                          <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${folder ? "font-medium text-foreground" : "text-foreground"}`}>{c.text}</Text>
+                        </View>
+                      );
+                    }
+                    // sizes as figures at the end, under their title (no tabular digits in a cell: GTK cuts the last one); the rest quiet
+                    return c.key === "size" || c.key === "parts" ? (
+                      <View class="flex-1 items-end justify-center">
+                        <Text class="text-small text-foreground">{c.text}</Text>
+                      </View>
+                    ) : (
+                      <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>
+                    );
+                  }
+            }
+            onContextMenu={(e) => {
+              if (e.row !== undefined && e.row !== null) menu(e.row);
+            }}
+            onLoadMore={() => {
+              const l = listing();
+              if (l && failure() === null) void load(l);
+            }}
+            onVisibleRowsChange={({ range }) => {
+              const want = Math.max(0, range.start - 100);
+              if (want < start() || range.end > start() + WINDOW - 50) start.set(want);
+            }}
+            onRowPress={({ row }) => open(row)}
+            classes={terminal() ? undefined : TABLE}
+            empty={
+              // each of its three states in its own words: on its way, failed, or truly nothing
+              <Await loading={loading()} error={failure()} retry={refresh} waiting={t("browse.listing")} testID="listing">
+                <Empty icon={filter() ? "search" : "folder"} text={filter() ? t("browse.noMatch", { text: filter() }) : t("browse.emptyPrefix")} />
+              </Await>
+            }
+          />
+        </InWindowMenu>
+      </Card>
     </View>
   );
 }

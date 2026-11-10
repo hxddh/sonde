@@ -1,21 +1,21 @@
 // Looking after sessions: a title of the user's, removing one, sharing one
 // as a web page. Each is in the session's context menu and its ⋯ menu.
 
-import { Clipboard, effect, openUrl, signal, Text, untracked, View } from "nsh";
+import { effect, openUrl, signal, untracked } from "nsh";
 import { AlertDialog } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
 import { forgetRun } from "../run";
-import { notify, report, sessionsChanged } from "../store";
+import { copy, notify, report, sessionsChanged } from "../store";
 import type { SessionInfo } from "../types";
-import { Button, Field, Modal, Title } from "./kit";
+import { Actions, Button, Field, Modal, Title } from "./kit";
 import { programOf } from "./sessionview";
 import { toast } from "./toast";
 
-/** What a session is called: the user's title, else its program, else its endpoint. */
 /** A path's last part, with either separator (Windows' too). */
 export const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
 
+/** What a session is called: the user's title, else its program, else its endpoint. */
 export const sessionName = (s: Pick<SessionInfo, "title" | "command" | "endpoint">) => s.title || programOf(s.command) || s.endpoint;
 
 /** The session being renamed, while the dialog is open. */
@@ -25,16 +25,18 @@ export const rename = (s: SessionInfo) => renaming.set(s);
 /** The dialog that gives a session a title (an empty one takes it away). */
 export function RenameDialog() {
   const draft = signal("");
-  // each opening starts from the session's present name
+  // each opening starts from the title the user gave (none: empty, the
+  // program's name as the placeholder), so Save unchanged changes nothing
   effect(() => {
     const s = renaming();
-    if (s) untracked(() => draft.set(s.title ?? programOf(s.command) ?? ""));
+    if (s) untracked(() => draft.set(s.title ?? ""));
   });
   const save = () => {
     const s = renaming();
     if (!s) return;
     try {
-      api.sessions.rename(s.path, draft());
+      // an empty title takes the user's away: the session is called by its program again
+      api.sessions.rename(s.path, draft().trim());
       renaming.set(null);
       sessionsChanged();
     } catch (e) {
@@ -45,10 +47,10 @@ export function RenameDialog() {
     <Modal open={renaming() !== null} onClose={() => renaming.set(null)} size="narrow" testID="rename-dialog">
       <Title>{t("sessions.renameTitle")}</Title>
       <Field label={t("sessions.renameLabel")} value={draft()} onChange={(v) => draft.set(v)} onSubmit={save} placeholder={renaming() ? (programOf(renaming()!.command) ?? renaming()!.endpoint) : ""} testID="rename-input" />
-      <View class="flex-row justify-end gap-2">
+      <Actions>
         <Button variant="ghost" label={t("common.cancel")} onPress={() => renaming.set(null)} />
         <Button variant="primary" label={t("common.save")} onPress={save} testID="rename-save" />
-      </View>
+      </Actions>
     </Modal>
   );
 }
@@ -90,14 +92,14 @@ export async function shareSession(path: string) {
       description: t("share.where", { dir: r.dir }),
       // the page's folder in the file manager, where it is a press away
       action: t("share.showFolder"),
-      onAction: () => void api.sessions.reveal(r.dir).catch(() => Clipboard.writeText(r.dir).then(() => notify(t("common.copied")))),
+      onAction: () => void api.sessions.reveal(r.dir).catch(() => copy(r.dir)),
       duration: 10000,
     });
   } catch (e) {
     // a build without the viewer: the command that makes the page
     // quoted: a path with spaces is one argument
     const command = `sonde share --serve "${path.replace(/(["\\$`])/g, "\\$1")}"`;
-    void Clipboard.writeText(command).then(() => notify(t("share.command")), report);
+    copy(command, t("share.command"));
     if (!String(e instanceof Error ? e.message : e).includes("no web viewer")) report(e);
   }
 }

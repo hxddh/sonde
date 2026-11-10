@@ -11,7 +11,7 @@ import { Icon } from "./icon";
 import { Button, Dot, Options, terminal, CARD } from "./kit";
 import { OperationView } from "./sessionview";
 
-export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, operationsAt, seconds, SessionHeader, SessionList, statusTone } from "./sessionview";
+export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList, statusTone } from "./sessionview";
 
 export type Policy = "allow" | "no-delete" | "read-only";
 

@@ -1,7 +1,8 @@
 // The page `sonde share` publishes: reads the session beside it.
 
 import { mount, resource } from "nsh";
-import { Loading, type SharedSession, SessionViewer } from "./SessionViewer";
+import { Await } from "../app/src/ui/kit";
+import { type SharedSession, SessionViewer } from "./SessionViewer";
 
 function App() {
   const data = resource(async () => {
@@ -10,9 +11,10 @@ function App() {
     return (await res.json()) as SharedSession;
   });
   return (
-    <If when={data()} else={<Loading error={data.error ? String(data.error) : null} />}>
-      {(d) => <SessionViewer data={d()} />}
-    </If>
+    // loading, failed (why, and Try again) or there: `error` and `loading` are the resource's readers, called
+    <Await loading={data.loading()} error={data.error()} retry={() => data.refetch()}>
+      <If when={data()}>{(d) => <SessionViewer data={d()} />}</If>
+    </Await>
   );
 }
 

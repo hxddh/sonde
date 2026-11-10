@@ -25,6 +25,8 @@ struct Recording {
     endpoint: String,
     log: RequestLog,
     writer: Arc<SessionWriter>,
+    /// The runtime it began on: where it is finished, from a handler that is in none.
+    runtime: tokio::runtime::Handle,
 }
 
 /// How long a stopping recording waits for the requests in flight (the
@@ -277,6 +279,7 @@ async fn begin(
         endpoint,
         log,
         writer,
+        runtime: tokio::runtime::Handle::current(),
     });
     Ok(view)
 }
@@ -1603,8 +1606,10 @@ impl Sessions {
     pub fn stop() -> Option<String> {
         let r = RECORDING.lock().take()?;
         let path = r.path.to_string_lossy().into_owned();
-        // a blocking thread, not a task: a handler is not in the runtime
-        blocking(move || tokio::runtime::Handle::current().block_on(r.finish()));
+        // a thread of its own on the recording's runtime: a handler is in no
+        // runtime, and off the interface's thread has no reactive one either
+        let runtime = r.runtime.clone();
+        std::thread::spawn(move || runtime.block_on(r.finish()));
         Some(path)
     }
 }
@@ -1943,6 +1948,7 @@ mod tests {
             endpoint: "target".into(),
             log,
             writer,
+            runtime: tokio::runtime::Handle::current(),
         };
         let file = recording.finish().await;
         assert_eq!(Path::new(&file), path);

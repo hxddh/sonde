@@ -2,30 +2,41 @@
 // (and measures closed formats), decodes them, and replays the logical
 // state at a chosen time.
 
-import { cleanup, List, signal, Text, View } from "nsh";
+import { cleanup, List, Scroll, signal, Text, View } from "nsh";
 import { Slider } from "nsh/base";
-import { bytes, date } from "../format";
+import { bytes, count, date } from "../format";
 import { type Key, t } from "../i18n";
-import { api, watch } from "../native";
+import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report } from "../store";
 import { here, LAYOUT_LABEL, remember } from "../ui/overview";
 import type { Detection, Layout, Snapshot } from "../types";
-import { Badge, Bar, Button, Card, Empty, Field, Heading, KeyValue, Muted, Page, SimpleTable, terminal, Title } from "../ui/kit";
+import { Await, Badge, Bar, Button, Card, Choice, Empty, Field, Heading, KeyValue, More, Muted, Path, ROW, rowHeight, SimpleTable, terminal, ToolBar } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const LABEL = LAYOUT_LABEL;
-/** A timeline event's kind in the reader's words (a decoder's own, as itself). */
-const kindLabel = (k: string) => {
-  const s = t(`layouts.kind.${k}` as Key);
-  return s === `layouts.kind.${k}` ? k : s;
+/** Words the app has for a decoder's own (a timeline event's kind, an issue's severity); what it has none for, as itself. */
+const worded = (key: string, raw: string) => {
+  const s = t(key as Key);
+  return s === key ? raw : s;
 };
+const kindLabel = (k: string) => worded(`layouts.kind.${k}`, k);
+const severityLabel = (s: string) => worded(`layouts.severity.${s}`, s);
 
 function Replay(props: { job: string; layout: Layout }) {
-  const times = () => props.layout.snapshots.map((s) => (s.time ? new Date(s.time).getTime() : 0)).filter((x) => x > 0);
+  const stamp = (s: Snapshot) => (s.time ? new Date(s.time).getTime() : 0);
+  const times = () => props.layout.snapshots.map(stamp).filter((x) => x > 0);
   const min = () => Math.min(...times());
   const max = () => Math.max(...times());
   const at = signal(max());
   const state = (): Snapshot | null => api.layoutState(props.job, at());
+  // the latest snapshots to jump to, one per moment
+  const jumps = () => {
+    const seen = new Set<number>();
+    return props.layout.snapshots
+      .slice(-12)
+      .filter((s) => stamp(s) > 0 && !seen.has(stamp(s)) && !!seen.add(stamp(s)))
+      .map((s) => ({ value: String(stamp(s)), title: s.label }));
+  };
   return (
     <If when={times().length > 0}>
       <Card testID="replay">
@@ -43,15 +54,14 @@ function Replay(props: { job: string; layout: Layout }) {
           indicatorClass="h-1.5 rounded-full bg-primary"
           thumbClass="h-4 w-4 rounded-full border border-border bg-background shadow"
         />
-        <View class="flex-row flex-wrap gap-2">
-          <Each of={props.layout.snapshots.slice(-12)}>
-            {(s) => <Button small variant="ghost" label={s().label} onPress={() => s().time && at.set(new Date(s().time!).getTime())} />}
-          </Each>
-        </View>
+        {/* one control for the snapshots, not a button each */}
+        <Choice class="w-72" placeholder={t("layouts.snapshot")} value={jumps().some((j) => j.value === String(at())) ? String(at()) : null} items={jumps()} onChange={(v) => at.set(Number(v))} testID="replay-snapshot" />
         <If when={state()}>
           {(s) => (
             <View class="gap-2">
-              <Text class="text-body font-medium text-foreground">{t("layouts.stateAt", { time: date(new Date(at()).toISOString()) })} — {s().label}</Text>
+              <Text class="text-body font-medium text-foreground">
+                {t("layouts.stateAt", { time: date(new Date(at()).toISOString()) })} — {s().label}
+              </Text>
               <KeyValue rows={s().facts.map((f) => [f.label, f.value])} />
               <Each of={s().tables}>
                 {(tb) => (
@@ -74,35 +84,47 @@ export function Layouts() {
   const found = signal<Detection[] | null>(terminal() ? null : (here().layouts ?? null));
   const layout = signal<{ job: string; layout: Layout } | null>(null);
   const progress = signal<string | null>(null);
+  // why the first scan gave nothing: said in place, with Try again
+  const failure = signal<string | null>(null);
   let job: string | null = null;
   cleanup(() => {
     if (job) api.cancelJob(job);
   });
-  const follow = async <R,>(id: string): Promise<R> => {
-    job = id;
+  // one job at a time, busy from the press: every command that starts one is off until it ends
+  const busy = () => progress() !== null;
+  const follow = async <R,>(start: () => Promise<string>): Promise<R> => {
     progress.set(t("common.loading"));
     try {
-      return await watch<R>(id, (e) => e.type === "Progress" && progress.set(e.progress.message));
+      job = await start();
+      return await watch<R>(job, (e) => e.type === "Progress" && progress.set(e.progress.message));
     } finally {
       job = null;
       progress.set(null);
     }
   };
   const detect = async () => {
+    const ep = endpoint();
+    const b = bucket();
+    if (!ep || !b || busy()) return;
+    failure.set(null);
     try {
-      const ep = endpoint()!;
-      const b = bucket()!;
-      const f = await follow<Detection[]>(await api.detectLayouts(ep, b, pfx()));
+      const f = await follow<Detection[]>(() => api.detectLayouts(ep, b, pfx()));
       found.set(f);
       remember(ep, b, pfx(), { layouts: f });
     } catch (e) {
-      report(e);
+      const err = asError(e);
+      // over a list already shown, a toast; with nothing to show, the reason in its place
+      if (err.kind !== "cancelled") found() ? report(e) : failure.set(err.message);
     }
   };
   const analyze = async (format: string, root: string) => {
+    const ep = endpoint();
+    const b = bucket();
+    if (!ep || !b || busy()) return;
     try {
-      const id = await api.analyzeLayout(endpoint()!, bucket()!, format, root);
-      layout.set({ job: id, layout: await follow<Layout>(id) });
+      let id = "";
+      const l = await follow<Layout>(async () => (id = await api.analyzeLayout(ep, b, format, root)));
+      layout.set({ job: id, layout: l });
     } catch (e) {
       report(e);
     }
@@ -110,49 +132,55 @@ export function Layouts() {
   const tone = (s: string) => (s === "error" ? "fail" : s === "warning" ? "warn" : "info");
   if (!terminal() && !found()) void detect();
   return (
-    <Page testID="screen-layouts">
-      <View class="flex-row flex-wrap items-end gap-2">
+    <Scroll testID="screen-layouts" class="flex-1" contentClass="gap-4 p-4">
+      <ToolBar
+        scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}
+        // the measure that needs no known layout: any prefix's write cadence
+        end={<More testID="layout-more" actions={() => [{ label: t("layouts.generic"), icon: "timer", run: () => void analyze("generic", pfx()), disabled: !bucket() || busy() }]} />}
+      >
         <If when={terminal()}>
           <EndpointPicker />
           <BucketPicker />
+          <Field bare class="w-64" label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} onSubmit={detect} mono testID="layout-prefix" />
         </If>
-        <If when={terminal()}>
-          <Field class="w-64" label={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} mono testID="layout-prefix" />
+        <Button small variant={found() ? "outline" : "primary"} label={found() ? t("overview.rescan") : t("common.scan")} onPress={detect} disabled={!bucket() || busy()} testID="layout-detect" />
+        <If when={busy()}>
+          <Button small variant="ghost" label={t("common.cancel")} onPress={() => job && api.cancelJob(job)} testID="layout-cancel" />
         </If>
-        <Button variant={terminal() ? "primary" : "outline"} label={t("layouts.detect")} onPress={detect} disabled={!bucket() || !!progress()} testID="layout-detect" />
-        <Button label={t("layouts.generic")} onPress={() => analyze("generic", pfx())} disabled={!bucket() || !!progress()} />
-        <If when={progress()}>
-          <Button label={t("common.cancel")} onPress={() => job && api.cancelJob(job)} />
+      </ToolBar>
+      {/* a job over what is already shown (scanning again, decoding a layout) */}
+      <If when={found() && progress()}>{(p) => <Bar value={null} label={p()} />}</If>
+      <Await loading={!found() && busy()} error={failure()} retry={detect} waiting={progress() ?? undefined} testID="layouts">
+        <If when={found()} else={<Empty icon="boxes" text={bucket() ? t("layouts.notScanned") : t("common.chooseBucket")} />}>
+          {(f) => (
+            <Card>
+              <Heading count={f().length}>{t("layouts.found")}</Heading>
+              <If when={f().length > 0} else={<Muted>{t("layouts.noneFound")}</Muted>}>
+                <Each of={f()}>
+                  {(d) => (
+                    <View class="flex-row items-center gap-2">
+                      <Badge label={LABEL[d().format] ?? d().format} tone="primary" />
+                      <Path path={d().root || "/"} class="min-w-0 flex-1 text-foreground" />
+                      <Text class="shrink text-small text-muted-foreground line-clamp-1">{d().evidence}</Text>
+                      <Button small label={t("common.run")} onPress={() => analyze(d().format, d().root)} disabled={busy()} testID={`analyze-${d().format}`} />
+                    </View>
+                  )}
+                </Each>
+              </If>
+            </Card>
+          )}
         </If>
-      </View>
-      <If when={progress()}>{(p) => <Bar value={null} label={p()} />}</If>
-      <If when={found()}>
-        {(f) => (
-          <Card>
-            <Heading>{t("layouts.found")}</Heading>
-            <If when={f().length > 0} else={<Muted>{t("layouts.noneFound")}</Muted>}>
-              <Each of={f()}>
-                {(d) => (
-                  <View class="flex-row items-center gap-2">
-                    <Badge label={LABEL[d().format] ?? d().format} tone="primary" />
-                    <Text class="flex-1 font-mono text-small text-foreground">{d().root || "/"}</Text>
-                    <Text class="text-small text-muted-foreground">{d().evidence}</Text>
-                    <Button small label={t("common.run")} onPress={() => analyze(d().format, d().root)} testID={`analyze-${d().format}`} />
-                  </View>
-                )}
-              </Each>
-            </If>
-          </Card>
-        )}
-      </If>
-      <If when={layout()} else={<Empty text={t("layouts.title")} />}>
+      </Await>
+      <If when={layout()}>
         {(l) => (
           <View class="gap-4" testID="layout-report">
             <Card>
               <View class="flex-row items-center gap-2">
-                <Title class="flex-1">{LABEL[l().layout.format] ?? l().layout.format}</Title>
+                <View class="min-w-0 flex-1">
+                  <Heading>{LABEL[l().layout.format] ?? l().layout.format}</Heading>
+                </View>
                 <If when={l().layout.formatVersion}>{(v) => <Badge label={v()} />}</If>
-                <Badge label={`${l().layout.objects} objects · ${bytes(l().layout.bytes)}`} />
+                <Badge label={`${t("du.objects", { n: count(l().layout.objects) })} · ${bytes(l().layout.bytes)}`} />
               </View>
               <Text class="text-body text-foreground">{l().layout.headline}</Text>
               <If when={!l().layout.decoded}>
@@ -162,11 +190,11 @@ export function Layouts() {
             </Card>
             <If when={l().layout.issues.length > 0}>
               <Card testID="layout-issues">
-                <Heading>{t("layouts.issues")}</Heading>
+                <Heading count={l().layout.issues.length}>{t("layouts.issues")}</Heading>
                 <Each of={l().layout.issues}>
                   {(i) => (
                     <View class="flex-row gap-2">
-                      <Badge label={i().severity} tone={tone(i().severity)} />
+                      <Badge label={severityLabel(i().severity)} tone={tone(i().severity)} />
                       <Text class="flex-1 text-body text-foreground">{i().message}</Text>
                     </View>
                   )}
@@ -184,9 +212,9 @@ export function Layouts() {
             </Each>
             <Card>
               <Heading>{t("layouts.timeline")}</Heading>
-              <List each={l().layout.timeline} estimatedItemSize={26} viewport="parent">
+              <List each={l().layout.timeline} estimatedItemSize={ROW.dense} viewport="parent">
                 {(e) => (
-                  <View class="h-[26px] flex-row items-center gap-3">
+                  <View class="flex-row items-center gap-3" style={{ height: rowHeight(ROW.dense) }}>
                     <Text class="w-36 text-small text-muted-foreground">{date(e().time)}</Text>
                     <Badge label={kindLabel(e().kind)} tone={e().kind === "fence" || e().kind === "gap" ? "warn" : "neutral"} />
                     <Text class="flex-1 text-small text-foreground line-clamp-1">{`${e().label}${e().detail ? ` — ${e().detail}` : ""}`}</Text>
@@ -197,6 +225,6 @@ export function Layouts() {
           </View>
         )}
       </If>
-    </Page>
+    </Scroll>
   );
 }

@@ -3,7 +3,7 @@
 // sidebar and the place beside it; a terminal gets a home list and a
 // navigation stack, the F10 menu bar and `:` for the palette.
 
-import { batch, effect, keymap, mount, platform, setColorScheme, signal, Text, UrlScheme, View } from "nsh";
+import { batch, effect, keymap, mount, platform, setColorScheme, signal, Text, untracked, UrlScheme, View } from "nsh";
 import { createNavStack, NavPage, NavStack, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { currentWindow, Menu } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
@@ -13,7 +13,7 @@ import { followNotifications, running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLink, openSession, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLink, wouldOpen, openSession, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
@@ -23,6 +23,7 @@ import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, sidebarOpen, toggleSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
 import { applyContrast } from "./src/theme";
+import { scrubCommand } from "./src/ui/sessionview";
 
 /** The view of an area: a plain function, called in a binding, so the view follows `area()`.
  * Until there is an endpoint, Run and Store open on the welcome. */
@@ -109,16 +110,17 @@ function DesktopShell() {
       onLayout={(e) => batch(() => (shellWidth.set(e.bounds.size.width), shellHeight.set(e.bounds.size.height)))}
       // a .sonde file dropped anywhere on the window opens it; while one is over it, it says so
       onFileDrop={(e) => {
-        dragging.set(false);
+        dragging.set(null);
         openDropped(e.uris);
       }}
-      onFileDragEnter={() => dragging.set(true)}
-      onFileDragLeave={() => dragging.set(false)}
+      // what the drag carries is known before the drop: the hint says what will open, and what will not
+      onFileDragEnter={(e) => dragging.set(wouldOpen(e.uris))}
+      onFileDragLeave={() => dragging.set(null)}
     >
       <Toolbar open={open} />
       {/* the sidebar and the place: a split, the sidebar's width the user's (kept) */}
       <ResizablePanelGroup class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sidebar.resize")}>
-        <ResizablePanel fixed visible={sidebarOpen()} size={sidebarWidth.size()} minSize={168} maxSize={320} onResize={sidebarWidth.onResize}>
+        <ResizablePanel fixed visible={sidebarOpen()} size={sidebarWidth.size()} minSize={208} maxSize={440} onResize={sidebarWidth.onResize}>
           <Sidebar open={open} />
         </ResizablePanel>
         <ResizablePanel minSize={480} class="min-w-0 bg-background">
@@ -133,10 +135,12 @@ function DesktopShell() {
       </SidePanel>
       <Palette />
       <If when={dragging()}>
-        <View testID="drop-hint" class="absolute inset-3 items-center justify-center rounded-(--radius-card) border-2 border-dashed border-ring bg-background/80">
-          <Text class="text-heading font-semibold text-foreground">{t("app.dropHint")}</Text>
-          <Text class="text-small text-muted-foreground">{t("app.dropKinds")}</Text>
-        </View>
+        {(d) => (
+          <View testID="drop-hint" class={`absolute inset-3 items-center justify-center gap-1 rounded-(--radius-card) border-2 border-dashed bg-background/80 ${d().opens > 0 || d().opens + d().others === 0 ? "border-ring" : "border-border"}`}>
+            <Text class="text-heading font-semibold text-foreground">{d().opens > 0 ? t("app.dropOpens", { n: d().opens }) : d().others > 0 ? t("app.dropNothing") : t("app.dropHint")}</Text>
+            <Text class="text-small text-muted-foreground">{d().opens > 0 && d().others > 0 ? t("app.dropSkips", { n: d().others }) : t("app.dropKinds")}</Text>
+          </View>
+        )}
       </If>
       <Toaster />
     </View>
@@ -166,7 +170,7 @@ function TermHeader(props: { title: string }) {
 }
 
 function Home() {
-  // 1–4 open a place from the home list (not while typing, not under another page)
+  // 1–5 open a place from the home list (not while typing, not under another page)
   const digits: Record<string, () => void> = {};
   AREAS.forEach((a, i) => {
     digits[String(i + 1)] = () => {
@@ -184,7 +188,7 @@ function Home() {
               <Text class="w-4 text-muted-foreground">{String(i() + 1)}</Text>
               <Text class="flex-1 text-foreground">{areaLabel(a())}</Text>
               <If when={a() === "run" && running()}>
-                <Text class="text-primary">● {running()!.command}</Text>
+                <Text class="text-primary">● {scrubCommand(running()!.command)}</Text>
               </If>
             </View>
           )}
@@ -204,12 +208,19 @@ function open(a: Area) {
   }
 }
 
+/** The place the terminal last showed: a change of it, not its first value, opens a page. */
+let opened: Area | null = null;
+
 function TerminalShell() {
+  opened = untracked(area);
   // a place chosen elsewhere (the palette, a button) becomes the page on top
   effect(() => {
     const a = area();
     const top = nav.routes()[nav.routes().length - 1];
     if (top.name === "area" && top.area !== a) nav.replace({ name: "area", area: a });
+    // from the home list (the palette's `:` then a place): the place opens over it
+    else if (top.name === "home" && a !== opened) untracked(() => nav.push({ name: "area", area: a }));
+    opened = a;
   });
   return (
     <View class="flex-1 bg-background">
@@ -260,10 +271,10 @@ function installMenus() {
 }
 
 /** The sidebar's width, as the user left it. */
-const sidebarWidth = rememberedSize("sidebar", 224);
+const sidebarWidth = rememberedSize("sidebar.list", 272);
 
 /** A file is being dragged over the window. */
-const dragging = signal(false);
+const dragging = signal<{ opens: number; others: number } | null>(null);
 
 function App() {
   init();

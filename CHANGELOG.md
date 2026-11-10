@@ -4,6 +4,71 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [13.0.0] - 2026-11-10
+
+Still and true. Every state says what it is, nothing moves under the hand, each thing is drawn one way — and a
+session's time is seen request by request. The review this came from is [docs/review-12.0.md](docs/review-12.0.md).
+
+### Added
+
+- **What ran at once**: every request on its lane, from its start to its end in its outcome's color — stacked ran
+  together, in a row waited their turn. A press opens the request.
+- The Time pane is a board: each chart in one frame (its question, a sentence that answers it, the plot, its
+  legend), two abreast where there is room, under one timeline whose chosen stretch every chart over time follows.
+- The sidebar lists what the place has: the commands run before (Run), the sessions (Sessions), the buckets
+  (Buckets). One left column in the whole window.
+- A `config.toml` that cannot be read is said so, with Reload, in Settings and Endpoints; nothing is saved over it.
+- `sonde import` reads gzip and says how many lines it skipped; CloudTrail keeps which upload, part and listing a
+  request was; HAR keeps its request headers.
+- Native Shell at `ec8430f`: buttons show their hints and shortcuts (the old commit dropped every tooltip).
+
+### Changed
+
+- A session's page: its command and figures, then tabs, then the pane, which takes all the room under them. The
+  findings sit with the operations they narrow; the session's shape is a strip over them, full width.
+- Choosing an operation opens the inspector and moves nothing else (the sessions list used to leave). A bucket's
+  four tiles (size, incomplete uploads, versioning, layouts) are always there; the sessions' search field too.
+- One of each: a figure, a section heading, a row, a disclosure, a banner (`Notice`), a dialog's foot (Cancel, then
+  the commit, at the end), a way back, a state for what is fetched (on its way, failed with why and Try again,
+  there). Two tab controls, not three. Settings' labels sit above their controls on one grid.
+- One duration (0.4 ms … 2 h 05 min, the unit chosen after rounding), one percent, one clock per list; counts are
+  grouped everywhere. Fewer is green and more is red in every chart that compares.
+- Run's command field is a field like the others, with one row under it; the run's band is one card whose primary
+  is Run again.
+- The proxy cuts an exchange only when it stops moving for 60 s (it cut every exchange at 60 s).
+- `--no-delete` goes by the method: every DELETE, `POST ?delete`, `PUT ?lifecycle`, and anything it cannot name
+  that is not a read. A path that starts with `//` is refused.
+- Compatibility probes are refused while read-only is on, and each run is in the audit log; a probe whose setup
+  failed is an error, not a verdict.
+- `-f` formats a command does not write, and `--tolerance` or `--no-new-warnings` without a baseline, are usage
+  errors. `replay` to several stores and `watch --logs --once` exit by what happened.
+- Words: `…` on every command that opens something; Delete for data, Remove for configuration; one name per
+  place. Chinese uses one word per concept (桶, 键, 分片上传, 任务, 重放).
+
+### Fixed
+
+- A configuration that failed to load was replaced by an empty one and saved over; a save lost what the file had
+  gained meanwhile; starting the demo dropped an endpoint named `demo`; `--url` and `--rate` were saved by the TUI.
+- Cancelling a job left probe objects, uploads and buckets, and a download's partial file; a job that panicked
+  stayed running; finished jobs were never dropped.
+- A replay whose prefix could not be listed deleted what was under it afterwards; a prefix-confined replay
+  replayed bucket inventory and analytics settings.
+- `watch --logs` read two hours of logs again past 50,000 files; access-log imports counted lifecycle lines as
+  requests and failed a file on one short line; `share --redact` kept the requester's ARN.
+- The shared page showed a function's source for "Loading…", opened nothing on a request's dot, and chose the wrong
+  row from an output line once sorted.
+- A session in its own window never grew while live, had no toasts, and laid itself out by another window's size;
+  toasts showed in every window.
+- Failed loads read "Loading…" forever or as "nothing here" (a comparison, an object, buckets, versions, runs).
+- The bucket tree showed one endpoint's folders under another's bucket; Refresh never read folders again; a folder
+  with `#` in its name could not be chosen.
+- A job's progress bar never passed 1%; Rename saved unchanged renamed the session; a run past its p95 budget read
+  `verdict.p95`; an empty run opened within eight seconds was deleted; Run's clock read `-1:-1`; a second run's
+  output was appended under the first; `:` then a place did nothing on the terminal's home list.
+- `184532 ms`, `1000 ms`, `1024 KiB`, `+0%`; commands with `KEY=value` in screen-reader labels and the palette.
+- And the rest of the review's list: the SlateDB WAL scan, the lakeFS name cut inside a character, the lifecycle
+  rule's id, STS with a port, percentiles defined three ways, cost for requests that never left.
+
 ## [12.0.0] - 2026-11-09
 
 Honesty and fit. What a log can and cannot say, the code that sent each request in Python, Node.js and Java, the

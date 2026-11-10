@@ -27,6 +27,10 @@ export const api = {
   importProfiles: (names: string[]) => Sonde.importProfiles(names),
   testEndpoint: async (id: string) => (await Sonde.testEndpoint(id)) as T.ConnectivityReport,
   startDemo: async () => (await Sonde.startDemo()) as T.EndpointView,
+  /** Why config.toml did not load, or null: while it stands there are no endpoints, default settings, and no save. */
+  configError: () => (Sonde as unknown as { configError(): string | null }).configError(),
+  /** Reads config.toml again; throws with why it still does not load. */
+  reloadConfig: () => (Sonde as unknown as { reloadConfig(): void }).reloadConfig(),
   settings: () => Sonde.settings() as T.Settings,
   saveSettings: (s: T.Settings) => Sonde.saveSettings(s),
   setReadOnly: (on: boolean) => Sonde.setReadOnly(on),

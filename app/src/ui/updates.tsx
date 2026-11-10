@@ -3,11 +3,11 @@
 // GitHub Releases); elsewhere — a system install, the terminal binary — it
 // links to the release.
 
-import { effect, openUrl, signal, Text, untracked, View } from "nsh";
+import { effect, openUrl, signal, untracked } from "nsh";
 import { type AppUpdate, checkForPackage, checkForUpdate, downloadPackage, downloadUpdate, installAndRestart, type PackageUpdate, restartToPackage, shellInfo } from "nsh/updater";
 import { t } from "../i18n";
 import { report } from "../store";
-import { Button, Muted, Section } from "./kit";
+import { Button, Notice, Section } from "./kit";
 
 type State =
   | { kind: "idle" }
@@ -77,32 +77,28 @@ export function Updates() {
       report(e);
     }
   };
+  const found = () => (s().kind === "found" || s().kind === "downloading" || s().kind === "package" ? (s() as { update: { version: string } }).update.version : null);
+  // what is known now, in a sentence: and while it downloads, how far
+  const text = () => {
+    if (s().kind === "current") return t("updates.current");
+    if (s().kind === "checking") return t("updates.checking");
+    if (found() === null) return t("updates.hint");
+    const said = [t("updates.found", { version: found()! })];
+    if (s().kind === "downloading") said.push(t("updates.downloading", { pct: String(Math.round((s() as { share: number }).share * 100)) }));
+    const notes = s().kind === "found" ? (s() as { update: AppUpdate }).update.notes : null;
+    if (notes) said.push(notes);
+    return said.join("\n");
+  };
   return (
-    <Section title={t("updates.title")} testID="updates">
-      <View class="flex-row flex-wrap items-center gap-2">
-        <Text class="flex-1 text-body text-foreground">
-          {s().kind === "current"
-            ? t("updates.current")
-            : s().kind === "checking"
-              ? t("updates.checking")
-              : s().kind === "found" || s().kind === "downloading" || s().kind === "package"
-                ? t("updates.found", { version: (s() as { update: { version: string } }).update.version })
-                : t("updates.hint")}
-        </Text>
+    <Section plain title={t("updates.title")} description={shell ? t("updates.running", { version: shell.version ?? t("updates.dev"), nsh: shell.nshVersion }) : undefined} testID="updates">
+      <Notice tone="info" icon={s().kind === "current" ? "circle-check" : found() !== null ? "download" : undefined} text={text()}>
         <If when={s().kind === "package" ? (s() as { update: PackageUpdate }).update : null}>
           {(p) => <Button small variant="primary" icon="refresh-cw" label={t("updates.restart")} onPress={() => void applyPackage(p())} disabled={(s() as { share: number | null }).share !== null} testID="updates-package" />}
         </If>
         <If when={s().kind === "found" ? (s() as { update: AppUpdate }).update : null} else={s().kind === "package" ? undefined : <Button small variant="outline" icon="refresh-cw" label={t("updates.check")} onPress={check} disabled={s().kind === "checking" || s().kind === "downloading"} testID="updates-check" />}>
           {(u) => <Button small variant="primary" icon="download" label={u().canInstall ? t("updates.install") : t("updates.download")} onPress={() => install(u())} testID="updates-install" />}
         </If>
-      </View>
-      <If when={shell}>
-        {(x) => <Muted class="text-small">{t("updates.running", { version: x().version ?? t("updates.dev"), nsh: x().nshVersion })}</Muted>}
-      </If>
-      <If when={s().kind === "downloading"}>
-        <Muted class="text-small">{t("updates.downloading", { pct: String(Math.round((s() as { share: number }).share * 100)) })}</Muted>
-      </If>
-      <If when={s().kind === "found" ? (s() as { update: AppUpdate }).update.notes : null}>{(n) => <Muted class="text-small">{n()}</Muted>}</If>
+      </Notice>
     </Section>
   );
 }

@@ -2,14 +2,15 @@
 
 import { batch, effect, signal, Text, untracked, View } from "nsh";
 import { AlertDialog } from "nsh/base";
+import { count, ms as fmtMs } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Icon } from "../ui/icon";
+import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, Labeled, Mono, Muted, Notice, Page, PageHeader, terminal, SwitchRow } from "../ui/kit";
 import { openCompatWindow } from "./CompatWindow";
-import { Badge, Button, CARD, Card, Check, Choice, Dot, Empty, Field, FORM, IconButton, PanelHeader, KeyValue, Muted, Page, terminal, Section, SwitchRow, Title } from "../ui/kit";
-import { ms as fmtMs } from "../format";
+import { CELL, ConfigNotice, GRID } from "./Settings";
 
 type Draft = {
   id: string;
@@ -51,7 +52,8 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
       api.saveEndpoint({
         adding: !props.editing,
         id,
-        name: x.name.trim() || x.id,
+        // an endpoint with no name is called by its id: the one it is saved under
+        name: x.name.trim() || id,
         url: x.url.trim(),
         region: x.region.trim(),
         pathStyle: x.pathStyle,
@@ -78,18 +80,22 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
   ];
   return (
     <View testID="endpoint-form" class="gap-4">
-      {/* the side panel's header names it on the desktops */}
-      <If when={terminal()}>
-        <Title>{props.editing ? t("endpoints.edit") : t("endpoints.addTitle")}</Title>
-      </If>
-      <View class="flex-row flex-wrap gap-3">
-        <Field class="min-w-48 flex-1" label={t("endpoints.field.name")} value={d().name} onChange={(v) => set("name", v)} testID="ep-name" />
+      <Heading>{props.editing ? t("endpoints.edit") : t("endpoints.addTitle")}</Heading>
+      <View class={GRID}>
+        <Field class={CELL} label={t("endpoints.field.name")} value={d().name} onChange={(v) => set("name", v)} onSubmit={save} testID="ep-name" />
         {/* an endpoint's id names it in sessions and settings: set once */}
-        <If when={!props.editing} else={<KeyValue rows={[[t("endpoints.field.id"), d().id]]} />}>
-          <Field class="min-w-48 flex-1" label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} testID="ep-id" mono />
+        <If
+          when={!props.editing}
+          else={
+            <Labeled class={CELL} label={t("endpoints.field.id")}>
+              <Mono>{d().id}</Mono>
+            </Labeled>
+          }
+        >
+          <Field class={CELL} label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} onSubmit={save} testID="ep-id" mono />
         </If>
         <Choice
-          class="min-w-48 flex-1"
+          class={CELL}
           label={t("endpoints.field.vendor")}
           value={d().vendor}
           items={vendors.map((v) => ({ value: v.id, title: v.id === "other" ? t("endpoints.vendorOther") : v.label }))}
@@ -109,70 +115,58 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
             });
           }}
         />
+        <Field class={CELL} label={t("endpoints.field.region")} value={d().region} onChange={(v) => set("region", v)} onSubmit={save} testID="ep-region" mono />
       </View>
-      <View class="flex-row flex-wrap gap-3">
-        <Field class="min-w-48 flex-[2]" label={t("endpoints.field.url")} value={d().url} onChange={(v) => set("url", v)} placeholder="https://s3.eu-west-1.amazonaws.com" testID="ep-url" mono />
-        <Field class="min-w-48 flex-1" label={t("endpoints.field.region")} value={d().region} onChange={(v) => set("region", v)} testID="ep-region" mono />
-      </View>
+      <Field label={t("endpoints.field.url")} value={d().url} onChange={(v) => set("url", v)} onSubmit={save} placeholder="https://s3.eu-west-1.amazonaws.com" testID="ep-url" mono />
       <SwitchRow label={t("endpoints.field.pathStyle")} checked={d().pathStyle} onChange={(v) => set("pathStyle", v)} testID="ep-path-style" />
-      <Field label={t("endpoints.field.ca")} value={d().caFile} onChange={(v) => set("caFile", v)} placeholder="/etc/ssl/my-ca.pem" mono />
-      <View class="flex-row flex-wrap gap-3">
-        <Choice class="min-w-48 flex-1" label={t("endpoints.field.credentials")} value={d().credentials} items={creds} onChange={(v) => set("credentials", v)} testID="ep-creds" />
-        <If when={d().credentials === "profile"}>
-          <Field class="min-w-48 flex-1" label={t("endpoints.field.profile")} value={d().profile} onChange={(v) => set("profile", v)} mono />
+      <View class={GRID}>
+        <Choice class={CELL} label={t("endpoints.field.credentials")} value={d().credentials} items={creds} onChange={(v) => set("credentials", v)} testID="ep-creds" />
+        <If when={d().credentials === "profile"} else={<View class={CELL} />}>
+          <Field class={CELL} label={t("endpoints.field.profile")} value={d().profile} onChange={(v) => set("profile", v)} onSubmit={save} mono />
         </If>
       </View>
-      <Muted>{t("endpoints.cred.note")}</Muted>
-      <Field label={t("endpoints.field.buckets")} value={d().buckets} onChange={(v) => set("buckets", v)} placeholder="logs, backups" mono />
-      <View class="flex-row gap-2">
+      <Field label={t("endpoints.field.ca")} value={d().caFile} onChange={(v) => set("caFile", v)} onSubmit={save} placeholder="/etc/ssl/my-ca.pem" mono />
+      <Field label={t("endpoints.field.buckets")} value={d().buckets} onChange={(v) => set("buckets", v)} onSubmit={save} placeholder="logs, backups" mono />
+      <Actions note={<Muted class="text-small">{t("endpoints.cred.note")}</Muted>}>
+        <Button variant="ghost" label={t("common.cancel")} onPress={props.onDone} testID="ep-cancel" />
         <Button variant="primary" label={t("common.save")} onPress={save} testID="ep-save" disabled={!d().url} />
-        <Button variant="ghost" label={t("common.cancel")} onPress={props.onDone} />
-      </View>
+      </Actions>
     </View>
   );
 }
 
+/** What a test found, said once: reachable (a note) or not (what went wrong, and its request). */
 function TestResult(props: { report: ConnectivityReport }) {
   const r = () => props.report;
-  const rows = (): [string, string][] => {
+  const facts = (): string => {
     const out: [string, string][] = [];
     if (r().credentialsSource) out.push([t("endpoints.credentials"), r().credentialsSource!]);
-    if (r().bucketCount !== null) out.push([t("browse.buckets"), String(r().bucketCount)]);
+    if (r().bucketCount !== null) out.push([t("browse.buckets"), count(r().bucketCount!)]);
     if (r().owner) out.push([t("endpoints.owner"), r().owner!]);
     if (r().server) out.push([t("endpoints.server"), r().server!]);
-    if (r().identity) out.push([t("endpoints.identity"), `${r().identity!.arn ?? ""} (${r().identity!.account ?? ""})`]);
-    if (r().identityNote) out.push([t("endpoints.identity"), r().identityNote!]);
-    return out;
+    // who the credentials are, or why that is not known: one line
+    const who = [r().identity ? `${r().identity!.arn ?? ""} (${r().identity!.account ?? ""})` : "", r().identityNote ?? ""].filter(Boolean).join(" · ");
+    if (who) out.push([t("endpoints.identity"), who]);
+    return [...(r().error ? [r().error!.message] : []), ...out.map(([k, v]) => `${k}: ${v}`)].join("\n");
   };
   return (
-    <View class="gap-2 rounded-(--radius) bg-muted p-3" testID="test-result">
-      <Badge tone={r().ok ? "pass" : "fail"} label={r().ok ? t("endpoints.reachable", { ms: fmtMs(r().latencyMs) }) : t("endpoints.unreachable")} />
-      <KeyValue rows={rows()} />
-      <If when={r().error}>
-        {(e) => (
-          <View class="flex-row items-center gap-2">
-            <Text class="flex-1 text-body text-destructive">
-              {e().message}
-            </Text>
-            <If when={e().recordId !== null && e().recordId !== undefined}>
-              <Button small label={t("common.showRequest")} onPress={() => showRequest(e().recordId)} />
-            </If>
-          </View>
-        )}
+    <Notice testID="test-result" tone={r().ok ? "info" : "error"} icon={r().ok ? "circle-check" : undefined} title={r().ok ? t("endpoints.reachable", { ms: fmtMs(r().latencyMs) }) : t("endpoints.unreachable")} text={facts()}>
+      <If when={r().error && r().error!.recordId !== null && r().error!.recordId !== undefined}>
+        <Button small label={t("common.showRequest")} onPress={() => showRequest(r().error!.recordId)} />
       </If>
-    </View>
+    </Notice>
   );
 }
 
 function Import(props: { onDone: () => void }) {
   const items = api.importableProfiles();
   const chosen = signal<Record<string, boolean>>({});
+  const names = () => items.filter((e) => chosen()[e.id]).map((e) => e.credentials.replace(/^profile /, ""));
   const doImport = () => {
-    const names = items.filter((e) => chosen()[e.id]).map((e) => e.credentials.replace(/^profile /, ""));
     try {
-      const n = api.importProfiles(names);
+      const n = api.importProfiles(names());
       refreshEndpoints();
-      notify(`+${n}`);
+      notify(t("welcome.imported", { n }));
       props.onDone();
     } catch (e) {
       report(e);
@@ -180,18 +174,18 @@ function Import(props: { onDone: () => void }) {
   };
   return (
     <View class="gap-4">
-      <If when={terminal()}>
-        <Title>{t("endpoints.import")}</Title>
-      </If>
+      <Heading>{t("endpoints.importTitle")}</Heading>
       <If when={items.length > 0} else={<Muted>{t("endpoints.importNone")}</Muted>}>
-        <Each of={items}>
-          {(e) => <Check label={`${e().name} — ${e().url}`} checked={!!chosen()[e().id]} onChange={(v) => chosen.update((c) => ({ ...c, [e().id]: v }))} />}
-        </Each>
+        <View class="gap-2">
+          <Each of={items}>
+            {(e) => <Check label={`${e().name} — ${e().url}`} checked={!!chosen()[e().id]} onChange={(v) => chosen.update((c) => ({ ...c, [e().id]: v }))} />}
+          </Each>
+        </View>
       </If>
-      <View class="flex-row gap-2">
-        <Button variant="primary" label={t("common.add")} onPress={doImport} disabled={items.length === 0} />
+      <Actions>
         <Button variant="ghost" label={t("common.cancel")} onPress={props.onDone} />
-      </View>
+        <Button variant="primary" label={t("welcome.importDo")} onPress={doImport} disabled={names().length === 0} testID="import-do" />
+      </Actions>
     </View>
   );
 }
@@ -254,13 +248,13 @@ export function Endpoints() {
       <View testID={`endpoint-${e.id}`} class="gap-2 px-4 py-3">
         <View class="flex-row items-center gap-3">
           <If when={!terminal()}>
-            <View class="size-8 items-center justify-center rounded-(--radius) bg-muted">
+            <View class="size-8 shrink-0 items-center justify-center rounded-(--radius) bg-muted">
               <Icon name="server" size={16} tint="foreground" />
             </View>
           </If>
           <View class="min-w-0 flex-1 gap-0.5">
             <View class="flex-row items-center gap-2">
-              <Text class="text-body font-semibold text-foreground">{e.name}</Text>
+              <Text class="min-w-0 shrink text-body font-semibold text-foreground line-clamp-1">{e.name}</Text>
               <Badge label={e.vendorLabel} />
               <If when={endpoint() === e.id}>
                 <Badge label={t("endpoints.current")} tone="primary" />
@@ -270,7 +264,7 @@ export function Endpoints() {
           </View>
           <Button small variant="outline" icon="activity" label={r() === "running" ? t("endpoints.testing") : t("endpoints.test")} onPress={() => test(e.id)} disabled={r() === "running"} testID={`test-${e.id}`} />
           <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
-          <IconButton icon="trash" label={t("common.remove")} onPress={() => void remove(e)} testID={`remove-${e.id}`} />
+          <IconButton icon="trash" label={t("endpoints.removeMenu")} onPress={() => void remove(e)} testID={`remove-${e.id}`} />
         </View>
         <If when={typeof r() === "object" ? (r() as ConnectivityReport) : null}>{(rep) => <TestResult report={rep()} />}</If>
       </View>
@@ -279,50 +273,28 @@ export function Endpoints() {
   return (
     <Page testID="screen-endpoints">
       <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
-        <View class="flex-row flex-wrap items-center gap-2">
-          <View class="flex-1">
-            <Title>{t("endpoints.title")}</Title>
-          </View>
-          <Button variant="outline" icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} testID="add-endpoint" />
-          <Button variant="outline" icon="key-round" label={t("endpoints.import")} onPress={() => mode.set("import")} />
-          <Button variant="outline" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
-        </View>
-        {/* the form in place, in a card with its own header: a sheet in the
-            Settings window would cover its tabs and lose its icons (nsh-issues) */}
-        <If when={form()}>
-          {(f) => (
-            <If when={!terminal()} else={<Card>{f()}</Card>}>
-              <Card pad="none" testID="endpoint-form-card">
-                <PanelHeader
-                  icon={mode() === "import" ? "key-round" : "server"}
-                  title={mode() === "import" ? t("endpoints.import") : mode() === "add" ? t("endpoints.addTitle") : t("endpoints.edit")}
-                  subtitle={typeof mode() === "object" ? (mode() as { edit: EndpointView }).edit.id : undefined}
-                  onClose={() => mode.set("list")}
-                  closeTestID="endpoint-form-close"
-                />
-                <View class="p-4">{f()}</View>
-              </Card>
-            </If>
-          )}
-        </If>
+        <ConfigNotice />
+        <PageHeader title={t("endpoints.title")}>
+          <If when={!terminal() && endpoints().length > 0}>
+            <Button variant="outline" label={t("compat.open")} tip={t("compat.hint")} onPress={() => openCompatWindow()} testID="open-compat" />
+          </If>
+          <Button variant="outline" label={t("endpoints.import")} onPress={() => mode.set("import")} testID="import-endpoints" />
+          <Button variant="primary" icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} testID="add-endpoint" />
+        </PageHeader>
+        {/* the form in place, a card of its own: a sheet in the Settings
+            window would cover its tabs and lose its icons (nsh-issues) */}
+        <If when={form()}>{(f) => <Card testID="endpoint-form-card">{f()}</Card>}</If>
         <If when={endpoints().length > 0} else={<Empty icon="server" text={t("endpoints.noneYet")} />}>
-          <View class={`overflow-hidden ${CARD}`}>
+          <Card pad="none">
             <Each of={endpoints()} key={(e) => e.id}>
               {(e, i) => <View class={i() > 0 ? "border-t border-border" : ""}>{row(e())}</View>}
             </Each>
-          </View>
+          </Card>
         </If>
-        <If when={!terminal() && endpoints().length > 0}>
-          <View class={`flex-row items-center gap-3 ${CARD} p-4`}>
-            <Icon name="flask-conical" size={16} tint="muted-foreground" />
-            <View class="min-w-0 flex-1 gap-0.5">
-              <Text class="text-body font-medium text-foreground">{t("compat.title")}</Text>
-              <Text class="text-small text-muted-foreground">{t("compat.hint")}</Text>
-            </View>
-            <Button variant="outline" label={t("compat.open")} onPress={() => openCompatWindow()} testID="open-compat" />
-          </View>
-        </If>
-        <Text class="text-small text-muted-foreground">{t("settings.telemetry")}</Text>
+        {/* a store to try sonde on, with or without endpoints of one's own */}
+        <View class="flex-row">
+          <Button small variant="ghost" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
+        </View>
       </View>
     </Page>
   );

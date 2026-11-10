@@ -40,7 +40,7 @@ delete markers, deleting objects, replacing a lifecycle configuration — are pl
    action, targets, outcome, request ids, errors).
 
 Probe runs write too (objects under `sonde-probe/` in the scratch bucket, and buckets of their own when allowed):
-the app and `sonde probe` refuse them while read-only mode is on, and each run is in the audit log (`runProbes`: started, then the
+the app refuses them while read-only mode is on (`sonde probe`, where the scratch bucket is named on the command line, runs), and each run is in the audit log (`runProbes`: started, then the
 outcome with anything cleanup could not remove). A cancelled run still cleans up after the probe it stopped in.
 
 A code place in a session opens only a source or text file (an allow-list of extensions) inside the folder the

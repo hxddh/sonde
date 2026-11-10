@@ -1,20 +1,20 @@
 // Activity: what sonde itself did — its requests, its jobs, the changes it
-// made (the audit log). One place for "what is sonde doing, what did it
+// made (Changes). One place for "what is sonde doing, what did it
 // do": a sheet from the window's edge, opened from the toolbar; a place of
 // its own in a terminal.
 
-import { batch, cleanup, effect, Scroll, signal, Text, View, type ViewRef } from "nsh";
-import { Button as BaseButton, DataTable } from "nsh/base";
+import { batch, cleanup, computed, effect, Scroll, signal, Text, View, type ViewRef } from "nsh";
+import { AlertDialog, DataTable } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
-import { ago, date, hm, middle, ms } from "../format";
+import { ago, clock, count, date, middle, ms } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, openSession, report, sessionsChanged } from "../store";
-import type { JobInfo, RecordSummary, RequestFilter } from "../types";
-import { Icon, iconSvg } from "./icon";
-import { Bar, Button, CARD, Dot, Empty, IconButton, Options, PanelHeader, terminal, ROW, rowHeight, SearchField, Segmented, Tip, TYPE, TABLE } from "./kit";
-import { clock, StatusMark, statusTone, toneText } from "./sessionview";
+import type { AuditEntry, JobInfo, RecordSummary, RequestFilter } from "../types";
+import { iconSvg } from "./icon";
+import { Badge, Bar, Button, Card, Empty, IconButton, Options, PanelHeader, terminal, ROW, rowHeight, SearchField, Segmented, type Tone, TYPE, TABLE } from "./kit";
+import { StatusMark } from "./sessionview";
 
 export const activityOpen = signal(false);
 
@@ -66,18 +66,41 @@ function Requests() {
   }, 300);
   cleanup(api.on("request", refresh));
   const filter = (): RequestFilter => ({ status: errors() ? { kind: "errors" } : null, text: text() || null });
-  const rows = (): RecordSummary[] => {
+  // asked of the engine once per change of the log or the filter, not once per cell drawn
+  const rows = computed((): RecordSummary[] => {
     latest();
     try {
       return api.requests(filter(), 5000);
     } catch (e) {
-      report(e);
+      // said after this pass: a toast is not shown from inside a derivation
+      queueMicrotask(() => report(e));
       return [];
     }
-  };
-  const record = () => {
+  });
+  const record = computed(() => {
     const id = selected();
     return id === null ? null : api.request(id);
+  });
+  // the log is gone for good: asked first, and what was open in it closes
+  const clear = async () => {
+    const { action } = await AlertDialog.show({
+      title: t("requests.clearTitle"),
+      description: t("requests.clearText"),
+      actions: [
+        { id: "cancel", label: t("common.cancel"), role: "cancel" },
+        { id: "clear", label: t("common.clear"), role: "destructive" },
+      ],
+    });
+    if (action !== "clear") return;
+    try {
+      api.clearRequests();
+      batch(() => {
+        selected.set(null);
+        latest.set(api.latestRequest());
+      });
+    } catch (e) {
+      report(e);
+    }
   };
   const asSession = () => {
     try {
@@ -105,13 +128,13 @@ function Requests() {
       { label: t("requests.exportJson"), icon: iconSvg("download"), onSelect: () => exportAs("json") },
       { label: t("requests.exportHar"), icon: iconSvg("download"), onSelect: () => exportAs("har") },
       { type: "separator" },
-      { label: t("requests.clear"), icon: iconSvg("trash"), onSelect: () => (api.clearRequests(), latest.set(api.latestRequest())) },
+      { label: t("requests.clear"), icon: iconSvg("trash"), onSelect: () => void clear() },
     ]);
   };
   const list = () => (
     <View class="min-h-0 flex-1 gap-2">
       <View class="flex-row items-center gap-2">
-        <SearchField class="min-w-0 flex-1" value={text()} placeholder={t("activity.search")} label={t("common.search")} onChange={(v) => text.set(v)} />
+        <SearchField small class="min-w-0 flex-1" value={text()} placeholder={t("activity.search")} label={t("common.search")} onChange={(v) => text.set(v)} />
         <Options
           testID="requests-filter"
           value={errors() ? "errors" : "all"}
@@ -127,19 +150,22 @@ function Requests() {
           <IconButton icon="ellipsis" label={t("common.more")} onPress={more} testID="requests-more" />
         </If>
       </View>
+      <Card pad="none" class="min-h-0 flex-1">
       <DataTable
         testID="requests"
         accessibilityLabel={t("activity.requests")}
-        class={`min-h-0 flex-1 ${CARD}`}
+        class="min-h-0 flex-1"
         columns={[
-          ...(terminal() ? [] : [{ key: "status", title: "", width: 56, resizable: false }]),
+          // a dot and the code, as StatusMark draws them
+          ...(terminal() ? [] : [{ key: "status", title: "", width: 52, resizable: false }]),
           // fits the panel: no column cut at its edge
           { key: "operation", title: t("requests.operation"), width: 164 },
           { key: "target", title: t("activity.target"), width: 148, minWidth: 100 },
           { key: "latency", title: t("sessions.took"), width: 64, align: "end" as const },
-          { key: "time", title: t("column.time"), width: 92 },
+          // to the millisecond, as operations show theirs
+          { key: "time", title: t("column.time"), width: 110 },
         ]}
-        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: ms(r.latencyMs), time: clock(r.time).slice(0, 8) }))}
+        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: ms(r.latencyMs), time: clock(r.time, "ms") }))}
         fontSize={TYPE.body}
         rowHeight={rowHeight(ROW.table)}
         classes={terminal() ? undefined : TABLE}
@@ -157,6 +183,7 @@ function Requests() {
         onRowPress={({ row }) => selected.set(rows()[row]?.id ?? null)}
         empty={<Empty icon="activity" text={t("activity.noRequests")} />}
       />
+      </Card>
     </View>
   );
   return (
@@ -170,61 +197,91 @@ function Requests() {
   );
 }
 
+const JOB_TONE: Record<JobInfo["state"], Tone> = { running: "primary", finished: "pass", failed: "fail", cancelled: "neutral" };
+
+/** A row of Activity's lists: hairlines between them, in one card. */
+const LIST_ROW = "gap-1 px-3 py-2";
+
 function Jobs() {
   const jobs = signal<JobInfo[]>(api.jobs());
   // the engine says when a job starts, moves on or ends
   const refresh = throttled(() => jobs.set(api.jobs()), 200);
   cleanup(api.on("jobs", refresh));
-  const tone = (s: string) => (s === "finished" ? "ok" : s === "failed" ? "server" : s === "cancelled" ? "miss" : "live") as "ok" | "server" | "miss" | "live";
+  // "3 min ago" follows the clock while the panel is open
+  const now = signal(Date.now());
+  const clockTick = setInterval(() => now.set(Date.now()), 30000);
+  cleanup(() => clearInterval(clockTick));
+  const age = (started: string) => (now(), ago(started));
   return (
     <If when={jobs().length > 0} else={<Empty icon="timer" text={t("jobs.none")} />}>
-      <Scroll class="flex-1" contentClass="gap-2 pb-4">
-        <Each of={jobs()} key={(j) => j.id}>
-          {(j) => (
-            <View class={`gap-2 ${CARD} p-4`}>
-              <View class="flex-row items-center gap-2">
-                <Dot tone={tone(j().state)} label={j().state} />
-                <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{j().title}</Text>
-                <Text class="text-caption text-muted-foreground">{ago(j().started)}</Text>
+      <Scroll class="flex-1" contentClass="pb-4">
+        <Card pad="none">
+          <Each of={jobs()} key={(j) => j.id}>
+            {(j, i) => (
+              <View class={`${LIST_ROW} ${i() > 0 ? "border-t border-border" : ""}`}>
+                <View class="min-h-7 flex-row items-center gap-2">
+                  <View class="shrink-0">
+                    <Badge tone={JOB_TONE[j().state] ?? "neutral"} label={t(`jobs.state.${j().state}` as never)} />
+                  </View>
+                  <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{j().title}</Text>
+                  <Text class="shrink-0 text-caption text-muted-foreground">{age(j().started)}</Text>
+                  <If when={j().state === "running"}>
+                    <Button small variant="outline" label={t("jobs.cancel")} onPress={() => api.cancelJob(j().id)} />
+                  </If>
+                </View>
                 <If when={j().state === "running"}>
-                  <Button small variant="outline" label={t("jobs.cancel")} onPress={() => api.cancelJob(j().id)} />
+                  <Bar value={j().progress.total ? j().progress.done / Math.max(1, j().progress.total!) : null} label={j().progress.message} />
                 </If>
+                <If when={j().error}>{(e) => <Text class="text-small text-destructive">{e().message}</Text>}</If>
               </View>
-              <If when={j().state === "running"}>
-                <Bar value={j().progress.total ? j().progress.done / Math.max(1, j().progress.total!) : null} label={j().progress.message} />
-              </If>
-              <If when={j().error}>{(e) => <Text class="text-small text-destructive">{e().message}</Text>}</If>
-            </View>
-          )}
-        </Each>
+            )}
+          </Each>
+        </Card>
       </Scroll>
     </If>
   );
 }
 
+/** What a change did, in words: its action's name here, else as the engine names it. */
+function actionLabel(action: string): string {
+  const key = `audit.action.${action}`;
+  const said = t(key as never);
+  return said === key ? action : said;
+}
+
 function Changes() {
   const entries = api.auditLog(200);
+  // started (its outcome not yet written), failed in part, or done
+  const outcome = (e: AuditEntry): { tone: Tone; label: string } => (e.stage === "started" ? { tone: "neutral", label: t("audit.started") } : e.failed > 0 ? { tone: "fail", label: t("audit.failed") } : { tone: "pass", label: t("audit.done") });
   return (
     <If when={entries.length > 0} else={<Empty icon="scroll-text" text={t("audit.none")} />}>
-      <Scroll class="flex-1" contentClass="gap-2 pb-4">
-        <Each of={entries}>
-          {(e) => (
-            <View class={`gap-2 ${CARD} p-4`}>
-              <View class="flex-row items-center gap-2">
-                <Dot tone={e().failed ? "client" : "ok"} />
-                <Text class="min-w-0 flex-1 text-body font-medium text-foreground">{`${e().action} · ${e().endpoint}/${e().bucket}`}</Text>
-                <Text class="tabular-nums text-caption text-muted-foreground">{`${e().succeeded}/${e().items}`}</Text>
-                <Text class="text-caption text-muted-foreground">{date(e().time)}</Text>
+      <Scroll class="flex-1" contentClass="pb-4">
+        <Card pad="none">
+          <Each of={entries}>
+            {(e, i) => (
+              <View class={`${LIST_ROW} ${i() > 0 ? "border-t border-border" : ""}`}>
+                <View class="min-h-7 flex-row items-center gap-2">
+                  <View class="shrink-0">
+                    <Badge tone={outcome(e()).tone} label={outcome(e()).label} />
+                  </View>
+                  <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{[actionLabel(e().action), [e().endpoint, e().bucket].filter(Boolean).join("/")].filter(Boolean).join(" · ")}</Text>
+                  <If when={e().stage !== "started"}>
+                    <Text class="shrink-0 tabular-nums text-caption text-muted-foreground">{t("matrix.of", { n: count(e().succeeded), of: count(e().items) })}</Text>
+                  </If>
+                  <Text class="shrink-0 text-caption text-muted-foreground">{date(e().time)}</Text>
+                </View>
+                <If when={e().targets.length > 0}>
+                  <View selectable>
+                    <Each of={e().targets.slice(0, 6)}>{(x) => <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{x()}</Text>}</Each>
+                  </View>
+                </If>
+                <If when={e().errors.length > 0}>
+                  <Text class="text-small text-destructive">{e().errors.join("; ")}</Text>
+                </If>
               </View>
-              <View selectable>
-                <Each of={e().targets.slice(0, 6)}>{(x) => <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{x()}</Text>}</Each>
-              </View>
-              <If when={e().errors.length > 0}>
-                <Text class="text-small text-destructive">{e().errors.join("; ")}</Text>
-              </If>
-            </View>
-          )}
-        </Each>
+            )}
+          </Each>
+        </Card>
       </Scroll>
     </If>
   );
@@ -264,27 +321,23 @@ export function Activity(props: { onClose?: () => void }) {
   );
 }
 
-/** The toolbar's way in: jobs running show as a count. */
-/** The toolbar's Activity button: where the focus goes back to as the panel closes. */
+/** The toolbar's way in (jobs running show as a count), and where the focus goes back to as the panel closes. */
 export let activityAnchor: ViewRef | undefined;
 
 export function ActivityButton(props: { onPress: () => void }) {
   watchJobs();
   return (
     <View ref={(r: ViewRef) => (activityAnchor = r)}>
-    <BaseButton
-      testID="activity-open"
-      accessibilityLabel={t("nav.activity")}
-      onPress={props.onPress}
-      selected={activityOpen()}
-      tooltip={<Tip text={t("nav.activity")} shortcut="mod+shift+a" />}
-      class="h-7 flex-row items-center gap-1.5 rounded-(--radius) px-1.5 hover:bg-muted selected:bg-accent"
-    >
-      <Icon name="activity" size={16} tint={runningJobs() > 0 ? "primary" : "muted-foreground"} />
-      <If when={runningJobs() > 0}>
-        <Text class="tabular-nums text-caption font-semibold text-primary">{String(runningJobs())}</Text>
-      </If>
-    </BaseButton>
+      <IconButton
+        testID="activity-open"
+        icon="activity"
+        label={t("nav.activity")}
+        shortcut="mod+shift+a"
+        onPress={props.onPress}
+        selected={activityOpen()}
+        tint={runningJobs() > 0 ? "primary" : undefined}
+        badge={runningJobs() > 0 ? count(runningJobs()) : undefined}
+      />
     </View>
   );
 }

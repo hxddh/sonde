@@ -4,7 +4,8 @@ import { effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { middle, separators } from "../format";
-import { Icon, type IconName, type Tint } from "./icon";
+import { isAvailable, Menu } from "nsh/desktop";
+import { Icon, type IconName, iconSvg, type Tint } from "./icon";
 
 export const terminal = () => platform.idiom === "terminal";
 /** Figures as text: a terminal, or a screen reader (a chart's table reads row by row, its picture not at all). */
@@ -77,6 +78,14 @@ export const TABLE = {
 } as const;
 /** The one width of a settings page, its forms and lists: Settings and Endpoints line up. */
 export const FORM = "w-full max-w-[720px]";
+/** The one width of a centered column to read (the welcome, an empty Run's intro). */
+export const READING = "w-full max-w-[560px]";
+/** The window's two breakpoints, and no others: under `sidebar` the sidebar
+ * folds away; from `inspector` an inspector sits beside what it details
+ * (under it, it comes in from the edge). */
+export const BREAK = { sidebar: 860, inspector: 1160, board: 1040 } as const;
+/** A row under the pointer, pressed, and chosen: one look in every list, tree and menu. */
+export const ROW_STATE = "hover:bg-row-hover active:bg-muted selected:bg-selection";
 /** The title bar's height: sheets start below it, so it stays a title bar. */
 export const TITLE_BAR = 44;
 
@@ -120,6 +129,18 @@ export function PanelHeader(props: { title: string; icon?: IconName; subtitle?: 
       <If when={props.onClose}>
         <IconButton icon="x" label={t("common.close")} onPress={() => props.onClose?.()} testID={props.closeTestID} />
       </If>
+    </View>
+  );
+}
+
+/** The head of a list in the sidebar: what it lists, and its few commands. */
+export function SideHeader(props: { title: string; children?: JSX.Element }) {
+  return (
+    <View class="h-9 shrink-0 flex-row items-center gap-1 pl-4 pr-2">
+      <Text role="header" class="min-w-0 flex-1 text-caption font-semibold text-muted-foreground line-clamp-1">
+        {props.title}
+      </Text>
+      {props.children}
     </View>
   );
 }
@@ -197,7 +218,7 @@ export function Button(props: {
 
 /** A button that shows only its icon, named for screen readers (a terminal
  * shows the name in its place), explained by its tooltip. */
-export function IconButton(props: { icon: IconName; label: string; onPress?: () => void; shortcut?: string; disabled?: boolean; selected?: boolean; tint?: Tint; testID?: string; class?: string }) {
+export function IconButton(props: { icon: IconName; label: string; onPress?: () => void; shortcut?: string; disabled?: boolean; selected?: boolean; tint?: Tint; testID?: string; class?: string; /** a small count at its corner (jobs running) */ badge?: string }) {
   return (
     <BaseButton
       testID={props.testID}
@@ -209,6 +230,11 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
       class={`size-7 items-center justify-center rounded-(--radius) hover:bg-muted active:bg-muted selected:bg-selection disabled:opacity-40 ${FOCUS} ${props.class ?? ""}`}
     >
       <Icon name={props.icon} size={16} tint={props.tint ?? (props.selected ? "foreground" : "muted-foreground")} />
+      <If when={props.badge}>
+        <View class="absolute -right-1.5 -top-1 h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1">
+          <Text class="tabular-nums text-caption font-semibold leading-4 text-primary-foreground">{props.badge}</Text>
+        </View>
+      </If>
     </BaseButton>
   );
 }
@@ -271,7 +297,7 @@ export function ListRow(props: { children: JSX.Element; onPress: () => void; sel
       accessibilityLabel={props.label}
       selected={props.selected}
       onPress={props.onPress}
-      class={`flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 hover:bg-muted active:bg-muted selected:bg-selection ${FOCUS} ${props.class ?? ""}`}
+      class={`flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 ${ROW_STATE} ${FOCUS} ${props.class ?? ""}`}
     >
       {props.children}
       {/* what ends the row (a count, a time) keeps its width and the row's middle */}
@@ -314,6 +340,120 @@ export function Path(props: { path: string; max?: number; class?: string; testID
     <Text testID={props.testID} accessibilityLabel={props.path} class={`font-mono text-caption line-clamp-1 ${props.class ?? "text-foreground"}`}>
       {middle(props.path, props.max ?? 48)}
     </Text>
+  );
+}
+
+/** Something the reader should know before going on, in place: a note
+ * (info), a caution (warn) or what went wrong (error); its icon, its words,
+ * and at its end what can be done about it. The one banner. */
+export function Notice(props: { text: string; title?: string; tone?: "info" | "warn" | "error"; icon?: IconName; children?: JSX.Element; testID?: string; class?: string }) {
+  const tone = () => props.tone ?? "info";
+  const look = () => ({ info: "border-border bg-muted/60", warn: "border-warn/30 bg-warn/10", error: "border-destructive/30 bg-destructive/10" })[tone()];
+  const icon = (): IconName => props.icon ?? (tone() === "info" ? "info" : "triangle-alert");
+  const tint = (): Tint => (tone() === "warn" ? "warn" : tone() === "error" ? "destructive" : "muted-foreground");
+  return (
+    <View testID={props.testID} role={tone() === "error" ? "alert" : undefined} class={`flex-row items-start gap-2 rounded-(--radius) border px-3 py-2 ${look()} ${props.class ?? ""}`}>
+      <If when={!terminal()}>
+        <View class="h-5 shrink-0 justify-center">
+          <Icon name={icon()} size={14} tint={tint()} />
+        </View>
+      </If>
+      <View selectable class="min-w-0 flex-1 gap-0.5">
+        <If when={props.title}>
+          <Text class="text-body font-medium text-foreground">{props.title}</Text>
+        </If>
+        <Text class="text-small leading-5 text-foreground">{props.text}</Text>
+      </View>
+      <If when={props.children}>
+        <View class="shrink-0 flex-row items-center gap-2">{props.children}</View>
+      </If>
+    </View>
+  );
+}
+
+/** Something fetched, in its three states, each said truly: on its way
+ * (what is being waited for), failed (why, and Try again), or there. A
+ * place never shows its empty words for a failure, nor waits forever. */
+export function Await(props: { loading: boolean; error?: unknown; retry?: () => void; waiting?: string; children: JSX.Element; testID?: string; class?: string }) {
+  const message = () => {
+    const e = props.error;
+    if (!e) return null;
+    return e instanceof Error ? e.message : typeof e === "object" && e !== null && "message" in e ? String((e as { message: unknown }).message) : String(e);
+  };
+  return (
+    <If
+      when={message()}
+      else={
+        <If when={props.loading} else={props.children}>
+          <View class={`flex-1 items-center justify-center p-6 ${props.class ?? ""}`}>
+            <Loading text={props.waiting} testID={props.testID ? `${props.testID}-loading` : undefined} />
+          </View>
+        </If>
+      }
+    >
+      {(m) => (
+        <Empty icon="triangle-alert" title={t("error.loadTitle")} text={m()} testID={props.testID ? `${props.testID}-error` : "load-error"}>
+          <If when={props.retry}>
+            <Button variant="outline" icon="refresh-cw" label={t("error.retry")} onPress={() => props.retry?.()} />
+          </If>
+        </Empty>
+      )}
+    </If>
+  );
+}
+
+/** The foot of a dialog or a form: Cancel (quiet) then what it commits, at
+ * the end, in that order everywhere; what is beside them (a note) at the start. */
+export function Actions(props: { children: JSX.Element; note?: JSX.Element; class?: string }) {
+  return (
+    <View class={`flex-row items-center gap-2 ${props.class ?? ""}`}>
+      <View class="min-w-0 flex-1">{props.note}</View>
+      {props.children}
+    </View>
+  );
+}
+
+/** Back to where this was opened from: one control, a chevron and the place's name. */
+export function Back(props: { label?: string; onPress: () => void; testID?: string }) {
+  return <Button small variant="ghost" icon="chevron-left" label={props.label ?? t("common.back")} onPress={props.onPress} testID={props.testID} class="-ml-1.5 self-start" />;
+}
+
+/** The head of a place or a panel's page: what it is, a line about it, and
+ * its commands at the end, on one middle. */
+export function PageHeader(props: { title: string; subtitle?: string; mono?: boolean; children?: JSX.Element; testID?: string }) {
+  return (
+    <View testID={props.testID} class="min-h-8 flex-row items-center gap-3">
+      <View class="min-w-0 flex-1 gap-0.5">
+        <Text role="header" class={`text-heading font-semibold text-foreground line-clamp-1 ${props.mono ? "font-mono" : ""}`}>
+          {props.title}
+        </Text>
+        <If when={props.subtitle}>
+          <Text class="text-small text-muted-foreground line-clamp-1">{props.subtitle}</Text>
+        </If>
+      </View>
+      <If when={props.children}>
+        <View class="shrink-0 flex-row items-center gap-2">{props.children}</View>
+      </If>
+    </View>
+  );
+}
+
+/** A figure in a line of them, without a card: the number, and under it
+ * what it counts. `delta` says how it changed (better in the ok tone, worse
+ * in the error's). The one inline figure; in a row of tiles, `Stat`. */
+export function Figure(props: { value: string; label: string; tone?: "plain" | "ok" | "warn" | "bad" | "quiet"; delta?: string; deltaTone?: "ok" | "bad" | "quiet"; small?: boolean; testID?: string }) {
+  const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+  const dt = () => ({ ok: "text-status-ok", bad: "text-status-server", quiet: "text-muted-foreground" })[props.deltaTone ?? "quiet"];
+  return (
+    <View testID={props.testID} class="gap-0.5">
+      <View class="flex-row items-baseline gap-1.5">
+        <Text class={`tabular-nums font-semibold ${props.small ? "text-body" : "text-heading"} ${tint()}`}>{props.value}</Text>
+        <If when={props.delta}>
+          <Text class={`tabular-nums text-caption font-medium ${dt()}`}>{props.delta}</Text>
+        </If>
+      </View>
+      <Text class="text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
+    </View>
   );
 }
 
@@ -418,10 +558,14 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxe
   );
 }
 
-export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string }) {
+/** A line of text to type. `bare` leaves its label to screen readers (and
+ * its placeholder): a field in a toolbar row, on the row's one middle. */
+export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean }) {
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
-      <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
+      <If when={!props.bare}>
+        <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
+      </If>
       <Input
         testID={props.testID}
         accessibilityLabel={props.label}
@@ -434,6 +578,18 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
         submitBehavior={props.onSubmit ? "submit" : undefined}
         class={`h-8 rounded-(--radius) border border-input bg-background px-2.5 text-body text-foreground focus:border-ring ${FOCUS} ${props.mono ? "font-mono" : ""}`}
       />
+    </View>
+  );
+}
+
+/** A control that has no label of its own (a row of options, a switch, a
+ * value only shown) under the label a `Field` has, on a field's height: in a
+ * form, every control's name is above it. */
+export function Labeled(props: { label: string; children: JSX.Element; class?: string }) {
+  return (
+    <View class={`gap-1 ${props.class ?? ""}`}>
+      <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
+      <View class="min-h-8 flex-row items-center">{props.children}</View>
     </View>
   );
 }
@@ -656,11 +812,13 @@ export function Section(props: { title?: string; description?: string; children:
   );
 }
 
+/** Progress: `value` is a fraction, 0–1 (`null` while how much is not known). */
 export function Bar(props: { value: number | null; label?: string }) {
   return (
     <View class="gap-1">
       <Progress
-        value={props.value ?? undefined}
+        // Native Shell's Progress counts 0–100
+        value={props.value === null ? undefined : Math.min(100, Math.max(0, props.value * 100))}
         indeterminate={props.value === null}
         accessibilityLabel={props.label ?? "progress"}
         class="h-1.5 rounded-full"
@@ -837,6 +995,54 @@ export function Legend(props: { items: { label: string; swatch: string }[]; clas
         )}
       </Each>
     </View>
+  );
+}
+
+/** A chart's tooltip: the popup surface, a title and a line or two of
+ * figures, beside the pointer (a Plot's `tooltipContent`). One for every chart. */
+export function ChartTip(props: { title: string; lines: string[] }) {
+  return (
+    <View class={`max-w-[280px] gap-0.5 ${POPUP} px-2 py-1.5`}>
+      <Text class="text-small font-medium text-popover-foreground line-clamp-2">{props.title}</Text>
+      <Each of={props.lines}>{(l) => <Text class="tabular-nums text-caption text-muted-foreground">{l()}</Text>}</Each>
+    </View>
+  );
+}
+
+/** The first row of a bucket tool's sheet, built one way: what it looks at
+ * (`scope`), its command and Cancel while it runs (`children`), and at the
+ * row's end what else it offers (`end`: a `More`). One middle, small controls. */
+export function ToolBar(props: { scope?: string; children?: JSX.Element; end?: JSX.Element; testID?: string }) {
+  return (
+    <View testID={props.testID} class="min-h-8 flex-row flex-wrap items-center gap-2">
+      <If when={props.scope}>{(s) => <Path path={s()} max={40} class="shrink text-muted-foreground" />}</If>
+      {props.children}
+      {/* what ends the row is pushed to its end; without it, a field among the children may take the room */}
+      <If when={props.end}>
+        <View class="flex-1" />
+        {props.end}
+      </If>
+    </View>
+  );
+}
+
+/** What else a place offers (exports, copies): a `⋯` button opening the
+ * system's menu; where there is none (the web), the commands as small buttons. */
+export function More(props: { actions: () => { label: string; icon?: IconName; run: () => void; disabled?: boolean }[]; testID?: string }) {
+  return (
+    <If
+      when={isAvailable}
+      else={
+        <Each of={props.actions()}>{(a) => <Button small variant="outline" icon={a().icon} label={a().label} onPress={a().run} disabled={a().disabled} />}</Each>
+      }
+    >
+      <IconButton
+        icon="ellipsis"
+        label={t("common.more")}
+        testID={props.testID}
+        onPress={() => void Menu.popup(props.actions().map((a) => ({ label: a.label, icon: a.icon ? iconSvg(a.icon) : undefined, disabled: a.disabled, onSelect: a.run })))}
+      />
+    </If>
   );
 }
 

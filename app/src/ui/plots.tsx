@@ -5,50 +5,52 @@
 // requests over time, and two runs side by side. Each says in words what it
 // shows; a terminal gets the words and a table instead.
 
-import { signal, Text, token, View } from "nsh";
+import { type JSX, signal, Text, token, View } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { Arc, Area, Bar, Cell, Dot, Grid, Line, Pie, Plot, PlotAppearScope, PlotAxis, PlotLabel, Rule, Sankey, Treemap } from "nsh/base/plot";
-import { bytes, ms } from "../format";
+import { bytes, cost, count, duration, ms, percent } from "../format";
 import { t } from "../i18n";
 import type { LatencyChange, Observation, Profile, ProfileGroup, ProgramHistory, RecordSummary, RunChange } from "../types";
 import { observationSaving, observationText } from "../phrases";
-import { CARD, Legend, Options, POPUP, terminal, textual, SimpleTable } from "./kit";
+import { Card, CARD, Legend, Options, POPUP, terminal, textual, SimpleTable } from "./kit";
 
-/** Time from a session's start: 840 ms, 2.35 s, 41.2 s. */
-export const offset = (v: number) => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(v < 10000 ? 2 : 1)} s`);
-
-/** An amount as people read it: a session's requests often cost thousandths
- * of a cent, which read as a thousand runs' worth ("0.28 USD per 1,000 runs"). */
-export function cost(v: number, currency: string): string {
-  if (!Number.isFinite(v) || v < 0) return `— ${currency}`;
-  if (v > 0 && v < 0.01) {
-    const k = v * 1000;
-    const s = k < 0.01 ? Number(k.toPrecision(2)).toString() : k.toFixed(2);
-    return t("cost.perThousand", { v: s, cur: currency });
-  }
-  return `${v.toFixed(2)} ${currency}`;
-}
+/** Time from a session's start, and what a run's requests cost: the app's one duration and cost. */
+export const offset = duration;
+export { cost };
 
 /** A kind of request as people say it: "HeadObject" or "HeadObject, not found". */
 export const groupName = (g: Pick<ProfileGroup, "operation" | "missed">) => (g.missed ? t("profile.notFound", { op: g.operation }) : g.operation);
 
-const pct = (v: number) => `${Math.round(v * 100)}%`;
+const pct = percent;
 
 // --- one visual language for every chart ------------------------------------------
 /** The room left of a chart across, for the names of its rows: one width
  * for every chart, so their bars start at one edge. */
-export const GUTTER = "ml-40";
+export const GUTTER = "ml-36";
 /** The same room before a legend under such a chart. */
-export const GUTTER_PAD = "pl-40";
+export const GUTTER_PAD = "pl-36";
 /** A row's name in that room: right-aligned, cut at its end. */
-export const AXIS_LABEL = "w-36 pr-3 text-right text-small text-foreground line-clamp-1";
+export const AXIS_LABEL = "w-32 pr-3 text-right text-small text-foreground line-clamp-1";
+/** The same name beside a plot that has no axis of names (small charts in rows). */
+const ROW_LABEL = "w-36 shrink-0 pr-3 text-right text-small text-foreground line-clamp-1";
+/** A row of a chart of bars across: one pitch for every chart. */
+const PITCH = 28;
+/** Under a chart whose bottom axis has ticks: the room they take. */
+const TICK_ROOM = "mb-5";
+/** What the pointer rests on: a band over a row or a slice, a line at a moment. */
+const CROSS_BAND = "w-full h-full rounded-(--radius-sm) bg-foreground/5";
+const CROSS_LINE = "w-px h-full bg-foreground/25";
+/** What the pointer does not rest on fades to this, in every chart. */
+const INACTIVE = 0.4;
 /** A time axis's ticks: three, tabular, quiet. */
 export const TIME_TICK = "pt-1 tabular-nums text-caption text-muted-foreground";
 /** A value axis's ticks, inside the plot on a chip. */
-export const VALUE_TICK = "ml-1 rounded-sm bg-card/85 px-1 tabular-nums text-caption text-muted-foreground";
+export const VALUE_TICK = "ml-1 rounded-(--radius-sm) bg-card/85 px-1 tabular-nums text-caption text-muted-foreground";
+/** The same at the plot's far edge (a second scale). */
+const VALUE_TICK_END = "mr-1 rounded-(--radius-sm) bg-card/85 px-1 tabular-nums text-caption text-muted-foreground";
 
 // the keys and screen readers step the hover with a spring; the pointer's own moves follow at once
-const MOTION = { appear: { duration: 420, easing: "easeOut" as const }, update: { duration: 260, easing: "easeOut" as const }, enter: { duration: 100 }, exit: { duration: 160 }, pointer: { stiffness: 420, damping: 36 } };
+export const MOTION = { appear: { duration: 420, easing: "easeOut" as const }, update: { duration: 260, easing: "easeOut" as const }, enter: { duration: 100 }, exit: { duration: 160 }, pointer: { stiffness: 420, damping: 36 } };
 
 const TONES = ["ok", "miss", "client", "server"] as const;
 type Tone = (typeof TONES)[number];
@@ -62,6 +64,142 @@ function Tip(props: { title: string; lines: string[] }) {
       <Text class="text-small font-medium text-popover-foreground line-clamp-2">{props.title}</Text>
       <Each of={props.lines}>{(l) => <Text class="tabular-nums text-caption text-muted-foreground">{l()}</Text>}</Each>
     </View>
+  );
+}
+
+/** A chart in its frame, the same for every chart: what it asks, a sentence
+ * that answers it, how it is cut (at the end of its title), the plot, its
+ * legend. A terminal gets the title and what the chart says in words. */
+export function Chart(props: { title: string; text?: string; action?: JSX.Element; children: JSX.Element; testID?: string; class?: string }) {
+  if (terminal()) {
+    return (
+      <View testID={props.testID} class="gap-0">
+        <Text role="header" class="font-semibold text-foreground">{props.title}</Text>
+        {props.children}
+      </View>
+    );
+  }
+  return (
+    <Card testID={props.testID} class={props.class}>
+      <View class="min-h-7 flex-row items-start gap-3">
+        <View class="min-w-0 flex-1 gap-0.5">
+          <Text role="header" class="text-body font-semibold text-foreground">{props.title}</Text>
+          <If when={props.text}>
+            <Text class="tabular-nums text-small text-muted-foreground line-clamp-2">{props.text}</Text>
+          </If>
+        </View>
+        {props.action}
+      </View>
+      {props.children}
+    </Card>
+  );
+}
+
+// --- what ran at once ----------------------------------------------------------------
+
+/** Each request its lane: a request takes the first lane free when it
+ * starts, so the lanes in use at a moment are the requests in flight then. */
+export function lanesOf(samples: { tMs: number; ms: number }[]): number[] {
+  const order = samples.map((_, i) => i).sort((a, b) => samples[a].tMs - samples[b].tMs || a - b);
+  const ends: number[] = [];
+  const lane = new Array<number>(samples.length).fill(0);
+  for (const i of order) {
+    const start = samples[i].tMs;
+    let k = ends.findIndex((e) => e <= start);
+    if (k < 0) k = ends.push(0) - 1;
+    ends[k] = start + Math.max(samples[i].ms, 1e-6);
+    lane[i] = k;
+  }
+  return lane;
+}
+
+const LANES = 24;
+const LANE_BINS = 96;
+
+/** The session's requests lane by lane: each a run of cells from its start
+ * to its end, in its outcome's color, on the first lane free. What ran at
+ * once is stacked; what waited for the one before follows it on its lane; a
+ * long request is a long run. A press opens the request under the pointer. */
+export function Lanes(props: { profile: Profile; domainMs?: [number, number] | null; onRequest?: (id: number) => void }) {
+  const domain = (): [number, number] => props.domainMs ?? [0, Math.max(props.profile.wallMs, 1)];
+  const all = () => {
+    const lane = lanesOf(props.profile.samples);
+    return props.profile.samples.map((x, i) => ({ ...x, lane: lane[i] }));
+  };
+  const lanes = () => Math.min(LANES, all().reduce((m, x) => Math.max(m, x.lane + 1), 1));
+  const hidden = () => all().filter((x) => x.lane >= LANES).length;
+  const width = () => (domain()[1] - domain()[0]) / LANE_BINS;
+  // a cell per slice of time a request spans, on its lane; requests of a lane alternate two shades, so two in a row read as two
+  const rows = () => {
+    const [a, b] = domain();
+    const w = width();
+    const turn = new Map<number, number>();
+    const out: { x: string; y: string; id: number; tone: Tone; alt: boolean; sample: number }[] = [];
+    all().forEach((x, i) => {
+      if (x.lane >= LANES || x.tMs >= b || x.tMs + x.ms < a) return;
+      const n = (turn.get(x.lane) ?? 0) + 1;
+      turn.set(x.lane, n);
+      const from = Math.max(0, Math.floor((x.tMs - a) / w));
+      const to = Math.min(LANE_BINS - 1, Math.floor((x.tMs + Math.max(x.ms, 0) - a) / w));
+      for (let k = from; k <= to; k++) out.push({ x: String(k), y: String(x.lane), id: x.id, tone: statusTone(x.status ?? null), alt: n % 2 === 0, sample: i });
+    });
+    return out;
+  };
+  const hovered = signal<number | null>(null);
+  const tip = () => {
+    const r = hovered() === null ? null : rows()[hovered()!];
+    const x = r ? all()[r.sample] : null;
+    if (!x) return null;
+    const g = props.profile.groups[x.group];
+    return { title: g ? groupName(g) : "", lines: [`+${offset(x.tMs)} · ${ms(x.ms)}`, `${x.status ?? "—"} · ${bytes(x.bytes ?? 0)}`] };
+  };
+  const label = () => t("lanes.text", { n: props.profile.peakInFlight, at: offset(props.profile.peakAtMs) });
+  const bins = Array.from({ length: LANE_BINS }, (_, i) => String(i));
+  return (
+    <If when={!terminal() && all().length > 1} else={<Text class="text-small text-muted-foreground">{label()}</Text>}>
+      <View class="gap-2">
+        <BaseButton
+          accessibilityLabel={label()}
+          disabled={!props.onRequest}
+          onPress={() => {
+            const r = hovered() === null ? null : rows()[hovered()!];
+            if (r) props.onRequest?.(r.id);
+          }}
+        >
+          <Plot
+            testID="lanes"
+            data={rows()}
+            xScale={{ type: "band", domain: bins, paddingInner: 0 }}
+            yScale={{ type: "band", domain: Array.from({ length: lanes() }, (_, i) => String(i)), paddingInner: 0.3 }}
+            colorScale={tones()}
+            accessibilityLabel={label()}
+            accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines.join(", ")}` : "" }}
+            motion={MOTION}
+            tooltipPlacement="pointer"
+            tooltipOffset={10}
+            tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
+            onHoverChange={({ index }) => {
+              hovered.set(index);
+              const r = index === null ? null : rows()[index];
+              focusMs.set(r ? all()[r.sample].tMs : null);
+            }}
+            class={`${TICK_ROOM} w-full`}
+            // a few lanes are tall, many are thin: about the height of the chart beside it either way
+            style={{ height: lanes() * Math.max(8, Math.min(22, Math.round(176 / lanes()))) + 6 }}
+          >
+            <Cell x={(_, i) => (rows()[i]?.alt ? (undefined as unknown as string) : (rows()[i]?.x ?? ""))} y="y" color="tone" inactiveOpacity={INACTIVE} hoverCellClass="outline-1 outline-foreground" />
+            <Cell x={(_, i) => (rows()[i]?.alt ? rows()[i].x : (undefined as unknown as string))} y="y" color="tone" inactiveOpacity={INACTIVE} style={{ opacity: 0.6 }} hoverCellClass="outline-1 outline-foreground" />
+            <PlotAxis tickValues={[0, LANE_BINS / 2, LANE_BINS - 1]} format={(i) => offset(domain()[0] + i * width())} labelClass={TIME_TICK} />
+          </Plot>
+        </BaseButton>
+        <View class="flex-row flex-wrap items-center gap-x-4 gap-y-1">
+          <Legend square items={[{ label: t("flows.ok"), swatch: "bg-bar" }, { label: t("flows.notfound"), swatch: "bg-status-miss" }, { label: t("lanes.failed"), swatch: "bg-status-server" }]} />
+          <If when={hidden() > 0}>
+            <Text class="tabular-nums text-caption text-muted-foreground">{t("lanes.more", { n: hidden(), lanes: LANES })}</Text>
+          </If>
+        </View>
+      </View>
+    </If>
   );
 }
 
@@ -175,7 +313,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines.join(", ")}` : "" }}
           appearGeneration={1}
           motion={MOTION}
-          crossLineClass="w-full h-full rounded-sm bg-foreground/6"
+          crossLineClass={CROSS_BAND}
           tooltipPlacement="pointer"
           tooltipOffset={10}
           tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
@@ -192,8 +330,8 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           <Line y="inFlight" scale="y2" curve="stepAfter" class="stroke-foreground/30 stroke-[1.25]" hoverDotClass="hidden" />
           {/* full width: when (from the session's start) and how many at once */}
           <If when={props.axis}>
-            <PlotAxis tickValues={[0, Math.floor((rows().length - 1) / 2), rows().length - 1]} format={(i) => `+${offset(rows()[i]?.tMs ?? 0)}`} labelClass="pt-1 tabular-nums text-caption text-muted-foreground" />
-            <PlotAxis placement="right" scale="y2" labelPlacement="inside" ticks={2} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass="mr-1 rounded-sm bg-card/85 px-1 tabular-nums text-caption text-muted-foreground" />
+            <PlotAxis tickValues={[0, Math.floor((rows().length - 1) / 2), rows().length - 1]} format={(i) => `+${offset(rows()[i]?.tMs ?? 0)}`} labelClass={TIME_TICK} />
+            <PlotAxis placement="right" scale="y2" labelPlacement="inside" ticks={2} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass={VALUE_TICK_END} />
           </If>
           {/* the moment another chart rests on */}
           <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
@@ -289,7 +427,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
         accessibilityLabel={label()}
         accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
         motion={MOTION}
-        crossLineClass="w-px h-full bg-foreground/20"
+        crossLineClass={CROSS_LINE}
         tooltipPlacement="pointer"
         tooltipOffset={10}
         tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
@@ -304,7 +442,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
         <Line y={gap((b) => b.p50Ms)} curve="linear" class="stroke-chart-1 stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
         <Line y={gap((b) => b.p99Ms)} curve="linear" class="stroke-muted-foreground/70 stroke-[1]" style={{ strokeDasharray: "3 3" }} hoverDotClass="hidden" />
         <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), focusMs()) ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
-        <PlotAxis placement="left" labelPlacement="inside" ticks={3} format={(v) => ms(v)} labelClass="ml-1 rounded-sm bg-card/85 px-1 tabular-nums text-caption text-muted-foreground" />
+        <PlotAxis placement="left" labelPlacement="inside" ticks={3} format={(v) => ms(v)} labelClass={VALUE_TICK} />
       </Plot>
     </If>
   );
@@ -340,22 +478,22 @@ export function Chains(props: { profile: Profile; max?: number }) {
           accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines.join(", ")}` : "" }}
           appearGeneration={1}
           motion={MOTION}
-          crossLineClass="w-full h-full rounded-sm bg-foreground/5"
+          crossLineClass={CROSS_BAND}
           tooltipPlacement="pointer"
           tooltipOffset={10}
           tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
           onHoverChange={({ index }) => hovered.set(index)}
-          class={`mb-6 ${GUTTER}`}
-          style={{ height: rows().length * 34 + 30 }}
+          class={`${TICK_ROOM} ${GUTTER}`}
+          style={{ height: rows().length * PITCH * 1.25 + 30 }}
         >
           {/* as it ran: one after another */}
-          <Bar base="startMs" value="endMs" class="fill-muted-foreground/45" cornerRadii={3} inactiveOpacity={0.45} label={(_, i) => offset(rows()[i].endMs - rows()[i].startMs)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
+          <Bar base="startMs" value="endMs" class="fill-muted-foreground/45" cornerRadii={3} inactiveOpacity={INACTIVE} label={(_, i) => offset(rows()[i].endMs - rows()[i].startMs)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
           {/* the same requests eight at once */}
-          <Bar base="startMs" value="soon" class="fill-chart-1" cornerRadii={3} inactiveOpacity={0.45} label={(_, i) => t("chains.bar", { fast: offset(rows()[i].atOnceMs) })} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
+          <Bar base="startMs" value="soon" class="fill-chart-1" cornerRadii={3} inactiveOpacity={INACTIVE} label={(_, i) => t("chains.bar", { fast: offset(rows()[i].atOnceMs) })} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
           <PlotAxis placement="left" format={(i) => rows()[i]?.name ?? ""} labelClass={AXIS_LABEL} />
-          <PlotAxis placement="bottom" ticks={4} format={(v) => offset(v)} labelClass="pt-1 tabular-nums text-caption text-muted-foreground" />
+          <PlotAxis placement="bottom" ticks={4} format={(v) => offset(v)} labelClass={TIME_TICK} />
         </Plot>
-        <Legend class="pl-32" items={[{ label: t("chains.asRan"), swatch: "bg-muted-foreground/45" }, { label: t("chains.atOnce"), swatch: "bg-chart-1" }]} />
+        <Legend class={GUTTER_PAD} items={[{ label: t("chains.asRan"), swatch: "bg-muted-foreground/45" }, { label: t("chains.atOnce"), swatch: "bg-chart-1" }]} />
       </View>
     </If>
   );
@@ -393,18 +531,18 @@ export function StoreLatency(props: { changes: LatencyChange[]; names: [string, 
           accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines.join(", ")}` : "" }}
           appearGeneration={1}
           motion={MOTION}
-          crossLineClass="w-full h-full rounded-sm bg-foreground/5"
+          crossLineClass={CROSS_BAND}
           tooltipPlacement="pointer"
           tooltipOffset={10}
           tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
           onHoverChange={({ index }) => hovered.set(index)}
           class={GUTTER}
-          style={{ height: rows().length * 40 + 8 }}
+          style={{ height: rows().length * PITCH + 8 }}
         >
           {/* each kind's p95 on the first store (hollow) joined to the second's */}
-          <Rule base="a95" value="b95" class="stroke-chart-1/60 stroke-[2.5]" inactiveOpacity={0.4} />
-          <Dot value="a95" r={4} class="fill-card stroke-muted-foreground stroke-[1.5]" inactiveOpacity={0.4} />
-          <Dot value="b95" r={4.5} class="fill-chart-1 stroke-card stroke-[1.5]" inactiveOpacity={0.4} />
+          <Rule base="a95" value="b95" class="stroke-chart-1/60 stroke-[2.5]" inactiveOpacity={INACTIVE} />
+          <Dot value="a95" r={4} class="fill-card stroke-muted-foreground stroke-[1.5]" inactiveOpacity={INACTIVE} />
+          <Dot value="b95" r={4.5} class="fill-chart-1 stroke-card stroke-[1.5]" inactiveOpacity={INACTIVE} />
           <PlotLabel class="tabular-nums text-caption text-foreground" texts={rows().map((r, i) => ({ text: `${ms(r.a95)} → ${ms(r.b95)} · ${ratio(r).toFixed(1)}×`, x: Math.max(r.a95, r.b95), y: i, align: "left" as const, class: "pl-2.5" }))} />
           <PlotAxis placement="left" format={(i) => rows()[i]?.name ?? ""} labelClass={AXIS_LABEL} />
         </Plot>
@@ -460,19 +598,19 @@ export function TimeSpent(props: { profile: Profile; max?: number; by?: "kind" |
         accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
         appearGeneration={1}
         motion={MOTION}
-        crossLineClass="w-full h-full rounded-sm bg-foreground/5"
+        crossLineClass={CROSS_BAND}
         tooltipPlacement="pointer"
         tooltipOffset={10}
         tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
         onHoverChange={({ index }) => hovered.set(index)}
         class={GUTTER}
-        style={{ height: rows().length * 30 + 8 }}
+        style={{ height: rows().length * PITCH + 8 }}
       >
         <Bar
           value="waitedMs"
           class="fill-chart-1"
           cornerRadii={{ topRight: 3, bottomRight: 3 }}
-          inactiveOpacity={0.45}
+          inactiveOpacity={INACTIVE}
           stagger={0.3}
           label={(_, i) => `${pct(rows()[i].share)} · ${offset(rows()[i].waitedMs)}`}
           labelClass="pl-2 tabular-nums text-caption text-muted-foreground"
@@ -532,18 +670,18 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
           accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines.join(", ")}` : "" }}
           appearGeneration={props.records[0]?.id}
           motion={MOTION}
-          crossLineClass="w-full h-full rounded-sm bg-foreground/5"
+          crossLineClass={CROSS_BAND}
           tooltipPlacement="pointer"
           tooltipOffset={10}
           tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
           onHoverChange={({ index }) => hovered.set(index)}
-          class={`mb-5 ${GUTTER}`}
+          class={`${TICK_ROOM} ${GUTTER}`}
           style={{ height: rows().length * 16 + 6 }}
         >
           {/* the body's part a lighter shade of the bar, the wait for its first byte the full one */}
-          <Bar base="start" value="end" color="tone" cornerRadii={2} inactiveOpacity={0.4} stagger={0.4} style={anyFirst() ? { opacity: 0.45 } : undefined} />
+          <Bar base="start" value="end" color="tone" cornerRadii={2} inactiveOpacity={INACTIVE} stagger={0.4} style={anyFirst() ? { opacity: 0.45 } : undefined} />
           <If when={anyFirst()}>
-            <Bar base="start" value="firstEnd" color="tone" cornerRadii={2} inactiveOpacity={0.4} stagger={0.4} />
+            <Bar base="start" value="firstEnd" color="tone" cornerRadii={2} inactiveOpacity={INACTIVE} stagger={0.4} />
           </If>
           <PlotAxis placement="left" format={(i) => short(rows()[i]?.target ?? "")} labelClass={`${AXIS_LABEL} font-mono text-caption`} />
           <PlotAxis ticks={4} format={(v) => (v === 0 ? "0" : offset(v))} labelClass={TIME_TICK} />
@@ -592,18 +730,18 @@ export function RunBars(props: { change: RunChange; max?: number }) {
           accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
           motion={MOTION}
           appearGeneration={props.change.requests.join("-")}
-          crossLineClass="w-full h-full rounded-sm bg-foreground/5"
+          crossLineClass={CROSS_BAND}
           tooltipPlacement="pointer"
           tooltipOffset={10}
           tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
           onHoverChange={({ index }) => hovered.set(index)}
           class={GUTTER}
-          style={{ height: rows().length * 34 + 8 }}
+          style={{ height: rows().length * PITCH + 8 }}
         >
           {/* a dumbbell: before (hollow) joined to after (in color); a drop to none still has its dot */}
-          <Rule base="before" value="after" color="tone" class="stroke-[2.5]" inactiveOpacity={0.4} />
-          <Dot value="before" r={4} class="fill-card stroke-muted-foreground stroke-[1.5]" inactiveOpacity={0.4} />
-          <Dot value="after" color="tone" r={4.5} class="stroke-card stroke-[1.5]" inactiveOpacity={0.4} />
+          <Rule base="before" value="after" color="tone" class="stroke-[2.5]" inactiveOpacity={INACTIVE} />
+          <Dot value="before" r={4} class="fill-card stroke-muted-foreground stroke-[1.5]" inactiveOpacity={INACTIVE} />
+          <Dot value="after" color="tone" r={4.5} class="stroke-card stroke-[1.5]" inactiveOpacity={INACTIVE} />
           <PlotLabel class="tabular-nums text-caption text-foreground" texts={rows().map((r, i) => ({ text: `${r.before} → ${r.after}`, x: Math.max(r.before, r.after), y: i, align: "left" as const, class: "pl-2.5" }))} />
           <PlotAxis placement="left" format={(i) => rows()[i]?.name ?? ""} labelClass={AXIS_LABEL} />
         </Plot>
@@ -681,7 +819,7 @@ export function Flows(props: { profile: Profile }) {
         onHoverChange={({ index }) => hovered.set(index)}
         appearGeneration={1}
         motion={{ ...MOTION, appear: { duration: 700, easing: "easeOut" } }}
-        class="mx-28 mt-4 h-96"
+        class="mx-28 mt-2 h-80"
       >
         <Sankey
           links={links()}
@@ -694,7 +832,7 @@ export function Flows(props: { profile: Profile }) {
           linkBackgroundClass={(l) => `bg-linear-to-r ${from(nodes()[l.source])} ${to(nodes()[l.target])}`}
           hoverDim={0.75}
           nodeLabel={(n) => name(n)}
-          valueLabel={(_, v) => String(v)}
+          valueLabel={(_, v) => count(v)}
           nodeLabelClass="max-w-36 truncate px-2 py-0.5 text-small text-foreground"
           valueLabelClass="tabular-nums text-caption text-muted-foreground"
         />
@@ -743,12 +881,12 @@ export function Heat(props: { profile: Profile }) {
         tooltipOffset={10}
         tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
         onHoverChange={({ index }) => hovered.set(index)}
-        class={`mb-6 ${GUTTER}`}
-        style={{ height: names().length * 22 + 8 }}
+        class={`${TICK_ROOM} ${GUTTER}`}
+        style={{ height: names().length * 24 + 8 }}
       >
-        <Cell x="x" y="y" value={(_, i) => Math.sqrt(rows()[i]?.n ?? 0)} cornerRadii={2} inactiveOpacity={0.45} stagger={0.2} hoverCellClass="rounded-sm outline-2 outline-offset-1 outline-foreground" />
+        <Cell x="x" y="y" value={(_, i) => Math.sqrt(rows()[i]?.n ?? 0)} cornerRadii={2} inactiveOpacity={INACTIVE} stagger={0.2} hoverCellClass="rounded-(--radius-sm) outline-2 outline-offset-1 outline-foreground" />
         <PlotAxis placement="left" labelClass={AXIS_LABEL} />
-        <PlotAxis tickValues={[0, Math.round(last() / 2), last()]} format={(i) => `+${offset(i * p().binMs)}`} labelClass="pt-2 tabular-nums text-caption text-muted-foreground" />
+        <PlotAxis tickValues={[0, Math.round(last() / 2), last()]} format={(i) => `+${offset(i * p().binMs)}`} labelClass={TIME_TICK} />
       </Plot>
     </If>
   );
@@ -786,18 +924,18 @@ export function Pressure(props: { profile: Profile; range?: [number, number] | n
             accessibilityLabel={label()}
             accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
             motion={MOTION}
-            crossLineClass="w-full h-full rounded-sm bg-foreground/6"
+            crossLineClass={CROSS_BAND}
             tooltipPlacement="pointer"
             tooltipOffset={10}
             tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
             onHoverChange={({ index }) => hovered.set(index)}
             class="h-14 w-full"
           >
-            <Bar value="throttled" stack="p" class="fill-status-server" />
-            <Bar value="failed" stack="p" class="fill-status-client" />
+            <Bar value="throttled" stack="p" class="fill-warn" />
+            <Bar value="failed" stack="p" class="fill-status-server" />
             <Bar value="retried" stack="p" class="fill-info" cornerRadii={{ topLeft: 1.5, topRight: 1.5 }} />
           </Plot>
-          <Legend items={[{ label: t("pressure.throttled", { n: totals().throttled }), swatch: "bg-status-server" }, { label: t("pressure.failed", { n: totals().failed }), swatch: "bg-status-client" }, { label: t("pressure.retried", { n: totals().retried }), swatch: "bg-info" }]} />
+          <Legend items={[{ label: t("pressure.throttled", { n: totals().throttled }), swatch: "bg-warn" }, { label: t("pressure.failed", { n: totals().failed }), swatch: "bg-status-server" }, { label: t("pressure.retried", { n: totals().retried }), swatch: "bg-info" }]} />
         </View>
       </If>
     </If>
@@ -835,27 +973,24 @@ export function Distribution(props: { profile: Profile }) {
           <Plot
             testID="distribution"
             data={rows()}
-            xScale={{ type: "band", paddingInner: 0.22 }}
-            y2Scale={{ type: "linear", domain: [0, 100] }}
-            alignTicks={false}
+            xScale={{ type: "band", paddingInner: 0.22, maxBandWidth: 64 }}
+            yScale={{ type: "linear", domain: [0, Math.max(1, ...rows().map((r) => r.n)) * 1.18] }}
+            colorScale={{ type: "ordinal", domain: ["body", "tail"], range: [token("chart-1"), token("chart-tail" as never) as unknown as string] }}
             accessibilityLabel={label()}
             accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
             appearGeneration={1}
             motion={MOTION}
-            crossLineClass="w-full h-full rounded-sm bg-foreground/5"
+            crossLineClass={CROSS_BAND}
             tooltipPlacement="pointer"
             tooltipOffset={10}
             tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
             onHoverChange={({ index }) => hovered.set(index)}
-            class="mb-6 h-36 w-full"
+            class={`${TICK_ROOM} h-36 w-full`}
           >
-            <Bar value="n" class="fill-chart-1" cornerRadii={{ topLeft: 2, topRight: 2 }} inactiveOpacity={0.45} stagger={0.2} />
-            <Bar value={(r, i) => (first95() >= 0 && i >= first95() ? r.n : 0)} class="fill-muted-foreground/55" cornerRadii={{ topLeft: 2, topRight: 2 }} inactiveOpacity={0.45} />
-            <Line y="cum" scale="y2" curve="stepAfter" class="stroke-muted-foreground stroke-[1.25]" hoverDotClass="size-1.5 rounded-full bg-muted-foreground" />
-            <PlotAxis format={(i) => rows()[i]?.name ?? ""} labelClass="pt-1.5 tabular-nums text-caption text-muted-foreground" />
-            <PlotAxis placement="right" scale="y2" labelPlacement="inside" tickValues={[50, 95]} format={(v) => `${v}%`} labelClass="mr-1 rounded-sm bg-card/85 px-1 tabular-nums text-caption text-muted-foreground" />
+            <Bar value="n" color={(_, i) => (first95() >= 0 && i >= first95() ? "tail" : "body")} cornerRadii={{ topLeft: 2, topRight: 2 }} inactiveOpacity={INACTIVE} stagger={0.2} label={(_, i) => `${Math.round(rows()[i]?.cum ?? 0)}%`} labelClass="pb-1 tabular-nums text-caption text-muted-foreground" />
+            <PlotAxis format={(i) => rows()[i]?.name ?? ""} labelClass={TIME_TICK} />
           </Plot>
-          <Legend items={[{ label: t("dist.requests"), swatch: "bg-chart-1" }, { label: t("dist.tail"), swatch: "bg-muted-foreground/55" }, { label: t("dist.cumulative"), swatch: "bg-muted-foreground" }]} />
+          <Legend items={[{ label: t("dist.requests"), swatch: "bg-chart-1" }, { label: t("dist.tail"), swatch: "bg-chart-tail" }]} />
         </If>
       </View>
     </If>
@@ -872,8 +1007,25 @@ const WRITES_PER_S = 3500;
  * per-prefix limit (5,500 reads, 3,500 writes a second). A rectangle per
  * prefix under its bucket, its area the measure chosen; a prefix past half
  * its limit in the warning color. */
-export function PrefixUse(props: { profile: Profile }) {
-  const measure = signal<"requests" | "cost" | "peak">("requests");
+export type PrefixMeasureKind = "requests" | "cost" | "peak";
+
+/** What the prefix map's areas stand for: requests, cost, or the busiest second. */
+export function PrefixMeasure(props: { profile: Profile; value: PrefixMeasureKind; onChange: (m: PrefixMeasureKind) => void }) {
+  const hasCost = () => props.profile.prefixes.some((x) => (x.cost ?? 0) > 0);
+  return (
+    <If when={!textual()}>
+      <Options
+        testID="prefix-measure"
+        value={props.value}
+        items={[{ value: "requests", title: t("prefixUse.byRequests") }, ...(hasCost() ? [{ value: "cost", title: t("prefixUse.byCost") }] : []), { value: "peak", title: t("prefixUse.byPeak") }]}
+        onChange={(v) => props.onChange(v as PrefixMeasureKind)}
+      />
+    </If>
+  );
+}
+
+export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind }) {
+  const measure = () => props.measure ?? "requests";
   const items = () => props.profile.prefixes.filter((x) => x.prefix !== "other");
   const share = (x: Profile["prefixes"][number]) => Math.max(x.peakReads / READS_PER_S, x.peakWrites / WRITES_PER_S);
   const value = (x: Profile["prefixes"][number]) => (measure() === "cost" ? (x.cost ?? 0) : measure() === "peak" ? x.peakPerSecond : x.requests);
@@ -905,7 +1057,6 @@ export function PrefixUse(props: { profile: Profile }) {
   };
   const top = () => [...items()].sort((a, b) => value(b) - value(a))[0];
   const label = () => (top() ? t("prefixUse.text", { prefix: top()!.prefix, value: shown(value(top()!)) }) : "");
-  const hasCost = () => items().some((x) => (x.cost ?? 0) > 0);
   return (
     <If when={items().length > 0}>
       <If
@@ -913,13 +1064,6 @@ export function PrefixUse(props: { profile: Profile }) {
         else={<SimpleTable columns={[t("common.prefix"), t("figure.requests"), t("limits.reads"), t("limits.writes"), t("profile.cost")]} rows={items().map((x) => [x.prefix, String(x.requests), `${x.peakReads}/s`, `${x.peakWrites}/s`, cost(x.cost ?? 0, props.profile.cost.currency)])} />}
       >
         <View class="gap-2">
-          <Options
-            testID="prefix-measure"
-            value={measure()}
-            items={[{ value: "requests", title: t("prefixUse.byRequests") }, ...(hasCost() ? [{ value: "cost", title: t("prefixUse.byCost") }] : []), { value: "peak", title: t("prefixUse.byPeak") }]}
-            onChange={(v) => measure.set(v as "requests" | "cost" | "peak")}
-            class="self-start"
-          />
           <Plot
             testID="prefix-use"
             data={rows()}
@@ -944,12 +1088,12 @@ export function PrefixUse(props: { profile: Profile }) {
               groupClass="fill-muted"
               groupLabel="label"
               groupLabelClass="px-1.5 text-caption font-semibold text-foreground"
-              inactiveOpacity={0.55}
+              inactiveOpacity={INACTIVE}
               label="label"
               valueLabel={(_, v) => shown(v)}
               labelClass="p-1.5 font-mono text-caption text-foreground"
               valueLabelClass="font-sans tabular-nums text-caption text-muted-foreground"
-              hoverClass="rounded-[4px] outline-2 outline-foreground"
+              hoverClass="rounded-(--radius-sm) outline-2 outline-foreground"
             />
           </Plot>
           <If when={items().some((x) => share(x) >= 0.5)}>
@@ -982,7 +1126,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
           <Plot
             testID="prefix-change"
             data={rows()}
-            colorScale={{ type: "diverging", domain: [-1, 1], pivot: 0, range: [token("chart-1"), token("muted"), token("warn")] }}
+            colorScale={{ type: "diverging", domain: [-1, 1], pivot: 0, range: [token("status-ok"), token("muted"), token("status-server")] }}
             accessibilityLabel={label()}
             accessibilityValue={{ text: hovered() === null ? "" : `${rows()[hovered()!]?.label}: ${line(rows()[hovered()!]!.x)}` }}
             appearGeneration={rows().length}
@@ -1000,15 +1144,15 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
               colorValue="change"
               paddingInner={2}
               cornerRadii={4}
-              inactiveOpacity={0.55}
+              inactiveOpacity={INACTIVE}
               label="label"
               valueLabel={(_, __, i) => line(rows()[i]!.x)}
               labelClass="p-1.5 font-mono text-caption text-foreground"
               valueLabelClass="font-sans tabular-nums text-caption text-muted-foreground"
-              hoverClass="rounded-[4px] outline-2 outline-foreground"
+              hoverClass="rounded-(--radius-sm) outline-2 outline-foreground"
             />
           </Plot>
-          <Legend square items={[{ label: t("prefixChange.fewer"), swatch: "bg-chart-1" }, { label: t("prefixChange.same"), swatch: "bg-muted" }, { label: t("prefixChange.more"), swatch: "bg-warn" }]} />
+          <Legend square items={[{ label: t("prefixChange.fewer"), swatch: "bg-status-ok" }, { label: t("prefixChange.same"), swatch: "bg-muted" }, { label: t("prefixChange.more"), swatch: "bg-status-server" }]} />
         </View>
       </If>
     </If>
@@ -1061,7 +1205,7 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
           accessibilityLabel={`${props.title}: ${values().map(props.format).join(", ")}`}
           appearGeneration={props.history.program}
           motion={MOTION}
-          crossLineClass="w-px h-full bg-muted-foreground/40"
+          crossLineClass={CROSS_LINE}
           onHoverChange={({ index }) => hovered.set(index)}
           class="mr-1 h-16"
         >
@@ -1101,9 +1245,15 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
       .filter((x) => !d || (x.tMs >= d[0] && x.tMs < d[1]))
       .map((x) => ({ ...x, y: log10(Math.max(x.ms, 0.1)), x: props.by === "time" ? x.tMs : log10(Math.max(x.bytes ?? 0, 1)), tone: statusTone(x.status ?? null) }));
   };
-  const yLo = () => Math.min(...rows().map((r) => r.y), log10(1));
+  const yLo = () => Math.min(...rows().map((r) => r.y), log10(1)) - 0.12;
   const yHi = () => Math.max(...rows().map((r) => r.y), log10(10)) + 0.15;
-  const xDomain = (): [number, number] => (props.by === "time" ? (props.domainMs ?? [0, Math.max(props.profile.wallMs, 1)]) : [0, Math.max(...rows().map((r) => r.x), 3) + 0.2]);
+  // a little room either side: a dot at the first or last instant is drawn whole
+  const xDomain = (): [number, number] => {
+    if (props.by !== "time") return [-0.1, Math.max(...rows().map((r) => r.x), 3) + 0.2];
+    const [a, b] = props.domainMs ?? [0, Math.max(props.profile.wallMs, 1)];
+    const pad = (b - a) * 0.015;
+    return [a - pad, b + pad];
+  };
   const p95 = () => log10(Math.max(props.profile.p95Ms ?? 0, 0.1));
   const hovered = signal<number | null>(null);
   const tip = () => {
@@ -1137,13 +1287,13 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
           tooltipOffset={10}
           tooltipContent={<If when={tip()}>{(x) => <Tip title={x().title} lines={x().lines} />}</If>}
           onHoverChange={({ index }) => hovered.set(index)}
-          class="mb-6 h-44 w-full"
+          class={`${TICK_ROOM} h-44 w-full`}
         >
-          <Grid y={decades(yLo(), yHi())} class="stroke-border" />
+          <Grid y={decades(Math.ceil(yLo()), yHi())} class="stroke-border" />
           <Grid y={[p95()]} class="stroke-muted-foreground/60" style={{ strokeDasharray: "3 3" }} />
-          <Dot value="y" r={2.5} hitRadius={6} color="tone" inactiveOpacity={0.35} hoverDotClass="size-2 rounded-full border border-card bg-foreground" />
-          <PlotAxis placement="left" labelPlacement="inside" tickValues={decades(yLo(), yHi())} format={(v) => ms(10 ** v)} labelClass={VALUE_TICK} />
-          <PlotAxis ticks={3} format={(v) => (props.by === "time" ? offset(v) : bytes(10 ** v))} labelClass={TIME_TICK} />
+          <Dot value="y" r={2.5} hitRadius={6} color="tone" inactiveOpacity={INACTIVE} hoverDotClass="size-2 rounded-full border border-card bg-foreground" />
+          <PlotAxis placement="left" labelPlacement="inside" tickValues={decades(Math.ceil(yLo()), yHi())} format={(v) => ms(10 ** v)} labelClass={VALUE_TICK} />
+          <PlotAxis ticks={3} format={(v) => (v < 0 ? "" : props.by === "time" ? offset(v) : bytes(10 ** v))} labelClass={TIME_TICK} />
           <PlotLabel class="tabular-nums text-caption text-muted-foreground" texts={[{ text: `p95 ${ms(props.profile.p95Ms ?? 0)}`, x: xDomain()[1], y: p95(), align: "right", class: "-translate-y-full pb-0.5" }]} />
         </Plot>
       </BaseButton>
@@ -1165,14 +1315,15 @@ export function KindsOverTime(props: { profile: Profile; domainMs?: [number, num
   };
   const top = () => Math.max(...kinds().flatMap((k) => k.rows.map((r) => r.p95)), 1) * 1.15;
   const domain = (): [number, number] => props.domainMs ?? [0, Math.max(props.profile.wallMs, 1)];
+  const hovered = signal<{ group: number; index: number } | null>(null);
   return (
     <If when={!terminal() && kinds().length > 0}>
       <View testID="kinds-over-time" class="gap-1">
         <Each of={kinds()} key={(k) => String(k.group)}>
           {(k, i) => (
             <View class="flex-row items-center">
-              <Text class={AXIS_LABEL}>{k().name}</Text>
-              <Plot data={k().rows} x="tMs" xScale={{ type: "linear", domain: domain() }} yScale={{ type: "linear", domain: [0, top()] }} accessibilityLabel={`${k().name}: p95 ${ms(Math.max(...k().rows.map((r) => r.p95)))}`} motion={MOTION} class={`h-10 flex-1 ${i() === kinds().length - 1 ? "mb-5" : ""}`}>
+              <Text class={ROW_LABEL}>{k().name}</Text>
+              <Plot data={k().rows} x="tMs" xScale={{ type: "linear", domain: domain() }} yScale={{ type: "linear", domain: [0, top()] }} accessibilityLabel={`${k().name}: p95 ${ms(Math.max(...k().rows.map((r) => r.p95)))}`} motion={MOTION} crossLineClass={CROSS_LINE} tooltipPlacement="pointer" tooltipOffset={10} tooltipContent={<If when={hovered()?.group === k().group ? k().rows[hovered()!.index] : null}>{(r) => <Tip title={k().name} lines={[`+${offset(r().tMs)}`, `p50 ${ms(r().p50)} · p95 ${ms(r().p95)}`]} />}</If>} onHoverChange={({ index }) => hovered.set(index === null ? null : { group: k().group, index })} class={`h-10 flex-1 ${i() === kinds().length - 1 ? TICK_ROOM : ""}`}>
                 <Area y0="p50" y1="p95" curve="linear" class="fill-chart-1/20" />
                 <Line y="p95" curve="linear" class="stroke-chart-1 stroke-[1.25]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
                 <Line y="p50" curve="linear" class="stroke-chart-1/50 stroke-1" hoverDotClass="hidden" />
@@ -1206,7 +1357,7 @@ export function DistributionCompare(props: { latency: [{ leMs: number | null; n:
   const label = () => t("cdf.text", { a: props.names[0], b: props.names[1] });
   return (
     <If when={!terminal() && rows().length > 1}>
-      <Plot testID="distribution-compare" data={rows()} x="x" xScale={{ type: "linear", domain: [rows()[0].x, rows()[rows().length - 1].x] }} yScale={{ type: "linear", domain: [0, 100] }} accessibilityLabel={label()} motion={MOTION} class="mb-6 h-36 w-full">
+      <Plot testID="distribution-compare" data={rows()} x="x" xScale={{ type: "linear", domain: [rows()[0].x, rows()[rows().length - 1].x] }} yScale={{ type: "linear", domain: [0, 100] }} accessibilityLabel={label()} motion={MOTION} class={`${TICK_ROOM} h-36 w-full`}>
         {/* the median and p95: 99 sits on the top edge, its label over 95's */}
         <Grid y={[50, 95]} class="stroke-border" />
         <Line y="a" curve="stepAfter" class="stroke-muted-foreground/70 stroke-[1.25]" style={{ strokeDasharray: "3 3" }} hoverDotClass="size-1.5 rounded-full bg-muted-foreground" />

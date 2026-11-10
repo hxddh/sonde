@@ -1,5 +1,5 @@
 // The window's chrome on the desktops: a title bar of the app's own (the
-// toolbar), the sidebar with the places and recent sessions, and the
+// toolbar), the sidebar with the places and the current place's list, and the
 // application's menus. A terminal has none of this (App.tsx's TerminalShell).
 
 import { type JSX, platform, signal, Storage, Text, View, windowSize } from "nsh";
@@ -10,7 +10,7 @@ import { t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
-import { type Area, area, bucket, shellWidth, chooseBucket, crumb, endpoint, endpoints, go, openSession, openSessionFile, readOnly, section, settings, sessionsTick, storeTab } from "../store";
+import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, openSession, openSessionFile, readOnly, section, settings, sessionsTick, sideList, storeTab, useEndpoint } from "../store";
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./sessionview";
@@ -24,17 +24,10 @@ const mac = platform.os === "macos";
 const wanted = signal(true);
 const SIDEBAR_KEY = "sidebar.open";
 void Storage.getItem(SIDEBAR_KEY).then((v) => v === "false" && wanted.set(false)).catch(() => {});
-/** A narrow window folds the sidebar away until it is asked for. */
-const narrow = () => shellWidth() < 1100;
-const shownWhileNarrow = signal(false);
-/** Whether the sidebar shows: the user's choice, folded away in a narrow window. */
-export const sidebarOpen = () => wanted() && (!narrow() || shownWhileNarrow());
+/** Whether the sidebar shows: the user's choice (⌘B). It holds the places
+ * and the current place's list, so it never folds away by itself. */
+export const sidebarOpen = () => wanted();
 export function toggleSidebar() {
-  if (narrow()) {
-    if (!wanted()) wanted.set(true);
-    shownWhileNarrow.set(!sidebarOpen() || !shownWhileNarrow() ? !sidebarOpen() : false);
-    return;
-  }
   wanted.set(!wanted());
   void Storage.setItem(SIDEBAR_KEY, String(wanted())).catch(() => {});
 }
@@ -116,10 +109,7 @@ export function EndpointSwitcher(props: { class?: string }) {
       placeholder={current()?.name ?? t("common.chooseEndpoint")}
       onChange={({ value }) => {
         const v = value[value.length - 1];
-        if (v && v !== endpoint()) {
-          endpoint.set(v);
-          chooseBucket(null);
-        }
+        if (v) useEndpoint(v);
       }}
       offset={4}
       class={`${CONTROL.trigger} ${FOCUS} ${props.class ?? (shellWidth() >= 1040 ? "w-52" : "w-40")}`}
@@ -210,17 +200,18 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       <RunningPill />
       <EndpointSwitcher />
       <ActivityButton onPress={() => (activityOpen() ? activityOpen.set(false) : go("activity"))} />
-      {/* the safety state in words, not a lock to decode: a press opens Settings */}
-      <BaseButton
-        testID="toolbar-lock"
-        accessibilityLabel={readOnly() ? t("common.readOnlyOn") : t("common.readOnlyOff")}
-        tooltip={<Tip text={t("settings.readOnlyHint")} />}
-        onPress={() => go("settings")}
-        class={`h-7 flex-row items-center gap-1.5 rounded-(--radius) border px-2 ${readOnly() ? "border-input hover:bg-muted" : "border-warn/50 bg-warn/10 hover:bg-warn/15"} ${FOCUS}`}
+      {/* read-only is the calm state, a lock among the icons; writable is the one to notice, in words */}
+      <If
+        when={readOnly()}
+        else={
+          <BaseButton testID="toolbar-lock" accessibilityLabel={t("common.readOnlyOff")} tooltip={<Tip text={t("settings.readOnlyHint")} />} onPress={() => go("settings")} class={`h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-warn/50 bg-warn/10 px-2 hover:bg-warn/15 ${FOCUS}`}>
+            <Icon name="lock-open" size={13} tint="warn" />
+            <Text class="text-small text-warn">{t("common.readOnlyOff")}</Text>
+          </BaseButton>
+        }
       >
-        <Icon name={readOnly() ? "lock" : "lock-open"} size={13} tint={readOnly() ? "muted-foreground" : "warn"} />
-        <Text class={`text-small ${readOnly() ? "text-muted-foreground" : "text-warn"}`}>{readOnly() ? t("common.readOnlyOn") : t("common.readOnlyOff")}</Text>
-      </BaseButton>
+        <IconButton testID="toolbar-lock" icon="lock" label={t("common.readOnlyOn")} onPress={() => go("settings")} />
+      </If>
       <SearchButton />
       <If when={!mac}>
         <IconButton
@@ -264,14 +255,22 @@ export const windowMaterial = () => material && (settings()?.theme ?? "system") 
 export function Sidebar(props: { open: (a: Area) => void }) {
   return (
     <If when={sidebarOpen()}>
-      <View testID="sidebar" class={`flex-1 ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} px-2 pb-2 pt-3`}>
+      <View testID="sidebar" class={`flex-1 ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} pt-3`}>
         {/* the places: one stop of Tab, ↑ and ↓ between them */}
-        <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="gap-0.5">
+        <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="shrink-0 gap-0.5 px-2">
           <Place area="run" open={props.open} />
           <Place area="sessions" open={props.open} />
           <Place area="store" open={props.open} />
         </ToolbarGroup>
-        <View class="flex-1" />
+        {/* under them, the place's own list: its sessions, its buckets, the commands run before */}
+        <Each of={sideList() ? [sideList()!] : []} key={(l) => l.key}>
+          {(l) => (
+            <View class="min-h-0 flex-1 pt-3">
+              <View class="mx-3 h-px shrink-0 bg-border" />
+              <View class="min-h-0 flex-1">{l().render()}</View>
+            </View>
+          )}
+        </Each>
       </View>
     </If>
   );

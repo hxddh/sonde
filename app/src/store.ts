@@ -2,7 +2,7 @@
 // errors, and navigation between sections. Rust owns the data; these
 // signals mirror it and are refreshed after each change.
 
-import { batch, lifecycle, Picker, signal } from "nsh";
+import { batch, Clipboard, type JSX, lifecycle, Picker, signal } from "nsh";
 import { api, asError } from "./native";
 import { language, t } from "./i18n";
 import { toast, type ToastKind } from "./ui/toast";
@@ -74,13 +74,22 @@ export const endpointsMode = signal<"list" | "add" | "import">("list");
 export const shellWidth = signal(1280);
 /** And its height. */
 export const shellHeight = signal(820);
-/** The newest error, for the banner. */
-export const lastError = signal<SondeError | null>(null);
-/** A short notice (copied, exported). */
-export const notice = signal<string | null>(null);
+/** What the sidebar lists under the places: the current place's own list
+ * (its sessions, its buckets, the commands run before), given by the place
+ * while it is on screen. One left column for the whole window. */
+export const sideList = signal<{ key: string; render: () => JSX.Element } | null>(null);
+/** Gives the sidebar a place's list while the place is on screen; returns what takes it back. */
+export function showInSidebar(key: string, render: () => JSX.Element): () => void {
+  const mine = { key, render };
+  sideList.set(mine);
+  return () => {
+    if (sideList() === mine) sideList.set(null);
+  };
+}
 
-/** Makes `id` the endpoint; a bucket of another endpoint is no longer chosen. */
-function useEndpoint(id: string | null) {
+/** Makes `id` the endpoint; a bucket of another endpoint is no longer chosen
+ * (one step: nothing lists the old bucket on the new endpoint). */
+export function useEndpoint(id: string | null) {
   if (id === endpoint()) return;
   batch(() => {
     endpoint.set(id);
@@ -114,7 +123,6 @@ export function readOnly(): boolean {
 export function report(e: unknown): SondeError {
   const err = asError(e);
   if (err.kind !== "cancelled") {
-    lastError.set(err);
     const record = err.recordId;
     toast({
       id: "error",
@@ -130,8 +138,12 @@ export function report(e: unknown): SondeError {
 
 /** A short notice (copied, exported, saved), as a toast. */
 export function notify(text: string, options: { kind?: ToastKind; action?: string; onAction?: () => void } = {}) {
-  notice.set(text);
   toast({ title: text, kind: options.kind ?? "success", action: options.action, onAction: options.onAction });
+}
+
+/** Copies `text` and says so: the one way anything is copied. */
+export function copy(text: string, said: string = t("common.copied")) {
+  void Clipboard.writeText(text).then(() => notify(said), report);
 }
 
 /** Opens a request in Activity. */
@@ -275,8 +287,14 @@ export function openDropped(uris: string[]) {
 }
 
 /** What opens as a session: a recording, or traffic sonde reads as one (an
- * S3 server access log, CloudTrail events, a HAR). */
-const OPENS = /\.(sonde|log|txt|json|jsonl|har)$/i;
+ * S3 server access log, CloudTrail events, a HAR), gzipped or not. */
+const OPENS = /\.(sonde|log|txt|json|jsonl|har)(\.gz)?$/i;
+
+/** Of what a drag carries, how many would open as sessions and how many would not: said before the drop. */
+export function wouldOpen(uris: string[]): { opens: number; others: number } {
+  const opens = uris.filter((u) => /^file:/i.test(u) && OPENS.test(pathOf(u))).length;
+  return { opens, others: uris.length - opens };
+}
 
 /** Opens session files by path; anything else is said to be no session. */
 export function openPaths(paths: string[]) {

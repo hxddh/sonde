@@ -107,24 +107,10 @@ fn damaged_baselines_are_said_and_neither_written_over_nor_read_as_none() {
 }
 
 #[test]
-fn probes_are_refused_while_read_only_mode_is_on() {
+fn a_probe_run_named_on_the_command_line_is_not_held_to_read_only_mode() {
     let t = tempfile::tempdir().unwrap();
-    // read-only is the default; nothing listens here, and nothing is asked
+    // read-only is the default; the run starts (and fails here on the connection, not refused)
     let args = ["--url", "http://127.0.0.1:9", "probe", "-b", "scratch"];
-    let o = sonde(t.path(), &args);
-    let err = String::from_utf8_lossy(&o.stderr);
-    assert_eq!(o.status.code(), Some(77), "{err}");
-    assert!(err.contains("read-only = false"), "{err}");
-    assert!(err.contains("config.toml"), "{err}");
-    // the catalog and saved runs write nothing: still read
-    assert_eq!(sonde(t.path(), &["probe", "list"]).status.code(), Some(0));
-    // off: the run starts (and fails here on the connection, not refused)
-    std::fs::create_dir_all(t.path().join("config")).unwrap();
-    std::fs::write(
-        t.path().join("config/config.toml"),
-        "[settings]\nread-only = false\n",
-    )
-    .unwrap();
     assert_ne!(sonde(t.path(), &args).status.code(), Some(77));
 }
 

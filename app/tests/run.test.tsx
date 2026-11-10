@@ -83,14 +83,16 @@ test("an example session reads as operations, each opening on its requests", asy
   await app.press("id:observation-0");
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
-  expect(app.shows("text:/^requests \\(5\\)$/i")).toBe(true);
+  expect(app.shows("text:/^requests · 5$/i")).toBe(true);
   await app.press("id:op-request-4");
   await app.waitFor("id:record-detail");
   expect(app.shows("text:if-none-match")).toBe(true);
   // what stands out narrows the operations to those it is about
   await app.press("id:inspector-close");
-  // each says why it matters, in place
+  // a line each, so the operations keep the room; the one chosen says why it matters, in place
+  await app.press("id:observation-2");
   expect(app.texts().some((t) => t.startsWith("Every operation of this kind made the same requests"))).toBe(true);
+  await app.press("id:observation-2");
   // ranked by the requests they bear on, with what acting on them saves
   expect(app.shows("text:/^slate\\/db\\/gc\\/manifest.boundary was read 46 times/")).toBe(true);
   expect(app.shows("id:observation-saving-0")).toBe(true);
@@ -216,6 +218,8 @@ test("a program over its runs: history, a baseline, and the flows of its request
   for (let i = 0; i < 2; i++) {
     await app.clear("id:run-command");
     await app.type("id:run-command", cmd);
+    // the button follows the field a frame later
+    await app.waitUntil(() => app.enabled("id:run-start"));
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });
   }
@@ -228,13 +232,12 @@ test("a program over its runs: history, a baseline, and the flows of its request
   expect(app.shows("text:/, over [2-9] runs$/")).toBe(true);
   expect(app.shows("id:trend-requests")).toBe(true);
   await app.press("id:history-baseline");
-  await app.waitFor("label:Not the baseline");
+  await app.waitFor("label:Baseline ✓ — clear");
   // where its requests went
   await app.press("id:session-pane-mode-time");
   await app.waitFor("id:time-pane");
   // how long every request took, and where they went, on demand
   expect(app.shows("text:/^median .* · p95 .* · p99 /")).toBe(true);
-  await app.press("id:flows-show");
   await app.waitFor("id:flows");
   expect(app.shows("label:/^2 requests: 50% answered/")).toBe(true);
 });

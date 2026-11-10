@@ -50,12 +50,11 @@ for (const v of variants) {
     };
     // The title bar's buttons are reached by their shortcuts: on macOS a
     // test's press in the hidden title bar's area does not reach the view
-    // (FINDINGS 12). A narrow window folds the sidebar away: bring it back
-    // to go somewhere.
+    // (FINDINGS 12). The sidebar holds the places and their lists at every
+    // size: brought back if it was put away.
     const go = async (area: string) => {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
-      if (v.name === "min") await app.keyboard.press("mod+b");
     };
 
     await shot("01-welcome");
@@ -168,8 +167,8 @@ for (const v of variants) {
     await app.window("compat").pressClose();
     await app.press("id:add-endpoint");
     await app.waitFor("id:endpoint-form");
-    // the panel's slide done: its icons paint once it rests
-    await app.waitFor("id:endpoint-form-close");
+    // the form is a card in place: there once its foot is
+    await app.waitFor("id:ep-save");
     await new Promise((r) => setTimeout(r, 500));
     await settings("05d-endpoint-form");
     await app.keyboard.press("Escape");
