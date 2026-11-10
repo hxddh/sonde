@@ -269,7 +269,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       filter={filter()}
       onFilter={(f) => filter.set(f)}
       onOpenCode={(place) => api.sessions.openCode(props.path, place).catch(report)}
-      maxHeight={Math.max(104, Math.round(box().h * 0.3))}
+      // a short window keeps two findings in view (the rest scroll): the operations need their rows
+      maxHeight={box().h < 600 ? 68 : Math.max(104, Math.round(box().h * 0.3))}
     />
   );
   /** When: the session's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
