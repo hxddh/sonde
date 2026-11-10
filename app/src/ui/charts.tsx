@@ -114,7 +114,8 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
           ...props.items.map((i) => ({ id: i.label, parent: `g:${top(i.label)}`, label: i.label.slice(top(i.label).length + 1) || i.label, value: i.value, group: top(i.label) })),
         ]
       : props.items.map((i) => ({ id: i.label, parent: "", label: i.label, value: i.value, group: i.label }));
-  const color = (g: string) => PALETTE[groups().indexOf(g) % PALETTE.length];
+  // a row outside the groups (a flat list) takes the first color, never none
+  const color = (g: string) => PALETTE[Math.max(0, groups().indexOf(g)) % PALETTE.length];
   // a folder's size is the sum of what is under it
   const sizeOf = (r: { id: string; value: number; group: string }) => (r.id.startsWith("g:") && nested() ? props.items.filter((i) => top(i.label) === r.group).reduce((s, i) => s + i.value, 0) : r.value);
   const tip = () => {
