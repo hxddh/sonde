@@ -44,6 +44,24 @@ this one makes the failures happen. The review this came from is [docs/review-13
   `slate/db/compactions/` read the same. Prefixes are now whole folders, folded into the one above only when there
   are more than a chart can hold (and the row says how many it holds); a label says the shared start once and keeps
   its end; the tooltip has the whole prefix.
+- **`sonde demo` shows the product**: 28 requests read as 11 operations (a multipart upload, a Delta commit, a
+  retry after 503, a paged listing, lookups that find nothing) and four findings, where it printed 53 lines.
+- **`sonde check`** names the session it judged; a failed row says by how much; the warnings row is "new
+  warnings", which is what it counted; a 10% tolerance is 10% for a small cost too.
+- **`sonde import <folder>`** reads every log file under a folder as one session.
+- `sonde diff` on two ordinary runs says they are not a session and its replay (64); `sonde compare` says "no
+  change" for a figure that did not move.
+- **A Parquet file is not called Delta or Iceberg by its name**: only when the session touched that table's log.
+- **Keys with a `.` or `..` segment are refused** before anything is sent: the URL library collapses them, so the
+  request went to another key. The special-keys probe says this is sonde's limit, not the store's.
+- A response cut mid-body is recorded as cut (and counted as an error), not as a clean 200; a proxy stopped with
+  requests in flight says the session lacks them.
+- `watch --logs --once` exits 70 when none of the files listed could be read; the store's own read for a copy in
+  an access log is part of the copy; `-f` is refused by every command for a format it does not write.
+- Finished jobs are pruned by kind (100 downloads no longer blank a layout's time slider); a probe cleanup that
+  could not list says so; a capacity scan that may not list versions says they were not counted, not 0; a probe
+  whose setup write failed is an error across the suite; a lifecycle document sonde cannot add to is never planned
+  over.
 - **The interface, from the 13.0 review**: an empty run is no longer deleted under its reader, however it was
   opened; with the sidebar hidden a place that needs its list shows it, and a list that fails says so; Sessions
   keeps its session, search and Runs/Programs when left and come back to; a lane's cell shows the worst of the

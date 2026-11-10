@@ -179,7 +179,9 @@ impl Record {
     }
 
     pub fn is_error(&self) -> bool {
-        self.status.is_none_or(|s| s >= 400)
+        // an answer that began and was cut is an error too: it has a status
+        // and a transport error
+        self.status.is_none_or(|s| s >= 400) || self.transport_error.is_some()
     }
 
     pub fn summary(&self) -> RecordSummary {

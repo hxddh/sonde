@@ -2331,6 +2331,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         paint(
             if c.passed {
                 "within budget"
+            } else if broke && c.verdicts.iter().all(|v| v.ok) && c.new_warnings.is_empty() {
+                "within budget, and broke under a trial"
             } else {
                 "over budget"
             },
