@@ -58,6 +58,9 @@ impl Probe for MinPartSize {
         let _ = cx.client.abort_multipart_upload(&cx.bucket, &k, &up).await;
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        if let Some(j) = super::setup_failed(s, &["create", "small-part", "last-part"]) {
+            return j;
+        }
         let c = s.at("complete-small");
         if c.ok() {
             Judgement::new(
@@ -141,6 +144,12 @@ impl Probe for OutOfOrder {
             s.at("complete-ascending"),
             s.at("tail"),
         );
+        if let Some(j) = super::setup_failed(s, &["create", "part-1-second"]) {
+            return j;
+        }
+        if let Some(j) = super::write_refused(s, &["part-2-first"]) {
+            return j;
+        }
         if !asc.ok() && !desc.ok() {
             return Judgement::new(
                 Verdict::Fail,
@@ -218,6 +227,9 @@ impl Probe for DuplicateComplete {
     }
     fn judge(&self, s: &Steps) -> Judgement {
         let (first, second) = (s.at("first"), s.at("second"));
+        if let Some(j) = super::setup_failed(s, &["create", "part"]) {
+            return j;
+        }
         if !first.ok() {
             return Judgement::new(Verdict::Error, "the first Complete failed", s);
         }
@@ -288,6 +300,18 @@ impl Probe for ConcurrentUploads {
         cx.get("read", &k, &[]).await;
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        if let Some(j) = super::setup_failed(s, &["create-a"]) {
+            return j;
+        }
+        // a second upload that started needs both parts to say who wins
+        if s.at("create-b").ok()
+            && let Some(j) = super::setup_failed(s, &["part-a", "part-b"])
+        {
+            return j;
+        }
+        if let Some(j) = super::write_refused(s, &["create-b"]) {
+            return j;
+        }
         let ids = s.at("ids").body;
         let mut it = ids.split(' ');
         if it.next() == it.next() {

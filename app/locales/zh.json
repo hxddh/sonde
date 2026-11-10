@@ -233,6 +233,7 @@
  "du.why": "为什么这么大？",
  "du.current": "当前版本",
  "du.noncurrent": "非当前版本",
+ "du.versionsUnknown": "未统计：此密钥无权列出版本",
  "du.markers": "删除标记",
  "du.multipart": "未完成的上传",
  "du.byClass": "按存储类别",

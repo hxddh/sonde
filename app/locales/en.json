@@ -233,6 +233,7 @@
  "du.why": "Why is it this big?",
  "du.current": "Current",
  "du.noncurrent": "Noncurrent",
+ "du.versionsUnknown": "Not counted: this key may not list versions",
  "du.markers": "Delete markers",
  "du.multipart": "Incomplete uploads",
  "du.byClass": "By storage class",

@@ -43,6 +43,9 @@ impl Probe for Bounds {
         }
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        if let Some(j) = super::setup_failed(s, &["put"]) {
+            return j;
+        }
         let want = [
             ("first", "0", "bytes 0-0/10"),
             ("last", "9", "bytes 9-9/10"),
@@ -98,6 +101,9 @@ impl Probe for MultiRange {
         cx.get("get", &k, &[("range", "bytes=0-1,4-5")]).await;
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        if let Some(j) = super::setup_failed(s, &["put"]) {
+            return j;
+        }
         let g = s.at("get");
         if g.is(200) && g.body == BODY {
             Judgement::new(Verdict::Pass, "ignored: 200 with the whole object", s)
@@ -152,6 +158,9 @@ impl Probe for Unsatisfiable {
         cx.get("empty", &e, &[("range", "bytes=0-")]).await;
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        if let Some(j) = super::setup_failed(s, &["put", "put-empty"]) {
+            return j;
+        }
         let (past, empty) = (s.at("past"), s.at("empty"));
         if past.ok() {
             return Judgement::new(

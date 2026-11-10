@@ -2,7 +2,7 @@
   "probe": "keys.special",
   "vendor": "minio",
   "expect": "differs",
-  "note": "",
+  "note": "put-8/9 and get-8/9 as 14.0 records them: sonde refuses dot-segment keys itself (they were 403 SignatureDoesNotMatch, sonde's own doing)",
   "steps": [
     {
       "label": "put-0",
@@ -306,70 +306,34 @@
     },
     {
       "label": "put-8",
-      "status": 403,
-      "code": "SignatureDoesNotMatch",
-      "headers": [
-        [
-          "content-type",
-          "application/xml"
-        ],
-        [
-          "content-length",
-          "320"
-        ]
-      ],
-      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your AWS secret access key and signing method. For more information, see REST Authentication and SOAP Authentication for details.</Message></Error>",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "a key with a . or .. segment cannot be sent correctly: sonde's HTTP library collapses such segments, so the request would reach another object. Nothing was sent.",
       "recordId": null
     },
     {
       "label": "get-8",
-      "status": 403,
-      "code": "SignatureDoesNotMatch",
-      "headers": [
-        [
-          "content-type",
-          "application/xml"
-        ],
-        [
-          "content-length",
-          "320"
-        ]
-      ],
-      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your AWS secret access key and signing method. For more information, see REST Authentication and SOAP Authentication for details.</Message></Error>",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "a key with a . or .. segment cannot be sent correctly: sonde's HTTP library collapses such segments, so the request would reach another object. Nothing was sent.",
       "recordId": null
     },
     {
       "label": "put-9",
-      "status": 403,
-      "code": "SignatureDoesNotMatch",
-      "headers": [
-        [
-          "content-type",
-          "application/xml"
-        ],
-        [
-          "content-length",
-          "320"
-        ]
-      ],
-      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your AWS secret access key and signing method. For more information, see REST Authentication and SOAP Authentication for details.</Message></Error>",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "a key with a . or .. segment cannot be sent correctly: sonde's HTTP library collapses such segments, so the request would reach another object. Nothing was sent.",
       "recordId": null
     },
     {
       "label": "get-9",
-      "status": 403,
-      "code": "SignatureDoesNotMatch",
-      "headers": [
-        [
-          "content-type",
-          "application/xml"
-        ],
-        [
-          "content-length",
-          "320"
-        ]
-      ],
-      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your AWS secret access key and signing method. For more information, see REST Authentication and SOAP Authentication for details.</Message></Error>",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "a key with a . or .. segment cannot be sent correctly: sonde's HTTP library collapses such segments, so the request would reach another object. Nothing was sent.",
       "recordId": null
     },
     {

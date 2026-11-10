@@ -27,6 +27,29 @@ pub(crate) fn setup_failed(s: &Steps, labels: &[&str]) -> Option<Judgement> {
     ))
 }
 
+/// `Error` when a write that is itself the test (`labels`) was not let
+/// through: no answer at all, or 403 AccessDenied (a bucket that may not be
+/// written). That says nothing of the feature, where a 400 or a 501 does.
+pub(crate) fn write_refused(s: &Steps, labels: &[&str]) -> Option<Judgement> {
+    // a step that never ran was not refused
+    let failed = labels.iter().filter_map(|l| s.get(l)).find(|x| {
+        x.status.is_none()
+            || (x.is(403)
+                && matches!(
+                    x.code.as_deref(),
+                    Some("AccessDenied" | "AllAccessDisabled" | "InvalidAccessKeyId")
+                ))
+    })?;
+    Some(Judgement::new(
+        Verdict::Error,
+        format!(
+            "could not run: the write was not allowed ({})",
+            failed.describe()
+        ),
+        s,
+    ))
+}
+
 pub(crate) fn meta(
     id: &str,
     category: Category,

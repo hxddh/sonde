@@ -190,6 +190,9 @@ impl Probe for ClockSkew {
             s.at("behind-20m"),
             s.at("ahead-20m-get"),
         );
+        if let Some(j) = super::setup_failed(s, &["put"]) {
+            return j;
+        }
         if !small.ok() {
             return Judgement::new(
                 Verdict::Differs,
@@ -251,6 +254,9 @@ impl Probe for MetadataLimit {
     }
     fn judge(&self, s: &Steps) -> Judgement {
         let (under, head, over) = (s.at("under"), s.at("head"), s.at("over"));
+        if let Some(j) = super::write_refused(s, &["under"]) {
+            return j;
+        }
         if !under.ok() {
             return Judgement::new(
                 Verdict::Differs,
@@ -551,6 +557,9 @@ impl Probe for SseC {
             s.at("wrong-key"),
             s.at("right-key"),
         );
+        if let Some(j) = super::write_refused(s, &["put"]) {
+            return j;
+        }
         if !put.ok() {
             if !https && put.is(400) {
                 return Judgement::new(
@@ -630,6 +639,9 @@ impl Probe for ExpressAppend {
     }
     fn judge(&self, s: &Steps) -> Judgement {
         let (append, wrong, head) = (s.at("append"), s.at("wrong-offset"), s.at("head"));
+        if let Some(j) = super::setup_failed(s, &["create"]) {
+            return j;
+        }
         if append.not_implemented() || (!append.ok() && head.header("content-length") == Some("5"))
         {
             return Judgement::new(

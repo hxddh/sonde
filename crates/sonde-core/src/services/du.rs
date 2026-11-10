@@ -77,6 +77,11 @@ pub struct DuReport {
     pub currency: String,
     pub scanned_at: String,
     pub requests: u64,
+    /// Why noncurrent versions and delete markers are not known (the
+    /// credentials may not list versions): their zeros are then "not
+    /// counted", not "none". `None`: they were counted.
+    #[serde(default)]
+    pub versions_unknown: Option<String>,
 }
 
 const KIB: u64 = 1024;
@@ -216,6 +221,7 @@ impl Accumulator {
             currency: prices.currency,
             scanned_at: Utc::now().to_rfc3339(),
             requests,
+            versions_unknown: None,
         };
         r.findings = findings(&r);
         r
@@ -234,13 +240,24 @@ fn pct(part: u64, whole: u64) -> f64 {
 pub fn findings(r: &DuReport) -> Vec<String> {
     let mut f: Vec<(u64, String)> = Vec::new();
     let t = r.total_bytes;
+    // old versions that could not be listed are unknown, never 0 B
+    let unknown = r.versions_unknown.as_ref().map(|why| {
+        format!(
+            "Noncurrent versions and delete markers were not counted: this key may not list versions ({why}). What they hold is unknown, and the total is of current objects only."
+        )
+    });
     if t == 0 {
-        return vec![format!(
-            "{} holds no bytes{}.",
+        let mut v = vec![format!(
+            "{} holds no bytes{}{}.",
             if r.prefix.is_empty() {
                 r.bucket.clone()
             } else {
                 format!("{}/{}", r.bucket, r.prefix)
+            },
+            if r.versions_unknown.is_some() {
+                " in current objects"
+            } else {
+                ""
             },
             if r.delete_markers > 0 {
                 format!(" but {} delete markers", r.delete_markers)
@@ -248,6 +265,11 @@ pub fn findings(r: &DuReport) -> Vec<String> {
                 String::new()
             }
         )];
+        v.extend(unknown);
+        return v;
+    }
+    if let Some(u) = unknown {
+        f.push((u64::MAX, u));
     }
     f.push((
         r.current.bytes,
@@ -364,6 +386,7 @@ pub async fn scan_inner(
     let mut acc = Accumulator::new(p);
     let mut requests = 0u64;
     let mut source = "ListObjectVersions";
+    let mut versions_unknown = None;
     let (mut km, mut vm): (Option<String>, Option<String>) = (None, None);
     loop {
         ctx.check()?;
@@ -378,6 +401,10 @@ pub async fn scan_inner(
                     && matches!(e.status, Some(400) | Some(403) | Some(405) | Some(501)) =>
             {
                 source = "ListObjectsV2";
+                // refused, not absent: the versions may be there all the same
+                if matches!(e.status, Some(403)) {
+                    versions_unknown = Some(e.to_string());
+                }
                 break;
             }
             Err(e) => return Err(e),
@@ -453,6 +480,10 @@ pub async fn scan_inner(
         Agg::default()
     };
     let mut report = acc.finish(s, ep, b, source, multipart, requests);
+    if versions_unknown.is_some() {
+        report.versions_unknown = versions_unknown;
+        report.findings = findings(&report);
+    }
     if let Some(e) = uncounted {
         // zero here is "unknown", and the report must say so
         report.findings.insert(
@@ -642,5 +673,41 @@ mod tests {
             "{:?}",
             r.findings
         );
+        // 0 B of old versions is not a fact here
+        let why = r.versions_unknown.clone().expect("unknown, not zero");
+        assert!(why.contains("AccessDenied"), "{why}");
+        assert_eq!(r.noncurrent.bytes, 0);
+        assert!(
+            r.findings[1].starts_with("Noncurrent versions and delete markers were not counted"),
+            "{:?}",
+            r.findings
+        );
+        let v = serde_json::to_value(&r).unwrap();
+        assert!(v["versionsUnknown"].is_string(), "{v}");
+        // and the cached report says so too
+        let cached = load_cache(&s, "e", "b", "").unwrap();
+        assert_eq!(cached.versions_unknown, r.versions_unknown);
+    }
+
+    #[test]
+    fn a_report_cached_before_14_still_loads_with_its_versions_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let r = Accumulator::new("").finish(&s, "e", "b", "ListObjectVersions", Agg::default(), 1);
+        let mut v = serde_json::to_value(&r).unwrap();
+        v.as_object_mut().unwrap().remove("versionsUnknown");
+        let old: DuReport = serde_json::from_value(v).unwrap();
+        assert_eq!(old.versions_unknown, None);
+    }
+
+    #[test]
+    fn an_empty_scan_without_versions_does_not_say_the_bucket_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let mut r = Accumulator::new("").finish(&s, "e", "b", "ListObjectsV2", Agg::default(), 1);
+        r.versions_unknown = Some("AccessDenied (403)".into());
+        let f = findings(&r);
+        assert_eq!(f[0], "b holds no bytes in current objects.");
+        assert!(f[1].contains("were not counted"), "{f:?}");
     }
 }

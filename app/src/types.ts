@@ -293,6 +293,8 @@ export interface Slice {
 }
 
 export interface DuReport {
+  /** Why old versions were not counted (the key may not list versions); their figures are then unknown, not 0. */
+  versionsUnknown?: string | null;
   endpoint: string;
   bucket: string;
   prefix: string;

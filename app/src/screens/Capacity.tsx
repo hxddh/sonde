@@ -97,7 +97,7 @@ export function Capacity() {
               <View class="flex-row flex-wrap gap-3">
                 <Stat class={TILE} label={t("overview.size")} value={bytes(r().totalBytes)} detail={`${date(r().scannedAt)} · ${r().source}`} testID="du-size" />
                 <Stat class={TILE} label={t("nav.objects")} value={count(r().current.objects)} detail={`${t("du.current")} · ${bytes(r().current.bytes)}`} />
-                <Stat class={TILE} label={t("browse.versions")} value={count(r().noncurrent.objects)} detail={`${t("du.noncurrent")} · ${bytes(r().noncurrent.bytes)} · ${t("du.markers")}: ${count(r().deleteMarkers)}`} />
+                <Stat class={TILE} label={t("browse.versions")} value={r().versionsUnknown ? "—" : count(r().noncurrent.objects)} detail={r().versionsUnknown ? t("du.versionsUnknown") : `${t("du.noncurrent")} · ${bytes(r().noncurrent.bytes)} · ${t("du.markers")}: ${count(r().deleteMarkers)}`} />
                 <Stat class={TILE} label={t("du.multipart")} value={count(r().multipart.objects)} detail={bytes(r().multipart.bytes)} />
                 <Stat class={TILE} label={t("du.costMonth")} value={money(r().costPerMonth, r().currency)} detail={`${t("du.cost")} · ${t("du.requests", { n: count(r().requests) })}`} />
               </View>
