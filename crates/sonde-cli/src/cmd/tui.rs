@@ -106,6 +106,8 @@ fn capabilities() -> TerminalCapabilities {
     } else {
         c.background_color = Some([16, 16, 18]);
     }
+    // the breadcrumb's links are s3:// places: nothing a terminal can open
+    c.hyperlinks = false;
     c
 }
 
@@ -245,4 +247,12 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
     drop(term);
     drop(session);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn links_are_not_drawn_as_terminal_hyperlinks() {
+        assert!(!super::capabilities().hyperlinks);
+    }
 }

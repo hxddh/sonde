@@ -119,6 +119,15 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
         }
         None => {}
     }
+    // as the app: a run writes and deletes in the scratch bucket. No flag
+    // turns it off for one run: the setting is the user's one switch
+    if probes::runner::allowed(s).is_err() {
+        return Err(s3raw::S3Error::refused(format!(
+            "read-only mode is on: set `read-only = false` in {} to run probes (a run writes and deletes objects under sonde-probe/ in the scratch bucket, and buckets of its own with --temp-buckets)",
+            s.paths().config_file().display()
+        ))
+        .into());
+    }
     let endpoints = if a.endpoints.is_empty() {
         vec![super::endpoint(s, None)?]
     } else {

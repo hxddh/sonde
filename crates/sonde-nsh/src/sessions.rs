@@ -27,6 +27,27 @@ struct Recording {
     writer: Arc<SessionWriter>,
 }
 
+/// How long a stopping recording waits for the requests in flight (the
+/// CLI's).
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+impl Recording {
+    /// Ends it: the requests in flight are answered and recorded (those
+    /// still going after [`SHUTDOWN_GRACE`] are left out), then the file is
+    /// compressed. The session file's path.
+    async fn finish(mut self) -> String {
+        // compressing renames a new file over this one: a connection still
+        // writing would write to a file nobody reads
+        self.proxy.shutdown(SHUTDOWN_GRACE).await;
+        let _ = self.writer.flush();
+        let file = self.path.clone();
+        drop(self);
+        // finished: a tenth of its size; still a .sonde file every reader opens
+        let _ = sonde_proxy::session::compress(&file);
+        file.to_string_lossy().into_owned()
+    }
+}
+
 static RECORDING: Mutex<Option<Recording>> = Mutex::new(None);
 static RUNNING: Mutex<Option<crate::run::Running>> = Mutex::new(None);
 
@@ -134,17 +155,13 @@ fn policy_of(name: &str) -> Result<Policy, String> {
 /// error when it is there and does not read. Writing an empty map over a
 /// file that is only damaged would drop every entry in it.
 fn map_to_change(path: &Path) -> Result<std::collections::BTreeMap<String, String>, String> {
-    let refuse = |why: String| {
+    sonde_proxy::program::read_map(path).map_err(|e| {
         err_msg(format!(
-            "{} cannot be read ({why}): nothing was changed; fix or remove the file",
-            path.display()
+            "{} cannot be read ({}): nothing was changed; fix or remove the file",
+            e.path.display(),
+            e.why
         ))
-    };
-    match std::fs::read(path) {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| refuse(e.to_string())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
-        Err(e) => Err(refuse(e.to_string())),
-    }
+    })
 }
 
 /// A file's text: a finished session (or a log) is gzip, read for what it
@@ -516,8 +533,9 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
 }
 
 /// Each program's baseline run, by file name: `baselines.json` beside the sessions.
-fn baselines() -> std::collections::BTreeMap<String, String> {
-    sonde_proxy::program::read_baselines(&sonde().paths().sessions())
+/// A damaged one is an error, not "none set": said, and never written over.
+fn baselines() -> Result<std::collections::BTreeMap<String, String>, String> {
+    sonde_proxy::program::read_baselines(&sonde().paths().sessions()).map_err(err_msg)
 }
 
 /// The sites shared from the app, each served on its own local port.
@@ -897,7 +915,10 @@ impl Sessions {
         let (mut out_rx, exit_rx, handle) = match started {
             Ok(x) => x,
             Err(e) => {
-                Sessions::stop();
+                let r = RECORDING.lock().take();
+                if let Some(r) = r {
+                    let _ = background(r.finish()).await;
+                }
                 return Err(err_msg(format!("cannot start {command}: {e}")));
             }
         };
@@ -944,12 +965,13 @@ impl Sessions {
         }
         RUNNING.lock().take();
         // its own recording only: the user may have stopped it and begun another
-        if RECORDING
-            .lock()
-            .as_ref()
-            .is_some_and(|r| r.path == Path::new(&path))
-        {
-            Sessions::stop();
+        let own = {
+            let mut g = RECORDING.lock();
+            g.take_if(|r| r.path == Path::new(&path))
+        };
+        // resolves once the file is whole: what reads it next reads all of it
+        if let Some(r) = own {
+            let _ = background(r.finish()).await;
         }
         Ok(json!({ "exit": code, "path": path }))
     }
@@ -1098,7 +1120,7 @@ impl Sessions {
                     by.entry(k).or_default().push((h.created.to_rfc3339(), p));
                 }
             }
-            let bases = baselines();
+            let bases = baselines()?;
             let mut out: Vec<(String, JsonValue)> = by
                 .into_iter()
                 .map(|(key, mut runs)| {
@@ -1192,7 +1214,7 @@ impl Sessions {
                 .collect();
             let commits: Vec<_> = dated.iter().map(|(_, g)| g.clone()).collect();
             let runs: Vec<_> = dated.iter().map(|(r, _)| r.clone()).collect();
-            let base = baselines()
+            let base = baselines()?
                 .get(&key)
                 .map(|name| dir.join(name))
                 .filter(|p| p.is_file());
@@ -1575,15 +1597,14 @@ impl Sessions {
         Ok(json!({ "dir": dir.to_string_lossy(), "url": url }))
     }
 
-    /// Stops recording; the session file's path.
+    /// Stops recording; the session file's path. No longer the recording
+    /// at once; the file is whole and compressed once the requests in flight
+    /// have been answered (five seconds at most), off the calling thread.
     pub fn stop() -> Option<String> {
         let r = RECORDING.lock().take()?;
-        let _ = r.writer.flush();
-        let file = r.path.clone();
-        let path = file.to_string_lossy().into_owned();
-        drop(r);
-        // finished: a tenth of its size; still a .sonde file every reader opens
-        let _ = sonde_proxy::session::compress(&file);
+        let path = r.path.to_string_lossy().into_owned();
+        // a blocking thread, not a task: a handler is not in the runtime
+        blocking(move || tokio::runtime::Handle::current().block_on(r.finish()));
         Some(path)
     }
 }
@@ -1834,6 +1855,105 @@ mod tests {
         }
         g.flush().unwrap();
         assert_eq!(count_records(&path), 6);
+    }
+
+    #[tokio::test]
+    async fn a_request_in_flight_when_a_recording_stops_is_in_the_compressed_file() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // a store that answers 300 ms after it is asked
+        let store = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = format!("http://{}", store.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = store.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut seen = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match s.read(&mut buf).await {
+                            Ok(n) if n > 0 => seen.extend_from_slice(&buf[..n]),
+                            _ => return,
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    let _ = s
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+                        .await;
+                });
+            }
+        });
+        let client = s3raw::S3Client::new(
+            s3raw::ClientConfig::new("target", &upstream, "eu-west-1").unwrap(),
+            Arc::new(s3raw::StaticProvider(Some(s3raw::Credentials::new(
+                "AKID", "secret", None,
+            )))),
+            RequestLog::default(),
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("live.sonde");
+        let header = SessionHeader::new("target", &upstream, "eu-west-1", None);
+        let writer = Arc::new(SessionWriter::create(&path, &header).unwrap());
+        let log = RequestLog::new(16);
+        log.set_sink(Some(writer.clone()));
+        let cfg = ProxyConfig {
+            policy: Policy::Allow,
+            ..Default::default()
+        };
+        let proxy = Proxy::start(client, log.clone(), cfg).await.unwrap();
+        let mut app = tokio::net::TcpStream::connect(proxy.addr()).await.unwrap();
+        // signed as an application would, with the proxy's own keys
+        let (key, secret) = proxy.client_keys();
+        let now = chrono::Utc::now();
+        let date = now.format("%Y%m%dT%H%M%SZ").to_string();
+        let headers = vec![
+            ("host".to_string(), proxy.addr().to_string()),
+            ("x-amz-date".to_string(), date.clone()),
+            (
+                "x-amz-content-sha256".to_string(),
+                "UNSIGNED-PAYLOAD".to_string(),
+            ),
+        ];
+        let auth = s3raw::sigv4::sign(
+            &s3raw::sigv4::SignInput {
+                method: "GET",
+                canonical_uri: "/data/k",
+                query: &[],
+                headers: &headers,
+                payload_hash: "UNSIGNED-PAYLOAD",
+                region: "us-east-1",
+                service: "s3",
+                time: now,
+            },
+            &s3raw::Credentials::new(key, secret, None),
+        )
+        .authorization(key);
+        let ask = format!(
+            "GET /data/k HTTP/1.1\r\nhost: {}\r\nx-amz-date: {date}\r\n\
+             x-amz-content-sha256: UNSIGNED-PAYLOAD\r\nauthorization: {auth}\r\n\r\n",
+            proxy.addr()
+        );
+        app.write_all(ask.as_bytes()).await.unwrap();
+        // the proxy has the request, the store has not answered
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(log.list(&reqlog::Filter::default(), 10).is_empty());
+        let recording = Recording {
+            proxy,
+            path: path.clone(),
+            endpoint: "target".into(),
+            log,
+            writer,
+        };
+        let file = recording.finish().await;
+        assert_eq!(Path::new(&file), path);
+        assert!(sonde_proxy::session::is_compressed(&path));
+        let s = Session::open(&path).unwrap();
+        assert_eq!(
+            s.records.len(),
+            1,
+            "recorded before the file was compressed"
+        );
+        assert_eq!(s.records[0].status, Some(200));
     }
 
     #[test]
