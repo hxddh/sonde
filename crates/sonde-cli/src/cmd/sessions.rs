@@ -125,10 +125,15 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
         }
         Some(Action::Prune { keep, yes }) => {
             let dir = s.paths().sessions();
+            // which sessions are baselines is unknown: none is deleted
             let baselines: std::collections::HashSet<String> =
-                sonde_proxy::program::read_baselines(&dir)
-                    .into_values()
-                    .collect();
+                match sonde_proxy::program::read_baselines(&dir) {
+                    Ok(all) => all.into_values().collect(),
+                    Err(e) => {
+                        eprintln!("sonde: {e} (nothing was deleted)");
+                        return Ok(64);
+                    }
+                };
             let gone: Vec<&Row> = all
                 .iter()
                 .skip(*keep)

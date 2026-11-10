@@ -1741,7 +1741,14 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             );
             return Ok(64);
         }
-        let mut all = sonde_proxy::program::read_baselines(&dir);
+        // a damaged file is not written over: every other baseline would go
+        let mut all = match sonde_proxy::program::read_baselines(&dir) {
+            Ok(all) => all,
+            Err(e) => {
+                eprintln!("sonde: {e} (no baseline was set)");
+                return Ok(64);
+            }
+        };
         let name = file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -1754,12 +1761,17 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         None => None,
         Some(_) if fetched.is_some() => fetched.as_ref().map(|p| p.to_path_buf()),
         Some("auto") => {
-            let found = program.as_ref().and_then(|k| {
-                sonde_proxy::program::read_baselines(&dir)
-                    .get(k)
-                    .map(|n| dir.join(n))
-                    .filter(|p| p.is_file())
-            });
+            // damaged is not "none set": the run would go unchecked
+            let all = match sonde_proxy::program::read_baselines(&dir) {
+                Ok(all) => all,
+                Err(e) => {
+                    eprintln!("sonde: {e}");
+                    return Ok(64);
+                }
+            };
+            let found = program
+                .as_ref()
+                .and_then(|k| all.get(k).map(|n| dir.join(n)).filter(|p| p.is_file()));
             if found.is_none() {
                 eprintln!(
                     "no baseline set for this program: set one with `sonde check FILE --set-baseline` or in the app"
@@ -2474,13 +2486,11 @@ fn post_alert(url: &str, text: String) -> tokio::task::JoinHandle<()> {
     })
 }
 
-/// A finished file held to the project's budget (`sonde.toml`'s `[check]`):
-/// what went over, when anything did.
-fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
-    use sonde_proxy::program::{Budget, check, run_point};
+/// The project's budget (`sonde.toml`'s `[check]`), when there is one.
+fn project_budget() -> Option<sonde_proxy::program::Budget> {
     let text = std::fs::read_to_string(find_project_file()?).ok()?;
     let p: ProjectCheck = toml::from_str::<ProjectFile>(&text).ok()?.check;
-    let budget = Budget {
+    Some(sonde_proxy::program::Budget {
         max_requests: p.max_requests,
         max_waiting_ms: p.max_waiting.as_ref().and_then(|v| waiting_ms(v).ok()),
         max_cost: p.max_cost,
@@ -2492,12 +2502,28 @@ fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
         expect: p.expect.clone(),
         tolerance: None,
         no_new_warnings: false,
-    };
+    })
+}
+
+/// A finished file held to the project's budget: what went over, when
+/// anything did.
+fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
+    let budget = project_budget()?;
     let endpoint = records.first().map(|r| r.endpoint.as_str()).unwrap_or("");
     let prof = profile(records, &request_prices_for(s, endpoint));
     let obs = observations(records, &episodes(records));
-    let point = run_point("", "", records, &prof, &obs);
-    let c = check((&point, records, &prof, &obs), None, &budget);
+    let point = sonde_proxy::program::run_point("", "", records, &prof, &obs);
+    over_limits(&point, &budget)
+}
+
+/// The same from a file's figures alone: without a baseline a budget's
+/// limits are all on them (requests, waiting, cost, errors, p95).
+fn over_limits(
+    point: &sonde_proxy::program::RunPoint,
+    budget: &sonde_proxy::program::Budget,
+) -> Option<String> {
+    let none = profile(&[], &RequestPrices::default());
+    let c = sonde_proxy::program::check((point, &[], &none, &[]), None, budget);
     let over: Vec<String> = c
         .verdicts
         .iter()
@@ -2505,8 +2531,8 @@ fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
         .map(|v| match v.what {
             "cost" => format!(
                 "cost {} > {}",
-                money_text(v.value, &prof.cost.currency),
-                money_text(v.limit, &prof.cost.currency)
+                money_text(v.value, &point.currency),
+                money_text(v.limit, &point.currency)
             ),
             "waiting" | "p95" => format!("{} {} > {}", v.what, ms_text(v.value), ms_text(v.limit)),
             what => format!("{what} {:.0} > {:.0}", v.value, v.limit),
@@ -2514,6 +2540,9 @@ fn over_budget(s: &Arc<Sonde>, records: &[Record]) -> Option<String> {
         .collect();
     (!over.is_empty()).then(|| over.join(", "))
 }
+
+/// How many of a file's newest records `watch` reads for its warnings.
+const WATCH_RECENT: usize = 50_000;
 
 /// A proxy left running: one status line for the last minute, each new
 /// warning as it appears, and a new session file every --rotate minutes.
@@ -2537,7 +2566,26 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
     let mut rx = started.log.subscribe();
     let mut writer = started.writer.clone();
     let mut path = started.path.clone();
-    let mut file_records: Vec<Record> = Vec::new();
+    // a file's records are on disk: held here are the figures its budget is
+    // on and the newest records, which the warnings are read from
+    let mut figures: Option<sonde_proxy::program::RunFigures> = None;
+    let mut recent: VecDeque<Record> = VecDeque::new();
+    let take = |figures: &mut Option<sonde_proxy::program::RunFigures>,
+                recent: &mut VecDeque<Record>,
+                r: Record| {
+        figures
+            .get_or_insert_with(|| {
+                sonde_proxy::program::RunFigures::new(request_prices_for(s, &r.endpoint))
+            })
+            .add(&r);
+        if recent.len() == WATCH_RECENT {
+            recent.pop_front();
+        }
+        recent.push_back(r);
+    };
+    let over = |figures: Option<sonde_proxy::program::RunFigures>| {
+        over_limits(&figures?.point(), &project_budget()?)
+    };
     let mut minute: VecDeque<(Instant, Record)> = VecDeque::new();
     let mut warned: HashSet<String> = HashSet::new();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -2557,7 +2605,7 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                 Ok(id) => {
                     if let Some(r) = started.log.get(id) {
                         minute.push_back((Instant::now(), r.clone()));
-                        file_records.push(r);
+                        take(&mut figures, &mut recent, r);
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
@@ -2577,7 +2625,7 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                     "last minute: {n} requests ({:.1}/s) · {errors} errors · p95 {} · {} in this file",
                     n as f64 / 60.0,
                     ms_text(p95),
-                    file_records.len()
+                    figures.as_ref().map_or(0, |f| f.requests())
                 );
                 if tty {
                     eprint!("\r\x1b[2K{line}");
@@ -2585,8 +2633,8 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                     eprintln!("{line}");
                 }
                 // what this file's requests say, every five seconds: each warning once
-                if seconds.is_multiple_of(5) && !file_records.is_empty() {
-                    let recent = &file_records[file_records.len().saturating_sub(50_000)..];
+                if seconds.is_multiple_of(5) && !recent.is_empty() {
+                    let recent = &*recent.make_contiguous();
                     for o in observations(recent, &episodes(recent)) {
                         if o.level == "warn" && warned.insert(sonde_proxy::profile::finding_identity(&o)) {
                             if tty {
@@ -2617,14 +2665,14 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                     }
                     eprintln!("{} {}", paint("·", "2", tty), old_path.display());
                     // said here whether or not anything is told elsewhere
-                    if let Some(over) = over_budget(s, &file_records) {
+                    if let Some(over) = over(figures.take()) {
                         let text = format!("sonde watch: {} is over budget: {over}", old_path.display());
                         eprintln!("{} {text}", paint("!", "33", tty));
                         if let Some(url) = &a.alert {
                             sent.push(post_alert(url, text));
                         }
                     }
-                    file_records.clear();
+                    recent.clear();
                     warned.clear();
                     rotated = Instant::now();
                 }
@@ -2638,13 +2686,15 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
     let Started { mut proxy, log, .. } = started;
     proxy.shutdown(SHUTDOWN_GRACE).await;
     while let Ok(id) = rx.try_recv() {
-        file_records.extend(log.get(id));
+        if let Some(r) = log.get(id) {
+            take(&mut figures, &mut recent, r);
+        }
     }
     log.set_sink(None);
     drop(proxy);
     finish(writer, &path);
     // the last file is held to the budget too
-    if let Some(over) = over_budget(s, &file_records) {
+    if let Some(over) = over(figures.take()) {
         let text = format!("sonde watch: {} is over budget: {over}", path.display());
         eprintln!("{} {text}", paint("!", "33", tty));
         if let Some(url) = &a.alert {
@@ -2660,6 +2710,32 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
 mod tests {
     use super::*;
     use sonde_proxy::program::md_text;
+
+    #[test]
+    fn a_watched_file_is_held_to_the_budget_by_its_figures() {
+        use sonde_proxy::program::{Budget, RunFigures};
+        let mut f = RunFigures::new(RequestPrices::default());
+        for i in 0..3 {
+            f.add(&Record {
+                id: i,
+                method: "GET".into(),
+                operation: "GetObject".into(),
+                status: Some(200),
+                latency_ms: 2000.0,
+                ..Default::default()
+            });
+        }
+        let budget = |max_requests, max_p95_ms| Budget {
+            max_requests,
+            max_p95_ms,
+            ..Default::default()
+        };
+        assert_eq!(over_limits(&f.point(), &budget(Some(3), None)), None);
+        assert_eq!(
+            over_limits(&f.point(), &budget(Some(2), Some(500.0))).as_deref(),
+            Some("requests 3 > 2, p95 2.0 s > 500 ms")
+        );
+    }
 
     #[test]
     fn a_findings_text_is_shown_as_written_in_a_pr_comment() {

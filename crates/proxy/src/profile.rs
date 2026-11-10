@@ -518,6 +518,19 @@ pub fn reached_store(r: &Record) -> bool {
             .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
 }
 
+/// What one request costs: nothing when it never reached the store.
+pub fn price(r: &Record, prices: &RequestPrices) -> f64 {
+    match class(r) {
+        _ if !reached_store(r) => 0.0,
+        Class::Write if r.operation.starts_with("List") => {
+            prices.per_1000_lists.unwrap_or(prices.per_1000_writes) / 1000.0
+        }
+        Class::Write => prices.per_1000_writes / 1000.0,
+        Class::Read => prices.per_1000_reads / 1000.0,
+        Class::Free => 0.0,
+    }
+}
+
 fn tone(r: &Record) -> u8 {
     match r.status {
         _ if is_miss(r) => 1,
@@ -566,15 +579,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let wall_us = (t1 - t0).max(1);
     let busy_us = union_us(records.iter().map(|r| (start_us(r), end_us(r))).collect());
     let ms = |us: i64| us as f64 / 1000.0;
-    let price = |r: &Record| match class(r) {
-        _ if !reached_store(r) => 0.0,
-        Class::Write if r.operation.starts_with("List") => {
-            prices.per_1000_lists.unwrap_or(prices.per_1000_writes) / 1000.0
-        }
-        Class::Write => prices.per_1000_writes / 1000.0,
-        Class::Read => prices.per_1000_reads / 1000.0,
-        Class::Free => 0.0,
-    };
+    let price = |r: &Record| price(r, prices);
 
     // groups
     let mut by: BTreeMap<(String, bool), Vec<&Record>> = BTreeMap::new();

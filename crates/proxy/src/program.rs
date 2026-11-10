@@ -231,12 +231,50 @@ pub fn shell_join(args: &[String]) -> String {
         .join(" ")
 }
 
-/// Each program's baseline run, by file name: `baselines.json` beside the sessions.
-pub fn read_baselines(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
-    std::fs::read(dir.join("baselines.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+/// A map beside the sessions that is there and does not read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unreadable {
+    pub path: std::path::PathBuf,
+    pub why: String,
+}
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} cannot be read ({}): fix or remove the file",
+            self.path.display(),
+            self.why
+        )
+    }
+}
+
+impl std::error::Error for Unreadable {}
+
+/// A JSON map beside the sessions (`titles.json`, `baselines.json`,
+/// `imports.json`): empty when there is none, an error when it is there and
+/// does not read. Read as empty, a file that is only damaged would say
+/// nothing is set, and the next write would drop every entry in it.
+pub fn read_map(
+    path: &std::path::Path,
+) -> Result<std::collections::BTreeMap<String, String>, Unreadable> {
+    let unreadable = |why: String| Unreadable {
+        path: path.to_path_buf(),
+        why,
+    };
+    match std::fs::read(path) {
+        Ok(b) => serde_json::from_slice(&b).map_err(|e| unreadable(e.to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+        Err(e) => Err(unreadable(e.to_string())),
+    }
+}
+
+/// Each program's baseline run, by file name: `baselines.json` beside the
+/// sessions. None set when there is no file; a damaged one is an error.
+pub fn read_baselines(
+    dir: &std::path::Path,
+) -> Result<std::collections::BTreeMap<String, String>, Unreadable> {
+    read_map(&dir.join("baselines.json"))
 }
 
 pub fn write_baselines(
@@ -298,6 +336,88 @@ pub fn run_point(
             .count(),
         warnings: findings.iter().filter(|o| o.level == "warn").count(),
         findings: findings.len(),
+    }
+}
+
+/// The figures a budget holds a run to, kept as its requests arrive: a
+/// proxy left running holds eight bytes a request (its latency, for the
+/// p95) and the stretches of time with a request in flight, not the records.
+/// The same figures as [`run_point`] of the same records.
+#[derive(Debug, Clone)]
+pub struct RunFigures {
+    prices: crate::profile::RequestPrices,
+    requests: usize,
+    errors: usize,
+    cost: f64,
+    latencies: Vec<f64>,
+    /// Disjoint stretches with a request in flight, start to end, in µs.
+    busy: std::collections::BTreeMap<i64, i64>,
+    /// The first request's start and the last one's end.
+    span: Option<(i64, i64)>,
+}
+
+impl RunFigures {
+    pub fn new(prices: crate::profile::RequestPrices) -> RunFigures {
+        RunFigures {
+            prices,
+            requests: 0,
+            errors: 0,
+            cost: 0.0,
+            latencies: Vec::new(),
+            busy: Default::default(),
+            span: None,
+        }
+    }
+
+    pub fn requests(&self) -> usize {
+        self.requests
+    }
+
+    pub fn add(&mut self, r: &Record) {
+        self.requests += 1;
+        self.errors += usize::from(r.is_error() && !is_miss(r));
+        self.cost += crate::profile::price(r, &self.prices);
+        self.latencies.push(r.latency_ms.max(0.0));
+        let mut start = r.time.timestamp_micros();
+        let mut end = start + r.latency_us();
+        self.span = Some(match self.span {
+            Some((s, e)) => (s.min(start), e.max(end)),
+            None => (start, end),
+        });
+        // no time in flight adds none (a log without latencies stays empty)
+        if end <= start {
+            return;
+        }
+        // the stretches it touches become one with it
+        while let Some((&s, &e)) = self.busy.range(..=end).next_back()
+            && e >= start
+        {
+            self.busy.remove(&s);
+            (start, end) = (start.min(s), end.max(e));
+        }
+        self.busy.insert(start, end);
+    }
+
+    /// The run so far, as a point (no path, no findings: a budget's limits
+    /// are on the figures).
+    pub fn point(&self) -> RunPoint {
+        let mut sorted = self.latencies.clone();
+        sorted.sort_by(f64::total_cmp);
+        let busy_us: i64 = self.busy.iter().map(|(s, e)| e - s).sum();
+        let wall_us = self.span.map_or(0, |(s, e)| (e - s).max(1));
+        RunPoint {
+            path: String::new(),
+            created: String::new(),
+            requests: self.requests,
+            busy_ms: busy_us as f64 / 1000.0,
+            wall_ms: wall_us as f64 / 1000.0,
+            p95_ms: crate::profile::percentile(&sorted, 0.95),
+            cost: self.cost,
+            currency: self.prices.currency.clone(),
+            errors: self.errors,
+            warnings: 0,
+            findings: 0,
+        }
     }
 }
 
@@ -658,6 +778,22 @@ mod tests {
     use crate::profile::{RequestPrices, profile};
     use chrono::DateTime;
 
+    #[test]
+    fn damaged_baselines_are_an_error_and_missing_ones_are_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_baselines(dir.path()).unwrap().is_empty(), "none set");
+        let mut all = std::collections::BTreeMap::new();
+        all.insert("python etl.py".to_string(), "a.sonde".to_string());
+        write_baselines(dir.path(), &all).unwrap();
+        assert_eq!(read_baselines(dir.path()).unwrap(), all);
+        // cut short: read as empty, the next write would drop every baseline
+        let f = dir.path().join("baselines.json");
+        std::fs::write(&f, "{\"python etl.py\": \"a.so").unwrap();
+        let e = read_baselines(dir.path()).unwrap_err();
+        assert_eq!(e.path, f);
+        assert!(e.to_string().contains("fix or remove the file"), "{e}");
+    }
+
     fn rec(id: u64, key: &str) -> Record {
         Record {
             id,
@@ -676,6 +812,53 @@ mod tests {
         let p = profile(rs, &RequestPrices::default());
         let o = observations(rs, &episodes(rs));
         (run_point("x", "", rs, &p, &o), p, o)
+    }
+
+    #[test]
+    fn figures_kept_as_requests_arrive_are_those_of_the_records() {
+        let mut rs = Vec::new();
+        for i in 0..200u64 {
+            let mut r = rec(i, &format!("k{}", i % 7));
+            // overlapping, touching and apart; some slow, some with no time
+            r.latency_ms = match i % 5 {
+                0 => 0.0,
+                1 => 37.5,
+                2 => 10.0,
+                _ => 4.0 + i as f64 / 10.0,
+            };
+            match i % 11 {
+                0 => r.status = Some(503),
+                1 => r.status = Some(404),
+                2 => r.status = None,
+                3 => (r.method, r.operation) = ("PUT".into(), "PutObject".into()),
+                4 => r.operation = "ListObjectsV2".into(),
+                5 => r.method = "DELETE".into(),
+                _ => {}
+            }
+            if i > 150 {
+                // a pause, then a late burst
+                r.time += chrono::Duration::seconds(30);
+            }
+            rs.push(r);
+        }
+        // arrival is by end, not by start
+        rs.sort_by_key(|r| r.time.timestamp_micros() + r.latency_us());
+        let prices = RequestPrices {
+            per_1000_lists: Some(0.004),
+            ..Default::default()
+        };
+        let mut f = RunFigures::new(prices.clone());
+        rs.iter().for_each(|r| f.add(r));
+        let p = profile(&rs, &prices);
+        let want = run_point("", "", &rs, &p, &[]);
+        assert_eq!(f.point(), want);
+        assert!(want.errors > 0 && want.cost > 0.0 && want.p95_ms > 10.0);
+        assert!(want.busy_ms < want.wall_ms);
+        assert_eq!(RunFigures::new(prices.clone()).point().requests, 0);
+        assert_eq!(
+            RunFigures::new(prices.clone()).point(),
+            run_point("", "", &[], &profile(&[], &prices), &[])
+        );
     }
 
     #[test]
