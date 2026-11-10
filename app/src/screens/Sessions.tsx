@@ -263,6 +263,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     <Observations
       view={v}
       dense={dense()}
+      // a narrow pane keeps the line for what was found; what it saves is in the finding once chosen
+      narrow={box().w < 820}
       onExpect={(o) => copy(`expect = [${JSON.stringify(o.identity)}]`, t("expect.copied"))}
       filter={filter()}
       onFilter={(f) => filter.set(f)}

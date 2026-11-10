@@ -78,10 +78,10 @@ back. Design standards: [app/DESIGN.md](app/DESIGN.md).
 
 | | |
 |---|---|
-| ![A session: its figures, what stands out and why, operations with outcome and time](docs/images/session.png) | ![Where the time went, dark](docs/images/time-dark.png) |
+| ![A session: its figures, what stands out and why, operations with outcome and time](docs/images/session.png) | ![The Time board, dark: the timeline, every request, what ran at once](docs/images/time-dark.png) |
 | ![Buckets: the overview over the objects, an object's details](docs/images/store.png) | ![Incomplete uploads, a sheet from the overview](docs/images/uploads.png) |
 | ![Where requests went: operation, prefix, outcome](docs/images/flows.png) | ![When and where, and how long requests took](docs/images/spread.png) |
-| ![Where the time went, the peak in flight, the request cost](docs/images/time.png) | ![Two runs, before and after](docs/images/runs.png) |
+| ![The Time board: one timeline, each chart in its frame](docs/images/time.png) | ![Two runs, before and after](docs/images/runs.png) |
 | ![Settings and endpoints in a window of their own](docs/images/endpoints.png) | ![The command palette](docs/images/palette.png) |
 
 What each version changed is in the [changelog](CHANGELOG.md).

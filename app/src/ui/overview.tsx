@@ -161,7 +161,7 @@ export function Overview() {
     return ep && b ? versioning()[bucketKey(ep, b)] : undefined;
   };
   const month = (cost: number, currency: string) => `${money(cost, currency)}/${t("overview.month")}`;
-  const TILE = "min-w-44 flex-1";
+  const TILE = "min-w-36 flex-1";
   return (
     <View testID="overview" class="flex-row flex-wrap gap-3">
       <Stat

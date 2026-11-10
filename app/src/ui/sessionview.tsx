@@ -477,7 +477,7 @@ export function whatIfText(v: SessionView): string | null {
 /** What stands out in a session — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
+export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   // a finding pressed brings its fixes into view, under the list
   let scroller: ScrollRef | undefined;
@@ -542,7 +542,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
         </If>
       </View>
       {/* a line each: what acting on it saves, at the row's end */}
-      <If when={dense() && props.filter !== i() && !props.compact && observationSaving(o())}>
+      <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && observationSaving(o())}>
         {(v) => (
           <View class="h-5 shrink-0 flex-row items-center gap-1">
             <Icon name="trending-down" size={12} tint="info" />
@@ -693,7 +693,9 @@ export function OperationsTable(props: {
   let titleWidth = 340;
   const data = () => {
     columns();
-    const room = Math.max(24, Math.floor((titleWidth - 12) / 5.8));
+    const room = Math.max(24, Math.floor((titleWidth - 12) / 6.4));
+    // a key is cut in its middle (its end tells two apart); a sentence is left to the cell, which cuts its end
+    const fit = (text: string) => (text.includes("/") ? middle(text, room) : text);
     return shown().map((i) => {
       const e = props.view.episodes[i];
       return {
@@ -701,7 +703,7 @@ export function OperationsTable(props: {
         time: clock(e.start),
         format: family(e).label,
         // cut in the middle: the end of a key is what tells two apart
-        title: middle(terminal() && e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), terminal() ? (props.compact ? 40 : 72) : room),
+        title: terminal() ? middle(e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72) : fit(episodeTitle(e)),
         requests: count(e.records.length),
         duration: ms(duration(e)),
         bar: "",
