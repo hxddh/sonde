@@ -1184,6 +1184,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dispatch2"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
+dependencies = [
+ "bitflags 2.13.2",
+ "objc2",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2645,7 +2655,7 @@ dependencies = [
 [[package]]
 name = "nsh-base"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "chrono",
  "html5ever",
@@ -2669,7 +2679,7 @@ dependencies = [
 [[package]]
 name = "nsh-core"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "cap-std",
  "crc32fast",
@@ -2704,7 +2714,7 @@ dependencies = [
 [[package]]
 name = "nsh-dev"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "base64 0.22.1",
  "dunce",
@@ -2717,7 +2727,7 @@ dependencies = [
 [[package]]
 name = "nsh-engine"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -2726,6 +2736,7 @@ dependencies = [
  "nsh-js",
  "nsh-package",
  "nsh-updater",
+ "objc2-io-surface",
  "oxc_sourcemap",
  "rustc-hash 2.1.3",
  "serde_json",
@@ -2737,12 +2748,12 @@ dependencies = [
 [[package]]
 name = "nsh-i18n"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 
 [[package]]
 name = "nsh-js"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "futures-util",
  "getrandom 0.4.3",
@@ -2765,7 +2776,7 @@ dependencies = [
 [[package]]
 name = "nsh-macros"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "imagesize",
  "proc-macro2",
@@ -2778,7 +2789,7 @@ dependencies = [
 [[package]]
 name = "nsh-package"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
@@ -2793,7 +2804,7 @@ dependencies = [
 [[package]]
 name = "nsh-platform-tui"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -2813,7 +2824,7 @@ dependencies = [
 [[package]]
 name = "nsh-testing"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",
@@ -2829,7 +2840,7 @@ dependencies = [
 [[package]]
 name = "nsh-tui-host"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -2847,7 +2858,7 @@ dependencies = [
 [[package]]
 name = "nsh-updater"
 version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=1662115e30b4a86ca2e5eaf216e165c93bbdbee9#1662115e30b4a86ca2e5eaf216e165c93bbdbee9"
+source = "git+https://github.com/longbridge/nsh?rev=ec8430f4910bb27670a39fc2e0355f26aa1d261a#ec8430f4910bb27670a39fc2e0355f26aa1d261a"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
@@ -2907,6 +2918,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8"
+dependencies = [
+ "objc2-encode",
+]
+
+[[package]]
+name = "objc2-core-foundation"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
+dependencies = [
+ "dispatch2",
+ "objc2",
+]
+
+[[package]]
+name = "objc2-encode"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef25abbcd74fb2609453eb695bd2f860d389e457f67dc17cafc8b8cbc89d0c33"
+
+[[package]]
+name = "objc2-io-surface"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "180788110936d59bab6bd83b6060ffdfffb3b922ba1396b312ae795e1de9d81d"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
+ "objc2",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2917,6 +2965,28 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "onig"
+version = "6.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc3cbf698f9438986c11a880c90a6d04b9de27575afd28bbf45b154b6c709e2"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
+ "once_cell",
+ "onig_sys",
+]
+
+[[package]]
+name = "onig_sys"
+version = "69.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
 
 [[package]]
 name = "openssl-probe"
@@ -4778,6 +4848,7 @@ dependencies = [
  "flate2",
  "fnv",
  "once_cell",
+ "onig",
  "regex-syntax",
  "serde",
  "serde_derive",
