@@ -131,6 +131,8 @@ for (const v of variants) {
     } else if (app.menu()) await app.closeMenu();
 
     await go("store");
+    // the buckets are listed from the store: there when the listing is in
+    await app.waitFor("id:bucket-demo", { timeout: 10000 });
     await shot("04-store");
     await app.press("id:bucket-demo");
     await app.waitFor("text:README.md", { timeout: 10000 });
