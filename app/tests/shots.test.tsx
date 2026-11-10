@@ -102,6 +102,8 @@ for (const v of variants) {
     }
     await app.press("id:session-pane-mode-time");
     await app.waitFor("id:time-pane");
+    // the board's charts draw themselves in: the picture is of them drawn
+    await app.wait(900);
     await shot("03g-time");
     // further down the Time pane, a window at a time: every request and each
     // kind over time; pushback and the distribution; time spent and chains;
