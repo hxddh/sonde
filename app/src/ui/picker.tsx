@@ -3,7 +3,7 @@
 import { resource, Text, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
-import { bucket, chooseBucket, endpoint, endpoints, report } from "../store";
+import { bucket, chooseBucket, endpoint, endpoints, report, useEndpoint } from "../store";
 import { Choice, Loading } from "./kit";
 
 export function EndpointPicker(props: { testID?: string; class?: string }) {
@@ -13,10 +13,7 @@ export function EndpointPicker(props: { testID?: string; class?: string }) {
       placeholder={t("common.chooseEndpoint")}
       value={endpoint()}
       items={endpoints().map((e) => ({ value: e.id, title: e.name }))}
-      onChange={(v) => {
-        endpoint.set(v);
-        chooseBucket(null);
-      }}
+      onChange={(v) => useEndpoint(v)}
       class={props.class ?? "w-56"}
     />
   );

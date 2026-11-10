@@ -4,15 +4,14 @@
 
 import { type JSX, signal, Text, View } from "nsh";
 import { Editor, type EditorDiagnostic } from "nsh/base";
-import { bytes, day, ms } from "../format";
+import { bytes, count, day, ms } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
-import { Icon } from "./icon";
-import { Button, Disclosure, Dot, KeyValue, terminal } from "./kit";
-import { clock, StatusMark, statusTone, toneText } from "./sessionview";
+import { Back, Disclosure, KeyValue, Notice, terminal } from "./kit";
+import { clock, StatusMark } from "./sessionview";
 
-/** A part of the request that folds: its title and count, open or not
- * (the kit's Disclosure: a heading, and a button that says it expands). */
+/** The kit's Disclosure, open unless told otherwise. Kept for the object's
+ * detail (screens/Browse.tsx); everything here uses Disclosure itself. */
 export function Fold(props: { title: string; count?: number; open?: boolean; children: JSX.Element; testID?: string }) {
   return (
     <Disclosure title={props.title} count={props.count} open={props.open ?? true} testID={props.testID}>
@@ -103,7 +102,6 @@ const headerRows = (h: Header[]): [string, string][] => h.map((x) => [x.name, x.
 /** A request in full: status, timing, ids, then its parts: error, query, headers. */
 export function RecordView(props: { record: RequestRecord; onBack?: () => void; actions?: JSX.Element }) {
   const r = () => props.record;
-  const tone = () => statusTone(r().status);
   const facts = (): [string, string][] =>
     [
       [t("column.time"), `${day(r().time)} ${clock(r().time)}`],
@@ -112,65 +110,60 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
       ...(r().firstByteMs != null ? [[t("requests.firstByte"), ms(r().firstByteMs!)] as [string, string]] : []),
       ...(r().requester ? [[t("requests.requester"), r().requester!] as [string, string]] : []),
       [t("requests.size"), `↑${bytes(r().requestBytes ?? 0)} ↓${bytes(r().responseBytes ?? 0)}`],
-      [t("requests.retries"), String(r().retries)],
+      [t("requests.retries"), count(r().retries)],
       ["x-amz-request-id", r().requestId ?? "—"],
       ["x-amz-id-2", r().hostId ?? "—"],
-      ["Region", r().region ?? "—"],
-      ...(r().job ? ([["Job", r().job!]] as [string, string][]) : []),
+      [t("requests.region"), r().region ?? "—"],
+      ...(r().job ? ([[t("requests.job"), r().job!]] as [string, string][]) : []),
     ] as [string, string][];
   return (
     <View selectable class="gap-4" testID="record-detail">
-      <View class="gap-1.5">
+      <View class="gap-2">
+        <If when={props.onBack}>
+          <Back onPress={() => props.onBack?.()} testID="record-back" />
+        </If>
         <View class="flex-row items-center gap-2">
-          <If when={props.onBack}>
-            <Button small variant="ghost" icon="chevron-left" label={t("common.back")} onPress={() => props.onBack?.()} testID="record-back" />
-          </If>
           <StatusMark status={r().status} text={r().status === null ? t("requests.transport") : undefined} />
           <Text class="text-heading font-semibold text-foreground">{r().operation}</Text>
         </View>
         <Text class="font-mono text-caption leading-4 text-muted-foreground">{`${r().method} ${r().url}`}</Text>
       </View>
       <If when={props.actions}>
-        <View class="flex-row flex-wrap gap-1.5">{props.actions}</View>
+        <View class="flex-row flex-wrap gap-2">{props.actions}</View>
       </If>
       <If when={r().transportError}>
         {(e) => (
-          <View class="flex-row gap-2 rounded-(--radius) border border-destructive/30 bg-destructive/10 px-2 py-2">
-            <Icon name="circle-x" size={14} tint="destructive" />
-            <Text class="flex-1 text-small text-destructive">
-              {e()}
-            </Text>
-          </View>
+          <Notice tone="error" icon="circle-x" text={e()} />
         )}
       </If>
       <If when={r().errorBody}>
         {(b) => (
-          <Fold title={t("requests.errorBody")} testID="record-error">
+          <Disclosure open title={t("requests.errorBody")} testID="record-error">
             <Document text={b()} mark testID="record-error-body" />
-          </Fold>
+          </Disclosure>
         )}
       </If>
       <If when={r().requestBody}>
         {(b) => (
-          <Fold title={r().requestBodyTruncated ? t("requests.bodyCut") : t("requests.body")} testID="record-body">
+          <Disclosure open title={r().requestBodyTruncated ? t("requests.bodyCut") : t("requests.body")} testID="record-body">
             <Document text={b()} />
-          </Fold>
+          </Disclosure>
         )}
       </If>
-      <Fold title={t("requests.facts")}>
+      <Disclosure open title={t("requests.facts")}>
         <KeyValue boxed rows={facts()} />
-      </Fold>
+      </Disclosure>
       <If when={r().query.length > 0}>
-        <Fold title={t("requests.query")} count={r().query.length}>
+        <Disclosure open title={t("requests.query")} count={r().query.length}>
           <KeyValue boxed rows={r().query.map(([k, v]) => [k, v])} />
-        </Fold>
+        </Disclosure>
       </If>
-      <Fold title={t("requests.requestHeaders")} count={r().requestHeaders.length}>
+      <Disclosure open title={t("requests.requestHeaders")} count={r().requestHeaders.length}>
         <KeyValue boxed rows={headerRows(r().requestHeaders)} />
-      </Fold>
-      <Fold title={t("requests.responseHeaders")} count={r().responseHeaders.length}>
+      </Disclosure>
+      <Disclosure open title={t("requests.responseHeaders")} count={r().responseHeaders.length}>
         <KeyValue boxed rows={headerRows(r().responseHeaders)} />
-      </Fold>
+      </Disclosure>
     </View>
   );
 }

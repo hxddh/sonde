@@ -25,8 +25,9 @@ test("multipart: scan, lifecycle verdict, the guard refuses while read-only", as
   await app.waitFor("text:3 · 172 MiB", { timeout: 10000 });
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
-  expect(app.shows("text:2 older than 7 days")).toBe(true);
-  expect(app.shows("text:missing")).toBe(true);
+  // the figure is the count; its line says how much they hold and how many are old
+  expect(app.shows("text:/2 older than 7 days/")).toBe(true);
+  expect(app.shows("text:Missing")).toBe(true);
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
   expect(app.shows("text:Read-only mode is on. Turn it off in Settings to run this.")).toBe(true);
@@ -70,6 +71,10 @@ test("layouts: detects and decodes the real SlateDB sample, with replay", async 
 
 test("compatibility: runs probes on the demo and fills the matrix", async () => {
   const app = await withDemo();
+  // probes write to the scratch bucket: they run with read-only off
+  await place(app, "settings");
+  await app.press("id:read-only");
+  await app.waitFor("label:Writes enabled");
   await place(app, "probes");
   // the endpoint in use comes chosen
   await app.type("id:probe-bucket", "demo");
@@ -81,6 +86,11 @@ test("compatibility: runs probes on the demo and fills the matrix", async () => 
   await app.waitFor("id:probe-detail");
   expect(app.shows("text:/^aws behavior$/i")).toBe(true);
   expect(app.shows("text:/^requests and responses$/i")).toBe(true);
+  // read-only again, as the other tests find it
+  await app.window("compat").pressClose();
+  await place(app, "settings");
+  await app.press("id:read-only");
+  await app.waitFor("label:Read-only");
 }, 120_000);
 
 test("endpoints: adding never replaces one; a name in another script gets an id of its own", async () => {
@@ -147,7 +157,7 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   await app.press("id:confirm-run");
   await app.waitFor("text:1 incomplete upload", { timeout: 10000 });
   await place(app, "audit");
-  await app.waitFor("text:abortUploads · demo/demo");
+  await app.waitFor("text:Abort uploads · demo/demo");
   await app.press("id:activity-close");
   await place(app, "settings");
   await app.press("id:read-only");
@@ -210,7 +220,7 @@ test("a number typed in Settings is saved a moment after the last key", async ()
   expect(app.shows("text:Settings saved")).toBe(false);
   await app.clock!.runFor(400);
   expect(app.shows("text:Settings saved")).toBe(false);
-  // 0.7 s after the last key it is saved, with Undo (the toast shows in each window)
+  // 0.7 s after the last key it is saved, with Undo (the toast shows in the window that has the focus, else the main one)
   await app.clock!.runFor(400);
   await app.waitFor("text:Settings saved >> nth=0");
   await app.press("text:Undo >> nth=0");

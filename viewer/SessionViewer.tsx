@@ -8,7 +8,7 @@ import { computed, Scroll, signal, Text, View } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { t } from "../app/src/i18n";
 import type { Episode, LogLine, RecordSummary, RequestRecord, SessionView } from "../app/src/types";
-import { Empty, IconButton, Segmented } from "../app/src/ui/kit";
+import { PanelHeader, Segmented, SPLIT_HANDLE } from "../app/src/ui/kit";
 import { RecordView } from "../app/src/ui/record";
 import { linesOf, Observations, OperationsTable, OperationView, OutputTable, operationsAt, SessionHeader } from "../app/src/ui/sessionview";
 import { TimePane } from "../app/src/ui/profile";
@@ -34,11 +34,16 @@ export function SessionViewer(props: { data: SharedSession }) {
   const pane = signal<Pane>(d.lines.length ? "aligned" : "operations");
   let opsRef: DataTableRef | undefined;
   let outRef: DataTableRef | undefined;
+  // the operations in the order their table shows them (sorted by a column)
+  let opsOrder: (() => number[]) | undefined;
 
   const episode = computed<Episode | null>(() => {
     const i = op();
     return i === null ? null : (d.episodes[i] ?? null);
   });
+  // a request chosen on the Time pane has no operation open: the inspector shows it all the same
+  const record = computed(() => (rec() === null ? null : (byId.get(rec()!) ?? null)));
+  const inspecting = () => !!episode() || !!record();
   const shown = () => (filter() === null ? undefined : d.observations[filter()!]?.episodes);
   const rows = (e: Episode): RecordSummary[] => e.records.map((id) => byId.get(id)).filter((r): r is RequestRecord => !!r);
   const chooseOperation = (i: number) => {
@@ -56,7 +61,8 @@ export function SessionViewer(props: { data: SharedSession }) {
     if (ops.length) {
       op.set(ops[0]);
       rec.set(null);
-      const at = shown() ? shown()!.indexOf(ops[0]) : ops[0];
+      // the row as the table shows it: sorted by a column, it is not the operation's index
+      const at = (opsOrder?.() ?? shown() ?? d.episodes.map((_, k) => k)).indexOf(ops[0]);
       if (at >= 0) opsRef?.select({ row: at });
     }
   };
@@ -66,18 +72,18 @@ export function SessionViewer(props: { data: SharedSession }) {
     opHighlight.set([]);
   };
 
-  const operations = () => <OperationsTable view={d} rows={shown()} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || !!episode()} />;
+  const operations = () => <OperationsTable view={d} rows={shown()} order={(o) => (opsOrder = o)} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || inspecting()} />;
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
   const body = () => {
     if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} />;
     if (pane() === "operations" || !d.lines.length) return operations();
     return (
-      <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1">
+      <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeOutput")}>
         <ResizablePanel minSize={240}>
-          <View class="flex-1 pr-1.5">{output()}</View>
+          <View class="flex-1 pr-2">{output()}</View>
         </ResizablePanel>
         <ResizablePanel minSize={320}>
-          <View class="flex-1 pl-1.5">{operations()}</View>
+          <View class="flex-1 pl-2">{operations()}</View>
         </ResizablePanel>
       </ResizablePanelGroup>
     );
@@ -85,15 +91,15 @@ export function SessionViewer(props: { data: SharedSession }) {
 
   const main = () => (
     <View class="min-h-0 flex-1">
-      <View class="gap-3.5 border-b border-border px-5 pb-3.5 pt-4">
+      <View class="gap-3 border-b border-border px-5 pb-3 pt-4">
         <View class="flex-row items-baseline gap-2">
           <Text class="text-heading font-bold text-foreground">sonde</Text>
           <Text class="text-small text-muted-foreground">{t("viewer.shared")}</Text>
         </View>
-        <SessionHeader view={d} compact={!!episode()} />
+        <SessionHeader view={d} />
         <Observations view={d} filter={filter()} onFilter={(f) => filter.set(f)} />
       </View>
-      <View class="flex-row items-center px-5 py-2.5">
+      <View class="flex-row items-center px-5 py-2">
         <Segmented
           value={pane()}
           items={[
@@ -110,30 +116,21 @@ export function SessionViewer(props: { data: SharedSession }) {
 
   return (
     <View class="flex-1 bg-background" testID="viewer">
-      <ResizablePanelGroup axis="horizontal" class="flex-1">
+      <ResizablePanelGroup axis="horizontal" class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeInspector")}>
         <ResizablePanel minSize={460}>{main()}</ResizablePanel>
-        <If when={episode()}>
-          {(e) => (
-            <ResizablePanel size={440} minSize={320}>
-              <View class="flex-1 border-l border-border bg-inspector">
-                <View class="h-10 flex-row items-center border-b border-border px-3">
-                  <Text class="flex-1 text-small font-semibold text-muted-foreground">{rec() !== null ? t("inspector.request") : t("inspector.operation")}</Text>
-                  <IconButton icon="x" label={t("common.close")} onPress={close} />
-                </View>
-                <Scroll class="flex-1" contentClass="p-4">
-                  <If when={rec() !== null ? byId.get(rec()!) : null} else={<OperationView episode={e()} shared={d.sharedNotes} rows={rows(e())} onRecord={(id) => rec.set(id)} />}>
-                    {(r) => <RecordView record={r()} onBack={() => rec.set(null)} />}
-                  </If>
-                </Scroll>
-              </View>
-            </ResizablePanel>
-          )}
+        <If when={inspecting()}>
+          <ResizablePanel size={420} minSize={320} maxSize={680}>
+            <View testID="inspector" class="flex-1 border-l border-border bg-inspector">
+              <PanelHeader icon={record() ? "radio" : "layers"} title={record() ? t("inspector.request") : t("inspector.operation")} onClose={close} closeTestID="inspector-close" />
+              <Scroll class="flex-1" contentClass="p-4">
+                <If when={record()} else={<If when={episode()}>{(e) => <OperationView episode={e()} shared={d.sharedNotes} rows={rows(e())} onRecord={(id) => rec.set(id)} />}</If>}>
+                  {(r) => <RecordView record={r()} onBack={() => rec.set(null)} />}
+                </If>
+              </Scroll>
+            </View>
+          </ResizablePanel>
         </If>
       </ResizablePanelGroup>
     </View>
   );
-}
-
-export function Loading(props: { error?: string | null }) {
-  return <Empty icon="scroll-text" text={props.error ?? t("common.loading")} />;
 }

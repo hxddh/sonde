@@ -2,13 +2,14 @@
 // typed confirmation (the number of items, or the bucket name).
 
 import { signal, Text, View } from "nsh";
-import { bytes } from "../format";
+import { bytes, count } from "../format";
 import { t } from "../i18n";
-import { api } from "../native";
-import { go, notify, readOnly, report } from "../store";
+import { api, asError } from "../native";
+import { go, notify, readOnly, report, showRequest } from "../store";
 import type { Outcome, Plan } from "../types";
-import { Button, Field, Heading, Modal, Muted, SimpleTable, Title } from "./kit";
+import { Actions, Button, Field, Heading, Modal, Muted, Notice, SimpleTable, Title } from "./kit";
 import { Document } from "./record";
+import { toast } from "./toast";
 
 export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outcome | null) => void }) {
   const typed = signal("");
@@ -19,14 +20,28 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
     typed.set("");
     props.onClose(o);
   };
+  // what the commit needs: writes allowed, nothing running, and the words typed
+  const ready = () => !readOnly() && !running() && props.plan !== null && typed().trim() === props.plan.confirm;
   const run = async () => {
     const p = props.plan;
-    if (!p) return;
+    if (!p || !ready()) return;
     running.set(true);
     try {
       const o = await api.executePlan(p.id, typed());
-      notify(t("confirm.done", { ok: o.succeeded, failed: o.failed }));
-      for (const e of o.errors) report(e);
+      if (o.errors.length === 0) notify(t("confirm.done", { ok: count(o.succeeded), failed: count(o.failed) }));
+      else {
+        // one toast for all of them: how many failed, and why the first did (its request a press away)
+        const first = asError(o.errors[0]);
+        const record = first.recordId;
+        toast({
+          id: "error",
+          kind: "error",
+          title: t("confirm.done", { ok: count(o.succeeded), failed: count(o.failed) }),
+          description: t("confirm.firstError", { reason: first.message }),
+          action: record !== null && record !== undefined ? t("common.showRequest") : undefined,
+          onAction: () => showRequest(record),
+        });
+      }
       running.set(false);
       typed.set("");
       props.onClose(o);
@@ -61,18 +76,18 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
             <If
               when={!readOnly()}
               else={
-                <View class="gap-2 rounded-(--radius) bg-muted p-3">
-                  <Text class="text-body text-foreground">{t("confirm.readOnly")}</Text>
-                  <Button small label={t("nav.settings")} onPress={() => (close(null), go("settings"))} />
-                </View>
+                <Notice tone="warn" text={t("confirm.readOnly")} testID="confirm-read-only">
+                  <Button small label={t("settings.open")} onPress={() => (close(null), go("settings"))} testID="confirm-settings" />
+                </Notice>
               }
             >
-              <Field label={t("confirm.type", { hint: p().confirmHint, value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} testID="confirm-input" mono />
+              {/* Return commits, once what is typed matches */}
+              <Field label={t("confirm.type", { hint: p().confirmHint, value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} onSubmit={run} testID="confirm-input" mono />
             </If>
-            <View class="flex-row justify-end gap-2">
+            <Actions>
               <Button variant="ghost" label={t("common.cancel")} onPress={() => close(null)} disabled={running()} testID="confirm-cancel" />
-              <Button variant="destructive" label={t("confirm.run")} disabled={readOnly() || running() || typed().trim() !== p().confirm} onPress={run} testID="confirm-run" />
-            </View>
+              <Button variant="destructive" label={t("confirm.run")} disabled={!ready()} onPress={run} testID="confirm-run" />
+            </Actions>
           </View>
         )}
       </If>

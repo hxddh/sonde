@@ -4,16 +4,16 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type ContextMenuEvent, effect, type JSX, List, platform, reduceMotion, Scroll, type ScrollRef, signal, Text, untracked, View, windowSize } from "nsh";
+import { type ContextMenuEvent, effect, type JSX, List, Scroll, type ScrollRef, signal, Text, token, untracked, View } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, Popover, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
-import { bytes, count, date, day, middle, ms } from "../format";
+import { bytes, clock, count, date, day, duration as took, hm, middle, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
 import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, timed, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Button, CARD, Dot, Empty, FOCUS, InWindowMenu, ListRow, Options, POPUP, ROW, rowHeight, TABLE, terminal, TYPE } from "./kit";
+import { Button, CARD, Dot, Empty, FOCUS, Heading, InWindowMenu, ListRow, Options, POPUP, ROW, ROW_STATE, rowHeight, TABLE, terminal, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -157,15 +157,7 @@ export function programOf(command: string | null | undefined): string | null {
   return first;
 }
 
-export const seconds = (s: number) => (s < 10 ? s.toFixed(1) : s.toFixed(0));
-
-/** Local time with milliseconds: 14:02:11.204 */
-export function clock(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const p = (n: number, w = 2) => String(n).padStart(w, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
-}
+export { clock };
 
 const time = (iso: string) => new Date(iso).getTime();
 
@@ -220,12 +212,13 @@ export function StatusMark(props: { status: number | null; text?: string }) {
 }
 
 const FORMAT_TEXT: Record<string, string> = { SlateDB: "text-fmt-slatedb", Iceberg: "text-fmt-iceberg", Delta: "text-fmt-delta" };
-const KIND_LABEL: Partial<Record<Episode["kind"], string>> = { multipart: "MPU", retry: "retry", listing: "list", probe: "lookup" };
+/** An operation's kind as a tag, in the app's language. */
+const kindLabel = (k: Episode["kind"]): string => (k === "multipart" ? t("kind.multipart") : k === "retry" ? t("kind.retry") : k === "listing" ? t("kind.listing") : k === "probe" ? t("kind.probe") : "");
 
 /** What kind of thing an operation is: its storage format, else its kind. */
 function family(e: Episode): { label: string; class: string } {
   if (e.format) return { label: e.format, class: FORMAT_TEXT[e.format] ?? "text-fmt-other" };
-  const k = KIND_LABEL[e.kind];
+  const k = kindLabel(e.kind);
   return k ? { label: k, class: e.kind === "multipart" ? "text-fmt-mpu" : "text-fmt-other" } : { label: "", class: "" };
 }
 
@@ -307,10 +300,10 @@ export function gitText(g: SessionView["header"]["git"]): string {
 }
 
 /** The command and where it ran, then the session's figures. */
-export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; compact?: boolean; slice?: number | null; onSlice?: (i: number | null) => void; shape?: boolean }) {
+export function SessionHeader(props: { view: SessionView; actions?: JSX.Element }) {
   const s = () => props.view.summary;
   const line = () => {
-    const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: seconds(s().seconds) })];
+    const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: took(s().seconds * 1000) })];
     if (s().errors) parts.push(t("timeline.errors", { n: s().errors }));
     if (s().misses) parts.push(t("timeline.notFound", { n: s().misses }));
     parts.push(`↑${bytes(s().bytesUp)} ↓${bytes(s().bytesDown)}`);
@@ -337,13 +330,12 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           </Text>
           <Text class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git)].filter(Boolean).join(" · ")}</Text>
           {/* the session in a sentence: where its time went, and the first thing to do */}
-          <If when={props.view.profile?.groups.length && props.shape !== false && !props.compact}>
+          <If when={props.view.profile?.groups.length}>
             <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(props.view.profile, props.view.observations)}</Text>
           </If>
         </View>
         {props.actions}
       </View>
-      <View class={props.compact ? "gap-2" : "flex-row items-center gap-5"}>
       <View testID="session-summary" accessibilityLabel={line()} class="-ml-2 flex-row flex-wrap">
           <Figure testID="figure-requests" value={count(s().requests)} label={t("figure.requests")} preview={props.view.profile?.groups.length ? <KindsPreview profile={props.view.profile} by="requests" /> : undefined} />
           <Figure value={count(props.view.episodes.length)} label={t("figure.operations")} />
@@ -362,11 +354,6 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
             <Figure value={count(s().misses)} label={t("figure.notFound")} />
           </If>
         </View>
-        {/* the session's shape: requests by outcome over time, and in flight */}
-        <If when={props.view.profile && props.shape !== false}>
-          <SessionShape profile={props.view.profile} slice={props.slice} onSlice={props.onSlice} annotate={!props.compact} marks={findingMarks(props.view)} class={props.compact ? "h-10 w-full" : "mt-3 h-12 min-w-[200px] flex-1"} />
-        </If>
-      </View>
     </View>
   );
 }
@@ -429,15 +416,23 @@ function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void;
         <View testID="fix-callers" class="gap-0.5">
           <Each of={props.o.callers!} key={(c) => c.place}>
             {(c) => (
-              <ListRow
-                label={t("fix.openCode", { place: c().place })}
-                onPress={() => props.onOpenCode?.(c().place)}
-                class="py-1"
+              // a shared page cannot open the code: the place is said, not offered
+              <If
+                when={props.onOpenCode}
+                else={
+                  <View class="flex-row items-center gap-2 px-2 py-1">
+                    <Icon name="file" size={12} />
+                    <Text class="min-w-0 flex-1 font-mono text-small text-foreground line-clamp-1">{c().place}</Text>
+                    <Text class="tabular-nums text-caption text-muted-foreground">{t("run.bandRequests", { n: c().requests })}</Text>
+                  </View>
+                }
               >
-                <Icon name="file" size={12} />
-                <Text class="min-w-0 flex-1 font-mono text-small text-primary line-clamp-1">{c().place}</Text>
-                <Text class="tabular-nums text-caption text-muted-foreground">{t("run.bandRequests", { n: c().requests })}</Text>
-              </ListRow>
+                <ListRow label={t("fix.openCode", { place: c().place })} onPress={() => props.onOpenCode?.(c().place)} class="py-1">
+                  <Icon name="file" size={12} />
+                  <Text class="min-w-0 flex-1 font-mono text-small text-primary line-clamp-1">{c().place}</Text>
+                  <Text class="tabular-nums text-caption text-muted-foreground">{t("run.bandRequests", { n: c().requests })}</Text>
+                </ListRow>
+              </If>
             )}
           </Each>
         </View>
@@ -537,7 +532,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       <View class="min-w-0 flex-1 gap-0.5">
         <Text class={`text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
         <If when={(!dense() || props.filter === i()) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
-        <If when={!dense() && observationSaving(o())}>
+        <If when={(!dense() || props.filter === i()) && !props.compact && observationSaving(o())}>
           {(v) => (
             <View class="flex-row items-center gap-1 pt-0.5">
               <Icon name="trending-down" size={12} tint="info" />
@@ -546,8 +541,17 @@ export function Observations(props: { view: SessionView; filter?: number | null;
           )}
         </If>
       </View>
+      {/* a line each: what acting on it saves, at the row's end */}
+      <If when={dense() && props.filter !== i() && !props.compact && observationSaving(o())}>
+        {(v) => (
+          <View class="h-5 shrink-0 flex-row items-center gap-1">
+            <Icon name="trending-down" size={12} tint="info" />
+            <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small font-medium text-info">{v()}</Text>
+          </View>
+        )}
+      </If>
       <If when={props.onFilter && o().episodes?.length}>
-        <View class="h-5 flex-row items-center gap-1">
+        <View class="h-5 w-28 shrink-0 flex-row items-center justify-end gap-1">
           <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: o().episodes.length })}</Text>
           <Icon name={props.filter === i() ? "x" : "chevron-right"} size={12} />
         </View>
@@ -612,7 +616,7 @@ const tableClasses = {
  * place in the session's time and notes. `rows` (default all) are the
  * episodes shown, by index; events name episodes by index too. */
 /** The operations' columns as the user last sized them (kept with the app's sizes). */
-const opsWidths = { title: rememberedSize("ops.title", 340), bar: rememberedSize("ops.bar", 150), notes: rememberedSize("ops.notes", 320) };
+const opsWidths = { bar: rememberedSize("ops.bar", 150), notes: rememberedSize("ops.notes", 320) };
 const kept = (key: keyof typeof opsWidths, fallback: number) => untracked(() => opsWidths[key].size()) || fallback;
 
 export function OperationsTable(props: {
@@ -652,7 +656,8 @@ export function OperationsTable(props: {
   const columns = () => {
     const w = terminal() ? 0 : width();
     const wanted = {
-      format: formats(),
+      // beside the output or a terminal there is no room for a tag most rows do not have
+      format: formats() && !props.compact,
       bar: !terminal() && !props.compact,
       notes: !props.compact,
     };
@@ -663,7 +668,7 @@ export function OperationsTable(props: {
         ...(on.format ? [{ key: "format", title: "", width: 86 }] : []),
       ];
       const after = [
-        { key: "requests", title: t("column.requests"), width: 68, align: "end" as const, sortable: true },
+        { key: "requests", title: t("column.requests"), width: 92, align: "end" as const, sortable: true },
         { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: true },
         ...(on.bar ? [{ key: "bar", title: t("column.when"), width: kept("bar", 150), minWidth: 80 }] : []),
         ...(on.notes ? [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }] : []),
@@ -680,25 +685,30 @@ export function OperationsTable(props: {
       on = { ...on, [drop]: false };
       m = make(on);
     }
-    const own = props.compact ? 220 : kept("title", 340);
-    const fill = w ? Math.max(160, w - m.used - 2) : own;
+    const fill = w ? Math.max(160, w - m.used - 2) : props.compact ? 220 : 340;
+    titleWidth = fill;
     return [...m.fixed, { key: "title", title: t("column.operation"), width: fill, minWidth: 160 }, ...m.after];
   };
-  const data = () =>
-    shown().map((i) => {
+  // the name is cut for the room it has, not at a fixed length
+  let titleWidth = 340;
+  const data = () => {
+    columns();
+    const room = Math.max(24, Math.floor((titleWidth - 12) / 5.8));
+    return shown().map((i) => {
       const e = props.view.episodes[i];
       return {
         status: episodeTone(e),
         time: clock(e.start),
         format: family(e).label,
         // cut in the middle: the end of a key is what tells two apart
-        title: middle(terminal() && e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72),
-        requests: String(e.records.length),
+        title: middle(terminal() && e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), terminal() ? (props.compact ? 40 : 72) : room),
+        requests: count(e.records.length),
         duration: ms(duration(e)),
         bar: "",
         notes: notes(e),
       };
     });
+  };
   const cell = (c: { row: number; key: string; text: string }) => {
     const e = ep(c.row);
     if (!e) return <Text class="text-body">{c.text}</Text>;
@@ -706,7 +716,7 @@ export function OperationsTable(props: {
       case "status":
         return (
           <View class="flex-1 items-center justify-center">
-            <Dot tone={episodeTone(e)} label={e.outcome.kind === "ok" ? undefined : e.outcome.kind === "refused" ? "refused" : e.outcome.detail} />
+            <Dot tone={episodeTone(e)} label={e.outcome.kind === "ok" ? undefined : e.outcome.kind === "refused" ? t("sessions.refused") : e.outcome.detail} />
           </View>
         );
       case "format":
@@ -738,11 +748,11 @@ export function OperationsTable(props: {
         return <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>;
       case "time":
         // from the episode, not the cell's text: DataTable fits that to the column with its own font
-        return <Text class="font-mono text-caption tabular-nums text-muted-foreground">{clock(e.start)}</Text>;
+        return <Text class="font-mono text-caption text-muted-foreground">{clock(e.start)}</Text>;
       case "requests":
       case "duration":
         // figures line up at their end, under their titles
-        return <View class="flex-1 items-end justify-center"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View>;
+        return <View class="flex-1 items-end justify-center"><Text class="text-small text-foreground">{c.text}</Text></View>;
       default:
         return <Text class="text-body text-foreground line-clamp-1">{c.text}</Text>;
     }
@@ -786,11 +796,11 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       class={`min-h-0 flex-1 ${CARD}`}
       columns={[
         { key: "time", title: t("column.time"), width: 110 },
-        { key: "line", title: t("sessions.output"), width: 520, minWidth: 160 },
+        { key: "line", title: t("sessions.output"), width: 2000, minWidth: 160 },
       ]}
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
       fontSize={TYPE.small}
-      fontFamily={platform.idiom === "terminal" ? undefined : "monospace"}
+      fontFamily={terminal() ? undefined : token("font-mono")}
       rowHeight={rowHeight(ROW.dense)}
       classes={terminal() ? undefined : tableClasses}
       rowClasses={props.lines.map((_, i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
@@ -864,7 +874,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
           <Each of={notes()}>
             {(n) => (
               <View class="flex-row gap-2">
-                <View class="mt-[7px] size-1 rounded-full bg-muted-foreground" />
+                <View class="h-5 justify-center"><View class="size-1 rounded-full bg-muted-foreground" /></View>
                 <Text class="flex-1 text-body leading-5 text-foreground">{n()}</Text>
               </View>
             )}
@@ -872,7 +882,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         </View>
       </If>
       <View class="gap-1">
-        <Text role="header" class="text-small font-semibold text-muted-foreground">{`${t("timeline.requestsOf")} (${e().records.length})`}</Text>
+        <Heading count={e().records.length}>{t("timeline.requestsOf")}</Heading>
         <Waterfall records={props.rows} onRecord={props.onRecord} />
         {/* an operation may hold thousands of requests: only those in view are drawn */}
         <List
@@ -909,7 +919,8 @@ function dayLabel(iso: string): string {
   const d = new Date(iso);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const diff = Math.floor((today.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / DAY);
+  // rounded: a day of 23 or 25 hours (a clock change) is still a day
+  const diff = Math.round((today.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / DAY);
   if (diff <= 0) return t("time.today");
   if (diff === 1) return t("time.yesterday");
   return day(iso);
@@ -964,10 +975,10 @@ export function SessionList(props: {
     >
     <BaseButton
       testID={`session-${x().i}`}
-      accessibilityLabel={x().s.title ?? x().s.command ?? x().s.name}
+      accessibilityLabel={x().s.title ?? (x().s.command ? scrubCommand(x().s.command!) : x().s.name)}
       selected={props.selected === x().s.path}
       onPress={() => props.onSelect(x().s.path)}
-      class="mb-0.5 gap-0.5 rounded-(--radius) px-2 py-1.5 hover:bg-row-hover selected:bg-selection"
+      class={`mb-0.5 gap-0.5 rounded-(--radius-sm) px-2 py-1.5 ${ROW_STATE} ${FOCUS}`}
     >
       <View class="flex-row items-center gap-2">
         <If when={x().s.live}>
@@ -977,7 +988,7 @@ export function SessionList(props: {
         <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{args(x().s)}</Text>
       </View>
       <View class="flex-row items-center gap-2">
-        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{`${clock(x().s.created).slice(0, 5)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
+        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{`${hm(x().s.created)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
         <If when={x().s.shape?.length}>
           <Sparkline shape={x().s.shape!} id={x().s.path} />
         </If>
@@ -999,7 +1010,7 @@ export function SessionList(props: {
         // a recycled cell: what it shows follows the item it is given
         <If when={dayOf(r())} else={row(() => r() as { s: SessionInfo; i: number })}>
           {(day) => (
-            <View class="bg-background px-2 pb-1 pt-2">
+            <View class={`${terminal() ? "" : "bg-sidebar"} px-2 pb-1 pt-2`}>
               <Text role="header" class="text-caption font-medium text-muted-foreground">
                 {day()}
               </Text>

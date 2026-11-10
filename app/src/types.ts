@@ -423,8 +423,12 @@ export interface Layout {
 
 export interface AuditEntry {
   time: string;
+  /** A plan's id; a probe run's id for `runProbes`. */
   plan: string;
+  /** `abortUploads`, `deleteVersions`, `restoreObject`, `deleteObjects`, `putLifecycle`, `runProbes` (items = its probes). */
   action: string;
+  /** Written as the work starts, before its outcome is known. */
+  stage?: "started";
   endpoint: string;
   bucket: string;
   items: number;
@@ -594,7 +598,7 @@ export interface RunPoint {
 }
 
 export interface BudgetVerdict {
-  what: "requests" | "waiting" | "cost" | "errors" | "warnings";
+  what: "requests" | "waiting" | "cost" | "errors" | "warnings" | "p95";
   value: number;
   limit: number;
   against: "budget" | "baseline";

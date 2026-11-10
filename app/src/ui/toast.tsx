@@ -2,11 +2,18 @@
 // "Run ended · 34 operations · Open", an error with its request. Built on
 // nsh/base's ToastManager, ToastStack and Toast (after Native Shell's
 // gallery); a terminal shows them on its bottom row.
+//
+// One stack for the app, shown once: a toast belongs to the window that has
+// the keyboard focus when it is pushed (Native Shell's `focusedWindow()`),
+// if that window has a Toaster; else to the main window. Each Toaster draws
+// only its own window's (`currentWindow()`, read as it renders).
 
-import { computed, Overlay, signal, Text, View } from "nsh";
+import { cleanup, computed, Overlay, signal, Text, untracked, View } from "nsh";
 import { Toast, type ToastEntry, ToastManager, ToastStack } from "nsh/base";
+import { currentWindow, focusedWindow, isAvailable } from "nsh/desktop";
+import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
-import { terminal } from "./kit";
+import { Button, glass, IconButton, POPUP, terminal } from "./kit";
 
 export type ToastKind = "success" | "error" | "warning" | "info";
 
@@ -19,8 +26,27 @@ export interface ToastContent {
   /** A button that closes it and calls `onAction`. */
   action?: string;
   onAction?: () => void;
-  /** Milliseconds it stays (4000; errors 8000). */
+  /** Milliseconds it stays (4000). An error stays until it is closed or
+   * replaced (a terminal, which has no close button, keeps it 8000). */
   duration?: number;
+}
+
+/** The main window's id, and the windows that have a Toaster. */
+let mainWindow = "main";
+const stacks = new Map<string, number>();
+/** The window each toast shows in. */
+const windowOf = signal<Record<string, string>>({});
+
+/** Where a toast pushed now shows: the focused window when it can show one, else the main window. */
+function target(): string {
+  if (!isAvailable) return mainWindow;
+  try {
+    const focused = untracked(() => focusedWindow());
+    if (focused && stacks.has(focused.id)) return focused.id;
+  } catch {
+    // no windows to ask (a terminal, the web)
+  }
+  return mainWindow;
 }
 
 const LIMIT = 3;
@@ -41,6 +67,8 @@ function tick() {
   for (const gone of advanced.removed) {
     const { [gone.id]: _, ...rest } = contents();
     contents.set(rest);
+    const { [gone.id]: __, ...others } = windowOf();
+    windowOf.set(others);
   }
   if (advanced.changed) sync();
   if (manager.isEmpty() && ticking !== undefined) {
@@ -59,7 +87,9 @@ export function toast(content: ToastContent): string {
   const id = content.id ?? `toast-${++count}`;
   if (terminal()) for (const e of shown()) if (e.id !== id) manager.dismiss(e.id);
   contents.set({ ...contents(), [id]: content });
-  manager.push(id, id, { timeout: content.duration ?? (content.kind === "error" ? 8000 : 4000) });
+  windowOf.set({ ...untracked(windowOf), [id]: target() });
+  const timeout = content.duration ?? (content.kind !== "error" ? 4000 : terminal() ? 8000 : undefined);
+  manager.push(id, id, timeout === undefined ? {} : { timeout });
   run();
   return id;
 }
@@ -111,7 +141,8 @@ function Item(props: { entry: ToastEntry }) {
       transitionStatus={props.entry.status}
       accessibilityLabel={[content().title, content().description].filter(Boolean).join(". ")}
       onDismissRequest={() => dismissToast(props.entry.id)}
-      class={`w-[340px] flex-row items-start gap-2 rounded-(--radius-card) border border-border bg-popover px-3 py-3 shadow-lg motion-safe:transition-all motion-safe:duration-200 motion-safe:ease-out`}
+      class={`${POPUP} w-[340px] flex-row items-start gap-2 px-3 py-3 motion-safe:transition-all motion-safe:duration-200 motion-safe:ease-out`}
+      style={glass}
       startingClass="opacity-0 translate-y-3"
       endingClass="opacity-0 scale-95"
       swipingClass="transition-none"
@@ -129,24 +160,42 @@ function Item(props: { entry: ToastEntry }) {
           <Text class="text-small text-muted-foreground line-clamp-3">{content().description}</Text>
         </If>
       </View>
-      <If when={content().action}>
-        <View role="button" testID="toast-action" accessibilityLabel={content().action} onPress={act} class="-my-0.5 rounded-(--radius-sm) px-2 py-1 hover:bg-muted active:bg-accent">
-          <Text class="text-small font-semibold text-primary">{content().action}</Text>
-        </View>
-      </If>
+      {/* what can be done about it, and Close: real buttons, with the keyboard's ring */}
+      <View class="-my-1 shrink-0 flex-row items-center gap-1">
+        <If when={content().action}>{(a) => <Button small variant="outline" label={a()} onPress={act} testID="toast-action" />}</If>
+        <IconButton icon="x" label={t("common.close")} onPress={() => dismissToast(props.entry.id)} testID="toast-close" />
+      </View>
     </Toast>
   );
 }
 
-/** Where toasts show: the window's bottom right; a terminal's bottom row. */
+/** Where toasts show: the window's bottom right; a terminal's bottom row.
+ * Escape is not theirs (it belongs to the sheet, dialog or palette that is
+ * open): every toast has its Close. */
 export function Toaster() {
-  const cancel = () => {
-    const newest = shown().filter((e) => e.status !== "ending").at(-1);
-    if (newest) dismissToast(newest.id);
-  };
+  // this Toaster's window, read while rendering
+  let own = mainWindow;
+  if (isAvailable) {
+    try {
+      const w = currentWindow();
+      own = w.id;
+      if (w.main) mainWindow = own;
+    } catch {
+      // no windows here
+    }
+  }
+  stacks.set(own, (stacks.get(own) ?? 0) + 1);
+  cleanup(() => {
+    const left = (stacks.get(own) ?? 1) - 1;
+    if (left > 0) return void stacks.set(own, left);
+    stacks.delete(own);
+    // the window is gone: what it was showing goes with it
+    for (const [id, w] of Object.entries(untracked(windowOf))) if (w === own && own !== mainWindow) dismissToast(id);
+  });
+  const mine = () => shown().filter((e) => (windowOf()[e.id] ?? mainWindow) === own);
   const stack = (
-    <ToastStack closeOnEscape={!terminal()} placement={terminal() ? "bottomCenter" : "bottomRight"} class={terminal() ? "w-full" : "w-[340px]"} onExpandedChange={(e) => expanded.set(e.expanded)} onCancel={cancel}>
-      <Each of={shown()} key={(e: ToastEntry) => e.id}>
+    <ToastStack closeOnEscape={false} placement={terminal() ? "bottomCenter" : "bottomRight"} class={terminal() ? "w-full" : "w-[340px]"} onExpandedChange={(e) => expanded.set(e.expanded)}>
+      <Each of={mine()} key={(e: ToastEntry) => e.id}>
         {(entry) => <Item entry={entry()} />}
       </Each>
     </ToastStack>

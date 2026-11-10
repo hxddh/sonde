@@ -10,7 +10,7 @@ import { api } from "../native";
 import { command } from "../run";
 import { endpointsMode, go, notify, openSession, openSessionFile, refreshEndpoints, report, sessionsChanged, startDemo } from "../store";
 import type { EndpointView } from "../types";
-import { Button, Card, CARD, Check, terminal } from "../ui/kit";
+import { Actions, Button, Card, Check, Heading, READING, terminal } from "../ui/kit";
 
 /** A first command for the demo: two reads, one of a key that is not there,
  * signed with the keys sonde gives the program (cmd.exe on Windows). */
@@ -66,16 +66,18 @@ export function Welcome() {
 
   return (
     <View testID="welcome" class="flex-1 items-center justify-center p-8">
-      <View class={terminal() ? "w-full gap-2" : "w-full max-w-[520px] gap-6"}>
+      <View class={terminal() ? "w-full gap-2" : `${READING} gap-6`}>
         <View class="gap-2">
           <Text class="text-title font-semibold text-foreground">{t("welcome.title")}</Text>
           <Text class="text-body leading-5 text-muted-foreground">{t("welcome.text")}</Text>
         </View>
-        <View testID="welcome-way-demo" class={`gap-3 ${CARD} p-4`}>
-          <Text class="text-heading font-semibold text-card-foreground">{t("welcome.demo")}</Text>
+        <Card testID="welcome-way-demo">
+          <Heading>{t("welcome.demo")}</Heading>
           <Text class="text-small leading-5 text-muted-foreground">{t("welcome.demoText")}</Text>
-          <Button variant="primary" icon="play" label={busy() ? t("common.loading") : t("welcome.demoStart")} onPress={demo} disabled={busy()} testID="welcome-demo" class="self-start" />
-        </View>
+          <View class="flex-row">
+            <Button variant="primary" icon="play" label={busy() ? t("common.loading") : t("welcome.demoStart")} onPress={demo} disabled={busy()} testID="welcome-demo" />
+          </View>
+        </Card>
         {/* the other ways in, for those who know what they want */}
         <View class="gap-3">
           <View class="flex-row items-center gap-3">
@@ -108,9 +110,9 @@ export function Welcome() {
           <If when={showProfiles()}>
             <Card>
               <Each of={profiles} key={(p) => p.id}>{(p) => <Check label={`${p().name} — ${p().url}`} checked={!!chosen()[p().id]} onChange={(v) => chosen.set({ ...chosen(), [p().id]: v })} />}</Each>
-              <View class="flex-row">
-                <Button small variant="primary" label={t("welcome.importDo")} onPress={importChosen} disabled={!Object.values(chosen()).some(Boolean)} testID="welcome-import-do" />
-              </View>
+              <Actions>
+                <Button variant="outline" label={t("welcome.importDo")} onPress={importChosen} disabled={!Object.values(chosen()).some(Boolean)} testID="welcome-import-do" />
+              </Actions>
             </Card>
           </If>
         </View>

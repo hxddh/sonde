@@ -56,7 +56,12 @@ export function bytes(n: number | null | undefined): string {
     v /= 1024;
     i++;
   }
-  return i === 0 ? `${n} B` : `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
+  // the unit after rounding: 1,048,575 B is 1.0 MiB, not 1024 KiB
+  if (i > 0 && i < units.length - 1 && Number(v.toFixed(v >= 100 ? 0 : 1)) >= 1024) {
+    v /= 1024;
+    i++;
+  }
+  return i === 0 ? `${Math.round(n)} B` : `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
 export function count(n: number): string {
@@ -92,19 +97,86 @@ export function ago(s: string | null | undefined): string {
 
 export function days(d: number | null | undefined): string {
   if (d === null || d === undefined) return "—";
-  return d < 1 ? t("time.hours", { n: Math.round(d * 24) }) : t("time.days", { n: d.toFixed(1) });
+  if (d * 24 < 1) return t("time.minutes", { n: Math.max(1, Math.round(d * 1440)) });
+  return d * 24 < 23.5 ? t("time.hours", { n: Math.round(d * 24) }) : t("time.days", { n: d.toFixed(1) });
 }
 
 export function money(v: number, currency: string): string {
   return `${v < 0.01 && v > 0 ? "<0.01" : v.toFixed(2)} ${currency}`;
 }
 
-export function ms(v: number): string {
-  return v < 10 ? `${v.toFixed(1)} ms` : `${Math.round(v)} ms`;
+/** How long something took, the one way everywhere: 0.4 ms, 84 ms, 2.35 s,
+ * 41.2 s, 3 min 05 s, 2 h 05 min. The unit is chosen after rounding, so
+ * nothing reads "1000 ms" or "60.0 s". */
+export function duration(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a === 0) return "0 ms";
+  if (a < 9.95) return `${v.toFixed(1)} ms`;
+  if (a < 999.5) return `${Math.round(v)} ms`;
+  if (a < 9995) return `${(v / 1000).toFixed(2)} s`;
+  if (a < 59950) return `${(v / 1000).toFixed(1)} s`;
+  const s = Math.round(a / 1000);
+  const sign = v < 0 ? "−" : "";
+  if (s < 3600) return `${sign}${Math.floor(s / 60)} min ${p2(s % 60)} s`;
+  const m = Math.round(s / 60);
+  return `${sign}${Math.floor(m / 60)} h ${p2(m % 60)} min`;
+}
+
+/** A request's or an operation's time: `duration`, under its older name. */
+export const ms = duration;
+
+/** A share as people read it: whole percents, "<1%" for a sliver, "0%" for none. */
+export function percent(fraction: number): string {
+  if (!Number.isFinite(fraction) || fraction === 0) return "0%";
+  const r = Math.round(fraction * 100);
+  if (r === 0) return fraction > 0 ? "<1%" : ">−1%";
+  return `${r}%`;
 }
 
 export function pct(part: number, whole: number): string {
-  return whole === 0 ? "0%" : `${((part * 100) / whole).toFixed(1)}%`;
+  return whole === 0 ? "0%" : percent(part / whole);
+}
+
+/** A change from `a` to `b` as a signed share of `a`: "+12%", "−3%", "0%"
+ * only for no change at all ("+<1%" for one too small to round). */
+export function change(a: number, b: number): string {
+  if (a === b) return "0%";
+  if (a === 0) return "+∞";
+  const sign = b > a ? "+" : "−";
+  const r = Math.round((Math.abs(b - a) * 100) / Math.abs(a));
+  return r === 0 ? `${sign}<1%` : `${sign}${r}%`;
+}
+
+/** What a run's requests cost, as people read it: a session's often cost
+ * thousandths of a cent, which read as a thousand runs' worth
+ * ("0.28 USD per 1,000 runs"). */
+export function cost(v: number, currency: string): string {
+  if (!Number.isFinite(v) || v < 0) return `— ${currency}`;
+  if (v > 0 && v < 0.01) {
+    const k = v * 1000;
+    const s = k < 0.01 ? Number(k.toPrecision(2)).toString() : k.toFixed(2);
+    return t("cost.perThousand", { v: s, cur: currency });
+  }
+  return `${v.toFixed(2)} ${currency}`;
+}
+
+/** A moment on the reader's clock, to the precision its list needs:
+ * `14:02`, `14:02:11` or `14:02:11.204` (operations and output). */
+export function clock(iso: string, precision: "m" | "s" | "ms" = "ms"): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const hms = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  if (precision === "m") return hms;
+  const s = `${hms}:${p2(d.getSeconds())}`;
+  return precision === "s" ? s : `${s}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+}
+
+/** A run's time so far, as a counter: 0:07, 12:40, 1:05:09. */
+export function elapsed(v: number): string {
+  const s = Math.max(0, Math.floor(v / 1000));
+  const h = Math.floor(s / 3600);
+  return h ? `${h}:${p2(Math.floor((s % 3600) / 60))}:${p2(s % 60)}` : `${Math.floor(s / 60)}:${p2(s % 60)}`;
 }
 
 /** A long key cut in its middle, so the end that tells keys apart stays:

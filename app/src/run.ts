@@ -124,7 +124,8 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
       let keep = false;
       toast({ id: "run-empty", kind: "info", title: t("run.emptyNotKept"), action: t("run.keepEmpty"), onAction: () => (keep = true), duration: 8000 });
       setTimeout(() => {
-        if (keep) return;
+        // kept, or opened meanwhile: never removed under its reader
+        if (keep || kept.has(r.path)) return;
         void api.sessions
           .remove(r.path)
           .then(() => {
@@ -194,6 +195,8 @@ export function runAgain(path: string, cmd: string, endpoint: string, dir?: stri
   if (start(cmd, endpoint)) againOf = path;
 }
 let againOf: string | null = null;
+/** Runs that made no request and were opened all the same: they stay. */
+const kept = new Set<string>();
 
 /** Starts it; whether it started. */
 export function start(cmd: string, endpoint: string): boolean {
@@ -259,6 +262,7 @@ export function input(data: string) {
 export function openLastRun(go: (s: "sessions") => void) {
   const r = lastRun();
   if (!r || r.removed) return;
+  kept.add(r.path);
   openSession.set(r.path);
   go("sessions");
 }

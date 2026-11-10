@@ -4,22 +4,22 @@
 // over a band of live figures. When it ends, a toast and a notification
 // say how, and the session opens lined up with the output.
 
-import { cleanup, LayoutAnimation, reduceMotion, resource, signal, Text, View } from "nsh";
-import { Button as BaseButton, Input, ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
+import { cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View } from "nsh";
+import { Input, ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
-import { bytes, ms } from "../format";
+import { count, elapsed, ms, percent } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, runAgain, running, start, startedAt, stop } from "../run";
-import { away, endpoint, endpoints, endpointsMode, go, openSession, report, sessionsChanged } from "../store";
+import { away, endpoint, endpoints, endpointsMode, go, openSession, report, sessionsChanged, showInSidebar } from "../store";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Badge, Button, CARD, Dot, Empty, IconButton, KeyValue, Options, terminal, SPLIT_HANDLE } from "../ui/kit";
+import { Badge, Button, Card, CARD, CONTROL, Dot, Empty, Figure, IconButton, KeyValue, ListRow, Options, SideHeader, terminal, SPLIT_HANDLE } from "../ui/kit";
+import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { LatencyBand, liveFigures, offset, SessionShape, sessionStory } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
-import { seconds } from "../ui/sessionview";
 
 const POLICIES = (): { value: Policy; title: string; icon: "shield-check" | "ban" | "lock" }[] => [
   { value: "allow", title: t("timeline.allow"), icon: "shield-check" },
@@ -56,32 +56,36 @@ function CommandBar() {
   }
   return (
     <View class="gap-2">
-      <View class="h-11 flex-row items-center gap-2 rounded-(--radius-card) border border-input bg-card pl-3.5 pr-1.5 shadow-sm focus-within:border-ring">
-        <Text class="font-mono text-heading font-semibold text-muted-foreground">$</Text>
-        <Input
-          testID="run-command"
-          value={command()}
-          placeholder={t("run.placeholder")}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onChange={({ value }) => command.set(value)}
-          onSubmit={run}
-          submitBehavior="submit"
-          accessibilityLabel={t("run.command")}
-          class="min-w-0 flex-1 font-mono text-body text-foreground placeholder:text-muted-foreground"
-        />
-        <If when={history().length > 0 && isAvailable}>
-          <IconButton icon="clock" label={t("run.recent")} onPress={recent} testID="run-history" />
-        </If>
+      {/* the command: a field like any other, a size up, with what runs it at its end */}
+      <View class="flex-row items-center gap-2">
+        <View class={`h-10 min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background pl-3 pr-1.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50`}>
+          <Text class="font-mono text-body font-semibold text-muted-foreground">$</Text>
+          <Input
+            testID="run-command"
+            value={command()}
+            placeholder={t("run.placeholder")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChange={({ value }) => command.set(value)}
+            onSubmit={run}
+            submitBehavior="submit"
+            accessibilityLabel={t("run.command")}
+            class="min-w-0 flex-1 font-mono text-body text-foreground placeholder:text-muted-foreground"
+          />
+          <If when={history().length > 0 && isAvailable}>
+            <IconButton icon="clock" label={t("run.recent")} onPress={recent} testID="run-history" />
+          </If>
+        </View>
         <If
           when={running()}
-          else={<Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" />}
+          else={<Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" class="h-10 px-4" />}
         >
-          <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
+          <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" class="h-10 px-4" />
         </If>
       </View>
-      <View class="flex-row flex-wrap items-center gap-x-4 gap-y-2 px-1">
-        <View class="h-7 w-64 flex-row items-center gap-1.5 rounded-(--radius) px-1.5 hover:bg-muted">
+      {/* where it runs, where its requests go, what it may do: one row, one height */}
+      <View class="flex-row flex-wrap items-center gap-x-3 gap-y-2">
+        <View class={`${CONTROL.small} w-64 flex-row items-center gap-1.5 rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring`}>
           <Icon name="folder" size={14} />
           <Input
             testID="run-cwd"
@@ -94,11 +98,10 @@ function CommandBar() {
             class="min-w-0 flex-1 font-mono text-small text-foreground placeholder:text-muted-foreground"
           />
         </View>
-        <View class="flex-row items-center gap-1.5">
+        <View class="min-w-0 flex-1 flex-row items-center gap-1.5">
           <Icon name="server" size={14} />
-          <Text class="text-small text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
+          <Text class="min-w-0 flex-1 text-small text-muted-foreground line-clamp-1">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
         </View>
-        <View class="flex-1" />
         <Options testID="run-policy" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
       </View>
     </View>
@@ -109,6 +112,13 @@ function ProgramTerminal() {
   let term: TerminalRef | undefined;
   const off = onOutput((d) => term?.write(d));
   cleanup(off);
+  // a run starts on a clean terminal: the one before is its session's now
+  let shownRun = startedAt();
+  effect(() => {
+    const at = startedAt();
+    if (at !== shownRun) term?.reset();
+    shownRun = at;
+  });
   return (
     <Terminal
       ref={(r) => {
@@ -119,17 +129,12 @@ function ProgramTerminal() {
       }}
       onData={({ data }) => input(data)}
       onResize={({ cols, rows }) => resize(cols, rows)}
-      accessibilityLabel={running()?.command ?? lastRun()?.command ?? "Program"}
+      accessibilityLabel={scrubCommand(running()?.command ?? lastRun()?.command ?? "") || t("run.program")}
       cursorClass="bg-foreground/50"
       class={terminal() ? "flex-1 border border-border" : `flex-1 ${CARD} p-2`}
       testID="run-terminal"
     />
   );
-}
-
-function clockOf(ms: number) {
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 /** The run's figures as they change: running for, requests, errors, bytes; then how it ended. */
@@ -161,13 +166,13 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
     return t("run.pastBaselineBy", { what: t(`verdict.${v.what}` as never), pct: grew });
   };
   return (
-    <View testID={r() ? "run-ended" : "run-status"} class={`min-h-11 flex-row flex-wrap items-center gap-x-4 gap-y-2 ${CARD} px-3 py-2`}>
+    <Card pad="none" testID={r() ? "run-ended" : "run-status"} class="min-h-11 shrink-0 flex-row flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2">
       <If
         when={r()}
         else={
           <View class="flex-row items-center gap-2">
             <Dot tone="live" label={t("run.running")} />
-            <Text class="tabular-nums text-body font-semibold text-foreground">{clockOf(props.now() - (startedAt() ?? props.now()))}</Text>
+            <Text class="tabular-nums text-body font-semibold text-foreground">{elapsed(props.now() - (startedAt() ?? props.now()))}</Text>
           </View>
         }
       >
@@ -206,11 +211,12 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
             <Button small variant="outline" icon="plus" label={t("run.nowYours")} tip={t("run.nowYoursHint")} onPress={() => (endpointsMode.set("add"), go("endpoints"))} testID="run-now-yours" />
           </If>
           {/* the loop in one place: change the program, run it again, see what it did */}
-          <Button small variant="outline" icon="play" label={t("sessions.runAgain")} onPress={() => runAgain(r()!.path, r()!.command, r()!.endpoint, cwd() || null)} testID="run-again-band" />
           <Button small variant="outline" icon="list-clock" label={t("run.lineUp")} onPress={() => openLastRun(go)} testID="run-open-session" />
+          {/* the loop's next step, and so the one primary here */}
+          <Button small variant="primary" icon="play" label={t("sessions.runAgain")} onPress={() => runAgain(r()!.path, r()!.command, r()!.endpoint, cwd() || null)} testID="run-again-band" />
         </View>
       </If>
-    </View>
+    </Card>
   );
 }
 
@@ -226,28 +232,26 @@ const liveRange = (p: Profile): [number, number] | null => {
 
 function LivePanel(props: { profile: Profile }) {
   const f = () => liveFigures(props.profile);
-  const figure = (value: string, label: string, testID: string, tone = "text-foreground") => (
-    <View testID={testID} class="gap-0">
-      <Text class={`tabular-nums text-body font-semibold ${tone}`}>{value}</Text>
-      <Text class="text-caption text-muted-foreground">{label}</Text>
-    </View>
-  );
+  // the first requests have no shape yet: the figures alone, the charts once there is one
+  const shaped = () => props.profile.rate.length > 1 && props.profile.samples.length >= 12;
   return (
-    <View testID="live" class={`gap-2 ${CARD} px-3 py-2`}>
+    <Card pad="none" testID="live" class="shrink-0 gap-2 px-3 py-2">
       <View class="flex-row items-center gap-6">
-        {figure(f().perSecond.toFixed(f().perSecond < 10 ? 1 : 0), t("live.perSecond"), "live-rate")}
-        {figure(`${Math.round(f().failedShare * 100)}%`, t("live.failed"), "live-failed", f().failedShare > 0 ? "text-status-server" : "text-foreground")}
-        {figure(String(f().inFlight), t("live.inFlight"), "live-in-flight")}
-        {figure(ms(f().p95), t("live.p95"), "live-p95")}
+        <Figure small testID="live-rate" value={f().perSecond.toFixed(f().perSecond < 10 ? 1 : 0)} label={t("live.perSecond")} />
+        <Figure small testID="live-failed" value={percent(f().failedShare)} label={t("live.failed")} tone={f().failedShare > 0 ? "bad" : "plain"} />
+        <Figure small testID="live-in-flight" value={count(f().inFlight)} label={t("live.inFlight")} />
+        <Figure small testID="live-p95" value={ms(f().p95)} label={t("live.p95")} />
       </View>
-      <View class="flex-row gap-4">
-        {/* the last 30 seconds, sliding as the run goes */}
-        <SessionShape profile={props.profile} range={liveRange(props.profile)} class="h-16 min-w-0 flex-1" testID="run-shape" />
-        <View class="min-w-0 flex-1 gap-0.5">
-          <LatencyBand profile={props.profile} domainMs={[Math.max(0, props.profile.wallMs - LIVE_WINDOW_MS), Math.max(props.profile.wallMs, 1)]} class="h-16 w-full" testID="run-band" />
+      <If when={shaped()}>
+        <View class="flex-row gap-4">
+          {/* the last 30 seconds, sliding as the run goes */}
+          <SessionShape profile={props.profile} range={liveRange(props.profile)} class="h-16 min-w-0 flex-1" testID="run-shape" />
+          <View class="min-w-0 flex-1">
+            <LatencyBand profile={props.profile} domainMs={[Math.max(0, props.profile.wallMs - LIVE_WINDOW_MS), Math.max(props.profile.wallMs, 1)]} class="h-16 w-full" testID="run-band" />
+          </View>
         </View>
-      </View>
-    </View>
+      </If>
+    </Card>
   );
 }
 
@@ -305,7 +309,7 @@ function NoRequests() {
     <View testID="run-no-requests" class={terminal() ? "gap-1" : "flex-1 items-center justify-center gap-3 p-6"}>
       <Text class={terminal() ? "font-semibold text-foreground" : "text-center text-heading font-semibold text-foreground"}>{t("run.noneTitle")}</Text>
       <Text class={terminal() ? "text-muted-foreground" : "max-w-[520px] text-center text-body text-muted-foreground"}>{t("run.noneText")}</Text>
-      <View class={`w-full max-w-[640px] ${CARD} p-4`}>
+      <Card class="w-full max-w-[640px]">
         <KeyValue
           mono
           rows={[
@@ -317,7 +321,7 @@ function NoRequests() {
             ["Node (@aws-sdk)", t("run.noneNode")],
           ]}
         />
-      </View>
+      </Card>
       <Text class={terminal() ? "text-muted-foreground" : "max-w-[520px] text-center text-small text-muted-foreground"}>{t("run.noneKeys")}</Text>
     </View>
   );
@@ -342,30 +346,22 @@ function Intro() {
           <Text class="text-title font-semibold text-foreground">{t("run.title")}</Text>
           <Text class="text-body leading-5 text-muted-foreground">{t("run.hint")}</Text>
         </View>
-        <If when={history().length > 0}>
+        <If when={terminal() && history().length > 0}>
           <View class="gap-1">
             <Text role="header" class="px-1 text-small font-semibold text-muted-foreground">
               {t("run.recent")}
             </Text>
             <Each of={history().slice(0, 5)}>
               {(c) => (
-                <BaseButton accessibilityLabel={c()} onPress={() => command.set(c())} class="flex-row items-center gap-2 rounded-(--radius) px-2 py-1.5 hover:bg-muted">
-                  <If when={!terminal()}>
-                    <Icon name="square-terminal" size={14} />
-                  </If>
-                  <Text class="flex-1 font-mono text-small text-foreground line-clamp-1">{c()}</Text>
-                </BaseButton>
+                <ListRow label={scrubCommand(c())} onPress={() => command.set(c())}>
+                  <Text class="flex-1 font-mono text-small text-foreground line-clamp-1">{scrubCommand(c())}</Text>
+                </ListRow>
               )}
             </Each>
           </View>
         </If>
         <RecordPanel recording={recording()} onChange={() => recording.set(api.sessions.current())} policy={policy} />
-        <BaseButton accessibilityLabel={t("run.example")} onPress={example} testID="open-example" class="flex-row items-center gap-1.5 self-start rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted">
-          <If when={!terminal()}>
-            <Icon name="scroll-text" size={14} />
-          </If>
-          <Text class="text-small text-muted-foreground">{t("run.example")}</Text>
-        </BaseButton>
+        <Button small variant="ghost" icon="scroll-text" label={t("run.example")} onPress={example} testID="open-example" class="-ml-2 self-start" />
       </View>
     </View>
   );
@@ -373,8 +369,32 @@ function Intro() {
 
 const opsWidth = rememberedSize("run.operations", 560);
 
+/** The commands run before, in the sidebar: a press puts one back in the field. */
+function Recent() {
+  return (
+    <View class="flex-1">
+      <SideHeader title={t("run.recent")} />
+      <If when={history().length > 0} else={<Text class="px-4 text-small text-muted-foreground">{t("run.recentNone")}</Text>}>
+        <Scroll class="min-h-0 flex-1" contentClass="gap-0.5 px-2 pb-2" scrollbar={false}>
+          <Each of={history().slice(0, 30)}>
+            {(c) => (
+              <ListRow label={scrubCommand(c())} selected={command() === c()} onPress={() => command.set(c())} class="items-start">
+                <View class="min-w-0 flex-1">
+                  <Text class="text-body font-medium text-foreground line-clamp-1">{programOf(c()) ?? scrubCommand(c())}</Text>
+                  <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{scrubCommand(c())}</Text>
+                </View>
+              </ListRow>
+            )}
+          </Each>
+        </Scroll>
+      </If>
+    </View>
+  );
+}
+
 export function Run() {
   const active = () => running() !== null || lastRun() !== null;
+  if (!terminal()) cleanup(showInSidebar("run", () => <Recent />));
   return (
     <View class={terminal() ? "flex-1 gap-1 p-1" : "flex-1 gap-4 px-5 pb-5 pt-4"} testID="screen-run">
       <CommandBar />

@@ -36,8 +36,8 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 - **Findings** say what deserves a look (hot keys, HEAD before GET, throttling, unfinished uploads, orphaned files,
   slow requests…), what fixing them would save, a fix in Python, Java, Go or JavaScript, and, with `--callers`,
   the line of your code that sent the requests (Python, Node.js and Java).
-- **Where the time and money went**: waiting by kind of request, requests in flight, each request on a log scale,
-  prefixes against S3's per-prefix limit, the request cost.
+- **Where the time and money went**, on one board under one timeline: waiting by kind of request, every request
+  on a log scale, what ran at once lane by lane, prefixes against S3's per-prefix limit, the request cost.
 - **Production traffic**: `sonde import` reads S3 access logs, CloudTrail and HAR files the same way.
 
 **Programs and CI**
@@ -71,7 +71,8 @@ English and 中文.
 ## The app
 
 **Run** is the home: type a command, and its terminal and its requests appear side by side. **Sessions** keeps every
-run and every file you open or drop on the window. **Buckets** browses your stores. ⌘K opens everything; Settings
+run and every file you open or drop on the window. **Buckets** browses your stores. The sidebar lists what the place
+has (the commands run before, the sessions, the buckets); a detail opens beside it and nothing else moves. ⌘K opens everything; Settings
 are a window of their own (⌘,). The terminal UI (`sonde tui`) has the same places: `:` for the palette, Esc to go
 back. Design standards: [app/DESIGN.md](app/DESIGN.md).
 

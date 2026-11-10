@@ -1,21 +1,19 @@
-// Buckets: what is in a bucket. The endpoint's buckets on the left, as a
-// tree whose folders are their prefixes (loaded as they open); on the right
+// Buckets: what is in a bucket. The endpoint's buckets in the sidebar, as a
+// tree whose folders are their prefixes (loaded as they open); beside it
 // the chosen prefix's objects, under cards that say what sonde noticed —
 // each opens its detail (incomplete uploads, versions, size, layouts) in a
 // sheet. A terminal keeps them as tabs.
 
-import { batch, Clipboard, effect, resource, signal, Text, untracked, View } from "nsh";
-import { ResizablePanel, ResizablePanelGroup, Tree, type TreeItem, type TreeRef } from "nsh/base";
+import { batch, cleanup, effect, resource, signal, Text, untracked, View } from "nsh";
+import { Tree, type TreeItem, type TreeRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { t } from "../i18n";
 import { sectionLabel } from "../labels";
-import { api, Listing } from "../native";
-import { bucket, chooseBucket, endpoint, go, notify, prefix, report, STORE_TABS, type StoreTab, storeSheet, storeTab } from "../store";
-import type { BucketEntry, Entry } from "../types";
+import { api, asError, Listing } from "../native";
+import { bucket, chooseBucket, copy, endpoint, go, prefix, report, showInSidebar, STORE_TABS, type StoreTab, storeSheet, storeTab } from "../store";
+import type { Entry } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { IconButton, Loading, PanelHeader, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
-import { rememberedSize } from "../ui/sizes";
-import { TabBar } from "../ui/tabs";
+import { Button, IconButton, Loading, Notice, PanelHeader, ROW_STATE, Segmented, SideHeader, SidePanel, terminal } from "../ui/kit";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
 import { Layouts } from "./Layouts";
@@ -58,16 +56,15 @@ async function prefixesOf(ep: string, b: string, p: string): Promise<Entry[]> {
   }
 }
 
-/** The endpoint's buckets as a tree: a bucket's folders are its prefixes, fetched when it opens. */
-function Buckets() {
-  const buckets = resource(endpoint, async (ep) => {
-    try {
-      return await api.buckets(ep);
-    } catch (e) {
-      report(e);
-      return [] as BucketEntry[];
-    }
-  });
+/** A folder not read yet holds one row that says so (a Tree item is a folder only while it has children). */
+const WAITING = "\u0000…";
+const waiting = (id: string) => id.endsWith(WAITING);
+
+/** The endpoint's buckets as a tree: a bucket's folders are its prefixes,
+ * fetched when it opens. The state lives with the place; the tree itself is
+ * drawn in the sidebar, under the places. */
+function useBuckets() {
+  const buckets = resource(endpoint, (ep) => api.buckets(ep));
   const children = signal<Record<string, Entry[] | typeof LOADING>>({});
   const expanded = signal<string[]>([]);
   let tree: TreeRef | undefined;
@@ -79,7 +76,7 @@ function Buckets() {
   });
   // no bucket open yet: the first, rather than a page asking for one
   effect(() => {
-    const list = buckets();
+    const list = buckets.error() ? null : buckets();
     if (!list?.length) return;
     untracked(() => {
       if (!bucket() || !list.some((b) => b.name === bucket())) chooseBucket(list[0].name);
@@ -93,33 +90,34 @@ function Buckets() {
     children.set({ ...children(), [id]: LOADING });
     try {
       const list = await prefixesOf(ep, b, p);
+      // the endpoint changed while this was read: its tree is another's
+      if (endpoint() !== ep) return;
       children.set({ ...children(), [id]: list });
     } catch (e) {
+      if (endpoint() !== ep) return;
       report(e);
       const { [id]: _, ...rest } = children();
       children.set(rest);
     }
   };
+  /** The buckets again, and every folder read again as it is opened. */
+  const refresh = () => {
+    const open = expanded();
+    batch(() => children.set({}));
+    buckets.refetch();
+    for (const id of open) void load(id);
+  };
 
+  const kidsOf = (b: string, id: string): TreeItem[] | undefined => {
+    const kids = children()[id];
+    if (kids === undefined || kids === LOADING) return [{ id: `${id}${WAITING}`, label: t("common.loading"), disabled: true }];
+    return kids.length ? kids.map((k) => node(b, k)) : undefined;
+  };
   const node = (b: string, e: Entry): TreeItem => {
     const id = prefixId(b, e.key);
-    const kids = children()[id];
-    return {
-      id,
-      label: e.name.replace(/\/$/, ""),
-      children: kids === undefined || kids === LOADING ? [{ id: `${id}#…`, label: t("common.loading"), disabled: true }] : kids.length ? kids.map((k) => node(b, k)) : undefined,
-    };
+    return { id, label: e.name.replace(/\/$/, ""), children: kidsOf(b, id) };
   };
-  const items = (): TreeItem[] =>
-    (buckets() ?? []).map((bk) => {
-      const id = bucketId(bk.name);
-      const kids = children()[id];
-      return {
-        id,
-        label: bk.name,
-        children: kids === undefined || kids === LOADING ? [{ id: `${id}#…`, label: t("common.loading"), disabled: true }] : kids.length ? kids.map((k) => node(bk.name, k)) : undefined,
-      };
-    });
+  const items = (): TreeItem[] => (buckets.error() ? [] : (buckets() ?? [])).map((bk) => ({ id: bucketId(bk.name), label: bk.name, children: kidsOf(bk.name, bucketId(bk.name)) }));
 
   const selected = () => {
     const b = bucket();
@@ -127,7 +125,7 @@ function Buckets() {
     return prefix() ? prefixId(b, prefix()) : bucketId(b);
   };
   const choose = (id: string) => {
-    if (id.includes("#")) return;
+    if (waiting(id)) return;
     if (id.startsWith("b:")) {
       chooseBucket(id.slice(2));
     } else {
@@ -147,26 +145,30 @@ function Buckets() {
   const menu = (b: string) => {
     if (!isAvailable) return;
     void Menu.popup([
-      { label: t("store.copyName"), icon: iconSvg("copy"), onSelect: () => void Clipboard.writeText(b).then(() => notify(t("common.copied")), report) },
-      { label: t("store.copyUri"), icon: iconSvg("link"), onSelect: () => void Clipboard.writeText(`s3://${b}/`).then(() => notify(t("common.copied")), report) },
+      { label: t("store.copyName"), icon: iconSvg("copy"), onSelect: () => copy(b) },
+      { label: t("store.copyUri"), icon: iconSvg("link"), onSelect: () => copy(`s3://${b}/`) },
       { type: "separator" },
       ...(["multipart", "capacity", "layouts"] as StoreTab[]).map((s) => ({ label: sectionLabel(s), onSelect: () => (chooseBucket(b), go(s)) })),
     ]);
   };
 
-  return (
-    <View class="flex-1 bg-sidebar/40">
-      <View class="h-10 flex-row items-center gap-2 px-3">
-        <Text role="header" class="flex-1 text-small font-semibold text-muted-foreground">
-          {t("browse.buckets")}
-        </Text>
-        <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={() => buckets.refetch()} />
-      </View>
-      <If when={buckets.state() === "pending"}>
-        <Loading class="px-3" />
+  const list = () => (
+    <View class="flex-1">
+      <SideHeader title={t("browse.buckets")}>
+        <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={refresh} testID="buckets-refresh" />
+      </SideHeader>
+      {/* on their way, failed (why, and again), none, or the tree: each said truly */}
+      <If when={buckets.error()}>
+        <View class="gap-2 px-3">
+          <Notice tone="error" text={asError(buckets.error()).message} testID="buckets-error" />
+          <Button small variant="outline" icon="refresh-cw" label={t("error.retry")} onPress={refresh} class="self-start" />
+        </View>
       </If>
-      <If when={buckets.state() !== "pending" && (buckets() ?? []).length === 0}>
-        <Text class="px-3 text-small text-muted-foreground">{t("store.noBuckets")}</Text>
+      <If when={!buckets.error() && buckets.state() === "pending"}>
+        <Loading class="px-4" />
+      </If>
+      <If when={!buckets.error() && buckets.state() !== "pending" && (buckets() ?? []).length === 0}>
+        <Text class="px-4 text-small text-muted-foreground">{t("store.noBuckets")}</Text>
       </If>
       <Tree
         ref={(r) => (tree = r)}
@@ -180,8 +182,9 @@ function Buckets() {
         onExpand={({ id }) => void load(id)}
         onSelectedChange={({ selected: id }) => choose(id)}
         class="min-h-0 flex-1"
-        listClass="px-1.5 pb-2"
-        itemClass="group h-7 rounded-(--radius-sm) hover:bg-row-hover selected:bg-selection disabled:opacity-60"
+        listClass="px-2 pb-2"
+        // the tree marks its focused row itself; a ring would be cut by the rows around it
+        itemClass={`group h-7 rounded-(--radius-sm) ${ROW_STATE} focus:bg-row-hover disabled:opacity-60`}
         renderItem={(entry) => {
           const isBucket = entry.id.startsWith("b:");
           const name = entry.label;
@@ -198,13 +201,14 @@ function Buckets() {
                 </If>
               </View>
               <Icon name={isBucket ? "database" : expanded().includes(entry.id) ? "folder-open" : "folder"} size={14} tint={isBucket ? "foreground" : "muted-foreground"} />
-              <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${entry.id.includes("#") ? "text-muted-foreground" : "text-foreground"}`}>{name}</Text>
+              <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${waiting(entry.id) ? "text-muted-foreground" : "text-foreground"}`}>{name}</Text>
             </View>
           );
         }}
       />
     </View>
   );
+  return { list };
 }
 
 /** A detail of the bucket, from the edge of the window. */
@@ -227,33 +231,24 @@ function DetailSheet() {
   );
 }
 
-const bucketsWidth = rememberedSize("store.buckets", 240);
-
 export function StoreArea() {
-  const tabs = () => (
-    <TabBar tabs={STORE_TABS} value={storeTab()} icon={(s) => TAB_ICON[s]} label={(s) => (s === "browse" ? t("nav.objects") : sectionLabel(s))} onChange={(s) => go(s)} />
-  );
-  return (
-    <If
-      when={terminal()}
-      else={
-        <View class="flex-1" testID="screen-store">
-          <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("store.resizeBuckets")}>
-            <ResizablePanel fixed size={bucketsWidth.size()} minSize={180} maxSize={400} onResize={bucketsWidth.onResize}>
-              <Buckets />
-            </ResizablePanel>
-            <ResizablePanel minSize={560} class="min-w-0">
-              <Browse />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-          <DetailSheet />
-        </View>
-      }
-    >
+  if (terminal()) {
+    return (
       <View class="flex-1" testID="screen-store">
-        {tabs()}
+        <View class="flex-row px-1">
+          <Segmented testID="tab" value={storeTab()} items={STORE_TABS.map((s) => ({ value: s, title: s === "browse" ? t("nav.objects") : sectionLabel(s) }))} onChange={(s) => go(s as StoreTab)} />
+        </View>
         <View class="flex-1">{screen(storeTab())}</View>
       </View>
-    </If>
+    );
+  }
+  // the buckets are the sidebar's list while this place shows
+  const { list } = useBuckets();
+  cleanup(showInSidebar("store", list));
+  return (
+    <View class="flex-1" testID="screen-store">
+      <Browse />
+      <DetailSheet />
+    </View>
   );
 }

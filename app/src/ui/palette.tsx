@@ -2,7 +2,7 @@
 // people come back to — recent sessions and commands, endpoints, buckets —
 // behind one search field. ⌘K (Ctrl+K) on a desktop, `:` in a terminal.
 
-import { resource, setColorScheme, signal, Text, View } from "nsh";
+import { computed, resource, setColorScheme, signal, Text, View } from "nsh";
 import { Command, Dialog } from "nsh/base";
 import { date } from "../format";
 import { language, t } from "../i18n";
@@ -10,10 +10,10 @@ import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { command, history, lastRun, openLastRun, running, stop } from "../run";
 import { checkRequested } from "./updates";
-import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS } from "../store";
+import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { fill, glass, Kbd, keyLabel, SCRIM, terminal } from "./kit";
+import { CONTROL, glass, Kbd, keyLabel, POPUP, SCRIM, terminal } from "./kit";
 import { scrubCommand } from "./sessionview";
 
 export const paletteOpen = signal(false);
@@ -34,12 +34,14 @@ const AREA_ICON = { run: "square-terminal", sessions: "list-clock", store: "data
 
 /** What is typed in the palette: with a word, every session is searched. */
 const typed = signal("");
+/** Whether a word is typed: the list is rebuilt when that changes, not at every key. */
+const searching = computed(() => typed().trim() !== "");
 
 function actions(buckets: BucketEntry[]): Action[] {
   const list: Action[] = [];
   AREAS.forEach((a, i) => list.push({ id: `area:${a}`, label: areaLabel(a), group: t("palette.go"), icon: AREA_ICON[a], shortcut: a === "settings" ? "mod+," : a === "activity" ? "mod+shift+a" : `mod+${i + 1}`, run: () => go(a) }));
   if (running()) list.push({ id: "run:stop", label: t("run.stop"), group: t("palette.actions"), icon: "square", run: stop });
-  if (lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: lastRun()!.command, run: () => openLastRun(go) });
+  if (lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: scrubCommand(lastRun()!.command), run: () => openLastRun(go) });
 
   // the commands run before: the field filled, ready to run again
   history()
@@ -47,7 +49,8 @@ function actions(buckets: BucketEntry[]): Action[] {
     .forEach((c, i) =>
       list.push({
         id: `cmd:${i}`,
-        label: c,
+        // as it is shown everywhere: its variables' values hidden
+        label: scrubCommand(c),
         group: t("palette.commands"),
         icon: "square-terminal",
         keywords: ["run", "command"],
@@ -61,7 +64,7 @@ function actions(buckets: BucketEntry[]): Action[] {
   sessionsTick();
   let sessions: SessionInfo[] = [];
   try {
-    sessions = api.sessions.list().slice(0, typed().trim() ? 1000 : 6);
+    sessions = api.sessions.list().slice(0, searching() ? 1000 : 6);
   } catch {
     // none yet
   }
@@ -72,7 +75,7 @@ function actions(buckets: BucketEntry[]): Action[] {
       group: t("palette.sessions"),
       icon: "list-clock",
       keywords: [s.endpoint, s.name, ...(s.title && s.command ? [scrubCommand(s.command)] : [])],
-      hint: `${date(s.created)} · ${s.requests}`,
+      hint: `${date(s.created)} · ${t("run.bandRequests", { n: s.requests })}`,
       run: () => {
         openSession.set(s.path);
         go("sessions");
@@ -89,10 +92,7 @@ function actions(buckets: BucketEntry[]): Action[] {
       hint: e.url,
       checked: endpoint() === e.id,
       keywords: [e.vendorLabel, e.id],
-      run: () => {
-        endpoint.set(e.id);
-        chooseBucket(null);
-      },
+      run: () => useEndpoint(e.id),
     }),
   );
   buckets.forEach((b) =>
@@ -195,16 +195,18 @@ export function Palette() {
       }
     },
   );
-  const items = () => actions(buckets() ?? []);
-  const byId = () => new Map(items().map((a) => [a.id, a]));
+  // built once per change of what it lists (and only while open), not per row drawn or key typed
+  const items = computed(() => (paletteOpen() ? actions(buckets() ?? []) : []));
+  const byId = computed(() => new Map(items().map((a) => [a.id, a])));
   return (
     <Dialog
       open={paletteOpen()}
       onOpenChange={({ open }) => paletteOpen.set(open)}
       animation="fade"
       backdropClass={terminal() ? undefined : SCRIM}
-      style={terminal() ? undefined : { marginTop: 96, ...glass }}
-      class={terminal() ? "w-full" : `w-[600px] max-w-[92%] self-center overflow-hidden rounded-(--radius-card) border border-border ${fill("bg-popover/85", "bg-popover")} shadow-2xl`}
+      // the popup surface, its hairlines from edge to edge
+      style={terminal() ? undefined : { marginTop: 96, padding: 0, ...glass }}
+      class={terminal() ? "w-full" : `w-[600px] max-w-[92%] self-center overflow-hidden ${POPUP}`}
       testID="palette-dialog"
     >
       <Command
@@ -223,9 +225,9 @@ export function Palette() {
         searchPrefix={terminal() ? undefined : <Icon name="search" size={16} />}
         searchBarClass={terminal() ? undefined : "h-12 flex-row items-center gap-2 border-b border-border px-4"}
         searchClass={terminal() ? "text-foreground" : "flex-1 text-heading text-foreground placeholder:text-muted-foreground"}
-        listClass={terminal() ? "max-h-[360px]" : "max-h-[400px] p-1.5"}
-        itemClass={terminal() ? "px-1 text-foreground focus:bg-accent checked:font-semibold" : "group h-9 rounded-(--radius) px-2 focus:bg-selection"}
-        groupClass={terminal() ? "px-1 text-muted-foreground" : "px-2 pb-1 pt-2.5 text-caption font-medium text-muted-foreground"}
+        listClass={terminal() ? "max-h-[360px]" : "max-h-[400px] p-1"}
+        itemClass={terminal() ? "px-1 text-foreground focus:bg-accent checked:font-semibold" : `group ${CONTROL.field} rounded-(--radius-sm) px-2 focus:bg-selection`}
+        groupClass={terminal() ? "px-1 text-muted-foreground" : "px-2 pb-1 pt-2 text-caption font-medium text-muted-foreground"}
         separatorClass="my-1 h-px bg-border"
         renderItem={
           terminal()
@@ -233,7 +235,7 @@ export function Palette() {
             : (entry) => {
                 const a = byId().get(entry.id);
                 return (
-                  <View class="h-9 flex-row items-center gap-2">
+                  <View class={`${CONTROL.field} flex-row items-center gap-2`}>
                     <Icon name={a?.icon ?? "chevron-right"} size={15} tint={a?.checked ? "primary" : "muted-foreground"} />
                     <Text class={`min-w-0 shrink text-body line-clamp-1 ${a?.id.startsWith("cmd:") ? "font-mono text-small" : ""} ${a?.checked ? "font-medium text-primary" : "text-popover-foreground"}`}>{entry.label}</Text>
                     <If when={a?.hint}>
@@ -255,7 +257,7 @@ export function Palette() {
         empty={<Text class="px-4 py-6 text-center text-body text-muted-foreground">{t("palette.nothing")}</Text>}
         footer={
           terminal() ? undefined : (
-            <View class="h-9 flex-row items-center gap-4 border-t border-border px-4">
+            <View class={`${CONTROL.field} flex-row items-center gap-4 border-t border-border px-4`}>
               <Text class="text-caption text-muted-foreground">{`↑↓ ${t("palette.move")}`}</Text>
               <Text class="text-caption text-muted-foreground">{`${keyLabel("enter")} ${t("palette.choose")}`}</Text>
               <Text class="text-caption text-muted-foreground">{`${keyLabel("escape")} ${t("palette.close")}`}</Text>
