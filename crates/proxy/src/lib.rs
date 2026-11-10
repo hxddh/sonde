@@ -31,7 +31,7 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use chrono::Utc;
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, Limited, StreamBody};
 use hyper::body::{Frame, Incoming};
@@ -57,11 +57,24 @@ pub enum Policy {
 }
 
 impl Policy {
-    /// Why `op` is refused, if it is.
-    pub fn refuses(self, method: &str, op: &str) -> Option<&'static str> {
+    /// Why `op` is refused, if it is. No-delete goes by the method and the
+    /// query as well as the name: a request the proxy cannot name is forwarded
+    /// as it came, and the store may read it as a delete.
+    pub fn refuses(
+        self,
+        method: &str,
+        op: &str,
+        query: &[(String, String)],
+    ) -> Option<&'static str> {
+        let q = |n: &str| query.iter().any(|(k, _)| k == n);
+        let removes = op::is_destructive(op)
+            || method == "DELETE"
+            || (method == "POST" && q("delete"))
+            || (method == "PUT" && q("lifecycle"))
+            || (op == "Unknown" && method != "GET" && method != "HEAD");
         match self {
             Policy::Allow => None,
-            Policy::NoDelete if op::is_destructive(op) => Some("no-delete"),
+            Policy::NoDelete if removes => Some("no-delete"),
             Policy::ReadOnly if method != "GET" && method != "HEAD" => Some("read-only"),
             _ => None,
         }
@@ -151,6 +164,10 @@ pub struct Proxy {
     region: String,
     keys: (String, String),
     task: tokio::task::JoinHandle<()>,
+    /// Tells every connection to finish the request it is on and close.
+    stop: tokio::sync::watch::Sender<bool>,
+    /// Closed once the last connection has gone.
+    open: tokio::sync::mpsc::Receiver<()>,
 }
 
 impl Drop for Proxy {
@@ -179,17 +196,31 @@ impl Proxy {
             cfg,
             buffered,
         });
+        let (stop, stopping) = tokio::sync::watch::channel(false);
+        let (alive, open) = tokio::sync::mpsc::channel::<()>(1);
         let task = tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
                     continue;
                 };
                 let shared = shared.clone();
+                let mut stopping = stopping.clone();
+                let alive = alive.clone();
                 tokio::spawn(async move {
                     let svc = service_fn(move |req| handle(shared.clone(), req));
-                    let _ = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(TokioIo::new(stream), svc)
-                        .await;
+                    let conn = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), svc);
+                    tokio::pin!(conn);
+                    tokio::select! {
+                        _ = conn.as_mut() => {}
+                        // (a proxy dropped without a shutdown leaves them be)
+                        Ok(()) = stopping.changed() => {
+                            // the request it is on is answered and recorded
+                            conn.as_mut().graceful_shutdown();
+                            let _ = conn.await;
+                        }
+                    }
+                    drop(alive);
                 });
             }
         });
@@ -198,7 +229,20 @@ impl Proxy {
             region,
             keys,
             task,
+            stop,
+            open,
         })
+    }
+
+    /// Stops accepting, and waits (`grace` at most) for the requests in
+    /// flight to be answered and recorded: what reads the log afterwards
+    /// reads all of it. Whether every connection had gone by then.
+    pub async fn shutdown(&mut self, grace: std::time::Duration) -> bool {
+        self.task.abort();
+        // the accepting task holds a sender of its own: gone with it
+        let _ = (&mut self.task).await;
+        let _ = self.stop.send(true);
+        tokio::time::timeout(grace, self.open.recv()).await.is_ok()
     }
 
     pub fn addr(&self) -> SocketAddr {
@@ -676,6 +720,22 @@ pub fn parse_target(host: &str, path: &str) -> (Option<String>, Option<String>) 
     }
 }
 
+/// Whether a path-style path starts with an empty segment (`//bucket/key`):
+/// it names no bucket here, but the store may fold the slashes and find one.
+pub fn empty_first_segment(host: &str, path: &str) -> bool {
+    let host = host.rsplit_once(':').map_or(host, |(h, p)| {
+        if p.chars().all(|c| c.is_ascii_digit()) {
+            h
+        } else {
+            host
+        }
+    });
+    let virtual_hosted = host
+        .strip_suffix(".localhost")
+        .is_some_and(|b| !b.is_empty());
+    !virtual_hosted && path.starts_with("//")
+}
+
 /// Query pairs, decoded (`+` stays a plus: S3 clients encode spaces as %20).
 pub fn parse_query(raw: Option<&str>) -> Vec<(String, String)> {
     raw.unwrap_or("")
@@ -802,7 +862,20 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         return Ok(xml_error(403, "SignatureDoesNotMatch", &msg));
     }
 
-    if let Some(mode) = shared.cfg.policy.refuses(&method, &operation) {
+    // under every policy: what the proxy read as no bucket must not reach a
+    // store that reads it as one
+    if empty_first_segment(&host, parts.uri.path()) {
+        let msg = "sonde refused the request: its path starts with an empty segment (//), so it names no bucket";
+        record.status = Some(400);
+        record.error_body = Some(msg.into());
+        record
+            .response_headers
+            .push(Header::new("x-sonde-proxy", "refused"));
+        shared.log.push(record);
+        return Ok(xml_error(400, "InvalidURI", msg));
+    }
+
+    if let Some(mode) = shared.cfg.policy.refuses(&method, &operation, &query) {
         let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
         record.status = Some(403);
         record.error_body = Some(msg.clone());
@@ -842,6 +915,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         None
     };
 
+    // no time for the whole exchange (a large body takes what it takes), only
+    // for one that has stopped moving
+    let idle = cfg.timeout;
+    let moved = Moved::default();
     let (payload_hash, upstream_body, sent_len): (String, reqwest::Body, Option<u64>) =
         if chunked::is_signed_streaming(&content_sha) {
             let raw = match Limited::new(body, shared.cfg.max_buffer).collect().await {
@@ -886,7 +963,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             if reqlog::is_control_operation(&operation) {
                 record.request_body = Some(String::from_utf8_lossy(&decoded.payload).into_owned());
             }
-            (hash, reqwest::Body::from(decoded.payload), Some(n))
+            (hash, moved.body(decoded.payload.into()), Some(n))
         } else if !has_body {
             let hash = if content_sha.is_empty() {
                 sigv4::EMPTY_SHA256.to_string()
@@ -908,7 +985,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                         Ok(c) => {
                             let raw = c.to_bytes();
                             record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
-                            (hash, reqwest::Body::from(raw), Some(n))
+                            (hash, moved.body(raw), Some(n))
                         }
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
@@ -919,7 +996,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     }
                 }
                 Some(n) => {
-                    let stream = body.into_data_stream();
+                    let moved = moved.clone();
+                    let stream = body.into_data_stream().inspect_ok(move |_| moved.touch());
                     (hash, reqwest::Body::wrap_stream(stream), Some(n))
                 }
                 None => {
@@ -938,7 +1016,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     if reqlog::is_control_operation(&operation) {
                         record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
                     }
-                    (hash, reqwest::Body::from(raw), Some(n))
+                    (hash, moved.body(raw), Some(n))
                 }
             }
         };
@@ -972,7 +1050,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
     }
 
-    let mut rb = client.http().request(parts.method.clone(), &url);
+    let mut rb = client.http_streaming().request(parts.method.clone(), &url);
     for (k, v) in &out {
         if !k.eq_ignore_ascii_case("host") {
             rb = rb.header(k.as_str(), v.as_str());
@@ -983,11 +1061,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     {
         rb = rb.header("content-length", n.to_string());
     }
-    let sent = rb.body(upstream_body).send().await;
-    record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
-    let resp = match sent {
-        Ok(r) => r,
-        Err(e) => {
+    moved.touch();
+    let sent = tokio::select! {
+        r = rb.body(upstream_body).send() => r.map_err(|e| {
             let mut msg = e.to_string();
             let mut src = std::error::Error::source(&e);
             while let Some(s) = src {
@@ -995,6 +1071,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 msg.push_str(&s.to_string());
                 src = s.source();
             }
+            msg
+        }),
+        _ = moved.quiet_for(idle) => Err(stalled(idle)),
+    };
+    record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
+    let resp = match sent {
+        Ok(r) => r,
+        Err(msg) => {
             record.transport_error = Some(msg.clone());
             shared.log.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
@@ -1014,7 +1098,11 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     }
 
     if status.as_u16() >= 400 && method != "HEAD" {
-        let body = resp.bytes().await.unwrap_or_default();
+        let body = tokio::time::timeout(idle, resp.bytes())
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
         record.response_bytes = Some(body.len() as u64);
         if !body.is_empty() {
             record.error_body = Some(String::from_utf8_lossy(&body).into_owned());
@@ -1034,18 +1122,83 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         fetched,
         read: 0,
     };
-    let stream = resp
-        .bytes_stream()
+    let stream = quiet_limited(resp.bytes_stream(), idle)
         // the closure owns the whole of `pending` (a method, not a field): it
         // goes, and the record is logged, when the body does
         .map_ok(move |chunk| {
             pending.count(chunk.len());
             Frame::data(chunk)
-        })
-        .map_err(std::io::Error::other);
+        });
     Ok(builder
         .body(BodyExt::boxed(StreamBody::new(stream)))
         .expect("valid response"))
+}
+
+/// When a request's body last moved towards the store.
+#[derive(Clone)]
+struct Moved(Arc<parking_lot::Mutex<Instant>>);
+
+impl Default for Moved {
+    fn default() -> Self {
+        Moved(Arc::new(parking_lot::Mutex::new(Instant::now())))
+    }
+}
+
+impl Moved {
+    fn touch(&self) {
+        *self.0.lock() = Instant::now();
+    }
+
+    /// A body read whole, sent in pieces so that its going is seen.
+    fn body(&self, data: Bytes) -> reqwest::Body {
+        if data.is_empty() {
+            return reqwest::Body::from(data);
+        }
+        let moved = self.clone();
+        let pieces = futures::stream::unfold(data, move |mut rest| {
+            moved.touch();
+            let piece = rest.split_to(rest.len().min(64 << 10));
+            futures::future::ready((!piece.is_empty()).then(|| (Ok::<_, Infallible>(piece), rest)))
+        });
+        reqwest::Body::wrap_stream(pieces)
+    }
+
+    /// Returns once nothing has moved for `limit`.
+    async fn quiet_for(&self, limit: std::time::Duration) {
+        loop {
+            let quiet = self.0.lock().elapsed();
+            if quiet >= limit {
+                return;
+            }
+            tokio::time::sleep(limit - quiet).await;
+        }
+    }
+}
+
+fn stalled(limit: std::time::Duration) -> String {
+    format!(
+        "the exchange with the store stopped moving for {} s",
+        limit.as_secs_f64()
+    )
+}
+
+/// A response body that fails when the store sends nothing for `limit`; the
+/// time the program takes to read is not the store's.
+fn quiet_limited(
+    body: impl futures::Stream<Item = reqwest::Result<Bytes>> + Send + 'static,
+    limit: std::time::Duration,
+) -> impl futures::Stream<Item = std::io::Result<Bytes>> + Send + 'static {
+    futures::stream::try_unfold(Box::pin(body), move |mut body| async move {
+        match tokio::time::timeout(limit, body.next()).await {
+            Ok(Some(Ok(chunk))) => Ok(Some((chunk, body))),
+            Ok(Some(Err(e))) => Err(std::io::Error::other(e)),
+            Ok(None) => Ok(None),
+            Err(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                stalled(limit),
+            )),
+        }
+    })
 }
 
 /// A record waiting for its response body to go through: logged when the
@@ -1121,17 +1274,48 @@ mod tests {
 
     #[test]
     fn policies() {
-        assert_eq!(Policy::Allow.refuses("DELETE", "DeleteObject"), None);
+        assert_eq!(Policy::Allow.refuses("DELETE", "DeleteObject", &[]), None);
         assert_eq!(
-            Policy::NoDelete.refuses("DELETE", "DeleteObject"),
+            Policy::NoDelete.refuses("DELETE", "DeleteObject", &[]),
             Some("no-delete")
         );
-        assert_eq!(Policy::NoDelete.refuses("PUT", "PutObject"), None);
+        assert_eq!(Policy::NoDelete.refuses("PUT", "PutObject", &[]), None);
         assert_eq!(
-            Policy::ReadOnly.refuses("PUT", "PutObject"),
+            Policy::ReadOnly.refuses("PUT", "PutObject", &[]),
             Some("read-only")
         );
-        assert_eq!(Policy::ReadOnly.refuses("GET", "GetObject"), None);
+        assert_eq!(Policy::ReadOnly.refuses("GET", "GetObject", &[]), None);
+    }
+
+    #[test]
+    fn no_delete_goes_by_the_method_whatever_the_request_is_named() {
+        let q = |k: &str| vec![(k.to_string(), String::new())];
+        let no = Policy::NoDelete;
+        assert_eq!(no.refuses("DELETE", "Unknown", &[]), Some("no-delete"));
+        assert_eq!(
+            no.refuses("POST", "Unknown", &q("delete")),
+            Some("no-delete")
+        );
+        assert_eq!(
+            no.refuses("PUT", "Unknown", &q("lifecycle")),
+            Some("no-delete")
+        );
+        // a write the proxy cannot name may be anything
+        assert_eq!(no.refuses("POST", "Unknown", &[]), Some("no-delete"));
+        assert_eq!(no.refuses("GET", "Unknown", &[]), None);
+        assert_eq!(no.refuses("HEAD", "Unknown", &[]), None);
+        assert_eq!(no.refuses("POST", "CreateMultipartUpload", &[]), None);
+        assert_eq!(Policy::Allow.refuses("DELETE", "Unknown", &[]), None);
+    }
+
+    #[test]
+    fn a_path_that_starts_with_an_empty_segment_names_no_bucket() {
+        assert!(empty_first_segment("127.0.0.1:9000", "//bucket/key"));
+        assert!(empty_first_segment("localhost", "//"));
+        assert!(!empty_first_segment("127.0.0.1:9000", "/bucket//key"));
+        assert!(!empty_first_segment("127.0.0.1:9000", "/"));
+        // virtual-hosted: the key itself starts with a slash
+        assert!(!empty_first_segment("data.localhost:9000", "//key"));
     }
 }
 

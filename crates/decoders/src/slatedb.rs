@@ -377,20 +377,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             bytes: Some(o.size),
         });
     }
-    let mut gaps = vec![];
-    if let (Some(first), Some(last)) = (wals.keys().next(), wals.keys().last()) {
-        let mut missing_run: Option<(u64, u64)> = None;
-        for id in *first..=*last {
-            if !wals.contains_key(&id) {
-                missing_run = Some(match missing_run {
-                    Some((s, _)) => (s, id),
-                    None => (id, id),
-                });
-            } else if let Some(r) = missing_run.take() {
-                gaps.push(r);
-            }
-        }
-    }
+    let gaps = wal_gaps(wals.keys().copied());
     for (s, e) in &gaps {
         let msg = if s == e {
             format!("WAL {s} is missing")
@@ -647,9 +634,35 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     Ok(l)
 }
 
+/// The runs of ids missing between the ids present (ascending), each as
+/// (first, last). Walks the ids that exist, never the range between them:
+/// two objects can name ids 2^64 apart.
+fn wal_gaps(ids: impl Iterator<Item = u64>) -> Vec<(u64, u64)> {
+    let mut gaps = vec![];
+    let mut prev: Option<u64> = None;
+    for id in ids {
+        if let Some(p) = prev
+            && id > p + 1
+        {
+            gaps.push((p + 1, id - 1));
+        }
+        prev = Some(id);
+    }
+    gaps
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wal_gaps_are_found_without_walking_the_id_range() {
+        assert_eq!(wal_gaps([1, 2, 3].into_iter()), vec![]);
+        assert_eq!(wal_gaps([1, 3, 4, 8].into_iter()), vec![(2, 2), (5, 7)]);
+        // two planted objects at the ends of u64: at once, not 2^64 steps
+        assert_eq!(wal_gaps([1, u64::MAX].into_iter()), vec![(2, u64::MAX - 1)]);
+        assert_eq!(wal_gaps(std::iter::empty()), vec![]);
+    }
 
     #[test]
     fn ulids() {

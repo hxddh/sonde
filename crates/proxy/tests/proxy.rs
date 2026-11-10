@@ -641,3 +641,197 @@ fn every_way_of_writing_this_machine_is_this_machine() {
         assert!(host_refused(other), "{other} was taken");
     }
 }
+
+/// An upstream that answers every request with `pieces` bytes, one every
+/// `gap`, after the headers.
+async fn dripping(pieces: usize, gap: std::time::Duration) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut seen = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut buf).await {
+                        Ok(n) if n > 0 => seen.extend_from_slice(&buf[..n]),
+                        _ => return,
+                    }
+                }
+                let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {pieces}\r\n\r\n");
+                let _ = s.write_all(head.as_bytes()).await;
+                for _ in 0..pieces {
+                    tokio::time::sleep(gap).await;
+                    if s.write_all(b"x").await.is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    format!("http://{addr}")
+}
+
+/// A proxy whose store client has `timeout`, and a GET of `/data/k` sent to it.
+async fn get_with_timeout(
+    upstream: &str,
+    timeout: std::time::Duration,
+) -> (Proxy, RequestLog, reqwest::Response) {
+    let mut cfg = ClientConfig::new("target", upstream, "eu-west-1").unwrap();
+    cfg.timeout = timeout;
+    let target = S3Client::new(
+        cfg,
+        Arc::new(StaticProvider(Some(Credentials::new(
+            REAL_KEY,
+            REAL_SECRET,
+            None,
+        )))),
+        RequestLog::default(),
+    )
+    .unwrap();
+    let log = RequestLog::default();
+    let proxy = Proxy::start(target, log.clone(), ProxyConfig::default())
+        .await
+        .unwrap();
+    let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
+    let resp = reqwest::Client::new()
+        .get(format!("{}/data/k", proxy.url()))
+        .header("x-amz-date", date)
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+        .header("authorization", auth)
+        .send()
+        .await
+        .unwrap();
+    (proxy, log, resp)
+}
+
+#[tokio::test]
+async fn a_body_that_takes_longer_than_the_timeout_but_keeps_moving_goes_through() {
+    use std::time::Duration;
+    // 8 pieces 100 ms apart: 800 ms in all, against a timeout of 400 ms
+    let url = dripping(8, Duration::from_millis(100)).await;
+    let (_proxy, _log, resp) = get_with_timeout(&url, Duration::from_millis(400)).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.bytes().await.unwrap().len(), 8);
+}
+
+#[tokio::test]
+async fn a_body_that_stops_moving_is_cut_after_the_timeout() {
+    use std::time::Duration;
+    let url = dripping(2, Duration::from_secs(30)).await;
+    let started = std::time::Instant::now();
+    let (_proxy, _log, resp) = get_with_timeout(&url, Duration::from_millis(300)).await;
+    assert_eq!(resp.status(), 200);
+    assert!(resp.bytes().await.is_err());
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[tokio::test]
+async fn an_upload_slower_than_the_timeout_but_still_moving_goes_through() {
+    use std::time::Duration;
+    let (url, up) = upstream().await;
+    let mut cfg = ClientConfig::new("target", &url, "eu-west-1").unwrap();
+    cfg.timeout = Duration::from_millis(400);
+    let target = S3Client::new(
+        cfg,
+        Arc::new(StaticProvider(Some(Credentials::new(
+            REAL_KEY,
+            REAL_SECRET,
+            None,
+        )))),
+        RequestLog::default(),
+    )
+    .unwrap();
+    let proxy = Proxy::start(target, RequestLog::default(), ProxyConfig::default())
+        .await
+        .unwrap();
+    let pieces = futures::stream::unfold(0, |i| async move {
+        if i == 8 {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        Some((Ok::<_, std::io::Error>(Bytes::from_static(b"x")), i + 1))
+    });
+    let (date, auth) = signed(&proxy, "PUT", "/data/slow", &[], &[], "UNSIGNED-PAYLOAD");
+    let resp = reqwest::Client::new()
+        .put(format!("{}/data/slow", proxy.url()))
+        .header("x-amz-date", date)
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+        .header("authorization", auth)
+        .header("content-length", "8")
+        .body(reqwest::Body::wrap_stream(pieces))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "{}", resp.text().await.unwrap());
+    assert_eq!(up.objects.lock()["/data/slow"].0, b"xxxxxxxx");
+}
+
+/// A request written by hand: reqwest would tidy the path.
+async fn raw(proxy: &Proxy, method: &str, path: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let canonical = path.split('?').next().unwrap();
+    let query = sonde_proxy::parse_query(path.split_once('?').map(|(_, q)| q));
+    let (date, auth) = signed(proxy, method, canonical, &query, &[], "UNSIGNED-PAYLOAD");
+    let mut s = tokio::net::TcpStream::connect(proxy.addr()).await.unwrap();
+    let req = format!(
+        "{method} {path} HTTP/1.1\r\nhost: {}\r\nx-amz-date: {date}\r\nx-amz-content-sha256: UNSIGNED-PAYLOAD\r\nauthorization: {auth}\r\nconnection: close\r\n\r\n",
+        proxy.addr()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    out
+}
+
+#[tokio::test]
+async fn a_path_with_an_empty_first_segment_is_refused_under_every_policy() {
+    for policy in [Policy::Allow, Policy::NoDelete, Policy::ReadOnly] {
+        let (proxy, _app, log, up) = setup(policy).await;
+        for method in ["DELETE", "GET"] {
+            let answer = raw(&proxy, method, "//data/k").await;
+            assert!(answer.starts_with("HTTP/1.1 400"), "{policy:?}: {answer}");
+        }
+        assert!(up.calls.lock().is_empty(), "{policy:?}");
+        assert_eq!(log.list(&reqlog::Filter::default(), 1)[0].status, Some(400));
+    }
+}
+
+#[tokio::test]
+async fn no_delete_refuses_a_delete_it_cannot_name() {
+    let (proxy, _app, _log, up) = setup(Policy::NoDelete).await;
+    // no bucket in the path: named Unknown, still a DELETE
+    for (method, path) in [
+        ("DELETE", "/"),
+        ("POST", "/?delete"),
+        ("PUT", "/?lifecycle"),
+        ("POST", "/data?unheard-of"),
+    ] {
+        let answer = raw(&proxy, method, path).await;
+        assert!(
+            answer.starts_with("HTTP/1.1 403"),
+            "{method} {path}: {answer}"
+        );
+        assert!(answer.contains("no-delete"), "{answer}");
+    }
+    assert!(up.calls.lock().is_empty());
+}
+
+#[tokio::test]
+async fn a_request_in_flight_when_the_proxy_stops_is_still_recorded() {
+    use std::time::Duration;
+    // the body takes 600 ms; the proxy is told to stop as soon as it starts
+    let url = dripping(6, Duration::from_millis(100)).await;
+    let (mut proxy, log, resp) = get_with_timeout(&url, Duration::from_secs(30)).await;
+    assert!(log.list(&reqlog::Filter::default(), 10).is_empty());
+    let reading = tokio::spawn(async move { resp.bytes().await.map(|b| b.len()) });
+    assert!(proxy.shutdown(Duration::from_secs(10)).await);
+    let records = log.list(&reqlog::Filter::default(), 10);
+    assert_eq!(records.len(), 1, "logged before shutdown returns");
+    assert_eq!(records[0].response_bytes, Some(6));
+    assert_eq!(reading.await.unwrap().unwrap(), 6);
+    // and nothing new is taken
+    assert!(reqwest::get(proxy.url()).await.is_err());
+}

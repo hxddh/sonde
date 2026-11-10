@@ -95,12 +95,10 @@ pub fn as_aws_cli(r: &Record) -> String {
         ("max-parts", "--max-parts"),
     ];
     for (q, flag) in map {
+        // a record's query is decoded already: a `%` in it is the key's own
         if let Some(v) = query(r, q) {
-            let decoded = percent_encoding::percent_decode_str(v)
-                .decode_utf8_lossy()
-                .to_string();
             parts.push(flag.into());
-            parts.push(shell_quote(&decoded));
+            parts.push(shell_quote(v));
         }
     }
     let headers = [
@@ -207,8 +205,9 @@ mod tests {
             bucket: Some("bucket".into()),
             query: vec![
                 ("list-type".into(), "2".into()),
-                ("prefix".into(), "logs%2F".into()),
-                ("delimiter".into(), "%2F".into()),
+                // decoded, as s3raw and the proxy keep a record's query
+                ("prefix".into(), "logs/".into()),
+                ("delimiter".into(), "/".into()),
             ],
             region: Some("us-east-1".into()),
             request_headers: vec![
@@ -243,6 +242,14 @@ mod tests {
             cmd,
             "aws s3api list-objects-v2 --bucket bucket --prefix logs/ --delimiter / --endpoint-url http://127.0.0.1:9000 --region us-east-1"
         );
+    }
+
+    #[test]
+    fn a_percent_sign_in_a_prefix_is_copied_as_it_is() {
+        let mut r = rec();
+        r.query = vec![("prefix".into(), "sale-50%25off/a%2Fb".into())];
+        let cmd = as_aws_cli(&r);
+        assert!(cmd.contains("--prefix sale-50%25off/a%2Fb "), "{cmd}");
     }
 
     #[test]

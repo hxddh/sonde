@@ -37,8 +37,45 @@ enum CodeTarget {
     Reveal(PathBuf),
 }
 
+/// What a press may open: source and text, which the system shows in an
+/// editor. Anything else (programs, scripts, shortcuts, installers, a file
+/// with no extension) is shown in the file manager, never opened.
+const OPENS: &[&str] = &[
+    "py", "js", "ts", "tsx", "jsx", "mjs", "cjs", "java", "kt", "go", "rs", "rb", "c", "h", "cpp",
+    "cs", "scala", "sql", "toml", "yaml", "yml", "json", "md", "txt", "xml",
+];
+
+/// Of [`OPENS`], what Windows runs when opened (Windows Script Host, an
+/// installed Python or Ruby): shown there, not opened.
+const RUNS_ON_WINDOWS: &[&str] = &["js", "py", "rb"];
+
+fn opens(ext: &str, windows: bool) -> bool {
+    let e = ext.to_ascii_lowercase();
+    OPENS.contains(&e.as_str()) && !(windows && RUNS_ON_WINDOWS.contains(&e.as_str()))
+}
+
+/// A path on another machine (`\\host\share`, `//host/share`,
+/// `\\?\UNC\…`): even looking at it reaches out to that host.
+fn remote(path: &str) -> bool {
+    let p = path.replace('/', "\\");
+    match p.strip_prefix("\\\\") {
+        // `\\?\C:\…` and `\\.\…` are this machine's, unless they spell UNC
+        Some(rest) => match rest
+            .strip_prefix("?\\")
+            .or_else(|| rest.strip_prefix(".\\"))
+        {
+            Some(local) => local.to_ascii_uppercase().starts_with("UNC\\"),
+            None => true,
+        },
+        None => false,
+    }
+}
+
 /// The file `place` names, inside `dir`: opened when it is a regular file
-/// there and not one that runs; shown in the file manager otherwise.
+/// there whose type is source or text ([`OPENS`]); shown in the file
+/// manager otherwise. `dir` and `place` both come from the session file,
+/// which may be someone else's: a folder on another machine is refused,
+/// and a folder that is a whole disk is no folder to be "inside" of.
 fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     // `file:line function`: a path may hold spaces and a drive's colon
     let named = sonde_proxy::callers::code_place(place);
@@ -48,6 +85,12 @@ fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     };
     if file.is_empty() {
         return Err(err_msg("the place names no file"));
+    }
+    // before anything touches the path: canonicalize would contact the host
+    if remote(&dir.to_string_lossy()) || remote(file) {
+        return Err(err_msg(
+            "the session names a folder on another machine: not opened",
+        ));
     }
     let root = dir
         .canonicalize()
@@ -61,21 +104,47 @@ fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     let full = joined
         .canonicalize()
         .map_err(|_| err_msg(format!("{} is not there", joined.display())))?;
-    const RUNS: &[&str] = &[
-        "exe", "bat", "cmd", "com", "msi", "scr", "ps1", "vbs", "js", "jse", "wsf", "lnk", "app",
-        "command", "sh", "bash", "zsh", "jar", "desktop", "appimage", "url", "reg",
-    ];
-    let runs = full
+    let source = full
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| RUNS.contains(&e.to_ascii_lowercase().as_str()));
-    let inside = full.starts_with(&root);
+        .is_some_and(|e| opens(e, cfg!(windows)));
+    let inside = root.parent().is_some() && full.starts_with(&root);
     let regular = full.metadata().map(|m| m.is_file()).unwrap_or(false);
-    Ok(if inside && regular && !runs {
+    Ok(if inside && regular && source {
         CodeTarget::Open(full)
     } else {
         CodeTarget::Reveal(full)
     })
+}
+
+/// A recording policy by its name; an unknown one is refused, never "allow".
+fn policy_of(name: &str) -> Result<Policy, String> {
+    match name {
+        "allow" | "" => Ok(Policy::Allow),
+        "no-delete" => Ok(Policy::NoDelete),
+        "read-only" => Ok(Policy::ReadOnly),
+        other => Err(err_msg(format!(
+            "unknown recording policy \"{other}\": allow, no-delete or read-only"
+        ))),
+    }
+}
+
+/// A JSON map beside the sessions (`titles.json`, `baselines.json`,
+/// `imports.json`), to change and write back: empty when there is none, an
+/// error when it is there and does not read. Writing an empty map over a
+/// file that is only damaged would drop every entry in it.
+fn map_to_change(path: &Path) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let refuse = |why: String| {
+        err_msg(format!(
+            "{} cannot be read ({why}): nothing was changed; fix or remove the file",
+            path.display()
+        ))
+    };
+    match std::fs::read(path) {
+        Ok(b) => serde_json::from_slice(&b).map_err(|e| refuse(e.to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+        Err(e) => Err(refuse(e.to_string())),
+    }
 }
 
 /// A file's text: a finished session (or a log) is gzip, read for what it
@@ -97,14 +166,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     })
 }
 
-/// The files opened into sessions, by their contents' digest: `imports.json`.
-fn read_imports(dir: &Path) -> std::collections::BTreeMap<String, String> {
-    std::fs::read(dir.join("imports.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
-}
-
+/// Writes the files opened into sessions, by their contents' digest: `imports.json`.
 fn write_imports(dir: &Path, all: &std::collections::BTreeMap<String, String>) {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let tmp = dir.join(format!(
@@ -148,11 +210,7 @@ async fn begin(
     let _starting = Starting;
     let s = sonde();
     let client = s.client(&endpoint).map_err(crate::state::err)?;
-    let policy = match policy.as_str() {
-        "no-delete" => Policy::NoDelete,
-        "read-only" => Policy::ReadOnly,
-        _ => Policy::Allow,
-    };
+    let policy = policy_of(&policy)?;
     let dir = s.paths().sessions();
     std::fs::create_dir_all(&dir).map_err(err_msg)?;
     let name = command
@@ -352,8 +410,14 @@ fn titles() -> std::collections::BTreeMap<String, String> {
 }
 
 fn save_titles(t: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let dir = sonde().paths().sessions();
-    let tmp = dir.join("titles.json.tmp");
+    // a name of its own: the app and the CLI may write at the same time
+    let tmp = dir.join(format!(
+        "titles.json.{}.{}.tmp",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     std::fs::write(&tmp, serde_json::to_vec_pretty(t).map_err(err_msg)?).map_err(err_msg)?;
     std::fs::rename(&tmp, dir.join("titles.json")).map_err(err_msg)
 }
@@ -879,7 +943,14 @@ impl Sessions {
             code = exit_rx.await.unwrap_or(None);
         }
         RUNNING.lock().take();
-        Sessions::stop();
+        // its own recording only: the user may have stopped it and begun another
+        if RECORDING
+            .lock()
+            .as_ref()
+            .is_some_and(|r| r.path == Path::new(&path))
+        {
+            Sessions::stop();
+        }
         Ok(json!({ "exit": code, "path": path }))
     }
 
@@ -1208,7 +1279,7 @@ impl Sessions {
         let key = header_of(Path::new(&path))
             .and_then(|h| sonde_proxy::program::program_key(h.command.as_deref()))
             .ok_or_else(|| err_msg("only a run of a program has a baseline"))?;
-        let mut all = baselines();
+        let mut all = map_to_change(&sonde().paths().sessions().join("baselines.json"))?;
         if on {
             all.insert(key, name);
         } else if all.get(&key) == Some(&name) {
@@ -1285,7 +1356,10 @@ impl Sessions {
         };
         // the same file opened again is the session it made, not a copy
         let digest = format!("{:016x}", fnv1a(text.as_bytes()));
-        let mut imported = read_imports(&dir);
+        // an index that does not read is left as it is (the session is
+        // still made; opening the file again makes another)
+        let known = map_to_change(&dir.join("imports.json"));
+        let mut imported = known.clone().unwrap_or_default();
         if let Some(p) = imported
             .get(&digest)
             .map(|n| dir.join(n))
@@ -1305,7 +1379,9 @@ impl Sessions {
                 return Err(format!("{name}: {e}"));
             }
         }
-        if let Some(n) = path.file_name() {
+        if let Some(n) = path.file_name()
+            && known.is_ok()
+        {
             imported.insert(digest, n.to_string_lossy().into_owned());
             write_imports(&dir, &imported);
         }
@@ -1385,7 +1461,7 @@ impl Sessions {
     /// Gives a session a title of the user's (an empty one takes it away).
     pub fn rename(path: String, title: String) -> Result<bool, String> {
         let (_, name) = own_session(&path)?;
-        let mut t = titles();
+        let mut t = map_to_change(&sonde().paths().sessions().join("titles.json"))?;
         let title = title.trim();
         if title.is_empty() {
             t.remove(&name);
@@ -1413,8 +1489,10 @@ impl Sessions {
             std::fs::remove_file(&p).map_err(err_msg)?;
         }
         forget(&p);
-        let mut t = titles();
-        if t.remove(&name).is_some() {
+        // the session is gone either way; a titles file that does not read stays
+        if let Ok(mut t) = map_to_change(&sonde().paths().sessions().join("titles.json"))
+            && t.remove(&name).is_some()
+        {
             save_titles(&t)?;
         }
         Ok(true)
@@ -1537,6 +1615,78 @@ mod tests {
             CodeTarget::Reveal(o)
         );
         assert!(code_target(&root, "../../nothing-here.py:1 f").is_err());
+    }
+
+    #[test]
+    fn a_code_place_opens_source_and_text_and_only_shows_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for name in [
+            "a.rs",
+            "notes.MD",
+            "tool",
+            "x.hta",
+            "x.pyw",
+            "x.terminal",
+            "x.desktop",
+        ] {
+            std::fs::write(root.join(name), "x").unwrap();
+        }
+        let target = |n: &str| code_target(&root, &format!("{n}:1 f")).unwrap();
+        assert_eq!(target("a.rs"), CodeTarget::Open(root.join("a.rs")));
+        assert_eq!(target("notes.MD"), CodeTarget::Open(root.join("notes.MD")));
+        // not on the list, whatever a deny-list would have missed
+        for n in ["tool", "x.hta", "x.pyw", "x.terminal", "x.desktop"] {
+            assert_eq!(target(n), CodeTarget::Reveal(root.join(n)), "{n}");
+        }
+        // what Windows runs when opened is shown there
+        assert!(opens("py", false) && !opens("py", true));
+        assert!(opens("JS", false) && !opens("js", true));
+        assert!(opens("rs", true) && !opens("exe", false));
+    }
+
+    #[test]
+    fn a_session_that_names_a_folder_elsewhere_opens_nothing() {
+        assert!(remote(r"\\host\share\etl"));
+        assert!(remote("//host/share"));
+        assert!(remote(r"\\?\UNC\host\share"));
+        assert!(!remote(r"\\?\C:\work"));
+        assert!(!remote("/home/me/work") && !remote(r"C:\work"));
+        // refused before the path is looked at
+        let e = code_target(Path::new("//host/share"), "load.py:1 f").unwrap_err();
+        assert!(e.contains("another machine"), "{e}");
+        let dir = tempfile::tempdir().unwrap();
+        assert!(code_target(dir.path(), "//host/share/load.py:1 f").is_err());
+        // a session that says it ran in the whole disk: nothing is "inside" it
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("load.py"), "x").unwrap();
+        let top = root.ancestors().last().unwrap();
+        assert_eq!(
+            code_target(top, &format!("{}:1 f", root.join("load.py").display())).unwrap(),
+            CodeTarget::Reveal(root.join("load.py"))
+        );
+    }
+
+    #[test]
+    fn an_unknown_recording_policy_is_refused_not_allowed() {
+        assert_eq!(policy_of("allow").unwrap(), Policy::Allow);
+        assert_eq!(policy_of("no-delete").unwrap(), Policy::NoDelete);
+        assert_eq!(policy_of("read-only").unwrap(), Policy::ReadOnly);
+        assert!(policy_of("readonly").unwrap_err().contains("readonly"));
+        assert!(policy_of("no_delete").is_err());
+    }
+
+    #[test]
+    fn a_damaged_map_is_refused_not_read_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("titles.json");
+        assert!(map_to_change(&f).unwrap().is_empty(), "none yet: empty");
+        std::fs::write(&f, "{\"a.sonde\": \"A\"}").unwrap();
+        assert_eq!(map_to_change(&f).unwrap()["a.sonde"], "A");
+        // cut short: every entry would go with the next write
+        std::fs::write(&f, "{\"a.sonde\": \"A\", \"b.so").unwrap();
+        let e = map_to_change(&f).unwrap_err();
+        assert!(e.contains("nothing was changed"), "{e}");
     }
 
     #[test]

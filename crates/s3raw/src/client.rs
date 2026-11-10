@@ -286,6 +286,8 @@ impl S3Response {
 pub struct S3Client {
     cfg: Arc<ClientConfig>,
     http: reqwest::Client,
+    /// The same, without a time for the whole exchange.
+    streaming: reqwest::Client,
     creds: Arc<dyn CredentialsProvider>,
     log: RequestLog,
     throttle: Option<Arc<Throttle>>,
@@ -336,30 +338,42 @@ impl S3Client {
         creds: Arc<dyn CredentialsProvider>,
         log: RequestLog,
     ) -> Result<Self, S3Error> {
-        let mut builder = reqwest::Client::builder()
+        let certs = match &cfg.ca_pem {
+            Some(pem) => {
+                let certs = reqwest::Certificate::from_pem_bundle(pem)
+                    .map_err(|e| S3Error::config(format!("CA certificate: {e}")))?;
+                if certs.is_empty() {
+                    return Err(S3Error::config(
+                        "CA certificate file holds no PEM certificate",
+                    ));
+                }
+                certs
+            }
+            None => Vec::new(),
+        };
+        let builder = || {
+            let mut b = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
+                .user_agent(cfg.user_agent.clone())
+                .pool_max_idle_per_host(32);
+            for c in &certs {
+                b = b.add_root_certificate(c.clone());
+            }
+            b
+        };
+        let http = builder()
             .timeout(cfg.timeout)
-            .connect_timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent(cfg.user_agent.clone())
-            .pool_max_idle_per_host(32);
-        if let Some(pem) = &cfg.ca_pem {
-            let certs = reqwest::Certificate::from_pem_bundle(pem)
-                .map_err(|e| S3Error::config(format!("CA certificate: {e}")))?;
-            if certs.is_empty() {
-                return Err(S3Error::config(
-                    "CA certificate file holds no PEM certificate",
-                ));
-            }
-            for c in certs {
-                builder = builder.add_root_certificate(c);
-            }
-        }
-        let http = builder
+            .build()
+            .map_err(|e| S3Error::config(format!("HTTP client: {e}")))?;
+        // no time for the whole exchange: a body of any size takes what it takes
+        let streaming = builder()
             .build()
             .map_err(|e| S3Error::config(format!("HTTP client: {e}")))?;
         Ok(S3Client {
             cfg: Arc::new(cfg),
             http,
+            streaming,
             creds,
             log,
             throttle: None,
@@ -380,6 +394,13 @@ impl S3Client {
     /// stream bodies themselves.
     pub fn http(&self) -> &reqwest::Client {
         &self.http
+    }
+
+    /// The HTTP client without `timeout` over the whole exchange (it still
+    /// gives up connecting after 10 s), for bodies of any size passed
+    /// through: the caller watches for one that has stopped moving.
+    pub fn http_streaming(&self) -> &reqwest::Client {
+        &self.streaming
     }
 
     pub fn credentials_provider(&self) -> &Arc<dyn CredentialsProvider> {

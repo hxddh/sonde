@@ -12,6 +12,11 @@ sonde reads `config.toml` from its configuration directory:
 The CLI takes `--config-dir` and `--data-dir` too. The file is written atomically, mode `0600` on Unix (it may hold
 static keys for local test servers). Unknown endpoint ids, duplicate ids and bad URLs are refused when it loads.
 
+A file that does not load is never written over: the app starts with no endpoints, shows why, and refuses every
+save until the file is fixed and read again. A save reads the file first and applies only what changed (one
+setting, one endpoint), so edits made to the file while the app runs — by hand, or by `sonde endpoints` — are
+kept; comments are not. Two processes saving at once take turns (`config.toml.lock`).
+
 ```toml
 [settings]
 read-only = true          # destructive operations refused while on (default)
@@ -63,4 +68,5 @@ credentials = { kind = "env", access-key-id-var = "LAB_KEY", secret-access-key-v
 see [credentials.md](credentials.md).
 
 `sonde --url <URL> [--region R] [--path-style] [--ca-file F]` adds an endpoint `adhoc` for one run, with the
-default credential chain; it is not saved.
+default credential chain; it is not saved, and neither are `--rate` and `--concurrency`. A configured endpoint
+named `adhoc` (or `demo`, while the built-in demo runs) is hidden for that run, not replaced: it stays in the file.

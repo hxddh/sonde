@@ -64,7 +64,8 @@ pub fn traces(s: &Session) -> Value {
         }));
         for id in &e.records {
             let Some(r) = by_id.get(id) else { continue };
-            let end = r.time + chrono::Duration::microseconds((r.latency_ms * 1000.0) as i64);
+            // clamped: a corrupt latency must not overflow the date
+            let end = r.time + chrono::Duration::microseconds(r.latency_us());
             let mut attrs = vec![
                 attr("rpc.system", json!("aws-api")),
                 attr("rpc.service", json!("S3")),
@@ -180,5 +181,27 @@ mod tests {
             t["resourceSpans"][0]["resource"]["attributes"][0]["value"]["stringValue"],
             "etl"
         );
+    }
+
+    #[test]
+    fn a_latency_no_request_could_have_does_not_overflow_the_date() {
+        let s = Session {
+            header: SessionHeader::new("e", "http://e", "us-east-1", None),
+            records: vec![reqlog::Record {
+                id: 1,
+                time: DateTime::from_timestamp_millis(1_700_000_000_000).unwrap(),
+                method: "GET".into(),
+                operation: "GetObject".into(),
+                status: Some(200),
+                latency_ms: 1e300,
+                ..Default::default()
+            }],
+            logs: vec![],
+        };
+        let t = traces(&s);
+        let spans = t["resourceSpans"][0]["scopeSpans"][0]["spans"]
+            .as_array()
+            .unwrap();
+        assert!(spans.iter().any(|s| s["name"] == "S3.GetObject"));
     }
 }

@@ -42,7 +42,7 @@ chrono.workspace = true
 tokio = { workspace = true, features = ["full"] }
 anyhow.workspace = true
 nsh-platform-tui = { workspace = true, optional = true, features = ["js", "run-app"] }
-nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "1662115e30b4a86ca2e5eaf216e165c93bbdbee9", optional = true }
+nsh-tui-host = { git = "https://github.com/longbridge/nsh", rev = "ec8430f4910bb27670a39fc2e0355f26aa1d261a", optional = true }
 nsh-engine = { workspace = true, optional = true, features = ["js-core"] }
 nsh-base = { workspace = true, optional = true }
 nsh-core = { workspace = true, optional = true }

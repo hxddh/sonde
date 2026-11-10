@@ -30,15 +30,31 @@ impl Probe for PresignExpiry {
             "presign.expiry",
             Category::Presign,
             "Presigned URL expiry",
-            "Presigns a GET valid for 2 seconds, uses it at once and again after 4 seconds; presigns with X-Amz-Expires over 7 days.",
+            "Presigns a GET valid for a few seconds (allowing for the difference between this clock and the store's), uses it at once and again once it has expired; presigns with X-Amz-Expires over 7 days.",
             "Fresh URL: 200. Expired: 403 AccessDenied (\"Request has expired\"). X-Amz-Expires above 604800: 400 AuthorizationQueryParametersError.",
             &[Needs::Slow],
         )
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("presign");
-        cx.put("put", &k, "presigned", &[]).await;
-        let Ok(url) = cx.client.presign("GET", &cx.bucket, &k, 2, &[]).await else {
+        let put = cx.put("put", &k, "presigned", &[]).await;
+        // the store's clock, from its Date header: the URL expires by it
+        let skew = put
+            .as_ref()
+            .and_then(|r| r.header("date"))
+            .and_then(|d| chrono::DateTime::parse_from_rfc2822(d).ok())
+            .map(|d| (d.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_seconds());
+        let Some((valid, wait)) = presign_timing(skew) else {
+            cx.note(
+                "clock",
+                format!(
+                    "the store's clock differs from this one by {} s",
+                    skew.unwrap_or(0)
+                ),
+            );
+            return;
+        };
+        let Ok(url) = cx.client.presign("GET", &cx.bucket, &k, valid, &[]).await else {
             cx.note("presign", "no credentials");
             return;
         };
@@ -48,7 +64,7 @@ impl Probe for PresignExpiry {
                 .send_url("GetObject (presigned)", http::Method::GET, &url)
                 .await,
         );
-        tokio::time::sleep(Duration::from_secs(4)).await;
+        tokio::time::sleep(Duration::from_secs(wait)).await;
         cx.record(
             "expired",
             cx.client
@@ -67,6 +83,12 @@ impl Probe for PresignExpiry {
     }
     fn judge(&self, s: &Steps) -> Judgement {
         let (fresh, expired, long) = (s.at("fresh"), s.at("expired"), s.at("too-long"));
+        if let Some(j) = super::setup_failed(s, &["put"]) {
+            return j;
+        }
+        if let Some(clock) = s.get("clock") {
+            return Judgement::new(Verdict::Error, format!("could not run: {}", clock.body), s);
+        }
         if !fresh.ok() {
             return Judgement::new(
                 Verdict::Fail,
@@ -95,6 +117,25 @@ impl Probe for PresignExpiry {
                 s,
             )
         }
+    }
+}
+
+/// How long the presigned URL is valid and how long to wait before it
+/// must have expired, in seconds, given how far the store's clock is ahead
+/// of this one (`None`: unknown). The URL is signed with this clock and
+/// expires by the store's, so a store `d` seconds ahead sees it `d` seconds
+/// old at once: the validity grows by `d`, the wait by `-d`. Either way
+/// about 8 seconds of real validity (a rate limit may delay the first use)
+/// and 3 of margin past the expiry. `None` when the clocks are too far
+/// apart to time anything.
+fn presign_timing(store_ahead: Option<i64>) -> Option<(u64, u64)> {
+    const LIVE: i64 = 8;
+    const MARGIN: i64 = 3;
+    match store_ahead {
+        // unknown: a longer validity and wait absorb a few seconds either way
+        None => Some((10, 15)),
+        Some(d) if d.abs() > 45 => None,
+        Some(d) => Some(((LIVE + d.max(0)) as u64, (LIVE + MARGIN - d.min(0)) as u64)),
     }
 }
 
@@ -614,5 +655,25 @@ impl Probe for ExpressAppend {
                 s,
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::presign_timing;
+
+    #[test]
+    fn the_presigned_url_outlives_a_few_seconds_of_clock_difference() {
+        // by the store's clock the URL is fresh at once and expired after the wait
+        for d in [-45i64, -3, -2, 0, 2, 3, 45] {
+            let (valid, wait) = presign_timing(Some(d)).unwrap();
+            let (valid, wait) = (valid as i64, wait as i64);
+            assert!(valid - d >= 8, "skew {d}: fresh for {} s", valid - d);
+            assert!(wait + d >= valid + 3, "skew {d}: expired at the second use");
+        }
+        // unknown clocks: 4 s either way is absorbed
+        let (valid, wait) = presign_timing(None).unwrap();
+        assert!(valid >= 10 && wait >= valid + 5);
+        assert_eq!(presign_timing(Some(600)), None);
     }
 }

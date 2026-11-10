@@ -69,8 +69,12 @@ object_store (Rust) — `scripts/sdk-smoke.sh` runs them in CI.
    `sonde proxy` listens on loopback only; `--allow-remote` opens it to other
    machines, for whoever holds the keys it prints.
 4. The policy may refuse it: `--no-delete` refuses deletes, aborts and
-   lifecycle changes; `--read-only` lets only GET and HEAD through. A refused
+   lifecycle changes — by the request's method as well as its name: every
+   DELETE, `POST ?delete`, `PUT ?lifecycle`, and any write sonde cannot name;
+   `--read-only` lets only GET and HEAD through. A refused
    request gets an S3 `AccessDenied` error and never leaves the machine.
+   Under every policy, a path that starts with an empty segment (`//bucket/key`)
+   is answered `400 InvalidURI`: it names no bucket.
 5. The client's signature headers are dropped and the request is signed again
    for the real endpoint (SigV4, the same code as every other sonde request).
    Bodies stream through, with these exceptions:
@@ -123,10 +127,15 @@ header, the summary and every record.
 sonde import access.log            # S3 server access log lines
 sonde import trail.json            # CloudTrail data events ({"Records": …}, or one event a line)
 sonde import browser.har           # a HAR (a browser's, or sonde's own --log-out)
+sonde import trail.json.gz         # gzip is read as it is
 ```
 
 Each becomes a session in the data directory (or `-o FILE`), read like a recording: operations, findings, where
 the time went. The app opens them too (Open, or drop the file on the window).
+
+An access log's lines that are no request of a program's (a lifecycle expiry, a batch delete's objects) are left out,
+and a line that cannot be read (a file cut off) is skipped: `sonde import` says how many of each. CloudTrail keeps
+which upload, part, listing page and version a request named; a HAR keeps the request's headers (secrets masked).
 
 | Source | Times | Who sent it | SDK (user agent) |
 |---|---|---|---|
@@ -206,7 +215,10 @@ differ from one endpoint to another, so a replay re-enacts each request:
 - requests go one at a time, in recorded order, without retries.
 
 It asks before sending anything (`--yes` in scripts) and deletes what it wrote
-afterwards (`--keep` keeps it). `--in-place` replays keys as recorded, bucket
+afterwards (`--keep` keeps it). Because that deletes everything under the
+prefix, the prefix must be empty first: a prefix that holds objects, or one
+that cannot be listed (anything but a bucket that is not there yet), stops
+the replay before it sends a request. `--in-place` replays keys as recorded, bucket
 changes included — on a scratch bucket only.
 
 Requests are compared by status and S3 error code; lookups that found nothing
@@ -272,6 +284,9 @@ failures, and requests sonde refused.
 - HTTP/1.1 between the application and sonde; plain HTTP on the loopback
   interface (no TLS listener yet).
 - One target endpoint per proxy.
+- No time limit on an exchange as a whole (a large body takes what it takes); one that stops moving for 60 s is cut,
+  and connecting gives up after 10 s.
+- `run`, `proxy` and `watch` wait up to 5 s at the end for requests still in flight, so they are in the session.
 - Replay is sequential: concurrency and timing of the original are not reproduced.
 - Signed `aws-chunked` bodies (and bodies sent chunked without a length) are read whole, up to 1 GiB each
   and 2 GiB at once: a request past that budget waits for the ones before it.

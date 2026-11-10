@@ -30,6 +30,9 @@ pub enum Action {
     RestoreObject,
     DeleteObjects,
     PutLifecycle,
+    /// A probe run: it writes and deletes under its scratch prefix (and
+    /// buckets of its own). Never a plan; audited as a run.
+    RunProbes,
 }
 
 impl Action {
@@ -40,6 +43,7 @@ impl Action {
             Action::RestoreObject => "remove the latest delete marker",
             Action::DeleteObjects => "delete objects",
             Action::PutLifecycle => "replace the lifecycle configuration",
+            Action::RunProbes => "run compatibility probes",
         }
     }
 }
@@ -88,6 +92,10 @@ pub struct AuditEntry {
     pub errors: Vec<String>,
     pub request_ids: Vec<String>,
     pub targets: Vec<String>,
+    /// `started` on the entry written before the first request (a run
+    /// that was cut short still shows); absent on the outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
 }
 
 #[derive(Clone)]
@@ -316,6 +324,7 @@ mod tests {
             errors: vec!["AccessDenied".into()],
             request_ids: vec!["R1".into()],
             targets: vec!["k@v".into()],
+            stage: None,
         };
         g.audit(&e).unwrap();
         g.audit(&e).unwrap();

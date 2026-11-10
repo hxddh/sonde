@@ -292,30 +292,63 @@ impl Config {
         Ok(())
     }
 
-    /// Writes atomically; 0600 on Unix (the file may hold static keys).
+    /// Writes atomically, through a temporary file of its own made with
+    /// mode 0600 on Unix (the file may hold static keys).
     pub fn save(&self, path: &Path) -> Result<(), String> {
+        use std::io::Write;
         self.validate()?;
         let text = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
-        let tmp = path.with_extension("toml.tmp");
-        std::fs::write(
-            &tmp,
-            format!("# sonde configuration — docs/configuration.md\n{text}"),
-        )
-        .map_err(|e| e.to_string())?;
+        // a name no other process writes to: two saves cannot interleave
+        let tmp = path.with_extension(format!(
+            "toml.{}-{}.tmp",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        ));
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600);
         }
-        std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+        let written = o
+            .open(&tmp)
+            .and_then(|mut f| {
+                f.write_all(
+                    format!("# sonde configuration — docs/configuration.md\n{text}").as_bytes(),
+                )?;
+                f.sync_all()
+            })
+            .and_then(|()| std::fs::rename(&tmp, path));
+        written.map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("{}: {e}", path.display())
+        })
     }
 
     pub fn endpoint(&self, id: &str) -> Option<&EndpointConfig> {
         self.endpoints.iter().find(|e| e.id == id)
     }
+}
+
+/// Holds `config.toml.lock` beside `path` until dropped, so two processes
+/// (the app and the CLI) do not read and write the file at once. `None`
+/// where the lock cannot be taken: the save goes on without it.
+pub(crate) fn lock(path: &Path) -> Option<std::fs::File> {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path.with_extension("toml.lock"))
+        .ok()?;
+    f.lock().ok()?;
+    Some(f)
 }
 
 #[cfg(test)]

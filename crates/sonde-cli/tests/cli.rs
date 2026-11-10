@@ -275,3 +275,126 @@ fn check_init_writes_a_budget_the_run_passes_and_github_annotates_it() {
         stdout(&c)
     );
 }
+
+#[test]
+fn a_gzipped_log_is_imported_and_its_odd_lines_are_counted() {
+    use std::io::Write;
+    let t = tempfile::tempdir().unwrap();
+    let log = concat!(
+        "79a5 lake [06/Feb/2026:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a \"GET /lake/t/a HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n",
+        "79a5 lake [06/Feb/2026:00:00:41 +0000] - AmazonS3 5E57 S3.EXPIRE.OBJECT t/old - \"-\" - - - 4096 - - \"-\" \"-\" - x - - - - - - -\n",
+        "79a5 lake [06/Feb/2026:00:00:44 +0000] 192.0.2.3 arn:aws\n",
+    );
+    let file = t.path().join("2026-02-06.log.gz");
+    let mut gz = flate2::write::GzEncoder::new(
+        std::fs::File::create(&file).unwrap(),
+        flate2::Compression::default(),
+    );
+    gz.write_all(log.as_bytes()).unwrap();
+    gz.finish().unwrap();
+    let out = t.path().join("out.sonde");
+    let o = sonde(
+        t.path(),
+        &[
+            "import",
+            file.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(
+        err.contains("1 requests from a S3 server access log"),
+        "{err}"
+    );
+    assert!(err.contains("1 line could not be read"), "{err}");
+    assert!(
+        err.contains("1 line left out: the store's own work"),
+        "{err}"
+    );
+    assert!(out.is_file());
+}
+
+#[test]
+fn a_flag_that_would_do_nothing_is_a_usage_error() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    // a format the command does not write
+    for args in [
+        &["show", "-f", "csv"][..],
+        &["show", "-f", "github"],
+        &["check", "--max-requests", "100000", "-f", "csv"],
+    ] {
+        let o = sonde(t.path(), args);
+        assert_eq!(o.status.code(), Some(64), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&o.stderr).contains("does not write -f"),
+            "{args:?}"
+        );
+        assert!(o.stdout.is_empty(), "{args:?}");
+    }
+    // held to a baseline, with no baseline
+    for flag in [&["--no-new-warnings"][..], &["--tolerance", "5"]] {
+        let mut args = vec!["check", "--max-requests", "100000"];
+        args.extend_from_slice(flag);
+        let o = sonde(t.path(), &args);
+        assert_eq!(o.status.code(), Some(64), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&o.stderr).contains("needs a baseline"),
+            "{args:?}"
+        );
+    }
+    // with one, both are taken
+    assert_eq!(
+        sonde(
+            t.path(),
+            &["check", "--set-baseline", "--max-requests", "100000"]
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+    let o = sonde(
+        t.path(),
+        &[
+            "check",
+            "--baseline",
+            "auto",
+            "--no-new-warnings",
+            "--tolerance",
+            "5",
+        ],
+    );
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_exits_as_a_shell_would_when_a_signal_ends_the_program() {
+    let t = tempfile::tempdir().unwrap();
+    // the program sends nothing: the endpoint is never called
+    let o = sonde(
+        t.path(),
+        &[
+            "--url",
+            "http://127.0.0.1:9",
+            "run",
+            "--",
+            "sh",
+            "-c",
+            "kill -TERM $$",
+        ],
+    );
+    assert_eq!(
+        o.status.code(),
+        Some(143),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+}

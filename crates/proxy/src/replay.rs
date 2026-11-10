@@ -745,15 +745,22 @@ pub async fn replay_to_file(
     // cleanup deletes everything under the prefix: it must hold nothing before
     if !opts.prefix.is_empty() && !keep {
         for b in buckets_of(&original.records, opts) {
-            if let Ok(found) = base.list_all(&b, &opts.prefix, 1).await
-                && !found.is_empty()
-            {
-                let _ = std::fs::remove_file(out);
-                return Err(format!(
+            let why = match base.list_all(&b, &opts.prefix, 1).await {
+                Ok(found) if found.is_empty() => continue,
+                Ok(_) => format!(
                     "{b}/{} already holds objects: a replay writes under a prefix of its own and deletes what is there afterwards; choose another prefix",
                     opts.prefix
-                ));
-            }
+                ),
+                // a bucket that is not there holds nothing (the replay may
+                // create it); any other answer leaves the prefix unknown
+                Err(e) if e.status == Some(404) => continue,
+                Err(e) => format!(
+                    "could not check that {b}/{} is empty ({e}): a replay deletes what is under its prefix afterwards, so nothing was replayed",
+                    opts.prefix
+                ),
+            };
+            let _ = std::fs::remove_file(out);
+            return Err(why);
         }
     }
     let log = reqlog::RequestLog::new(4096);

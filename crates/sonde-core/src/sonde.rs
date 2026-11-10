@@ -68,41 +68,111 @@ pub struct ConnectivityReport {
     pub server: Option<String>,
 }
 
+/// Values of one run that stand in for the saved settings (`--rate`,
+/// `--concurrency`): never written to `config.toml`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Overrides {
+    pub rate_limit: Option<f64>,
+    pub concurrency: Option<usize>,
+}
+
+struct State {
+    /// What `config.toml` holds (or will, at the next save).
+    base: Config,
+    /// The file as last read or written: a save that finds it changed
+    /// starts from the file. `None` when it was never read.
+    disk: Option<Config>,
+    /// Endpoints of this process only. One with a configured id hides the
+    /// configured endpoint, which stays in `base` and in every save.
+    transient: Vec<EndpointConfig>,
+    overrides: Overrides,
+    /// Why the file did not load. Nothing is saved while it stands.
+    error: Option<String>,
+    /// `base` with the transient endpoints and the overrides: what runs.
+    effective: Config,
+}
+
+impl State {
+    fn refresh(&mut self) {
+        let mut c = self.base.clone();
+        for t in &self.transient {
+            match c.endpoints.iter_mut().find(|e| e.id == t.id) {
+                Some(e) => *e = t.clone(),
+                None => c.endpoints.push(t.clone()),
+            }
+        }
+        if let Some(r) = self.overrides.rate_limit {
+            c.settings.rate_limit = Some(r);
+        }
+        if let Some(n) = self.overrides.concurrency {
+            c.settings.concurrency = n;
+        }
+        self.effective = c;
+    }
+}
+
 pub struct Sonde {
     paths: Paths,
-    config: RwLock<Config>,
+    state: RwLock<State>,
+    /// One save at a time in this process (the lock file covers the others).
+    saving: parking_lot::Mutex<()>,
     log: RequestLog,
     jobs: JobManager,
     guard: Guard,
     clients: RwLock<HashMap<String, S3Client>>,
-    transient: RwLock<std::collections::HashSet<String>>,
 }
 
 impl Sonde {
     /// Loads the configuration from `paths` (an empty one if there is none).
     pub fn open(paths: Paths) -> Result<Arc<Sonde>, String> {
         let config = Config::load(&paths.config_file())?;
-        Ok(Self::with_config(paths, config))
+        Ok(Self::build(paths, config.clone(), Some(config), None))
+    }
+
+    /// As [`Self::open`], but a file that does not load is kept: the
+    /// sonde starts empty, [`Self::config_error`] says why, and nothing is
+    /// saved until [`Self::reload_config`] reads the file.
+    pub fn open_lenient(paths: Paths) -> Arc<Sonde> {
+        match Config::load(&paths.config_file()) {
+            Ok(c) => Self::build(paths, c.clone(), Some(c), None),
+            Err(e) => Self::build(paths, Config::default(), None, Some(e)),
+        }
     }
 
     pub fn with_config(paths: Paths, config: Config) -> Arc<Sonde> {
+        Self::build(paths, config, None, None)
+    }
+
+    fn build(
+        paths: Paths,
+        config: Config,
+        disk: Option<Config>,
+        error: Option<String>,
+    ) -> Arc<Sonde> {
         let log = RequestLog::new(config.settings.reqlog_capacity);
         let guard = Guard::new(paths.audit_log());
         let s = Arc::new(Sonde {
             paths,
-            config: RwLock::new(config),
+            state: RwLock::new(State {
+                effective: config.clone(),
+                base: config,
+                disk,
+                transient: Vec::new(),
+                overrides: Overrides::default(),
+                error,
+            }),
+            saving: Default::default(),
             log,
             jobs: JobManager::new(),
             guard,
             clients: RwLock::new(HashMap::new()),
-            transient: RwLock::new(Default::default()),
         });
         s.apply_log_settings();
         s
     }
 
     fn apply_log_settings(&self) {
-        let settings = self.config.read().settings.clone();
+        let settings = self.settings();
         self.log.set_capacity(settings.reqlog_capacity);
         if settings.reqlog_persist {
             let _ = std::fs::create_dir_all(&self.paths.data_dir);
@@ -128,38 +198,137 @@ impl Sonde {
         &self.guard
     }
     pub fn settings(&self) -> Settings {
-        self.config.read().settings.clone()
+        self.state.read().effective.settings.clone()
     }
     pub fn read_only(&self) -> bool {
-        self.config.read().settings.read_only
+        self.state.read().effective.settings.read_only
     }
 
     pub fn config(&self) -> Config {
-        self.config.read().clone()
+        self.state.read().effective.clone()
     }
 
-    fn save(&self) -> Result<(), String> {
-        let mut c = self.config.read().clone();
-        let transient = self.transient.read();
-        c.endpoints.retain(|e| !transient.contains(&e.id));
-        c.save(&self.paths.config_file())
+    /// Why `config.toml` did not load, if it did not.
+    pub fn config_error(&self) -> Option<String> {
+        self.state.read().error.clone()
     }
 
-    pub fn set_settings(&self, settings: Settings) -> Result<(), String> {
+    /// Reads `config.toml` again: after the file was fixed, or to pick up
+    /// edits made outside. An error is kept (and returned).
+    pub fn reload_config(&self) -> Result<(), String> {
+        let _one = self.saving.lock();
+        let loaded = Config::load(&self.paths.config_file());
         {
-            let mut c = self.config.write();
-            let mut next = c.clone();
-            next.settings = settings;
-            next.validate()?;
-            *c = next;
+            let mut st = self.state.write();
+            match loaded {
+                Ok(c) => {
+                    st.base = c.clone();
+                    st.disk = Some(c);
+                    st.error = None;
+                    st.refresh();
+                }
+                Err(e) => {
+                    // a file that loaded before stays in use, unsaved
+                    st.error = Some(e.clone());
+                    return Err(e);
+                }
+            }
+        }
+        self.clients.write().clear();
+        self.apply_log_settings();
+        Ok(())
+    }
+
+    /// Values for this run only (`--rate`, `--concurrency`): not saved.
+    pub fn set_overrides(&self, o: Overrides) -> Result<(), String> {
+        if o.concurrency.is_some_and(|n| n == 0 || n > 1024) {
+            return Err("concurrency: 1 to 1024".into());
+        }
+        let mut st = self.state.write();
+        st.overrides = o;
+        st.refresh();
+        Ok(())
+    }
+
+    /// Applies `change` to the configuration and writes it. The file is
+    /// read first: one that changed since it was last read is what the
+    /// change applies to (edits made outside are kept), and one that does
+    /// not load is left as it is.
+    fn save_with(
+        &self,
+        change: impl FnOnce(&mut Config) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let _one = self.saving.lock();
+        if let Some(e) = self.config_error() {
+            return Err(not_loaded(&e));
+        }
+        let file = self.paths.config_file();
+        let _lock = crate::config::lock(&file);
+        let current = Config::load(&file).map_err(|e| {
+            format!("{e}: the file no longer loads, so nothing was saved; fix it and reload")
+        })?;
+        let (known, mut next) = {
+            let st = self.state.read();
+            (st.disk.clone(), st.base.clone())
+        };
+        if known.is_some_and(|k| k != current) {
+            next = current;
+        }
+        change(&mut next)?;
+        next.validate()?;
+        next.save(&file)?;
+        let mut st = self.state.write();
+        st.base = next.clone();
+        st.disk = Some(next);
+        st.refresh();
+        Ok(())
+    }
+
+    /// Saves the settings that differ from the current ones (and only
+    /// those: the rest keep what the file says).
+    pub fn set_settings(&self, settings: Settings) -> Result<(), String> {
+        let (old, overrides) = {
+            let st = self.state.read();
+            (st.effective.settings.clone(), st.overrides)
+        };
+        let obj = |s: &Settings| match serde_json::to_value(s) {
+            Ok(serde_json::Value::Object(m)) => Ok(m),
+            _ => Err("settings: not an object".to_string()),
+        };
+        let (was, now) = (obj(&old)?, obj(&settings)?);
+        let changed: Vec<(String, serde_json::Value)> = now
+            .into_iter()
+            .filter(|(k, v)| was.get(k) != Some(v))
+            .collect();
+        // an override the user changed is theirs now, and saved
+        let mut o = overrides;
+        for (k, _) in &changed {
+            match k.as_str() {
+                "rate-limit" => o.rate_limit = None,
+                "concurrency" => o.concurrency = None,
+                _ => {}
+            }
+        }
+        self.save_with(|c| {
+            let mut m = obj(&c.settings)?;
+            m.extend(changed);
+            c.settings = serde_json::from_value(serde_json::Value::Object(m))
+                .map_err(|e| format!("settings: {e}"))?;
+            Ok(())
+        })?;
+        {
+            let mut st = self.state.write();
+            st.overrides = o;
+            st.refresh();
         }
         self.apply_log_settings();
-        self.save()
+        Ok(())
     }
 
     pub fn endpoints(&self) -> Vec<EndpointView> {
-        self.config
+        self.state
             .read()
+            .effective
             .endpoints
             .iter()
             .map(EndpointView::from)
@@ -187,47 +356,83 @@ impl Sonde {
     }
 
     pub fn endpoint_config(&self, id: &str) -> Option<EndpointConfig> {
-        self.config.read().endpoint(id).cloned()
+        self.state.read().effective.endpoint(id).cloned()
     }
 
-    /// Adds or replaces an endpoint (by id) and saves.
+    fn is_transient(&self, id: &str) -> bool {
+        self.state.read().transient.iter().any(|t| t.id == id)
+    }
+
+    /// Adds or replaces an endpoint (by id) and saves. One that exists for
+    /// this process only (the demo, `--url`) changes for this process only.
     pub fn upsert_endpoint(&self, e: EndpointConfig) -> Result<EndpointView, String> {
         e.validate()?;
-        {
-            let mut c = self.config.write();
+        if self.is_transient(&e.id) {
+            return self.add_transient_endpoint(e);
+        }
+        self.save_with(|c| {
             match c.endpoints.iter_mut().find(|x| x.id == e.id) {
                 Some(x) => *x = e.clone(),
                 None => c.endpoints.push(e.clone()),
             }
-        }
+            Ok(())
+        })?;
         self.clients.write().remove(&e.id);
-        self.save()?;
         Ok(EndpointView::from(&e))
     }
 
-    /// Adds an endpoint for this process only (not saved): the demo server.
+    /// Adds an endpoint for this process only (not saved): the demo server,
+    /// `--url`. A configured endpoint with the same id is hidden meanwhile,
+    /// not replaced: it stays in the file and comes back when this one goes.
     pub fn add_transient_endpoint(&self, e: EndpointConfig) -> Result<EndpointView, String> {
         e.validate()?;
         {
-            let mut c = self.config.write();
-            c.endpoints.retain(|x| x.id != e.id);
-            c.endpoints.push(e.clone());
+            let mut st = self.state.write();
+            st.transient.retain(|x| x.id != e.id);
+            st.transient.push(e.clone());
+            st.refresh();
         }
-        self.transient.write().insert(e.id.clone());
         self.clients.write().remove(&e.id);
         Ok(EndpointView::from(&e))
     }
 
+    /// Removes an endpoint. One of this process only just goes (the
+    /// configured endpoint it hid is back); a configured one leaves the file.
     pub fn remove_endpoint(&self, id: &str) -> Result<(), String> {
-        self.config.write().endpoints.retain(|e| e.id != id);
+        if self.is_transient(id) {
+            let mut st = self.state.write();
+            st.transient.retain(|x| x.id != id);
+            st.refresh();
+        } else {
+            self.save_with(|c| {
+                c.endpoints.retain(|e| e.id != id);
+                Ok(())
+            })?;
+        }
         self.clients.write().remove(id);
-        self.save()
+        Ok(())
     }
 
     /// Endpoints for the profiles of `~/.aws/config` that are not
     /// configured yet (not saved: the caller picks which to add).
     pub fn importable_profiles(&self) -> Vec<EndpointConfig> {
-        importable(&AwsFiles::load(), &self.config.read().endpoints)
+        importable(&AwsFiles::load(), &self.state.read().effective.endpoints)
+    }
+
+    /// Adds the endpoints of the named AWS profiles; how many were added.
+    /// Never replaces an endpoint: [`importable`] gives each a free id.
+    pub fn import_profiles(&self, names: &[String]) -> Result<u32, String> {
+        let mut n = 0;
+        for e in self.importable_profiles() {
+            if let CredentialSource::Profile { name } = &e.credentials
+                && names.contains(name)
+                && self.endpoint_config(&e.id).is_none()
+            {
+                self.upsert_endpoint(e)?;
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     /// The client of an endpoint, made on first use.
@@ -351,6 +556,10 @@ impl Sonde {
     }
 }
 
+fn not_loaded(e: &str) -> String {
+    format!("{e}: the configuration was not loaded, so nothing is saved; fix the file and reload")
+}
+
 /// Builds the client of an endpoint configuration.
 pub fn build_client(e: &EndpointConfig, log: RequestLog) -> Result<S3Client, S3Error> {
     let region = if e.region.is_empty() {
@@ -377,6 +586,9 @@ pub fn build_client(e: &EndpointConfig, log: RequestLog) -> Result<S3Client, S3E
 }
 
 fn importable(files: &AwsFiles, existing: &[EndpointConfig]) -> Vec<EndpointConfig> {
+    // ids in use: the configured ones, then each one given out here
+    let mut taken: std::collections::HashSet<String> =
+        existing.iter().map(|e| e.id.clone()).collect();
     files
         .profile_names()
         .into_iter()
@@ -399,10 +611,17 @@ fn importable(files: &AwsFiles, existing: &[EndpointConfig]) -> Vec<EndpointConf
                 }
             });
             let vendor = Vendor::guess(&url);
-            let id = format!(
+            let stem = format!(
                 "profile-{}",
                 name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '-', "-")
             );
+            // `a.b` and `a_b` give one stem, and an endpoint may hold it already
+            let mut id = stem.clone();
+            let mut n = 2;
+            while !taken.insert(id.clone()) {
+                id = format!("{stem}-{n}");
+                n += 1;
+            }
             let mut e = EndpointConfig::new(
                 &id,
                 &format!("{name} ({})", vendor.label()),
@@ -481,5 +700,160 @@ mod tests {
                 .is_empty()
         );
         assert!(s.client("missing").is_err());
+    }
+
+    fn ep(id: &str) -> EndpointConfig {
+        EndpointConfig::new(id, id, "http://127.0.0.1:1", "us-east-1", Vendor::Minio)
+    }
+
+    #[test]
+    fn a_config_that_did_not_load_is_never_written_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::rooted(dir.path());
+        let file = paths.config_file();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let text = "[[endpoint]]\nid = \"prod\"\nname = \"Prod\"\nurl = \"https://s3.example.com\"\nca-file = \"/nonexistent/ca.pem\"\n";
+        std::fs::write(&file, text).unwrap();
+        let s = Sonde::open_lenient(paths);
+        assert!(s.config_error().unwrap().contains("CA file"));
+        assert!(s.endpoints().is_empty());
+        let mut st = s.settings();
+        st.read_only = false;
+        let e = s.set_settings(st).unwrap_err();
+        assert!(e.contains("not loaded"), "{e}");
+        assert!(s.read_only(), "a refused save changes nothing");
+        assert!(s.upsert_endpoint(ep("a")).is_err());
+        assert!(s.remove_endpoint("prod").is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+        // fixed by hand, then read again
+        assert!(s.reload_config().is_err());
+        std::fs::write(
+            &file,
+            text.replace("ca-file = \"/nonexistent/ca.pem\"\n", ""),
+        )
+        .unwrap();
+        s.reload_config().unwrap();
+        assert_eq!(s.config_error(), None);
+        assert_eq!(s.endpoints().len(), 1);
+        s.upsert_endpoint(ep("a")).unwrap();
+        assert_eq!(Config::load(&file).unwrap().endpoints.len(), 2);
+    }
+
+    #[test]
+    fn a_save_keeps_what_was_edited_in_the_file_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::rooted(dir.path());
+        let file = paths.config_file();
+        let s = Sonde::open(paths.clone()).unwrap();
+        s.upsert_endpoint(ep("a")).unwrap();
+        // another process (the CLI, an editor) adds an endpoint and a setting
+        let other = Sonde::open(paths).unwrap();
+        other.upsert_endpoint(ep("by-hand")).unwrap();
+        let mut st = other.settings();
+        st.stale_upload_days = 30;
+        other.set_settings(st).unwrap();
+        // this one changes one setting: only that is applied to the file
+        let mut st = s.settings();
+        st.read_only = false;
+        s.set_settings(st).unwrap();
+        let on_disk = Config::load(&file).unwrap();
+        assert!(on_disk.endpoint("by-hand").is_some());
+        assert_eq!(on_disk.settings.stale_upload_days, 30);
+        assert!(!on_disk.settings.read_only);
+        assert!(s.endpoint_config("by-hand").is_some(), "and it is in use");
+        // a file that no longer loads is left alone
+        std::fs::write(&file, "not toml [").unwrap();
+        assert!(s.upsert_endpoint(ep("b")).is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "not toml [");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_config_is_written_with_mode_0600_through_a_file_of_its_own() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::rooted(dir.path());
+        let s = Sonde::open(paths.clone()).unwrap();
+        s.upsert_endpoint(ep("a")).unwrap();
+        let file = paths.config_file();
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let left: Vec<_> = std::fs::read_dir(file.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+    }
+
+    #[test]
+    fn an_endpoint_of_this_run_hides_a_configured_one_and_never_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::rooted(dir.path());
+        let s = Sonde::open(paths.clone()).unwrap();
+        let mut mine = ep("demo");
+        mine.name = "Mine".into();
+        s.upsert_endpoint(mine).unwrap();
+        let mut demo = ep("demo");
+        demo.name = "Demo (built-in)".into();
+        s.add_transient_endpoint(demo).unwrap();
+        assert_eq!(s.endpoint_config("demo").unwrap().name, "Demo (built-in)");
+        assert_eq!(s.endpoints().len(), 1);
+        // any save keeps the configured one in the file
+        let mut st = s.settings();
+        st.read_only = false;
+        s.set_settings(st).unwrap();
+        s.upsert_endpoint(ep("other")).unwrap();
+        let on_disk = Config::load(&paths.config_file()).unwrap();
+        assert_eq!(on_disk.endpoint("demo").unwrap().name, "Mine");
+        // removing the demo brings it back
+        s.remove_endpoint("demo").unwrap();
+        assert_eq!(s.endpoint_config("demo").unwrap().name, "Mine");
+        let on_disk = Config::load(&paths.config_file()).unwrap();
+        assert_eq!(on_disk.endpoint("demo").unwrap().name, "Mine");
+    }
+
+    #[test]
+    fn values_of_one_run_are_never_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::rooted(dir.path());
+        let s = Sonde::open(paths.clone()).unwrap();
+        s.add_transient_endpoint(ep("adhoc")).unwrap();
+        s.set_overrides(Overrides {
+            rate_limit: Some(5.0),
+            concurrency: Some(2),
+        })
+        .unwrap();
+        assert_eq!(s.settings().concurrency, 2);
+        let mut st = s.settings();
+        st.read_only = false;
+        s.set_settings(st).unwrap();
+        let on_disk = Config::load(&paths.config_file()).unwrap();
+        assert!(on_disk.endpoints.is_empty());
+        assert_eq!(on_disk.settings.concurrency, 16);
+        assert_eq!(on_disk.settings.rate_limit, None);
+        assert!(!on_disk.settings.read_only);
+        assert_eq!(s.settings().concurrency, 2, "still in force here");
+        // a value the user sets is theirs: saved, and the override ends
+        let mut st = s.settings();
+        st.concurrency = 8;
+        s.set_settings(st).unwrap();
+        assert_eq!(s.settings().concurrency, 8);
+        let on_disk = Config::load(&paths.config_file()).unwrap();
+        assert_eq!(on_disk.settings.concurrency, 8);
+        assert_eq!(on_disk.settings.rate_limit, None);
+    }
+
+    #[test]
+    fn importing_profiles_never_takes_an_id_in_use() {
+        let files = AwsFiles {
+            config: ini::parse("[profile dev]\nregion = us-east-1\n[profile a.b]\n[profile a_b]\n"),
+            credentials: Default::default(),
+        };
+        let existing = vec![ep("profile-dev")];
+        let got = importable(&files, &existing);
+        let mut ids: Vec<&str> = got.iter().map(|e| e.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["profile-a-b", "profile-a-b-2", "profile-dev-2"]);
     }
 }

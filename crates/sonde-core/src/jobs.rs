@@ -2,7 +2,10 @@
 //! scans, probe runs. A job runs on the Tokio runtime with its own
 //! [`Throttle`] (concurrency and rate), reports progress as a stream of
 //! [`JobEvent`]s, and stops for real when cancelled: its future is dropped,
-//! which aborts the requests in flight.
+//! which aborts the requests in flight. A job that must clean up after
+//! itself (probe runs, downloads) is spawned with
+//! [`JobManager::spawn_cooperative`] instead: it watches its token, cleans
+//! up, and ends by itself.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -118,6 +121,9 @@ impl JobCtx {
     }
 }
 
+/// Jobs over that are kept (with their results) for views to read.
+pub const KEEP_FINISHED: usize = 100;
+
 /// All jobs of the process.
 #[derive(Clone)]
 pub struct JobManager {
@@ -150,13 +156,49 @@ impl JobManager {
         self.changes.send_modify(|n| *n = n.wrapping_add(1));
     }
 
-    /// Starts `work` as a job. Returns its id at once.
+    /// Starts `work` as a job. Returns its id at once. Cancelling drops
+    /// the future where it stands.
     pub fn spawn<F, Fut>(
         &self,
         kind: &str,
         title: &str,
         concurrency: usize,
         rate: Option<f64>,
+        work: F,
+    ) -> String
+    where
+        F: FnOnce(JobCtx) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<Value, S3Error>> + Send + 'static,
+    {
+        self.start(kind, title, concurrency, rate, false, work)
+    }
+
+    /// As [`Self::spawn`], for work that has something to undo: cancelling
+    /// does not drop the future. The work watches `ctx.cancel` (or
+    /// [`JobCtx::check`]), cleans up, and returns `Err(cancelled)`; the job
+    /// is running until it does.
+    pub fn spawn_cooperative<F, Fut>(
+        &self,
+        kind: &str,
+        title: &str,
+        concurrency: usize,
+        rate: Option<f64>,
+        work: F,
+    ) -> String
+    where
+        F: FnOnce(JobCtx) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<Value, S3Error>> + Send + 'static,
+    {
+        self.start(kind, title, concurrency, rate, true, work)
+    }
+
+    fn start<F, Fut>(
+        &self,
+        kind: &str,
+        title: &str,
+        concurrency: usize,
+        rate: Option<f64>,
+        cooperative: bool,
         work: F,
     ) -> String
     where
@@ -201,11 +243,28 @@ impl JobManager {
         let jobs = self.clone();
         let job_id = id.clone();
         tokio::spawn(async move {
-            let outcome = tokio::select! {
-                r = work(ctx) => r,
-                _ = cancel.cancelled() => Err(S3Error::cancelled()),
+            // a panic ends the job as failed: it must not stay running forever
+            let guarded = std::panic::AssertUnwindSafe(async move { work(ctx).await });
+            let work = futures::FutureExt::catch_unwind(guarded);
+            let caught = if cooperative {
+                work.await
+            } else {
+                tokio::select! {
+                    r = work => r,
+                    _ = cancel.cancelled() => Ok(Err(S3Error::cancelled())),
+                }
             };
+            let outcome = caught.unwrap_or_else(|p| {
+                let what = p
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| p.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown".into());
+                Err(S3Error::config(format!("the job panicked: {what}")))
+            });
             jobs.finish(&job_id, outcome);
+            // results are big (reports, layouts, probe runs): keep the newest
+            jobs.prune(KEEP_FINISHED);
         });
         id
     }
@@ -311,13 +370,13 @@ impl JobManager {
         }
     }
 
-    /// Drops finished jobs older than the newest `keep`.
+    /// Drops finished jobs but the `keep` that ended last.
     pub fn prune(&self, keep: usize) {
         let mut g = self.inner.lock();
         let mut done: Vec<(String, DateTime<Utc>)> = g
             .values()
             .filter(|e| e.info.state != JobState::Running)
-            .map(|e| (e.info.id.clone(), e.info.started))
+            .map(|e| (e.info.id.clone(), e.info.ended.unwrap_or(e.info.started)))
             .collect();
         done.sort_by_key(|d| std::cmp::Reverse(d.1));
         for (id, _) in done.into_iter().skip(keep) {
@@ -384,6 +443,56 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!reached.load(Ordering::SeqCst), "the future was dropped");
         assert!(!jobs.cancel(&id), "already over");
+    }
+
+    #[tokio::test]
+    async fn a_cooperative_job_cleans_up_before_it_ends_cancelled() {
+        let jobs = JobManager::new();
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let c = cleaned.clone();
+        let id = jobs.spawn_cooperative("t", "tidy", 1, None, move |ctx| async move {
+            ctx.cancel.cancelled().await;
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            c.store(true, Ordering::SeqCst);
+            ctx.check()?;
+            Ok(Value::Null)
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(jobs.cancel(&id));
+        assert!(jobs.wait(&id).await.unwrap_err().kind == s3raw::ErrorKind::Cancelled);
+        assert!(cleaned.load(Ordering::SeqCst), "the cleanup ran first");
+    }
+
+    #[tokio::test]
+    async fn a_job_that_panics_ends_failed() {
+        let jobs = JobManager::new();
+        let id = jobs.spawn("t", "boom", 1, None, |_| async {
+            if true {
+                panic!("byte index 12 is not a char boundary");
+            }
+            Ok(Value::Null)
+        });
+        let e = tokio::time::timeout(Duration::from_secs(5), jobs.wait(&id))
+            .await
+            .expect("the job ended")
+            .unwrap_err();
+        assert!(e.message.contains("panicked"), "{e}");
+        assert_eq!(jobs.info(&id).unwrap().state, JobState::Failed);
+    }
+
+    #[tokio::test]
+    async fn finished_jobs_beyond_the_newest_are_dropped() {
+        let jobs = JobManager::new();
+        let mut ids = Vec::new();
+        for _ in 0..KEEP_FINISHED + 5 {
+            let id = jobs.spawn("t", "quick", 1, None, |_| async { Ok(Value::Null) });
+            jobs.wait(&id).await.unwrap();
+            ids.push(id);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(jobs.list().len(), KEEP_FINISHED);
+        assert!(jobs.info(&ids[0]).is_none());
+        assert!(jobs.info(ids.last().unwrap()).is_some());
     }
 
     #[tokio::test]

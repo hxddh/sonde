@@ -521,7 +521,8 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
                     ),
                     None => (0, len.saturating_sub(1)),
                 };
-                if s >= len {
+                // a reversed range (`bytes=7-3`) is not satisfiable either
+                if s >= len || e < s {
                     return err(
                         416,
                         "InvalidRange",
@@ -884,6 +885,29 @@ mod tests {
         .await
         .unwrap();
         assert!(found.len() >= 4, "{found:?}");
+    }
+}
+
+#[cfg(test)]
+mod ranges {
+    #[tokio::test]
+    async fn a_reversed_range_is_refused_not_a_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = crate::Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        super::install(&s).await.unwrap();
+        let c = s.client("demo").unwrap();
+        let get = |range: &'static str| {
+            let req = s3raw::S3Request::new("GetObject", http::Method::GET)
+                .bucket("demo")
+                .key("README.md")
+                .header("range", range)
+                .no_retry();
+            let c = c.clone();
+            async move { c.send_raw(req).await.unwrap() }
+        };
+        assert_eq!(get("bytes=7-3").await.status, 416);
+        // and the server still answers
+        assert_eq!(get("bytes=3-7").await.status, 206);
     }
 }
 

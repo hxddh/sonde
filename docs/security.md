@@ -10,7 +10,7 @@
 - Every request record is redacted at creation (`reqlog::redact`): signatures, tokens, SSE-C keys, presign
   parameters, and the secrets services echo in error bodies. The ring buffer, SQLite file, HAR/JSON exports, probe
   reports and fixtures only ever hold redacted records. "Copy as curl" carries no signature.
-- `config.toml` is written with mode 0600.
+- `config.toml` is written with mode 0600 (its temporary file is created with that mode, never widened).
 
 ## Network
 
@@ -35,7 +35,17 @@ delete markers, deleting objects, replacing a lifecycle configuration — are pl
 2. it runs only with read-only mode off;
 3. and only with the typed confirmation it names: the number of items, or the bucket name;
 4. plans expire after 10 minutes and run once;
-5. every run is appended to `<data>/audit.jsonl` (time, action, targets, outcome, request ids, errors).
+5. every run is appended to `<data>/audit.jsonl` twice: an entry with `"stage": "started"` before the first
+   request (a run cut short is on record; one that cannot be recorded does not start), then the outcome (time,
+   action, targets, outcome, request ids, errors).
+
+Probe runs write too (objects under `sonde-probe/` in the scratch bucket, and buckets of their own when allowed):
+the app refuses them while read-only mode is on, and each run is in the audit log (`runProbes`: started, then the
+outcome with anything cleanup could not remove). A cancelled run still cleans up after the probe it stopped in.
+
+A code place in a session opens only a source or text file (an allow-list of extensions) inside the folder the
+session ran in; anything else is shown in the file manager, and a session naming a folder on another machine
+(`\\host\share`) opens nothing.
 
 ## Run
 

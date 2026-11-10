@@ -55,12 +55,41 @@ pub fn detect(text: &str) -> Option<Source> {
         .map(|_| Source::AccessLog)
 }
 
+/// An import: the session, and what of the source was left out of it.
+#[derive(Debug, Clone)]
+pub struct Imported {
+    pub source: Source,
+    pub session: Session,
+    /// Lines that could not be read (cut off, or not the source's format).
+    pub malformed: usize,
+    /// Lines that are no request of a program's (a lifecycle expiry, a batch
+    /// delete's objects): the store's own work.
+    pub not_requests: usize,
+}
+
+/// A file's text: gunzipped when it is gzip (as S3 delivers CloudTrail).
+pub fn text_of(bytes: &[u8]) -> Result<String, String> {
+    if !bytes.starts_with(&[0x1f, 0x8b]) {
+        return Ok(String::from_utf8_lossy(bytes).into_owned());
+    }
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(bytes), &mut out)
+        .map_err(|e| format!("gzip: {e}"))?;
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
 /// Reads `text` as the source it is into a session (records numbered in time
 /// order). `name` names it (the endpoint shown for it).
 pub fn import(text: &str, name: &str) -> Result<(Source, Session), String> {
+    import_counted(text, name).map(|i| (i.source, i.session))
+}
+
+/// [`import`], with the count of the lines left out.
+pub fn import_counted(text: &str, name: &str) -> Result<Imported, String> {
     let source = detect(text).ok_or("not an S3 server access log, CloudTrail file or HAR")?;
+    let (mut malformed, mut not_requests) = (0, 0);
     let mut records = match source {
-        Source::AccessLog => access_log(text)?,
+        Source::AccessLog => access_log(text, &mut malformed, &mut not_requests),
         Source::CloudTrail => cloudtrail(text)?,
         Source::Har => har(text)?,
     };
@@ -79,14 +108,16 @@ pub fn import(text: &str, name: &str) -> Result<(Source, Session), String> {
         Some(format!("imported from {}", source.name())),
     );
     header.created = records[0].time;
-    Ok((
+    Ok(Imported {
         source,
-        Session {
+        session: Session {
             header,
             records,
             logs: Vec::new(),
         },
-    ))
+        malformed,
+        not_requests,
+    })
 }
 
 fn decode(s: &str) -> String {
@@ -190,19 +221,30 @@ fn fields(line: &str) -> Vec<String> {
 /// S3 server access log lines (`bucket_owner bucket [time] remote_ip
 /// requester request_id operation key "request_uri" status error_code
 /// bytes_sent object_size total_time turnaround "referer" "user_agent" …`).
-fn access_log(text: &str) -> Result<Vec<Record>, String> {
+/// A line that cannot be read (a file cut off mid-line) is counted in
+/// `malformed` and one that is no request (`S3.EXPIRE.OBJECT`,
+/// `BATCH.DELETE.OBJECT`) in `not_requests`: neither fails the file.
+fn access_log(text: &str, malformed: &mut usize, not_requests: &mut usize) -> Vec<Record> {
     let mut out = Vec::new();
-    for (n, line) in text.lines().enumerate() {
+    for line in text.lines() {
         if line.trim().is_empty() {
             continue;
         }
         let f = fields(line);
-        if f.len() < 14 {
-            return Err(format!("line {}: not an access log line", n + 1));
+        let time = f
+            .get(2)
+            .filter(|_| f.len() >= 14)
+            .and_then(|t| DateTime::parse_from_str(t, "%d/%b/%Y:%H:%M:%S %z").ok());
+        let Some(time) = time else {
+            *malformed += 1;
+            continue;
+        };
+        let time = time.with_timezone(&Utc);
+        // requests only: the rest has no method, no status and no price
+        if !(f[6].starts_with("REST.") || f[6].starts_with("WEBSITE.")) {
+            *not_requests += 1;
+            continue;
         }
-        let time = DateTime::parse_from_str(&f[2], "%d/%b/%Y:%H:%M:%S %z")
-            .map_err(|e| format!("line {}: time {:?}: {e}", n + 1, f[2]))?
-            .with_timezone(&Utc);
         // "GET /bucket/key?query HTTP/1.1"
         let mut uri = f[8].split(' ');
         let method = uri.next().unwrap_or("GET").to_string();
@@ -233,7 +275,9 @@ fn access_log(text: &str) -> Result<Vec<Record>, String> {
                 .push(reqlog::Header::new("user-agent", ua));
         }
         r.response_bytes = num(&f[11]);
-        if method == "PUT" || method == "POST" {
+        // the object's size is what was sent only where the object is the
+        // body: a CompleteMultipartUpload's is its parts', sent already
+        if matches!(f[6].as_str(), "REST.PUT.OBJECT" | "REST.PUT.PART") {
             r.request_bytes = num(&f[12]);
         }
         if f[10] != "-" {
@@ -250,8 +294,26 @@ fn access_log(text: &str) -> Result<Vec<Record>, String> {
         }
         out.push(r);
     }
-    Ok(out)
+    out
 }
+
+/// The request parameters CloudTrail keeps that are the request's query:
+/// which upload and part, which listing and page, which version.
+const TRAIL_QUERY: &[&str] = &[
+    "uploadId",
+    "partNumber",
+    "list-type",
+    "prefix",
+    "delimiter",
+    "continuation-token",
+    "start-after",
+    "marker",
+    "key-marker",
+    "upload-id-marker",
+    "version-id-marker",
+    "max-keys",
+    "versionId",
+];
 
 /// CloudTrail S3 data events (`{"Records": [...]}`, or one event per line).
 fn cloudtrail(text: &str) -> Result<Vec<Record>, String> {
@@ -286,6 +348,7 @@ fn cloudtrail(text: &str) -> Result<Vec<Record>, String> {
             n if n.starts_with("Get") || n.starts_with("List") => "GET",
             n if n.starts_with("Head") => "HEAD",
             n if n.starts_with("Delete") && n != "DeleteObjects" => "DELETE",
+            "AbortMultipartUpload" => "DELETE",
             "CreateMultipartUpload"
             | "CompleteMultipartUpload"
             | "DeleteObjects"
@@ -293,7 +356,18 @@ fn cloudtrail(text: &str) -> Result<Vec<Record>, String> {
             | "SelectObjectContent" => "POST",
             _ => "PUT",
         };
-        let mut r = record(time, method, bucket, key, Vec::new(), status_of(code), 0.0);
+        let query: Vec<(String, String)> = TRAIL_QUERY
+            .iter()
+            .filter_map(|k| {
+                let v = match &p[*k] {
+                    Value::String(v) => v.clone(),
+                    Value::Number(n) => n.to_string(),
+                    _ => return None,
+                };
+                Some((k.to_string(), v))
+            })
+            .collect();
+        let mut r = record(time, method, bucket, key, query, status_of(code), 0.0);
         // CloudTrail names the operation itself
         r.operation = name.to_string();
         r.request_id = e["requestID"].as_str().map(String::from);
@@ -410,6 +484,13 @@ fn har(text: &str) -> Result<Vec<Record>, String> {
             &r.query,
             &headers,
         );
+        // what the request carried: the SDK it names, its conditions, its
+        // range (secrets masked here, as on every record)
+        r.request_headers = headers
+            .iter()
+            .filter(|(n, _)| !n.starts_with(':'))
+            .map(|(n, v)| reqlog::Header::new(n, reqlog::redact::redact_header(n, v)))
+            .collect();
         // sonde's own HAR names the operation
         if let Some(op) = e["_sonde"]["operation"].as_str() {
             r.operation = op.to_string();
@@ -580,6 +661,129 @@ mod tests {
             ["k", "k2", "k3"],
             "the page and its script are not S3's"
         );
+    }
+
+    #[test]
+    fn lines_that_are_not_requests_or_cut_off_are_counted_not_imported() {
+        let log = format!(
+            "{LOG}\n{}\n{}\n{}\n{}",
+            // a lifecycle expiry and a batch delete's object: no method, no status
+            r#"79a5 lake [06/Feb/2026:00:00:41 +0000] - AmazonS3 5E57 S3.EXPIRE.OBJECT t/old - "-" - - - 4096 - - "-" "-" - xyz= - - - - - - -"#,
+            r#"79a5 lake [06/Feb/2026:00:00:42 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 6E57 BATCH.DELETE.OBJECT t/gone - "-" 204 - - 4096 - - "-" "-" - xyz= SigV4 - - - - - -"#,
+            // a completed upload: the object's size is not this request's body
+            r#"79a5 lake [06/Feb/2026:00:00:43 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 7E57 REST.POST.UPLOAD t/big "POST /lake/t/big?uploadId=u1 HTTP/1.1" 200 - 300 10485760 40 39 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#,
+            // the file ends mid-line
+            r#"79a5 lake [06/Feb/2026:00:00:44 +0000] 192.0.2.3 arn:aws"#,
+        );
+        let i = import_counted(&log, "prod").unwrap();
+        assert_eq!((i.malformed, i.not_requests), (1, 2));
+        let ops: Vec<&str> = i
+            .session
+            .records
+            .iter()
+            .map(|r| r.operation.as_str())
+            .collect();
+        assert_eq!(
+            ops,
+            [
+                "GetObject",
+                "HeadObject",
+                "ListObjectsV2",
+                "CompleteMultipartUpload"
+            ]
+        );
+        assert_eq!(i.session.records[3].request_bytes, None);
+        // an upload's own body is still counted
+        let put = r#"79a5 lake [06/Feb/2026:00:00:45 +0000] 192.0.2.3 - 8E57 REST.PUT.OBJECT t/new "PUT /lake/t/new HTTP/1.1" 200 - - 512 9 8 "-" "-" - xyz= SigV4 - - - - - -"#;
+        let (_, s) = import(put, "prod").unwrap();
+        assert_eq!(s.records[0].request_bytes, Some(512));
+    }
+
+    #[test]
+    fn cloudtrail_keeps_which_upload_part_and_listing_a_request_was() {
+        let ct = r#"{"Records":[
+          {"eventTime":"2026-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"CreateMultipartUpload","requestParameters":{"bucketName":"lake","key":"big","uploads":""},"responseElements":{"uploadId":"u1"}},
+          {"eventTime":"2026-02-06T00:00:02Z","eventSource":"s3.amazonaws.com","eventName":"UploadPart","requestParameters":{"bucketName":"lake","key":"big","uploadId":"u1","partNumber":"1","Host":"lake.s3.amazonaws.com"}},
+          {"eventTime":"2026-02-06T00:00:03Z","eventSource":"s3.amazonaws.com","eventName":"CompleteMultipartUpload","requestParameters":{"bucketName":"lake","key":"big","uploadId":"u1"}},
+          {"eventTime":"2026-02-06T00:00:04Z","eventSource":"s3.amazonaws.com","eventName":"ListObjects","requestParameters":{"bucketName":"lake","list-type":"2","prefix":"t/","max-keys":1000,"continuation-token":"abc"}},
+          {"eventTime":"2026-02-06T00:00:05Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"k","versionId":"v7"}},
+          {"eventTime":"2026-02-06T00:00:06Z","eventSource":"s3.amazonaws.com","eventName":"AbortMultipartUpload","requestParameters":{"bucketName":"lake","key":"other","uploadId":"u2"}}]}"#;
+        let (_, s) = import(ct, "trail").unwrap();
+        let q = |i: usize, k: &str| {
+            s.records[i]
+                .query
+                .iter()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(q(1, "uploadId"), Some("u1"));
+        assert_eq!(q(1, "partNumber"), Some("1"));
+        assert_eq!(q(1, "Host"), None);
+        assert_eq!(q(2, "uploadId"), Some("u1"));
+        assert_eq!(q(3, "prefix"), Some("t/"));
+        assert_eq!(q(3, "continuation-token"), Some("abc"));
+        assert_eq!(q(3, "max-keys"), Some("1000"));
+        assert_eq!(q(4, "versionId"), Some("v7"));
+        // an abort removes: it is not a write
+        assert_eq!(s.records[5].method, "DELETE");
+        // the upload reads as finished, with its part
+        let eps = crate::episode::episodes(&s.records);
+        let obs = crate::episode::observations(&s.records, &eps);
+        assert!(
+            !obs.iter().any(|o| o.phrases[0].key == "obs.unfinished"),
+            "{obs:?}"
+        );
+        let upload = eps
+            .iter()
+            .find(|e| e.kind == crate::episode::Kind::Multipart && e.records.len() == 3);
+        assert!(upload.is_some(), "{eps:?}");
+    }
+
+    #[test]
+    fn a_gzipped_file_is_read_as_its_text() {
+        use std::io::Write;
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(LOG.as_bytes()).unwrap();
+        let bytes = gz.finish().unwrap();
+        let text = text_of(&bytes).unwrap();
+        assert_eq!(text, LOG);
+        assert_eq!(import(&text, "prod").unwrap().1.records.len(), 3);
+        assert_eq!(text_of(LOG.as_bytes()).unwrap(), LOG);
+        assert!(text_of(&bytes[..bytes.len() / 2]).is_err());
+    }
+
+    #[test]
+    fn a_har_keeps_what_each_request_carried() {
+        let har = r#"{"log":{"version":"1.2","entries":[{"startedDateTime":"2026-11-09T10:00:00Z","time":5,
+          "request":{"method":"PUT","url":"https://lake.s3.amazonaws.com/k","headers":[
+            {"name":":authority","value":"lake.s3.amazonaws.com"},
+            {"name":"User-Agent","value":"aws-sdk-js/3.500"},
+            {"name":"If-Match","value":"\"e1\""},
+            {"name":"x-amz-copy-source","value":"/lake/src"},
+            {"name":"Authorization","value":"AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261109/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=deadbeefdeadbeef"},
+            {"name":"x-amz-security-token","value":"TOKENTOKENTOKEN"}]},
+          "response":{"status":200,"headers":[],"bodySize":0}}]}}"#;
+        let (_, s) = import(har, "browser").unwrap();
+        let r = &s.records[0];
+        let h = |n: &str| {
+            r.request_headers
+                .iter()
+                .find(|h| h.name.eq_ignore_ascii_case(n))
+                .map(|h| h.value.as_str())
+        };
+        assert_eq!(h("user-agent"), Some("aws-sdk-js/3.500"));
+        assert_eq!(h("if-match"), Some("\"e1\""));
+        assert_eq!(h("x-amz-copy-source"), Some("/lake/src"));
+        assert_eq!(h(":authority"), None);
+        assert_eq!(r.operation, "CopyObject");
+        let text = serde_json::to_string(r).unwrap();
+        for secret in [
+            "deadbeefdeadbeef",
+            "AKIAIOSFODNN7EXAMPLE",
+            "TOKENTOKENTOKEN",
+        ] {
+            assert!(!text.contains(secret), "{secret} kept: {text}");
+        }
     }
 
     #[test]

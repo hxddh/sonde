@@ -18,6 +18,13 @@ const BUCKET_SUBRESOURCES: &[(&str, &str)] = &[
     ("publicAccessBlock", "PublicAccessBlock"),
     ("accelerate", "BucketAccelerateConfiguration"),
     ("requestPayment", "BucketRequestPayment"),
+    ("analytics", "BucketAnalyticsConfiguration"),
+    ("metrics", "BucketMetricsConfiguration"),
+    ("inventory", "BucketInventoryConfiguration"),
+    (
+        "intelligent-tiering",
+        "BucketIntelligentTieringConfiguration",
+    ),
 ];
 
 fn has(query: &[(String, String)], name: &str) -> bool {
@@ -53,6 +60,9 @@ pub fn classify(
                 ("GET", None) if q("location") => "GetBucketLocation",
                 ("GET", None) => "ListObjects",
                 ("HEAD", _) => "HeadBucket",
+                // a subresource not listed above is a bucket setting sonde
+                // does not know, not the bucket's creation or removal
+                ("PUT" | "DELETE", None) if query.iter().any(|(k, _)| k != "x-id") => "Unknown",
                 ("PUT", None) => "CreateBucket",
                 ("DELETE", None) => "DeleteBucket",
                 ("POST", _) if q("delete") => "DeleteObjects",
@@ -158,5 +168,40 @@ mod tests {
         assert!(is_destructive("DeleteObjects"));
         assert!(is_destructive("PutBucketLifecycleConfiguration"));
         assert!(!is_destructive("PutObject"));
+    }
+
+    #[test]
+    fn a_bucket_setting_is_never_named_the_buckets_creation() {
+        let none: &[(String, String)] = &[];
+        for (sub, name) in [
+            ("inventory", "BucketInventoryConfiguration"),
+            ("analytics", "BucketAnalyticsConfiguration"),
+            ("metrics", "BucketMetricsConfiguration"),
+            (
+                "intelligent-tiering",
+                "BucketIntelligentTieringConfiguration",
+            ),
+        ] {
+            let query = q(&[sub, "id=x"]);
+            let put = classify("PUT", Some("b"), None, &query, none);
+            assert_eq!(put, format!("Put{name}"));
+            assert!(crate::replay::changes_bucket(&put), "{put}");
+            let delete = classify("DELETE", Some("b"), None, &query, none);
+            assert!(crate::replay::changes_bucket(&delete), "{delete}");
+        }
+        // one sonde has never heard of
+        let odd = q(&["unheard-of"]);
+        assert_eq!(classify("PUT", Some("b"), None, &odd, none), "Unknown");
+        assert_eq!(classify("DELETE", Some("b"), None, &odd, none), "Unknown");
+        // the SDKs' own marker changes nothing
+        let marked = q(&["x-id=CreateBucket"]);
+        assert_eq!(
+            classify("PUT", Some("b"), None, &marked, none),
+            "CreateBucket"
+        );
+        assert_eq!(
+            classify("DELETE", Some("b"), None, none, none),
+            "DeleteBucket"
+        );
     }
 }

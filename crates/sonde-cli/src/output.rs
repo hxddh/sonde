@@ -14,6 +14,31 @@ pub enum Format {
     Github,
 }
 
+impl Format {
+    fn flag(self) -> &'static str {
+        match self {
+            Format::Table => "table",
+            Format::Json => "json",
+            Format::Markdown => "markdown",
+            Format::Csv => "csv",
+            Format::Github => "github",
+        }
+    }
+}
+
+/// Why `command` does not write `format`, when it writes only `formats`: a
+/// format asked for and not written is a mistake in the command, not a table.
+pub fn unsupported(format: Format, command: &str, formats: &[Format]) -> Option<String> {
+    (!formats.contains(&format)).then(|| {
+        let known: Vec<&str> = formats.iter().map(|f| f.flag()).collect();
+        format!(
+            "{command} does not write -f {} (it writes {})",
+            format.flag(),
+            known.join(", ")
+        )
+    })
+}
+
 /// Prints rows as an aligned table (wide characters counted as two).
 pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
     let width = |s: &str| {
@@ -134,6 +159,16 @@ pub fn bytes(b: u64) -> String {
 #[cfg(test)]
 mod render_tests {
     use super::*;
+
+    #[test]
+    fn a_format_a_command_does_not_write_is_said_not_ignored() {
+        let writes = [Format::Table, Format::Json];
+        assert_eq!(unsupported(Format::Json, "show", &writes), None);
+        assert_eq!(
+            unsupported(Format::Csv, "show", &writes).as_deref(),
+            Some("show does not write -f csv (it writes table, json)")
+        );
+    }
 
     #[test]
     fn markdown_and_csv_are_real() {
