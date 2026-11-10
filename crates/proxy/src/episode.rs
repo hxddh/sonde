@@ -107,7 +107,9 @@ fn digits(s: &str, n: usize) -> Option<u64> {
         .flatten()
 }
 
-/// The format part a key names, from its last two path segments.
+/// The format part a key names, from its last two path segments. A data
+/// file's name is only a guess: [`episodes`] takes it when the session also
+/// touched that table's log.
 pub fn part_of(key: &str) -> Option<Part> {
     let mut segs = key.rsplit('/');
     let name = segs.next()?;
@@ -201,14 +203,103 @@ pub fn listed_format(prefix: &str) -> Option<(Format, &str)> {
     Some((f, dir))
 }
 
-/// The format of a request: from its key, or from a listing's prefix.
-fn format_of(r: &Record) -> Option<Format> {
-    match r.key.as_deref().and_then(part_of) {
-        Some(p) => Some(p.format()),
-        None if r.operation.starts_with("ListObjects") => {
-            listed_format(query(r, "prefix").unwrap_or("")).map(|(f, _)| f)
+/// The tables a session touched the log of: a `_delta_log/` key or listing
+/// (Delta), a `metadata/` file or listing (Iceberg). A Parquet file's name
+/// alone says nothing: Spark, Hive, Hudi and DuckDB write `part-*.parquet`
+/// and `…/data/*.parquet` too.
+#[derive(Default)]
+struct Tables {
+    /// (bucket, format, the table's root with its trailing slash; empty at the bucket's root)
+    roots: Vec<(Option<String>, Format, String)>,
+}
+
+/// The table root a log key or log listing names: what precedes `/<dir>/`.
+fn root_before(path: &str, dir: &str) -> Option<String> {
+    if path == dir || path.starts_with(&format!("{dir}/")) {
+        return Some(String::new());
+    }
+    let at = path.find(&format!("/{dir}/")).or_else(|| {
+        path.ends_with(&format!("/{dir}"))
+            .then(|| path.len() - dir.len() - 1)
+    })?;
+    Some(path[..=at].to_string())
+}
+
+impl Tables {
+    fn of(records: &[&Record]) -> Self {
+        let mut roots = Vec::new();
+        for r in records {
+            let listed = r
+                .operation
+                .starts_with("ListObjects")
+                .then(|| query(r, "prefix").unwrap_or("").trim_end_matches('/'));
+            let Some(path) = r.key.as_deref().or(listed) else {
+                continue;
+            };
+            let part = part_of(path);
+            if matches!(part, Some(Part::IcebergData | Part::DeltaData)) {
+                continue;
+            }
+            // a listing of the directory itself has no part, a key in it does
+            let format = match (&part, listed) {
+                (Some(p), _) => Some(p.format()),
+                (None, Some(prefix)) => listed_format(prefix).map(|(f, _)| f),
+                (None, None) => None,
+            };
+            let dir = match format {
+                Some(Format::Delta) => "_delta_log",
+                Some(Format::Iceberg) => "metadata",
+                _ => continue,
+            };
+            if let Some(root) = root_before(path, dir) {
+                let entry = (r.bucket.clone(), format.expect("matched above"), root);
+                if !roots.contains(&entry) {
+                    roots.push(entry);
+                }
+            }
         }
-        None => None,
+        Tables { roots }
+    }
+
+    /// Whether a data file's table was seen: its log under the same root.
+    fn backs(&self, bucket: &Option<String>, format: Format, key: &str) -> bool {
+        self.roots
+            .iter()
+            .any(|(b, f, root)| b == bucket && *f == format && key.starts_with(root.as_str()))
+    }
+
+    /// The part a request's key names, when the session gives a reason to
+    /// believe it: a data file counts only beside its table's log.
+    fn part(&self, r: &Record) -> Option<Part> {
+        let key = r.key.as_deref()?;
+        let part = part_of(key)?;
+        match part {
+            Part::IcebergData | Part::DeltaData if !self.backs(&r.bucket, part.format(), key) => {
+                None
+            }
+            _ => Some(part),
+        }
+    }
+
+    /// The format of a request: from its key, or from a listing's prefix.
+    fn format_of(&self, r: &Record) -> Option<Format> {
+        if r.key.is_some() {
+            return self.part(r).map(|p| p.format());
+        }
+        if !r.operation.starts_with("ListObjects") {
+            return None;
+        }
+        let prefix = query(r, "prefix").unwrap_or("");
+        let trimmed = prefix.trim_end_matches('/');
+        match part_of(trimmed) {
+            // a listing of a data file's path is of a table only when the table is
+            Some(p @ (Part::IcebergData | Part::DeltaData))
+                if !self.backs(&r.bucket, p.format(), trimmed) =>
+            {
+                None
+            }
+            _ => listed_format(prefix).map(|(f, _)| f),
+        }
     }
 }
 
@@ -419,9 +510,10 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     let mut out = Vec::new();
 
     // a completed multipart upload of a format's file is one write of it
-    let mut units = multipart(&sorted, &mut used, &mut out);
+    let tables = Tables::of(&sorted);
+    let mut units = multipart(&sorted, &tables, &mut used, &mut out);
     // a format's write retried is still that write: its attempts go with it to the step
-    units.extend(retries(&sorted, &mut used, &mut out));
+    units.extend(retries(&sorted, &tables, &mut used, &mut out));
 
     // what is left, in order: format steps, bursts of lookups, listings, single requests
     let mut items: Vec<Vec<&Record>> = units;
@@ -444,8 +536,8 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
         if !probe.is_empty() && (r.time - probe.last().unwrap().time).num_milliseconds() > BURST {
             out.extend(flush_probe(std::mem::take(&mut probe)));
         }
-        if let Some(f) = format_of(r) {
-            let part = r.key.as_deref().and_then(part_of);
+        if let Some(f) = tables.format_of(r) {
+            let part = tables.part(r);
             let pos = match buffers.iter().position(|(bf, _)| *bf == f) {
                 Some(p) => p,
                 None => {
@@ -597,6 +689,7 @@ fn flush_listing(rs: Vec<&Record>) -> Episode {
 /// writes of a step); every other upload is an episode.
 fn multipart<'a>(
     sorted: &[&'a Record],
+    tables: &Tables,
     used: &mut [bool],
     out: &mut Vec<Episode>,
 ) -> Vec<Vec<&'a Record>> {
@@ -679,7 +772,7 @@ fn multipart<'a>(
             .iter()
             .any(|r| r.operation == "CompleteMultipartUpload" && !r.is_error());
         let aborted = rs.iter().any(|r| r.operation == "AbortMultipartUpload");
-        let formatted = rs[0].key.as_deref().and_then(part_of).is_some();
+        let formatted = tables.part(rs[0]).is_some();
         if completed && formatted {
             let mut unit = rs;
             unit.sort_by_key(|r| (r.operation == "CompleteMultipartUpload", r.time, r.id));
@@ -720,6 +813,7 @@ fn retryable(r: &Record) -> bool {
 /// belongs to keeps it, attempts and all.
 fn retries<'a>(
     sorted: &[&'a Record],
+    tables: &Tables,
     used: &mut [bool],
     out: &mut Vec<Episode>,
 ) -> Vec<Vec<&'a Record>> {
@@ -754,7 +848,7 @@ fn retries<'a>(
             }
             let rs: Vec<&Record> = chain.iter().map(|&c| sorted[c]).collect();
             let last = *rs.last().expect("a chain has records");
-            if format_of(last).is_some() && is_write(last) && !retryable(last) {
+            if tables.format_of(last).is_some() && is_write(last) && !retryable(last) {
                 units.push(rs);
                 i += 1;
                 continue;
@@ -1882,6 +1976,64 @@ mod tests {
                 .iter()
                 .any(|o| o.text.contains("no commit after them"))
         );
+    }
+
+    #[test]
+    fn a_parquet_file_is_no_table_until_the_session_touches_its_log() {
+        // what Spark, Hive, Hudi and DuckDB write: the names alone
+        let spark = rec(
+            1,
+            0,
+            "GET",
+            "GetObject",
+            Some("out/part-00000-a.parquet"),
+            200,
+        );
+        let hive = rec(
+            2,
+            10,
+            "GET",
+            "GetObject",
+            Some("wh/data/x=1/a.parquet"),
+            200,
+        );
+        let eps = episodes(&[spark.clone(), hive.clone()]);
+        assert_eq!(eps.len(), 2, "{eps:#?}");
+        assert!(eps.iter().all(|e| e.format.is_none()), "{eps:#?}");
+        assert!(eps.iter().all(|e| e.kind == Kind::Request), "{eps:#?}");
+
+        // the same reads beside a table's log are that table's
+        let log = with_query(
+            rec(3, 20, "GET", "ListObjectsV2", None, 200),
+            &[("prefix", "out/_delta_log/")],
+        );
+        let meta = rec(
+            4,
+            30,
+            "GET",
+            "GetObject",
+            Some("wh/metadata/v2.metadata.json"),
+            200,
+        );
+        let eps = episodes(&[spark.clone(), hive.clone(), log.clone(), meta]);
+        let formats: Vec<_> = eps.iter().filter_map(|e| e.format).collect();
+        assert_eq!(formats, vec![Format::Delta, Format::Iceberg], "{eps:#?}");
+        assert_eq!(eps.iter().map(|e| e.records.len()).sum::<usize>(), 4);
+
+        // another table's log, or the same root in another bucket, backs nothing
+        let mut elsewhere = log;
+        elsewhere.bucket = Some("other".into());
+        let other = rec(
+            5,
+            40,
+            "GET",
+            "GetObject",
+            Some("lake/_delta_log/00000000000000000001.json"),
+            200,
+        );
+        let eps = episodes(&[spark, elsewhere, other]);
+        let read = eps.iter().find(|e| e.records == vec![1]).expect("its own");
+        assert_eq!(read.format, None, "{eps:#?}");
     }
 
     #[test]

@@ -52,6 +52,20 @@ fn load(s: &Sonde, spec: &str) -> anyhow::Result<Run> {
 }
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32> {
+    // before a run writes to the store: a report nobody could read is not worth it
+    let (command, writes): (_, &[Format]) = match &a.action {
+        Some(ProbeAction::List) => ("probe list", &[Format::Table, Format::Json]),
+        Some(ProbeAction::Runs) => ("probe runs", &[Format::Table, Format::Json]),
+        Some(ProbeAction::Diff { .. }) => ("probe diff", &[Format::Table, Format::Json]),
+        None => (
+            "probe",
+            &[Format::Table, Format::Json, Format::Markdown, Format::Csv],
+        ),
+    };
+    if let Some(why) = output::unsupported(a.format, command, writes) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     match &a.action {
         Some(ProbeAction::List) => {
             let c = probes::catalog();

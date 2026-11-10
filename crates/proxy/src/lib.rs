@@ -1200,13 +1200,22 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         received,
         fetched,
         read: 0,
+        cut: None,
     };
     let stream = quiet_limited(resp.bytes_stream(), idle)
         // the closure owns the whole of `pending` (a method, not a field): it
         // goes, and the record is logged, when the body does
-        .map_ok(move |chunk| {
-            pending.count(chunk.len());
-            Frame::data(chunk)
+        .map(move |piece| match piece {
+            Ok(chunk) => {
+                pending.count(chunk.len());
+                Ok(Frame::data(chunk))
+            }
+            // the status went out already: the record is what says the
+            // program did not get the whole of it
+            Err(e) => {
+                pending.cut(&e);
+                Err(e)
+            }
         });
     Ok(builder
         .body(BodyExt::boxed(StreamBody::new(stream)))
@@ -1288,11 +1297,18 @@ struct Pending {
     received: Instant,
     fetched: std::time::Duration,
     read: u64,
+    /// Why the body ended before its end: the idle limit, or the store's
+    /// connection.
+    cut: Option<String>,
 }
 
 impl Pending {
     fn count(&mut self, n: usize) {
         self.read += n as u64;
+    }
+
+    fn cut(&mut self, why: &std::io::Error) {
+        self.cut = Some(why.to_string());
     }
 }
 
@@ -1305,8 +1321,16 @@ impl Drop for Pending {
                 .saturating_sub(self.fetched)
                 .as_secs_f64()
                 * 1000.0;
-            if r.response_bytes.is_none() || self.read > 0 {
+            if r.response_bytes.is_none() || self.read > 0 || self.cut.is_some() {
                 r.response_bytes = Some(self.read);
+            }
+            // a 200 with fewer bytes is not a clean 200
+            if let Some(why) = self.cut.take() {
+                r.transport_error = Some(format!(
+                    "the response body was cut after {} byte{}: {why}",
+                    self.read,
+                    if self.read == 1 { "" } else { "s" }
+                ));
             }
             self.log.log.push(r);
         }

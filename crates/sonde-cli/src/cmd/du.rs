@@ -26,6 +26,12 @@ pub struct DuArgs {
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> {
+    if let Some(why) =
+        output::unsupported(a.format, "du", &[Format::Table, Format::Json, Format::Csv])
+    {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     let ep = super::endpoint(s, a.endpoint.as_deref())?;
     let r = if a.cached {
         du::load_cache(s, &ep, &a.bucket, &a.prefix)

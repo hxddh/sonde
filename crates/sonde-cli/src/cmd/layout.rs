@@ -114,6 +114,12 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i
         at,
         format,
     } = &a.action;
+    if let Some(why) =
+        output::unsupported(*format, "layout inspect", &[Format::Table, Format::Json])
+    {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     let at = at
         .as_deref()
         .map(|t| chrono::DateTime::parse_from_rfc3339(t).map(|d| d.with_timezone(&chrono::Utc)))

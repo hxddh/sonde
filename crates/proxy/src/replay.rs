@@ -608,6 +608,13 @@ fn conditions(r: &Record) -> Vec<String> {
         .collect()
 }
 
+/// Whether these records are a replay's: any of them names the request it
+/// repeats. Two ordinary runs have nothing to pair, and [`compare`] of them
+/// compares nothing.
+pub fn is_replay(records: &[Record]) -> bool {
+    records.iter().any(|r| original_of(r).is_some())
+}
+
 /// Compares an original session with its replay (records tagged by
 /// [`replay_tag`]). `replayed` gives the reasons for requests not sent.
 pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) -> Comparison {

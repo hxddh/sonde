@@ -37,6 +37,42 @@ fn a_mistake_in_the_command_is_a_usage_error_and_help_is_not() {
 }
 
 #[test]
+fn help_lists_the_commands_by_what_they_are_for() {
+    let t = tempfile::tempdir().unwrap();
+    let help = stdout(&sonde(t.path(), &["--help"]));
+    let at = |what: &str| {
+        help.find(what)
+            .unwrap_or_else(|| panic!("no {what:?} in:\n{help}"))
+    };
+    // each heading, then its commands, each with its own line
+    for (heading, first, last) in [
+        ("Record:", "\n  run ", "\n  import "),
+        ("Read a session:", "\n  sessions ", "\n  export "),
+        ("Replay on another store:", "\n  replay ", "\n  diff "),
+        ("The store itself:", "\n  probe ", "\n  endpoints "),
+    ] {
+        assert!(at(heading) < at(first) && at(first) < at(last), "{help}");
+    }
+    assert!(at("\n  import ") < at("Read a session:"), "{help}");
+    assert!(
+        help.contains("run        Run a command with its S3 requests recorded"),
+        "{help}"
+    );
+    assert!(
+        at("Options:") < at("--config-dir") && at("--config-dir") < at("--version"),
+        "{help}"
+    );
+    // what sonde is now, not what it was before it recorded anything
+    assert!(
+        help.starts_with("See what your software does to S3"),
+        "{help}"
+    );
+    // a command's own help is clap's, as before
+    let run = stdout(&sonde(t.path(), &["run", "--help"]));
+    assert!(run.contains("Usage: sonde run"), "{run}");
+}
+
+#[test]
 fn the_demo_records_a_session_that_every_command_reads() {
     let t = tempfile::tempdir().unwrap();
     let demo = sonde(t.path(), &["demo"]);
@@ -56,8 +92,8 @@ fn the_demo_records_a_session_that_every_command_reads() {
 
     let json = sonde(t.path(), &["show", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(v["records"].as_array().unwrap().len(), 53);
-    assert!(!v["observations"].as_array().unwrap().is_empty());
+    assert_eq!(v["records"].as_array().unwrap().len(), 28);
+    assert!(v["observations"].as_array().unwrap().len() >= 2, "{v}");
 
     let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
     let mut lines = csv.lines();
@@ -71,14 +107,51 @@ fn the_demo_records_a_session_that_every_command_reads() {
         &["show", name.trim_end_matches(".sonde"), "--summary"],
     );
     assert_eq!(by_name.status.code(), Some(0));
-    assert!(stdout(&by_name).contains("53 requests"));
+    assert!(stdout(&by_name).contains("28 requests"));
 
-    // the same run against itself: the latency table compares each kind
+    // the same run against itself is no session and its replay: diff says
+    // so and names the command that compares two runs, which says "no change"
     let path = t.path().join("data/sessions").join(&name);
     let p = path.to_str().unwrap();
-    let diff = sonde(t.path(), &["diff", p, p, "-f", "json"]);
-    let v: serde_json::Value = serde_json::from_slice(&diff.stdout).unwrap();
-    assert!(v["latency"].as_array().unwrap().len() >= 4, "{v}");
+    for format in ["table", "json"] {
+        let diff = sonde(t.path(), &["diff", p, p, "-f", format]);
+        let err = String::from_utf8_lossy(&diff.stderr).into_owned();
+        assert_eq!(diff.status.code(), Some(64), "{err}");
+        assert!(diff.stdout.is_empty(), "{}", stdout(&diff));
+        assert!(
+            err.contains("not a session and its replay") && err.contains("sonde compare "),
+            "{err}"
+        );
+    }
+    let same = stdout(&sonde(t.path(), &["compare", p, p]));
+    assert!(same.starts_with("no change"), "{same}");
+    assert!(same.contains("requests   28 (no change)"), "{same}");
+    assert!(!same.contains("0%"), "{same}");
+}
+
+#[test]
+fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    let out = stdout(&sonde(t.path(), &["show"]));
+    // what sonde reads from requests, each once in the tour
+    for line in [
+        "4 lookups in demo/tour/, none found",
+        "multipart upload demo/tour/export.csv · 5 parts",
+        "commit 0 · 3 files",
+        "PutObject tour/summary.json retried 1× after 503 SlowDown",
+        "listed demo/tour/ in 3 pages",
+        "28 requests (11 operations)",
+    ] {
+        assert!(out.contains(line), "no {line:?} in:\n{out}");
+    }
+    // and at least two findings to act on
+    for finding in [
+        "1 request repeated after a retryable failure",
+        "3 objects were checked with HEAD and then read with GET",
+    ] {
+        assert!(out.contains(finding), "no {finding:?} in:\n{out}");
+    }
 }
 
 #[test]
@@ -179,6 +252,38 @@ fn check_holds_a_run_to_its_programs_baseline() {
 }
 
 #[test]
+fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
+    let name = csv.lines().nth(1).unwrap().split(',').next().unwrap();
+    let c = sonde(t.path(), &["check", "--max-requests", "20"]);
+    assert_eq!(c.status.code(), Some(1));
+    let out = stdout(&c);
+    let first = out.lines().next().unwrap();
+    assert!(
+        first.starts_with(&format!("session {name} · recorded 20")),
+        "{out}"
+    );
+    // 28 requests against 20
+    let fail = out.lines().find(|l| l.starts_with("FAIL")).unwrap();
+    assert!(
+        fail.contains("requests") && fail.trim_end().ends_with("+40%"),
+        "{out}"
+    );
+
+    // the demo warns (a retry); against itself none of it is new, and the row says so
+    let same = sonde(
+        t.path(),
+        &["check", "--baseline", name, "--no-new-warnings"],
+    );
+    let out = stdout(&same);
+    assert_eq!(same.status.code(), Some(0), "{out}");
+    assert!(out.contains(&format!("against session {name}")), "{out}");
+    assert!(out.contains("new warnings  0"), "{out}");
+}
+
+#[test]
 fn a_baseline_set_alone_succeeds_by_name_or_relative_path() {
     let t = tempfile::tempdir().unwrap();
     assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
@@ -237,7 +342,10 @@ fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
     );
     let md = stdout(&c);
     assert!(md.starts_with("### sonde: over budget"), "{md}");
-    assert!(md.contains("| **FAIL** | requests |"), "{md}");
+    assert!(
+        md.contains("| **FAIL** +2700% | requests | 28 | ≤ 1 |"),
+        "{md}"
+    );
     assert!(md.contains("| pass | waiting |"), "{md}");
     // a flag still wins over the file
     let c = sonde(
@@ -347,6 +455,94 @@ fn a_gzipped_log_is_imported_and_its_odd_lines_are_counted() {
         "{err}"
     );
     assert!(out.is_file());
+}
+
+#[test]
+fn a_folder_of_logs_is_imported_as_one_session() {
+    let t = tempfile::tempdir().unwrap();
+    let logs = t.path().join("lake-logs");
+    std::fs::create_dir_all(logs.join("2026-02-06")).unwrap();
+    let line = |second: u32, id: &str, key: &str| {
+        format!(
+            r#"79a5 lake [06/Feb/2026:00:00:{second:02} +0000] 192.0.2.3 arn:aws:iam::1:user/etl {id} REST.GET.OBJECT {key} "GET /lake/{key} HTTP/1.1" 200 - 4096 4096 12 10 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#
+        )
+    };
+    // named out of time order: the session is in time order all the same
+    std::fs::write(logs.join("2026-02-06/b"), line(1, "A1", "t/one")).unwrap();
+    std::fs::write(logs.join("2026-02-06/a"), line(2, "A2", "t/two")).unwrap();
+    std::fs::write(logs.join("c"), line(3, "A3", "t/three")).unwrap();
+    std::fs::write(logs.join("notes.txt"), "kept by hand").unwrap();
+    let out = t.path().join("logs.sonde");
+    let o = sonde(
+        t.path(),
+        &[
+            "import",
+            logs.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(
+        err.contains("3 requests from 3 files of S3 server access log"),
+        "{err}"
+    );
+    assert!(
+        err.contains("1 file left out:") && err.contains("notes.txt: not an S3"),
+        "{err}"
+    );
+    let shown = stdout(&sonde(
+        t.path(),
+        &["show", out.to_str().unwrap(), "--requests"],
+    ));
+    let at = |k: &str| shown.find(k).unwrap_or_else(|| panic!("no {k} in {shown}"));
+    assert!(
+        at("t/one") < at("t/two") && at("t/two") < at("t/three"),
+        "{shown}"
+    );
+    assert!(shown.contains("to lake-logs"), "{shown}");
+
+    // a folder with no log in it is a mistake in the command
+    let none = t.path().join("none");
+    std::fs::create_dir(&none).unwrap();
+    assert_eq!(
+        sonde(t.path(), &["import", none.to_str().unwrap()])
+            .status
+            .code(),
+        Some(64)
+    );
+}
+
+#[test]
+fn every_command_refuses_a_format_it_does_not_write() {
+    let t = tempfile::tempdir().unwrap();
+    // before anything is asked of a store: none of these has one to ask
+    for args in [
+        &["du", "-b", "b", "-f", "markdown"][..],
+        &["mpu", "scan", "-b", "b", "-f", "github"],
+        &["mpu", "abort", "-b", "b", "-f", "json"],
+        &["probe", "list", "-f", "csv"],
+        &["probe", "-b", "scratch", "-f", "github"],
+        &["layout", "inspect", "-b", "b", "-f", "csv"],
+        &["endpoints", "list", "-f", "csv"],
+        &["sessions", "-f", "github"],
+        &["sessions", "prune", "--keep", "5", "-f", "json"],
+    ] {
+        let o = sonde(t.path(), args);
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert_eq!(o.status.code(), Some(64), "{args:?}: {err}");
+        assert!(err.contains("does not write -f"), "{args:?}: {err}");
+        assert!(o.stdout.is_empty(), "{args:?}: {}", stdout(&o));
+    }
+    // what each does write is still written
+    let list = sonde(t.path(), &["endpoints", "list", "-f", "json"]);
+    assert_eq!(list.status.code(), Some(0));
+    assert!(
+        stdout(&list).trim_start().starts_with('['),
+        "{}",
+        stdout(&list)
+    );
 }
 
 #[test]

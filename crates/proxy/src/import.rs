@@ -86,37 +86,146 @@ pub fn import(text: &str, name: &str) -> Result<(Source, Session), String> {
 
 /// [`import`], with the count of the lines left out.
 pub fn import_counted(text: &str, name: &str) -> Result<Imported, String> {
-    let source = detect(text).ok_or("not an S3 server access log, CloudTrail file or HAR")?;
-    let (mut malformed, mut not_requests) = (0, 0);
-    let mut records = match source {
-        Source::AccessLog => access_log(text, &mut malformed, &mut not_requests),
-        Source::CloudTrail => cloudtrail(text)?,
-        Source::Har => har(text)?,
-    };
-    if records.is_empty() {
-        return Err(format!("no S3 requests in this {}", source.name()));
+    let mut parts = Parts::default();
+    parts.add(text)?;
+    parts.finish(name)
+}
+
+/// A session gathered from several files of one source, one text at a time:
+/// S3 delivers an hour of access logs as thousands of small files, and only
+/// the requests of each are kept once it is read.
+#[derive(Default)]
+pub struct Parts {
+    source: Option<Source>,
+    records: Vec<Record>,
+    malformed: usize,
+    not_requests: usize,
+}
+
+impl Parts {
+    /// Reads one file's text. An error leaves what was read before as it
+    /// was: the text is no source sonde reads, or another than the first's.
+    pub fn add(&mut self, text: &str) -> Result<(), String> {
+        let source = detect(text).ok_or("not an S3 server access log, CloudTrail file or HAR")?;
+        match self.source {
+            Some(first) if first != source => {
+                return Err(format!("a {} among {} files", source.name(), first.name()));
+            }
+            _ => {}
+        }
+        let (mut malformed, mut not_requests) = (0, 0);
+        let records = match source {
+            Source::AccessLog => access_log(text, &mut malformed, &mut not_requests),
+            Source::CloudTrail => cloudtrail(text)?,
+            Source::Har => har(text)?,
+        };
+        self.source = Some(source);
+        self.records.extend(records);
+        self.malformed += malformed;
+        self.not_requests += not_requests;
+        Ok(())
     }
-    records.sort_by_key(|r| r.time);
-    for (i, r) in records.iter_mut().enumerate() {
-        r.id = i as u64 + 1;
-        r.endpoint = name.to_string();
+
+    /// The session of everything added, its records numbered in time order.
+    pub fn finish(self, name: &str) -> Result<Imported, String> {
+        let source = self
+            .source
+            .ok_or("not an S3 server access log, CloudTrail file or HAR")?;
+        let mut records = self.records;
+        if records.is_empty() {
+            return Err(format!("no S3 requests in this {}", source.name()));
+        }
+        records.sort_by_key(|r| r.time);
+        for (i, r) in records.iter_mut().enumerate() {
+            r.id = i as u64 + 1;
+            r.endpoint = name.to_string();
+        }
+        let mut header = SessionHeader::new(
+            name,
+            "",
+            "",
+            Some(format!("imported from {}", source.name())),
+        );
+        header.created = records[0].time;
+        Ok(Imported {
+            source,
+            session: Session {
+                header,
+                records,
+                logs: Vec::new(),
+            },
+            malformed: self.malformed,
+            not_requests: self.not_requests,
+        })
     }
-    let mut header = SessionHeader::new(
-        name,
-        "",
-        "",
-        Some(format!("imported from {}", source.name())),
-    );
-    header.created = records[0].time;
-    Ok(Imported {
-        source,
-        session: Session {
-            header,
-            records,
-            logs: Vec::new(),
-        },
-        malformed,
-        not_requests,
+}
+
+/// A folder imported as one session, and the files that were no part of it.
+#[derive(Debug, Clone)]
+pub struct ImportedDir {
+    pub imported: Imported,
+    /// Files read into the session.
+    pub files: usize,
+    /// Files left out, each with why (relative to the folder).
+    pub left_out: Vec<(String, String)>,
+}
+
+/// Every file under `dir` (folders within too, as CloudTrail delivers), in
+/// the order of their names, gzip or plain, as one session. A file that is
+/// not of the first file's source is left out and named; hidden files are
+/// passed over.
+pub fn import_dir(dir: &std::path::Path, name: &str) -> Result<ImportedDir, String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out)?;
+            } else {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(dir, &mut files).map_err(|e| e.to_string())?;
+    files.sort();
+    if files.is_empty() {
+        return Err("no files in this folder".into());
+    }
+    let mut parts = Parts::default();
+    let (mut read, mut left_out) = (0, Vec::new());
+    for path in &files {
+        // one file in memory at a time
+        let added = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| text_of(&bytes))
+            .and_then(|text| parts.add(&text));
+        match added {
+            Ok(()) => read += 1,
+            Err(why) => left_out.push((
+                path.strip_prefix(dir)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .into_owned(),
+                why,
+            )),
+        }
+    }
+    if read == 0 {
+        return Err(format!(
+            "no S3 server access log, CloudTrail file or HAR among its {} file{}",
+            files.len(),
+            if files.len() == 1 { "" } else { "s" }
+        ));
+    }
+    Ok(ImportedDir {
+        imported: parts.finish(name)?,
+        files: read,
+        left_out,
     })
 }
 
@@ -225,7 +334,9 @@ fn fields(line: &str) -> Vec<String> {
 /// `malformed` and one that is no request (`S3.EXPIRE.OBJECT`,
 /// `BATCH.DELETE.OBJECT`) in `not_requests`: neither fails the file.
 fn access_log(text: &str, malformed: &mut usize, not_requests: &mut usize) -> Vec<Record> {
-    let mut out = Vec::new();
+    let mut out: Vec<Record> = Vec::new();
+    // request id → the object a copy read, from the store's own line of it
+    let mut sources: std::collections::HashMap<String, String> = Default::default();
     for line in text.lines() {
         if line.trim().is_empty() {
             continue;
@@ -243,6 +354,16 @@ fn access_log(text: &str, malformed: &mut usize, not_requests: &mut usize) -> Ve
         // requests only: the rest has no method, no status and no price
         if !(f[6].starts_with("REST.") || f[6].starts_with("WEBSITE.")) {
             *not_requests += 1;
+            continue;
+        }
+        // a copy is logged twice: the request, and the store reading the
+        // source for it (REST.COPY.OBJECT_GET, REST.COPY.PART_GET) under the
+        // same request id. the second is no request: it names the source
+        if f[6].contains(".COPY.") && f[6].ends_with("_GET") {
+            *not_requests += 1;
+            if f[5] != "-" && f[1] != "-" && f[7] != "-" {
+                sources.insert(f[5].clone(), format!("/{}/{}", f[1], f[7]));
+            }
             continue;
         }
         // "GET /bucket/key?query HTTP/1.1"
@@ -293,6 +414,12 @@ fn access_log(text: &str, malformed: &mut usize, not_requests: &mut usize) -> Ve
             .into();
         }
         out.push(r);
+    }
+    for r in &mut out {
+        if let Some(source) = r.request_id.as_ref().and_then(|id| sources.remove(id)) {
+            r.request_headers
+                .push(reqlog::Header::new("x-amz-copy-source", source));
+        }
     }
     out
 }
@@ -660,6 +787,101 @@ mod tests {
             keys,
             ["k", "k2", "k3"],
             "the page and its script are not S3's"
+        );
+    }
+
+    #[test]
+    fn the_stores_read_for_a_copy_is_part_of_the_copy_not_a_request() {
+        let log = [
+            // the copy as the program sent it, and the store reading its source
+            r#"79a5 lake [06/Feb/2026:00:00:41 +0000] 192.0.2.3 arn:aws:iam::1:user/etl C0FFEE REST.COPY.OBJECT t/copy "PUT /lake/t/copy HTTP/1.1" 200 - 234 4096 30 - "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#,
+            r#"79a5 archive [06/Feb/2026:00:00:41 +0000] 192.0.2.3 arn:aws:iam::1:user/etl C0FFEE REST.COPY.OBJECT_GET t/src - 200 - - 4096 - - - - - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#,
+            // a part copied into an upload
+            r#"79a5 lake [06/Feb/2026:00:00:42 +0000] 192.0.2.3 arn:aws:iam::1:user/etl BEEF REST.COPY.PART t/big "PUT /lake/t/big?partNumber=1&uploadId=u1 HTTP/1.1" 200 - 234 4096 30 - "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#,
+            r#"79a5 lake [06/Feb/2026:00:00:42 +0000] 192.0.2.3 arn:aws:iam::1:user/etl BEEF REST.COPY.PART_GET t/src - 206 - - 4096 - - - - - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#,
+        ]
+        .join("\n");
+        let i = import_counted(&log, "prod").unwrap();
+        let ops: Vec<(&str, Option<&str>)> = i
+            .session
+            .records
+            .iter()
+            .map(|r| (r.operation.as_str(), r.key.as_deref()))
+            .collect();
+        assert_eq!(
+            ops,
+            [
+                ("CopyObject", Some("t/copy")),
+                ("UploadPartCopy", Some("t/big"))
+            ],
+            "two requests were sent, not four"
+        );
+        assert_eq!(i.not_requests, 2);
+        // what it read is kept on the copy, as the request's own header says it
+        let source = |r: &Record| {
+            r.request_headers
+                .iter()
+                .find(|h| h.name == "x-amz-copy-source")
+                .map(|h| h.value.clone())
+        };
+        assert_eq!(
+            source(&i.session.records[0]).as_deref(),
+            Some("/archive/t/src")
+        );
+        assert_eq!(
+            source(&i.session.records[1]).as_deref(),
+            Some("/lake/t/src")
+        );
+    }
+
+    #[test]
+    fn a_folder_of_log_files_is_one_session_in_the_order_of_their_names() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let lines: Vec<&str> = LOG.lines().collect();
+        // as S3 delivers them: many small files, some in folders, some gzipped
+        std::fs::write(dir.path().join("2026-02-06-00-10-00-B"), lines[1]).unwrap();
+        std::fs::create_dir(dir.path().join("2026-02-06-00-05")).unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), Default::default());
+        gz.write_all(lines[0].as_bytes()).unwrap();
+        std::fs::write(
+            dir.path().join("2026-02-06-00-05/A.gz"),
+            gz.finish().unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("2026-02-06-00-15-00-C"), lines[2]).unwrap();
+        // what else a folder holds
+        std::fs::write(dir.path().join("README.txt"), "the logs of lake").unwrap();
+        std::fs::write(dir.path().join(".DS_Store"), [0u8, 1, 2]).unwrap();
+        std::fs::write(dir.path().join("trail.json"), r#"{"Records":[]}"#).unwrap();
+
+        let d = import_dir(dir.path(), "prod").unwrap();
+        assert_eq!(d.files, 3);
+        let ops: Vec<&str> = d
+            .imported
+            .session
+            .records
+            .iter()
+            .map(|r| r.operation.as_str())
+            .collect();
+        assert_eq!(ops, ["GetObject", "HeadObject", "ListObjectsV2"]);
+        assert_eq!(d.imported.source, Source::AccessLog);
+        let left: Vec<&str> = d.left_out.iter().map(|(f, _)| f.as_str()).collect();
+        assert_eq!(left, ["README.txt", "trail.json"], "{:?}", d.left_out);
+        assert!(d.left_out[1].1.contains("CloudTrail"), "{:?}", d.left_out);
+
+        // a folder with nothing sonde reads says so
+        let empty = tempfile::tempdir().unwrap();
+        assert!(
+            import_dir(empty.path(), "x")
+                .unwrap_err()
+                .contains("no files")
+        );
+        std::fs::write(empty.path().join("notes"), "hello").unwrap();
+        assert!(
+            import_dir(empty.path(), "x")
+                .unwrap_err()
+                .contains("among its 1 file")
         );
     }
 
