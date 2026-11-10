@@ -52,6 +52,13 @@ fn template(key: &str) -> &'static str {
         "iceberg.metadata.v" => "commit: table metadata v{v}",
         "iceberg.metadata" => "commit: table metadata",
         "delta.commit" => "commit {n}",
+        "lance.commit" => "version {v} committed",
+        "lance.data" => " · {n} data file{s} ({size})",
+        "lance.index" => " · an index ({size})",
+        "lance.deletions" => " · rows deleted",
+        "lance.read.v" => "read version {v}",
+        "lance.read" => "read the dataset",
+        "lance.ranges" => " · {n} ranges of {files} file{s} ({size})",
         "delta.checkpoint" => "checkpoint written",
         "delta.last" => "_last_checkpoint updated",
         "step.other" => "{op} {key}",
@@ -72,6 +79,9 @@ fn template(key: &str) -> &'static str {
         "loose.misses" => "{n} lookup{s} that found nothing",
         "loose.reads" => "{n} reads",
         "obs.shared" => "{n} {format} writes: ",
+        "obs.injected" => {
+            "{n} request{s} met a fault sonde injected (scenario {scenario}): the errors and retries here are the trial's, not the store's"
+        }
         "obs.unfinished" => {
             "{n} multipart upload{s} never completed or aborted: the parts stay billed until a lifecycle rule removes them"
         }

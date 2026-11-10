@@ -371,14 +371,7 @@ pub async fn plan_lifecycle_rule(
 ) -> Result<Plan, S3Error> {
     let c = s.client(endpoint)?;
     let current = c.lifecycle_raw(bucket).await?;
-    // one rule per prefix, replaced when planned again: two rules with one
-    // ID are refused by the service
-    let id = abort_rule_id(prefix);
-    let kept = current.as_deref().map(|c| without_rule(c, &id));
-    let rule = xml::abort_rule_xml(&id, prefix, days);
-    let doc = xml::add_rule(kept.as_deref(), &rule);
-    xml::lifecycle(&doc)
-        .map_err(|e| S3Error::decode(format!("the merged document does not parse: {e}")))?;
+    let doc = merged(current.as_deref(), prefix, days)?;
     Ok(s.guard().plan(
         Action::PutLifecycle,
         endpoint,
@@ -392,6 +385,61 @@ pub async fn plan_lifecycle_rule(
         Some(doc),
         current,
     ))
+}
+
+/// The bucket's lifecycle document with sonde's abort rule for `prefix`
+/// added (or replaced). An error when the rule cannot be put into the
+/// document as fetched with every other rule kept: a PUT replaces the whole
+/// configuration, so a document sonde cannot splice is never planned over.
+fn merged(current: Option<&str>, prefix: &str, days: u32) -> Result<String, S3Error> {
+    // one rule per prefix, replaced when planned again: two rules with one
+    // ID are refused by the service
+    let id = abort_rule_id(prefix);
+    let rule = xml::abort_rule_xml(&id, prefix, days);
+    let refuse = |why: String| {
+        S3Error::refused(format!(
+            "the bucket's lifecycle configuration {why}: adding a rule would replace the rules it has. Nothing was planned; add the rule by hand:\n{rule}"
+        ))
+    };
+    let doc = match current.filter(|c| !c.trim().is_empty()) {
+        None => xml::add_rule(None, &rule),
+        Some(c) => {
+            let before =
+                xml::lifecycle(c).map_err(|e| refuse(format!("could not be read ({e})")))?;
+            let kept = before
+                .rule
+                .iter()
+                .filter(|r| r.id.as_deref() != Some(id.as_str()))
+                .count();
+            let rest = without_rule(c, &id);
+            if !rest.contains("</LifecycleConfiguration>") {
+                // no place to add to; only a document without rules may be replaced
+                if kept > 0 || rest.to_ascii_lowercase().contains("rule") {
+                    return Err(refuse(
+                        "is not written the way sonde can add to (no </LifecycleConfiguration>)"
+                            .into(),
+                    ));
+                }
+                xml::add_rule(None, &rule)
+            } else {
+                let doc = xml::add_rule(Some(&rest), &rule);
+                // every rule that was there is there still, and ours once
+                let after = xml::lifecycle(&doc).map_err(|e| {
+                    S3Error::decode(format!("the merged document does not parse: {e}"))
+                })?;
+                if after.rule.len() != kept + 1 {
+                    return Err(refuse(format!(
+                        "has {kept} other rules and the merged document would have {}",
+                        after.rule.len().saturating_sub(1)
+                    )));
+                }
+                doc
+            }
+        }
+    };
+    xml::lifecycle(&doc)
+        .map_err(|e| S3Error::decode(format!("the merged document does not parse: {e}")))?;
+    Ok(doc)
 }
 
 /// The ID of sonde's abort rule for `prefix`: the same for the same prefix,
@@ -470,11 +518,8 @@ mod tests {
                 .filter_map(|r| r.id.clone())
                 .collect()
         };
-        let add = |current: Option<&str>, prefix: &str, days: u32| {
-            let id = abort_rule_id(prefix);
-            let kept = current.map(|c| without_rule(c, &id));
-            xml::add_rule(kept.as_deref(), &xml::abort_rule_xml(&id, prefix, days))
-        };
+        let add =
+            |current: Option<&str>, prefix: &str, days: u32| merged(current, prefix, days).unwrap();
         let user = "<LifecycleConfiguration><Rule><ID>exp</ID><Filter/><Status>Enabled</Status><Expiration><Days>30</Days></Expiration></Rule></LifecycleConfiguration>";
         let a = add(Some(user), "a/", 7);
         let b = add(Some(&a), "b/", 7);
@@ -492,5 +537,67 @@ mod tests {
             "b/ only"
         );
         assert_eq!(abort_rule_id(""), "sonde-abort-incomplete-mpu");
+    }
+
+    #[test]
+    fn a_lifecycle_document_with_no_place_to_add_to_is_never_planned_over() {
+        // rules, but no closing tag as sonde looks for it: a namespace
+        // prefix, another case, a document cut short
+        for doc in [
+            "<s3:LifecycleConfiguration xmlns:s3=\"http://s3.amazonaws.com/doc/2006-03-01/\"><s3:Rule><s3:ID>exp</s3:ID><s3:Filter/><s3:Status>Enabled</s3:Status><s3:Expiration><s3:Days>30</s3:Days></s3:Expiration></s3:Rule></s3:LifecycleConfiguration>",
+            "<LifecycleConfiguration><Rule><ID>exp</ID><Filter/><Status>Enabled</Status><Expiration><Days>30</Days></Expiration></Rule></LifecycleConfiguration >",
+            "<LifecycleConfiguration><Rule><ID>exp</ID><Filter/><Status>Enabled</Status>",
+            "{\"Rules\": [{\"ID\": \"exp\"}]}",
+        ] {
+            let e = merged(Some(doc), "", 7).unwrap_err();
+            assert_eq!(e.kind, s3raw::ErrorKind::Refused, "{doc}: {e}");
+            assert!(e.message.contains("would replace the rules it has"), "{e}");
+            assert!(
+                e.message.contains("<AbortIncompleteMultipartUpload>"),
+                "{e}"
+            );
+        }
+        // no document, an empty one, one without rules: a new one loses nothing
+        for doc in [
+            None,
+            Some(""),
+            Some("<LifecycleConfiguration/>"),
+            Some("<LifecycleConfiguration></LifecycleConfiguration>"),
+        ] {
+            let got = merged(doc, "", 7).unwrap();
+            assert_eq!(xml::lifecycle(&got).unwrap().rule.len(), 1, "{doc:?}");
+        }
+        // and the usual document keeps its rule
+        let user = "<LifecycleConfiguration><Rule><ID>exp</ID><Filter/><Status>Enabled</Status><Expiration><Days>30</Days></Expiration></Rule></LifecycleConfiguration>";
+        let got = merged(Some(user), "", 7).unwrap();
+        assert!(got.contains("<ID>exp</ID>"));
+        assert_eq!(xml::lifecycle(&got).unwrap().rule.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_plan_is_refused_when_the_stores_document_cannot_be_added_to() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = l.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf).await;
+                let body = "<s3:LifecycleConfiguration xmlns:s3=\"http://s3.amazonaws.com/doc/2006-03-01/\"><s3:Rule><s3:ID>exp</s3:ID><s3:Status>Enabled</s3:Status></s3:Rule></s3:LifecycleConfiguration>";
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = c.write_all(reply.as_bytes()).await;
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let mut e = crate::EndpointConfig::new("e", "e", &url, "us-east-1", crate::Vendor::Other);
+        e.path_style = true;
+        e.credentials = crate::CredentialSource::Anonymous;
+        s.add_transient_endpoint(e).unwrap();
+        let err = plan_lifecycle_rule(&s, "e", "b", "", 7).await.unwrap_err();
+        assert_eq!(err.kind, s3raw::ErrorKind::Refused, "{err}");
     }
 }

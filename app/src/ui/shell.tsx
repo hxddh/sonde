@@ -2,7 +2,7 @@
 // toolbar), the sidebar with the places and the current place's list, and the
 // application's menus. A terminal has none of this (App.tsx's TerminalShell).
 
-import { type JSX, platform, signal, Storage, Text, View, windowSize } from "nsh";
+import { ErrorBoundary, type JSX, platform, signal, Storage, Text, View, windowSize } from "nsh";
 import { Button as BaseButton, Combobox, Toolbar as ToolbarGroup } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, titleBar } from "nsh/desktop";
 import { date } from "../format";
@@ -14,7 +14,7 @@ import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, op
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./sessionview";
-import { CONTROL, FOCUS, glass, IconButton, Kbd, material, POPUP, Tip } from "./kit";
+import { Button, CONTROL, FOCUS, glass, IconButton, Kbd, material, Notice, POPUP, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { sessionName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -25,8 +25,10 @@ const wanted = signal(true);
 const SIDEBAR_KEY = "sidebar.open";
 void Storage.getItem(SIDEBAR_KEY).then((v) => v === "false" && wanted.set(false)).catch(() => {});
 /** Whether the sidebar shows: the user's choice (⌘B). It holds the places
- * and the current place's list, so it never folds away by itself. */
-export const sidebarOpen = () => wanted();
+ * and the current place's list, so it never folds away by itself — and it
+ * comes back while the place has nothing to show without its list (a bucket
+ * or a session to choose, a listing that failed). */
+export const sidebarOpen = () => wanted() || !!sideList()?.needed?.();
 export function toggleSidebar() {
   wanted.set(!wanted());
   void Storage.setItem(SIDEBAR_KEY, String(wanted())).catch(() => {});
@@ -267,7 +269,20 @@ export function Sidebar(props: { open: (a: Area) => void }) {
           {(l) => (
             <View class="min-h-0 flex-1 pt-3">
               <View class="mx-3 h-px shrink-0 bg-border" />
-              <View class="min-h-0 flex-1">{l().render()}</View>
+              {/* a list that fails to draw says why, here: the place's own boundary does not hold it */}
+              <View class="min-h-0 flex-1">
+                <ErrorBoundary
+                  fallback={(error, reset) => (
+                    <View class="p-3">
+                      <Notice tone="error" text={error instanceof Error ? error.message : String(error)} testID="sidebar-error">
+                        <Button small variant="outline" label={t("error.retry")} onPress={reset} />
+                      </Notice>
+                    </View>
+                  )}
+                >
+                  {l().render()}
+                </ErrorBoundary>
+              </View>
             </View>
           )}
         </Each>

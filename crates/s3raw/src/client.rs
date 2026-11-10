@@ -305,6 +305,32 @@ impl std::fmt::Debug for S3Client {
     }
 }
 
+/// A response body being read: each chunk has the client's timeout to
+/// arrive, the whole has none.
+pub struct Download {
+    resp: reqwest::Response,
+    idle: Duration,
+}
+
+impl Download {
+    pub fn content_length(&self) -> Option<u64> {
+        self.resp.content_length()
+    }
+
+    /// The next chunk; `None` at the end. A body silent for the timeout is an
+    /// error, as is one that breaks off.
+    pub async fn chunk(&mut self) -> Result<Option<bytes::Bytes>, S3Error> {
+        match tokio::time::timeout(self.idle, self.resp.chunk()).await {
+            Ok(Ok(c)) => Ok(c),
+            Ok(Err(e)) => Err(S3Error::new(ErrorKind::Transport, e.to_string())),
+            Err(_) => Err(S3Error::new(
+                ErrorKind::Transport,
+                format!("the download stopped for {} s", self.idle.as_secs_f32()),
+            )),
+        }
+    }
+}
+
 /// Whether `bucket` can be a DNS label under the endpoint host.
 pub fn dns_compatible(bucket: &str, https: bool) -> bool {
     let len_ok = (3..=63).contains(&bucket.len());
@@ -456,6 +482,10 @@ impl S3Client {
         url: &str,
     ) -> Result<S3Response, S3Error> {
         let parsed = url::Url::parse(url).map_err(|e| S3Error::config(format!("URL: {e}")))?;
+        // the parser collapses dot segments: such a URL would go elsewhere
+        if raw_path(url).split('/').any(is_dot_segment) {
+            return Err(S3Error::refused(DOT_SEGMENT));
+        }
         let req = S3Request::new(operation, method.clone());
         let start = Instant::now();
         let sent = self.http.request(method, parsed).send().await;
@@ -614,9 +644,10 @@ impl S3Client {
         self.send_raw(req).await?.ok()
     }
 
-    /// Sends a GET and returns the response with its body unread, for
-    /// streaming downloads. Logged when the headers arrive.
-    pub async fn send_stream(&self, req: S3Request) -> Result<(reqwest::Response, u64), S3Error> {
+    /// Sends a GET and returns its body unread, for downloads of any size:
+    /// the timeout is for the headers and then for each stretch of silence,
+    /// never for the whole. Logged when the headers arrive.
+    pub async fn send_stream(&self, req: S3Request) -> Result<(Download, u64), S3Error> {
         let _permit = match &self.throttle {
             Some(t) => Some(t.acquire().await),
             None => None,
@@ -631,7 +662,19 @@ impl S3Client {
             headers: sent_headers,
         };
         let start = Instant::now();
-        let sent = self.http.execute(request).await;
+        let idle = self.cfg.timeout;
+        let sent = match tokio::time::timeout(idle, self.streaming.execute(request)).await {
+            Ok(sent) => sent,
+            Err(_) => {
+                let msg = format!("no answer in {} s", idle.as_secs_f32());
+                let mut record =
+                    self.record(&req, &prepared.url, &prepared.headers, 0, start.elapsed());
+                record.transport_error = Some(msg.clone());
+                let mut err = S3Error::new(ErrorKind::Transport, msg);
+                err.record_id = Some(self.log.push(record));
+                return Err(err);
+            }
+        };
         let latency = start.elapsed();
         match sent {
             Ok(resp) => {
@@ -651,7 +694,7 @@ impl S3Client {
                     return Err(S3Error::from_response(status, &body, rid, hid, id));
                 }
                 let id = self.log.push(record);
-                Ok((resp, id))
+                Ok((Download { resp, idle }, id))
             }
             Err(e) => Err(self.transport_error(&req, &prepared, 0, latency, e)),
         }
@@ -780,10 +823,16 @@ impl S3Client {
             job: self.job.clone(),
             first_byte_ms: None,
             requester: None,
+            injected: None,
         }
     }
 
     async fn prepare(&self, req: &S3Request) -> Result<Prepared, S3Error> {
+        // the URL library collapses `.` and `..` segments, percent-encoded
+        // or not: the request would reach another key than the one signed
+        if req.key.as_deref().is_some_and(has_dot_segment) {
+            return Err(S3Error::refused(DOT_SEGMENT));
+        }
         let endpoint = req
             .endpoint
             .clone()
@@ -942,6 +991,38 @@ pub fn fill_ids(record: &mut Record, headers: &[(String, String)]) {
         .map(|(_, v)| v.clone());
 }
 
+/// What a request for a key the HTTP library would rewrite is refused with.
+pub const DOT_SEGMENT: &str = "a key with a . or .. segment cannot be sent correctly: sonde's HTTP library \
+     collapses such segments, so the request would reach another object. Nothing was sent.";
+
+/// Whether a key has a `.` or `..` segment between its slashes: a key the
+/// HTTP library cannot put on the wire as it is.
+pub fn has_dot_segment(key: &str) -> bool {
+    key.split('/').any(|seg| seg == "." || seg == "..")
+}
+
+/// Whether an error is the local refusal of such a key.
+pub fn is_dot_segment_refusal(e: &S3Error) -> bool {
+    e.kind == ErrorKind::Refused && e.message == DOT_SEGMENT
+}
+
+/// A path segment a URL parser takes for `.` or `..`, encoded or not.
+fn is_dot_segment(seg: &str) -> bool {
+    let plain = seg.to_ascii_lowercase().replace("%2e", ".");
+    plain == "." || plain == ".."
+}
+
+/// The path of a URL as written, before any parser normalises it.
+fn raw_path(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let end = rest.find(['?', '#']).unwrap_or(rest.len());
+    let rest = &rest[..end];
+    match rest.find('/') {
+        Some(i) => &rest[i..],
+        None => "/",
+    }
+}
+
 /// Encodes a key for the path: each byte outside the unreserved set, and
 /// the dot segments `.` and `..` (which URL parsers would collapse).
 pub fn encode_key(key: &str) -> String {
@@ -964,6 +1045,146 @@ mod tests {
         let mut cfg = ClientConfig::new("t", endpoint, "us-east-1").unwrap();
         cfg.addressing = addressing;
         S3Client::new(cfg, Arc::new(StaticProvider(None)), RequestLog::new(10)).unwrap()
+    }
+
+    /// A store that answers a GET with `chunks` chunks, `gap` apart.
+    async fn dribble(chunks: usize, gap: Duration) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut c, _) = l.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = c.read(&mut buf).await;
+            let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", chunks * 4);
+            c.write_all(head.as_bytes()).await.unwrap();
+            for _ in 0..chunks {
+                tokio::time::sleep(gap).await;
+                if c.write_all(b"data").await.is_err() {
+                    return;
+                }
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    async fn download(url: &str, timeout: Duration) -> Result<usize, S3Error> {
+        let mut cfg = ClientConfig::new("t", url, "us-east-1").unwrap();
+        cfg.timeout = timeout;
+        let c = S3Client::new(cfg, Arc::new(StaticProvider(None)), RequestLog::new(10)).unwrap();
+        let (mut body, _) = c
+            .send_stream(
+                S3Request::new("GetObject", http::Method::GET)
+                    .bucket("b")
+                    .key("k"),
+            )
+            .await?;
+        let mut n = 0;
+        while let Some(chunk) = body.chunk().await? {
+            n += chunk.len();
+        }
+        Ok(n)
+    }
+
+    /// A store that answers 200 to every request and keeps each request line.
+    async fn lines() -> (String, Arc<parking_lot::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(vec![]));
+        let kept = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut c, _) = l.accept().await.unwrap();
+                let mut got = vec![];
+                let mut buf = [0u8; 4096];
+                while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match c.read(&mut buf).await {
+                        Ok(n) if n > 0 => got.extend_from_slice(&buf[..n]),
+                        _ => break,
+                    }
+                }
+                let text = String::from_utf8_lossy(&got).to_string();
+                kept.lock()
+                    .push(text.lines().next().unwrap_or_default().to_string());
+                let _ = c
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                    .await;
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    #[tokio::test]
+    async fn a_key_with_a_dot_segment_is_refused_and_never_sent_elsewhere() {
+        let (url, seen) = lines().await;
+        let c = client(&url, Addressing::Path);
+        let get = |k: &str| {
+            S3Request::new("GetObject", http::Method::GET)
+                .bucket("b")
+                .key(k)
+        };
+        for key in ["a/../b", "./dot", "a/.", "..", "a/./b"] {
+            let e = c.send_raw(get(key).no_retry()).await.unwrap_err();
+            assert_eq!(e.kind, ErrorKind::Refused, "{key}: {e}");
+            assert!(is_dot_segment_refusal(&e), "{key}: {e}");
+            assert!(e.message.contains(". or .. segment"), "{e}");
+            assert!(c.send_stream(get(key)).await.is_err(), "{key}");
+        }
+        // nothing reached the store: not `GET /b/b`, not anything
+        assert_eq!(*seen.lock(), Vec::<String>::new());
+        // dots that are not a segment of their own are a key like another,
+        // and the path on the wire is the encoded key, byte for byte
+        for key in ["a/..b/.c/...", "a b/x+y", "double//slash", ".hidden/..."] {
+            let r = c.send_raw(get(key).no_retry()).await.unwrap();
+            assert_eq!(r.status, 200);
+            assert_eq!(
+                seen.lock().pop().unwrap(),
+                format!("GET /b/{} HTTP/1.1", encode_key(key))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_presigned_url_with_a_dot_segment_is_refused() {
+        let (url, seen) = lines().await;
+        let c = client(&url, Addressing::Path);
+        for path in ["/b/a/../k", "/b/a/%2E%2E/k", "/b/%2e/k", "/b/a/.%2E"] {
+            let e = c
+                .send_url(
+                    "GetObject",
+                    http::Method::GET,
+                    &format!("{url}{path}?X-Amz-Signature=0"),
+                )
+                .await
+                .unwrap_err();
+            assert!(is_dot_segment_refusal(&e), "{path}: {e}");
+        }
+        assert_eq!(*seen.lock(), Vec::<String>::new());
+        let ok = format!("{url}/b/a/..k?x=1");
+        c.send_url("GetObject", http::Method::GET, &ok)
+            .await
+            .unwrap();
+        assert_eq!(seen.lock().pop().unwrap(), "GET /b/a/..k?x=1 HTTP/1.1");
+    }
+
+    #[tokio::test]
+    async fn a_download_longer_than_the_timeout_is_whole() {
+        // 8 chunks 100 ms apart: 800 ms through a 300 ms timeout
+        let url = dribble(8, Duration::from_millis(100)).await;
+        assert_eq!(
+            download(&url, Duration::from_millis(300)).await.unwrap(),
+            32
+        );
+    }
+
+    #[tokio::test]
+    async fn a_download_that_goes_quiet_is_an_error() {
+        let url = dribble(2, Duration::from_millis(600)).await;
+        let e = download(&url, Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("stopped"), "{e}");
     }
 
     #[test]

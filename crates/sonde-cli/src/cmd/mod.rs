@@ -79,8 +79,38 @@ pub fn endpoint(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
 
 /// Prints a job's progress on stderr while waiting for it.
 pub async fn wait(s: &Sonde, job: &str, quiet: bool) -> Result<serde_json::Value, s3raw::S3Error> {
-    let mut rx = s.jobs().subscribe(job);
-    let jobs = s.jobs().clone();
+    wait_on(s.jobs(), job, quiet).await
+}
+
+/// Waits for jobs started together, each to its end. One that fails leaves
+/// the others running to theirs; one that is cancelled (an interrupt) cancels
+/// the rest, and each is still waited for, since a cancelled job cleans up
+/// before it returns.
+pub async fn wait_all(
+    jobs: &sonde_core::JobManager,
+    ids: &[String],
+    quiet: bool,
+) -> Vec<Result<serde_json::Value, s3raw::S3Error>> {
+    let mut out = Vec::with_capacity(ids.len());
+    for (i, id) in ids.iter().enumerate() {
+        let r = wait_on(jobs, id, quiet).await;
+        if matches!(&r, Err(e) if e.kind == s3raw::ErrorKind::Cancelled) {
+            for rest in &ids[i + 1..] {
+                jobs.cancel(rest);
+            }
+        }
+        out.push(r);
+    }
+    out
+}
+
+async fn wait_on(
+    jobs: &sonde_core::JobManager,
+    job: &str,
+    quiet: bool,
+) -> Result<serde_json::Value, s3raw::S3Error> {
+    let mut rx = jobs.subscribe(job);
+    let jobs = jobs.clone();
     let id = job.to_string();
     let show = !quiet && std::io::IsTerminal::is_terminal(&std::io::stderr());
     let printer = tokio::spawn(async move {
@@ -106,4 +136,61 @@ pub async fn wait(s: &Sonde, job: &str, quiet: bool) -> Result<serde_json::Value
         eprint!("\r\x1b[2K");
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    /// A job with something to undo, as a probe run has: `cleaned` counts the
+    /// ones that reached their cleanup.
+    fn run(jobs: &sonde_core::JobManager, cleaned: &Arc<AtomicUsize>, fails: bool) -> String {
+        let cleaned = cleaned.clone();
+        jobs.spawn_cooperative("probe", "t", 1, None, move |ctx| async move {
+            if fails {
+                return Err(s3raw::S3Error::config("no such bucket"));
+            }
+            for _ in 0..20 {
+                if ctx.is_cancelled() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            cleaned.fetch_add(1, Ordering::SeqCst);
+            ctx.check()?;
+            Ok(serde_json::json!(1))
+        })
+    }
+
+    #[tokio::test]
+    async fn one_endpoint_failing_does_not_leave_the_others_runs_behind() {
+        let jobs = sonde_core::JobManager::new();
+        let cleaned = Arc::new(AtomicUsize::new(0));
+        let ids = [run(&jobs, &cleaned, true), run(&jobs, &cleaned, false)];
+        let r = wait_all(&jobs, &ids, true).await;
+        assert!(r[0].is_err() && r[1].is_ok());
+        assert_eq!(
+            cleaned.load(Ordering::SeqCst),
+            1,
+            "the second ran to its end"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_interrupt_ends_every_run_and_each_cleans_up() {
+        let jobs = sonde_core::JobManager::new();
+        let cleaned = Arc::new(AtomicUsize::new(0));
+        let ids = [run(&jobs, &cleaned, false), run(&jobs, &cleaned, false)];
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        jobs.cancel(&ids[0]);
+        let r = wait_all(&jobs, &ids, true).await;
+        assert!(
+            r.iter().all(|r| r.is_err()),
+            "the rest are cancelled with it"
+        );
+        assert_eq!(cleaned.load(Ordering::SeqCst), 2);
+    }
 }

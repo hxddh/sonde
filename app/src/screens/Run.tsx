@@ -7,7 +7,7 @@
 import { cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View } from "nsh";
 import { Input, ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
-import { count, elapsed, ms, percent } from "../format";
+import { change, count, elapsed, ms, percent } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
@@ -38,7 +38,7 @@ function CommandBar() {
   };
   const recent = () => {
     if (!isAvailable || !history().length) return;
-    void Menu.popup(history().map((c) => ({ label: c, onSelect: () => command.set(c) })));
+    void Menu.popup(history().map((c) => ({ label: scrubCommand(c), onSelect: () => command.set(c) })));
   };
   if (terminal()) {
     return (
@@ -162,8 +162,9 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
     if (!v) return t("run.pastBaseline");
     // past a limit of nothing: say how many, not "+0%"
     if (v.limit <= 0) return t("run.pastBaselineN", { what: t(`verdict.${v.what}` as never), n: Math.round(v.value) });
-    const grew = Math.round(((v.value - v.limit) * 100) / v.limit);
-    return t("run.pastBaselineBy", { what: t(`verdict.${v.what}` as never), pct: grew });
+    // never "0% past": a sliver is "<1%" (`change` rounds as every change does)
+    if (v.value <= v.limit) return t("run.pastBaseline");
+    return t("run.pastBaselineBy", { what: t(`verdict.${v.what}` as never), pct: change(v.limit, v.value).slice(1, -1) });
   };
   return (
     <Card pad="none" testID={r() ? "run-ended" : "run-status"} class="min-h-11 shrink-0 flex-row flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2">

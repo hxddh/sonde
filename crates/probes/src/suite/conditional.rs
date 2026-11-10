@@ -51,6 +51,9 @@ impl Probe for PutIfNoneMatch {
     }
     fn judge(&self, s: &Steps) -> Judgement {
         let (first, second, read) = (s.at("first"), s.at("second"), s.at("read"));
+        if let Some(j) = super::write_refused(s, &["first"]) {
+            return j;
+        }
         let j = if !first.ok() {
             Judgement::new(
                 Verdict::Fail,

@@ -4,7 +4,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use futures::StreamExt;
 use s3raw::S3Error;
 use s3raw::checksum::{self, StoredChecksum};
 use s3raw::etag::{self, EtagInfo};
@@ -389,11 +388,10 @@ async fn fetch(
     }
     let (dest, part, mut file) = reserve(dest).await?;
     *partial = Some(part.clone());
-    let mut stream = resp.bytes_stream();
+    let mut resp = resp;
     let mut written = 0u64;
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = resp.chunk().await? {
         ctx.check()?;
-        let chunk = chunk.map_err(|e| S3Error::new(s3raw::ErrorKind::Transport, e.to_string()))?;
         file.write_all(&chunk)
             .await
             .map_err(|e| S3Error::config(e.to_string()))?;

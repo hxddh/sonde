@@ -26,6 +26,12 @@ pub struct DuArgs {
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> {
+    if let Some(why) =
+        output::unsupported(a.format, "du", &[Format::Table, Format::Json, Format::Csv])
+    {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     let ep = super::endpoint(s, a.endpoint.as_deref())?;
     let r = if a.cached {
         du::load_cache(s, &ep, &a.bucket, &a.prefix)
@@ -66,12 +72,25 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
                         ],
                         vec![
                             "noncurrent".into(),
-                            r.noncurrent.objects.to_string(),
-                            h(r.noncurrent.bytes)
+                            // not permitted to list versions: unknown, not 0
+                            if r.versions_unknown.is_some() {
+                                "unknown".into()
+                            } else {
+                                r.noncurrent.objects.to_string()
+                            },
+                            if r.versions_unknown.is_some() {
+                                "not counted".into()
+                            } else {
+                                h(r.noncurrent.bytes)
+                            }
                         ],
                         vec![
                             "delete markers".into(),
-                            r.delete_markers.to_string(),
+                            if r.versions_unknown.is_some() {
+                                "unknown".into()
+                            } else {
+                                r.delete_markers.to_string()
+                            },
                             "—".into()
                         ],
                         vec![

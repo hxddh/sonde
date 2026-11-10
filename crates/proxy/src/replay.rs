@@ -111,14 +111,35 @@ fn refused(r: &Record) -> bool {
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
 }
 
+/// The operation a record's own method, place and query name today.
+fn named(r: &Record) -> String {
+    let headers: Vec<(String, String)> = r
+        .request_headers
+        .iter()
+        .map(|h| (h.name.clone(), h.value.clone()))
+        .collect();
+    crate::op::classify(
+        &r.method,
+        r.bucket.as_deref(),
+        r.key.as_deref(),
+        &r.query,
+        &headers,
+    )
+}
+
 fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if refused(r) {
         return Some("refused by sonde when recorded".into());
     }
+    if crate::trial::faulted(r) {
+        return Some("failed by sonde on purpose when recorded (a trial)".into());
+    }
     if r.operation == "Unknown" {
         return Some("not an S3 operation sonde knows".into());
     }
-    if !opts.prefix.is_empty() && changes_bucket(&r.operation) {
+    // by what the request is, not only by the name the session stored: a
+    // session recorded before 13.0 calls `PUT /bucket?inventory` CreateBucket
+    if !opts.prefix.is_empty() && (changes_bucket(&r.operation) || changes_bucket(&named(r))) {
         return Some("changes the bucket itself".into());
     }
     if r.query.iter().any(|(k, _)| k == "versionId") {
@@ -585,6 +606,13 @@ fn conditions(r: &Record) -> Vec<String> {
         })
         .map(|h| format!("{}: {}", h.name.to_ascii_lowercase(), h.value))
         .collect()
+}
+
+/// Whether these records are a replay's: any of them names the request it
+/// repeats. Two ordinary runs have nothing to pair, and [`compare`] of them
+/// compares nothing.
+pub fn is_replay(records: &[Record]) -> bool {
+    records.iter().any(|r| original_of(r).is_some())
 }
 
 /// Compares an original session with its replay (records tagged by

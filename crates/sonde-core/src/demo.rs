@@ -41,6 +41,8 @@ struct Bucket {
     versioning: Option<&'static str>,
     objects: BTreeMap<String, Vec<Version>>, // newest last
     uploads: Vec<Upload>,
+    /// The bytes of parts uploaded to this server: (upload id, part number).
+    staged: BTreeMap<(String, u32), Vec<u8>>,
     lifecycle: Option<String>,
     synthetic: usize,
     created: Option<DateTime<Utc>>,
@@ -50,7 +52,13 @@ struct Bucket {
 struct State {
     buckets: BTreeMap<String, Bucket>,
     seq: u64,
+    /// Whether [`BUSY_ONCE`] has had its one refusal.
+    slowed: bool,
 }
+
+/// The one key the store is too busy for, once: the first write of it gets
+/// `503 SlowDown`, so that `sonde demo` has a retry to show.
+pub const BUSY_ONCE: &str = "tour/summary.json";
 
 fn synthetic_key(i: usize) -> String {
     format!(
@@ -385,6 +393,10 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
     if !st.buckets.contains_key(&bucket) {
         return err(404, "NoSuchBucket", "The specified bucket does not exist");
     }
+    if method == "PUT" && bucket == "demo" && key == BUSY_ONCE && !st.slowed {
+        st.slowed = true;
+        return err(503, "SlowDown", "Please reduce your request rate.");
+    }
     let seq_id = st.next();
     let b = st.buckets.get_mut(&bucket).unwrap();
     let now = Utc::now();
@@ -462,6 +474,18 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
         };
     }
     // object operations
+    if method == "POST" && q.contains_key("uploads") {
+        b.uploads.push(Upload {
+            key: key.clone(),
+            id: seq_id.clone(),
+            initiated: now,
+            parts: vec![],
+        });
+        return xml(format!(
+            "<InitiateMultipartUploadResult><Bucket>{bucket}</Bucket><Key>{}</Key><UploadId>{seq_id}</UploadId></InitiateMultipartUploadResult>",
+            esc(&key)
+        ));
+    }
     if let Some(up) = q.get("uploadId") {
         let Some(pos) = b.uploads.iter().position(|u| &u.id == up && u.key == key) else {
             return err(404, "NoSuchUpload", "The specified upload does not exist");
@@ -481,9 +505,58 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
             }
             "DELETE" => {
                 b.uploads.remove(pos);
+                b.staged.retain(|(id, _), _| id != up);
                 (204, vec![], vec![])
             }
-            _ => err(501, "NotImplemented", "uploads are read-only in the demo"),
+            "PUT" => {
+                let Some(n) = q.get("partNumber").and_then(|n| n.parse::<u32>().ok()) else {
+                    return err(400, "InvalidArgument", "partNumber must be a number");
+                };
+                let e = etag(&body);
+                let u = &mut b.uploads[pos];
+                u.parts.retain(|(m, _)| *m != n);
+                u.parts.push((n, body.len() as u64));
+                u.parts.sort_unstable();
+                b.staged.insert((up.clone(), n), body);
+                (200, vec![("etag".into(), e)], vec![])
+            }
+            // the parts in order, whatever the request's list says: enough for a demo
+            "POST" => {
+                let u = b.uploads.remove(pos);
+                let mut data = Vec::new();
+                for (n, _) in &u.parts {
+                    match b.staged.remove(&(up.clone(), *n)) {
+                        Some(part) => data.extend(part),
+                        // a seeded upload's parts were never sent
+                        None => {
+                            b.uploads.insert(pos, u);
+                            return err(400, "InvalidPart", "a part of this upload has no data");
+                        }
+                    }
+                }
+                let id = if b.versioning == Some("Enabled") {
+                    seq_id
+                } else {
+                    "null".into()
+                };
+                let e = format!("\"{}-{}\"", etag(&data).trim_matches('"'), u.parts.len());
+                let vs = b.objects.entry(key.clone()).or_default();
+                if id == "null" {
+                    vs.retain(|v| v.id != "null");
+                }
+                vs.push(Version {
+                    id,
+                    data: Some(data),
+                    time: now,
+                    class: "STANDARD",
+                });
+                xml(format!(
+                    "<CompleteMultipartUploadResult><Bucket>{bucket}</Bucket><Key>{}</Key><ETag>{}</ETag></CompleteMultipartUploadResult>",
+                    esc(&key),
+                    esc(&e)
+                ))
+            }
+            _ => err(501, "NotImplemented", "not in the demo server"),
         };
     }
     match method {

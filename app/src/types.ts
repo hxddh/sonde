@@ -293,6 +293,8 @@ export interface Slice {
 }
 
 export interface DuReport {
+  /** Why old versions were not counted (the key may not list versions); their figures are then unknown, not 0. */
+  versionsUnknown?: string | null;
   endpoint: string;
   bucket: string;
   prefix: string;
@@ -463,7 +465,7 @@ export interface Phrase {
 
 export interface Episode {
   kind: "request" | "multipart" | "retry" | "probe" | "listing" | "step";
-  format: "SlateDB" | "Iceberg" | "Delta" | null;
+  format: "SlateDB" | "Iceberg" | "Delta" | "Lance" | null;
   title: string;
   start: string;
   end: string;
@@ -561,7 +563,7 @@ export interface Profile {
   timed?: boolean;
   cost: { writes: number; reads: number; free: number; amount: number; currency: string };
   prices: { per1000Writes: number; per1000Reads: number; currency: string };
-  prefixes: { prefix: string; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number; cost?: number }[];
+  prefixes: { prefix: string; /** Folders under it shown with it (absent: this folder alone). */ folders?: number; requests: number; reads: number; writes: number; errors: number; peakPerSecond: number; peakReads: number; peakWrites: number; cost?: number }[];
   heat: { prefix: number; bin: number; n: number }[];
   flows: { source: string; target: string; value: number }[];
   /** Requests that each waited for the one before, longest first. */
@@ -638,9 +640,35 @@ export interface CodeChange {
 }
 
 /** A program over its runs, its baseline and this run checked against it. */
+/** What one fault scenario did to a program (`sonde run --trial`). */
+export interface Trial {
+  scenario: string;
+  about: string;
+  standing: "survived" | "degraded" | "broke" | "untested";
+  exit: number;
+  cleanExit: number;
+  faults: number;
+  retried: number;
+  droppedReads: number;
+  droppedWrites: number;
+  attempts: number;
+  /** The waits before a retry: shortest, median, longest (ms). */
+  backoffMs?: [number, number, number];
+  jitter: boolean;
+  requests: number;
+  cleanRequests: number;
+  leftUploads: number;
+  wroteTwice: number;
+  reasons: string[];
+  /** The trial's own session. */
+  session?: string;
+}
+
 export interface ProgramHistory {
   program: string;
   runs: RunPoint[];
+  /** The run under fault scenarios, when it was tried. */
+  trials?: Trial[];
   /** Each run's commit, as `runs`. */
   commits?: (GitStamp | null)[];
   since?: Since | null;

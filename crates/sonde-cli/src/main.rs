@@ -18,15 +18,15 @@ mod output;
 
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "sonde", version, about = "Diagnose S3 and S3-compatible object storage", long_about = None)]
+#[command(name = "sonde", version, about = "See what your software does to S3: its requests recorded, read as operations, replayed elsewhere", long_about = None)]
 pub struct Cli {
     /// Configuration directory (default: $SONDE_CONFIG_DIR or the platform's).
     #[arg(long, global = true, env = "SONDE_CONFIG_DIR")]
     config_dir: Option<std::path::PathBuf>,
-    /// Data directory (request log, scans, probe runs, audit log).
+    /// Data directory (sessions, request log, scans, probe runs, audit log).
     #[arg(long, global = true, env = "SONDE_DATA_DIR")]
     data_dir: Option<std::path::PathBuf>,
     /// Use an endpoint not in the configuration: its URL (credentials from the AWS default chain).
@@ -60,7 +60,7 @@ enum Command {
     Demo(cmd::record::DemoArgs),
     /// Run a command with its S3 requests recorded: sonde run -- <command>.
     Run(cmd::record::RunArgs),
-    /// A local S3 endpoint that records what talks to it.
+    /// A local S3 endpoint that records what talks to it: each request as it arrives, one session, its summary at Ctrl-C.
     Proxy(cmd::record::ProxyArgs),
     /// The recorded sessions, newest first; prune old ones.
     Sessions(cmd::sessions::SessionsArgs),
@@ -88,13 +88,65 @@ enum Command {
     Mpu(cmd::mpu::MpuArgs),
     /// Capacity breakdown: why is this bucket so big?
     Du(cmd::du::DuArgs),
-    /// Storage layout lenses (SlateDB, Iceberg, lakeFS, Woodpecker, cadence).
+    /// What a prefix holds, decoded: SlateDB, Iceberg, lakeFS, Woodpecker, turbopuffer, WarpStream, or any prefix's write cadence.
     Layout(cmd::layout::LayoutArgs),
     /// Configured endpoints.
     Endpoints(cmd::endpoints::EndpointArgs),
     /// The terminal UI.
     #[cfg(feature = "tui")]
     Tui(cmd::tui::TuiArgs),
+}
+
+/// The commands as `sonde --help` lists them: by what they are for, not in
+/// one list of eighteen.
+const GROUPS: &[(&str, &[&str])] = &[
+    ("Record", &["demo", "run", "proxy", "watch", "import"]),
+    (
+        "Read a session",
+        &["sessions", "show", "compare", "check", "share", "export"],
+    ),
+    ("Replay on another store", &["replay", "diff"]),
+    (
+        "The store itself",
+        &["probe", "mpu", "du", "layout", "endpoints"],
+    ),
+    ("More", &["tui"]),
+];
+
+/// The top-level command with its help grouped. Each line is the command's
+/// own (its doc comment), so the two cannot drift; a command no group names
+/// is listed under the last.
+fn grouped(cmd: clap::Command) -> clap::Command {
+    let about = |c: &clap::Command| c.get_about().map(|a| a.to_string()).unwrap_or_default();
+    let mut named: Vec<(String, String)> = cmd
+        .get_subcommands()
+        .filter(|c| !c.is_hide_set())
+        .map(|c| (c.get_name().to_string(), about(c)))
+        .collect();
+    let width = named.iter().map(|(n, _)| n.len()).max().unwrap_or(0).max(4);
+    let mut help = String::from("{about-with-newline}\n{usage-heading} {usage}\n");
+    for (i, (heading, names)) in GROUPS.iter().enumerate() {
+        let mut lines: Vec<(String, String)> = names
+            .iter()
+            .filter_map(|n| {
+                let at = named.iter().position(|(name, _)| name == n)?;
+                Some(named.remove(at))
+            })
+            .collect();
+        if i + 1 == GROUPS.len() {
+            lines.append(&mut named);
+            lines.push((
+                "help".into(),
+                "Print this message or the help of a command: sonde help run".into(),
+            ));
+        }
+        help.push_str(&format!("\n{heading}:\n"));
+        for (name, about) in lines {
+            help.push_str(&format!("  {name:<width$}  {about}\n"));
+        }
+    }
+    help.push_str("\nOptions:\n{options}");
+    cmd.help_template(help)
 }
 
 fn main() -> ExitCode {
@@ -113,7 +165,10 @@ fn main() -> ExitCode {
         previous(info);
     }));
     // a mistake in the command is a usage error (64), as docs/cli.md says; help and --version are not
-    let cli = match Cli::try_parse() {
+    let parsed = grouped(Cli::command())
+        .try_get_matches()
+        .and_then(|m| Cli::from_arg_matches(&m));
+    let cli = match parsed {
         Ok(c) => c,
         Err(e) => {
             let _ = e.print();
@@ -206,4 +261,30 @@ fn main() -> ExitCode {
         0..=255 => code as u8,
         _ => 1,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_command_is_in_one_group_of_the_help() {
+        let cmd = Cli::command();
+        let grouped: Vec<&str> = GROUPS.iter().flat_map(|(_, n)| n.iter().copied()).collect();
+        for c in cmd.get_subcommands().filter(|c| !c.is_hide_set()) {
+            assert_eq!(
+                grouped.iter().filter(|n| **n == c.get_name()).count(),
+                1,
+                "{} is in no group, or in two",
+                c.get_name()
+            );
+        }
+        // and no group names a command that is gone (tui is there by feature)
+        for name in grouped.iter().filter(|n| **n != "tui") {
+            assert!(
+                cmd.get_subcommands().any(|c| c.get_name() == *name),
+                "{name} is no command"
+            );
+        }
+    }
 }

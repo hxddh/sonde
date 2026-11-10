@@ -34,6 +34,12 @@ pub struct SessionHeader {
     /// repository (or CI says): a run is tied to the change that made it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<GitStamp>,
+    /// The fault scenario the run was put through (a trial), and the file
+    /// name of the clean run it is a trial of.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenario: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial_of: Option<String>,
 }
 
 /// The commit a run's code was at.
@@ -104,6 +110,8 @@ impl SessionHeader {
             command,
             cwd: None,
             git: None,
+            scenario: None,
+            trial_of: None,
         }
     }
 

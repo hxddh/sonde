@@ -73,6 +73,9 @@ impl Probe for Single {
         let (good, head, bad) = (s.at("good"), s.at("head"), s.at("bad"));
         let expected = s.at("expected").body;
         let h = self.0.header();
+        if let Some(j) = super::write_refused(s, &["good"]) {
+            return j;
+        }
         if !good.ok() {
             return if good.status == Some(400) || good.not_implemented() {
                 Judgement::new(
@@ -228,8 +231,14 @@ impl Probe for Multipart {
         let (create, complete, head) = (s.at("create"), s.at("complete"), s.at("head"));
         let expected = s.at("expected").body;
         let h = self.alg.header();
-        if !create.ok() || !complete.ok() {
-            let failing = if !create.ok() { create } else { complete };
+        // the upload and its parts are what the checksum is read from
+        let failing = [create, s.at("part-1"), s.at("part-2"), complete]
+            .into_iter()
+            .find(|x| !x.ok());
+        if let Some(failing) = failing {
+            if let Some(j) = super::write_refused(s, &[failing.label.as_str()]) {
+                return j;
+            }
             return if failing.status == Some(400) || failing.not_implemented() {
                 Judgement::new(
                     Verdict::Unsupported,
@@ -319,6 +328,9 @@ impl Probe for Trailing {
     fn judge(&self, s: &Steps) -> Judgement {
         let (put, head) = (s.at("put"), s.at("head"));
         let expected = s.at("expected").body;
+        if let Some(j) = super::write_refused(s, &["put"]) {
+            return j;
+        }
         if !put.ok() {
             return if put.not_implemented() || put.status == Some(400) || put.status == Some(403) {
                 Judgement::new(

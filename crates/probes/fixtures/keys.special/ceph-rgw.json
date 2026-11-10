@@ -1,8 +1,8 @@
 {
   "probe": "keys.special",
   "vendor": "ceph-rgw",
-  "expect": "differs",
-  "note": "",
+  "expect": "error",
+  "note": "put-8/9 and get-8/9 as 14.0 records them: sonde refuses dot-segment keys itself (they were 403 SignatureDoesNotMatch, sonde's own doing)",
   "steps": [
     {
       "label": "put-0",
@@ -310,70 +310,34 @@
     },
     {
       "label": "put-8",
-      "status": 403,
-      "code": "SignatureDoesNotMatch",
-      "headers": [
-        [
-          "content-length",
-          "194"
-        ],
-        [
-          "content-type",
-          "application/xml"
-        ]
-      ],
-      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><RequestId>tx000000000000000000558-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "a key with a . or .. segment cannot be sent correctly: sonde's HTTP library collapses such segments, so the request would reach another object. Nothing was sent.",
       "recordId": null
     },
     {
       "label": "get-8",
-      "status": 403,
-      "code": "SignatureDoesNotMatch",
-      "headers": [
-        [
-          "content-length",
-          "194"
-        ],
-        [
-          "content-type",
-          "application/xml"
-        ]
-      ],
-      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><RequestId>tx000000000000000000559-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "a key with a . or .. segment cannot be sent correctly: sonde's HTTP library collapses such segments, so the request would reach another object. Nothing was sent.",
       "recordId": null
     },
     {
       "label": "put-9",
-      "status": 403,
-      "code": "SignatureDoesNotMatch",
-      "headers": [
-        [
-          "content-length",
-          "194"
-        ],
-        [
-          "content-type",
-          "application/xml"
-        ]
-      ],
-      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><RequestId>tx00000000000000000055a-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "a key with a . or .. segment cannot be sent correctly: sonde's HTTP library collapses such segments, so the request would reach another object. Nothing was sent.",
       "recordId": null
     },
     {
       "label": "get-9",
-      "status": 403,
-      "code": "SignatureDoesNotMatch",
-      "headers": [
-        [
-          "content-length",
-          "194"
-        ],
-        [
-          "content-type",
-          "application/xml"
-        ]
-      ],
-      "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>SignatureDoesNotMatch</Code><RequestId>tx00000000000000000055b-006aedee7f-100e-default</RequestId><HostId>100e-default-default</HostId></Error>",
+      "status": null,
+      "code": null,
+      "headers": [],
+      "body": "a key with a . or .. segment cannot be sent correctly: sonde's HTTP library collapses such segments, so the request would reach another object. Nothing was sent.",
       "recordId": null
     },
     {

@@ -645,6 +645,11 @@ fn every_way_of_writing_this_machine_is_this_machine() {
 /// An upstream that answers every request with `pieces` bytes, one every
 /// `gap`, after the headers.
 async fn dripping(pieces: usize, gap: std::time::Duration) -> String {
+    dripping_after(0, pieces, gap).await
+}
+
+/// [`dripping`], with the first `at_once` bytes sent with the headers.
+async fn dripping_after(at_once: usize, pieces: usize, gap: std::time::Duration) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -660,7 +665,11 @@ async fn dripping(pieces: usize, gap: std::time::Duration) -> String {
                         _ => return,
                     }
                 }
-                let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {pieces}\r\n\r\n");
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{}",
+                    at_once + pieces,
+                    "x".repeat(at_once)
+                );
                 let _ = s.write_all(head.as_bytes()).await;
                 for _ in 0..pieces {
                     tokio::time::sleep(gap).await;
@@ -720,12 +729,33 @@ async fn a_body_that_takes_longer_than_the_timeout_but_keeps_moving_goes_through
 #[tokio::test]
 async fn a_body_that_stops_moving_is_cut_after_the_timeout() {
     use std::time::Duration;
-    let url = dripping(2, Duration::from_secs(30)).await;
+    // one byte at once, the next never (in this test's time)
+    let url = dripping_after(1, 2, Duration::from_secs(30)).await;
     let started = std::time::Instant::now();
-    let (_proxy, _log, resp) = get_with_timeout(&url, Duration::from_millis(300)).await;
+    let (_proxy, log, resp) = get_with_timeout(&url, Duration::from_millis(300)).await;
     assert_eq!(resp.status(), 200);
     assert!(resp.bytes().await.is_err());
     assert!(started.elapsed() < Duration::from_secs(10));
+    // the record is not a clean 200 of one byte: it says the body was cut, and where
+    let mut records = log.snapshot();
+    for _ in 0..40 {
+        if !records.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        records = log.snapshot();
+    }
+    let r = records.first().expect("the request is recorded");
+    assert_eq!((r.status, r.response_bytes), (Some(200), Some(1)));
+    let why = r
+        .transport_error
+        .as_deref()
+        .expect("a cut body is an error");
+    assert!(
+        why.starts_with("the response body was cut after 1 byte: ")
+            && why.contains("stopped moving for 0.3 s"),
+        "{why}"
+    );
 }
 
 #[tokio::test]
@@ -834,4 +864,76 @@ async fn a_request_in_flight_when_the_proxy_stops_is_still_recorded() {
     assert_eq!(reading.await.unwrap().unwrap(), 6);
     // and nothing new is taken
     assert!(reqwest::get(proxy.url()).await.is_err());
+}
+
+async fn setup_faults(scenario: &str) -> (Proxy, S3Client, RequestLog, Arc<Upstream>) {
+    let (url, up) = upstream().await;
+    let log = RequestLog::default();
+    let target = client(&url, REAL_KEY, REAL_SECRET, RequestLog::default());
+    let faults = sonde_proxy::fault::Faults::new(&sonde_proxy::fault::scenario(scenario).unwrap());
+    let proxy = Proxy::start(
+        target,
+        log.clone(),
+        ProxyConfig {
+            faults: Some(Arc::new(faults)),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let cfg = ClientConfig::new("app", &proxy.url(), "us-east-1").unwrap();
+    let (key, secret) = proxy.client_keys();
+    let app = S3Client::new(
+        cfg,
+        Arc::new(StaticProvider(Some(Credentials::new(key, secret, None)))),
+        RequestLog::default(),
+    )
+    .unwrap();
+    (proxy, app, log, up)
+}
+
+fn put(key: &str) -> S3Request {
+    S3Request::new("PutObject", http::Method::PUT)
+        .bucket("data")
+        .key(key)
+        .body(Body::from("payload"))
+        .no_retry()
+}
+
+#[tokio::test]
+async fn a_fault_is_answered_without_the_store_and_the_retry_goes_through() {
+    let (_proxy, app, log, up) = setup_faults("slowdown").await;
+    let r = app.send_raw(put("k")).await.unwrap();
+    assert_eq!(r.status, 503);
+    assert!(r.text().contains("<Code>SlowDown</Code>"), "{}", r.text());
+    assert!(up.calls.lock().is_empty(), "the store never saw it");
+    let r = app.send_raw(put("k")).await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(up.calls.lock().len(), 1);
+    let recs = log.list(&reqlog::Filter::default(), 10);
+    let injected: Vec<_> = recs.iter().filter(|r| r.injected.is_some()).collect();
+    assert_eq!(injected.len(), 1);
+    assert_eq!(injected[0].status, Some(503));
+    assert_eq!(injected[0].injected.as_deref(), Some("slowdown"));
+}
+
+#[tokio::test]
+async fn a_lost_answer_is_a_write_the_store_made_and_the_program_was_not_told() {
+    let (_proxy, app, log, up) = setup_faults("lost-answer").await;
+    let r = app.send_raw(put("k")).await.unwrap();
+    assert_eq!(r.status, 500);
+    assert_eq!(up.calls.lock().len(), 1, "the store took the write");
+    let rec = &log.list(&reqlog::Filter::default(), 1)[0];
+    assert_eq!(rec.injected.as_deref(), Some("lost-answer"));
+    assert!(
+        rec.response_headers
+            .iter()
+            .any(|h| h.name == "x-sonde-store-status" && h.value == "200")
+    );
+    // reads are not writes: untouched
+    let get = S3Request::new("GetObject", http::Method::GET)
+        .bucket("data")
+        .key("k")
+        .no_retry();
+    assert_eq!(app.send_raw(get).await.unwrap().status, 200);
 }

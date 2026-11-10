@@ -6,10 +6,10 @@ import { announce, batch, effect, lifecycle, Notifications, platform, signal, St
 import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { area, compareOnOpen, endpoint, go, notify, openSession, report, sessionsChanged } from "./store";
+import { area, compareOnOpen, endpoint, go, notify, openSession, report, sessionsChanged, wasRead } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
-import { programOf } from "./ui/sessionview";
+import { programOf, scrubCommand } from "./ui/sessionview";
 import type { Policy } from "./ui/session";
 import { toast } from "./ui/toast";
 
@@ -79,7 +79,7 @@ if (isAvailable && platform.idiom !== "terminal") {
     const ep = endpoint();
     if (!last || !ep) return notify(t("run.shortcutNothing"), { kind: "warning" });
     start(last, ep);
-    announce(t("run.shortcutStarted", { command: last }));
+    announce(t("run.shortcutStarted", { command: scrubCommand(last) }));
   }).catch(() => false);
 }
 
@@ -124,8 +124,8 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
       let keep = false;
       toast({ id: "run-empty", kind: "info", title: t("run.emptyNotKept"), action: t("run.keepEmpty"), onAction: () => (keep = true), duration: 8000 });
       setTimeout(() => {
-        // kept, or opened meanwhile: never removed under its reader
-        if (keep || kept.has(r.path)) return;
+        // kept, or opened meanwhile by any way in: never removed under its reader
+        if (keep || wasRead(r.path)) return;
         void api.sessions
           .remove(r.path)
           .then(() => {
@@ -142,7 +142,7 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
     }
     const warnings = v.observations.filter((o) => o.level === "warn").length;
     const body = [t("run.bandRequests", { n: v.summary.requests }), t("figure.operationsN", { n: v.episodes.length }), ...(warnings ? [t("run.toLook", { n: warnings })] : [])].join(" · ");
-    const title = killed ? t("run.toastStopped", { command: programOf(cmd) ?? cmd }) : t("run.toastEnded", { command: programOf(cmd) ?? cmd, code: String(r.exit ?? "?") });
+    const title = killed ? t("run.toastStopped", { command: programOf(cmd) ?? scrubCommand(cmd) }) : t("run.toastEnded", { command: programOf(cmd) ?? scrubCommand(cmd), code: String(r.exit ?? "?") });
     // read out to a screen reader wherever the focus is
     announce(`${title}. ${body}`);
     // on Run the band says it; elsewhere a toast does
@@ -174,7 +174,7 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
     // asked for when the run began (something the user did), not now
     if ((await Notifications.permission()) !== "granted") return;
     // the session in the id: pressed after the app was quit, it still opens that run
-    await Notifications.show({ id: `${NOTIFY}${r.path}`, title: t("run.notifyTitle", { command: programOf(cmd) ?? cmd }), body });
+    await Notifications.show({ id: `${NOTIFY}${r.path}`, title: t("run.notifyTitle", { command: programOf(cmd) ?? scrubCommand(cmd) }), body });
     if (lifecycle() === "active") await Notifications.setBadge(0).catch(() => {});
   } catch {
     // no notifications here (a terminal, an unbundled app): the screen says it
@@ -195,8 +195,6 @@ export function runAgain(path: string, cmd: string, endpoint: string, dir?: stri
   if (start(cmd, endpoint)) againOf = path;
 }
 let againOf: string | null = null;
-/** Runs that made no request and were opened all the same: they stay. */
-const kept = new Set<string>();
 
 /** Starts it; whether it started. */
 export function start(cmd: string, endpoint: string): boolean {
@@ -262,7 +260,6 @@ export function input(data: string) {
 export function openLastRun(go: (s: "sessions") => void) {
   const r = lastRun();
   if (!r || r.removed) return;
-  kept.add(r.path);
   openSession.set(r.path);
   go("sessions");
 }

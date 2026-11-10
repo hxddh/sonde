@@ -7,11 +7,11 @@
 
 import { batch, effect, Scroll, signal, Text, untracked, View } from "nsh";
 import { t } from "../i18n";
-import { ms } from "../format";
+import { count, ms } from "../format";
 import type { SessionView } from "../types";
 import { Button, Notice, Options, terminal } from "./kit";
 import { findingMarks } from "./sessionview";
-import { Chains, Chart, Distribution, timed, Flows, Heat, KindsOverTime, Lanes, offset, PrefixMeasure, type PrefixMeasureKind, PrefixUse, Pressure, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
+import { Chains, Chart, Distribution, timed, Flows, Heat, KindsOverTime, Lanes, offset, PrefixMeasure, type PrefixMeasureKind, PrefixUse, Pressure, requestsOf, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
 
 /** The Time pane of a session. */
 export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void }) {
@@ -20,10 +20,11 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
   const zoomFrom = signal<number | null>(null);
   const zoom = signal<[number, number] | null>(null);
   const pick = (i: number | null) => {
-    // pressing the first slice again lets it go
+    // pressing the first slice again lets it go: a stretch is two slices at least
+    // (one slice is no shape over time: the timeline and the charts would have nothing to draw)
     if (i === null) return zoomFrom.set(null);
     const from = zoomFrom();
-    if (from === i && !zoom()) return zoomFrom.set(null);
+    if (from === i) return zoomFrom.set(null);
     if (from === null) return zoomFrom.set(i);
     batch(() => {
       zoom.set([Math.min(from, i), Math.max(from, i)]);
@@ -85,7 +86,8 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
           <Chart
             class={half}
             title={t("scatter.title")}
-            text={scatterBy() === "kinds" ? t("kinds.title") : t("scatter.text", { n: shown(), p95: ms(p().p95Ms ?? 0) })}
+            // above what a session keeps of its requests, the dots are of a sample: said
+            text={scatterBy() === "kinds" ? t("kinds.title") : `${t("scatter.text", { n: shown(), p95: ms(p().p95Ms ?? 0) })}${p().samples.length < requestsOf(p()) ? ` · ${t("plots.sampled", { n: count(p().samples.length), of: count(requestsOf(p())) })}` : ""}`}
             action={<Options testID="scatter-by" value={scatterBy()} items={[{ value: "time", title: t("scatter.byTime") }, { value: "size", title: t("scatter.bySize") }, ...((p().groupRate?.length ?? 0) > 0 ? [{ value: "kinds", title: t("scatter.byKind") }] : [])]} onChange={(v) => scatterBy.set(v as "time" | "size" | "kinds")} />}
           >
             {/* every request, or the busiest kinds each over time (their median to p95) */}
@@ -137,7 +139,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
         </If>
         <If when={p().heat?.length}>
           <Chart class={half} title={t("heat.title")} text={t("heat.hint")}>
-            <Heat profile={p()} />
+            <Heat profile={p()} range={zoom()} />
           </Chart>
         </If>
       </View>

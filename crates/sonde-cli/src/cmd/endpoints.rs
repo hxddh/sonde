@@ -40,6 +40,17 @@ enum EndpointAction {
 }
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<i32> {
+    let (command, writes): (_, &[Format]) = match &a.action {
+        EndpointAction::List => ("endpoints list", &[Format::Table, Format::Json]),
+        EndpointAction::Test { .. } => ("endpoints test", &[Format::Table, Format::Json]),
+        // these say what they did on stderr: there is nothing to format
+        EndpointAction::Add { .. } => ("endpoints add", &[Format::Table]),
+        EndpointAction::Import { .. } => ("endpoints import", &[Format::Table]),
+    };
+    if let Some(why) = output::unsupported(a.format, command, writes) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     match &a.action {
         EndpointAction::Add {
             id,

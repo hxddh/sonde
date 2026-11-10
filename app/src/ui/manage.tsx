@@ -18,12 +18,18 @@ export const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
 /** What a session is called: the user's title, else its program, else its endpoint. */
 export const sessionName = (s: Pick<SessionInfo, "title" | "command" | "endpoint">) => s.title || programOf(s.command) || s.endpoint;
 
-/** The session being renamed, while the dialog is open. */
-const renaming = signal<SessionInfo | null>(null);
-export const rename = (s: SessionInfo) => renaming.set(s);
+/** The session being renamed, while the dialog is open, and the window that
+ * asked (a session's own window, by its path; null: the main window). */
+const asked = signal<{ session: SessionInfo; window: string | null } | null>(null);
+export const rename = (s: SessionInfo, window: string | null = null) => asked.set({ session: s, window });
 
-/** The dialog that gives a session a title (an empty one takes it away). */
-export function RenameDialog() {
+/** The dialog that gives a session a title (an empty one takes it away):
+ * one per window, open only in the window that asked. */
+export function RenameDialog(props: { window?: string }) {
+  const renaming = () => {
+    const a = asked();
+    return a && a.window === (props.window ?? null) ? a.session : null;
+  };
   const draft = signal("");
   // each opening starts from the title the user gave (none: empty, the
   // program's name as the placeholder), so Save unchanged changes nothing
@@ -37,18 +43,18 @@ export function RenameDialog() {
     try {
       // an empty title takes the user's away: the session is called by its program again
       api.sessions.rename(s.path, draft().trim());
-      renaming.set(null);
+      asked.set(null);
       sessionsChanged();
     } catch (e) {
       report(e);
     }
   };
   return (
-    <Modal open={renaming() !== null} onClose={() => renaming.set(null)} size="narrow" testID="rename-dialog">
+    <Modal open={renaming() !== null} onClose={() => asked.set(null)} size="narrow" testID="rename-dialog">
       <Title>{t("sessions.renameTitle")}</Title>
       <Field label={t("sessions.renameLabel")} value={draft()} onChange={(v) => draft.set(v)} onSubmit={save} placeholder={renaming() ? (programOf(renaming()!.command) ?? renaming()!.endpoint) : ""} testID="rename-input" />
       <Actions>
-        <Button variant="ghost" label={t("common.cancel")} onPress={() => renaming.set(null)} />
+        <Button variant="ghost" label={t("common.cancel")} onPress={() => asked.set(null)} />
         <Button variant="primary" label={t("common.save")} onPress={save} testID="rename-save" />
       </Actions>
     </Modal>

@@ -121,7 +121,9 @@ impl JobCtx {
     }
 }
 
-/// Jobs over that are kept (with their results) for views to read.
+/// Jobs over that are kept (with their results) for views to read, of each
+/// kind: a view reads its job's result by id long after it ended (a
+/// layout's time slider), and a hundred downloads since must not take it.
 pub const KEEP_FINISHED: usize = 100;
 
 /// All jobs of the process.
@@ -263,7 +265,7 @@ impl JobManager {
                 Err(S3Error::config(format!("the job panicked: {what}")))
             });
             jobs.finish(&job_id, outcome);
-            // results are big (reports, layouts, probe runs): keep the newest
+            // results are big (reports, layouts, probe runs): keep the newest of each kind
             jobs.prune(KEEP_FINISHED);
         });
         id
@@ -370,17 +372,22 @@ impl JobManager {
         }
     }
 
-    /// Drops finished jobs but the `keep` that ended last.
+    /// Drops finished jobs but, of each kind, the `keep` that ended last:
+    /// many jobs of one kind (downloads) never push out another kind's
+    /// result (a layout a screen still reads by its job's id).
     pub fn prune(&self, keep: usize) {
         let mut g = self.inner.lock();
-        let mut done: Vec<(String, DateTime<Utc>)> = g
-            .values()
-            .filter(|e| e.info.state != JobState::Running)
-            .map(|e| (e.info.id.clone(), e.info.ended.unwrap_or(e.info.started)))
-            .collect();
-        done.sort_by_key(|d| std::cmp::Reverse(d.1));
-        for (id, _) in done.into_iter().skip(keep) {
-            g.remove(&id);
+        let mut done: HashMap<String, Vec<(String, DateTime<Utc>)>> = HashMap::new();
+        for e in g.values().filter(|e| e.info.state != JobState::Running) {
+            done.entry(e.info.kind.clone())
+                .or_default()
+                .push((e.info.id.clone(), e.info.ended.unwrap_or(e.info.started)));
+        }
+        for mut of_kind in done.into_values() {
+            of_kind.sort_by_key(|d| std::cmp::Reverse(d.1));
+            for (id, _) in of_kind.into_iter().skip(keep) {
+                g.remove(&id);
+            }
         }
     }
 }
@@ -493,6 +500,27 @@ mod tests {
         assert_eq!(jobs.list().len(), KEEP_FINISHED);
         assert!(jobs.info(&ids[0]).is_none());
         assert!(jobs.info(ids.last().unwrap()).is_some());
+    }
+
+    #[tokio::test]
+    async fn many_jobs_of_one_kind_do_not_drop_a_result_of_another() {
+        let jobs = JobManager::new();
+        // a layout a screen keeps reading by its job's id
+        let layout = jobs.spawn("layout", "decode", 1, None, |_| async {
+            Ok(serde_json::json!({"snapshots": 3}))
+        });
+        jobs.wait(&layout).await.unwrap();
+        let mut downloads = Vec::new();
+        for _ in 0..KEEP_FINISHED + 5 {
+            let id = jobs.spawn("download", "get", 1, None, |_| async { Ok(Value::Null) });
+            jobs.wait(&id).await.unwrap();
+            downloads.push(id);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(jobs.result(&layout).unwrap()["snapshots"], 3);
+        // the downloads themselves are still bounded
+        assert!(jobs.info(&downloads[0]).is_none());
+        assert_eq!(jobs.list().len(), KEEP_FINISHED + 1);
     }
 
     #[tokio::test]

@@ -455,6 +455,34 @@ pub struct Verdict {
     pub ok: bool,
 }
 
+impl Verdict {
+    /// The row's name as it reads: `warnings` counts those the baseline did
+    /// not have, and a run with an old warning is not a run with none.
+    pub fn label(&self) -> &'static str {
+        match self.what {
+            "warnings" => "new warnings",
+            what => what,
+        }
+    }
+
+    /// By how much a failed row is over its limit: `+23%`, or the count
+    /// itself where the limit is none at all. None for a row that passed.
+    pub fn over(&self) -> Option<String> {
+        if self.ok {
+            return None;
+        }
+        if self.limit <= 0.0 {
+            return Some(format!("+{:.0}", self.value));
+        }
+        let pct = (self.value - self.limit) / self.limit * 100.0;
+        Some(if pct < 1.0 {
+            "+<1%".to_string()
+        } else {
+            format!("+{pct:.0}%")
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Check {
@@ -525,8 +553,14 @@ pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
             .max(base.requests as f64),
         // a run this short varies more than its tolerance: a few ms of slack
         waiting_ms: base.busy_ms * grow + 5.0,
-        // a free baseline (deletes only) still lets a run cost a hundredth of a cent
-        cost: (base.cost * grow).max(base.cost + 0.0001),
+        // a free baseline (deletes only) still lets a run cost a hundredth of a
+        // cent; one that cost anything is held to its percent, however small
+        // (the same floor on top was 100% of a run costing 0.0001)
+        cost: if base.cost > 0.0 {
+            base.cost * grow
+        } else {
+            0.0001
+        },
         errors: base.errors as f64,
     }
 }
@@ -731,8 +765,11 @@ pub fn check_markdown(
     for v in &c.verdicts {
         md.push_str(&format!(
             "| {} | {} | {} | ≤ {} | {} |\n",
-            if v.ok { "pass" } else { "**FAIL**" },
-            v.what,
+            match v.over() {
+                Some(over) => format!("**FAIL** {over}"),
+                None => "pass".to_string(),
+            },
+            v.label(),
             shown(v.what, v.value),
             shown(v.what, v.limit),
             v.against
@@ -1041,6 +1078,75 @@ mod tests {
         assert!(
             c.verdicts.iter().find(|v| v.what == "cost").unwrap().ok,
             "{c:#?}"
+        );
+    }
+
+    #[test]
+    fn a_small_cost_is_held_to_its_percent_and_a_failed_row_says_by_how_much() {
+        let base: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
+        let (mut pb, prb, ob) = point(&base);
+        // what a short run costs: a ten-thousandth
+        pb.cost = 0.0001;
+        pb.requests = 100;
+        let mut run = pb.clone();
+        run.cost = 0.00019;
+        run.requests = 123;
+        run.errors = 2;
+        let c = check(
+            (&run, &base, &prb, &ob),
+            Some((&pb, &base, &prb, &ob)),
+            &Budget {
+                max_requests: Some(100),
+                tolerance: Some(0.1),
+                ..Default::default()
+            },
+        );
+        let row = |what: &str, against: &str| {
+            c.verdicts
+                .iter()
+                .find(|v| v.what == what && v.against == against)
+                .unwrap()
+        };
+        let cost = row("cost", "baseline");
+        assert!(!cost.ok, "90% more is past 10%: {cost:?}");
+        assert!((cost.limit - 0.00011).abs() < 1e-9, "{cost:?}");
+        assert_eq!(cost.over().as_deref(), Some("+73%"));
+        assert_eq!(row("requests", "budget").over().as_deref(), Some("+23%"));
+        // no limit to be a percent of: the count
+        assert_eq!(row("errors", "baseline").over().as_deref(), Some("+2"));
+        assert_eq!(row("waiting", "baseline").over(), None, "it passed");
+        let md = check_markdown(&c, "USD", None, &[]);
+        assert!(
+            md.contains("| **FAIL** +23% | requests | 123 | ≤ 100 | budget |"),
+            "{md}"
+        );
+    }
+
+    #[test]
+    fn the_warnings_row_says_it_counts_the_new_ones() {
+        let quiet: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
+        // a run with a warning its baseline has too
+        let mut warned = quiet.clone();
+        let mut failed = rec(50, "k0");
+        failed.status = Some(503);
+        warned.push(failed);
+        warned.push(rec(51, "k0"));
+        let (p, pr, o) = point(&warned);
+        assert!(o.iter().any(|f| f.level == "warn"), "{o:#?}");
+        let c = check(
+            (&p, &warned, &pr, &o),
+            Some((&p, &warned, &pr, &o)),
+            &Budget {
+                no_new_warnings: true,
+                ..Default::default()
+            },
+        );
+        let row = c.verdicts.iter().find(|v| v.what == "warnings").unwrap();
+        assert_eq!((row.value, row.label()), (0.0, "new warnings"));
+        let md = check_markdown(&c, "USD", None, &o);
+        assert!(
+            md.contains("| pass | new warnings | 0 | ≤ 0 | baseline |"),
+            "{md}"
         );
     }
 

@@ -23,6 +23,7 @@ pub enum Format {
     SlateDB,
     Iceberg,
     Delta,
+    Lance,
 }
 
 impl Format {
@@ -31,6 +32,7 @@ impl Format {
             Format::SlateDB => "SlateDB",
             Format::Iceberg => "Iceberg",
             Format::Delta => "Delta",
+            Format::Lance => "Lance",
         }
     }
 }
@@ -52,6 +54,16 @@ pub enum Part {
     DeltaCheckpoint,
     DeltaLastCheckpoint,
     DeltaData,
+    /// A dataset's version: `_versions/<n>.manifest`, written if absent.
+    LanceManifest(u64),
+    /// What a commit did, written before its manifest: `_transactions/*.txn`.
+    LanceTransaction,
+    /// A fragment's file: `data/*.lance`.
+    LanceData,
+    /// An index's file: `_indices/<uuid>/…`.
+    LanceIndex,
+    /// Rows marked deleted in a fragment: `_deletions/*`.
+    LanceDeletion,
 }
 
 impl Part {
@@ -64,6 +76,9 @@ impl Part {
             IcebergMetadata(_) | IcebergVersionHint | IcebergManifestList | IcebergManifest
             | IcebergData => Format::Iceberg,
             DeltaCommit(_) | DeltaCheckpoint | DeltaLastCheckpoint | DeltaData => Format::Delta,
+            LanceManifest(_) | LanceTransaction | LanceData | LanceIndex | LanceDeletion => {
+                Format::Lance
+            }
         }
     }
 
@@ -81,6 +96,7 @@ impl Part {
                 | DeltaCommit(_)
                 | DeltaCheckpoint
                 | DeltaLastCheckpoint
+                | LanceManifest(_)
         )
     }
 }
@@ -91,11 +107,17 @@ fn digits(s: &str, n: usize) -> Option<u64> {
         .flatten()
 }
 
-/// The format part a key names, from its last two path segments.
+/// The format part a key names, from its last two path segments. A data
+/// file's name is only a guess: [`episodes`] takes it when the session also
+/// touched that table's log.
 pub fn part_of(key: &str) -> Option<Part> {
     let mut segs = key.rsplit('/');
     let name = segs.next()?;
     let dir = segs.next().unwrap_or("");
+    // an index's files are a folder deeper: _indices/<uuid>/<file>
+    if segs.next() == Some("_indices") {
+        return Some(Part::LanceIndex);
+    }
     let stem = |ext: &str| name.strip_suffix(ext);
     match dir {
         "manifest" => stem(".manifest")
@@ -107,6 +129,19 @@ pub fn part_of(key: &str) -> Option<Part> {
             .and_then(|s| digits(s, 20))
             .map(Part::SlateCompactions),
         "gc" if name.ends_with(".boundary") => Some(Part::SlateGcBoundary),
+        // newer datasets name a version by what is left to u64's end, so the
+        // newest lists first; older ones by the version itself
+        "_versions" => stem(".manifest").and_then(|s| {
+            digits(s, 20)
+                .map(|n| u64::MAX - n)
+                .or_else(|| s.parse().ok())
+                .map(Part::LanceManifest)
+        }),
+        "_transactions" if name.ends_with(".txn") => Some(Part::LanceTransaction),
+        "_deletions" if name.ends_with(".arrow") || name.ends_with(".bin") => {
+            Some(Part::LanceDeletion)
+        }
+        "data" if name.ends_with(".lance") => Some(Part::LanceData),
         "_delta_log" => {
             if let Some(n) = stem(".json").and_then(|s| digits(s, 20)) {
                 Some(Part::DeltaCommit(n))
@@ -162,19 +197,109 @@ pub fn listed_format(prefix: &str) -> Option<(Format, &str)> {
         "manifest" | "wal" | "compacted" | "compactions" | "checkpoints" => Format::SlateDB,
         "_delta_log" => Format::Delta,
         "metadata" => Format::Iceberg,
+        "_versions" | "_transactions" | "_indices" | "_deletions" => Format::Lance,
         _ => return None,
     };
     Some((f, dir))
 }
 
-/// The format of a request: from its key, or from a listing's prefix.
-fn format_of(r: &Record) -> Option<Format> {
-    match r.key.as_deref().and_then(part_of) {
-        Some(p) => Some(p.format()),
-        None if r.operation.starts_with("ListObjects") => {
-            listed_format(query(r, "prefix").unwrap_or("")).map(|(f, _)| f)
+/// The tables a session touched the log of: a `_delta_log/` key or listing
+/// (Delta), a `metadata/` file or listing (Iceberg). A Parquet file's name
+/// alone says nothing: Spark, Hive, Hudi and DuckDB write `part-*.parquet`
+/// and `…/data/*.parquet` too.
+#[derive(Default)]
+struct Tables {
+    /// (bucket, format, the table's root with its trailing slash; empty at the bucket's root)
+    roots: Vec<(Option<String>, Format, String)>,
+}
+
+/// The table root a log key or log listing names: what precedes `/<dir>/`.
+fn root_before(path: &str, dir: &str) -> Option<String> {
+    if path == dir || path.starts_with(&format!("{dir}/")) {
+        return Some(String::new());
+    }
+    let at = path.find(&format!("/{dir}/")).or_else(|| {
+        path.ends_with(&format!("/{dir}"))
+            .then(|| path.len() - dir.len() - 1)
+    })?;
+    Some(path[..=at].to_string())
+}
+
+impl Tables {
+    fn of(records: &[&Record]) -> Self {
+        let mut roots = Vec::new();
+        for r in records {
+            let listed = r
+                .operation
+                .starts_with("ListObjects")
+                .then(|| query(r, "prefix").unwrap_or("").trim_end_matches('/'));
+            let Some(path) = r.key.as_deref().or(listed) else {
+                continue;
+            };
+            let part = part_of(path);
+            if matches!(part, Some(Part::IcebergData | Part::DeltaData)) {
+                continue;
+            }
+            // a listing of the directory itself has no part, a key in it does
+            let format = match (&part, listed) {
+                (Some(p), _) => Some(p.format()),
+                (None, Some(prefix)) => listed_format(prefix).map(|(f, _)| f),
+                (None, None) => None,
+            };
+            let dir = match format {
+                Some(Format::Delta) => "_delta_log",
+                Some(Format::Iceberg) => "metadata",
+                _ => continue,
+            };
+            if let Some(root) = root_before(path, dir) {
+                let entry = (r.bucket.clone(), format.expect("matched above"), root);
+                if !roots.contains(&entry) {
+                    roots.push(entry);
+                }
+            }
         }
-        None => None,
+        Tables { roots }
+    }
+
+    /// Whether a data file's table was seen: its log under the same root.
+    fn backs(&self, bucket: &Option<String>, format: Format, key: &str) -> bool {
+        self.roots
+            .iter()
+            .any(|(b, f, root)| b == bucket && *f == format && key.starts_with(root.as_str()))
+    }
+
+    /// The part a request's key names, when the session gives a reason to
+    /// believe it: a data file counts only beside its table's log.
+    fn part(&self, r: &Record) -> Option<Part> {
+        let key = r.key.as_deref()?;
+        let part = part_of(key)?;
+        match part {
+            Part::IcebergData | Part::DeltaData if !self.backs(&r.bucket, part.format(), key) => {
+                None
+            }
+            _ => Some(part),
+        }
+    }
+
+    /// The format of a request: from its key, or from a listing's prefix.
+    fn format_of(&self, r: &Record) -> Option<Format> {
+        if r.key.is_some() {
+            return self.part(r).map(|p| p.format());
+        }
+        if !r.operation.starts_with("ListObjects") {
+            return None;
+        }
+        let prefix = query(r, "prefix").unwrap_or("");
+        let trimmed = prefix.trim_end_matches('/');
+        match part_of(trimmed) {
+            // a listing of a data file's path is of a table only when the table is
+            Some(p @ (Part::IcebergData | Part::DeltaData))
+                if !self.backs(&r.bucket, p.format(), trimmed) =>
+            {
+                None
+            }
+            _ => listed_format(prefix).map(|(f, _)| f),
+        }
     }
 }
 
@@ -385,9 +510,10 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     let mut out = Vec::new();
 
     // a completed multipart upload of a format's file is one write of it
-    let mut units = multipart(&sorted, &mut used, &mut out);
+    let tables = Tables::of(&sorted);
+    let mut units = multipart(&sorted, &tables, &mut used, &mut out);
     // a format's write retried is still that write: its attempts go with it to the step
-    units.extend(retries(&sorted, &mut used, &mut out));
+    units.extend(retries(&sorted, &tables, &mut used, &mut out));
 
     // what is left, in order: format steps, bursts of lookups, listings, single requests
     let mut items: Vec<Vec<&Record>> = units;
@@ -410,8 +536,8 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
         if !probe.is_empty() && (r.time - probe.last().unwrap().time).num_milliseconds() > BURST {
             out.extend(flush_probe(std::mem::take(&mut probe)));
         }
-        if let Some(f) = format_of(r) {
-            let part = r.key.as_deref().and_then(part_of);
+        if let Some(f) = tables.format_of(r) {
+            let part = tables.part(r);
             let pos = match buffers.iter().position(|(bf, _)| *bf == f) {
                 Some(p) => p,
                 None => {
@@ -563,6 +689,7 @@ fn flush_listing(rs: Vec<&Record>) -> Episode {
 /// writes of a step); every other upload is an episode.
 fn multipart<'a>(
     sorted: &[&'a Record],
+    tables: &Tables,
     used: &mut [bool],
     out: &mut Vec<Episode>,
 ) -> Vec<Vec<&'a Record>> {
@@ -645,7 +772,7 @@ fn multipart<'a>(
             .iter()
             .any(|r| r.operation == "CompleteMultipartUpload" && !r.is_error());
         let aborted = rs.iter().any(|r| r.operation == "AbortMultipartUpload");
-        let formatted = rs[0].key.as_deref().and_then(part_of).is_some();
+        let formatted = tables.part(rs[0]).is_some();
         if completed && formatted {
             let mut unit = rs;
             unit.sort_by_key(|r| (r.operation == "CompleteMultipartUpload", r.time, r.id));
@@ -686,6 +813,7 @@ fn retryable(r: &Record) -> bool {
 /// belongs to keeps it, attempts and all.
 fn retries<'a>(
     sorted: &[&'a Record],
+    tables: &Tables,
     used: &mut [bool],
     out: &mut Vec<Episode>,
 ) -> Vec<Vec<&'a Record>> {
@@ -720,7 +848,7 @@ fn retries<'a>(
             }
             let rs: Vec<&Record> = chain.iter().map(|&c| sorted[c]).collect();
             let last = *rs.last().expect("a chain has records");
-            if format_of(last).is_some() && is_write(last) && !retryable(last) {
+            if tables.format_of(last).is_some() && is_write(last) && !retryable(last) {
                 units.push(rs);
                 i += 1;
                 continue;
@@ -853,6 +981,7 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         (Part::DeltaCommit(n), _) => p("delta.commit", &[("n", n.to_string())]),
         (Part::DeltaCheckpoint, _) => p("delta.checkpoint", &[]),
         (Part::DeltaLastCheckpoint, _) => p("delta.last", &[]),
+        (Part::LanceManifest(v), _) => p("lance.commit", &[("v", v.to_string())]),
         _ => p(
             "step.other",
             &[
@@ -868,7 +997,45 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         .filter(|r| r.key.is_none())
         .filter_map(|r| listed_format(query(r, "prefix").unwrap_or("")).map(|(_, d)| d))
         .next();
-    if !files.is_empty() {
+    if f == Format::Lance {
+        // what the commit brought, by what its files are (the transaction
+        // file says it too, but its body is not kept)
+        let of = |want: fn(&Part) -> bool| {
+            let mut keys: Vec<&str> = before
+                .iter()
+                .filter(|r| is_write(r) && !r.is_error())
+                .filter(|r| r.key.as_deref().and_then(part_of).is_some_and(|p| want(&p)))
+                .filter_map(|r| r.key.as_deref())
+                .collect();
+            keys.sort_unstable();
+            keys.dedup();
+            let bytes: u64 = before
+                .iter()
+                .filter(|r| is_write(r) && r.key.as_deref().is_some_and(|k| keys.contains(&k)))
+                .map(|r| data_bytes(r))
+                .sum();
+            (keys.len(), bytes)
+        };
+        let (data, data_bytes) = of(|p| matches!(p, Part::LanceData));
+        let (index, index_bytes) = of(|p| matches!(p, Part::LanceIndex));
+        let (deletions, _) = of(|p| matches!(p, Part::LanceDeletion));
+        if data > 0 {
+            title.push(p(
+                "lance.data",
+                &[
+                    ("n", data.to_string()),
+                    ("s", plural(data)),
+                    ("size", human(data_bytes)),
+                ],
+            ));
+        }
+        if index > 0 {
+            title.push(p("lance.index", &[("size", human(index_bytes))]));
+        }
+        if deletions > 0 {
+            title.push(p("lance.deletions", &[]));
+        }
+    } else if !files.is_empty() {
         title.push(p(
             "step.files",
             &[
@@ -932,7 +1099,50 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
         .filter(|r| r.key.is_none())
         .filter_map(|r| listed_format(query(r, "prefix").unwrap_or("")).map(|(_, d)| d))
         .collect();
-    let title = if wal_probe.len() >= 3 {
+    // a Lance read: ranges of its data and index files, after the version was found
+    let lance_reads: Vec<&&Record> = rs
+        .iter()
+        .filter(|r| r.method == "GET" && !r.is_error())
+        .filter(|r| {
+            matches!(
+                r.key.as_deref().and_then(part_of),
+                Some(Part::LanceData | Part::LanceIndex | Part::LanceDeletion)
+            )
+        })
+        .collect();
+    let title = if f == Format::Lance && !lance_reads.is_empty() {
+        let mut files: Vec<&str> = lance_reads
+            .iter()
+            .filter_map(|r| r.key.as_deref())
+            .collect();
+        files.sort_unstable();
+        files.dedup();
+        let bytes: u64 = lance_reads
+            .iter()
+            .map(|r| r.response_bytes.unwrap_or(0))
+            .sum();
+        let version = rs
+            .iter()
+            .rev()
+            .find_map(|r| match r.key.as_deref().and_then(part_of) {
+                Some(Part::LanceManifest(v)) if r.method == "GET" && !r.is_error() => Some(v),
+                _ => None,
+            });
+        let mut t = vec![match version {
+            Some(v) => p("lance.read.v", &[("v", v.to_string())]),
+            None => p("lance.read", &[]),
+        }];
+        t.push(p(
+            "lance.ranges",
+            &[
+                ("n", lance_reads.len().to_string()),
+                ("files", files.len().to_string()),
+                ("s", plural(files.len())),
+                ("size", human(bytes)),
+            ],
+        ));
+        t
+    } else if wal_probe.len() >= 3 {
         let lo = wal_probe.iter().min().unwrap();
         let hi = wal_probe.iter().max().unwrap();
         vec![p(
@@ -949,6 +1159,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
             Some(Part::SlateCompactions(c)) => p("read.compactions", &[("n", c.to_string())]),
             Some(Part::IcebergMetadata(Some(v))) => p("read.metadata", &[("v", v.to_string())]),
             Some(Part::DeltaCommit(c)) => p("read.commit", &[("n", c.to_string())]),
+            Some(Part::LanceManifest(v)) => p("lance.read.v", &[("v", v.to_string())]),
             _ => p(
                 "read.file",
                 &[(
@@ -1047,7 +1258,12 @@ impl Observation {
 /// steps of the format).
 pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)> {
     let mut out = Vec::new();
-    for f in [Format::SlateDB, Format::Iceberg, Format::Delta] {
+    for f in [
+        Format::SlateDB,
+        Format::Iceberg,
+        Format::Delta,
+        Format::Lance,
+    ] {
         let of_f: Vec<&Episode> = episodes.iter().filter(|e| e.format == Some(f)).collect();
         let mut notes: Vec<&String> = of_f.iter().flat_map(|e| e.notes.iter()).collect();
         notes.sort();
@@ -1160,6 +1376,26 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 unfinished,
             )
             .weigh(impact, 0, total),
+        );
+    }
+    // a trial's faults are sonde's doing: said first among the notes, so
+    // that the errors and retries below are not read as the store's
+    let injected: Vec<&Record> = records.iter().filter(|r| r.injected.is_some()).collect();
+    if let Some(first) = injected.first() {
+        let n = injected.len();
+        out.push(
+            info(
+                p(
+                    "obs.injected",
+                    &[
+                        ("n", n.to_string()),
+                        ("s", plural(n)),
+                        ("scenario", first.injected.clone().unwrap_or_default()),
+                    ],
+                ),
+                of_records(&mut injected.iter().map(|r| r.id)),
+            )
+            .weigh(n, 0, total),
         );
     }
     let orphans = of_episodes(&|e| e.title.contains("no commit followed"));
@@ -1743,6 +1979,64 @@ mod tests {
     }
 
     #[test]
+    fn a_parquet_file_is_no_table_until_the_session_touches_its_log() {
+        // what Spark, Hive, Hudi and DuckDB write: the names alone
+        let spark = rec(
+            1,
+            0,
+            "GET",
+            "GetObject",
+            Some("out/part-00000-a.parquet"),
+            200,
+        );
+        let hive = rec(
+            2,
+            10,
+            "GET",
+            "GetObject",
+            Some("wh/data/x=1/a.parquet"),
+            200,
+        );
+        let eps = episodes(&[spark.clone(), hive.clone()]);
+        assert_eq!(eps.len(), 2, "{eps:#?}");
+        assert!(eps.iter().all(|e| e.format.is_none()), "{eps:#?}");
+        assert!(eps.iter().all(|e| e.kind == Kind::Request), "{eps:#?}");
+
+        // the same reads beside a table's log are that table's
+        let log = with_query(
+            rec(3, 20, "GET", "ListObjectsV2", None, 200),
+            &[("prefix", "out/_delta_log/")],
+        );
+        let meta = rec(
+            4,
+            30,
+            "GET",
+            "GetObject",
+            Some("wh/metadata/v2.metadata.json"),
+            200,
+        );
+        let eps = episodes(&[spark.clone(), hive.clone(), log.clone(), meta]);
+        let formats: Vec<_> = eps.iter().filter_map(|e| e.format).collect();
+        assert_eq!(formats, vec![Format::Delta, Format::Iceberg], "{eps:#?}");
+        assert_eq!(eps.iter().map(|e| e.records.len()).sum::<usize>(), 4);
+
+        // another table's log, or the same root in another bucket, backs nothing
+        let mut elsewhere = log;
+        elsewhere.bucket = Some("other".into());
+        let other = rec(
+            5,
+            40,
+            "GET",
+            "GetObject",
+            Some("lake/_delta_log/00000000000000000001.json"),
+            200,
+        );
+        let eps = episodes(&[spark, elsewhere, other]);
+        let read = eps.iter().find(|e| e.records == vec![1]).expect("its own");
+        assert_eq!(read.format, None, "{eps:#?}");
+    }
+
+    #[test]
     fn delta_commits_races_and_refusals() {
         let mut won = rec(
             1,
@@ -1855,5 +2149,33 @@ mod tests {
             None,
             "SlateDB ids are 20 digits"
         );
+    }
+
+    #[test]
+    fn lance_parts() {
+        // a version is stored as u64::MAX - v, so the newest lists first
+        assert_eq!(
+            part_of("d.lance/_versions/18446744073709551608.manifest"),
+            Some(Part::LanceManifest(7))
+        );
+        assert_eq!(
+            part_of("d.lance/_versions/3.manifest"),
+            Some(Part::LanceManifest(3)),
+            "the older naming"
+        );
+        assert_eq!(
+            part_of("d.lance/_transactions/6-0a1b.txn"),
+            Some(Part::LanceTransaction)
+        );
+        assert_eq!(part_of("d.lance/data/0a1b.lance"), Some(Part::LanceData));
+        assert_eq!(
+            part_of("d.lance/_indices/0a1b/page_data.lance"),
+            Some(Part::LanceIndex)
+        );
+        assert_eq!(
+            part_of("d.lance/_deletions/0-4-99.arrow"),
+            Some(Part::LanceDeletion)
+        );
+        assert_eq!(part_of("d/data/a.parquet"), Some(Part::IcebergData));
     }
 }

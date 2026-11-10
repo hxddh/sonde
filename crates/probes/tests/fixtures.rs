@@ -170,3 +170,243 @@ fn if_match_on_a_missing_key_that_writes_is_a_fail() {
     let j = probes::probe("cond.put-if-match").unwrap().judge(&steps);
     assert_eq!(j.verdict, Verdict::Fail, "{}", j.summary);
 }
+
+#[test]
+fn every_judge_calls_a_bucket_it_could_not_write_an_error() {
+    let numbered = |n: usize, extra: &[(&str, u16)]| -> Steps {
+        let mut v: Vec<Step> = (0..n).map(|i| step(&format!("put-{i}"), 403, "")).collect();
+        v.extend(extra.iter().map(|(l, s)| step(l, *s, "")));
+        Steps(v)
+    };
+    let mut special = numbered(14, &[("list", 200)]);
+    special
+        .0
+        .extend((0..14).map(|i| step(&format!("get-{i}"), 404, "")));
+    let cases: Vec<(&str, Steps)> = vec![
+        (
+            "range.bounds",
+            read_only_bucket(&[
+                ("put", 403),
+                ("first", 404),
+                ("last", 404),
+                ("suffix", 404),
+                ("open", 404),
+                ("past-end", 404),
+            ]),
+        ),
+        (
+            "range.multi",
+            read_only_bucket(&[("put", 403), ("get", 404)]),
+        ),
+        (
+            "range.unsatisfiable",
+            read_only_bucket(&[
+                ("put", 403),
+                ("past", 404),
+                ("put-empty", 403),
+                ("empty", 404),
+            ]),
+        ),
+        (
+            "range.unsatisfiable",
+            // the empty object is half of the test
+            read_only_bucket(&[
+                ("put", 200),
+                ("past", 416),
+                ("put-empty", 403),
+                ("empty", 404),
+            ]),
+        ),
+        ("list.token-stability", numbered(30, &[("page-0", 200)])),
+        (
+            "list.token-stability",
+            // the 30 keys are there, the two written between pages are not
+            Steps(
+                (0..30)
+                    .map(|i| step(&format!("put-{i}"), 200, ""))
+                    .chain([
+                        step("page-0", 200, ""),
+                        step("insert-before", 403, ""),
+                        step("insert-after", 403, ""),
+                        step("keys", 200, "[]"),
+                    ])
+                    .collect(),
+            ),
+        ),
+        ("keys.special", special),
+        (
+            "delete.batch-limit",
+            read_only_bucket(&[("batch-1000", 403), ("batch-1001", 403)]),
+        ),
+        (
+            "checksum.crc32.single",
+            read_only_bucket(&[("good", 403), ("head", 404), ("bad", 403)]),
+        ),
+        (
+            "checksum.crc32.mpu-composite",
+            read_only_bucket(&[("create", 403)]),
+        ),
+        (
+            "checksum.crc32.mpu-composite",
+            // the parts were refused: the Complete's 400 says nothing of checksums
+            read_only_bucket(&[
+                ("create", 200),
+                ("part-1", 403),
+                ("part-2", 403),
+                ("complete", 400),
+                ("head", 404),
+            ]),
+        ),
+        (
+            "checksum.crc64nvme.mpu-full-object",
+            read_only_bucket(&[("create", 403)]),
+        ),
+        (
+            "checksum.trailing",
+            read_only_bucket(&[("put", 403), ("head", 404)]),
+        ),
+        ("mpu.min-part-size", read_only_bucket(&[("create", 403)])),
+        (
+            "mpu.min-part-size",
+            read_only_bucket(&[
+                ("create", 200),
+                ("small-part", 403),
+                ("last-part", 403),
+                ("complete-small", 400),
+            ]),
+        ),
+        ("mpu.out-of-order", read_only_bucket(&[("create", 403)])),
+        (
+            "mpu.duplicate-complete",
+            read_only_bucket(&[("create", 403)]),
+        ),
+        (
+            "mpu.concurrent-same-key",
+            read_only_bucket(&[("create-a", 403), ("create-b", 403)]),
+        ),
+        (
+            "presign.clock-skew",
+            read_only_bucket(&[
+                ("put", 403),
+                ("ahead-5m", 404),
+                ("ahead-20m", 403),
+                ("behind-20m", 403),
+                ("ahead-20m-get", 403),
+            ]),
+        ),
+        (
+            "meta.size-limit",
+            read_only_bucket(&[("under", 403), ("head", 404), ("over", 403)]),
+        ),
+        (
+            "sse-c",
+            read_only_bucket(&[
+                ("put", 403),
+                ("no-key", 404),
+                ("wrong-key", 404),
+                ("right-key", 404),
+            ]),
+        ),
+        (
+            "express.append",
+            read_only_bucket(&[
+                ("create", 403),
+                ("append", 403),
+                ("wrong-offset", 403),
+                ("head", 404),
+            ]),
+        ),
+        (
+            "cond.put-if-none-match",
+            read_only_bucket(&[("first", 403), ("second", 403), ("read", 404)]),
+        ),
+    ];
+    for (id, steps) in cases {
+        let j = probes::probe(id).unwrap().judge(&steps);
+        assert_eq!(j.verdict, Verdict::Error, "{id}: {}", j.summary);
+        assert!(
+            j.summary.starts_with("could not run"),
+            "{id}: {}",
+            j.summary
+        );
+    }
+}
+
+#[test]
+fn a_refusal_that_is_about_the_feature_is_still_a_verdict() {
+    // 403 for a signature the store does not know is not "may not write"
+    let mut put = step("put", 403, "");
+    put.code = Some("SignatureDoesNotMatch".into());
+    let j = probes::probe("checksum.trailing")
+        .unwrap()
+        .judge(&Steps(vec![put, step("head", 404, "")]));
+    assert_eq!(j.verdict, Verdict::Unsupported, "{}", j.summary);
+    // a store without multipart: unsupported, not "could not run"
+    let mut create = step("create", 501, "");
+    create.code = Some("NotImplemented".into());
+    let j = probes::probe("checksum.crc32.mpu-composite")
+        .unwrap()
+        .judge(&Steps(vec![create]));
+    assert_eq!(j.verdict, Verdict::Unsupported, "{}", j.summary);
+}
+
+/// The special keys as a store that keeps every key answers them, the two
+/// with dot segments as sonde answers them itself.
+fn special_keys(refuse: &[usize]) -> Steps {
+    let mut v = vec![];
+    let mut listed = vec![];
+    for (i, k) in probes::suite::listing::SPECIAL.iter().enumerate() {
+        if s3raw::has_dot_segment(k) {
+            for l in ["put", "get"] {
+                v.push(Step {
+                    label: format!("{l}-{i}"),
+                    body: s3raw::client::DOT_SEGMENT.into(),
+                    ..Default::default()
+                });
+            }
+        } else if refuse.contains(&i) {
+            v.push(step(&format!("put-{i}"), 400, ""));
+            v.push(step(&format!("get-{i}"), 404, ""));
+        } else {
+            v.push(step(&format!("put-{i}"), 200, ""));
+            v.push(step(&format!("get-{i}"), 200, &format!("body-{i}")));
+            listed.push(k.to_string());
+        }
+    }
+    v.push(step("list", 200, ""));
+    v.push(Step {
+        label: "listed".into(),
+        body: serde_json::to_string(&listed).unwrap(),
+        ..Default::default()
+    });
+    Steps(v)
+}
+
+#[test]
+fn keys_sonde_cannot_send_are_its_own_error_and_not_the_stores() {
+    let p = probes::probe("keys.special").unwrap();
+    let j = p.judge(&special_keys(&[]));
+    assert_eq!(j.verdict, Verdict::Error, "{}", j.summary);
+    assert!(
+        j.summary.starts_with("the 12 keys sent round-trip"),
+        "{}",
+        j.summary
+    );
+    assert!(
+        j.summary.contains("\"./dot\" and \"a/../b\" not tested"),
+        "{}",
+        j.summary
+    );
+    assert!(j.summary.contains("sonde cannot send"), "{}", j.summary);
+    // what the store does refuse is still counted, of the keys it was sent
+    let j = p.judge(&special_keys(&[0]));
+    assert_eq!(j.verdict, Verdict::Differs, "{}", j.summary);
+    assert!(
+        j.summary
+            .starts_with("1 of 12 keys do not round-trip: \"a b\""),
+        "{}",
+        j.summary
+    );
+    assert!(!j.summary.contains("a/../b"), "{}", j.summary);
+    assert!(j.observations.iter().any(|o| o.contains("not tested")));
+}

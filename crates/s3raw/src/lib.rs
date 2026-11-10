@@ -20,7 +20,7 @@ pub mod throttle;
 pub mod xml;
 
 pub use client::{Addressing, Body, ClientConfig, RetryPolicy, S3Client, S3Request, S3Response};
-pub use client::{fill_ids, header_pairs};
+pub use client::{fill_ids, has_dot_segment, header_pairs, is_dot_segment_refusal};
 pub use credentials::{Credentials, CredentialsProvider, Secret, StaticProvider};
 pub use error::{ErrorKind, S3Error};
 pub use throttle::Throttle;

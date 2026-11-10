@@ -89,10 +89,14 @@ impl Probe for SpecialKeys {
     fn judge(&self, s: &Steps) -> Judgement {
         let listed: Vec<String> = serde_json::from_str(&s.at("listed").body).unwrap_or_default();
         let mut bad = vec![];
+        // keys sonde itself refused to send: nothing was asked of the store
+        let mut unsent = vec![];
         for (i, k) in SPECIAL.iter().enumerate() {
             let put = s.at(&format!("put-{i}"));
             let get = s.at(&format!("get-{i}"));
-            if !put.ok() {
+            if put.status.is_none() && put.body == s3raw::client::DOT_SEGMENT {
+                unsent.push(format!("{k:?}"));
+            } else if !put.ok() {
                 bad.push(format!("{k:?}: PUT {:?}", put.status));
             } else if get.body != format!("body-{i}") {
                 bad.push(format!("{k:?}: GET {:?}", get.status));
@@ -100,27 +104,59 @@ impl Probe for SpecialKeys {
                 bad.push(format!("{k:?}: not listed as such"));
             }
         }
-        if bad.is_empty() {
+        let sent = SPECIAL.len() - unsent.len();
+        // not one key could be written: the bucket, not the keys
+        let puts: Vec<String> = (0..SPECIAL.len())
+            .map(|i| format!("put-{i}"))
+            .filter(|l| s.at(l).body != s3raw::client::DOT_SEGMENT)
+            .collect();
+        if puts.iter().all(|l| !s.at(l).ok())
+            && let Some(first) = puts.first()
+            && s.any_not_implemented().is_none()
+        {
+            return Judgement::new(
+                Verdict::Error,
+                format!(
+                    "could not run: no key could be written ({})",
+                    s.at(first).describe()
+                ),
+                s,
+            );
+        }
+        let not_tested = format!(
+            "{} not tested: sonde cannot send a key with a . or .. segment (its HTTP library collapses them), which says nothing about the store",
+            unsent.join(" and ")
+        );
+        if bad.is_empty() && unsent.is_empty() {
             Judgement::new(
                 Verdict::Pass,
                 format!("all {} keys round-trip", SPECIAL.len()),
                 s,
             )
+        } else if bad.is_empty() {
+            // sonde's own limit, not a difference of the store's
+            Judgement::new(
+                Verdict::Error,
+                format!("the {sent} keys sent round-trip; {not_tested}"),
+                s,
+            )
         } else {
             let mut j = Judgement::new(
-                if bad.len() == SPECIAL.len() {
+                if bad.len() == sent {
                     Verdict::Fail
                 } else {
                     Verdict::Differs
                 },
                 format!(
-                    "{} of {} keys do not round-trip: {}",
+                    "{} of {sent} keys do not round-trip: {}",
                     bad.len(),
-                    SPECIAL.len(),
                     bad.join("; ")
                 ),
                 s,
             );
+            if !unsent.is_empty() {
+                j.observations.push(not_tested);
+            }
             j.observations.push(format!("listed: {listed:?}"));
             j
         }
@@ -223,6 +259,18 @@ impl Probe for TokenStability {
         }
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        let puts: Vec<String> = (0..30).map(|i| format!("put-{i}")).collect();
+        let puts: Vec<&str> = puts.iter().map(String::as_str).collect();
+        if let Some(j) = super::setup_failed(s, &puts) {
+            return j;
+        }
+        if !s.at("page-0").ok() {
+            return Judgement::new(Verdict::Error, "could not run: the listing failed", s);
+        }
+        // the keys written between pages are what the later pages are read for
+        if let Some(j) = super::setup_failed(s, &["insert-before", "insert-after"]) {
+            return j;
+        }
         let keys: Vec<String> = serde_json::from_str(&s.at("keys").body).unwrap_or_default();
         let mut sorted = keys.clone();
         sorted.sort();
@@ -398,6 +446,9 @@ impl Probe for DeleteBatchLimit {
         let deleted: usize = s.at("batch-1000-deleted").body.parse().unwrap_or(0);
         if ok.not_implemented() {
             return Judgement::new(Verdict::Unsupported, "DeleteObjects is not implemented", s);
+        }
+        if let Some(j) = super::write_refused(s, &["batch-1000"]) {
+            return j;
         }
         if !ok.ok() {
             return Judgement::new(

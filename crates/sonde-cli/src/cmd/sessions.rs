@@ -82,6 +82,17 @@ pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
 }
 
 pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
+    let (command, writes): (_, &[Format]) = match &a.action {
+        None | Some(Action::List) => (
+            "sessions",
+            &[Format::Table, Format::Json, Format::Markdown, Format::Csv],
+        ),
+        Some(Action::Prune { .. }) => ("sessions prune", &[Format::Table]),
+    };
+    if let Some(why) = output::unsupported(a.format, command, writes) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     let all = rows(s);
     match &a.action {
         None | Some(Action::List) => {
@@ -142,6 +153,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             for r in &gone {
                 if *yes {
                     std::fs::remove_file(&r.path)?;
+                    sonde_proxy::trial::remove(std::path::Path::new(&r.path));
                 }
                 println!(
                     "{}{}",
@@ -159,7 +171,10 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
 
 #[derive(Args)]
 pub struct ImportArgs {
-    /// An S3 server access log, a CloudTrail file (`{"Records": …}` or one event a line), or a HAR.
+    /// An S3 server access log, a CloudTrail file (`{"Records": …}` or one
+    /// event a line), or a HAR; or a folder of them (gzip or plain, folders
+    /// within too), read in the order of their names into one session.
+    #[arg(value_name = "FILE|FOLDER")]
     file: PathBuf,
     /// The session file (default: a new one in the data directory's sessions/).
     #[arg(long, short = 'o')]
@@ -169,22 +184,31 @@ pub struct ImportArgs {
 /// Production traffic as a session: the same operations, findings and
 /// figures as a recording, with no proxy in front of the program.
 pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
-    let bytes = std::fs::read(&a.file)?;
-    // as S3 delivers CloudTrail, and as logs are often kept: gzip
-    let text = match sonde_proxy::import::text_of(&bytes) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("sonde: {}: {e}", a.file.display());
-            return Ok(64);
-        }
-    };
-    let name = a
-        .file
-        .file_stem()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "imported".into());
+    // a folder is every file in it: S3 delivers logs as thousands of small ones
+    let is_dir = a.file.is_dir();
+    let name = if is_dir {
+        // `.` and `logs/` have a name too
+        a.file
+            .canonicalize()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+    } else {
+        a.file.file_stem().map(|n| n.to_string_lossy().into_owned())
+    }
+    .unwrap_or_else(|| "imported".into());
     let name = name.strip_suffix(".json").unwrap_or(&name).to_string();
-    let imported = match sonde_proxy::import::import_counted(&text, &name) {
+    let mut folder = None;
+    let imported = if is_dir {
+        sonde_proxy::import::import_dir(&a.file, &name).map(|d| {
+            folder = Some((d.files, d.left_out));
+            d.imported
+        })
+    } else {
+        // as S3 delivers CloudTrail, and as logs are often kept: gzip
+        sonde_proxy::import::text_of(&std::fs::read(&a.file)?)
+            .and_then(|text| sonde_proxy::import::import_counted(&text, &name))
+    };
+    let imported = match imported {
         Ok(x) => x,
         Err(e) => {
             eprintln!("sonde: {}: {e}", a.file.display());
@@ -201,12 +225,36 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
         }
     };
     sonde_proxy::import::save(session, &path)?;
-    eprintln!(
-        "{} requests from a {} → {}",
-        session.records.len(),
-        source.name(),
-        path.display()
-    );
+    match &folder {
+        Some((files, _)) => eprintln!(
+            "{} requests from {files} file{} of {} → {}",
+            session.records.len(),
+            if *files == 1 { "" } else { "s" },
+            source.name(),
+            path.display()
+        ),
+        None => eprintln!(
+            "{} requests from a {} → {}",
+            session.records.len(),
+            source.name(),
+            path.display()
+        ),
+    }
+    if let Some((_, left_out)) = &folder
+        && !left_out.is_empty()
+    {
+        eprintln!(
+            "  {} file{} left out:",
+            left_out.len(),
+            if left_out.len() == 1 { "" } else { "s" }
+        );
+        for (file, why) in left_out.iter().take(5) {
+            eprintln!("    {file}: {why}");
+        }
+        if left_out.len() > 5 {
+            eprintln!("    … and {} more", left_out.len() - 5);
+        }
+    }
     let lines = |n: usize| format!("{n} line{}", if n == 1 { "" } else { "s" });
     if imported.malformed > 0 {
         eprintln!(

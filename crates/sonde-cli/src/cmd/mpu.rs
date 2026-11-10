@@ -56,6 +56,20 @@ fn human(b: u64) -> String {
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &MpuArgs) -> anyhow::Result<i32> {
+    // the scan is data; a dry run and its confirmation are read by a person
+    let (format, command, writes): (_, _, &[Format]) = match &a.action {
+        MpuAction::Scan(t) => (
+            t.format,
+            "mpu scan",
+            &[Format::Table, Format::Json, Format::Csv],
+        ),
+        MpuAction::Abort { target, .. } => (target.format, "mpu abort", &[Format::Table]),
+        MpuAction::Lifecycle { target, .. } => (target.format, "mpu lifecycle", &[Format::Table]),
+    };
+    if let Some(why) = output::unsupported(format, command, writes) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     match &a.action {
         MpuAction::Scan(t) => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;

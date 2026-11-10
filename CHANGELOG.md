@@ -4,6 +4,71 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [14.0.0] - 2026-11-10
+
+Run your program against an S3 that misbehaves, and sonde says whether it survived. Thirteen versions observed;
+this one makes the failures happen. The review this came from is [docs/review-13.0.md](docs/review-13.0.md).
+
+### Added
+
+- **Trials.** `sonde run --trial -- <command>` runs the command once clean, then once per fault scenario chosen
+  from what it did, and says of each whether the program **survived**, was **degraded** or **broke**: the faults
+  and how many were retried, the wait before a retry and whether the waits are jittered, how much the load grew,
+  writes made twice, uploads left unfinished, the exit. See [docs/trials.md](docs/trials.md).
+- **Faults in the proxy**: a status on each request's first attempt (`slowdown`, `error`), a write whose answer is
+  lost after the store acted (`lost-answer`), a failed completion (`fail-complete`), a delay (`slow`), S3's
+  per-prefix rate (`s3-limits`). Rules match by operation and key and count attempts at one request, never the
+  order of arrival. `--fault NAME` picks scenarios; `[[scenario]]` in `sonde.toml` defines a project's own.
+- `{trial}` in an argument, and `SONDE_TRIAL`, give each run of a trial a place of its own.
+- A trial is a session: its first finding says how many requests met a fault sonde injected, records carry
+  `injected`, and a replay skips them.
+- **`sonde check`** prints a run's trials as rows and fails when the program broke (`-f markdown` and `-f github`
+  too). **The app** shows them on a run's Runs pane, each opening its trial's session.
+- **Lance is read as versions.** A commit (`_versions/<n>.manifest`, written with `If-None-Match: *`) is one
+  operation with the listings, the transaction file and what it wrote: `version 6 committed · 1 data file
+  (439.4 KiB)`, `· an index`, `· rows deleted`; the ranged reads of a scan are one `read version 7 · 3 ranges of 1
+  file`. A recorded pylance run of 63 requests is eight operations (`tools/gen_lance.py` makes the recording).
+
+### Fixed
+
+- **The app's own downloads were still cut at 60 s** (13.0 fixed the proxy only). The timeout is now for the
+  headers and for each stretch of silence, never for the whole download.
+- **`sonde probe -e A -e B` left the other endpoint's objects** when one run failed or was interrupted: it returned
+  on the first. Every run is now waited to its end; an interrupt cancels them all and each cleans up.
+- **A replay confined to a prefix still sent `PUT /bucket?inventory…`** from a session recorded before 13.0, which
+  stored it as CreateBucket. What is skipped is decided by the request, not by the stored name.
+- **After an outside edit of `config.toml`, the app sent to the old address until restart**: a save that took the
+  edit in kept the cached clients.
+- **Prefixes were cut short, twice.** The analysis kept three folder levels, so `db/wal/2026/11/` and
+  `db/wal/2026/12/` were one row; the charts then clipped a label at its end, so `slate/db/compacted/` and
+  `slate/db/compactions/` read the same. Prefixes are now whole folders, folded into the one above only when there
+  are more than a chart can hold (and the row says how many it holds); a label says the shared start once and keeps
+  its end; the tooltip has the whole prefix.
+- **`sonde demo` shows the product**: 28 requests read as 11 operations (a multipart upload, a Delta commit, a
+  retry after 503, a paged listing, lookups that find nothing) and four findings, where it printed 53 lines.
+- **`sonde check`** names the session it judged; a failed row says by how much; the warnings row is "new
+  warnings", which is what it counted; a 10% tolerance is 10% for a small cost too.
+- **`sonde import <folder>`** reads every log file under a folder as one session.
+- `sonde diff` on two ordinary runs says they are not a session and its replay (64); `sonde compare` says "no
+  change" for a figure that did not move.
+- **A Parquet file is not called Delta or Iceberg by its name**: only when the session touched that table's log.
+- **Keys with a `.` or `..` segment are refused** before anything is sent: the URL library collapses them, so the
+  request went to another key. The special-keys probe says this is sonde's limit, not the store's.
+- A response cut mid-body is recorded as cut (and counted as an error), not as a clean 200; a proxy stopped with
+  requests in flight says the session lacks them.
+- `watch --logs --once` exits 70 when none of the files listed could be read; the store's own read for a copy in
+  an access log is part of the copy; `-f` is refused by every command for a format it does not write.
+- Finished jobs are pruned by kind (100 downloads no longer blank a layout's time slider); a probe cleanup that
+  could not list says so; a capacity scan that may not list versions says they were not counted, not 0; a probe
+  whose setup write failed is an error across the suite; a lifecycle document sonde cannot add to is never planned
+  over.
+- **The interface, from the 13.0 review**: an empty run is no longer deleted under its reader, however it was
+  opened; with the sidebar hidden a place that needs its list shows it, and a list that fails says so; Sessions
+  keeps its session, search and Runs/Programs when left and come back to; a lane's cell shows the worst of the
+  requests it holds and says how many, a sampled view says it is a sample, the legend has client errors; the heat
+  map follows the chosen stretch and an empty stretch says so; flow labels no longer sit on their nodes; the rename
+  dialog opens in the window that asked; "Copy table" copies plain numbers.
+
 ## [13.0.0] - 2026-11-10
 
 Still and true. Every state says what it is, nothing moves under the hand, each thing is drawn one way — and a

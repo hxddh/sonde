@@ -102,6 +102,8 @@ for (const v of variants) {
     }
     await app.press("id:session-pane-mode-time");
     await app.waitFor("id:time-pane");
+    // the board's charts draw themselves in: the picture is of them drawn
+    await app.wait(900);
     await shot("03g-time");
     // further down the Time pane, a window at a time: every request and each
     // kind over time; pushback and the distribution; time spent and chains;
@@ -129,6 +131,8 @@ for (const v of variants) {
     } else if (app.menu()) await app.closeMenu();
 
     await go("store");
+    // the buckets are listed from the store: there when the listing is in
+    await app.waitFor("id:bucket-demo", { timeout: 10000 });
     await shot("04-store");
     await app.press("id:bucket-demo");
     await app.waitFor("text:README.md", { timeout: 10000 });

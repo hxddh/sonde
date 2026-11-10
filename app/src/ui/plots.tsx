@@ -5,7 +5,7 @@
 // requests over time, and two runs side by side. Each says in words what it
 // shows; a terminal gets the words and a table instead.
 
-import { type JSX, signal, Text, token, View } from "nsh";
+import { computed, type JSX, signal, Text, token, View } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { Arc, Area, Bar, Cell, Dot, Grid, Line, Pie, Plot, PlotAppearScope, PlotAxis, PlotLabel, Rule, Sankey, Treemap } from "nsh/base/plot";
 import { bytes, cost, count, duration, ms, percent } from "../format";
@@ -95,6 +95,16 @@ export function Chart(props: { title: string; text?: string; action?: JSX.Elemen
   );
 }
 
+/** A chart over time whose stretch (chosen on the timeline) holds nothing of
+ * its kind: said inside the chart's frame, at a plot's height, so the board keeps its shape. */
+function NoneInStretch() {
+  return (
+    <View testID="none-in-stretch" class={`${TICK_ROOM} h-44 w-full items-center justify-center`}>
+      <Text class="text-small text-muted-foreground">{t("plots.noneInStretch")}</Text>
+    </View>
+  );
+}
+
 // --- what ran at once ----------------------------------------------------------------
 
 /** Each request its lane: a request takes the first lane free when it
@@ -113,8 +123,48 @@ export function lanesOf(samples: { tMs: number; ms: number }[]): number[] {
   return lane;
 }
 
+/** Every request of the session, as its slices count them: more than `samples` holds once a session is sampled. */
+export const requestsOf = (p: Profile) => p.rate.reduce((n, b) => n + b.ok + b.miss + b.client + b.server, 0);
+
 const LANES = 24;
 const LANE_BINS = 96;
+/** Outcomes from quiet to worst: a cell that holds several requests shows the worst. */
+const WORST: Record<Tone, number> = { ok: 0, miss: 1, client: 2, server: 3 };
+
+/** The lanes' cells over `domain`, cut in `bins` slices: one cell per slice
+ * and lane, with how many requests it holds (`n`), the worst outcome among
+ * them (`tone` — a failure is never painted over), and the request it stands
+ * for (`sample`, an index into `samples`: the worst, the earliest of those).
+ * Requests of a lane alternate two shades (`alt`) so two in a row read as
+ * two; cells that hold several alternate by slice. In order of lane, then slice. */
+export function laneCells(samples: { tMs: number; ms: number; lane: number; status?: number | null }[], domain: [number, number], bins: number, lanes: number): { bin: number; lane: number; n: number; tone: Tone; alt: boolean; sample: number }[] {
+  const [a, b] = domain;
+  const w = (b - a) / bins;
+  const order = samples.map((_, i) => i).sort((i, j) => samples[i].tMs - samples[j].tMs || i - j);
+  const turn = new Map<number, number>();
+  const cells = new Map<number, { bin: number; lane: number; n: number; tone: Tone; alt: boolean; sample: number }>();
+  for (const i of order) {
+    const x = samples[i];
+    if (x.lane >= lanes || x.tMs >= b || x.tMs + x.ms < a) continue;
+    const n = (turn.get(x.lane) ?? 0) + 1;
+    turn.set(x.lane, n);
+    const tone = statusTone(x.status ?? null);
+    const from = Math.max(0, Math.floor((x.tMs - a) / w));
+    const to = Math.min(bins - 1, Math.floor((x.tMs + Math.max(x.ms, 0) - a) / w));
+    for (let k = from; k <= to; k++) {
+      const at = x.lane * bins + k;
+      const c = cells.get(at);
+      if (!c) cells.set(at, { bin: k, lane: x.lane, n: 1, tone, alt: n % 2 === 0, sample: i });
+      else {
+        c.n += 1;
+        c.alt = k % 2 === 1;
+        // the earliest of the worst: later ones of the same outcome do not take its place
+        if (WORST[tone] > WORST[c.tone]) (c.tone = tone), (c.sample = i);
+      }
+    }
+  }
+  return [...cells.entries()].sort((p, q) => p[0] - q[0]).map(([, c]) => c);
+}
 
 /** The session's requests lane by lane: each a run of cells from its start
  * to its end, in its outcome's color, on the first lane free. What ran at
@@ -122,42 +172,32 @@ const LANE_BINS = 96;
  * long request is a long run. A press opens the request under the pointer. */
 export function Lanes(props: { profile: Profile; domainMs?: [number, number] | null; onRequest?: (id: number) => void }) {
   const domain = (): [number, number] => props.domainMs ?? [0, Math.max(props.profile.wallMs, 1)];
-  const all = () => {
+  const all = computed(() => {
     const lane = lanesOf(props.profile.samples);
     return props.profile.samples.map((x, i) => ({ ...x, lane: lane[i] }));
-  };
+  });
   const lanes = () => Math.min(LANES, all().reduce((m, x) => Math.max(m, x.lane + 1), 1));
   const hidden = () => all().filter((x) => x.lane >= LANES).length;
   const width = () => (domain()[1] - domain()[0]) / LANE_BINS;
-  // a cell per slice of time a request spans, on its lane; requests of a lane alternate two shades, so two in a row read as two
-  const rows = () => {
-    const [a, b] = domain();
-    const w = width();
-    const turn = new Map<number, number>();
-    const out: { x: string; y: string; id: number; tone: Tone; alt: boolean; sample: number }[] = [];
-    all().forEach((x, i) => {
-      if (x.lane >= LANES || x.tMs >= b || x.tMs + x.ms < a) return;
-      const n = (turn.get(x.lane) ?? 0) + 1;
-      turn.set(x.lane, n);
-      const from = Math.max(0, Math.floor((x.tMs - a) / w));
-      const to = Math.min(LANE_BINS - 1, Math.floor((x.tMs + Math.max(x.ms, 0) - a) / w));
-      for (let k = from; k <= to; k++) out.push({ x: String(k), y: String(x.lane), id: x.id, tone: statusTone(x.status ?? null), alt: n % 2 === 0, sample: i });
-    });
-    return out;
-  };
+  // a cell per slice of time and lane, holding the requests that span it: drawn once, in the worst outcome of what it holds
+  const rows = computed(() => laneCells(all(), domain(), LANE_BINS, LANES).map((c) => ({ ...c, x: String(c.bin), y: String(c.lane), id: all()[c.sample].id })));
   const hovered = signal<number | null>(null);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
     const x = r ? all()[r.sample] : null;
-    if (!x) return null;
+    if (!r || !x) return null;
     const g = props.profile.groups[x.group];
-    return { title: g ? groupName(g) : "", lines: [`+${offset(x.tMs)} · ${ms(x.ms)}`, `${x.status ?? "—"} · ${bytes(x.bytes ?? 0)}`] };
+    // several in one cell: how many, and that the figures are the worst one's (the one a press opens)
+    return { title: g ? groupName(g) : "", lines: [`+${offset(x.tMs)} · ${ms(x.ms)}`, `${x.status ?? "—"} · ${bytes(x.bytes ?? 0)}`, ...(r.n > 1 ? [t("lanes.cellHolds", { n: r.n })] : [])] };
   };
+  // the lanes are of the requests sampled: said when that is not all of them
+  const total = () => requestsOf(props.profile);
   const label = () => t("lanes.text", { n: props.profile.peakInFlight, at: offset(props.profile.peakAtMs) });
   const bins = Array.from({ length: LANE_BINS }, (_, i) => String(i));
   return (
     <If when={!terminal() && all().length > 1} else={<Text class="text-small text-muted-foreground">{label()}</Text>}>
       <View class="gap-2">
+        <If when={rows().length > 0} else={<NoneInStretch />}>
         <BaseButton
           accessibilityLabel={label()}
           disabled={!props.onRequest}
@@ -192,8 +232,12 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
             <PlotAxis tickValues={[0, LANE_BINS / 2, LANE_BINS - 1]} format={(i) => offset(domain()[0] + i * width())} labelClass={TIME_TICK} />
           </Plot>
         </BaseButton>
+        </If>
         <View class="flex-row flex-wrap items-center gap-x-4 gap-y-1">
-          <Legend square items={[{ label: t("flows.ok"), swatch: "bg-bar" }, { label: t("flows.notfound"), swatch: "bg-status-miss" }, { label: t("lanes.failed"), swatch: "bg-status-server" }]} />
+          <Legend square items={[{ label: t("flows.ok"), swatch: "bg-bar" }, { label: t("flows.notfound"), swatch: "bg-status-miss" }, { label: t("flows.clienterror"), swatch: "bg-status-client" }, { label: t("lanes.failed"), swatch: "bg-status-server" }]} />
+          <If when={all().length < total()}>
+            <Text testID="lanes-sampled" class="tabular-nums text-caption text-muted-foreground">{t("plots.sampled", { n: count(all().length), of: count(total()) })}</Text>
+          </If>
           <If when={hidden() > 0}>
             <Text class="tabular-nums text-caption text-muted-foreground">{t("lanes.more", { n: hidden(), lanes: LANES })}</Text>
           </If>
@@ -775,6 +819,59 @@ export function sessionStory(p: Profile, findings: Observation[]): string {
   return parts.join(" ");
 }
 
+// --- prefixes, named ---------------------------------------------------------------
+
+/** A path too long for its place, cut at its start on a folder's edge: the
+ * end is what tells two prefixes apart (`…/compactions/`, `…/compacted/`). */
+export function tail(path: string, max: number): string {
+  if (path.length <= max) return path;
+  const keep = path.slice(-(max - 1));
+  const edge = keep.indexOf("/");
+  // from a folder's edge where one is near the cut, else mid-name
+  return `…${edge >= 0 && edge < keep.length - 1 && edge <= 8 ? keep.slice(edge) : keep}`;
+}
+
+/** How a chart names a set of prefixes: what they all start with is said
+ * once (`common`), and each is named by the rest — whole where it fits, cut
+ * at its start where it does not, with `…` after one that stands for the
+ * folders under it. No two get the same name. */
+export function prefixNames(prefixes: { prefix: string; folders?: number }[], max = 20): { common: string; name: (prefix: string) => string } {
+  const real = prefixes.filter((x) => x.prefix !== "other" && x.prefix !== "/");
+  let common = "";
+  if (real.length > 1) {
+    const parts = real.map((x) => x.prefix.split("/").filter(Boolean));
+    let n = 0;
+    while (parts.every((p) => p.length > n + 1 && p[n] === parts[0][n])) n++;
+    common = n > 0 ? `${parts[0].slice(0, n).join("/")}/` : "";
+  }
+  const names = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const x of real) {
+    const own = `${x.prefix.slice(common.length)}${x.folders ? "…" : ""}`;
+    let shown = tail(own, max);
+    // two cut to the same name: the whole of it rather than a name that lies
+    if (taken.has(shown)) shown = own;
+    taken.add(shown);
+    names.set(x.prefix, shown);
+  }
+  return { common, name: (prefix) => names.get(prefix) ?? prefix };
+}
+
+/** Under a chart of prefixes: what they all start with, and that `…` marks one shown with the folders under it. */
+function PrefixNote(props: { prefixes: { prefix: string; folders?: number }[]; common: string; class?: string }) {
+  const folded = () => props.prefixes.some((x) => (x.folders ?? 0) > 0);
+  return (
+    <If when={props.common || folded()}>
+      <Text testID="prefix-note" class={`text-caption text-muted-foreground ${props.class ?? ""}`}>
+        {[props.common ? t("prefix.under", { path: props.common }) : "", folded() ? t("prefix.foldedNote") : ""].filter(Boolean).join(" · ")}
+      </Text>
+    </If>
+  );
+}
+
+/** A prefix in full, for a tooltip: its whole path, and the folders it stands for. */
+const prefixTitle = (x: { prefix: string; folders?: number }) => (x.folders ? `${x.prefix} ${t("prefix.folders", { n: x.folders })}` : x.prefix);
+
 // --- where requests went -----------------------------------------------------------
 
 const OUTCOME_FILL: Record<string, string> = { ok: "fill-bar", "not found": "fill-status-miss", "client error": "fill-status-client", "server error": "fill-status-server" };
@@ -795,13 +892,18 @@ export function Flows(props: { profile: Profile }) {
     const at = new Map(nodes().map((n, i) => [n.name, i]));
     return props.profile.flows.map((f) => ({ source: at.get(f.source)!, target: at.get(f.target)!, value: f.value }));
   };
-  const bucketOf = (p: string) => p.split("/")[0];
-  const oneBucket = () => new Set(props.profile.prefixes.filter((x) => x.prefix !== "other").map((x) => bucketOf(x.prefix))).size === 1;
-  const short = (n: string) => (oneBucket() && n.includes("/") && n.indexOf("/") < n.length - 1 ? n.slice(n.indexOf("/") + 1) : n);
+  // prefixes by what tells them apart; what they share is said once under the chart
+  const named = () => prefixNames(props.profile.prefixes, 22);
+  const short = (n: string) => named().name(n);
   const name = (n: { name: string }) => (n.name === "other operations" ? t("flows.otherOps") : n.name === "other prefixes" ? t("flows.otherPrefixes") : OUTCOME_FILL[n.name] ? t(`flows.${n.name.replace(" ", "")}` as never) : short(n.name));
   const fill = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FILL[n.name] : n.stage === 0 ? "fill-chart-1" : "fill-chart-4");
   const from = (n: { stage: number }) => (n.stage === 0 ? "from-chart-1/35" : "from-chart-4/35");
   const to = (n: { name: string; stage: number }) => (n.stage === 2 ? OUTCOME_FROM[n.name] : "to-chart-4/35");
+  // a node's requests: what came in, or (the first column) what went out
+  const through = (n: { name: string }) => {
+    const sum = (side: "source" | "target") => props.profile.flows.reduce((s, f) => (f[side] === n.name ? s + f.value : s), 0);
+    return Math.max(sum("source"), sum("target"));
+  };
   const hovered = signal<number | null>(null);
   const label = () => {
     const ok = props.profile.flows.filter((f) => f.target === "ok").reduce((s, f) => s + f.value, 0);
@@ -811,11 +913,12 @@ export function Flows(props: { profile: Profile }) {
   };
   return (
     <If when={!terminal() && props.profile.flows.length > 0} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{label()}</Text>}>
+      <View class="gap-1">
       <Plot
         testID="flows"
         data={nodes()}
         accessibilityLabel={label()}
-        accessibilityValue={{ text: hovered() === null ? "" : name(nodes()[hovered()!]) }}
+        accessibilityValue={{ text: hovered() === null ? "" : `${name(nodes()[hovered()!])}, ${t("sessions.requestsN", { n: through(nodes()[hovered()!]) })}` }}
         onHoverChange={({ index }) => hovered.set(index)}
         appearGeneration={1}
         motion={{ ...MOTION, appear: { duration: 700, easing: "easeOut" } }}
@@ -831,12 +934,13 @@ export function Flows(props: { profile: Profile }) {
           nodeClass={(n) => fill(n)}
           linkBackgroundClass={(l) => `bg-linear-to-r ${from(nodes()[l.source])} ${to(nodes()[l.target])}`}
           hoverDim={0.75}
-          nodeLabel={(n) => name(n)}
-          valueLabel={(_, v) => count(v)}
-          nodeLabelClass="max-w-36 truncate px-2 py-0.5 text-small text-foreground"
-          valueLabelClass="tabular-nums text-caption text-muted-foreground"
+          // one line, name then count: two lines over a middle node reached the bar of the node above it
+          nodeLabel={(n) => `${name(n)} · ${count(through(n))}`}
+          nodeLabelClass="max-w-40 truncate px-2 py-0.5 tabular-nums text-small text-foreground"
         />
       </Plot>
+      <PrefixNote prefixes={props.profile.prefixes} common={named().common} class="px-28" />
+      </View>
     </If>
   );
 }
@@ -844,16 +948,26 @@ export function Flows(props: { profile: Profile }) {
 // --- when, and where ---------------------------------------------------------------
 
 /** Requests by prefix and slice of the session: when each part of the key space was busy. */
-export function Heat(props: { profile: Profile }) {
+export function Heat(props: { profile: Profile; range?: [number, number] | null }) {
   const p = () => props.profile;
-  const bins = () => p().rate.map((_, i) => String(i));
-  const names = () => p().prefixes.map((x) => (x.prefix === "other" ? t("flows.otherPrefixes") : x.prefix));
-  const rows = () => p().heat.map((c) => ({ x: String(c.bin), y: names()[c.prefix] ?? "", n: c.n, bin: c.bin }));
+  // a stretch chosen on the timeline: its slices only, as every chart over time
+  const from = () => props.range?.[0] ?? 0;
+  const to = () => props.range?.[1] ?? p().rate.length - 1;
+  const bins = () => p().rate.map((_, i) => String(i)).slice(from(), to() + 1);
+  // a row's name keeps its end (what tells two prefixes apart); the tooltip has it whole
+  const named = () => prefixNames(p().prefixes, 18);
+  const names = () => p().prefixes.map((x) => (x.prefix === "other" ? t("flows.otherPrefixes") : named().name(x.prefix)));
+  const whole = (i: number) => {
+    const x = p().prefixes[i];
+    return !x ? "" : x.prefix === "other" ? t("flows.otherPrefixes") : prefixTitle(x);
+  };
+  const rows = () => p().heat.filter((c) => c.bin >= from() && c.bin <= to()).map((c) => ({ x: String(c.bin), y: names()[c.prefix] ?? "", n: c.n, bin: c.bin, prefix: c.prefix }));
   const hovered = signal<number | null>(null);
-  const max = () => rows().reduce((m, r) => Math.max(m, r.n), 1);
+  // of the whole session, so a stretch keeps the colors it had
+  const max = () => p().heat.reduce((m, r) => Math.max(m, r.n), 1);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
-    return r ? { title: r.y, lines: [`+${offset(r.bin * p().binMs)} – +${offset((r.bin + 1) * p().binMs)}`, t("sessions.requestsN", { n: r.n })] } : null;
+    return r ? { title: whole(r.prefix), lines: [`+${offset(r.bin * p().binMs)} – +${offset((r.bin + 1) * p().binMs)}`, t("sessions.requestsN", { n: r.n })] } : null;
   };
   const last = () => Math.max(0, bins().length - 1);
   const label = () => {
@@ -862,10 +976,12 @@ export function Heat(props: { profile: Profile }) {
   };
   return (
     <If
-      when={!terminal() && rows().length > 0 && bins().length > 1}
+      when={!terminal() && p().heat.length > 0 && bins().length > 1}
       // a terminal: each prefix's requests and its busiest second, as figures
-      else={<If when={p().prefixes.length > 0}><SimpleTable columns={[t("common.prefix"), t("heat.requests"), t("heat.peak"), t("heat.errors")]} rows={p().prefixes.map((x, i) => [names()[i], String(x.requests), String(x.peakPerSecond), String(x.errors)])} /></If>}
+      else={<If when={p().prefixes.length > 0}><SimpleTable columns={[t("common.prefix"), t("heat.requests"), t("heat.peak"), t("heat.errors")]} rows={p().prefixes.map((x, i) => [whole(i), count(x.requests), count(x.peakPerSecond), count(x.errors)])} /></If>}
     >
+      <View class="gap-1">
+      <If when={rows().length > 0} else={<NoneInStretch />}>
       <Plot
         testID="heat"
         data={rows()}
@@ -886,8 +1002,11 @@ export function Heat(props: { profile: Profile }) {
       >
         <Cell x="x" y="y" value={(_, i) => Math.sqrt(rows()[i]?.n ?? 0)} cornerRadii={2} inactiveOpacity={INACTIVE} stagger={0.2} hoverCellClass="rounded-(--radius-sm) outline-2 outline-offset-1 outline-foreground" />
         <PlotAxis placement="left" labelClass={AXIS_LABEL} />
-        <PlotAxis tickValues={[0, Math.round(last() / 2), last()]} format={(i) => `+${offset(i * p().binMs)}`} labelClass={TIME_TICK} />
+        <PlotAxis tickValues={[0, Math.round(last() / 2), last()]} format={(i) => `+${offset((from() + i) * p().binMs)}`} labelClass={TIME_TICK} />
       </Plot>
+      </If>
+      <PrefixNote prefixes={p().prefixes} common={named().common} class={GUTTER_PAD} />
+      </View>
     </If>
   );
 }
@@ -1033,10 +1152,12 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
   const bucketOf = (p: string) => p.split("/")[0] || p;
   const buckets = () => [...new Set(items().map((x) => bucketOf(x.prefix)))];
   const nested = () => buckets().length > 1;
+  // under several buckets each is named within its bucket's box; under one, by what tells them apart
+  const named = () => (nested() ? { common: "", name: (p: string) => tail(`${p.slice(bucketOf(p).length + 1) || p}${items().find((x) => x.prefix === p)?.folders ? "…" : ""}`, 28) } : prefixNames(items(), 28));
   const rows = () => {
     const leaves = items()
       .filter((x) => value(x) > 0)
-      .map((x) => ({ id: x.prefix, parent: nested() ? `b:${bucketOf(x.prefix)}` : "", label: nested() ? x.prefix.slice(bucketOf(x.prefix).length + 1) || x.prefix : x.prefix, value: value(x), hot: share(x) >= 0.5, x }));
+      .map((x) => ({ id: x.prefix, parent: nested() ? `b:${bucketOf(x.prefix)}` : "", label: named().name(x.prefix), value: value(x), hot: share(x) >= 0.5, x }));
     const groups = nested() ? buckets().map((b) => ({ id: `b:${b}`, parent: "", label: `${b}/`, value: 0, hot: false, x: null })) : [];
     return [...groups, ...leaves];
   };
@@ -1047,7 +1168,7 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
     if (!r?.x) return null;
     const x = r.x;
     return {
-      title: x.prefix,
+      title: prefixTitle(x),
       lines: [
         t("prefixUse.requests", { n: x.requests }) + (x.errors ? ` · ${t("timeline.errors", { n: x.errors })}` : ""),
         t("limits.line", { reads: x.peakReads, rpct: Math.round((x.peakReads / READS_PER_S) * 100), writes: x.peakWrites, wpct: Math.round((x.peakWrites / WRITES_PER_S) * 100) }),
@@ -1099,6 +1220,7 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
           <If when={items().some((x) => share(x) >= 0.5)}>
             <Legend square items={[{ label: t("prefixUse.hot"), swatch: "bg-warn/60" }]} />
           </If>
+          <PrefixNote prefixes={items()} common={named().common} />
         </View>
       </If>
     </If>
@@ -1111,10 +1233,11 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
 export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [number, number] }[] }) {
   // a change as a share of the larger run, from −1 (all gone) to +1 (all new)
   const change = (a: number, b: number) => (a === b ? 0 : (b - a) / Math.max(a, b));
+  const named = () => prefixNames(props.prefixes, 28);
   const rows = () =>
     props.prefixes
       .filter((x) => x.requests[0] + x.requests[1] > 0)
-      .map((x) => ({ id: x.prefix, parent: "", label: x.prefix, value: Math.max(x.requests[1], x.requests[0] > 0 && x.requests[1] === 0 ? x.requests[0] : 0), change: change(x.requests[0], x.requests[1]), x }));
+      .map((x) => ({ id: x.prefix, parent: "", label: named().name(x.prefix), value: Math.max(x.requests[1], x.requests[0] > 0 && x.requests[1] === 0 ? x.requests[0] : 0), change: change(x.requests[0], x.requests[1]), x }));
   const hovered = signal<number | null>(null);
   const line = (x: { requests: [number, number] }) => t("prefixChange.line", { a: x.requests[0], b: x.requests[1] });
   const biggest = () => [...rows()].sort((p, q) => Math.abs(q.x.requests[1] - q.x.requests[0]) - Math.abs(p.x.requests[1] - p.x.requests[0]))[0];
@@ -1133,7 +1256,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
             motion={MOTION}
             tooltipPlacement="pointer"
             tooltipOffset={10}
-            tooltipContent={<If when={hovered() !== null ? rows()[hovered()!] : null}>{(r) => <Tip title={r().label} lines={[line(r().x)]} />}</If>}
+            tooltipContent={<If when={hovered() !== null ? rows()[hovered()!] : null}>{(r) => <Tip title={r().x.prefix} lines={[line(r().x)]} />}</If>}
             onHoverChange={({ index }) => hovered.set(index)}
             class="h-48"
           >
@@ -1264,7 +1387,8 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
   };
   const label = () => t("scatter.text", { n: rows().length, p95: ms(props.profile.p95Ms ?? 0) });
   return (
-    <If when={!terminal() && rows().length > 1} else={<Text class="text-small text-muted-foreground">{label()}</Text>}>
+    // a stretch with one request draws its one dot; with none, says so in the chart's room
+    <If when={!terminal() && rows().length > 0} else={terminal() ? <Text class="text-small text-muted-foreground">{label()}</Text> : <NoneInStretch />}>
       <BaseButton
         accessibilityLabel={label()}
         disabled={!props.onRequest}

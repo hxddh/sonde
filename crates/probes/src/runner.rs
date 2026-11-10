@@ -201,8 +201,7 @@ pub async fn run_endpoint(
                 j.verdict = Verdict::Error;
                 j.summary = format!("timed out after {} s; {}", opts.timeout_secs, j.summary);
             }
-            j.observations
-                .extend(left.iter().map(|l| format!("left behind: {l}")));
+            j.observations.extend(left.iter().map(|l| said(l)));
             record_fixture(cfg.vendor.id(), &meta.id, j.verdict, &steps);
             let exchanges = s
                 .log()
@@ -247,10 +246,7 @@ pub async fn run_endpoint(
         .iter()
         .filter(|r| !matches!(r.verdict, Verdict::Error | Verdict::Skipped))
         .count();
-    entry.errors = leftovers
-        .iter()
-        .map(|l| format!("left behind: {l}"))
-        .collect();
+    entry.errors = leftovers.iter().map(|l| said(l)).collect();
     if cancelled {
         entry.errors.insert(0, "cancelled".into());
     }
@@ -258,7 +254,7 @@ pub async fn run_endpoint(
         tracing::error!("audit log: {e}");
     }
     for l in &leftovers {
-        tracing::warn!("probe run {run_id} left behind: {l}");
+        tracing::warn!("probe run {run_id}: {}", said(l));
     }
     if cancelled {
         // a cancelled job has no result: its last message says what stayed
@@ -267,7 +263,7 @@ pub async fn run_endpoint(
                 done: results.len() as u64,
                 total: Some(total),
                 bytes: 0,
-                message: format!("cancelled; left behind: {}", leftovers.join("; ")),
+                message: format!("cancelled; {}", said_all(&leftovers)),
             });
         }
         return Err(S3Error::cancelled());
@@ -279,7 +275,7 @@ pub async fn run_endpoint(
         message: if leftovers.is_empty() {
             "done".into()
         } else {
-            format!("done; left behind: {}", leftovers.join("; "))
+            format!("done; {}", said_all(&leftovers))
         },
     });
     Ok(Run {
@@ -308,8 +304,26 @@ fn skipped(meta: &crate::ProbeMeta, why: &str) -> ProbeResult {
     }
 }
 
+/// How a line of [`cleanup`] starts when a listing failed: what is left is
+/// not known, which is not the same as nothing.
+const UNCHECKED: &str = "could not check what was left";
+
+/// A line of [`cleanup`] as a result, the job and the audit log say it.
+fn said(l: &str) -> String {
+    if l.starts_with(UNCHECKED) {
+        l.to_string()
+    } else {
+        format!("left behind: {l}")
+    }
+}
+
+fn said_all(left: &[String]) -> String {
+    left.iter().map(|l| said(l)).collect::<Vec<_>>().join("; ")
+}
+
 /// Removes everything under `prefix` (every version and upload) and the
-/// temporary buckets. What could not be removed, in words (empty: all gone).
+/// temporary buckets. What could not be removed, in words, and what could
+/// not be listed to find out (empty: all gone).
 pub async fn cleanup(c: &S3Client, bucket: &str, prefix: &str, temp: &[String]) -> Vec<String> {
     let mut left = purge(c, bucket, prefix).await;
     for b in temp {
@@ -329,11 +343,19 @@ async fn purge(c: &S3Client, bucket: &str, prefix: &str) -> Vec<String> {
     let mut left = Vec::new();
     let mut stuck_uploads = 0usize;
     for _ in 0..20 {
-        let Ok(l) = c
+        let l = match c
             .list_multipart_uploads(bucket, Some(prefix), None, None)
             .await
-        else {
-            break;
+        {
+            Ok(l) => l,
+            // a store without multipart listings has none to leave
+            Err(e) if not_implemented(&e) => break,
+            Err(e) => {
+                left.push(format!(
+                    "{UNCHECKED} under {bucket}/{prefix}: multipart uploads could not be listed ({e})"
+                ));
+                break;
+            }
         };
         stuck_uploads = 0;
         for u in &l.upload {
@@ -370,7 +392,12 @@ async fn purge(c: &S3Client, bucket: &str, prefix: &str) -> Vec<String> {
                 .collect(),
             Err(_) => match c.list_all(bucket, prefix, 1000).await {
                 Ok(o) => o.into_iter().map(|o| (o.key, None)).collect(),
-                Err(_) => break,
+                Err(e) => {
+                    left.push(format!(
+                        "{UNCHECKED} under {bucket}/{prefix}: objects could not be listed ({e})"
+                    ));
+                    break;
+                }
             },
         };
         if objs.is_empty() {
@@ -403,6 +430,14 @@ async fn purge(c: &S3Client, bucket: &str, prefix: &str) -> Vec<String> {
         }
     }
     left
+}
+
+fn not_implemented(e: &S3Error) -> bool {
+    e.status == Some(501)
+        || matches!(
+            e.code.as_deref(),
+            Some("NotImplemented" | "NotSupported" | "UnsupportedOperation")
+        )
 }
 
 /// With `SONDE_RECORD_FIXTURES=<dir>`, writes each probe's steps as a
@@ -461,12 +496,13 @@ mod tests {
 
     /// A store that keeps keys: PUT, DELETE and listings. A GET of an
     /// object never answers while `stall` is on; DELETE is refused while
-    /// `deny_delete` is.
+    /// `deny_delete` is, every listing while `deny_list` is.
     #[derive(Default)]
     struct Fake {
         keys: Mutex<BTreeSet<String>>,
         stall: AtomicBool,
         deny_delete: AtomicBool,
+        deny_list: AtomicBool,
     }
 
     async fn serve(fake: Arc<Fake>) -> String {
@@ -534,6 +570,10 @@ mod tests {
                     }
                     (200, "version-0".to_string())
                 }
+                ("GET", false) if fake.deny_list.load(Ordering::SeqCst) => (
+                    403,
+                    "<Error><Code>AccessDenied</Code><Message>no</Message></Error>".to_string(),
+                ),
                 ("GET", false) if query.contains("uploads") => (
                     200,
                     "<ListMultipartUploadsResult></ListMultipartUploadsResult>".to_string(),
@@ -669,5 +709,64 @@ mod tests {
             "the job says so too"
         );
         assert!(s.guard().audit_entries(1)[0].errors[0].starts_with("left behind"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cleanup_that_cannot_list_does_not_say_nothing_was_left() {
+        let fake = Arc::new(Fake::default());
+        let dir = tempfile::tempdir().unwrap();
+        let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
+        let c = s.client("fake").unwrap();
+        c.send(
+            s3raw::S3Request::new("PutObject", http::Method::PUT)
+                .bucket("scratch")
+                .key("sonde-probe/r/p/k")
+                .body("x"),
+        )
+        .await
+        .unwrap();
+        // listings are refused: the object stays, and nobody can know
+        fake.deny_list.store(true, Ordering::SeqCst);
+        let left = cleanup(&c, "scratch", "sonde-probe/r/p/", &[]).await;
+        assert_eq!(fake.keys.lock().len(), 1);
+        assert_eq!(left.len(), 2, "{left:?}");
+        for l in &left {
+            assert!(l.starts_with(UNCHECKED), "{l}");
+            assert!(l.contains("AccessDenied"), "{l}");
+            assert_eq!(&said(l), l, "not called a leftover: it is not known");
+        }
+        assert!(left[0].contains("multipart uploads"), "{left:?}");
+        assert!(left[1].contains("objects"), "{left:?}");
+        // and a listing that works still says nothing when nothing is left
+        fake.deny_list.store(false, Ordering::SeqCst);
+        assert!(
+            cleanup(&c, "scratch", "sonde-probe/r/p/", &[])
+                .await
+                .is_empty()
+        );
+        assert!(fake.keys.lock().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_whose_cleanup_could_not_list_says_so() {
+        let fake = Arc::new(Fake::default());
+        fake.deny_list.store(true, Ordering::SeqCst);
+        let dir = tempfile::tempdir().unwrap();
+        let s = sonde_on(&serve(fake.clone()).await, dir.path()).await;
+        let ids = spawn(&s, &["fake".to_string()], one_probe());
+        let v = tokio::time::timeout(Duration::from_secs(30), s.jobs().wait(&ids[0]))
+            .await
+            .expect("the job ended")
+            .unwrap();
+        let run: Run = serde_json::from_value(v).unwrap();
+        let r = &run.results[0];
+        assert!(
+            r.observations.iter().any(|o| o.starts_with(UNCHECKED)),
+            "{:?}",
+            r.observations
+        );
+        let message = s.jobs().info(&ids[0]).unwrap().progress.message;
+        assert!(message.starts_with("done; could not check"), "{message}");
+        assert!(s.guard().audit_entries(1)[0].errors[0].starts_with(UNCHECKED));
     }
 }
