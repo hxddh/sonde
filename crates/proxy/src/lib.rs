@@ -10,6 +10,7 @@
 pub mod callers;
 pub mod chunked;
 pub mod episode;
+pub mod fault;
 pub mod fixes;
 pub mod import;
 pub mod logs;
@@ -23,6 +24,7 @@ pub mod report;
 pub mod session;
 pub mod share;
 pub mod summary;
+pub mod trial;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -82,7 +84,7 @@ impl Policy {
 }
 
 /// Proxy settings.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProxyConfig {
     /// Where to listen; port 0 picks a free one.
     pub listen: SocketAddr,
@@ -103,6 +105,8 @@ pub struct ProxyConfig {
     /// taken. Otherwise only loopback names are (a web page that rebinds a
     /// name of its own to 127.0.0.1 is turned away).
     pub allow_remote: bool,
+    /// The faults this proxy answers with (a trial run's scenario).
+    pub faults: Option<Arc<fault::Faults>>,
 }
 
 /// A fresh client key and secret: the key names the proxy, the secret is 32
@@ -136,6 +140,7 @@ impl Default for ProxyConfig {
             client_key: key,
             client_secret: secret,
             allow_remote: false,
+            faults: None,
         }
     }
 }
@@ -764,6 +769,19 @@ fn xml_error(status: u16, code: &str, message: &str) -> Response<Out> {
         .expect("static response")
 }
 
+/// An injected fault's answer: S3's error document, marked as sonde's.
+fn fault_error(status: u16, code: &str, message: &str, scenario: &str) -> Response<Out> {
+    let body = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>{code}</Code><Message>{message}</Message><RequestId>sonde-fault</RequestId></Error>"
+    );
+    Response::builder()
+        .status(status)
+        .header("content-type", "application/xml")
+        .header("x-sonde-fault", scenario)
+        .body(full(Bytes::from(body)))
+        .expect("static response")
+}
+
 fn full(b: Bytes) -> Out {
     Full::new(b).map_err(|never| match never {}).boxed()
 }
@@ -842,6 +860,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         job: shared.cfg.tag.clone(),
         first_byte_ms: None,
         requester: None,
+        injected: None,
     };
     if presigned {
         record.request_headers.push(Header::new(
@@ -884,6 +903,46 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
         return Ok(xml_error(403, "AccessDenied", &msg));
+    }
+
+    // a trial's faults: answered here, delayed, or sent on with the answer
+    // to be lost. The record says so, so that no reader blames the store.
+    let mut lose_answer = false;
+    let fault = shared.cfg.faults.as_ref().and_then(|f| {
+        f.decide(
+            &method,
+            &operation,
+            bucket.as_deref(),
+            key.as_deref(),
+            &query,
+        )
+        .map(|v| (f.name.clone(), v))
+    });
+    match fault {
+        Some((name, fault::Verdict::Answer { status, code })) => {
+            // the body is taken first, as a store that answers an error does
+            let mut body = body;
+            while let Some(Ok(_)) = body.frame().await {}
+            let msg = format!("sonde answered in the store's place (scenario {name})");
+            record.injected = Some(name.clone());
+            record.status = Some(status);
+            record.error_body = Some(format!("{code}: {msg}"));
+            record.latency_ms = received.elapsed().as_secs_f64() * 1000.0;
+            record
+                .response_headers
+                .push(Header::new("x-sonde-fault", &name));
+            shared.log.push(record);
+            return Ok(fault_error(status, &code, &msg, &name));
+        }
+        Some((name, fault::Verdict::Wait(d))) => {
+            record.injected = Some(name);
+            tokio::time::sleep(d).await;
+        }
+        Some((name, fault::Verdict::LoseAnswer)) => {
+            record.injected = Some(name);
+            lose_answer = true;
+        }
+        None => {}
     }
 
     // headers to forward, and the payload
@@ -1090,6 +1149,26 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.status = Some(status.as_u16());
     s3raw::fill_ids(&mut record, &headers);
     record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+    if lose_answer {
+        // the store acted; the program is told it failed
+        let _ = tokio::time::timeout(idle, resp.bytes()).await;
+        let name = record.injected.clone().unwrap_or_default();
+        let msg = format!(
+            "sonde lost the store's answer ({}) on purpose (scenario {name})",
+            status.as_u16()
+        );
+        record
+            .response_headers
+            .push(Header::new("x-sonde-store-status", status.as_str()));
+        record
+            .response_headers
+            .push(Header::new("x-sonde-fault", &name));
+        record.status = Some(500);
+        record.error_body = Some(format!("InternalError: {msg}"));
+        record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
+        shared.log.push(record);
+        return Ok(fault_error(500, "InternalError", &msg, &name));
+    }
     let mut builder = Response::builder().status(status);
     for (k, v) in resp.headers() {
         if !DROP_RESPONSE.contains(&k.as_str()) {

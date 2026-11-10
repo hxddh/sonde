@@ -131,6 +131,9 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if refused(r) {
         return Some("refused by sonde when recorded".into());
     }
+    if crate::trial::faulted(r) {
+        return Some("failed by sonde on purpose when recorded (a trial)".into());
+    }
     if r.operation == "Unknown" {
         return Some("not an S3 operation sonde knows".into());
     }

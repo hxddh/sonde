@@ -51,6 +51,13 @@ export const activityTab = signal<ActivityTab>("requests");
 export const area = () => areaOf(section());
 /** The session the Sessions area shows (set by Run when a run ends, by the palette, …). */
 export const openSession = signal<string | null>(null);
+/** The sessions read since launch, whatever way led to them (the Sessions
+ * place, a window of their own, a comparison): every reader says so here. */
+const read = new Set<string>();
+export const reading = (path: string) => void read.add(path);
+/** Whether `path` is being read or was, or is on its way to being: what
+ * tidies up after a run asks this one question before it removes a session. */
+export const wasRead = (path: string) => read.has(path) || openSession() === path;
 /** A comparison to open with a session: the run before it (`Run again`). */
 export const compareOnOpen = signal<{ before: string; after: string } | null>(null);
 /** A pane to show a session on when it opens: a program opens on its runs. */
@@ -77,10 +84,13 @@ export const shellHeight = signal(820);
 /** What the sidebar lists under the places: the current place's own list
  * (its sessions, its buckets, the commands run before), given by the place
  * while it is on screen. One left column for the whole window. */
-export const sideList = signal<{ key: string; render: () => JSX.Element } | null>(null);
-/** Gives the sidebar a place's list while the place is on screen; returns what takes it back. */
-export function showInSidebar(key: string, render: () => JSX.Element): () => void {
-  const mine = { key, render };
+export const sideList = signal<{ key: string; render: () => JSX.Element; needed?: () => boolean } | null>(null);
+/** Gives the sidebar a place's list while the place is on screen; returns
+ * what takes it back. `needed`: the place has nothing to show until
+ * something in the list is chosen (or the list has an error to say), so a
+ * hidden sidebar comes back for it rather than leave a dead end. */
+export function showInSidebar(key: string, render: () => JSX.Element, needed?: () => boolean): () => void {
+  const mine = { key, render, needed };
   sideList.set(mine);
   return () => {
     if (sideList() === mine) sideList.set(null);

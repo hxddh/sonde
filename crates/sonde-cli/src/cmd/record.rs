@@ -48,6 +48,16 @@ pub struct RunArgs {
     /// findings then say where to change it. Also the `name-callers` setting.
     #[arg(long)]
     callers: bool,
+    /// Then run the command again under faults chosen from what it did (a
+    /// 503 on each request's first attempt, a lost answer on each write, a
+    /// failed completion if it uploads in parts), and say whether it survived
+    /// each. The command runs several times: give it a place of its own.
+    #[arg(long)]
+    trial: bool,
+    /// A fault scenario to try by name (repeatable): slowdown, error,
+    /// lost-answer, fail-complete, slow, s3-limits, or one of sonde.toml's.
+    #[arg(long = "fault", value_name = "SCENARIO")]
+    faults: Vec<String>,
     /// The command, after `--`.
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<String>,
@@ -149,6 +159,14 @@ struct Started {
     path: PathBuf,
 }
 
+/// A trial run: the scenario it is put through, the clean run it is a trial
+/// of, and the file it is recorded to.
+struct Under {
+    scenario: sonde_proxy::fault::Scenario,
+    of: String,
+    path: PathBuf,
+}
+
 async fn start(
     s: &Arc<Sonde>,
     r: &Recording,
@@ -156,12 +174,24 @@ async fn start(
     command: Option<String>,
     allow_remote: bool,
 ) -> anyhow::Result<Started> {
+    start_under(s, r, listen, command, allow_remote, None).await
+}
+
+async fn start_under(
+    s: &Arc<Sonde>,
+    r: &Recording,
+    listen: SocketAddr,
+    command: Option<String>,
+    allow_remote: bool,
+    under: Option<&Under>,
+) -> anyhow::Result<Started> {
     let ep = super::endpoint(s, r.endpoint.as_deref())?;
     let client = s.client(&ep)?;
     let cfg = client.config();
-    let path = match &r.out {
-        Some(p) => p.clone(),
-        None => {
+    let path = match (&under, &r.out) {
+        (Some(u), _) => u.path.clone(),
+        (None, Some(p)) => p.clone(),
+        (None, None) => {
             let dir = s.paths().sessions();
             std::fs::create_dir_all(&dir)?;
             let name = command
@@ -180,6 +210,10 @@ async fn start(
     if ran && let Ok(dir) = std::env::current_dir() {
         header = header.ran_in(&dir);
     }
+    if let Some(u) = under {
+        header.scenario = Some(u.scenario.name.clone());
+        header.trial_of = Some(u.of.clone());
+    }
     let writer = Arc::new(SessionWriter::create(&path, &header)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
@@ -197,6 +231,7 @@ async fn start(
             listen,
             policy,
             allow_remote,
+            faults: under.map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario))),
             ..Default::default()
         },
     )
@@ -558,28 +593,175 @@ fn print_summary(
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
+    // the scenarios asked for by name are checked before anything runs
+    let project = project_scenarios()?;
+    let mut asked = Vec::new();
+    for name in &a.faults {
+        asked.push(named_scenario(name, &project)?);
+    }
+    let (file, code) = run_once(s, a, None).await?;
+    if !a.trial && asked.is_empty() {
+        return Ok(code);
+    }
+    let clean = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    if clean.records.is_empty() {
+        eprintln!("\nNo trial: the program sent no requests to fail.");
+        return Ok(code);
+    }
+    let scenarios = if !asked.is_empty() {
+        asked
+    } else if !project.is_empty() {
+        project
+    } else {
+        sonde_proxy::trial::choose(&clean.records)
+    };
+    let of = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stem = of.trim_end_matches(".sonde").to_string();
+    // trials are kept in a folder of their own: they are not runs of the
+    // program (no trend, baseline or "newest" counts them)
+    let dir = sonde_proxy::trial::folder_for(&file);
+    std::fs::create_dir_all(&dir)?;
+    let color = std::io::stderr().is_terminal();
+    eprintln!(
+        "\nTrial: the command runs {} more time{}, each under one scenario.",
+        scenarios.len(),
+        if scenarios.len() == 1 { "" } else { "s" }
+    );
+    let mut trials = Vec::new();
+    for scenario in scenarios {
+        let under = Under {
+            path: sonde_proxy::session::fresh_path(&dir, &format!("{stem}.{}", scenario.name)),
+            of: of.clone(),
+            scenario,
+        };
+        let (path, exit) = run_once(s, a, Some(&under)).await?;
+        let run = Session::open(&path).map_err(|e| anyhow::anyhow!(e))?;
+        let mut t =
+            sonde_proxy::trial::judge(&under.scenario, &clean.records, code, &run.records, exit);
+        t.session = Some(path.to_string_lossy().into_owned());
+        eprintln!("{}", trial_line(&t, color));
+        trials.push(t);
+    }
+    sonde_proxy::trial::save(&file, &trials)?;
+    let broke = trials
+        .iter()
+        .filter(|t| t.standing == sonde_proxy::trial::Standing::Broke)
+        .count();
+    eprintln!(
+        "\n{} Each trial is a session: sonde show {}",
+        if broke == 0 {
+            "The program did not break.".to_string()
+        } else {
+            format!("The program broke under {broke} of {}.", trials.len())
+        },
+        dir.join(format!("{stem}.<scenario>.sonde")).display()
+    );
+    Ok(if code != 0 {
+        code
+    } else if broke > 0 {
+        1
+    } else {
+        0
+    })
+}
+
+/// A trial's line: its standing, the scenario, what happened.
+pub fn trial_line(t: &sonde_proxy::trial::Trial, color: bool) -> String {
+    use sonde_proxy::trial::Standing;
+    let code = match t.standing {
+        Standing::Survived => "32",
+        Standing::Degraded => "33",
+        Standing::Broke => "31",
+        Standing::Untested => "2",
+    };
+    format!(
+        "  {}  {:<14} {}",
+        paint(&format!("{:<8}", t.standing.label()), code, color),
+        t.scenario,
+        t.line()
+    )
+}
+
+/// The scenarios a project's `sonde.toml` names.
+fn project_scenarios() -> anyhow::Result<Vec<sonde_proxy::fault::Scenario>> {
+    let Some(file) = find_project_file() else {
+        return Ok(Vec::new());
+    };
+    let text = std::fs::read_to_string(&file)?;
+    let project: ProjectFile =
+        toml::from_str(&text).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    project
+        .scenario
+        .iter()
+        .map(|p| {
+            p.scenario()
+                .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))
+        })
+        .collect()
+}
+
+fn named_scenario(
+    name: &str,
+    project: &[sonde_proxy::fault::Scenario],
+) -> anyhow::Result<sonde_proxy::fault::Scenario> {
+    if let Some(s) = project.iter().find(|s| s.name == name) {
+        return Ok(s.clone());
+    }
+    sonde_proxy::fault::scenario(name).ok_or_else(|| {
+        let known: Vec<String> = sonde_proxy::fault::scenarios()
+            .iter()
+            .chain(project)
+            .map(|s| format!("  {:<14} {}", s.name, s.about))
+            .collect();
+        anyhow::anyhow!(
+            "--fault {name}: no such scenario. The scenarios:\n{}",
+            known.join("\n")
+        )
+    })
+}
+
+/// One run of the command, recorded: the session's file and the program's
+/// exit code. Under a scenario, the proxy answers with its faults.
+async fn run_once(
+    s: &Arc<Sonde>,
+    a: &RunArgs,
+    under: Option<&Under>,
+) -> anyhow::Result<(PathBuf, i32)> {
     let command = sonde_proxy::program::shell_join(&a.command);
-    let mut started = start(
+    let mut started = start_under(
         s,
         &a.rec,
         SocketAddr::from(([127, 0, 0, 1], 0)),
         Some(command),
         false,
+        under,
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
     if a.callers || s.settings().name_callers {
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
+    // each run a place of its own, if the command asks for one: `{trial}`
+    // in an argument (and SONDE_TRIAL) is "clean", then the scenario's name
+    let trial = under.map_or("clean", |u| u.scenario.name.as_str());
     let mut child = tokio::process::Command::new(&a.command[0]);
-    child.args(&a.command[1..]);
+    child.args(a.command[1..].iter().map(|x| x.replace("{trial}", trial)));
+    child.env("SONDE_TRIAL", trial);
     for k in &unset {
         child.env_remove(k);
     }
     for (k, v) in &set {
         child.env(k, v);
     }
-    let printer = a.live.then(|| follow(&started.log, true));
+    if under.is_some() {
+        // a trial's output is the clean run's again: the verdict is what is read
+        child.stdout(std::process::Stdio::null());
+        child.stderr(std::process::Stdio::null());
+    }
+    let printer = (a.live && under.is_none()).then(|| follow(&started.log, true));
     let mut child = child
         .spawn()
         .map_err(|e| anyhow::anyhow!("cannot start {}: {e}", a.command[0]))?;
@@ -596,24 +778,26 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     // requests still in flight are recorded before the file is read and packed
     started.proxy.shutdown(SHUTDOWN_GRACE).await;
     started.writer.flush()?;
-    let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
-    let color = std::io::stderr().is_terminal();
-    print_summary(
-        &session.records,
-        &session.header.endpoint,
-        &started.path,
-        color,
-        &request_prices_for(s, &session.header.endpoint),
-        false,
-    );
-    if session.records.is_empty() {
-        eprintln!("{}", NO_REQUESTS);
+    if under.is_none() {
+        let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
+        let color = std::io::stderr().is_terminal();
+        print_summary(
+            &session.records,
+            &session.header.endpoint,
+            &started.path,
+            color,
+            &request_prices_for(s, &session.header.endpoint),
+            false,
+        );
+        if session.records.is_empty() {
+            eprintln!("{}", NO_REQUESTS);
+        }
     }
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();
     drop(started);
     let _ = sonde_proxy::session::compress(&file);
-    Ok(exit_code(status))
+    Ok((file, exit_code(status)))
 }
 
 /// How long a stopping proxy waits for the requests in flight.
@@ -1363,10 +1547,70 @@ struct ProjectCheck {
     baseline: Option<String>,
 }
 
+/// A fault scenario of the project's own, a `[[scenario]]` of `sonde.toml`:
+/// `fault = "503 SlowDown"` (or `500`, `lost-answer`, `delay 200ms`), `on`
+/// the operations it is for, `prefix` the keys, `times` the attempts at each
+/// request that meet it (1 unless said; 0 is every attempt).
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct ProjectScenario {
+    name: String,
+    fault: String,
+    #[serde(default)]
+    on: Vec<String>,
+    #[serde(default)]
+    prefix: String,
+    times: Option<u32>,
+}
+
+impl ProjectScenario {
+    fn scenario(&self) -> Result<sonde_proxy::fault::Scenario, String> {
+        if self.name.is_empty()
+            || !self
+                .name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(format!(
+                "scenario {:?}: a name is letters, digits, - and _",
+                self.name
+            ));
+        }
+        let effect = sonde_proxy::fault::parse_effect(&self.fault)
+            .map_err(|e| format!("scenario {}: {e}", self.name))?;
+        let every = matches!(effect, sonde_proxy::fault::Effect::Delay { .. });
+        Ok(sonde_proxy::fault::Scenario {
+            name: self.name.clone(),
+            about: format!(
+                "{}{}{}",
+                self.fault,
+                if self.on.is_empty() {
+                    String::new()
+                } else {
+                    format!(" on {}", self.on.join(", "))
+                },
+                if self.prefix.is_empty() {
+                    String::new()
+                } else {
+                    format!(" under {}", self.prefix)
+                }
+            ),
+            rules: vec![sonde_proxy::fault::Rule {
+                on: self.on.clone(),
+                prefix: self.prefix.clone(),
+                effect,
+                times: self.times.unwrap_or(if every { 0 } else { 1 }),
+            }],
+        })
+    }
+}
+
 #[derive(Debug, Default, serde::Deserialize)]
 struct ProjectFile {
     #[serde(default)]
     check: ProjectCheck,
+    #[serde(default)]
+    scenario: Vec<ProjectScenario>,
 }
 
 /// `sonde.toml` here or in a folder above (to the repository's root).
@@ -1831,6 +2075,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         base.as_ref().map(|b| (&b.0, &b.1[..], &b.2, &b.3[..])),
         &budget,
     );
+    // what the run's last trial found: a program that broke fails the check
+    let trials = sonde_proxy::trial::load(&file);
+    let broke = trials
+        .iter()
+        .any(|t| t.standing == sonde_proxy::trial::Standing::Broke);
+    let mut c = c;
+    c.passed &= !broke;
     // setting a baseline alone is a whole command
     if c.verdicts.is_empty() && a.set_baseline {
         return Ok(0);
@@ -1883,6 +2134,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 ))
             );
         }
+        for t in trials
+            .iter()
+            .filter(|t| t.standing == sonde_proxy::trial::Standing::Broke)
+        {
+            println!(
+                "::error title=sonde check::{}",
+                gh_escape(&format!("breaks under {}: {}", t.scenario, t.line()))
+            );
+        }
         for w in &c.new_warnings {
             println!(
                 "::warning title=sonde: new since the baseline::{}",
@@ -1921,6 +2181,17 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             "{}",
             check_markdown(&c, &run.0.currency, since_text.as_deref(), &run.3)
         );
+        if !trials.is_empty() {
+            println!("\n| | scenario | |\n|---|---|---|");
+            for t in &trials {
+                println!(
+                    "| {} | {} | {} |",
+                    t.standing.label(),
+                    t.scenario,
+                    t.line().replace('|', "\\|")
+                );
+            }
+        }
         return Ok(if c.passed { 0 } else { 1 });
     }
     let rows: Vec<Vec<String>> = c
@@ -1944,6 +2215,29 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         "{}",
         output::table(&["", "", "run", "limit", "from"], &rows)
     );
+    for t in &trials {
+        use sonde_proxy::trial::Standing;
+        println!(
+            "{}  {} {}{}",
+            match t.standing {
+                Standing::Broke => paint("FAIL", "31", color),
+                Standing::Untested => paint("skip", "2", color),
+                _ => paint("pass", "32", color),
+            },
+            match t.standing {
+                Standing::Survived => "survives",
+                Standing::Degraded => "gets through",
+                Standing::Broke => "breaks under",
+                Standing::Untested => "not met:",
+            },
+            t.scenario,
+            if t.line().is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", t.line())
+            }
+        );
+    }
     for w in &c.new_warnings {
         println!("{} {w}", paint("!", "33", color));
     }

@@ -112,6 +112,33 @@ test("a month of a program reads as money, not per 1,000 runs", async () => {
   expect(cost(0.004, "USD")).not.toBe("<0.01 USD");
 });
 
+test("a lane's cell shows the worst of the requests it holds, and says how many", async () => {
+  const { laneCells } = await import("../src/ui/plots");
+  // 96 slices of 10 ms: three short requests share the first cell of lane 0, the failure not the last of them
+  const samples = [
+    { tMs: 0, ms: 5, lane: 0, status: 200 },
+    { tMs: 6, ms: 2, lane: 0, status: 500 },
+    { tMs: 8, ms: 1, lane: 0, status: 200 },
+    { tMs: 0, ms: 25, lane: 1, status: 404 },
+  ];
+  const cells = laneCells(samples, [0, 960], 96, 24);
+  // one cell per slice and lane, in order of lane then slice
+  expect(cells.length).toBe(4);
+  expect(cells[0].lane).toBe(0);
+  expect(cells[0].bin).toBe(0);
+  expect(cells[0].n).toBe(3);
+  // the failure wins, and is the request the cell stands for
+  expect(cells[0].tone).toBe("server");
+  expect(cells[0].sample).toBe(1);
+  // a long request is a run of cells, one request each
+  expect(cells[3].lane).toBe(1);
+  expect(cells[3].bin).toBe(2);
+  expect(cells[3].n).toBe(1);
+  expect(cells[3].tone).toBe("miss");
+  // the same input gives the same cells: nothing is left to the order of drawing
+  expect(JSON.stringify(laneCells(samples, [0, 960], 96, 24))).toBe(JSON.stringify(cells));
+});
+
 test("prefixes are named by what tells them apart: the shared start once, the end kept", async () => {
   const { prefixNames, tail } = await import("../src/ui/plots");
   // cut at the start, on a folder's edge: the end is what differs
@@ -137,4 +164,11 @@ test("prefixes are named by what tells them apart: the shared start once, the en
   // two never get one name
   const twins = prefixNames([{ prefix: "aaaaaaaaaaaaaaaaaaaaaaaa/same-ending/" }, { prefix: "bbbbbbbbbbbbbbbbbbbbbbbb/same-ending/" }], 16);
   expect(twins.name("aaaaaaaaaaaaaaaaaaaaaaaa/same-ending/")).not.toBe(twins.name("bbbbbbbbbbbbbbbbbbbbbbbb/same-ending/"));
+});
+
+test("a trial reads as figures: the faults and retries, the wait, the load, what went wrong", async () => {
+  const { trialText } = await import("../src/ui/history");
+  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
+  expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
+  expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried · 2 writes never sent again · exited 1 (clean run: 0)");
 });

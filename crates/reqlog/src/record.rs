@@ -73,6 +73,10 @@ pub struct Record {
     /// canonical user id); only an imported log knows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requester: Option<String>,
+    /// The fault scenario that answered this request in the store's place
+    /// (or delayed it, or lost its answer): sonde's doing, not the store's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub injected: Option<String>,
 }
 
 /// A compact view for list rows.

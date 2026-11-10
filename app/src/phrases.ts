@@ -58,6 +58,7 @@ const zh: Record<string, string> = {
   "loose.misses": "查找了 {n} 次，均未找到",
   "loose.reads": "读取了 {n} 次",
   "obs.shared": "{n} 次 {format} 写入都是：",
+  "obs.injected": "{n} 个请求遇到了 sonde 注入的故障（场景 {scenario}）：这里的错误和重试来自演练，不是存储本身",
   "obs.unfinished": "{n} 个分片上传既没有完成也没有中止：分片会一直计费，直到生命周期规则清理它们",
   "obs.orphans.one": "写入了文件但之后没有提交：除非后续提交引用它们，否则就是孤儿文件",
   "obs.orphans": "有 {n} 次写入了文件但之后没有提交：除非后续提交引用它们，否则就是孤儿文件",

@@ -208,7 +208,9 @@ function useBuckets() {
       />
     </View>
   );
-  return { list };
+  // nothing to show beside the list until a bucket is chosen, and a failed listing is said only there
+  const needed = () => !!endpoint() && (!!buckets.error() || !bucket());
+  return { list, needed };
 }
 
 /** A detail of the bucket, from the edge of the window. */
@@ -243,8 +245,8 @@ export function StoreArea() {
     );
   }
   // the buckets are the sidebar's list while this place shows
-  const { list } = useBuckets();
-  cleanup(showInSidebar("store", list));
+  const { list, needed } = useBuckets();
+  cleanup(showInSidebar("store", list, needed));
   return (
     <View class="flex-1" testID="screen-store">
       <Browse />

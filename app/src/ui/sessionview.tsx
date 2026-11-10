@@ -7,7 +7,7 @@
 import { type ContextMenuEvent, effect, type JSX, List, Scroll, type ScrollRef, signal, Text, token, untracked, View } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, Popover, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
-import { bytes, clock, count, date, day, duration as took, hm, middle, ms } from "../format";
+import { bytes, change, clock, count, date, day, duration as took, hm, middle, ms } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
 import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, timed, Waterfall } from "./plots";
@@ -468,7 +468,7 @@ export function whatIfText(v: SessionView): string | null {
   const w = v.whatIf;
   if (!w) return null;
   // the cost as what changes: amounts of thousandths of a cent read as nothing
-  const cut = w.cost[0] > 0 ? `${w.cost[1] <= w.cost[0] ? "−" : "+"}${Math.round((Math.abs(w.cost[0] - w.cost[1]) * 100) / w.cost[0])}%` : "—";
+  const cut = w.cost[0] > 0 ? change(w.cost[0], w.cost[1]) : "—";
   // a log without times says nothing of waiting
   if (!timed(v.profile)) return t("whatIf.untimed", { n: w.findings, a: w.requests[0], b: w.requests[1], cut });
   return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: offset(w.waitingMs[0]), wb: offset(w.waitingMs[1]), cut });
@@ -619,6 +619,19 @@ const tableClasses = {
 const opsWidths = { bar: rememberedSize("ops.bar", 150), notes: rememberedSize("ops.notes", 320) };
 const kept = (key: keyof typeof opsWidths, fallback: number) => untracked(() => opsWidths[key].size()) || fallback;
 
+/** The operations as a table to paste (tab-separated), in the order given:
+ * figures as plain numbers in one unit each, named in the column's title —
+ * what the table shows ("840 ms", "2.35 s") would not sort or sum. */
+export function operationsText(view: SessionView, order: number[]): string {
+  const plain = (s: string) => s.replace(/[\t\r\n]+/g, " ");
+  const head = [t("column.time"), t("column.operation"), t("column.requests"), t("sessions.tookMs"), t("column.notes")];
+  const rows = order.flatMap((i) => {
+    const e = view.episodes[i];
+    return e ? [[e.start, plain(episodeTitle(e)), String(e.records.length), String(Number(duration(e).toFixed(3))), plain(episodeNotes(e, view.sharedNotes).join(" · "))]] : [];
+  });
+  return [head, ...rows].map((r) => r.join("\t")).join("\n");
+}
+
 export function OperationsTable(props: {
   view: SessionView;
   rows?: number[];
@@ -669,7 +682,7 @@ export function OperationsTable(props: {
       ];
       const after = [
         { key: "requests", title: t("column.requests"), width: 92, align: "end" as const, sortable: true },
-        { key: "duration", title: t("sessions.took"), width: 78, align: "end" as const, sortable: true },
+        { key: "duration", title: t("sessions.took"), width: 96, align: "end" as const, sortable: true },
         ...(on.bar ? [{ key: "bar", title: t("column.when"), width: kept("bar", 150), minWidth: 80 }] : []),
         ...(on.notes ? [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }] : []),
       ];

@@ -638,9 +638,35 @@ export interface CodeChange {
 }
 
 /** A program over its runs, its baseline and this run checked against it. */
+/** What one fault scenario did to a program (`sonde run --trial`). */
+export interface Trial {
+  scenario: string;
+  about: string;
+  standing: "survived" | "degraded" | "broke" | "untested";
+  exit: number;
+  cleanExit: number;
+  faults: number;
+  retried: number;
+  droppedReads: number;
+  droppedWrites: number;
+  attempts: number;
+  /** The waits before a retry: shortest, median, longest (ms). */
+  backoffMs?: [number, number, number];
+  jitter: boolean;
+  requests: number;
+  cleanRequests: number;
+  leftUploads: number;
+  wroteTwice: number;
+  reasons: string[];
+  /** The trial's own session. */
+  session?: string;
+}
+
 export interface ProgramHistory {
   program: string;
   runs: RunPoint[];
+  /** The run under fault scenarios, when it was tried. */
+  trials?: Trial[];
   /** Each run's commit, as `runs`. */
   commits?: (GitStamp | null)[];
   since?: Since | null;

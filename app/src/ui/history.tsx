@@ -7,14 +7,54 @@ import { count, date, day, duration, money } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { copy, report, sessionsChanged, sessionsTick } from "../store";
-import type { CodeChange, GitStamp, ProgramHistory } from "../types";
+import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ListRow, Modal, Muted, Notice, PageHeader, POPUP, SimpleTable, Title, terminal, textual } from "./kit";
+import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ListRow, Modal, Muted, Notice, PageHeader, POPUP, Section, SimpleTable, Title, terminal, textual } from "./kit";
 import { cost, offset, RunTrend, Sparkline } from "./plots";
 import { programOf, scrubCommand } from "./sessionview";
 
 /** How high a dialog's scrolling part (a comment, a file's diff) grows before it scrolls: one cap for all. */
 const TALL = 480;
+
+const STANDING = { survived: "pass", degraded: "warn", broke: "fail", untested: "neutral" } as const;
+
+/** What a trial found, in figures: the faults and their retries, the wait
+ * before a retry, the load it made, and what went wrong. */
+export function trialText(x: Trial): string {
+  const parts: string[] = [];
+  if (x.faults > 0) parts.push(x.retried === x.faults ? t("trial.allRetried", { n: count(x.faults) }) : t("trial.retried", { n: count(x.faults), m: count(x.retried) }));
+  if (x.backoffMs) {
+    const [lo, , hi] = x.backoffMs;
+    parts.push(hi - lo < 1 ? t("trial.after", { t: duration(lo) }) : t(x.jitter ? "trial.afterJitter" : "trial.afterStep", { lo: duration(lo), hi: duration(hi) }));
+  }
+  if (x.cleanRequests > 0 && x.requests !== x.cleanRequests) parts.push(t("trial.load", { x: (x.requests / x.cleanRequests).toFixed(1) }));
+  if (x.wroteTwice > 0) parts.push(t("trial.twice", { n: count(x.wroteTwice) }));
+  if (x.leftUploads > 0) parts.push(t("trial.left", { n: count(x.leftUploads) }));
+  if (x.droppedReads > 0) parts.push(t("trial.gaveUp", { n: count(x.droppedReads) }));
+  if (x.droppedWrites > 0) parts.push(t("trial.droppedWrites", { n: count(x.droppedWrites) }));
+  if (x.exit !== x.cleanExit) parts.push(t("trial.exit", { n: x.exit, m: x.cleanExit }));
+  if (x.standing === "untested") parts.push(t("trial.notMet"));
+  return parts.join(" · ");
+}
+
+/** The run under faults: a row a scenario, its standing first; a press opens the trial's own session. */
+function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void }) {
+  return (
+    <Section testID="history-trials" title={t("trial.title")} description={t("trial.hint")}>
+      <Card pad="tile">
+        <Each of={props.trials} key={(x) => x.scenario}>
+          {(x) => (
+            <ListRow testID={`trial-${x().scenario}`} label={`${t(`trial.${x().standing}` as never)}: ${x().scenario}`} onPress={() => x().session && props.onOpen?.(x().session!)}>
+              <Badge label={t(`trial.${x().standing}` as never)} tone={STANDING[x().standing]} />
+              <Text class="w-28 font-mono text-small text-foreground">{x().scenario}</Text>
+              <Muted class="min-w-0 flex-1 text-small">{trialText(x())}</Muted>
+            </ListRow>
+          )}
+        </Each>
+      </Card>
+    </Section>
+  );
+}
 
 function Verdicts(props: { h: ProgramHistory }) {
   const c = () => props.h.check!;
@@ -211,6 +251,9 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
             </PageHeader>
             <If when={x().check}>
               <Verdicts h={x()} />
+            </If>
+            <If when={(x().trials?.length ?? 0) > 0}>
+              <Trials trials={x().trials!} onOpen={props.onOpen} />
             </If>
             <If when={x().since}>
               <SinceRow h={x()} onOpen={props.onOpen} />

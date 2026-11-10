@@ -1284,6 +1284,26 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .weigh(impact, 0, total),
         );
     }
+    // a trial's faults are sonde's doing: said first among the notes, so
+    // that the errors and retries below are not read as the store's
+    let injected: Vec<&Record> = records.iter().filter(|r| r.injected.is_some()).collect();
+    if let Some(first) = injected.first() {
+        let n = injected.len();
+        out.push(
+            info(
+                p(
+                    "obs.injected",
+                    &[
+                        ("n", n.to_string()),
+                        ("s", plural(n)),
+                        ("scenario", first.injected.clone().unwrap_or_default()),
+                    ],
+                ),
+                of_records(&mut injected.iter().map(|r| r.id)),
+            )
+            .weigh(n, 0, total),
+        );
+    }
     let orphans = of_episodes(&|e| e.title.contains("no commit followed"));
     if !orphans.is_empty() {
         let n = orphans.len();

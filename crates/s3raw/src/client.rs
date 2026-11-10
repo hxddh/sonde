@@ -819,6 +819,7 @@ impl S3Client {
             job: self.job.clone(),
             first_byte_ms: None,
             requester: None,
+            injected: None,
         }
     }
 

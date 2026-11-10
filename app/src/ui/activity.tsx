@@ -161,7 +161,7 @@ function Requests() {
           // fits the panel: no column cut at its edge
           { key: "operation", title: t("requests.operation"), width: 164 },
           { key: "target", title: t("activity.target"), width: 148, minWidth: 100 },
-          { key: "latency", title: t("sessions.took"), width: 64, align: "end" as const },
+          { key: "latency", title: t("sessions.took"), width: 96, align: "end" as const },
           // to the millisecond, as operations show theirs
           { key: "time", title: t("column.time"), width: 110 },
         ]}

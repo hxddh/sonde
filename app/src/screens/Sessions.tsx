@@ -14,7 +14,7 @@ import { hm } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
-import { away, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, report, sessionsChanged, sessionsTick, showInSidebar, startDemo } from "../store";
+import { away, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { Icon, iconSvg } from "../ui/icon";
@@ -23,7 +23,7 @@ import { Toaster } from "../ui/toast";
 import { fileName, removeSession, rename, RenameDialog, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
-import { findingMarks } from "../ui/sessionview";
+import { findingMarks, operationsText } from "../ui/sessionview";
 import { episodeTitle } from "../phrases";
 import { programOf, ranCommand, scrubCommand } from "../ui/sessionview";
 import { HistoryPane, ProgramList } from "../ui/history";
@@ -42,6 +42,8 @@ const inspectorWidth = rememberedSize("sessions.inspector", 420);
 /** One session: its figures, its operations (and output), the inspector, and what can be done with it. */
 
 export function SessionPane(props: { path: string; others: () => SessionInfo[]; tick: () => number; onBack?: () => void; onOpen?: (p: string) => void; inWindow?: boolean }) {
+  // read here, whatever way led here: an empty run is not tidied away under its reader
+  reading(props.path);
   const op = signal<number | null>(null);
   const rec = signal<number | null>(null);
   const opHighlight = signal<number[]>([]);
@@ -216,15 +218,19 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       { label: t("sessions.window"), icon: iconSvg("app-window"), onSelect: openWindow, disabled: props.inWindow },
       { label: t("sessions.share"), icon: iconSvg("share-2"), onSelect: () => void shareSession(props.path) },
       { label: t("sessions.copyPath"), icon: iconSvg("copy"), onSelect: () => copy(props.path) },
-      // the operations as shown, for a ticket or a spreadsheet (Native Shell's dump)
+      // the operations as shown, for a ticket or a spreadsheet
       {
         label: t("sessions.copyTable"),
         icon: iconSvg("copy"),
         // the table is there only on its own pane
         disabled: pane() === "time" || pane() === "runs",
-        onSelect: () => void opsRef?.dump().then((d) => copy([d.headers, ...d.rows].map((r) => r.join("\t")).join("\n")), report),
+        // in the order shown; figures as numbers in one unit (not "840 ms" beside "2.35 s")
+        onSelect: () => {
+          const v = view();
+          if (v) copy(operationsText(v, opsOrder?.() ?? rows() ?? v.episodes.map((_, i) => i)));
+        },
       },
-      ...(me ? ([{ type: "separator" }, { label: t("sessions.rename"), icon: iconSvg("pencil"), onSelect: () => rename(me) }, { label: t("sessions.removeMenu"), icon: iconSvg("trash"), disabled: me.live, onSelect: () => void removeSession(me) }] as MenuItem[]) : []),
+      ...(me ? ([{ type: "separator" }, { label: t("sessions.rename"), icon: iconSvg("pencil"), onSelect: () => rename(me, props.inWindow ? props.path : null) }, { label: t("sessions.removeMenu"), icon: iconSvg("trash"), disabled: me.live, onSelect: () => void removeSession(me) }] as MenuItem[]) : []),
     ]);
   };
 
@@ -269,8 +275,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       filter={filter()}
       onFilter={(f) => filter.set(f)}
       onOpenCode={(place) => api.sessions.openCode(props.path, place).catch(report)}
-      // a short window keeps two findings in view (the rest scroll): the operations need their rows
-      maxHeight={box().h < 600 ? 68 : Math.max(104, Math.round(box().h * 0.3))}
+      // a short window keeps two findings in view (the rest scroll): the operations need their rows;
+      // a finding chosen there gets the room to read what to change
+      maxHeight={box().h < 600 ? (filter() === null ? 68 : Math.max(160, Math.round(box().h * 0.4))) : Math.max(104, Math.round(box().h * 0.3))}
     />
   );
   /** When: the session's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
@@ -487,7 +494,7 @@ function SessionWindow(props: { path: string }) {
   });
   return (
     <View class="flex-1 bg-background">
-      <RenameDialog />
+      <RenameDialog window={props.path} />
       <SessionPane
         path={props.path}
         others={others}
@@ -503,10 +510,19 @@ function SessionWindow(props: { path: string }) {
   );
 }
 
+/** What the place was showing, kept while another place is on screen: the
+ * session chosen, the search, and whether the list is of runs or programs. */
+const selected = signal<string | null>(null);
+const query = signal("");
+const byProgram = signal(false);
+
 export function Sessions() {
   const sessions = signal<SessionInfo[]>(api.sessions.list());
-  // a terminal starts on the list; a window on the newest session
-  const selected = signal<string | null>(openSession() ?? (terminal() ? null : (sessions()[0]?.path ?? null)));
+  // a terminal starts on the list; a window on the session it showed last, or the newest
+  untracked(() => {
+    const was = selected();
+    selected.set(openSession() ?? (terminal() ? null : was && sessions().some((s) => s.path === was) ? was : (sessions()[0]?.path ?? null)));
+  });
   const tick = signal(0);
 
   // another place asked for a session (a run that ended, the palette, the sidebar)
@@ -543,8 +559,6 @@ export function Sessions() {
       report(e);
     }
   };
-  const query = signal("");
-  const byProgram = signal(false);
   const shown = () => {
     const q = terminal() ? "" : query().trim().toLowerCase();
     if (!q) return sessions();
@@ -683,7 +697,8 @@ export function Sessions() {
   });
 
   // the sessions are the sidebar's list while this place shows
-  if (!terminal()) cleanup(showInSidebar("sessions", list));
+  // (with none chosen the list is all there is to act on: a hidden sidebar comes back)
+  if (!terminal()) cleanup(showInSidebar("sessions", list, () => sessions().length > 0 && !selected()));
 
   return (
     <View class="flex-1" testID="screen-sessions">

@@ -79,6 +79,9 @@ fn template(key: &str) -> &'static str {
         "loose.misses" => "{n} lookup{s} that found nothing",
         "loose.reads" => "{n} reads",
         "obs.shared" => "{n} {format} writes: ",
+        "obs.injected" => {
+            "{n} request{s} met a fault sonde injected (scenario {scenario}): the errors and retries here are the trial's, not the store's"
+        }
         "obs.unfinished" => {
             "{n} multipart upload{s} never completed or aborted: the parts stay billed until a lifecycle rule removes them"
         }

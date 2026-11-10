@@ -835,3 +835,75 @@ async fn a_request_in_flight_when_the_proxy_stops_is_still_recorded() {
     // and nothing new is taken
     assert!(reqwest::get(proxy.url()).await.is_err());
 }
+
+async fn setup_faults(scenario: &str) -> (Proxy, S3Client, RequestLog, Arc<Upstream>) {
+    let (url, up) = upstream().await;
+    let log = RequestLog::default();
+    let target = client(&url, REAL_KEY, REAL_SECRET, RequestLog::default());
+    let faults = sonde_proxy::fault::Faults::new(&sonde_proxy::fault::scenario(scenario).unwrap());
+    let proxy = Proxy::start(
+        target,
+        log.clone(),
+        ProxyConfig {
+            faults: Some(Arc::new(faults)),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let cfg = ClientConfig::new("app", &proxy.url(), "us-east-1").unwrap();
+    let (key, secret) = proxy.client_keys();
+    let app = S3Client::new(
+        cfg,
+        Arc::new(StaticProvider(Some(Credentials::new(key, secret, None)))),
+        RequestLog::default(),
+    )
+    .unwrap();
+    (proxy, app, log, up)
+}
+
+fn put(key: &str) -> S3Request {
+    S3Request::new("PutObject", http::Method::PUT)
+        .bucket("data")
+        .key(key)
+        .body(Body::from("payload"))
+        .no_retry()
+}
+
+#[tokio::test]
+async fn a_fault_is_answered_without_the_store_and_the_retry_goes_through() {
+    let (_proxy, app, log, up) = setup_faults("slowdown").await;
+    let r = app.send_raw(put("k")).await.unwrap();
+    assert_eq!(r.status, 503);
+    assert!(r.text().contains("<Code>SlowDown</Code>"), "{}", r.text());
+    assert!(up.calls.lock().is_empty(), "the store never saw it");
+    let r = app.send_raw(put("k")).await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(up.calls.lock().len(), 1);
+    let recs = log.list(&reqlog::Filter::default(), 10);
+    let injected: Vec<_> = recs.iter().filter(|r| r.injected.is_some()).collect();
+    assert_eq!(injected.len(), 1);
+    assert_eq!(injected[0].status, Some(503));
+    assert_eq!(injected[0].injected.as_deref(), Some("slowdown"));
+}
+
+#[tokio::test]
+async fn a_lost_answer_is_a_write_the_store_made_and_the_program_was_not_told() {
+    let (_proxy, app, log, up) = setup_faults("lost-answer").await;
+    let r = app.send_raw(put("k")).await.unwrap();
+    assert_eq!(r.status, 500);
+    assert_eq!(up.calls.lock().len(), 1, "the store took the write");
+    let rec = &log.list(&reqlog::Filter::default(), 1)[0];
+    assert_eq!(rec.injected.as_deref(), Some("lost-answer"));
+    assert!(
+        rec.response_headers
+            .iter()
+            .any(|h| h.name == "x-sonde-store-status" && h.value == "200")
+    );
+    // reads are not writes: untouched
+    let get = S3Request::new("GetObject", http::Method::GET)
+        .bucket("data")
+        .key("k")
+        .no_retry();
+    assert_eq!(app.send_raw(get).await.unwrap().status, 200);
+}

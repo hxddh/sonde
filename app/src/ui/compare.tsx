@@ -7,7 +7,7 @@ import { change, count, date, ms } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
-import { endpoint, endpoints, go, report, sessionsChanged } from "../store";
+import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange, SessionInfo } from "../types";
 import { Icon } from "./icon";
 import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Figure, Modal, Muted, Notice, PageHeader, ROW, rowHeight, Section, TABLE, terminal, Title, TYPE } from "./kit";
@@ -123,6 +123,8 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
     }
   });
   const info = (p: string) => sessions().find((x) => x.path === p);
+  // both are being read: neither is tidied away meanwhile
+  effect(() => (reading(props.a), reading(props.b)));
   // which one is a replay: its answers are compared with its original's, whichever was opened first
   const replayOf = computed(() => {
     const isReplay = (p: string) => !!info(p)?.command?.startsWith("replay of ");

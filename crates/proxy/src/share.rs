@@ -167,6 +167,8 @@ mod tests {
                 command: Some("AWS_SECRET_ACCESS_KEY=hunter2 python etl.py".into()),
                 cwd: None,
                 git: None,
+                scenario: None,
+                trial_of: None,
             },
             records: vec![],
             logs: vec![],

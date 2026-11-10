@@ -142,6 +142,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             for r in &gone {
                 if *yes {
                     std::fs::remove_file(&r.path)?;
+                    sonde_proxy::trial::remove(std::path::Path::new(&r.path));
                 }
                 println!(
                     "{}{}",

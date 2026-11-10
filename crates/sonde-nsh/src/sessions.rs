@@ -1281,6 +1281,8 @@ impl Sessions {
                 "limits": limits,
                 "check": check,
                 "markdown": markdown,
+                // what the run's last trial found (`sonde run --trial`)
+                "trials": sonde_proxy::trial::load(Path::new(&path)),
             }))
         })
         .await
@@ -1513,6 +1515,8 @@ impl Sessions {
             }
             std::fs::remove_file(&p).map_err(err_msg)?;
         }
+        // its trials go with it
+        sonde_proxy::trial::remove(&p);
         forget(&p);
         // the session is gone either way; a titles file that does not read stays
         if let Ok(mut t) = map_to_change(&sonde().paths().sessions().join("titles.json"))
