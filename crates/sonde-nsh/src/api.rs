@@ -207,19 +207,10 @@ impl Sonde {
         )
     }
 
-    /// Adds the endpoints of the named AWS profiles.
+    /// Adds the endpoints of the named AWS profiles (each under an id of
+    /// its own: an endpoint that exists is never replaced); how many.
     pub fn import_profiles(names: Vec<String>) -> Result<u32, String> {
-        let s = sonde();
-        let mut n = 0;
-        for e in s.importable_profiles() {
-            if let CredentialSource::Profile { name } = &e.credentials
-                && names.contains(name)
-            {
-                s.upsert_endpoint(e).map_err(err_msg)?;
-                n += 1;
-            }
-        }
-        Ok(n)
+        sonde().import_profiles(&names).map_err(err_msg)
     }
 
     /// Lists buckets and asks STS who the credentials are (where the vendor has it).
@@ -235,6 +226,22 @@ impl Sonde {
                 .map_err(sonde_core::S3Error::config)
         })
         .await
+    }
+
+    // --- configuration -------------------------------------------------------
+
+    /// Why `config.toml` did not load, or null. While it stands the app
+    /// runs with no endpoints and default settings, and every save
+    /// (settings, endpoints, imports) is refused: the file is never
+    /// written over. Show it, with [`Self::paths`]' `config`.
+    pub fn config_error() -> Option<String> {
+        sonde().config_error()
+    }
+
+    /// Reads `config.toml` again (after it was fixed, or edited outside).
+    /// Rejects with why it still does not load.
+    pub fn reload_config() -> Result<(), String> {
+        sonde().reload_config().map_err(err_msg)
     }
 
     // --- settings ------------------------------------------------------------
@@ -342,6 +349,7 @@ impl Sonde {
     }
 
     /// Downloads an object into the downloads directory (a job; its id).
+    /// Never replaces a file: the result's `path` is where it went.
     pub async fn download(endpoint: String, bucket: String, key: String) -> Result<String, String> {
         let s = sonde();
         let st = s.settings();
@@ -349,12 +357,8 @@ impl Sonde {
             .downloads_dir
             .clone()
             .unwrap_or_else(|| s.paths().default_downloads());
-        let name = key
-            .rsplit('/')
-            .find(|p| !p.is_empty())
-            .unwrap_or("object")
-            .replace(['\\', ':'], "_");
-        let dest = dir.join(name);
+        // a name taken already gets ` (2)`: the job's result says the path
+        let dest = dir.join(browse::download_name(&key));
         spawn(move || browse::download(&sonde(), &endpoint, &bucket, &key, dest)).await
     }
 
@@ -728,12 +732,15 @@ impl Sonde {
     }
 
     /// Runs probes on several endpoints in parallel: `options` is
-    /// `{ bucket, allowTempBuckets, includeSlow, only }`. The job ids, in order.
+    /// `{ bucket, allowTempBuckets, includeSlow, only }`. The job ids, in
+    /// order. Refused (kind `refused`) while read-only mode is on, as every
+    /// write is; each run is in the audit log.
     pub async fn run_probes(
         endpoints: Vec<String>,
         options: JsonValue,
     ) -> Result<Vec<String>, String> {
         let o: probes::runner::RunOptions = parse(options, "options")?;
+        probes::runner::allowed(&sonde()).map_err(err)?;
         match background(async move { probes::runner::spawn(&sonde(), &endpoints, o) }).await {
             Ok(ids) => Ok(ids),
             Err(e) => Err(err_msg(e)),

@@ -1322,7 +1322,11 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     // the same prefix listed again and again
     let mut lists: HashMap<String, Vec<u64>> = HashMap::new();
     for r in records.iter().filter(|r| {
-        r.operation.starts_with("ListObjects") && query(r, "continuation-token").is_none()
+        // a later page (ListObjectsV2's token, ListObjects' marker) is the
+        // same listing going on
+        r.operation.starts_with("ListObjects")
+            && query(r, "continuation-token").is_none()
+            && query(r, "marker").is_none_or(str::is_empty)
     }) {
         lists
             .entry(format!(

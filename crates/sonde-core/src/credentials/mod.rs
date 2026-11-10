@@ -344,10 +344,7 @@ async fn sts(
     };
     let endpoint =
         std::env::var("AWS_ENDPOINT_URL_STS").unwrap_or_else(|_| format!("https://{host}"));
-    let host = url::Url::parse(&endpoint)
-        .ok()
-        .and_then(|u| u.host_str().map(String::from))
-        .unwrap_or(host);
+    let host = host_header(&endpoint).unwrap_or(host);
     let body = form(params);
     let mut req = http().post(&endpoint).header(
         "content-type",
@@ -734,6 +731,33 @@ fn static_from(
     }
 }
 
+/// The `host` a request to `endpoint` carries, which is what gets signed:
+/// with the port when the URL names one (`localhost:4566`).
+fn host_header(endpoint: &str) -> Option<String> {
+    let u = url::Url::parse(endpoint).ok()?;
+    let host = u.host_str()?;
+    Some(match u.port() {
+        Some(p) => format!("{host}:{p}"),
+        None => host.to_string(),
+    })
+}
+
+/// A step of the chain that could not be set up: it says why when asked.
+struct FailedSource {
+    name: String,
+    error: String,
+}
+
+#[async_trait::async_trait]
+impl Source for FailedSource {
+    async fn fetch(&self) -> Result<Option<Credentials>, String> {
+        Err(self.error.clone())
+    }
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+}
+
 /// The AWS default chain.
 pub struct ChainSource {
     pub sources: Vec<Box<dyn Source>>,
@@ -764,12 +788,21 @@ pub fn default_chain() -> ChainSource {
     }
     let files = AwsFiles::load();
     let profile = std::env::var("AWS_PROFILE").unwrap_or_else(|_| "default".into());
-    if let Ok(p) = profile_source(&files, &profile, 0) {
-        sources.push(p);
-    }
+    sources.push(profile_step(&files, &profile));
     sources.push(Box::new(ContainerSource));
     sources.push(Box::new(ImdsSource::default()));
     ChainSource { sources }
+}
+
+/// The chain's profile step. A profile that cannot be used stays in the
+/// chain as a step that fails, so the chain's error says what it said.
+fn profile_step(files: &AwsFiles, profile: &str) -> Box<dyn Source> {
+    profile_source(files, profile, 0).unwrap_or_else(|error| {
+        Box::new(FailedSource {
+            name: format!("profile {profile}"),
+            error,
+        })
+    })
 }
 
 /// The provider for an endpoint's configured source.
@@ -956,5 +989,34 @@ mod tests {
         .unwrap();
         assert_eq!(p.credentials().await.unwrap().unwrap().access_key_id, "a");
         assert_eq!(p.describe(), "config file");
+    }
+
+    #[test]
+    fn the_signed_sts_host_keeps_the_port() {
+        assert_eq!(
+            host_header("http://localhost:4566").as_deref(),
+            Some("localhost:4566")
+        );
+        assert_eq!(
+            host_header("https://sts.eu-west-1.amazonaws.com").as_deref(),
+            Some("sts.eu-west-1.amazonaws.com")
+        );
+        // the scheme's own port is not in the Host header
+        assert_eq!(
+            host_header("https://sts.example.com:443/").as_deref(),
+            Some("sts.example.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_chain_says_why_the_profile_step_failed() {
+        let chain = ChainSource {
+            sources: vec![profile_step(&files(), "empty")],
+        };
+        let e = chain.fetch().await.unwrap_err();
+        assert!(
+            e.contains("profile empty has no credentials"),
+            "the profile step is in the message: {e}"
+        );
     }
 }

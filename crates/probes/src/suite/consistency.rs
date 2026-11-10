@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use s3raw::ops::ListV2;
 
-use super::meta;
+use super::{meta, setup_failed};
 use crate::Probe;
 use crate::cx::{ProbeCx, data};
 use crate::model::{Category, Judgement, ProbeMeta, Steps, Verdict};
@@ -70,6 +70,17 @@ impl Probe for ListAfterWrite {
         if !s.at("list").ok() {
             return Judgement::new(Verdict::Error, "the listing failed", s);
         }
+        // a pass needs writes to list: none acknowledged is "could not run"
+        if puts == 0 {
+            return Judgement::new(
+                Verdict::Error,
+                format!(
+                    "could not run: no write was acknowledged ({})",
+                    s.at("put-0").describe()
+                ),
+                s,
+            );
+        }
         if listed == puts {
             Judgement::new(
                 Verdict::Pass,
@@ -111,6 +122,11 @@ impl Probe for ReadAfterOverwrite {
         }
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        let puts: Vec<String> = (0..5u8).map(|i| format!("put-{i}")).collect();
+        let puts: Vec<&str> = puts.iter().map(String::as_str).collect();
+        if let Some(j) = setup_failed(s, &puts) {
+            return j;
+        }
         let stale: Vec<u8> = (0..5u8)
             .filter(|i| s.at(&format!("get-{i}")).body != format!("version-{i}"))
             .collect();
@@ -148,6 +164,10 @@ impl Probe for ReadAfterDelete {
         cx.head("head", &k, &[]).await;
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        // a 404 says nothing when there was never an object to delete
+        if let Some(j) = setup_failed(s, &["put", "delete"]) {
+            return j;
+        }
         let (get, head) = (s.at("get"), s.at("head"));
         if get.ok() || head.ok() {
             Judgement::new(Verdict::Fail, "the deleted object was still readable", s)

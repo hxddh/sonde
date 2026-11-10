@@ -165,19 +165,28 @@ pub struct ImportArgs {
 /// figures as a recording, with no proxy in front of the program.
 pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     let bytes = std::fs::read(&a.file)?;
-    let text = String::from_utf8_lossy(&bytes);
+    // as S3 delivers CloudTrail, and as logs are often kept: gzip
+    let text = match sonde_proxy::import::text_of(&bytes) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("sonde: {}: {e}", a.file.display());
+            return Ok(64);
+        }
+    };
     let name = a
         .file
         .file_stem()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "imported".into());
-    let (source, session) = match sonde_proxy::import::import(&text, &name) {
+    let name = name.strip_suffix(".json").unwrap_or(&name).to_string();
+    let imported = match sonde_proxy::import::import_counted(&text, &name) {
         Ok(x) => x,
         Err(e) => {
             eprintln!("sonde: {}: {e}", a.file.display());
             return Ok(64);
         }
     };
+    let (source, session) = (imported.source, &imported.session);
     let path = match &a.out {
         Some(p) => p.clone(),
         None => {
@@ -186,13 +195,26 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             sonde_proxy::session::fresh_path(&dir, &name)
         }
     };
-    sonde_proxy::import::save(&session, &path)?;
+    sonde_proxy::import::save(session, &path)?;
     eprintln!(
         "{} requests from a {} → {}",
         session.records.len(),
         source.name(),
         path.display()
     );
+    let lines = |n: usize| format!("{n} line{}", if n == 1 { "" } else { "s" });
+    if imported.malformed > 0 {
+        eprintln!(
+            "  {} could not be read and left out",
+            lines(imported.malformed)
+        );
+    }
+    if imported.not_requests > 0 {
+        eprintln!(
+            "  {} left out: the store's own work (lifecycle, batch), not requests",
+            lines(imported.not_requests)
+        );
+    }
     super::record::show_file(s, &path).await
 }
 

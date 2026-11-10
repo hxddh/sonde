@@ -320,6 +320,9 @@ impl Probe for StartAfter {
         }
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        if let Some(j) = super::setup_failed(s, &["put-a", "put-b", "put-c", "put-d"]) {
+            return j;
+        }
         let got = |l: &str| s.at(&format!("{l}-keys")).body;
         let ok = got("existing") == "c,d"
             && got("between") == "c,d"

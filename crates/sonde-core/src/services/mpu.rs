@@ -371,8 +371,12 @@ pub async fn plan_lifecycle_rule(
 ) -> Result<Plan, S3Error> {
     let c = s.client(endpoint)?;
     let current = c.lifecycle_raw(bucket).await?;
-    let rule = xml::abort_rule_xml("sonde-abort-incomplete-mpu", prefix, days);
-    let doc = xml::add_rule(current.as_deref(), &rule);
+    // one rule per prefix, replaced when planned again: two rules with one
+    // ID are refused by the service
+    let id = abort_rule_id(prefix);
+    let kept = current.as_deref().map(|c| without_rule(c, &id));
+    let rule = xml::abort_rule_xml(&id, prefix, days);
+    let doc = xml::add_rule(kept.as_deref(), &rule);
     xml::lifecycle(&doc)
         .map_err(|e| S3Error::decode(format!("the merged document does not parse: {e}")))?;
     Ok(s.guard().plan(
@@ -388,6 +392,38 @@ pub async fn plan_lifecycle_rule(
         Some(doc),
         current,
     ))
+}
+
+/// The ID of sonde's abort rule for `prefix`: the same for the same prefix,
+/// another for another (IDs are unique in a lifecycle configuration).
+fn abort_rule_id(prefix: &str) -> String {
+    use sha1::Digest;
+    const ID: &str = "sonde-abort-incomplete-mpu";
+    if prefix.is_empty() {
+        return ID.into();
+    }
+    let h = hex::encode(&sha1::Sha1::digest(prefix.as_bytes())[..4]);
+    format!("{ID}-{h}")
+}
+
+/// `doc` without its rules whose ID is `id` (the rest verbatim).
+fn without_rule(doc: &str, id: &str) -> String {
+    let needle = format!("<ID>{id}</ID>");
+    let mut out = String::with_capacity(doc.len());
+    let mut rest = doc;
+    while let Some(start) = rest.find("<Rule>") {
+        let Some(len) = rest[start..].find("</Rule>") else {
+            break;
+        };
+        let end = start + len + "</Rule>".len();
+        out.push_str(&rest[..start]);
+        if !rest[start..end].contains(&needle) {
+            out.push_str(&rest[start..end]);
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 pub fn summary_json(r: &MpuReport) -> serde_json::Value {
@@ -422,5 +458,39 @@ mod tests {
             judge_lifecycle(Some(&disabled), "", 7).status,
             LifecycleStatus::Partial
         );
+    }
+
+    #[test]
+    fn planning_the_abort_rule_again_never_repeats_a_rule_id() {
+        let ids = |doc: &str| -> Vec<String> {
+            xml::lifecycle(doc)
+                .unwrap()
+                .rule
+                .iter()
+                .filter_map(|r| r.id.clone())
+                .collect()
+        };
+        let add = |current: Option<&str>, prefix: &str, days: u32| {
+            let id = abort_rule_id(prefix);
+            let kept = current.map(|c| without_rule(c, &id));
+            xml::add_rule(kept.as_deref(), &xml::abort_rule_xml(&id, prefix, days))
+        };
+        let user = "<LifecycleConfiguration><Rule><ID>exp</ID><Filter/><Status>Enabled</Status><Expiration><Days>30</Days></Expiration></Rule></LifecycleConfiguration>";
+        let a = add(Some(user), "a/", 7);
+        let b = add(Some(&a), "b/", 7);
+        // again for a/, with other days: replaced, not added
+        let again = add(Some(&b), "a/", 3);
+        let got = ids(&again);
+        assert_eq!(got.len(), 3, "{got:?}");
+        let unique: std::collections::BTreeSet<&String> = got.iter().collect();
+        assert_eq!(unique.len(), 3, "{got:?}");
+        assert!(got.contains(&"exp".to_string()), "the user's rule is kept");
+        assert!(again.contains("<DaysAfterInitiation>3</DaysAfterInitiation>"));
+        assert_eq!(
+            again.matches("<DaysAfterInitiation>7<").count(),
+            1,
+            "b/ only"
+        );
+        assert_eq!(abort_rule_id(""), "sonde-abort-incomplete-mpu");
     }
 }

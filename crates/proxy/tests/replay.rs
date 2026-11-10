@@ -305,3 +305,88 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
         "only the replay's own writes went"
     );
 }
+
+/// A store that answers every request with `status` and `code`.
+async fn answering(status: u16, code: &'static str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 8192];
+                // one request a connection: none of the replay's has a body
+                // larger than a read
+                if s.read(&mut buf).await.unwrap_or(0) == 0 {
+                    return;
+                }
+                let body = format!("<Error><Code>{code}</Code><Message>{code}</Message></Error>");
+                let answer = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/xml\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(answer.as_bytes()).await;
+            });
+        }
+    });
+    format!("http://{addr}")
+}
+
+fn one_put() -> sonde_proxy::session::Session {
+    let r = reqlog::Record {
+        id: 1,
+        operation: "PutObject".into(),
+        method: "PUT".into(),
+        bucket: Some("data".into()),
+        key: Some("k".into()),
+        status: Some(200),
+        request_bytes: Some(1),
+        ..Default::default()
+    };
+    sonde_proxy::session::Session {
+        header: sonde_proxy::session::SessionHeader::new("t", "http://x", "us-east-1", None),
+        records: vec![r],
+        logs: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn a_replay_that_cannot_list_its_prefix_does_not_start() {
+    let url = answering(403, "AccessDenied").await;
+    let log = RequestLog::new(100);
+    let store = client(&url, log.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let opts = ReplayOptions {
+        prefix: "fresh/".into(),
+        buckets: vec![],
+    };
+    let out = dir.path().join("r.sonde");
+    let run =
+        sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, false, |_, _| {})
+            .await;
+    let why = run.expect_err("an unknown prefix is not replayed into");
+    assert!(why.contains("could not check"), "{why}");
+    assert!(!out.exists());
+    // the listing only: nothing written, nothing deleted
+    let sent = log.list(&Filter::default(), 100);
+    assert!(sent.iter().all(|r| r.method == "GET"), "{sent:?}");
+}
+
+#[tokio::test]
+async fn a_bucket_that_is_not_there_yet_holds_nothing() {
+    let url = answering(404, "NoSuchBucket").await;
+    let store = client(&url, RequestLog::default());
+    let dir = tempfile::tempdir().unwrap();
+    let opts = ReplayOptions {
+        prefix: "fresh/".into(),
+        buckets: vec![],
+    };
+    let out = dir.path().join("r.sonde");
+    let run =
+        sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, false, |_, _| {})
+            .await
+            .unwrap();
+    assert_eq!(run.plan.requests, 1);
+    assert_eq!(run.removed, 0);
+}

@@ -376,3 +376,33 @@ fn requests_one_after_another_are_a_chain_that_requests_at_once_would_shorten() 
             .is_empty()
     );
 }
+
+#[test]
+fn the_pages_of_one_listing_are_not_the_prefix_listed_again() {
+    // ListObjects (v1) pages with a marker, as ListObjectsV2's with a token
+    let page = |id: u64, op: &str, param: Option<(&str, &str)>| {
+        let mut r = rec(id, id as i64 * 10, op, None, 200, 5.0);
+        r.query = vec![("prefix".into(), "t/".into())];
+        if let Some((k, v)) = param {
+            r.query.push((k.into(), v.into()));
+        }
+        r
+    };
+    let mut recs = vec![page(1, "ListObjects", None)];
+    for i in 2..=8u64 {
+        recs.push(page(i, "ListObjects", Some(("marker", "t/k"))));
+    }
+    recs.push(page(9, "ListObjectsV2", None));
+    for i in 10..=16u64 {
+        recs.push(page(i, "ListObjectsV2", Some(("continuation-token", "x"))));
+    }
+    let found = findings(&recs);
+    assert!(
+        !found.iter().any(|o| key(o) == "obs.listed"),
+        "{:?}",
+        found.iter().map(key).collect::<Vec<_>>()
+    );
+    // five listings from the start are
+    let again: Vec<Record> = (1..=5).map(|i| page(i, "ListObjects", None)).collect();
+    assert!(findings(&again).iter().any(|o| key(o) == "obs.listed"));
+}

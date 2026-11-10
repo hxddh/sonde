@@ -370,6 +370,9 @@ impl Probe for UploadPartCopy {
     }
     fn judge(&self, s: &Steps) -> Judgement {
         let (copy, complete, head) = (s.at("copy-part"), s.at("complete"), s.at("head"));
+        if let Some(j) = super::setup_failed(s, &["source", "create"]) {
+            return j;
+        }
         if copy.not_implemented() {
             return Judgement::new(Verdict::Unsupported, "UploadPartCopy is not implemented", s);
         }

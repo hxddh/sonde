@@ -147,6 +147,13 @@ pub fn python_env(dir: &std::path::Path) -> std::io::Result<(String, String)> {
     Ok(("PYTHONPATH".into(), path))
 }
 
+/// A path as one quoted word of `NODE_OPTIONS`. Node reads a backslash
+/// inside quotes as an escape, so a Windows path's are doubled
+/// (`C:\Users\x` would lose them, and `\t` its letter).
+fn node_quoted(path: &str) -> Option<String> {
+    (!path.contains('"')).then(|| format!("\"{}\"", path.replace('\\', "\\\\")))
+}
+
 /// The environment that names callers in a Python, Node.js or Java program:
 /// each language's hook written into `dir`, and the variable that loads it,
 /// after what the variable held. A program of another language, or one
@@ -165,7 +172,7 @@ pub fn caller_env(dir: &std::path::Path) -> std::io::Result<Vec<(String, String)
         Ok(rest) if !rest.trim().is_empty() => format!("{} {add}", rest.trim()),
         _ => add,
     };
-    if let Some(p) = quoted(dir.join("sonde-caller.cjs")) {
+    if let Some(p) = node_quoted(&dir.join("sonde-caller.cjs").to_string_lossy()) {
         env.push((
             "NODE_OPTIONS".into(),
             after("NODE_OPTIONS", format!("--require {p}")),
@@ -332,5 +339,19 @@ mod tests {
                 requests: 2
             }
         );
+    }
+
+    #[test]
+    fn a_windows_path_keeps_its_backslashes_in_node_options() {
+        // node unescapes inside quotes: each backslash is written twice
+        assert_eq!(
+            node_quoted(r"C:\Users\me\tmp\sonde-caller.cjs").as_deref(),
+            Some(r#""C:\\Users\\me\\tmp\\sonde-caller.cjs""#)
+        );
+        assert_eq!(
+            node_quoted("/tmp/with space/h.cjs").as_deref(),
+            Some("\"/tmp/with space/h.cjs\"")
+        );
+        assert_eq!(node_quoted("/tmp/a\"b/h.cjs"), None);
     }
 }

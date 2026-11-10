@@ -338,9 +338,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         .iter()
         .filter(|o| !referenced.contains(&o.key))
         .collect();
+    // a set: every referenced file against every object is quadratic
+    let present: std::collections::HashSet<&str> = objects.iter().map(|o| o.key.as_str()).collect();
     let missing: Vec<&String> = referenced
         .iter()
-        .filter(|k| !objects.iter().any(|o| &o.key == *k))
+        .filter(|k| !present.contains(k.as_str()))
         .collect();
     let now = Utc::now();
     let protected: BTreeSet<i64> = refs.values().copied().chain(current).collect();

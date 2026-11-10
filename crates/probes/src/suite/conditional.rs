@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use s3raw::S3Request;
 
-use super::meta;
+use super::{meta, setup_failed};
 use crate::Probe;
 use crate::cx::{ProbeCx, data, etag_of};
 use crate::model::{Category, Judgement, ProbeMeta, Steps, Verdict};
@@ -125,6 +125,9 @@ impl Probe for PutIfMatch {
         .await;
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        if let Some(j) = setup_failed(s, &["create"]) {
+            return j;
+        }
         let (stale, current, missing) = (s.at("stale"), s.at("current"), s.at("missing"));
         let j = if stale.ok() {
             Judgement::new(
@@ -134,6 +137,13 @@ impl Probe for PutIfMatch {
             )
         } else if !current.ok() {
             Judgement::new(Verdict::Fail, "the current ETag was refused", s)
+        } else if missing.ok() {
+            // an object written that must not be: the guarantee broke
+            Judgement::new(
+                Verdict::Fail,
+                "If-Match was ignored on a missing key: the object was created",
+                s,
+            )
         } else if stale.is(412) && missing.is(404) {
             Judgement::new(
                 Verdict::Pass,
@@ -206,6 +216,9 @@ impl Probe for CopyIfMatch {
         copy("dest-exists", vec![("if-none-match", "*".into())]).await;
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        if let Some(j) = setup_failed(s, &["source"]) {
+            return j;
+        }
         let (wrong, right, exists) = (
             s.at("wrong-source"),
             s.at("right-source"),
@@ -278,6 +291,10 @@ impl Probe for CompleteIfNoneMatch {
         let _ = cx.client.abort_multipart_upload(&cx.bucket, &k, &up).await;
     }
     fn judge(&self, s: &Steps) -> Judgement {
+        // without the racing object there is nothing for the condition to refuse
+        if let Some(j) = setup_failed(s, &["create-upload", "part", "racing-put"]) {
+            return j;
+        }
         let (complete, head) = (s.at("complete"), s.at("head"));
         let j = if complete.ok() {
             Judgement::new(

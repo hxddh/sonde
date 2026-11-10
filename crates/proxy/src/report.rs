@@ -167,6 +167,7 @@ pub fn redact(s: &mut Session) {
     };
     s.header.url = String::new();
     s.header.endpoint = "endpoint".into();
+    s.header.region = String::new();
     s.header.cwd = None;
     // the commit says which change; a branch's name may say whose
     if let Some(g) = &mut s.header.git {
@@ -209,6 +210,9 @@ pub fn redact(s: &mut Session) {
         rec.request_body = None;
         rec.request_id = None;
         rec.host_id = None;
+        // who asked (an IAM ARN: account and user) and from where
+        rec.requester = None;
+        rec.region = None;
         // the S3 error code says what went wrong; the message may name things
         rec.error_body = rec.error_body.as_deref().and_then(|b| {
             let code = b.split("<Code>").nth(1)?.split("</Code>").next()?;
@@ -551,5 +555,19 @@ mod tests {
         assert!(page.starts_with("<!doctype html>"));
         assert!(page.contains("id=\"op-0\"") && page.contains("href=\"#op-0\""));
         assert!(page.contains("prefers-color-scheme:dark"));
+    }
+
+    #[test]
+    fn who_sent_a_request_and_from_which_region_do_not_survive_redaction() {
+        let mut s = session();
+        s.records[0].requester = Some("arn:aws:iam::123456789012:user/alice".into());
+        s.records[0].region = Some("eu-west-3".into());
+        s.header.region = "eu-west-3".into();
+        redact(&mut s);
+        let doc = serde_json::to_string(&crate::share::session_json(&s, &RequestPrices::default()))
+            .unwrap();
+        for secret in ["123456789012", "alice", "eu-west-3"] {
+            assert!(!doc.contains(secret), "{secret} leaked");
+        }
     }
 }

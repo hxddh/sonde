@@ -246,8 +246,87 @@ pub async fn presign(
         .await
 }
 
-/// Streams an object to `dest` as a job; a cancelled or failed download
-/// removes its partial file.
+/// A file name for the object `key`: its last segment, without what a
+/// file system refuses (separators, `* ? " < > |`, control characters,
+/// names of dots, Windows' device names).
+pub fn download_name(key: &str) -> String {
+    let last = key.rsplit('/').find(|p| !p.is_empty()).unwrap_or("");
+    let name: String = last
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let name = name.trim_end_matches(['.', ' ']).trim_start();
+    if name.is_empty() {
+        return "object".into();
+    }
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.ends_with(|c: char| c.is_ascii_digit() && c != '0'));
+    if device {
+        format!("_{name}")
+    } else {
+        name.to_string()
+    }
+}
+
+/// `path` with `suffix` after its whole name (`a.csv` → `a.csv.sonde-partial`).
+fn with_suffix(path: &std::path::Path, suffix: &str) -> PathBuf {
+    let mut n = path.file_name().unwrap_or_default().to_os_string();
+    n.push(suffix);
+    path.with_file_name(n)
+}
+
+const PARTIAL: &str = ".sonde-partial";
+
+/// A destination no file or download holds: `dest`, else `name (2).ext`,
+/// `name (3).ext`… Its partial file is created here, which reserves it.
+async fn reserve(dest: &std::path::Path) -> Result<(PathBuf, PathBuf, tokio::fs::File), S3Error> {
+    let stem = dest
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let ext = dest
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    for n in 1..10_000 {
+        let to = if n == 1 {
+            dest.to_path_buf()
+        } else {
+            dest.with_file_name(format!("{stem} ({n}){ext}"))
+        };
+        if tokio::fs::try_exists(&to).await.unwrap_or(true) {
+            continue;
+        }
+        let part = with_suffix(&to, PARTIAL);
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&part)
+            .await
+        {
+            Ok(f) => return Ok((to, part, f)),
+            // another download is writing this name
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(S3Error::config(format!("{}: {e}", part.display()))),
+        }
+    }
+    Err(S3Error::config(format!(
+        "{}: no free name beside it",
+        dest.display()
+    )))
+}
+
+/// Streams an object to `dest` as a job, or beside it under a free name
+/// (`name (2).ext`) when `dest` exists: a download never replaces a file.
+/// A cancelled or failed download removes its partial file.
 pub fn download(s: &Arc<Sonde>, endpoint: &str, bucket: &str, key: &str, dest: PathBuf) -> String {
     let (s2, ep, b, k) = (
         s.clone(),
@@ -256,65 +335,84 @@ pub fn download(s: &Arc<Sonde>, endpoint: &str, bucket: &str, key: &str, dest: P
         key.to_string(),
     );
     let settings = s.settings();
-    s.jobs().spawn(
+    // cooperative: a cancelled download still gets to remove its partial file
+    s.jobs().spawn_cooperative(
         "download",
         &format!("Download {b}/{k}"),
         1,
         settings.rate_limit,
         move |ctx| async move {
-            let c = s2.job_client(&ep, &ctx)?;
-            let (resp, record_id) = c
-                .send_stream(
-                    s3raw::S3Request::new("GetObject", http::Method::GET)
-                        .bucket(&b)
-                        .key(&k),
-                )
-                .await?;
-            let total = resp.content_length();
-            if let Some(dir) = dest.parent() {
-                tokio::fs::create_dir_all(dir)
-                    .await
-                    .map_err(|e| S3Error::config(format!("{}: {e}", dir.display())))?;
+            let mut part = None;
+            let r = tokio::select! {
+                r = fetch(&s2, &ep, &b, &k, &dest, &ctx, &mut part) => r,
+                _ = ctx.cancel.cancelled() => Err(S3Error::cancelled()),
+            };
+            if r.is_err()
+                && let Some(p) = part
+                && let Err(e) = tokio::fs::remove_file(&p).await
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                // said where the job shows: the file is the user's to remove
+                tracing::warn!("partial download {} left behind: {e}", p.display());
+                ctx.progress(Progress {
+                    message: format!("left behind: {} ({e})", p.display()),
+                    ..Default::default()
+                });
             }
-            let part = dest.with_extension("sonde-partial");
-            let mut file = tokio::fs::File::create(&part)
-                .await
-                .map_err(|e| S3Error::config(format!("{}: {e}", part.display())))?;
-            let mut stream = resp.bytes_stream();
-            let mut written = 0u64;
-            let result: Result<(), S3Error> = async {
-                while let Some(chunk) = stream.next().await {
-                    ctx.check()?;
-                    let chunk = chunk
-                        .map_err(|e| S3Error::new(s3raw::ErrorKind::Transport, e.to_string()))?;
-                    file.write_all(&chunk)
-                        .await
-                        .map_err(|e| S3Error::config(e.to_string()))?;
-                    written += chunk.len() as u64;
-                    ctx.progress(Progress {
-                        done: written,
-                        total,
-                        bytes: written,
-                        message: format!("{written} bytes"),
-                    });
-                }
-                file.flush()
-                    .await
-                    .map_err(|e| S3Error::config(e.to_string()))?;
-                Ok(())
-            }
-            .await;
-            drop(file);
-            if let Err(e) = result {
-                let _ = tokio::fs::remove_file(&part).await;
-                return Err(e);
-            }
-            tokio::fs::rename(&part, &dest)
-                .await
-                .map_err(|e| S3Error::config(e.to_string()))?;
-            Ok(json!({"path": dest, "bytes": written, "recordId": record_id}))
+            r
         },
     )
+}
+
+async fn fetch(
+    s: &Sonde,
+    endpoint: &str,
+    bucket: &str,
+    key: &str,
+    dest: &std::path::Path,
+    ctx: &crate::jobs::JobCtx,
+    partial: &mut Option<PathBuf>,
+) -> Result<serde_json::Value, S3Error> {
+    let c = s.job_client(endpoint, ctx)?;
+    let (resp, record_id) = c
+        .send_stream(
+            s3raw::S3Request::new("GetObject", http::Method::GET)
+                .bucket(bucket)
+                .key(key),
+        )
+        .await?;
+    let total = resp.content_length();
+    if let Some(dir) = dest.parent() {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| S3Error::config(format!("{}: {e}", dir.display())))?;
+    }
+    let (dest, part, mut file) = reserve(dest).await?;
+    *partial = Some(part.clone());
+    let mut stream = resp.bytes_stream();
+    let mut written = 0u64;
+    while let Some(chunk) = stream.next().await {
+        ctx.check()?;
+        let chunk = chunk.map_err(|e| S3Error::new(s3raw::ErrorKind::Transport, e.to_string()))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| S3Error::config(e.to_string()))?;
+        written += chunk.len() as u64;
+        ctx.progress(Progress {
+            done: written,
+            total,
+            bytes: written,
+            message: format!("{written} bytes"),
+        });
+    }
+    file.flush()
+        .await
+        .map_err(|e| S3Error::config(e.to_string()))?;
+    drop(file);
+    tokio::fs::rename(&part, &dest)
+        .await
+        .map_err(|e| S3Error::config(e.to_string()))?;
+    Ok(json!({"path": dest, "bytes": written, "recordId": record_id}))
 }
 
 /// Finds keys under `prefix` whose name contains `needle` (case-insensitive),
@@ -396,4 +494,83 @@ pub fn search(
             Ok(json!({"scanned": scanned, "matches": found}))
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_download_name_is_one_a_file_system_takes() {
+        assert_eq!(download_name("a/b/report.csv"), "report.csv");
+        assert_eq!(download_name("dir/"), "dir");
+        assert_eq!(download_name("x/."), "object");
+        assert_eq!(download_name("x/.."), "object");
+        assert_eq!(download_name(""), "object");
+        assert_eq!(download_name("a/w*h?a\"t<>|:\\.txt"), "w_h_a_t_____.txt");
+        assert_eq!(download_name("a/con.txt"), "_con.txt");
+        assert_eq!(download_name("a/COM1"), "_COM1");
+        assert_eq!(download_name("a/common.txt"), "common.txt");
+    }
+
+    #[tokio::test]
+    async fn downloads_of_one_name_do_not_replace_each_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        crate::demo::install(&s).await.unwrap();
+        let dest = dir.path().join("dl").join("README.md");
+        let mut paths = Vec::new();
+        for _ in 0..2 {
+            let job = download(&s, "demo", "demo", "README.md", dest.clone());
+            let r = s.jobs().wait(&job).await.unwrap();
+            paths.push(PathBuf::from(r["path"].as_str().unwrap()));
+        }
+        assert_eq!(paths[0], dest);
+        assert_eq!(paths[1], dir.path().join("dl").join("README (2).md"));
+        assert!(paths.iter().all(|p| p.exists()));
+        // the partial is the whole name and a suffix: data.csv and data.json differ
+        assert_eq!(
+            with_suffix(std::path::Path::new("d/data.csv"), PARTIAL),
+            PathBuf::from("d/data.csv.sonde-partial")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_download_removes_its_partial_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        // a server that sends the head and half the body, then waits
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let (mut c, _) = l.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = c.read(&mut buf).await;
+            let _ = c
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\nhalf-")
+                .await;
+            let _ = c.flush().await;
+            std::future::pending::<()>().await
+        });
+        let mut e =
+            crate::EndpointConfig::new("slow", "slow", &url, "us-east-1", crate::Vendor::Other);
+        e.path_style = true;
+        e.credentials = crate::CredentialSource::Anonymous;
+        s.add_transient_endpoint(e).unwrap();
+        let dest = dir.path().join("dl").join("big.bin");
+        let part = with_suffix(&dest, PARTIAL);
+        let job = download(&s, "slow", "b", "big.bin", dest.clone());
+        for _ in 0..200 {
+            if part.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(part.exists(), "the download began");
+        assert!(s.jobs().cancel(&job));
+        assert!(s.jobs().wait(&job).await.is_err());
+        assert!(!part.exists(), "the partial file is gone");
+        assert!(!dest.exists());
+    }
 }

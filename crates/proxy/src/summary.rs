@@ -125,7 +125,7 @@ pub fn summarize(records: &[Record]) -> Summary {
         .into_values()
         .map(|(mut o, mut lat)| {
             lat.sort_by(|a, b| a.total_cmp(b));
-            o.p50_ms = lat[lat.len() / 2];
+            o.p50_ms = crate::profile::percentile(&lat, 0.5);
             o
         })
         .collect();

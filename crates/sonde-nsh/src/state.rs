@@ -7,14 +7,18 @@ use sonde_core::{Paths, S3Error, Sonde};
 static SONDE: OnceLock<Arc<Sonde>> = OnceLock::new();
 
 /// The process's sonde: opened from the platform's paths on first use
-/// (`SONDE_CONFIG_DIR` / `SONDE_DATA_DIR` override them).
+/// (`SONDE_CONFIG_DIR` / `SONDE_DATA_DIR` override them). A configuration
+/// that does not load is not replaced: the sonde starts empty, keeps the
+/// error (`Sonde.config_error()` shows it) and saves nothing until the
+/// file loads.
 pub fn sonde() -> Arc<Sonde> {
     SONDE
         .get_or_init(|| {
-            Sonde::open(Paths::from_env()).unwrap_or_else(|e| {
-                eprintln!("sonde: configuration: {e}; starting with an empty one");
-                Sonde::with_config(Paths::from_env(), Default::default())
-            })
+            let s = Sonde::open_lenient(Paths::from_env());
+            if let Some(e) = s.config_error() {
+                eprintln!("sonde: configuration: {e}; not loaded, and not saved until it is");
+            }
+            s
         })
         .clone()
 }

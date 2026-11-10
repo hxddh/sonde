@@ -559,7 +559,7 @@ fn print_summary(
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
     let command = sonde_proxy::program::shell_join(&a.command);
-    let started = start(
+    let mut started = start(
         s,
         &a.rec,
         SocketAddr::from(([127, 0, 0, 1], 0)),
@@ -593,6 +593,8 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     if let Some(p) = printer {
         p.abort();
     }
+    // requests still in flight are recorded before the file is read and packed
+    started.proxy.shutdown(SHUTDOWN_GRACE).await;
     started.writer.flush()?;
     let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
     let color = std::io::stderr().is_terminal();
@@ -611,7 +613,20 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     let file = started.path.clone();
     drop(started);
     let _ = sonde_proxy::session::compress(&file);
-    Ok(status.code().unwrap_or(1))
+    Ok(exit_code(status))
+}
+
+/// How long a stopping proxy waits for the requests in flight.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The program's exit code as a shell gives it: its own, or 128 and the
+/// signal that ended it.
+fn exit_code(status: std::process::ExitStatus) -> i32 {
+    #[cfg(unix)]
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        return 128 + signal;
+    }
+    status.code().unwrap_or(1)
 }
 
 /// What to try when a program sent sonde nothing: most SDKs read
@@ -658,11 +673,13 @@ fn print_env(proxy: &Proxy) {
 
 pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<i32> {
     check_listen(a)?;
-    let started = start(s, &a.rec, a.listen, None, a.allow_remote).await?;
+    let mut started = start(s, &a.rec, a.listen, None, a.allow_remote).await?;
     print_env(&started.proxy);
     let printer = follow(&started.log, false);
     tokio::signal::ctrl_c().await?;
     printer.abort();
+    // requests still in flight are recorded before the file is read and packed
+    started.proxy.shutdown(SHUTDOWN_GRACE).await;
     started.writer.flush()?;
     let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
     print_summary(
@@ -706,6 +723,10 @@ pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
 }
 
 pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
+    if let Some(why) = output::unsupported(a.format, "show", &[Format::Table, Format::Json]) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     let file = match &a.file {
         Some(f) => super::sessions::resolve(s, f),
         None => newest_session(s)?,
@@ -869,6 +890,14 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
     if a.endpoint.len() > 1 {
         return replay_many(s, a).await;
     }
+    if let Some(why) = output::unsupported(
+        a.format,
+        "replay on one endpoint",
+        &[Format::Table, Format::Json],
+    ) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     let original = Session::open(&a.file).map_err(|e| anyhow::anyhow!(e))?;
     let ep = super::endpoint(s, a.endpoint.first().map(String::as_str))?;
     let base = s.client(&ep)?;
@@ -997,6 +1026,14 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
 /// how many answers differ from the recording, and each kind's p95.
 async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     use sonde_proxy::replay::{self as rp, ReplayOptions};
+    if let Some(why) = output::unsupported(
+        a.format,
+        "replay",
+        &[Format::Table, Format::Json, Format::Markdown, Format::Csv],
+    ) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     let original = Session::open(&a.file).map_err(|e| anyhow::anyhow!(e))?;
     if a.in_place {
         anyhow::bail!("--in-place replays on one endpoint at a time");
@@ -1057,11 +1094,13 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     let mut columns = vec![original.header.endpoint.clone()];
     let mut stores = Vec::new();
     let mut differ_total = 0;
+    let mut failed = 0;
     for (id, path, run) in runs {
         let run = match run {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("sonde: {id}: {e}");
+                failed += 1;
                 continue;
             }
         };
@@ -1131,7 +1170,20 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             eprintln!("{id}: {}", path.display());
         }
     }
-    Ok(if differ_total > 0 { 2 } else { 0 })
+    Ok(replay_exit(failed, differ_total))
+}
+
+/// What a replay on several stores exits with: a store it could not be
+/// replayed on is a failure (70), whatever the others answered; answers
+/// that differ are 2.
+fn replay_exit(failed: usize, differ: usize) -> i32 {
+    if failed > 0 {
+        70
+    } else if differ > 0 {
+        2
+    } else {
+        0
+    }
 }
 
 /// The same workload on two stores: each kind's p50 and p95 on each, slowest change first.
@@ -1174,6 +1226,10 @@ fn opts_bucket(o: &sonde_proxy::replay::ReplayOptions, b: &str) -> String {
 }
 
 pub async fn diff(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
+    if let Some(why) = output::unsupported(a.format, "diff", &[Format::Table, Format::Json]) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     let original = Session::open(&a.original).map_err(|e| anyhow::anyhow!(e))?;
     let replay = Session::open(&a.replay).map_err(|e| anyhow::anyhow!(e))?;
     let c = sonde_proxy::replay::compare(&original.records, &replay.records, &[]);
@@ -1210,6 +1266,10 @@ fn change(a: f64, b: f64, text: impl Fn(f64) -> String) -> String {
 
 /// `sonde compare`: two runs of a program, before and after a change.
 pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
+    if let Some(why) = output::unsupported(a.format, "compare", &[Format::Table, Format::Json]) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     let open = |p: &PathBuf| Session::open(p).map_err(|e| anyhow::anyhow!(e));
     let (sa, sb) = (open(&a.before)?, open(&a.after)?);
     let (pa, pb) = (
@@ -1544,14 +1604,7 @@ fn url_shown(url: &str) -> &str {
 async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPath> {
     const MAX: u64 = 1 << 30;
     let shown = url_shown(url);
-    let local = reqwest::Url::parse(url)
-        .ok()
-        .and_then(|u| {
-            u.host_str()
-                .map(|h| h == "127.0.0.1" || h == "localhost" || h == "[::1]")
-        })
-        .unwrap_or(false);
-    if !url.starts_with("https://") && !local {
+    if !url.starts_with("https://") {
         anyhow::bail!("baseline {shown}: only https URLs are fetched");
     }
     let client = reqwest::Client::builder()
@@ -1588,6 +1641,19 @@ async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPath> {
 }
 
 pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
+    if let Some(why) = output::unsupported(
+        a.format,
+        "check",
+        &[
+            Format::Table,
+            Format::Json,
+            Format::Markdown,
+            Format::Github,
+        ],
+    ) {
+        eprintln!("sonde: {why}");
+        return Ok(64);
+    }
     use sonde_proxy::program::{Budget, check, run_point};
     // the project's budget, which the flags override
     // --init writes the file: there is none to read yet
@@ -1705,6 +1771,18 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         Some(p) => Some(super::sessions::resolve(s, &PathBuf::from(p))),
     };
     let base = base_path.as_ref().map(read).transpose()?;
+    // both hold a run to its baseline: without one they would check nothing
+    if base.is_none() && (a.tolerance.is_some() || a.no_new_warnings) {
+        eprintln!(
+            "{} needs a baseline: add --baseline FILE|auto|URL (or `baseline` in sonde.toml)",
+            if a.no_new_warnings {
+                "--no-new-warnings"
+            } else {
+                "--tolerance"
+            }
+        );
+        return Ok(64);
+    }
     if let Some(b) = &base_path {
         let bh = Session::open(b).map_err(|e| anyhow::anyhow!(e))?.header;
         let bp = sonde_proxy::program::program_key(bh.command.as_deref());
@@ -2070,9 +2148,72 @@ pub struct WatchArgs {
 /// Where `watch --logs` got to: the newest log file's time read, and the
 /// files read since a little before it.
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(from = "LogsMarkFile")]
 struct LogsMark {
     watermark: chrono::DateTime<chrono::Utc>,
-    seen: std::collections::BTreeSet<String>,
+    /// Each file read, with when it was written: what its forgetting goes by.
+    seen: std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>,
+}
+
+/// A mark as its file holds it: `seen` with each file's time, or (written
+/// before 13.0) the names alone.
+#[derive(serde::Deserialize)]
+struct LogsMarkFile {
+    watermark: chrono::DateTime<chrono::Utc>,
+    seen: SeenFiles,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum SeenFiles {
+    Timed(std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>),
+    Named(std::collections::BTreeSet<String>),
+}
+
+impl From<LogsMarkFile> for LogsMark {
+    fn from(f: LogsMarkFile) -> Self {
+        LogsMark {
+            watermark: f.watermark,
+            seen: match f.seen {
+                SeenFiles::Timed(m) => m,
+                // no time kept: remembered until the mark has moved two hours on
+                SeenFiles::Named(n) => n.into_iter().map(|k| (k, f.watermark)).collect(),
+            },
+        }
+    }
+}
+
+/// How long before the mark a file is still listed, and so still remembered.
+const LOGS_GRACE: chrono::Duration = chrono::Duration::hours(2);
+
+impl LogsMark {
+    /// Whether a file written at `at` is to be read: new enough to be looked
+    /// at, and not read yet.
+    fn wants(&self, key: &str, at: chrono::DateTime<chrono::Utc>) -> bool {
+        at > self.watermark - LOGS_GRACE && !self.seen.contains_key(key)
+    }
+
+    /// A file read (or given up on): not read again.
+    fn read(&mut self, key: &str, at: chrono::DateTime<chrono::Utc>) {
+        self.seen.insert(key.to_string(), at);
+    }
+
+    /// Forgets the files too old to be listed again, and only those: one
+    /// still within the grace would be read a second time.
+    fn forget_old(&mut self) {
+        let keep_after = self.watermark - LOGS_GRACE;
+        self.seen.retain(|_, at| *at > keep_after);
+    }
+}
+
+/// What `watch --logs --once` exits with: the listing failed (nothing was
+/// read: 70), the pass is over the budget (1, as `sonde check`), or 0.
+fn once_exit(listing_failed: bool, over_budget: bool) -> i32 {
+    if listing_failed {
+        70
+    } else {
+        i32::from(over_budget)
+    }
 }
 
 /// The program key of a log source's sessions: its runs make a history and
@@ -2139,9 +2280,10 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
     let mut warned: HashSet<String> = HashSet::new();
     let mut sent = Vec::new();
     eprintln!("watching {src} every {}s", pause.as_secs());
+    // the last pass's outcome: what `--once` exits with
+    let (mut listing_failed, mut over);
     loop {
         // the files written since the mark (less a grace for late ones), not read yet
-        let grace = mark.watermark - chrono::Duration::hours(2);
         let mut keys: Vec<(String, u64, chrono::DateTime<chrono::Utc>)> = Vec::new();
         let mut token = None;
         let listed = loop {
@@ -2166,7 +2308,7 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
                     .as_deref()
                     .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())?
                     .with_timezone(&chrono::Utc);
-                (at > grace && !mark.seen.contains(&o.key)).then(|| (o.key.clone(), o.size, at))
+                mark.wants(&o.key, at).then(|| (o.key.clone(), o.size, at))
             }));
             token = page.next_continuation_token.filter(|_| page.is_truncated);
             if token.is_none() {
@@ -2174,6 +2316,8 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
             }
         };
         // a store that did not answer this time is asked again next time
+        listing_failed = listed.is_err();
+        over = false;
         if let Err(e) = listed {
             eprintln!(
                 "{} listing {src}: {e}",
@@ -2185,7 +2329,7 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
         for (k, size, at) in &keys {
             // a log file is small; something this large is not one
             if *size > 256 << 20 {
-                mark.seen.insert(k.clone());
+                mark.read(k, *at);
                 continue;
             }
             let r = match client.get_object(bucket, k, None).await {
@@ -2199,37 +2343,26 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
                     continue;
                 }
             };
-            let mut bytes = r.body.to_vec();
-            if bytes.starts_with(&[0x1f, 0x8b]) {
-                let mut out = Vec::new();
-                if std::io::Read::read_to_end(
-                    &mut flate2::read::MultiGzDecoder::new(&bytes[..]),
-                    &mut out,
-                )
-                .is_ok()
-                {
-                    bytes = out;
+            let text = sonde_proxy::import::text_of(&r.body)
+                .unwrap_or_else(|_| String::from_utf8_lossy(&r.body).into_owned());
+            if let Ok(i) = sonde_proxy::import::import_counted(&text, k) {
+                if i.malformed > 0 {
+                    eprintln!(
+                        "{} {k}: {} line{} could not be read",
+                        paint("!", "33", std::io::stderr().is_terminal()),
+                        i.malformed,
+                        if i.malformed == 1 { "" } else { "s" }
+                    );
                 }
+                records.extend(i.session.records);
             }
-            let text = String::from_utf8_lossy(&bytes);
-            if let Ok((_, session)) = sonde_proxy::import::import(&text, k) {
-                records.extend(session.records);
-            }
-            mark.seen.insert(k.clone());
+            mark.read(k, *at);
             if *at > mark.watermark {
                 mark.watermark = *at;
             }
         }
         // the seen files old enough to be past the grace are forgotten
-        let keep_after = mark.watermark - chrono::Duration::hours(2);
-        let recent: std::collections::BTreeSet<String> = keys
-            .iter()
-            .filter(|(_, _, at)| *at > keep_after)
-            .map(|(k, _, _)| k.clone())
-            .collect();
-        if mark.seen.len() > 50_000 {
-            mark.seen.retain(|k| recent.contains(k));
-        }
+        mark.forget_old();
         if let Ok(b) = serde_json::to_vec(&mark) {
             let _ = std::fs::write(&mark_file, b);
         }
@@ -2284,14 +2417,20 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
                     }
                 }
             }
-            if let (Some(url), Some(over)) = (&a.alert, over_budget(s, records)) {
-                sent.push(post_alert(
-                    url,
-                    format!(
-                        "sonde watch ({src}): {} is over budget: {over}",
-                        path.display()
-                    ),
-                ));
+            // said here whether or not anything is told elsewhere
+            if let Some(what) = over_budget(s, records) {
+                over = true;
+                let text = format!(
+                    "sonde watch ({src}): {} is over budget: {what}",
+                    path.display()
+                );
+                eprintln!(
+                    "{} {text}",
+                    paint("!", "33", std::io::stderr().is_terminal())
+                );
+                if let Some(url) = &a.alert {
+                    sent.push(post_alert(url, text));
+                }
             }
         }
         sent.retain(|h: &tokio::task::JoinHandle<()>| !h.is_finished());
@@ -2308,7 +2447,12 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
         futures::future::join_all(sent),
     )
     .await;
-    Ok(0)
+    // a watch stopped by hand is done; a single pass answers for itself
+    Ok(if a.once {
+        once_exit(listing_failed, over)
+    } else {
+        0
+    })
 }
 
 /// Posts `text` to a webhook, in the background; a failure is said once on stderr.
@@ -2428,7 +2572,7 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                 let errors = minute.iter().filter(|(_, r)| r.is_error() && !sonde_proxy::summary::is_miss(r)).count();
                 let mut lat: Vec<f64> = minute.iter().map(|(_, r)| r.latency_ms).collect();
                 lat.sort_by(f64::total_cmp);
-                let p95 = lat.get(((lat.len() as f64 * 0.95).ceil() as usize).saturating_sub(1)).copied().unwrap_or(0.0);
+                let p95 = sonde_proxy::profile::percentile(&lat, 0.95);
                 let line = format!(
                     "last minute: {n} requests ({:.1}/s) · {errors} errors · p95 {} · {} in this file",
                     n as f64 / 60.0,
@@ -2467,14 +2611,19 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                     let old = std::mem::replace(&mut writer, w);
                     let old_path = std::mem::replace(&mut path, next);
                     finish(old, &old_path);
-                    if let (Some(url), Some(over)) = (&a.alert, over_budget(s, &file_records)) {
-                        sent.push(post_alert(url, format!("sonde watch: {} is over budget: {over}", old_path.display())));
-                    }
                     sent.retain(|h| !h.is_finished());
                     if tty {
                         eprint!("\r\x1b[2K");
                     }
                     eprintln!("{} {}", paint("·", "2", tty), old_path.display());
+                    // said here whether or not anything is told elsewhere
+                    if let Some(over) = over_budget(s, &file_records) {
+                        let text = format!("sonde watch: {} is over budget: {over}", old_path.display());
+                        eprintln!("{} {text}", paint("!", "33", tty));
+                        if let Some(url) = &a.alert {
+                            sent.push(post_alert(url, text));
+                        }
+                    }
                     file_records.clear();
                     warned.clear();
                     rotated = Instant::now();
@@ -2485,16 +2634,22 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
     if tty {
         eprintln!();
     }
-    started.log.set_sink(None);
-    let Started { proxy, .. } = started;
+    // requests still in flight are recorded before the file is packed
+    let Started { mut proxy, log, .. } = started;
+    proxy.shutdown(SHUTDOWN_GRACE).await;
+    while let Ok(id) = rx.try_recv() {
+        file_records.extend(log.get(id));
+    }
+    log.set_sink(None);
     drop(proxy);
     finish(writer, &path);
     // the last file is held to the budget too
-    if let (Some(url), Some(over)) = (&a.alert, over_budget(s, &file_records)) {
-        sent.push(post_alert(
-            url,
-            format!("sonde watch: {} is over budget: {over}", path.display()),
-        ));
+    if let Some(over) = over_budget(s, &file_records) {
+        let text = format!("sonde watch: {} is over budget: {over}", path.display());
+        eprintln!("{} {text}", paint("!", "33", tty));
+        if let Some(url) = &a.alert {
+            sent.push(post_alert(url, text));
+        }
     }
     let _ = tokio::time::timeout(Duration::from_secs(10), futures::future::join_all(sent)).await;
     eprintln!("{}", path.display());
@@ -2622,8 +2777,101 @@ mod tests {
         assert_eq!(count(), 2);
     }
 
+    #[test]
+    fn a_replay_that_failed_on_a_store_does_not_exit_as_if_all_agreed() {
+        assert_eq!(replay_exit(0, 0), 0);
+        assert_eq!(replay_exit(0, 3), 2);
+        assert_eq!(replay_exit(1, 0), 70);
+        assert_eq!(replay_exit(2, 3), 70);
+    }
+
+    #[test]
+    fn a_single_pass_over_the_logs_answers_for_itself() {
+        assert_eq!(once_exit(false, false), 0);
+        assert_eq!(once_exit(false, true), 1);
+        assert_eq!(once_exit(true, false), 70);
+        assert_eq!(once_exit(true, true), 70);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_ended_by_a_signal_exits_as_a_shell_says_it() {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::ExitStatus;
+        // a wait status: the signal in its low bits, the exit code above
+        assert_eq!(exit_code(ExitStatus::from_raw(9)), 137);
+        assert_eq!(exit_code(ExitStatus::from_raw(15)), 143);
+        assert_eq!(exit_code(ExitStatus::from_raw(3 << 8)), 3);
+        assert_eq!(exit_code(ExitStatus::from_raw(0)), 0);
+    }
+
+    #[test]
+    fn a_log_file_read_is_remembered_until_it_is_too_old_to_be_listed() {
+        let t = |h: i64| chrono::DateTime::from_timestamp(1_770_000_000 + h * 3600, 0).unwrap();
+        let mut mark = LogsMark {
+            watermark: t(0),
+            seen: Default::default(),
+        };
+        // more files than the old limit, all within the grace
+        for i in 0..50_010 {
+            mark.read(&format!("logs/{i:06}"), t(0));
+        }
+        // a pass with one new file, an hour on
+        assert!(mark.wants("logs/new", t(1)));
+        mark.read("logs/new", t(1));
+        mark.watermark = t(1);
+        mark.forget_old();
+        assert_eq!(mark.seen.len(), 50_011);
+        assert!(!mark.wants("logs/000000", t(0)), "read a second time");
+        // two hours past them they are not listed, so not remembered
+        mark.read("logs/later", t(3));
+        mark.watermark = t(3);
+        mark.forget_old();
+        assert_eq!(mark.seen.len(), 1);
+        assert!(!mark.wants("logs/000000", t(0)));
+        // a mark written before 13.0 (names only) still reads
+        let old: LogsMark =
+            serde_json::from_str(r#"{"watermark":"2026-02-06T00:00:00Z","seen":["a","b"]}"#)
+                .unwrap();
+        assert_eq!(old.seen.len(), 2);
+        assert!(!old.wants("a", old.watermark));
+        let again: LogsMark = serde_json::from_str(&serde_json::to_string(&old).unwrap()).unwrap();
+        assert_eq!(again.seen, old.seen);
+    }
+
+    #[tokio::test]
+    async fn a_single_pass_that_could_not_list_the_logs_does_not_exit_0() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Arc::new(Sonde::open(sonde_core::Paths::rooted(dir.path())).unwrap());
+        sonde_core::demo::install(&s).await.unwrap();
+        let src = "s3://no-such-bucket-of-logs/logs/";
+        let args = WatchArgs {
+            proxy: ProxyArgs {
+                rec: Recording {
+                    endpoint: Some("demo".into()),
+                    no_delete: false,
+                    read_only: true,
+                    out: None,
+                },
+                listen: "127.0.0.1:0".parse().unwrap(),
+                allow_remote: false,
+            },
+            rotate: 60,
+            alert: None,
+            logs: Some(src.into()),
+            every: "15m".into(),
+            once: true,
+        };
+        assert_eq!(watch_logs(&s, &args, src).await.unwrap(), 70);
+    }
+
     #[tokio::test]
     async fn a_baseline_is_fetched_over_https_only() {
+        // this machine's own names too
+        for url in ["http://localhost:8080/base.sonde", "http://127.0.0.1/b"] {
+            let e = fetch_baseline(url).await.unwrap_err();
+            assert!(e.to_string().contains("only https"), "{e}");
+        }
         let e = fetch_baseline("http://example.com/base.sonde?sig=1")
             .await
             .unwrap_err();

@@ -39,7 +39,12 @@ pub fn decode(body: &[u8]) -> Result<Decoded, String> {
         if size == 0 {
             break;
         }
-        if at + size + 2 > body.len() {
+        // a size near usize::MAX must not wrap round to a small one
+        if size
+            .checked_add(2)
+            .and_then(|n| n.checked_add(at))
+            .is_none_or(|end| end > body.len())
+        {
             return Err("aws-chunked: a chunk runs past the body".into());
         }
         payload.extend_from_slice(&body[at..at + size]);
@@ -90,6 +95,14 @@ mod tests {
         let d = decode(b"3;chunk-signature=x\r\nabc\r\n0;chunk-signature=y\r\n\r\n").unwrap();
         assert_eq!(d.payload, b"abc");
         assert!(d.trailers.is_empty());
+    }
+
+    #[test]
+    fn a_chunk_size_near_the_largest_number_is_an_error_not_a_panic() {
+        for size in ["ffffffffffffffff", "fffffffffffffffe", "7fffffffffffffff"] {
+            let body = format!("{size};chunk-signature=x\r\nabc\r\n0\r\n\r\n");
+            assert!(decode(body.as_bytes()).is_err(), "{size}");
+        }
     }
 
     #[test]

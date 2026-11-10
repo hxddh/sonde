@@ -28,6 +28,14 @@ pub struct Listing {
     prefix: String,
     delimiter: Option<String>,
     state: Arc<Mutex<State>>,
+    /// Set as the listing goes: a `load_all` under way stops at its next page.
+    closed: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for Listing {
+    fn drop(&mut self) {
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 fn entry_json(e: &Entry) -> JsonValue {
@@ -49,6 +57,7 @@ impl Listing {
             prefix,
             delimiter,
             state: Arc::new(Mutex::new(State::default())),
+            closed: Arc::default(),
         }
     }
 
@@ -107,13 +116,14 @@ impl Listing {
         if this.is_disposed() {
             return Err(err_msg("the listing was closed"));
         }
-        let (ep, b, p, d, state) = this.with(|l| {
+        let (ep, b, p, d, state, closed) = this.with(|l| {
             (
                 l.endpoint.clone(),
                 l.bucket.clone(),
                 l.prefix.clone(),
                 l.delimiter.clone(),
                 l.state.clone(),
+                l.closed.clone(),
             )
         });
         let st = state.clone();
@@ -136,8 +146,9 @@ impl Listing {
                 s.done = !page.is_truncated || page.next_token.is_none();
                 s.token = page.next_token;
                 s.rows.extend(page.entries);
-                // the listing was dropped: stop
-                if Arc::strong_count(&st) == 1 {
+                // the listing was dropped: stop (counting the state's owners
+                // cannot tell: this call holds two of them itself)
+                if closed.load(std::sync::atomic::Ordering::SeqCst) {
                     return Ok(());
                 }
             }
@@ -235,6 +246,26 @@ fn refilter(s: &mut State, text: &str) {
                 .filter(|(_, e)| e.name.to_lowercase().contains(&t))
                 .map(|(i, _)| i)
                 .collect(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_listing_that_goes_tells_the_load_under_way() {
+        let l = Listing::new("e".into(), "b".into(), String::new(), None);
+        // what load_all holds while it runs: the flag, and the state twice over
+        let (closed, state) = (l.closed.clone(), l.state.clone());
+        let _in_the_task = state.clone();
+        assert!(!closed.load(std::sync::atomic::Ordering::SeqCst));
+        drop(l);
+        assert!(closed.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            Arc::strong_count(&state) > 1,
+            "which the count never showed"
         );
     }
 }

@@ -372,7 +372,11 @@ pub async fn scan_inner(
             .await
         {
             Ok(page) => page,
-            Err(e) if requests == 0 && matches!(e.status, Some(400) | Some(405) | Some(501)) => {
+            // 403: credentials that may list objects but not versions
+            Err(e)
+                if requests == 0
+                    && matches!(e.status, Some(400) | Some(403) | Some(405) | Some(501)) =>
+            {
                 source = "ListObjectsV2";
                 break;
             }
@@ -432,6 +436,7 @@ pub async fn scan_inner(
             token = page.next_continuation_token;
         }
     }
+    let mut uncounted = None;
     let multipart = if include_multipart {
         match crate::services::mpu::scan_inner(s, ep, b, p, ctx).await {
             Ok(m) => Agg {
@@ -439,12 +444,23 @@ pub async fn scan_inner(
                 bytes: m.total_bytes,
             },
             Err(e) if e.kind == s3raw::ErrorKind::Cancelled => return Err(e),
-            Err(_) => Agg::default(),
+            Err(e) => {
+                uncounted = Some(e);
+                Agg::default()
+            }
         }
     } else {
         Agg::default()
     };
-    Ok(acc.finish(s, ep, b, source, multipart, requests))
+    let mut report = acc.finish(s, ep, b, source, multipart, requests);
+    if let Some(e) = uncounted {
+        // zero here is "unknown", and the report must say so
+        report.findings.insert(
+            0,
+            format!("Incomplete multipart uploads were not counted: {e}"),
+        );
+    }
+    Ok(report)
 }
 
 fn cache_file(s: &Sonde, ep: &str, b: &str, p: &str) -> PathBuf {
@@ -563,5 +579,68 @@ mod tests {
         let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
         let r = Accumulator::new("x/").finish(&s, "e", "b", "ListObjectsV2", Agg::default(), 1);
         assert_eq!(r.findings, vec!["b/x/ holds no bytes."]);
+    }
+
+    #[tokio::test]
+    async fn a_scan_that_may_not_list_versions_or_uploads_says_so() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // a store that refuses ListObjectVersions and ListMultipartUploads
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = l.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    loop {
+                        let mut chunk = [0u8; 4096];
+                        match c.read(&mut chunk).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                        }
+                        let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
+                            continue;
+                        };
+                        let head = String::from_utf8_lossy(&buf[..end]).to_string();
+                        buf.drain(..end + 4);
+                        let target = head.split(' ').nth(1).unwrap_or("");
+                        let (status, body) = if target.contains("versions")
+                            || target.contains("uploads")
+                        {
+                            (
+                                403,
+                                "<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>",
+                            )
+                        } else {
+                            (
+                                200,
+                                "<ListBucketResult><Contents><Key>a</Key><Size>7</Size></Contents></ListBucketResult>",
+                            )
+                        };
+                        let reply = format!(
+                            "HTTP/1.1 {status} X\r\ncontent-length: {}\r\n\r\n{body}",
+                            body.len()
+                        );
+                        if c.write_all(reply.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let mut e = crate::EndpointConfig::new("e", "e", &url, "us-east-1", crate::Vendor::Other);
+        e.path_style = true;
+        e.credentials = crate::CredentialSource::Anonymous;
+        s.add_transient_endpoint(e).unwrap();
+        let job = scan(&s, "e", "b", "", true);
+        let r: DuReport = serde_json::from_value(s.jobs().wait(&job).await.unwrap()).unwrap();
+        assert_eq!(r.source, "ListObjectsV2", "403 on versions falls back");
+        assert_eq!(r.current.bytes, 7);
+        assert!(
+            r.findings[0].starts_with("Incomplete multipart uploads were not counted:"),
+            "{:?}",
+            r.findings
+        );
     }
 }

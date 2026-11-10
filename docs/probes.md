@@ -5,10 +5,13 @@ Generated from the probe catalog (`sonde probe list --format json`) by `scripts/
 Each probe runs in a scratch prefix `sonde-probe/<run>/<probe>/` of the bucket you give (`--bucket`), and, with
 `--temp-buckets`, in temporary buckets of its own. Everything it wrote is removed afterwards: every version,
 delete marker and incomplete upload under the prefix, and the temporary buckets (Object Lock versions with
-`x-amz-bypass-governance-retention`).
+`x-amz-bypass-governance-retention`). A cancelled run cleans up after the probe it stopped in before it ends.
+What could not be removed (a locked version without `s3:BypassGovernanceRetention`, a bucket that is not empty)
+is named in the probe's observations (`left behind: …`), in the job's last message and in the audit log.
 
 Verdicts: **pass** (as AWS), **fail** (a guarantee broke: data written that should not be, wrong data read),
-**differs** (works, differently from AWS), **unsupported** (not implemented), **error** (could not run),
+**differs** (works, differently from AWS), **unsupported** (not implemented), **error** (could not run: the
+probe timed out, or a request it only prepares with failed, as in a scratch bucket that cannot be written),
 **skipped** (needs a temporary bucket or real-time waits that were not allowed).
 
 The judge of every probe is a pure function of the recorded responses, unit-tested on fixtures recorded from
@@ -275,7 +278,7 @@ Ceph RGW and RustFS and on AWS-reference fixtures (`crates/probes/fixtures`).
 
 ### `presign.expiry`
 
-**Presigned URL expiry.** Presigns a GET valid for 2 seconds, uses it at once and again after 4 seconds; presigns with X-Amz-Expires over 7 days. Needs: slow.
+**Presigned URL expiry.** Presigns a GET valid for a few seconds (allowing for the difference between this clock and the store's), uses it at once and again once it has expired; presigns with X-Amz-Expires over 7 days. Needs: slow.
 
 **AWS behavior:** Fresh URL: 200. Expired: 403 AccessDenied ("Request has expired"). X-Amz-Expires above 604800: 400 AuthorizationQueryParametersError.
 

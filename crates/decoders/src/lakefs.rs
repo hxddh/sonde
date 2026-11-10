@@ -6,7 +6,7 @@
 //! DynamoDB, local), not in object storage, so the lens shows the trees
 //! (one metarange per committed state) and what they map, and says so.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use chrono::{DateTime, Utc};
 
@@ -157,12 +157,19 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         .flat_map(|(e, _, _)| e.iter().map(|x| x.address.clone()))
         .collect();
     let rel = |o: &ObjectMeta| o.key.strip_prefix(root).unwrap_or(&o.key).to_string();
-    let unreferenced: Vec<&&ObjectMeta> = data
+    // an address may be absolute (`s3://bucket/root/data/x`): every tail of
+    // it at a `/`, so each object is one lookup, not a pass over all addresses
+    let tails: HashSet<&str> = referenced
         .iter()
-        .filter(|o| {
-            !referenced.contains(&rel(o)) && !referenced.iter().any(|a| a.ends_with(&rel(o)))
+        .flat_map(|a| {
+            std::iter::once(a.as_str()).chain(a.match_indices('/').map(|(i, _)| &a[i + 1..]))
         })
         .collect();
+    let unreferenced: Vec<&&ObjectMeta> = data
+        .iter()
+        .filter(|o| !tails.contains(rel(o).as_str()))
+        .collect();
+    let unreferenced_keys: HashSet<&str> = unreferenced.iter().map(|u| u.key.as_str()).collect();
     let used_ranges: BTreeSet<String> = metaranges
         .values()
         .flat_map(|(r, _)| r.iter().map(|x| x.0.clone()))
@@ -225,7 +232,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             .flat_map(|(e, _, _)| e.iter())
             .collect();
         mt.row(vec![
-            id[..12.min(id.len())].to_string(),
+            short(id),
             time_str(*t),
             rs.len().to_string(),
             entries.len().to_string(),
@@ -234,7 +241,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         l.timeline.push(Event {
             time: *t,
             kind: "commit".into(),
-            label: format!("tree {}", &id[..12.min(id.len())]),
+            label: format!("tree {}", short(id)),
             detail: format!("{} ranges, {} entries", rs.len(), entries.len()),
             key: Some(format!("{root}_lakefs/{id}")),
             bytes: None,
@@ -253,7 +260,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         }
         l.snapshots.push(Snapshot {
             time: *t,
-            label: format!("tree {}", &id[..12.min(id.len())]),
+            label: format!("tree {}", short(id)),
             facts: vec![fact("Ranges", rs.len()), fact("Entries", entries.len())],
             tables: vec![files],
         });
@@ -264,7 +271,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     );
     for (id, (e, _, size)) in &ranges {
         rt.row(vec![
-            id[..12.min(id.len())].to_string(),
+            short(id),
             e.len().to_string(),
             e.first().map(|x| x.path.clone()).unwrap_or_default(),
             e.last().map(|x| x.path.clone()).unwrap_or_default(),
@@ -276,7 +283,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             time: o.last_modified,
             kind: "object".into(),
             label: rel(o),
-            detail: if unreferenced.iter().any(|u| u.key == o.key) {
+            detail: if unreferenced_keys.contains(o.key.as_str()) {
                 "unreferenced".into()
             } else {
                 "committed".into()
@@ -295,4 +302,25 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         unreferenced.len()
     );
     Ok(l)
+}
+
+/// The first 12 characters of an id (an object's name: any UTF-8).
+fn short(id: &str) -> String {
+    id.chars().take(12).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short;
+
+    #[test]
+    fn a_name_with_multi_byte_characters_is_shortened_not_sliced() {
+        // byte 12 falls inside the seventh `é`
+        assert_eq!(short("ééééééé"), "ééééééé");
+        assert_eq!(short("0123456789abcdef"), "0123456789ab");
+        assert_eq!(
+            short("日本語のテーブル名はとても長い"),
+            "日本語のテーブル名はとて"
+        );
+    }
 }

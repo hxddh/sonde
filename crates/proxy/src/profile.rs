@@ -498,12 +498,24 @@ fn nice(ms: f64) -> f64 {
     10.0 * p
 }
 
-fn percentile(sorted: &[f64], q: f64) -> f64 {
+/// The `q` quantile of sorted values by nearest rank (the smallest value
+/// with at least `q` of them at or under it; 0 without any). The one
+/// definition every figure uses: a session's, a kind's, a slice's.
+pub fn percentile(sorted: &[f64], q: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
-    let i = ((sorted.len() - 1) as f64 * q).round() as usize;
-    sorted[i.min(sorted.len() - 1)]
+    sorted[((sorted.len() as f64 * q).ceil() as usize).clamp(1, sorted.len()) - 1]
+}
+
+/// Whether a request reached the store: one sonde refused, or that got no
+/// answer, is not on the store's bill.
+pub fn reached_store(r: &Record) -> bool {
+    r.status.is_some()
+        && !r
+            .response_headers
+            .iter()
+            .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
 }
 
 fn tone(r: &Record) -> u8 {
@@ -555,6 +567,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let busy_us = union_us(records.iter().map(|r| (start_us(r), end_us(r))).collect());
     let ms = |us: i64| us as f64 / 1000.0;
     let price = |r: &Record| match class(r) {
+        _ if !reached_store(r) => 0.0,
         Class::Write if r.operation.starts_with("List") => {
             prices.per_1000_lists.unwrap_or(prices.per_1000_writes) / 1000.0
         }
@@ -651,7 +664,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             continue;
         }
         l.sort_by(f64::total_cmp);
-        let at = |q: f64| l[((l.len() as f64 * q).ceil() as usize).clamp(1, l.len()) - 1];
+        let at = |q: f64| percentile(&l, q);
         (b.p50_ms, b.p95_ms, b.p99_ms) = (at(0.5), at(0.95), at(0.99));
     }
 
@@ -782,7 +795,12 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     });
     callers.truncate(12);
 
-    let count = |c: Class| records.iter().filter(|r| class(r) == c).count();
+    let count = |c: Class| {
+        records
+            .iter()
+            .filter(|r| reached_store(r) && class(r) == c)
+            .count()
+    };
     let cost = Cost {
         writes: count(Class::Write),
         reads: count(Class::Read),
@@ -904,7 +922,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     // the distribution, every request in it (not a sample)
     let mut all: Vec<f64> = records.iter().map(|r| r.latency_ms.max(0.0)).collect();
     all.sort_by(f64::total_cmp);
-    let q = |p: f64| all[((all.len() as f64 * p).ceil() as usize).clamp(1, all.len()) - 1];
+    let q = |p: f64| percentile(&all, p);
     let mut latency: Vec<LatencyBucket> = LATENCY_EDGES
         .iter()
         .map(|&le_ms| LatencyBucket { le_ms, n: 0 })
@@ -1165,17 +1183,14 @@ pub fn compare_runs(
             .map(|x| x.prefix.as_str())
             .filter(|p| *p != "other")
             .collect();
-    let count = |p: &Profile, name: &str| {
-        p.prefixes
-            .iter()
-            .find(|x| x.prefix == name)
-            .map_or(0, |x| x.requests)
-    };
+    // from the records: a prefix among one run's busiest may be in the
+    // other's "other"
+    let count = |rs: &[Record], name: &str| rs.iter().filter(|r| prefix_of(r) == name).count();
     let mut prefixes: Vec<PrefixChange> = named
         .into_iter()
         .map(|name| PrefixChange {
             prefix: name.to_string(),
-            requests: (count(a.1, name), count(b.1, name)),
+            requests: (count(a.0, name), count(b.0, name)),
         })
         .collect();
     prefixes.sort_by_key(|x| std::cmp::Reverse(x.requests.0.max(x.requests.1)));
@@ -1446,5 +1461,76 @@ mod tests {
             "{:?}",
             &p.in_flight[p.in_flight.len().saturating_sub(5)..]
         );
+    }
+
+    #[test]
+    fn a_percentile_is_the_same_number_wherever_it_is_shown() {
+        assert_eq!(percentile(&[], 0.5), 0.0);
+        assert_eq!(percentile(&[10.0, 30.0], 0.5), 10.0);
+        assert_eq!(percentile(&[10.0, 30.0], 0.95), 30.0);
+        // two requests of one kind: the session's median is the kind's, the
+        // slice's and the summary's
+        let rs = [
+            rec(1, 0, "GetObject", 200, 10.0),
+            rec(2, 1, "GetObject", 200, 30.0),
+        ];
+        let p = profile(&rs, &RequestPrices::default());
+        assert_eq!(p.p50_ms, 10.0);
+        assert_eq!(p.groups[0].p50_ms, 10.0);
+        assert_eq!(p.rate[0].p50_ms, 10.0);
+        assert_eq!(p.group_rate[0].p50_ms, 10.0);
+        let s = crate::summary::summarize(&rs);
+        assert_eq!(s.operations[0].p50_ms, 10.0);
+    }
+
+    #[test]
+    fn a_request_that_never_reached_the_store_is_not_on_its_bill() {
+        let mut refused = rec(2, 10, "PutObject", 403, 0.0);
+        refused.response_headers = vec![reqlog::Header::new("x-sonde-proxy", "refused")];
+        let mut lost = rec(3, 20, "PutObject", 200, 5.0);
+        lost.status = None;
+        lost.transport_error = Some("connection refused".into());
+        let rs = [rec(1, 0, "PutObject", 200, 5.0), refused, lost];
+        let p = profile(&rs, &RequestPrices::default());
+        assert_eq!((p.cost.writes, p.cost.reads, p.cost.free), (1, 0, 0));
+        assert!((p.cost.amount - 0.005 / 1000.0).abs() < 1e-12);
+        let by_kind: f64 = p.groups.iter().map(|g| g.cost).sum();
+        assert!((by_kind - p.cost.amount).abs() < 1e-12);
+        // the store's own refusal is a request it answered
+        let p = profile(
+            &[rec(1, 0, "PutObject", 403, 5.0)],
+            &RequestPrices::default(),
+        );
+        assert_eq!(p.cost.writes, 1);
+    }
+
+    #[test]
+    fn a_prefix_one_run_counts_under_other_is_still_counted_in_the_comparison() {
+        let at = |id: u64, key: String| Record {
+            bucket: Some("b".into()),
+            key: Some(key),
+            ..rec(id, id as i64, "GetObject", 200, 1.0)
+        };
+        // before: ten prefixes, p0/ the quietest of them (so under "other")
+        let mut before = Vec::new();
+        let mut id = 0;
+        for p in 0..10u64 {
+            for _ in 0..=p {
+                id += 1;
+                before.push(at(id, format!("p{p}/k")));
+            }
+        }
+        // after: p0/ alone
+        let after: Vec<Record> = (1..=5).map(|i| at(i, "p0/k".into())).collect();
+        let prices = RequestPrices::default();
+        let (pa, pb) = (profile(&before, &prices), profile(&after, &prices));
+        let name = prefix_of(&after[0]);
+        assert!(
+            !pa.prefixes.iter().any(|x| x.prefix == name),
+            "the test needs {name} outside the first run's busiest"
+        );
+        let c = compare_runs((&before, &pa, &[]), (&after, &pb, &[]));
+        let change = c.prefixes.iter().find(|x| x.prefix == name).unwrap();
+        assert_eq!(change.requests, (1, 5));
     }
 }

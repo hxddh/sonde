@@ -11,7 +11,7 @@ pub mod tui;
 
 use std::sync::Arc;
 
-use sonde_core::{Config, CredentialSource, EndpointConfig, Paths, Sonde, Vendor};
+use sonde_core::{CredentialSource, EndpointConfig, Paths, Sonde, Vendor};
 
 use crate::Cli;
 
@@ -30,25 +30,21 @@ pub fn paths(cli: &Cli) -> Paths {
 }
 
 pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
-    let paths = paths(cli);
-    let mut config = Config::load(&paths.config_file())?;
+    let s = Sonde::open(paths(cli))?;
+    // of this run only: neither the endpoint nor the limits are ever saved
     if let Some(url) = &cli.url {
         let vendor = Vendor::guess(url);
         let mut e = EndpointConfig::new(ADHOC, url, url, &cli.region, vendor);
         e.path_style = cli.path_style;
         e.ca_file = cli.ca_file.clone();
         e.credentials = CredentialSource::Default;
-        config.endpoints.retain(|x| x.id != ADHOC);
-        config.endpoints.push(e);
+        s.add_transient_endpoint(e)?;
     }
-    if let Some(r) = cli.rate {
-        config.settings.rate_limit = Some(r);
-    }
-    if let Some(c) = cli.concurrency {
-        config.settings.concurrency = c.clamp(1, 1024);
-    }
-    config.validate()?;
-    Ok(Sonde::with_config(paths, config))
+    s.set_overrides(sonde_core::sonde::Overrides {
+        rate_limit: cli.rate,
+        concurrency: cli.concurrency.map(|c| c.clamp(1, 1024)),
+    })?;
+    Ok(s)
 }
 
 /// The endpoint a command acts on: `--endpoint`, `--url`, or the only one configured.
