@@ -395,11 +395,11 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
   const said = () => [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ");
   const name = () => (
     <>
-      {/* the icon only where the name has room beside it */}
+      {/* the icon only where the name has room beside it; a name's qualifier ("· median") likewise */}
       <If when={props.icon && look() === "full"}>
         <Icon name={props.icon!} size={ICON.small} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
       </If>
-      <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
+      <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
     </>
   );
   const chevron = () => (

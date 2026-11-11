@@ -48,6 +48,9 @@ export async function place(app: App, where: string) {
   // a terminal shows the places on its home list only
   if (!app.shows(`id:nav-${area}`)) await app.back();
   await app.press(`id:nav-${area}`);
+  // a terminal pushes the place over its home list: there once the list has gone (a place
+  // with much to read, a long list of sessions, takes a moment)
+  if (!window) await app.waitFor(`id:nav-${area}`, { state: "gone" });
   if (area === "store" || area === "settings") await app.press(`id:tab-${where}`);
   if (area === "activity") await app.press(`id:activity-tab-${where}`);
 }
