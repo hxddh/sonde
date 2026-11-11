@@ -406,6 +406,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     let mut statuses: BTreeMap<(Option<u16>, Option<&str>), StatusRow> = BTreeMap::new();
     let mut amount = 0f64;
     let mut spans: Vec<(i64, i64)> = Vec::new();
+    let mut owed: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
 
     for r in records {
         let Some(tl) = &tl else { break };
@@ -427,8 +428,17 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
             received.add(b);
         }
 
-        retries[i] += r.retries as f64;
-        retries_total += r.retries as u64;
+        // a retry is counted where it is known: inside a record (sonde's own
+        // client says how many it took), or as a record of its own, which is
+        // how a program's SDK retries through the proxy: the same request
+        // again after an answer that asks for it
+        let id = crate::fault::identity_of(r);
+        let again = u32::from(owed.remove(&id).is_some());
+        if crate::episode::retryable(r) {
+            owed.insert(id, ());
+        }
+        retries[i] += (r.retries + again) as f64;
+        retries_total += (r.retries + again) as u64;
         if is_failure(r) {
             // what sonde did in the store's place is not the store's failure
             let (series, count) = if r.injected.is_some() {

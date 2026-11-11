@@ -1010,13 +1010,15 @@ async fn run_once(
         (Some(kept), Some(mut to)) if under.is_none() => {
             // sonde's input, to the program and kept: read on a thread of
             // its own, which a program that reads none of it leaves waiting
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+            // (a few chunks ahead at most: a program that reads slowly
+            // slows whoever writes to sonde, as a pipe would)
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
             std::thread::spawn(move || {
                 use std::io::Read;
                 let mut buf = vec![0u8; 64 << 10];
                 let mut stdin = std::io::stdin().lock();
                 while let Ok(n) = stdin.read(&mut buf) {
-                    if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                    if n == 0 || tx.blocking_send(buf[..n].to_vec()).is_err() {
                         break;
                     }
                 }

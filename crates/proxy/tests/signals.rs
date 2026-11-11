@@ -126,9 +126,8 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
             sig.errors.retries_total as f64,
             "{name}"
         );
-        assert_eq!(
-            sig.errors.retries_total,
-            recs.iter().map(|r| r.retries as u64).sum::<u64>(),
+        assert!(
+            sig.errors.retries_total >= recs.iter().map(|r| r.retries as u64).sum::<u64>(),
             "{name}"
         );
         // what the profile draws as client and server errors, and no more
@@ -331,6 +330,10 @@ fn an_injected_error_is_counted_as_injected_not_as_the_stores() {
     let mut recs: Vec<Record> = (0..10)
         .map(|i| rec(i + 1, i as i64 * 100, "GetObject", 200, 5.0))
         .collect();
+    // (ten requests, none of them another's retry)
+    for r in &mut recs {
+        r.key = Some(format!("data/{}.bin", r.id));
+    }
     // a fault scenario answered 503 in the store's place; the store's own 503
     recs[2].status = Some(503);
     recs[2].injected = Some("slow-down".into());
@@ -699,4 +702,23 @@ fn a_million_requests_are_read_in_under_two_seconds() {
     check_million(&s, recs.len());
     let bound = if cfg!(debug_assertions) { 6.0 } else { 2.0 };
     assert!(took.as_secs_f64() < bound, "{took:?}");
+}
+
+#[test]
+fn a_retry_sent_as_a_request_of_its_own_is_a_retry() {
+    // an SDK's retry through the proxy is another record, its own `retries` zero
+    let mut recs = vec![
+        rec(1, 0, "PutObject", 503, 2.0),
+        rec(2, 300, "PutObject", 200, 2.0),
+        rec(3, 400, "GetObject", 200, 2.0),
+        rec(4, 500, "GetObject", 200, 2.0),
+    ];
+    for r in &mut recs {
+        r.key = Some("state".into());
+    }
+    let s = signals(&recs, &RequestPrices::default());
+    // the PUT again after its 503; the second GET follows a success and is no retry
+    assert_eq!(s.errors.retries_total, 1);
+    assert_eq!(s.errors.retries.iter().sum::<f64>(), 1.0);
+    assert!(text(&s, false).contains("1 retry"), "{}", text(&s, false));
 }

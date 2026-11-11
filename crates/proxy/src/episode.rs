@@ -825,7 +825,9 @@ fn sondes_fault(r: &Record) -> bool {
     r.injected.is_some() && response_header(r, "x-sonde-fault").is_some()
 }
 
-fn retryable(r: &Record) -> bool {
+/// Whether a client is expected to send the request again: no answer, a 5xx
+/// that says so, or the store asking for fewer.
+pub(crate) fn retryable(r: &Record) -> bool {
     r.transport_error.is_some()
         || matches!(r.status, Some(500 | 502 | 503 | 504 | 429))
         || s3_code(r).is_some_and(|c| c == "SlowDown" || c == "RequestTimeout")

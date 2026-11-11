@@ -72,6 +72,7 @@ row of it is in this version.
   files; a folder import followed a symlink to itself; `--log-out` on `run` wrote an empty file (it is refused);
   `check --init` wrote a time limit an identical run would fail; `-f` help listed formats the command refuses.
 - A gzip file that holds more than 2 GiB is refused rather than read into memory.
+- A program fed by a pipe that reads slowly slows the pipe's writer, as it would without sonde.
 - A session that cannot be read says so, and why (it stayed an outline for ever); a 404 for a bucket that is not
   there has the tone of a failure among the status codes, as the errors count it.
 - The timeline's axis says the most in flight the session had (it said its nearest round tick: "up to 5" beside
