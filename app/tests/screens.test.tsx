@@ -291,7 +291,7 @@ test("a store that is gone: the buckets say why and come back with it; the endpo
 });
 
 test("a session file that cannot be read says so, and why", async () => {
-  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Sessions.analyse": async () => {
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Sessions.view": async () => {
     throw new Error("line 3 is cut short: not a whole record");
   } } } });
   await app.press("id:open-example");
@@ -302,3 +302,77 @@ test("a session file that cannot be read says so, and why", async () => {
   // no figure of a session that was not read
   expect(app.shows("id:session-summary")).toBe(false);
 });
+
+// --- a session of any size: its operations come in pages, as the table scrolls, sorts and narrows
+
+/** A session of `n` operations as the bridge would answer for it, whatever file is asked for (the
+ * calls that answer at once are the bridge's own, so the session opened is a real one): the view
+ * carries the totals and the first page only; a page is made when it is asked for, and every ask is kept. */
+function bigSession(n: number) {
+  const t0 = Date.parse("2026-11-07T00:00:00Z");
+  const row = (i: number) => ({ index: i, kind: "request", format: null, title: `operation ${i}`, start: new Date(t0 + i * 10).toISOString(), end: new Date(t0 + i * 10 + 4).toISOString(), records: [i + 1], requests: 1 + (i % 7), bytesUp: 0, bytesDown: 128, outcome: { kind: "ok" }, notes: [] });
+  const zeros = [0, 0];
+  const signals = {
+    timed: true, short: false, wallMs: n * 10, binMs: n * 5, bins: 2,
+    rate: { value: 100, unit: "1/s", series: [100, 100], requests: n },
+    errors: { value: 0, series: zeros, count: 0, counts: { client: 0, server: 0, transport: 0, injected: 0 }, client: zeros, server: zeros, transport: zeros, injected: zeros, retries: zeros, retriesTotal: 0 },
+    latency: { value: 4, series: [4, 4], p50Ms: 4, p95Ms: 4, p99Ms: 4, p95: [4, 4], p99: [4, 4] },
+    bytes: { value: 12800, series: [12800, 12800], upPerSec: 0, downPerSec: 12800, up: zeros, down: [12800, 12800], upBytes: 0, downBytes: n * 128 },
+    inFlight: { value: 1, series: [1, 1], peak: 1, peakAtMs: 0 },
+    firstByte: null, sizes: { request: [], response: [], throughput: [], mibPerSec: null }, statuses: [], cost: { amount: 0, currency: "USD", operations: [] }, prefixes: [],
+  };
+  const profile = { wallMs: n * 10, busyMs: n * 4, peakInFlight: 1, peakAtMs: 0, meanInFlight: 0.4, groups: [], binMs: n * 5, rate: [], inFlight: [], samples: [], cost: { writes: 0, reads: n, free: 0, amount: 0, currency: "USD" }, prices: { per1000Writes: 0, per1000Reads: 0, currency: "USD" }, prefixes: [], heat: [], flows: [] };
+  const asked: { offset: number; limit: number; sort?: string; descending?: boolean; finding?: number }[] = [];
+  // the order a query asks for: by time, or the busiest first (ties by index)
+  const order = (q: { sort?: string; descending?: boolean; finding?: number }) => {
+    const all = q.finding === 0 ? Array.from({ length: 300 }, (_, k) => k * 3) : Array.from({ length: n }, (_, i) => i);
+    if (q.sort === "requests") all.sort((a, b) => ((a % 7) - (b % 7)) * (q.descending ? -1 : 1) || a - b);
+    else if (q.descending) all.reverse();
+    return all;
+  };
+  const modules = {
+    "Sessions.view": async (path: string) => ({
+      path, header: { endpoint: "demo", url: "http://127.0.0.1:9000", region: "us-east-1", created: new Date(t0).toISOString(), command: "etl --all" },
+      summary: { requests: n, errors: 0, misses: 0, refused: 0, seconds: n / 100, bytesUp: 0, bytesDown: n * 128, operations: [{ operation: "GetObject", count: n, errors: 0, misses: 0, errorShare: 0, bytesUp: 0, bytesDown: n * 128, p50Ms: 4, p95Ms: 4, p99Ms: 4, maxMs: 4 }] },
+      profile, signals, whatIf: null, injected: [], sharedNotes: [],
+      episodes: Array.from({ length: 500 }, (_, i) => row(i)), episodesTotal: n,
+      span: { start: new Date(t0).toISOString(), end: new Date(t0 + n * 10).toISOString() }, families: { formats: {}, kinds: { request: n } },
+      observations: [{ level: "info", text: "300 operations of every third", episodes: Array.from({ length: 200 }, (_, k) => k * 3), episodesTotal: 300, firstStart: new Date(t0).toISOString() }],
+    }),
+    "Sessions.episodes": async (_: string, q: { offset?: number; limit?: number; sort?: string; descending?: boolean; finding?: number }) => {
+      const offset = q.offset ?? 0;
+      const limit = Math.min(q.limit ?? 500, 5000);
+      asked.push({ offset, limit, sort: q.sort, descending: q.descending, finding: q.finding });
+      const all = order(q);
+      return { total: all.length, offset, rows: all.slice(offset, offset + limit).map(row) };
+    },
+  };
+  return { modules, asked };
+}
+
+test("a session of a hundred thousand operations opens on its totals and first page, and reads on in pages", async () => {
+  const N = 100000;
+  const big = bigSession(N);
+  const began = Date.now();
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: big.modules } });
+  await app.press("id:open-example");
+  // its totals at once, from the view: nothing waits for the operations to be whole
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.waitFor("text:operation 0", { timeout: 10000 });
+  expect(app.shows("label:/100,000 requests · 100,000 operations/")).toBe(true);
+  // (opened and drawn well inside the budget; the window's own start is most of it here)
+  expect(Date.now() - began).toBeLessThan(15000);
+  // the first page came with the view: nothing past the table's start was asked for
+  expect(big.asked.every((q) => q.offset === 0)).toBe(true);
+  // down the table, past what is held: the rows there are asked for, a window of them, once
+  await app.scroll("id:operations", 30 * 1700);
+  await app.waitUntil(() => big.asked.some((q) => q.offset > 0), { timeout: 10000 });
+  await app.waitFor("text:/^operation 17\\d\\d$/", { timeout: 10000 });
+  expect(big.asked.every((q) => q.limit <= 5000)).toBe(true);
+  expect(big.asked.length).toBeLessThan(6);
+  // a finding narrows them where they are kept (as a sort does): its 300, though the view listed 200 of them
+  await app.press("id:observation-0");
+  await app.waitUntil(() => big.asked.some((q) => q.finding === 0), { timeout: 10000 });
+  await app.waitFor("text:/^300 of 100,000 operations$/", { timeout: 10000 });
+  // (scrolling a table row by row takes the headless window a while)
+}, 120000);

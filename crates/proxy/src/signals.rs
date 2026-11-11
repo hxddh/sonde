@@ -233,6 +233,10 @@ pub struct Signals {
     /// Whether the requests' times are known (the profile's rule).
     pub timed: bool,
     pub wall_ms: f64,
+    /// The run took under a second ([`SHORT_MS`]): it has totals and no
+    /// rates (`rate.value`, `bytes.value` and the two ways are none). Nine
+    /// requests in a third of a second are not "27 a second".
+    pub short: bool,
     /// The slices every series is over: the profile's `binMs` and `rate`.
     pub bin_ms: f64,
     pub bins: usize,
@@ -249,6 +253,123 @@ pub struct Signals {
     pub cost: CostBy,
     /// The profile's prefixes, in its order.
     pub prefixes: Vec<PrefixRate>,
+}
+
+/// A run under this long has no rate: there was no second to have one in.
+pub const SHORT_MS: f64 = 1000.0;
+
+/// How long after a failure its retry may start: the bound the episodes
+/// group a request's attempts by.
+pub const RETRY_WINDOW_US: i64 = 60_000_000;
+
+/// Under this a steady wait is an SDK's fixed backoff, not a program's poll.
+const POLL_MIN_US: i64 = 200_000;
+
+/// A request's time as it is taken everywhere here: never negative, never
+/// past a day ([`reqlog::MAX_LATENCY_MS`]), as its span on the timeline is.
+fn took_ms(r: &Record) -> f64 {
+    if r.latency_ms.is_finite() {
+        r.latency_ms.clamp(0.0, reqlog::MAX_LATENCY_MS)
+    } else {
+        0.0
+    }
+}
+
+/// Which records are retries: the same request sent again after a failure
+/// that asks for it.
+///
+/// The rule. A request is named by [`crate::fault::identity_of`] and its
+/// `Range` (two ranges of one object are two requests). After a retryable
+/// failure ([`crate::episode::retryable`]: no answer, a 408, 429, 500, 502,
+/// 503 or 504, SlowDown), its retry is the next request of that name, in
+/// the order of their times and not of the file, that starts once the
+/// failure was answered and within [`RETRY_WINDOW_US`] of it. A request is
+/// the retry of one failure at most. And a request that fails three times
+/// or more in a row at a steady pace of [`POLL_MIN_US`] or more (waits
+/// within a tenth of their median) is a program polling a key that keeps
+/// failing, not an SDK backing off: none of those is a retry. (An SDK set
+/// to wait a fixed fifth of a second or more between three attempts reads
+/// as that poll; the SDKs' own backoff grows or is jittered.)
+fn retries_of(records: &[Record]) -> Vec<bool> {
+    let mut again = vec![false; records.len()];
+    // only the places a failure was at are named: naming every request of a
+    // large session would cost more than the rest of this pass
+    let places: std::collections::HashSet<(Option<&str>, Option<&str>)> = records
+        .iter()
+        .filter(|r| crate::episode::retryable(r))
+        .map(|r| (r.bucket.as_deref(), r.key.as_deref()))
+        .collect();
+    if places.is_empty() {
+        return again;
+    }
+    let mut groups: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, r) in records.iter().enumerate() {
+        if !places.contains(&(r.bucket.as_deref(), r.key.as_deref())) {
+            continue;
+        }
+        let range = r
+            .request_headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("range"))
+            .map_or("", |h| h.value.trim());
+        groups
+            .entry(format!("{} {range}", crate::fault::identity_of(r)))
+            .or_default()
+            .push(i);
+    }
+    for group in groups.values_mut() {
+        if !group
+            .iter()
+            .any(|&i| crate::episode::retryable(&records[i]))
+        {
+            continue;
+        }
+        group.sort_by_key(|&i| (start_us(&records[i]), records[i].id));
+        // (failure, its retry, the wait between them), in time order
+        let mut links: Vec<(usize, usize, i64)> = Vec::new();
+        let mut free = 0;
+        for at in 0..group.len() {
+            let r = &records[group[at]];
+            if !crate::episode::retryable(r) {
+                continue;
+            }
+            let told = end_us(r);
+            free = free.max(at + 1);
+            while free < group.len() && start_us(&records[group[free]]) < told {
+                free += 1;
+            }
+            if let Some(&next) = group.get(free) {
+                let wait = start_us(&records[next]) - told;
+                if wait <= RETRY_WINDOW_US {
+                    links.push((at, free, wait));
+                    free += 1;
+                }
+            }
+        }
+        // chains of failures each followed by the next: a steady one is a poll
+        let mut i = 0;
+        while i < links.len() {
+            let mut j = i + 1;
+            while j < links.len() && links[j].0 == links[j - 1].1 {
+                j += 1;
+            }
+            let chain = &links[i..j];
+            let mut waits: Vec<i64> = chain.iter().map(|l| l.2).collect();
+            waits.sort_unstable();
+            let mid = waits[waits.len() / 2];
+            let poll = chain.len() >= 3
+                && waits[0] >= POLL_MIN_US
+                && (waits[waits.len() - 1] - waits[0]) * 10 <= mid;
+            if !poll {
+                for l in chain {
+                    again[group[l.1]] = true;
+                }
+            }
+            i = j;
+        }
+    }
+    again
 }
 
 /// The smallest body whose transfer is timed against its size: under it the
@@ -406,15 +527,16 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     let mut statuses: BTreeMap<(Option<u16>, Option<&str>), StatusRow> = BTreeMap::new();
     let mut amount = 0f64;
     let mut spans: Vec<(i64, i64)> = Vec::new();
-    let mut owed: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
+    let sent_again = retries_of(records);
 
-    for r in records {
+    for (at, r) in records.iter().enumerate() {
         let Some(tl) = &tl else { break };
         let i = tl.bin_of(r);
         let s = start_us(r);
+        let latency_ms = took_ms(r);
         n[i] += 1.0;
-        took[i].push(r.latency_ms);
-        all.push(r.latency_ms.max(0.0));
+        took[i].push(latency_ms);
+        all.push(latency_ms);
 
         let (u, d) = (r.request_bytes.unwrap_or(0), r.response_bytes.unwrap_or(0));
         up[i] += u as f64;
@@ -431,12 +553,8 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         // a retry is counted where it is known: inside a record (sonde's own
         // client says how many it took), or as a record of its own, which is
         // how a program's SDK retries through the proxy: the same request
-        // again after an answer that asks for it
-        let id = crate::fault::identity_of(r);
-        let again = u32::from(owed.remove(&id).is_some());
-        if crate::episode::retryable(r) {
-            owed.insert(id, ());
-        }
+        // again after an answer that asks for it ([`retries_of`] has the rule)
+        let again = u32::from(sent_again[at]);
         retries[i] += (r.retries + again) as f64;
         retries_total += (r.retries + again) as u64;
         if is_failure(r) {
@@ -469,8 +587,12 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         op.billed += usize::from(reached_store(r));
         op.cost += cost;
         if let Some(fb) = r.first_byte_ms.filter(|_| timed) {
-            let fb = fb.max(0.0);
-            let whole = r.latency_ms.max(fb);
+            let fb = if fb.is_finite() {
+                fb.clamp(0.0, reqlog::MAX_LATENCY_MS)
+            } else {
+                0.0
+            };
+            let whole = latency_ms.max(fb);
             op.first_byte.push(fb);
             op.rest.push(whole - fb);
             fb_sum += fb;
@@ -484,10 +606,10 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
             _ => None,
         };
         if let Some(b) = body.filter(|b| *b >= TRANSFER_MIN)
-            && r.latency_ms > 0.0
+            && latency_ms > 0.0
             && !r.is_error()
         {
-            let rate = b as f64 / MIB / (r.latency_ms / 1000.0);
+            let rate = b as f64 / MIB / (latency_ms / 1000.0);
             moved
                 .entry((r.operation.as_str(), size_bucket(b)))
                 .or_default()
@@ -574,8 +696,9 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         level -= 1;
     }
 
-    // a run that took no time has no rate
-    let seconds = (wall_ms >= 1.0).then_some(wall_ms / 1000.0);
+    // a run too short to have a second in has totals, not rates
+    let short = wall_ms < SHORT_MS;
+    let seconds = (!short).then_some(wall_ms / 1000.0);
     let per_bin = |v: &[f64]| v.iter().map(|x| x / bin_s).collect::<Vec<f64>>();
     let failed = counts.client + counts.server + counts.transport + counts.injected;
 
@@ -637,6 +760,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     Signals {
         timed,
         wall_ms,
+        short,
         bin_ms,
         bins,
         rate: Rate {
@@ -721,25 +845,46 @@ const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 /// The width of a signal's line in the terminal.
 pub const SPARK_COLUMNS: usize = 32;
 
-/// A series as `columns` bars, each the most of the values it stands for (a
-/// burst is not averaged away); nothing is the lowest bar, anything at all
-/// is above it.
+/// What a column of a sparkline is of the slices it stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Column {
+    /// Their mean: a rate.
+    Mean,
+    /// The most of them: a burst or a tail is not averaged away.
+    Max,
+}
+
+/// A series as bars, [`Column::Max`] of the values each stands for.
 pub fn sparkline(series: &[f64], columns: usize) -> String {
+    sparkline_of(series, columns, Column::Max)
+}
+
+/// A series as `columns` bars at most: a series of fewer values is as wide
+/// as it is (a bar for each, none stretched), a longer one has `how` of the
+/// values each column stands for. Nothing is the lowest bar, anything at
+/// all is above it.
+pub fn sparkline_of(series: &[f64], columns: usize, how: Column) -> String {
     let len = series.len();
     if len == 0 || columns == 0 {
         return String::new();
     }
-    let max = series.iter().copied().fold(0.0, f64::max);
-    (0..columns)
+    let columns = columns.min(len);
+    let drawn: Vec<f64> = (0..columns)
         .map(|c| {
             let a = c * len / columns;
-            let b = if len <= columns {
-                a + 1
-            } else {
-                ((c + 1) * len).div_ceil(columns).clamp(a + 1, len)
-            };
-            let v = series[a..b].iter().copied().fold(0.0, f64::max);
-            if v <= 0.0 || max <= 0.0 {
+            let b = ((c + 1) * len).div_ceil(columns).clamp(a + 1, len);
+            let part = &series[a..b];
+            match how {
+                Column::Max => part.iter().copied().fold(0.0, f64::max),
+                Column::Mean => part.iter().sum::<f64>() / part.len() as f64,
+            }
+        })
+        .collect();
+    let max = drawn.iter().copied().fold(0.0, f64::max);
+    drawn
+        .iter()
+        .map(|v| {
+            if *v <= 0.0 || max <= 0.0 {
                 BARS[0]
             } else {
                 BARS[1 + ((v / max * 7.0) as usize).min(6)]
@@ -756,7 +901,9 @@ fn paint(s: &str, code: &str, color: bool) -> String {
     }
 }
 
-fn ms_text(v: f64) -> String {
+/// A length of time as sonde writes it: "0.4 ms", "12 ms", "1.5 s",
+/// "2m 26s".
+pub fn ms_text(v: f64) -> String {
     if v >= 60_000.0 {
         format!(
             "{}m {:02}s",
@@ -772,8 +919,11 @@ fn ms_text(v: f64) -> String {
     }
 }
 
-fn bytes_text(b: f64) -> String {
-    let units = ["B", "KiB", "MiB", "GiB", "TiB"];
+/// A count of bytes as sonde writes it, on the one ladder: "0 B",
+/// "1.5 KiB", up to EiB (what a count of bytes can reach).
+pub fn bytes_text(b: f64) -> String {
+    // the one ladder: as far as a count of bytes goes
+    let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
     let (mut v, mut i) = (b.max(0.0), 0);
     while v >= 1024.0 && i < units.len() - 1 {
         v /= 1024.0;
@@ -787,7 +937,7 @@ fn bytes_text(b: f64) -> String {
 }
 
 /// 1234567 as "1,234,567".
-fn count_text(n: usize) -> String {
+pub fn count_text(n: usize) -> String {
     let d = n.to_string();
     let mut out = String::with_capacity(d.len() + d.len() / 3);
     for (i, c) in d.chars().enumerate() {
@@ -797,6 +947,11 @@ fn count_text(n: usize) -> String {
         out.push(c);
     }
     out
+}
+
+/// "1 request", "1,234 requests".
+pub fn requests_text(n: usize) -> String {
+    format!("{} request{}", count_text(n), if n == 1 { "" } else { "s" })
 }
 
 fn rate_text(v: f64) -> String {
@@ -827,50 +982,60 @@ const PREFIX_ROWS: usize = 3;
 /// The signals for a terminal: a line each for rate, errors, latency and
 /// bytes with its series as a sparkline, then what is there to say of the
 /// first byte, the cost by operation and the prefixes past half of S3's limit.
+///
+/// It follows a head line that has the requests, the time they took, the
+/// failures and the lookups that found nothing: none of those is said again
+/// here. This is the one place for the bytes, the most in flight and the
+/// cost.
 pub fn text(s: &Signals, color: bool) -> String {
     let mut out = String::new();
     if s.rate.requests == 0 {
         return out;
     }
     // the figures in one column, the lines under one another
-    let mut line =
-        |label: &str, figure: String, tone: Option<&str>, series: &[f64], rest: String| {
-            let pad = " ".repeat(30usize.saturating_sub(figure.chars().count()));
-            let figure = match tone {
-                Some(t) => paint(&figure, t, color),
-                None => figure,
-            };
-            let spark = if series.is_empty() {
-                " ".repeat(SPARK_COLUMNS)
-            } else {
-                sparkline(series, SPARK_COLUMNS)
-            };
-            let row = format!(
-                "{}{figure}{pad}{spark}  {rest}",
-                paint(&format!("{label:<9}"), "2", color)
-            );
-            out.push_str(row.trim_end());
-            out.push('\n');
+    let mut line = |label: &str,
+                    figure: String,
+                    tone: Option<&str>,
+                    series: &[f64],
+                    how: Column,
+                    rest: Vec<String>| {
+        // (a long figure still stands apart from what follows it)
+        let pad = " ".repeat(30usize.saturating_sub(figure.chars().count()).max(2));
+        let figure = match tone {
+            Some(t) => paint(&figure, t, color),
+            None => figure,
         };
-
-    let at_once = if s.in_flight.peak > 1 {
-        format!(", {} at once at most", count_text(s.in_flight.peak))
-    } else {
-        String::new()
+        // as wide as its slices, and the lines after it still in a column
+        let spark = sparkline_of(series, SPARK_COLUMNS, how);
+        let gap = " ".repeat(SPARK_COLUMNS - spark.chars().count());
+        let row = format!(
+            "{}{figure}{pad}{spark}{gap}  {}",
+            paint(&format!("{label:<9}"), "2", color),
+            rest.join(" · ")
+        );
+        out.push_str(row.trim_end());
+        out.push('\n');
     };
+    // what a bar is, said when it stands for more than one slice
+    let wide = s.bins > SPARK_COLUMNS;
+    let bar = |what: &str| wide.then(|| format!("a bar is {what}"));
+
+    let mut rest: Vec<String> = Vec::new();
+    if s.in_flight.peak > 1 {
+        rest.push(format!("{} at once at most", count_text(s.in_flight.peak)));
+    }
+    rest.extend(bar("the mean of its slices"));
     line(
         "rate",
         match s.rate.value {
             Some(v) => format!("{} req/s", rate_text(v)),
-            None => "—".into(),
+            // (the head line has the requests and the time)
+            None => "no rate: under a second".into(),
         },
         None,
         &s.rate.series,
-        format!(
-            "{} requests in {}{at_once}",
-            count_text(s.rate.requests),
-            ms_text(s.wall_ms)
-        ),
+        Column::Mean,
+        rest,
     );
 
     let c = &s.errors.counts;
@@ -895,6 +1060,11 @@ pub fn text(s: &Signals, color: bool) -> String {
             }
         ));
     }
+    let mut rest = vec![kinds.join(", ")];
+    rest.retain(|k| !k.is_empty());
+    if s.errors.count > 0 {
+        rest.extend(bar("the most in its slices"));
+    }
     line(
         "errors",
         if s.errors.count == 0 {
@@ -907,8 +1077,14 @@ pub fn text(s: &Signals, color: bool) -> String {
             )
         },
         (s.errors.count > 0).then_some("31"),
-        &s.errors.series,
-        kinds.join(", "),
+        // no failure, no line of none
+        if s.errors.count == 0 {
+            &[]
+        } else {
+            &s.errors.series
+        },
+        Column::Max,
+        rest,
     );
 
     match (s.latency.p50_ms, s.latency.p95_ms, s.latency.p99_ms) {
@@ -918,30 +1094,65 @@ pub fn text(s: &Signals, color: bool) -> String {
             None,
             // the tail is what moves
             &s.latency.p95,
-            format!("p95 {}, p99 {}", ms_text(p95), ms_text(p99)),
+            Column::Max,
+            vec![
+                format!("p95 {}, p99 {}", ms_text(p95), ms_text(p99)),
+                if wide {
+                    "a bar is the highest p95 of its slices".into()
+                } else {
+                    "a bar is a slice's p95".into()
+                },
+            ],
         ),
         // a log without times
-        _ => line("latency", "not recorded".into(), None, &[], String::new()),
+        _ => line(
+            "latency",
+            "not recorded".into(),
+            None,
+            &[],
+            Column::Max,
+            Vec::new(),
+        ),
     }
 
-    line(
-        "bytes",
-        match (s.bytes.up_per_sec, s.bytes.down_per_sec) {
-            (Some(u), Some(d)) => format!("↑ {}/s ↓ {}/s", bytes_text(u), bytes_text(d)),
-            _ => "—".into(),
-        },
-        None,
-        &s.bytes.series,
-        format!(
-            "{} sent, {} received",
-            bytes_text(s.bytes.up_bytes as f64),
-            bytes_text(s.bytes.down_bytes as f64)
-        ),
+    // the one place for the bytes: every body, an error's answer too
+    let totals = format!(
+        "{} sent, {} received (error bodies too)",
+        bytes_text(s.bytes.up_bytes as f64),
+        bytes_text(s.bytes.down_bytes as f64)
     );
+    let mut rest = Vec::new();
+    let figure = match (s.bytes.up_per_sec, s.bytes.down_per_sec) {
+        (Some(u), Some(d)) => {
+            rest.push(totals);
+            format!("↑ {}/s ↓ {}/s", bytes_text(u), bytes_text(d))
+        }
+        _ => {
+            rest.push("error bodies too".into());
+            format!(
+                "{} sent, {} received",
+                bytes_text(s.bytes.up_bytes as f64),
+                bytes_text(s.bytes.down_bytes as f64)
+            )
+        }
+    };
+    rest.extend(bar("the mean of its slices"));
+    line("bytes", figure, None, &s.bytes.series, Column::Mean, rest);
 
     let heading = |t: String| format!("{}\n", paint(&t, "1", color));
     let width = |names: &mut dyn Iterator<Item = &str>| {
-        names.map(|n| n.chars().count()).max().unwrap_or(0).min(40)
+        names
+            .map(|n| n.chars().count())
+            .max()
+            .unwrap_or(0)
+            .clamp("operation".len(), 40)
+    };
+    let more = |left: usize| {
+        if left == 0 {
+            String::new()
+        } else {
+            format!("  … and {} more\n", count_text(left))
+        }
     };
 
     if let Some(fb) = &s.first_byte {
@@ -951,17 +1162,27 @@ pub fn text(s: &Signals, color: bool) -> String {
             "first byte  {} of the time is the wait for it",
             percent(fb.share)
         )));
+        out.push_str(&paint(
+            &format!(
+                "  {:<w$}  {:>9}  {:>10}  {}\n",
+                "operation", "requests", "first byte", "then the rest"
+            ),
+            "2",
+            color,
+        ));
         for k in rows {
             out.push_str(&format!(
-                "  {:<w$}  {:>9}  {:>8}  then {}\n",
+                "  {:<w$}  {:>9}  {:>10}  {}\n",
                 k.operation,
                 count_text(k.count),
                 ms_text(k.first_byte_ms),
                 ms_text(k.rest_ms),
             ));
         }
+        out.push_str(&more(fb.kinds.len() - rows.len()));
     }
 
+    let all_paid = s.cost.operations.iter().filter(|r| r.cost > 0.0).count();
     let paid: Vec<&CostRow> = s
         .cost
         .operations
@@ -972,10 +1193,18 @@ pub fn text(s: &Signals, color: bool) -> String {
     if !paid.is_empty() {
         let w = width(&mut paid.iter().map(|r| r.operation.as_str()));
         out.push_str(&heading(format!(
-            "cost  {}",
+            "cost  {} for its requests",
             crate::program::money_text(s.cost.amount, &s.cost.currency)
         )));
-        for r in paid {
+        out.push_str(&paint(
+            &format!(
+                "  {:<w$}  {:>9}  {:>5}  {}\n",
+                "operation", "requests", "share", "cost"
+            ),
+            "2",
+            color,
+        ));
+        for r in &paid {
             out.push_str(&format!(
                 "  {:<w$}  {:>9}  {:>5}  {}\n",
                 r.operation,
@@ -984,6 +1213,7 @@ pub fn text(s: &Signals, color: bool) -> String {
                 crate::program::money_text(r.cost, &s.cost.currency),
             ));
         }
+        out.push_str(&more(all_paid - paid.len()));
     }
 
     let mut near: Vec<&PrefixRate> = s
@@ -1016,4 +1246,223 @@ pub fn text(s: &Signals, color: bool) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::DateTime;
+    use reqlog::Header;
+
+    fn get(id: u64, at_ms: i64, key: &str, status: u16) -> Record {
+        Record {
+            id,
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
+            method: "GET".into(),
+            operation: "GetObject".into(),
+            bucket: Some("b".into()),
+            key: Some(key.into()),
+            status: Some(status),
+            latency_ms: 5.0,
+            ..Default::default()
+        }
+    }
+
+    fn retries(records: &[Record]) -> u64 {
+        signals(records, &RequestPrices::default())
+            .errors
+            .retries_total
+    }
+
+    #[test]
+    fn a_retry_follows_its_failure_within_the_window_and_in_time_order() {
+        // a 503, and the same read an hour later: not its retry
+        assert_eq!(
+            retries(&[get(1, 0, "k", 503), get(2, 3_600_000, "k", 200)]),
+            0
+        );
+        // within the window it is
+        assert_eq!(retries(&[get(1, 0, "k", 503), get(2, 59_000, "k", 200)]), 1);
+        // a 408 asks for a retry as a 503 does
+        assert_eq!(retries(&[get(1, 0, "k", 408), get(2, 100, "k", 200)]), 1);
+        // a 501 does not
+        assert_eq!(retries(&[get(1, 0, "k", 501), get(2, 100, "k", 200)]), 0);
+        // the file's order is not the order of time: the read listed first
+        // came after the failure
+        assert_eq!(retries(&[get(2, 200, "k", 200), get(1, 0, "k", 503)]), 1);
+        // and one that came before it is not its retry
+        assert_eq!(retries(&[get(2, 200, "k", 503), get(1, 0, "k", 200)]), 0);
+        // a request in flight when the failure was answered is another sender's
+        let mut slow = get(2, 2, "k", 200);
+        slow.latency_ms = 50.0;
+        assert_eq!(retries(&[get(1, 0, "k", 503), slow]), 0);
+    }
+
+    #[test]
+    fn another_range_of_the_object_is_another_request() {
+        let ranged = |id, at, range: &str, status| {
+            let mut r = get(id, at, "k", status);
+            r.request_headers.push(Header::new("range", range));
+            r
+        };
+        assert_eq!(
+            retries(&[
+                ranged(1, 0, "bytes=0-9", 503),
+                ranged(2, 10, "bytes=10-19", 206),
+                ranged(3, 20, "bytes=20-29", 206),
+            ]),
+            0
+        );
+        assert_eq!(
+            retries(&[
+                ranged(1, 0, "bytes=0-9", 503),
+                ranged(2, 10, "bytes=10-19", 206),
+                ranged(3, 20, "bytes=0-9", 206),
+            ]),
+            1
+        );
+    }
+
+    #[test]
+    fn a_poll_of_a_key_that_keeps_failing_is_not_a_run_of_retries() {
+        // five polls a second apart, each answered 503
+        let poll: Vec<Record> = (0..5)
+            .map(|i| get(i + 1, i as i64 * 1000, "job", 503))
+            .collect();
+        assert_eq!(retries(&poll), 0);
+        // an SDK backing off: the waits grow
+        let backoff = [
+            get(1, 0, "job", 503),
+            get(2, 300, "job", 503),
+            get(3, 900, "job", 503),
+            get(4, 2100, "job", 503),
+            get(5, 4500, "job", 200),
+        ];
+        assert_eq!(retries(&backoff), 4);
+        // two failures and the answer: too few to call a poll
+        assert_eq!(
+            retries(&[
+                get(1, 0, "job", 503),
+                get(2, 1000, "job", 503),
+                get(3, 2000, "job", 200)
+            ]),
+            2
+        );
+        // attempts in quick step are a fixed backoff, not a poll
+        let quick: Vec<Record> = (0..5)
+            .map(|i| get(i + 1, i as i64 * 20, "job", 503))
+            .collect();
+        assert_eq!(retries(&quick), 4);
+    }
+
+    #[test]
+    fn a_run_under_a_second_has_totals_and_no_rate() {
+        let mut one = get(1, 0, "k", 200);
+        one.latency_ms = 2.0;
+        one.response_bytes = Some(10);
+        let s = signals(std::slice::from_ref(&one), &RequestPrices::default());
+        assert!(s.short);
+        assert_eq!(
+            (s.rate.value, s.bytes.value, s.bytes.down_per_sec),
+            (None, None, None)
+        );
+        assert_eq!(s.rate.requests, 1);
+        let said = text(&s, false);
+        let rate = said.lines().next().unwrap();
+        // the head line has the requests and the time: not said again
+        assert!(
+            rate.starts_with("rate     no rate: under a second  "),
+            "{said}"
+        );
+        assert!(
+            !said.contains("req/s") && !said.contains("1 request"),
+            "{said}"
+        );
+        assert!(said.contains("0 B sent, 10 B received"), "{said}");
+        // a run of a second and more has its rate
+        let long = [get(1, 0, "k", 200), get(2, 1995, "k", 200)];
+        let s = signals(&long, &RequestPrices::default());
+        assert!(!s.short);
+        assert_eq!(s.rate.value, Some(1.0));
+        let said = text(&s, false);
+        assert!(said.starts_with("rate     1.00 req/s"), "{said}");
+        assert!(
+            !said.contains("2 requests") && !said.contains("2.0 s"),
+            "{said}"
+        );
+        // no failure: no line drawn for none
+        let errors = said.lines().nth(1).unwrap();
+        assert_eq!(errors, "errors   none");
+        assert!(
+            said.contains("a bar is the highest p95 of its slices"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_latency_no_request_can_have_is_clamped_everywhere_alike() {
+        let mut neg = get(1, 0, "k", 200);
+        neg.latency_ms = -5.0;
+        let mut absurd = get(2, 10, "k", 200);
+        absurd.latency_ms = 1e12;
+        let ok = get(3, 20, "k", 200);
+        let s = signals(&[neg, absurd, ok], &RequestPrices::default());
+        // a day at most, in the figures as on the timeline
+        assert_eq!(s.latency.p99_ms, Some(reqlog::MAX_LATENCY_MS));
+        assert_eq!(s.latency.p50_ms, Some(5.0));
+        let slice_max = s.latency.p99.iter().copied().fold(0.0, f64::max);
+        assert_eq!(slice_max, reqlog::MAX_LATENCY_MS);
+        assert!(s.latency.series.iter().all(|v| *v >= 0.0));
+    }
+
+    #[test]
+    fn a_sparkline_is_as_wide_as_its_slices_and_a_bar_is_their_mean_or_their_most() {
+        // fewer values than columns: a bar each, none stretched
+        assert_eq!(sparkline_of(&[0.0, 8.0], 4, Column::Mean), "▁█");
+        assert_eq!(sparkline(&[0.0, 8.0, 4.0], 32), "▁█▅");
+        // more: the mean for a rate, the most for a tail
+        let series = [0.0, 8.0, 4.0, 4.0];
+        assert_eq!(sparkline_of(&series, 2, Column::Mean), "██");
+        assert_eq!(sparkline_of(&series, 2, Column::Max), "█▅");
+    }
+
+    #[test]
+    fn the_tables_have_headings_and_say_what_they_left_out() {
+        let ops = [
+            "GetObject",
+            "PutObject",
+            "HeadObject",
+            "DeleteObject",
+            "CopyObject",
+            "ListObjectsV2",
+        ];
+        let records: Vec<Record> = ops
+            .iter()
+            .enumerate()
+            .map(|(i, op)| {
+                let mut r = get(i as u64, i as i64 * 400, "k", 200);
+                r.operation = op.to_string();
+                r.method = if *op == "GetObject" { "GET" } else { "PUT" }.into();
+                r.first_byte_ms = Some(2.0);
+                r
+            })
+            .collect();
+        let said = text(&signals(&records, &RequestPrices::default()), false);
+        assert!(
+            said.contains("  operation      requests  first byte  then the rest\n"),
+            "{said}"
+        );
+        assert!(said.contains("  … and 2 more\n"), "{said}");
+        assert!(said.contains("requests  share  cost\n"), "{said}");
+    }
+
+    #[test]
+    fn bytes_are_written_on_one_ladder() {
+        assert_eq!(crate::episode::human_bytes(2048), "2.0 KiB");
+        assert_eq!(crate::episode::human_bytes(5 << 50), "5.0 PiB");
+        assert_eq!(bytes_text(0.0), "0 B");
+        assert_eq!(bytes_text(1536.0), "1.5 KiB");
+        assert_eq!(bytes_text(600_000.0 * 1024f64.powi(4)), "585.9 PiB");
+        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3.0 EiB");
+    }
 }

@@ -9,7 +9,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 
-use crate::episode::{Episode, Outcome, episodes, observations};
+use crate::episode::{Episode, Outcome, episodes};
 use crate::profile::{RequestPrices, profile};
 use crate::session::Session;
 use crate::summary::summarize;
@@ -239,18 +239,8 @@ fn ms(v: f64) -> String {
 }
 
 fn bytes(b: u64) -> String {
-    let units = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut v = b as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < units.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{b} B")
-    } else {
-        format!("{v:.1} {}", units[i])
-    }
+    // the one ladder of sizes
+    crate::signals::bytes_text(b as f64)
 }
 
 const STYLE: &str = r#"
@@ -278,19 +268,37 @@ a{color:var(--accent);text-decoration:none}.bad{color:var(--bad)}.muted{color:va
 .wrap{overflow-x:auto}footer{margin-top:40px;color:var(--muted);font-size:12px}
 "#;
 
+/// The operations a page lists and draws at most (and those the findings
+/// name, wherever they are): past it the page says how many it left out.
+pub const PAGE_OPERATIONS: usize = 2000;
+
 /// The page.
 pub fn html(s: &Session, prices: &RequestPrices) -> String {
     let recs = &s.records;
     let eps = episodes(recs);
-    let obs = observations(recs, &eps);
+    let obs = crate::episode::observations_of(&s.header, recs, &eps);
     let sum = summarize(recs);
     let prof = profile(recs, prices);
-    let title = s
+    let command = s
         .header
         .command
         .as_deref()
-        .map(crate::program::scrub_command)
+        .map(crate::program::scrub_command);
+    // a program's name titles its page; its command is said under it
+    let named = s
+        .header
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+    let title = named
+        .map(String::from)
+        .or_else(|| command.clone())
         .unwrap_or_else(|| format!("Session on {}", s.header.endpoint));
+    let said_under = match (named, &command) {
+        (Some(_), Some(c)) => format!("{} · ", esc(c)),
+        _ => String::new(),
+    };
     let mut o = String::new();
     let _ = write!(
         o,
@@ -299,7 +307,7 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
     );
     let _ = write!(
         o,
-        "<h1>{}</h1><p class=\"sub\">{} · {}</p>",
+        "<h1>{}</h1><p class=\"sub\">{said_under}{} · {}</p>",
         esc(&title),
         esc(&s.header.endpoint),
         s.header.created.format("%Y-%m-%d %H:%M UTC")
@@ -377,11 +385,33 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
         o.push_str("</div>");
     }
 
-    o.push_str(&timeline(&eps));
+    // a page is read, not scrolled for ever: the first operations and every
+    // one a finding links to are on it, and it says how many are not
+    let mut on_page: Vec<usize> = (0..eps.len().min(PAGE_OPERATIONS)).collect();
+    on_page.extend(
+        obs.iter()
+            .flat_map(|f| f.episodes.iter().take(5).copied())
+            .filter(|i| *i >= PAGE_OPERATIONS && *i < eps.len()),
+    );
+    on_page.sort_unstable();
+    on_page.dedup();
+    let left_out = eps.len() - on_page.len();
+    let left_out_text = (left_out > 0).then(|| {
+        format!(
+            "<p class=\"muted\">{} of its {} operations are on this page: the first {} and those the findings name. <code>sonde show --all</code> prints every one; <code>sonde share</code> without <code>--html</code> makes the whole session a site.</p>",
+            on_page.len(),
+            eps.len(),
+            PAGE_OPERATIONS
+        )
+    });
+    o.push_str(&timeline(&eps, &on_page));
+    if let Some(t) = &left_out_text {
+        o.push_str(t);
+    }
 
     o.push_str("<h2>Operations</h2><div class=\"card wrap\"><table><thead><tr><th>#</th><th>at</th><th>operation</th><th class=\"r\">requests</th><th class=\"r\">took</th></tr></thead><tbody>");
     let t0 = eps.first().map(|e| e.start);
-    for (i, e) in eps.iter().enumerate() {
+    for (i, e) in on_page.iter().map(|i| (*i, &eps[*i])) {
         let at = t0
             .map(|t| ms((e.start - t).num_microseconds().unwrap_or(0) as f64 / 1000.0))
             .unwrap_or_default();
@@ -398,13 +428,16 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
         );
     }
     o.push_str("</tbody></table></div>");
+    if let Some(t) = &left_out_text {
+        o.push_str(t);
+    }
     o.push_str("<footer>Recorded with sonde.</footer></main></body></html>\n");
     o
 }
 
 /// The operations on one time axis: each a bar from its start to its end,
 /// in rows so that none overlap; a failed one in red. Each links to its row.
-fn timeline(eps: &[Episode]) -> String {
+fn timeline(eps: &[Episode], on_page: &[usize]) -> String {
     let (Some(first), Some(_)) = (eps.first(), eps.last()) else {
         return String::new();
     };
@@ -417,7 +450,7 @@ fn timeline(eps: &[Episode]) -> String {
     // lanes: the first lane free at an operation's start (at most 12, then they stack)
     let mut lanes: Vec<f64> = Vec::new();
     let mut bars = String::new();
-    for (i, e) in eps.iter().enumerate() {
+    for (i, e) in on_page.iter().map(|i| (*i, &eps[*i])) {
         let (a, b) = (x(e.start), x(e.end).max(x(e.start) + 2.0));
         let lane = match lanes.iter().position(|&free| free <= a) {
             Some(l) => l,
@@ -555,6 +588,51 @@ mod tests {
         assert!(page.starts_with("<!doctype html>"));
         assert!(page.contains("id=\"op-0\"") && page.contains("href=\"#op-0\""));
         assert!(page.contains("prefers-color-scheme:dark"));
+    }
+
+    #[test]
+    fn a_long_session_is_a_page_of_its_first_operations_and_those_a_finding_names() {
+        // 2600 writes, then one key read 400 times: a finding about the reads
+        let mut s = session();
+        s.header.name = Some("etl".into());
+        s.records = (0..3000u64)
+            .map(|i| Record {
+                id: i + 1,
+                time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 10).unwrap(),
+                method: if i < 2600 { "PUT" } else { "GET" }.into(),
+                operation: if i < 2600 { "PutObject" } else { "GetObject" }.into(),
+                bucket: Some("b".into()),
+                key: Some(if i < 2600 {
+                    format!("out/{i}")
+                } else {
+                    "conf.json".into()
+                }),
+                status: Some(200),
+                latency_ms: 4.0,
+                ..Default::default()
+            })
+            .collect();
+        let page = html(&s, &RequestPrices::default());
+        let rows = page.matches("<tr id=\"op-").count();
+        let bars = page.matches("<rect ").count();
+        // the first 2000, and the five the finding links to (past them)
+        assert_eq!((rows, bars), (PAGE_OPERATIONS + 5, PAGE_OPERATIONS + 5));
+        assert!(page.contains("id=\"op-2600\"") && !page.contains("id=\"op-2599\""));
+        assert!(
+            page.contains("2005 of its 3000 operations are on this page")
+                && page.contains("sonde show --all"),
+            "it says what it left out, and how to see it"
+        );
+        // a program's name is the page's title; its command is said under it
+        assert!(page.contains("<title>etl · sonde</title>"));
+        assert!(
+            page.contains("<h1>etl</h1><p class=\"sub\">/opt/etl/run ")
+                && page.contains(" · prod · "),
+            "{}",
+            &page[page.find("<h1>").unwrap_or(0)..][..200]
+        );
+        // a short session's page says nothing of the kind
+        assert!(!html(&session(), &RequestPrices::default()).contains("are on this page"));
     }
 
     #[test]

@@ -1,10 +1,10 @@
 // Endpoint and bucket pickers shared by the screens.
 
-import { resource, Text, View } from "nsh";
+import { resource, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
 import { bucket, chooseBucket, endpoint, endpoints, report, useEndpoint } from "../store";
-import { Choice, Loading } from "./kit";
+import { Choice, Loading, WIDTH } from "./kit";
 
 export function EndpointPicker(props: { testID?: string; class?: string }) {
   return (
@@ -14,7 +14,7 @@ export function EndpointPicker(props: { testID?: string; class?: string }) {
       value={endpoint()}
       items={endpoints().map((e) => ({ value: e.id, title: e.name }))}
       onChange={(v) => useEndpoint(v)}
-      class={props.class ?? "w-56"}
+      class={props.class ?? WIDTH.field}
     />
   );
 }
@@ -36,7 +36,7 @@ export function BucketPicker(props: { testID?: string }) {
         value={bucket()}
         items={(list() ?? []).map((b) => ({ value: b.name, title: b.name }))}
         onChange={(v) => chooseBucket(v)}
-        class="w-56"
+        class={WIDTH.field}
       />
       <If when={list.state() === "pending"}>
         <Loading />

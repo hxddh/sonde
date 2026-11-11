@@ -9,15 +9,15 @@ import { Application, currentWindow, Menu } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
 import { areaLabel } from "./src/labels";
-import { followNotifications, running } from "./src/run";
+import { endForQuit, followNotifications, running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, wouldOpen, openSession, openSessionFile, readOnly, report, section, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, readOnly, report, section, shellHeight, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
-import { Badge, Recoverable, SidePanel, SPLIT_HANDLE, terminal } from "./src/ui/kit";
+import { Badge, FocusRest, Recoverable, SidePanel, SPLIT_HANDLE, terminal } from "./src/ui/kit";
 import { rememberedSize } from "./src/ui/sizes";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, sidebarOpen, toggleSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
@@ -110,7 +110,7 @@ function DesktopShell() {
     <View
       testID="shell"
       class={`flex-1 ${windowMaterial() ? "" : "bg-background"}`}
-      onLayout={(e) => shellWidth.set(e.bounds.size.width)}
+      onLayout={(e) => batch(() => (shellWidth.set(e.bounds.size.width), shellHeight.set(e.bounds.size.height)))}
       // a .sonde file dropped anywhere on the window opens it; while one is over it, it says so
       onFileDrop={(e) => {
         dragging.set(null);
@@ -120,6 +120,7 @@ function DesktopShell() {
       onFileDragEnter={(e) => dragging.set(wouldOpen(e.uris))}
       onFileDragLeave={() => dragging.set(null)}
     >
+      <FocusRest />
       <Toolbar open={open} />
       {/* the sidebar and the place: a split, the sidebar's width the user's (kept) */}
       <ResizablePanelGroup class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sidebar.resize")}>
@@ -292,6 +293,12 @@ function App() {
     // forward and hands over what it was asked to open
     try {
       Application.on("secondInstance", ({ args, cwd }) => openLaunch(args, cwd));
+      // a .sonde file opened from the system (a double click, Open With, a drop on the app's
+      // icon; nsh.json's `fileTypes`): as one dropped on the window, the launch's own included
+      Application.on("openFiles", ({ paths }) => openSystemFiles(paths));
+      // however the app stops, the program it is recording does not outlive it unseen, and its
+      // session is a finished file: the system waits 200 ms for this, no longer
+      Application.on("quit", () => endForQuit());
     } catch {
       // a host that is not the app's own (a test runner)
     }

@@ -10,7 +10,7 @@ import { type Key, t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, go, prefix } from "../store";
 import type { Detection, DuReport, MpuReport, VersioningStatus } from "../types";
-import { Stat, type TileLook, Tiles } from "./kit";
+import { Stat, type TileLook, Tiles, SIZES } from "./kit";
 
 export const LAYOUT_LABEL: Record<string, string> = {
   slatedb: "SlateDB",
@@ -162,9 +162,11 @@ export function Overview() {
   };
   const month = (cost: number, currency: string) => `${money(cost, currency)}/${t("overview.month")}`;
   return (
-    // four abreast, or two and two as the place narrows: never three and one
+    // four abreast, or two and two as the place narrows (never three and one); beside an
+    // inspector, where two would cut their words, a line each: what it is, then its figure
     <Tiles
       testID="overview"
+      min={SIZES.bucketTile}
       items={[
       (look: () => TileLook) => <Stat
         look={look()}

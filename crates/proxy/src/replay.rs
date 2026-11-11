@@ -116,7 +116,7 @@ fn named(r: &Record) -> String {
     let headers: Vec<(String, String)> = r
         .request_headers
         .iter()
-        .map(|h| (h.name.clone(), h.value.clone()))
+        .map(|h| (h.name.to_string(), h.value.to_string()))
         .collect();
     crate::op::classify(
         &r.method,
@@ -244,6 +244,8 @@ struct State {
     etags: HashMap<String, String>,
     /// (bucket, original prefix) → the replay's next continuation token
     tokens: HashMap<(String, String), String>,
+    /// listings the replay's store answered to their end: no page follows
+    ended: std::collections::HashSet<(String, String)>,
 }
 
 fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
@@ -302,9 +304,17 @@ impl State {
                     );
                     match self.tokens.get(&key) {
                         Some(t) => req = req.query(k, t.clone()),
+                        // the store said this listing was over: it holds
+                        // fewer keys under the prefix than the original did
+                        None if self.ended.contains(&key) => {
+                            return Err(
+                                "asks for a further page of a listing that had ended on this store"
+                                    .into(),
+                            );
+                        }
                         None => {
                             return Err(
-                                "continues a listing whose first page was not replayed".into()
+                                "continues a listing whose page before it was not replayed".into(),
                             );
                         }
                     }
@@ -345,7 +355,7 @@ impl State {
             } else if n == "x-amz-copy-source" {
                 copy_source(&h.value, opts)
             } else {
-                h.value.clone()
+                h.value.to_string()
             };
             req = req.header(&n, v);
         }
@@ -431,10 +441,12 @@ impl State {
                 let key = (bucket, query(r, "prefix").unwrap_or("").to_string());
                 match tags(&resp.text(), "NextContinuationToken").first() {
                     Some(t) => {
+                        self.ended.remove(&key);
                         self.tokens.insert(key, t.to_string());
                     }
                     None => {
                         self.tokens.remove(&key);
+                        self.ended.insert(key);
                     }
                 }
             }
@@ -444,7 +456,7 @@ impl State {
             .response_headers
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("etag"))
-            .map(|h| h.value.clone());
+            .map(|h| h.value.to_string());
         if let (Some(o), Some(n)) = (original, etag_of(&resp.headers)) {
             self.etags.insert(o, n);
         }
@@ -745,15 +757,34 @@ pub struct ReplayRun {
     /// keeps versions.
     #[serde(default)]
     pub removed_versions: usize,
-    /// What is still under the prefix after the cleanup (objects, versions
-    /// and delete markers): not 0 when the store would not delete them.
+    /// What is still under the prefix after the cleanup, each thing counted
+    /// once: not 0 when the store would not delete them. Where the store
+    /// lists versions it is its versions and delete markers (an object is
+    /// its newest version); elsewhere its objects.
     #[serde(default)]
     pub remaining: usize,
+    /// Of what remains: objects, versions that are no object's newest, and
+    /// delete markers.
+    #[serde(default)]
+    pub remaining_objects: usize,
+    #[serde(default)]
+    pub remaining_versions: usize,
+    #[serde(default)]
+    pub remaining_markers: usize,
+    /// Multipart uploads under the prefix the store would not abort: their
+    /// parts stay billed.
+    #[serde(default)]
+    pub unaborted_uploads: usize,
 }
 
-/// Every version and delete marker under `prefix`: none where the store
-/// keeps no versions or does not list them.
-async fn versions_under(base: &S3Client, bucket: &str, prefix: &str) -> Vec<(String, String)> {
+/// Every version and delete marker under `prefix` (key, version id,
+/// whether it is a marker): none where the store keeps no versions or does
+/// not list them.
+async fn versions_under(
+    base: &S3Client,
+    bucket: &str,
+    prefix: &str,
+) -> Vec<(String, String, bool)> {
     let mut out = Vec::new();
     let (mut key, mut version) = (None::<String>, None::<String>);
     // (a page at a time; a store that answers the same page for ever is left)
@@ -773,13 +804,13 @@ async fn versions_under(base: &S3Client, bucket: &str, prefix: &str) -> Vec<(Str
         out.extend(
             page.version
                 .iter()
-                .map(|v| (v.key.clone(), v.version_id.clone()))
+                .map(|v| (v.key.clone(), v.version_id.clone(), false))
                 .chain(
                     page.delete_marker
                         .iter()
-                        .map(|m| (m.key.clone(), m.version_id.clone())),
+                        .map(|m| (m.key.clone(), m.version_id.clone(), true)),
                 )
-                .filter_map(|(k, v)| Some((k, v?))),
+                .filter_map(|(k, v, marker)| Some((k, v?, marker))),
         );
         if !page.is_truncated || page.next_key_marker.is_none() {
             break;
@@ -787,6 +818,42 @@ async fn versions_under(base: &S3Client, bucket: &str, prefix: &str) -> Vec<(Str
         (key, version) = (page.next_key_marker, page.next_version_id_marker);
     }
     out
+}
+
+/// Deletes `keys` (each with its version, if one is named) and says how
+/// many the store deleted: by what its answer says of each key, not by how
+/// many were asked for. In batches; a store without `DeleteObjects` (the
+/// batch is answered 501 or 405) is asked key by key from then on, and a
+/// batch that fails some other way is asked again key by key.
+async fn delete_keys(
+    base: &S3Client,
+    bucket: &str,
+    keys: &[(String, Option<String>)],
+    batches: &mut bool,
+) -> usize {
+    let mut removed = 0;
+    for chunk in keys.chunks(1000) {
+        if *batches {
+            match base.delete_objects(bucket, chunk, true).await {
+                // a quiet answer names only the keys it could not delete
+                Ok(answer) => {
+                    removed += chunk.len().saturating_sub(answer.error.len());
+                    continue;
+                }
+                Err(e) => *batches = !matches!(e.status, Some(501 | 405)),
+            }
+        }
+        for (key, version) in chunk {
+            if base
+                .delete_object(bucket, key, version.as_deref())
+                .await
+                .is_ok()
+            {
+                removed += 1;
+            }
+        }
+    }
+    removed
 }
 
 /// Replays `original` with `base`'s endpoint into a new session file at
@@ -842,37 +909,38 @@ pub async fn replay_to_file(
     let client = base.with_log(log).with_retry(s3raw::RetryPolicy::none());
     let done = replay(&client, &original.records, opts, progress).await;
     writer.flush().map_err(|e| e.to_string())?;
-    let (mut removed, mut removed_versions, mut remaining) = (0usize, 0usize, 0usize);
+    let (mut removed, mut removed_versions) = (0usize, 0usize);
+    let (mut left_objects, mut left_versions, mut left_markers) = (0usize, 0usize, 0usize);
+    let mut unaborted_uploads = 0usize;
+    // whether the store takes DeleteObjects: found out once
+    let mut batches = true;
     if !opts.prefix.is_empty() && !keep {
         for b in buckets_of(&original.records, opts) {
             if let Ok(objects) = base.list_all(&b, &opts.prefix, usize::MAX).await {
-                for chunk in objects.chunks(1000) {
-                    let keys: Vec<(String, Option<String>)> =
-                        chunk.iter().map(|o| (o.key.clone(), None)).collect();
-                    if base.delete_objects(&b, &keys, true).await.is_ok() {
-                        removed += keys.len();
-                    }
-                }
+                let keys: Vec<(String, Option<String>)> =
+                    objects.iter().map(|o| (o.key.clone(), None)).collect();
+                removed += delete_keys(base, &b, &keys, &mut batches).await;
             }
             // a bucket that keeps versions kept every one of them, and a
             // delete marker for each delete above: they go by their ids
             // (a bucket without versions lists none once its objects are gone)
-            let versions = versions_under(base, &b, &opts.prefix).await;
-            for chunk in versions.chunks(1000) {
-                let keys: Vec<(String, Option<String>)> = chunk
-                    .iter()
-                    .map(|(k, v)| (k.clone(), Some(v.clone())))
-                    .collect();
-                if base.delete_objects(&b, &keys, true).await.is_ok() {
-                    removed_versions += keys.len();
-                }
-            }
-            // and what is there now is what was left
-            remaining += base
+            let versions: Vec<(String, Option<String>)> = versions_under(base, &b, &opts.prefix)
+                .await
+                .into_iter()
+                .map(|(k, v, _)| (k, Some(v)))
+                .collect();
+            removed_versions += delete_keys(base, &b, &versions, &mut batches).await;
+            // and what is there now is what was left, each thing once: an
+            // object the store also lists as a version is that version
+            let objects = base
                 .list_all(&b, &opts.prefix, usize::MAX)
                 .await
                 .map_or(0, |o| o.len());
-            remaining += versions_under(base, &b, &opts.prefix).await.len();
+            let listed = versions_under(base, &b, &opts.prefix).await;
+            let markers = listed.iter().filter(|(_, _, marker)| *marker).count();
+            left_objects += objects;
+            left_markers += markers;
+            left_versions += (listed.len() - markers).saturating_sub(objects);
             if let Ok(up) = base
                 .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
                 .await
@@ -880,6 +948,13 @@ pub async fn replay_to_file(
                 for u in up.upload {
                     let _ = base.abort_multipart_upload(&b, &u.key, &u.upload_id).await;
                 }
+            }
+            // an upload still listed would not abort: its parts are billed
+            if let Ok(up) = base
+                .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
+                .await
+            {
+                unaborted_uploads += up.upload.len();
             }
         }
     }
@@ -891,7 +966,11 @@ pub async fn replay_to_file(
         comparison,
         removed,
         removed_versions,
-        remaining,
+        remaining: left_objects + left_versions + left_markers,
+        remaining_objects: left_objects,
+        remaining_versions: left_versions,
+        remaining_markers: left_markers,
+        unaborted_uploads,
     })
 }
 
@@ -996,6 +1075,51 @@ mod tests {
         assert!(changes_bucket("PutBucketLifecycleConfiguration"));
         assert!(changes_bucket("DeleteBucket"));
         assert!(!changes_bucket("PutObject"));
+    }
+
+    #[test]
+    fn a_page_that_cannot_be_asked_for_says_which_of_the_two_reasons() {
+        let page = |token: Option<&str>| {
+            let mut r = Record {
+                method: "GET".into(),
+                operation: "ListObjectsV2".into(),
+                bucket: Some("b".into()),
+                query: vec![("prefix".into(), "p/".into())],
+                status: Some(200),
+                ..Default::default()
+            };
+            if let Some(t) = token {
+                r.query.push(("continuation-token".into(), t.into()));
+            }
+            r
+        };
+        let opts = ReplayOptions::default();
+        let mut state = State::default();
+        // its first page was never replayed
+        assert_eq!(
+            state.build(&page(Some("t1")), &opts).unwrap_err(),
+            "continues a listing whose page before it was not replayed"
+        );
+        // the first page was, and the store ended the listing there
+        let first = page(None);
+        let req = state.build(&first, &opts).unwrap();
+        let answer = S3Response {
+            status: 200,
+            headers: Vec::new(),
+            body: Bytes::from(
+                "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>",
+            ),
+            record_id: 1,
+            request_id: None,
+            host_id: None,
+            latency: Default::default(),
+            retries: 0,
+        };
+        state.learn(&first, &req, &answer);
+        assert_eq!(
+            state.build(&page(Some("t1")), &opts).unwrap_err(),
+            "asks for a further page of a listing that had ended on this store"
+        );
     }
 
     #[test]

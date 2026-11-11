@@ -12,6 +12,22 @@
 | `latest.json` | `release.yml` | `nsh update-manifest` over the desktop archives: what the app's updater reads (version, notes, URL and SHA-256 per platform). |
 | `SHA256SUMS` | `release.yml` | Every artifact's SHA-256; each also ships as `<artifact>.sha256`. |
 
+## What the package tells the system
+
+`app/nsh.json` declares, and `nsh package` writes into each platform's package:
+
+- **The file type.** `fileTypes` names `.sonde`: the app is in Open With, and a double click on a session or a
+  drop on the app's icon opens it (`Application.on("openFiles")`, as a drop on the window does). A gzipped
+  `.sonde.gz` is not declared: a type is a file's last extension, and sonde does not claim every `.gz`; such a file
+  still opens by a drop on the window or File › Open.
+- **The icon, per platform.** `icon` is an object: macOS takes `assets/icon-macos.png` (the artwork 824 of the
+  canvas's 1024 pixels, inset on a transparent canvas, as macOS draws icons), Windows and Linux
+  `assets/icon-fill.png` (edge to edge). Both are made from the one drawing, `assets/icon.png`, by
+  `python3 scripts/icons.py` (Pillow); `--check` fails when either is stale.
+
+When the app quits, however it does (`Application.on("quit")`), the program it is recording and a running trial
+are ended and the recording is written as a finished session; the system waits 200 ms for it.
+
 ## Signing and notarization
 
 Secrets (repository settings): `MACOS_CERTIFICATE_P12` (base64 of the Developer ID Application `.p12`),

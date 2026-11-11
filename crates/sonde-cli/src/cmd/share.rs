@@ -56,12 +56,28 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         Some(f) => super::sessions::resolve(s, f),
         None => super::record::newest_session(s)?,
     };
-    let mut session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
-    // priced before redaction hides the endpoint
-    let prices = super::record::request_prices_for(s, &session.header.endpoint);
-    if a.redact {
-        sonde_proxy::report::redact(&mut session);
+    if !file.exists() {
+        return Err(super::usage(format!(
+            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            file.display(),
+            s.paths().sessions().display()
+        )));
     }
+    // redacting changes every record, so all are read in full; otherwise
+    // the session is read for what it amounts to, and each request is
+    // written from the file as its turn comes
+    let (session, full) = if a.redact {
+        let mut session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+        let prices = super::record::request_prices_for(s, &session.header.endpoint);
+        sonde_proxy::report::redact(&mut session);
+        ((session, prices), None)
+    } else {
+        let session = Session::open_lean(&file).map_err(|e| anyhow::anyhow!(e))?;
+        // priced before redaction hides the endpoint
+        let prices = super::record::request_prices_for(s, &session.header.endpoint);
+        ((session, prices), Some(file.as_path()))
+    };
+    let (session, prices) = session;
     if a.html {
         let page = sonde_proxy::report::html(&session, &prices);
         match &a.out {
@@ -73,14 +89,25 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         }
         return Ok(0);
     }
-    let doc = serde_json::to_vec(&share::session_json(&session, &prices))?;
     if a.json {
+        use std::io::Write;
+        // written as it is made, to the file or to stdout
         match &a.out {
-            Some(p) => std::fs::write(p, &doc)?,
-            None => println!("{}", String::from_utf8_lossy(&doc)),
+            Some(p) => {
+                let out = std::io::BufWriter::new(std::fs::File::create(p)?);
+                share::write_session_json(&session, full, &prices, out)?;
+            }
+            None => {
+                let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+                share::write_session_json(&session, full, &prices, &mut out)?;
+                out.write_all(b"\n")?;
+                out.flush()?;
+            }
         }
         return Ok(0);
     }
+    let mut doc = Vec::new();
+    share::write_session_json(&session, full, &prices, &mut doc)?;
     if a.serve {
         // a directory of its own, made fresh (no name another user can claim first)
         let tmp = tempfile::Builder::new().prefix("sonde-share-").tempdir()?;

@@ -84,8 +84,20 @@ export const api = {
     programs: async () => (await Sessions.programs()) as unknown,
     /** sonde's own requests (browsing, scans, probes) as a session file: its path. */
     fromRequestLog: (limit = 100000) => Sessions.fromRequestLog(limit) as string,
-    open: (path: string) => Sessions.open(path) as T.SessionView,
-    analyse: async (path: string) => (await Sessions.analyse(path)) as T.SessionView,
+    /** A session as a window opens it: its totals, signals, profile and findings, and the first page of its operations. Read off the interface's thread. */
+    view: async (path: string) => (await Sessions.view(path)) as T.SessionView,
+    /** A range of its operations, sorted and narrowed as the table asks. */
+    episodes: async (path: string, query: T.EpisodeQuery) => (await Sessions.episodes(path, query)) as T.EpisodePage,
+    /** One operation by its index, with every one of its requests' ids. */
+    episode: (path: string, index: number) => Sessions.episode(path, index) as T.EpisodeRow | null,
+    /** The operation a request belongs to. */
+    episodeOf: (path: string, recordId: number) => Sessions.episodeOf(path, recordId),
+    /** The row the table shows an operation at under a query; -1 where the query leaves it out. */
+    episodeRow: (path: string, query: T.EpisodeQuery, index: number) => Sessions.episodeRow(path, query, index),
+    /** The operations running at a moment (at most 200), else the nearest one. */
+    episodesAt: (path: string, time: string) => Sessions.episodesAt(path, time) as number[],
+    /** A range of the operations a finding is about (a view lists its first 200). */
+    observationEpisodes: (path: string, observation: number, offset: number, limit: number) => Sessions.observationEpisodes(path, observation, offset, limit) as number[],
     records: (path: string, ids: number[]) => Sessions.records(path, ids) as T.RecordSummary[],
     record: (path: string, id: number) => Sessions.record(path, id) as T.RequestRecord | null,
     copy: (path: string, id: number, kind: "cli" | "curl") => Sessions.copy(path, id, kind) as string | null,
@@ -108,9 +120,11 @@ export const api = {
     input: (data: string) => Sessions.input(data),
     resize: (cols: number, rows: number) => Sessions.resize(cols, rows),
     kill: () => Sessions.kill(),
+    /** The app is quitting: the program being recorded and a running trial are ended, and the recording is written as a finished session, within the 200 ms a quitting app has. */
+    quit: async () => (await Sessions.quit()) as { program: boolean; trial: boolean; session: string | null },
     /** What trying a session's program under faults would run, said before it runs; throws with why there is no trial. */
     trialPlan: (path: string) => Sessions.trialPlan(path) as T.TrialPlan,
-    /** The session's command again, once per scenario, sonde answering in the store's place; `kill` cancels (and nothing is kept). */
+    /** The session's command again, once per scenario (`slowdown:3`: its first three attempts at each request), sonde answering in the store's place; `kill` cancels (and nothing is kept). */
     trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent) => void) =>
       Sessions.trial(path, scenarios, policy, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
     logLines: (path: string) => Sessions.logLines(path) as T.LogLine[],

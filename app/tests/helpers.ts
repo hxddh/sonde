@@ -66,3 +66,16 @@ export async function withDemo(bucket?: string, options: Parameters<typeof open>
   if (bucket) await app.press(`id:bucket-${bucket}`);
   return app;
 }
+
+/** Presses one of the commands at the end of Run's band: as a button where
+ * the band has room for it, behind `⋯` where it has not (they never wrap). */
+export async function runAction(app: App, id: "run-open-session" | "run-try" | "run-now-yours") {
+  await app.waitFor("id:run-actions", { timeout: 15000 });
+  if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
+  // by its words, in the language the window is in
+  const labels = { "run-open-session": ["See the whole run", "查看完整运行"], "run-try": ["Try under faults…", "在故障下试运行…"], "run-now-yours": ["Now your own store…", "换成你自己的存储…"] }[id];
+  await app.press("id:run-actions-more");
+  const item = app.menu()?.map((m) => m.label).find((l) => labels.includes(l));
+  if (!item) throw new Error(`${id}: not in the band, not behind its menu`);
+  await app.chooseMenuItem(item);
+}

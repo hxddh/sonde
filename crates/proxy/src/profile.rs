@@ -16,7 +16,7 @@ use crate::summary::is_miss;
 
 /// Request prices, per thousand (S3's classes: writes and listings, reads).
 /// Deletes are free.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestPrices {
     pub per_1000_writes: f64,
@@ -382,17 +382,33 @@ fn is_zero(n: &usize) -> bool {
 /// A key's prefix for S3's rate limits: its bucket and folder, three levels
 /// at most ("b/logs/2026/"). What a session is *shown* by is [`prefix_groups`].
 pub fn prefix_of(r: &Record) -> String {
+    let (b, short) = prefix_parts(r);
+    prefix_named(b, short)
+}
+
+/// [`prefix_of`] as the record's own text: its bucket, and its key's
+/// folder cut to three levels. For counting a million requests by prefix
+/// without writing a million names.
+pub fn prefix_parts(r: &Record) -> (&str, &str) {
     let b = r.bucket.as_deref().unwrap_or("");
     let k = r.key.as_deref().unwrap_or("");
     let dir = match k.rfind('/') {
         Some(i) => &k[..=i],
         None => "",
     };
-    let short: String = dir.split_inclusive('/').take(3).collect();
-    match (b.is_empty(), short.is_empty()) {
+    let short = match dir.match_indices('/').nth(2) {
+        Some((i, _)) => &dir[..=i],
+        None => dir,
+    };
+    (b, short)
+}
+
+/// The name [`prefix_of`] gives the parts of [`prefix_parts`].
+pub fn prefix_named(bucket: &str, short: &str) -> String {
+    match (bucket.is_empty(), short.is_empty()) {
         (true, true) => "/".into(),
-        (true, false) => short,
-        _ => format!("{b}/{short}"),
+        (true, false) => short.to_string(),
+        _ => format!("{bucket}/{short}"),
     }
 }
 
@@ -571,7 +587,12 @@ pub(crate) fn end_us(r: &Record) -> i64 {
 
 /// The time with a request in flight, in ms.
 pub fn busy_ms(records: &[Record]) -> f64 {
-    union_us(records.iter().map(|r| (start_us(r), end_us(r))).collect()) as f64 / 1000.0
+    busy_ms_of(records.iter())
+}
+
+/// [`busy_ms`] of any records, wherever they are kept.
+pub fn busy_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
+    union_us(records.map(|r| (start_us(r), end_us(r))).collect()) as f64 / 1000.0
 }
 
 /// Each kind's part of the waiting, in microseconds: every stretch of time
@@ -694,14 +715,19 @@ pub fn percentile(sorted: &[f64], q: f64) -> f64 {
     sorted[((sorted.len() as f64 * q).ceil() as usize).clamp(1, sorted.len()) - 1]
 }
 
-/// Whether a request reached the store: one sonde refused, or that got no
-/// answer, is not on the store's bill.
+/// Whether a request reached the store: one sonde refused, one it answered
+/// in the store's place (a trial's fault), or one that got no answer, is not
+/// on the store's bill. A fault done to the store's own answer (a lost
+/// answer, a body cut short, a race the store had let the write win) is.
 pub fn reached_store(r: &Record) -> bool {
-    r.status.is_some()
-        && !r
-            .response_headers
+    let has = |name: &str| {
+        r.response_headers
             .iter()
-            .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
+            .any(|h| h.name.eq_ignore_ascii_case(name))
+    };
+    r.status.is_some()
+        && !has("x-sonde-proxy")
+        && !(has("x-sonde-fault") && !has("x-sonde-store-status"))
 }
 
 /// What one request costs: nothing when it never reached the store.
@@ -882,9 +908,10 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let price = |r: &Record| price(r, prices);
 
     // groups
-    let mut by: BTreeMap<(String, bool), Vec<&Record>> = BTreeMap::new();
+    // (named by the records' own text: a kind is not copied for each request)
+    let mut by: BTreeMap<(&str, bool), Vec<&Record>> = BTreeMap::new();
     for r in records {
-        by.entry((r.operation.clone(), is_miss(r)))
+        by.entry((r.operation.as_str(), is_miss(r)))
             .or_default()
             .push(r);
     }
@@ -893,7 +920,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         .into_iter()
         .map(|(key, rs)| {
             let waited_us = waited.get(&key).copied().unwrap_or(0.0);
-            let (operation, missed) = key;
+            let (operation, missed) = (key.0.to_string(), key.1);
             let mut lat: Vec<f64> = rs.iter().map(|r| r.latency_ms.max(0.0)).collect();
             lat.sort_by(f64::total_cmp);
             let busy = union_us(rs.iter().map(|r| (start_us(r), end_us(r))).collect());
@@ -1368,7 +1395,7 @@ fn identity(o: &Observation) -> String {
         "obs.slow" => Vec::new(),
         _ => ["key", "prefix", "format"]
             .iter()
-            .filter_map(|k| p.args.get(*k).cloned())
+            .filter_map(|k| p.args.get(k).cloned())
             .collect(),
     };
     // a format's shared habit is the note it shares
@@ -1946,5 +1973,41 @@ mod tests {
         let c = compare_runs((&before, &pa, &[]), (&after, &pb, &[]));
         let change = c.prefixes.iter().find(|x| x.prefix == name).unwrap();
         assert_eq!(change.requests, (1, 5));
+    }
+}
+
+#[cfg(test)]
+mod injected {
+    use super::*;
+    use reqlog::Header;
+
+    #[test]
+    fn a_request_sonde_answered_itself_is_not_priced() {
+        let prices = RequestPrices::default();
+        let put = Record {
+            method: "PUT".into(),
+            operation: "PutObject".into(),
+            bucket: Some("b".into()),
+            key: Some("k".into()),
+            status: Some(200),
+            ..Default::default()
+        };
+        assert!(price(&put, &prices) > 0.0);
+        // a trial's 503: the store never saw it
+        let mut fault = put.clone();
+        fault.status = Some(503);
+        fault.injected = Some("slowdown".into());
+        fault
+            .response_headers
+            .push(Header::new("x-sonde-fault", "slowdown"));
+        assert!(!reached_store(&fault));
+        assert_eq!(price(&fault, &prices), 0.0);
+        // an answer lost on purpose: the store made the write, and bills it
+        let mut lost = fault.clone();
+        lost.response_headers
+            .push(Header::new("x-sonde-store-status", "200"));
+        assert_eq!(price(&lost, &prices), price(&put, &prices));
+        let p = profile(&[put, fault, lost], &prices);
+        assert_eq!(p.cost.writes, 2);
     }
 }

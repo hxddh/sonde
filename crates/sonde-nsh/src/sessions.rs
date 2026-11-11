@@ -2,7 +2,6 @@
 //! recording. Credentials stay in Rust: the recording's endpoint signs with
 //! them; the application gets dummy keys and the proxy's URL.
 
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -11,10 +10,10 @@ use nsh_core::prelude::*;
 use parking_lot::Mutex;
 use reqlog::RequestLog;
 use serde_json::json;
-use sonde_proxy::episode::{episodes, observations, shared_notes};
+use sonde_proxy::episode::episodes;
 use sonde_proxy::replay::{self, ReplayOptions};
 use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
-use sonde_proxy::summary::summarize;
+use sonde_proxy::view::Analysis;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
 
 use crate::state::{err_msg, sonde, to_json};
@@ -37,10 +36,15 @@ impl Recording {
     /// Ends it: the requests in flight are answered and recorded (those
     /// still going after [`SHUTDOWN_GRACE`] are left out), then the file is
     /// compressed. The session file's path.
-    async fn finish(mut self) -> String {
+    async fn finish(self) -> String {
+        self.finish_within(SHUTDOWN_GRACE).await
+    }
+
+    /// [`Recording::finish`], waiting `grace` for the requests in flight.
+    async fn finish_within(mut self, grace: std::time::Duration) -> String {
         // compressing renames a new file over this one: a connection still
         // writing would write to a file nobody reads
-        self.proxy.shutdown(SHUTDOWN_GRACE).await;
+        self.proxy.shutdown(grace).await;
         let _ = self.writer.flush();
         let file = self.path.clone();
         drop(self);
@@ -313,7 +317,10 @@ struct Cached {
     read_to: Option<u64>,
     used: u64,
     session: Arc<Session>,
-    view: Option<Arc<JsonValue>>,
+    /// A large session is kept lean ([`Session::open_lean`]): a request in
+    /// full is then read from the file when it is asked for.
+    lean: bool,
+    analysis: Option<Arc<Analysis>>,
 }
 
 /// The sessions kept read: the open ones and a few recent.
@@ -327,7 +334,65 @@ fn stamp(path: &Path) -> Result<(u64, Option<std::time::SystemTime>), String> {
     Ok((m.len(), m.modified().ok()))
 }
 
+/// A session past this size on disk is kept lean: about two hundred
+/// thousand requests (compressed, a file is a tenth of its text).
+const LEAN_FROM: u64 = 24 << 20;
+
+fn kept_lean(len: u64, compressed: bool) -> bool {
+    len > if compressed {
+        LEAN_FROM
+    } else {
+        LEAN_FROM * 10
+    }
+}
+
 fn open_session(path: &str) -> Result<Arc<Session>, String> {
+    cached_session(path).map(|(s, _)| s)
+}
+
+/// A session with every record in full: the one kept, or (a large session
+/// is kept lean) read again for the occasion.
+fn full_session(path: &str) -> Result<Arc<Session>, String> {
+    match cached_session(path)? {
+        (s, false) => Ok(s),
+        _ => Ok(Arc::new(Session::open(Path::new(path)).map_err(err_msg)?)),
+    }
+}
+
+/// One record of a session in full: from memory, or (a session kept lean)
+/// from its file.
+fn full_record(path: &str, id: u64) -> Result<Option<reqlog::Record>, String> {
+    let (s, lean) = cached_session(path)?;
+    if !lean {
+        return Ok(s.records.iter().find(|r| r.id == id).cloned());
+    }
+    record_from_file(Path::new(path), &s, id)
+}
+
+/// One record in full from a session's file, for a session read lean (`s`:
+/// it has the ids the reading gave the file's records).
+fn record_from_file(path: &Path, s: &Session, id: u64) -> Result<Option<reqlog::Record>, String> {
+    if !s.records.iter().any(|r| r.id == id) {
+        return Ok(None);
+    }
+    let mut found = None;
+    // read to where it is, and no further
+    let read =
+        sonde_proxy::share::each_record(path, &mut s.records.iter().map(|r| r.id), &mut |r| {
+            if r.id == id {
+                found = Some(r);
+                return Err(std::io::Error::other("found"));
+            }
+            Ok(())
+        });
+    match (found, read) {
+        (Some(r), _) => Ok(Some(r)),
+        (None, Err(e)) => Err(err_msg(e)),
+        (None, Ok(())) => Ok(None),
+    }
+}
+
+fn cached_session(path: &str) -> Result<(Arc<Session>, bool), String> {
     let p = Path::new(path);
     let now = stamp(p)?;
     let used = USE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -339,31 +404,46 @@ fn open_session(path: &str) -> Result<Arc<Session>, String> {
         match cache.get_mut(p) {
             Some(c) if c.stamp == now => {
                 c.used = used;
-                return Ok(c.session.clone());
+                return Ok((c.session.clone(), c.lean));
             }
             // a live recording that grew: read only what it appended (taken
             // out of the cache so that, unshared, it grows without a copy)
-            Some(c) if !compressed && now.0 > c.stamp.0 && c.read_to.is_some() => {
-                cache.remove(p).map(|c| (c.session, c.read_to.unwrap_or(0)))
-            }
+            Some(c) if !compressed && now.0 > c.stamp.0 && c.read_to.is_some() => cache
+                .remove(p)
+                .map(|c| (c.session, c.read_to.unwrap_or(0), c.lean)),
             _ => None,
         }
     };
     // the same recording, grown; not another written in its place
-    let grown = grown.filter(|(old, _)| header_of(p).as_ref() == Some(&old.header));
-    let (session, read_to) = match grown {
-        Some((old, from)) => {
+    let grown = grown.filter(|(old, ..)| header_of(p).as_ref() == Some(&old.header));
+    let (session, read_to, lean) = match grown {
+        Some((old, from, was_lean)) => {
             let mut s = Arc::unwrap_or_clone(old);
+            let had = s.records.len();
             let to = s.read_more(p, from).map_err(err_msg)?;
-            (Arc::new(s), Some(to))
+            // once lean, lean: what it appends is kept as the rest is
+            let lean = was_lean || kept_lean(now.0, false);
+            if lean {
+                let from = if was_lean { had } else { 0 };
+                s.records[from..]
+                    .iter_mut()
+                    .for_each(sonde_proxy::session::lean);
+            }
+            (Arc::new(s), Some(to), lean)
         }
         None => {
             // where complete lines end, taken before the read: the next read starts there
             let to = (!compressed)
                 .then(|| sonde_proxy::session::complete_len(p).ok())
                 .flatten();
+            let lean = kept_lean(now.0, compressed);
             // read outside the lock: another session opens meanwhile
-            (Arc::new(Session::open(p).map_err(err_msg)?), to)
+            let s = if lean {
+                Session::open_lean(p)
+            } else {
+                Session::open(p)
+            };
+            (Arc::new(s.map_err(err_msg)?), to, lean)
         }
     };
     let mut cache = CACHE.lock();
@@ -383,57 +463,55 @@ fn open_session(path: &str) -> Result<Arc<Session>, String> {
             read_to,
             used,
             session: session.clone(),
-            view: None,
+            lean,
+            analysis: None,
         },
     );
-    Ok(session)
+    Ok((session, lean))
 }
 
-/// What [`Sessions::open`] returns, built once per version of the file.
-fn view_of(path: &str) -> Result<Arc<JsonValue>, String> {
+/// A session and what it amounts to (its operations, findings, signals),
+/// worked out once per version of the file: every view of it, and every
+/// page of its operations, is a look at this.
+fn analysis_of(path: &str) -> Result<(Arc<Session>, Arc<Analysis>), String> {
     let s = open_session(path)?;
     let p = Path::new(path);
-    if let Some(v) = CACHE
+    if let Some(a) = CACHE
         .lock()
         .get(p)
         .filter(|c| Arc::ptr_eq(&c.session, &s))
-        .and_then(|c| c.view.clone())
+        .and_then(|c| c.analysis.clone())
     {
-        return Ok(v);
+        return Ok((s, a));
     }
-    let eps = episodes(&s.records);
-    let obs = observations(&s.records, &eps);
-    let shared: Vec<String> = shared_notes(&eps)
-        .into_iter()
-        .map(|(_, n, _, _)| n)
-        .collect();
-    let prof = sonde_proxy::profile::profile(
-        &s.records,
+    let a = Arc::new(Analysis::of(
+        &s,
         &crate::state::request_prices_for(&s.header.endpoint),
-    );
-    let what_if = sonde_proxy::fixes::what_if(&s.records, &prof, &obs);
-    let view = Arc::new(json!({
-        "path": path,
-        "header": s.header,
-        "summary": summarize(&s.records),
-        "profile": prof,
-        "signals": sonde_proxy::signals::signals(
-            &s.records,
-            &crate::state::request_prices_for(&s.header.endpoint),
-        ),
-        "whatIf": what_if,
-        // the requests a fault scenario answered, by id: the charts mark their dots and cells
-        "injected": s.records.iter().filter(|r| r.injected.is_some()).map(|r| r.id).collect::<Vec<_>>(),
-        "episodes": eps,
-        "observations": obs,
-        "sharedNotes": shared,
-    }));
+    ));
     if let Some(c) = CACHE.lock().get_mut(p)
         && Arc::ptr_eq(&c.session, &s)
     {
-        c.view = Some(view.clone());
+        c.analysis = Some(a.clone());
     }
-    Ok(view)
+    Ok((s, a))
+}
+
+/// What [`Sessions::view`] returns: the totals, the findings and the first
+/// page of operations, built from the analysis kept.
+fn view_of(path: &str) -> Result<JsonValue, String> {
+    let (s, a) = analysis_of(path)?;
+    Ok(with_trials(
+        JsonValue::Object(a.view(path, &s.header)),
+        path,
+    ))
+}
+
+/// A page's query as the interface sends it.
+fn query_of(query: JsonValue) -> Result<sonde_proxy::view::Query, String> {
+    if query.is_null() {
+        return Ok(Default::default());
+    }
+    serde_json::from_value(query).map_err(err_msg)
 }
 
 /// path → (bytes counted up to the last complete line, records in them)
@@ -445,6 +523,8 @@ static COUNTS: std::sync::LazyLock<
 fn forget(path: &Path) {
     CACHE.lock().remove(path);
     COUNTS.lock().remove(path);
+    POINTS.lock().remove(path);
+    sonde_proxy::summary::forget(path);
 }
 
 /// The titles given to sessions, by file name: `titles.json` beside them.
@@ -555,12 +635,11 @@ fn trial_marks(session: &Path) -> Vec<JsonValue> {
         .collect()
 }
 
-/// A session's view with what is known of its trials, read fresh (the
-/// verdicts are written after the session's file, and beside it): a trial
+/// A session's view (taken, not copied) with what is known of its trials,
+/// read fresh (the verdicts are written after the session's file, and beside it): a trial
 /// says `trial: { scenario, of, clean }`, a clean run with verdicts
 /// `trials: [...]`.
-fn with_trials(view: &JsonValue, path: &str) -> JsonValue {
-    let mut v = view.clone();
+fn with_trials(mut v: JsonValue, path: &str) -> JsonValue {
     let p = Path::new(path);
     let scenario = v["header"]["scenario"].as_str().map(String::from);
     let Some(o) = v.as_object_mut() else {
@@ -611,13 +690,19 @@ fn project_scenarios(dir: &Path) -> Result<Vec<sonde_proxy::fault::Scenario>, St
     let said = |e: String| format!("{}: {e}", file.display());
     let text = std::fs::read_to_string(&file).map_err(|e| said(e.to_string()))?;
     let doc: toml::Table = toml::from_str(&text).map_err(|e| said(e.to_string()))?;
+    // (checked where the command line's are: one reading of sonde.toml)
+    let name = doc
+        .get("program")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str());
+    sonde_proxy::fault::project_program_name(name).map_err(said)?;
     let Some(list) = doc.get("scenario") else {
         return Ok(Vec::new());
     };
     let list = list
         .as_array()
         .ok_or_else(|| said("scenario is written [[scenario]]".into()))?;
-    list.iter().map(|t| scenario_of(t).map_err(said)).collect()
+    sonde_proxy::fault::project_scenarios(list.iter().map(scenario_of)).map_err(said)
 }
 
 /// One `[[scenario]]`: `name`, `fault` ("503 SlowDown", "500", "lost-answer",
@@ -632,15 +717,6 @@ fn scenario_of(t: &toml::Value) -> Result<sonde_proxy::fault::Scenario, String> 
         return Err(format!("scenario: unknown key {k}"));
     }
     let name = t.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(format!(
-            "scenario {name:?}: a name is letters, digits, - and _"
-        ));
-    }
     let fault = t
         .get("fault")
         .and_then(|v| v.as_str())
@@ -665,26 +741,7 @@ fn scenario_of(t: &toml::Value) -> Result<sonde_proxy::fault::Scenario, String> 
                 .ok_or_else(|| format!("scenario {name}: times is a count"))?,
         ),
     };
-    let effect =
-        sonde_proxy::fault::parse_effect(fault).map_err(|e| format!("scenario {name}: {e}"))?;
-    let every = matches!(effect, sonde_proxy::fault::Effect::Delay { .. });
-    let mut about = fault.to_string();
-    if !on.is_empty() {
-        about.push_str(&format!(" on {}", on.join(", ")));
-    }
-    if !prefix.is_empty() {
-        about.push_str(&format!(" under {prefix}"));
-    }
-    Ok(sonde_proxy::fault::Scenario {
-        name: name.to_string(),
-        about,
-        rules: vec![sonde_proxy::fault::Rule {
-            on,
-            prefix,
-            effect,
-            times: times.unwrap_or(if every { 0 } else { 1 }),
-        }],
-    })
+    sonde_proxy::fault::project_scenario(name, fault, &on, &prefix, times)
 }
 
 /// What a trial of a session would run: the project's scenarios when its
@@ -736,7 +793,8 @@ fn trial_plan_of(s: &Session) -> Result<TrialPlan, String> {
     })
 }
 
-/// The scenarios asked for by name, from the plan's and the built-in ones;
+/// The scenarios asked for by name, from the plan's and the built-in ones
+/// (`slowdown:3`: pressed harder, see [`sonde_proxy::fault::scenario_asked`]);
 /// all of the plan's when none is named.
 fn scenarios_named(
     plan: &TrialPlan,
@@ -748,11 +806,18 @@ fn scenarios_named(
     names
         .iter()
         .map(|n| {
-            plan.scenarios
-                .iter()
-                .find(|s| &s.name == n)
-                .cloned()
-                .or_else(|| sonde_proxy::fault::scenario(n))
+            if let Some(s) = plan.scenarios.iter().find(|s| &s.name == n) {
+                return Ok(s.clone());
+            }
+            // a project's own scenario of the name says its times itself
+            let name = n.split_once(':').map_or(n.as_str(), |(name, _)| name);
+            if plan.project && plan.scenarios.iter().any(|s| s.name == name) {
+                return Err(err_msg(format!(
+                    "{n}: {name} is the project's own scenario (sonde.toml says its times)"
+                )));
+            }
+            sonde_proxy::fault::scenario_asked(n)
+                .map_err(err_msg)?
                 .ok_or_else(|| err_msg(format!("{n}: no such scenario")))
         })
         .collect()
@@ -785,8 +850,59 @@ impl Newest {
     }
 }
 
+/// Whether a terminal's output asks where the cursor is (a Device Status
+/// Report, `ESC [ 6 n`), which its reader is to answer.
+fn asks_cursor(text: &str) -> bool {
+    text.contains("\x1b[6n")
+}
+
+/// The command a run's shell is given: as the session keeps it, every
+/// separator, pipe and quote where it was written, with `{trial}` alone
+/// replaced (`clean`, or the scenario's name under one).
+fn command_under(command: &str, trial: Option<&str>) -> String {
+    command.replace("{trial}", trial.unwrap_or("clean"))
+}
+
+/// How long the app's quit waits for the requests in flight: the system
+/// gives a quitting app 200 ms in all (Native Shell's `quit` event).
+const QUIT_GRACE: std::time::Duration = std::time::Duration::from_millis(60);
+
+/// The app is quitting: the program being recorded is ended (with what it
+/// started), a running trial is stopped, and the recording is written as a
+/// finished session. A trial keeps nothing, as when it is stopped by hand:
+/// its half-recorded session and those of the scenarios before it go.
+/// What it ended: `{ program, trial, session }`.
+async fn end_for_quit() -> JsonValue {
+    use std::sync::atomic::Ordering::SeqCst;
+    let trial = TRYING.load(SeqCst);
+    if trial {
+        TRIAL_STOPPED.store(true, SeqCst);
+    }
+    let program = RUNNING.lock().take().is_some_and(|mut r| r.kill());
+    let recording = RECORDING.lock().take();
+    let mut session = None;
+    if let Some(r) = recording {
+        let path = r.path.clone();
+        // (on the runtime's own threads, as every recording is finished)
+        let _ = background(r.finish_within(QUIT_GRACE)).await;
+        if trial {
+            // (the run it is a trial of is beside the folder it is in)
+            let _ = std::fs::remove_file(&path);
+            let of = TRIAL_OF.lock().take();
+            if let Some(clean) = of {
+                sonde_proxy::trial::remove(&clean);
+            }
+        } else {
+            session = Some(path.to_string_lossy().into_owned());
+        }
+    }
+    json!({ "program": program, "trial": trial, "session": session })
+}
+
 /// A trial is running, and was asked to stop ([`Sessions::kill`]).
 static TRYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The run the trial under way is of (its session's file).
+static TRIAL_OF: Mutex<Option<PathBuf>> = Mutex::new(None);
 static TRIAL_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// One run of `command` in a pseudo-terminal, recorded: the exit code and
@@ -833,7 +949,7 @@ async fn run_recorded(
         )
     };
     let started = crate::run::spawn(
-        &command.replace("{trial}", trial.as_deref().unwrap_or("clean")),
+        &command_under(command, trial.as_deref()),
         cwd,
         &env_set,
         &env_unset,
@@ -869,6 +985,16 @@ async fn run_recorded(
             bytes = out_rx.recv() => match bytes {
                 Some(bytes) => {
                     let text = decoder.push(&bytes);
+                    // Windows' pseudo-console asks where the cursor is as it
+                    // starts and holds the program until it is told. A run's
+                    // terminal answers; a trial's output goes to no terminal,
+                    // so it is answered here, or the program never starts.
+                    if trial.is_some()
+                        && asks_cursor(&text)
+                        && let Some(r) = RUNNING.lock().as_mut()
+                    {
+                        r.write(b"\x1b[1;1R");
+                    }
                     if !text.is_empty() {
                         writer.write_log(&text);
                         match &trial {
@@ -930,58 +1056,19 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
     {
         return Some(p.clone());
     }
-    // kept on disk too, beside the sessions: a program's history reads 30
-    // runs, and a finished run does not change
-    let name = path.file_name()?.to_string_lossy().into_owned();
-    let mtime = now
-        .1
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let disk = path.parent()?.join(".runpoints.json");
-    let mut stored: std::collections::HashMap<String, (u64, u64, sonde_proxy::program::RunPoint)> =
-        std::fs::read(&disk)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
-    if let Some((len, t, p)) = stored.get(&name)
-        && *len == now.0
-        && *t == mtime
-    {
-        let mut p = p.clone();
-        p.path = path.to_string_lossy().into_owned();
-        POINTS.lock().insert(path.to_path_buf(), (now, p.clone()));
-        return Some(p);
+    // kept on disk too, beside the session (`<name>.summary.json`): a
+    // program's history reads 30 runs, and a finished run does not change
+    let h = header_of(path)?;
+    let (_, figures) =
+        sonde_proxy::summary::figures(path, &crate::state::request_prices_for(&h.endpoint))?;
+    POINTS
+        .lock()
+        .insert(path.to_path_buf(), (now, figures.point.clone()));
+    // (what 15.0 kept them in, all in one file)
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::remove_file(dir.join(".runpoints.json"));
     }
-    let s = Session::open(path).ok()?;
-    let pr = sonde_proxy::profile::profile(
-        &s.records,
-        &crate::state::request_prices_for(&s.header.endpoint),
-    );
-    let ob = observations(&s.records, &episodes(&s.records));
-    let p = sonde_proxy::program::run_point(
-        &path.to_string_lossy(),
-        &s.header.created.to_rfc3339(),
-        &s.records,
-        &pr,
-        &ob,
-    );
-    POINTS.lock().insert(path.to_path_buf(), (now, p.clone()));
-    // only finished runs: a live one changes
-    if sonde_proxy::session::is_compressed(path) {
-        let dir = path.parent()?;
-        stored.retain(|n, _| dir.join(n).is_file());
-        stored.insert(name, (now.0, mtime, p.clone()));
-        let tmp = dir.join(".runpoints.json.tmp");
-        if serde_json::to_vec(&stored)
-            .ok()
-            .and_then(|b| std::fs::write(&tmp, b).ok())
-            .is_some()
-        {
-            let _ = std::fs::rename(&tmp, &disk);
-        }
-    }
-    Some(p)
+    Some(figures.point)
 }
 
 /// Each program's baseline run, by file name: `baselines.json` beside the sessions.
@@ -1009,17 +1096,10 @@ fn count_records(path: &Path) -> usize {
         // rewritten: count again
         (from, n) = (0, 0);
     }
-    // a finished session is compressed: counted whole, once
+    // a finished session is compressed: counted whole, once, and the count
+    // kept beside it
     if len > from && sonde_proxy::session::is_compressed(path) {
-        let n = sonde_proxy::session::reader(path)
-            .map(|r| {
-                r.split(b'\n')
-                    .skip(1)
-                    .filter_map(Result::ok)
-                    .filter(|l| !l.is_empty() && l.starts_with(b"{") && !l.starts_with(b"{\"log\""))
-                    .count()
-            })
-            .unwrap_or(0);
+        let n = sonde_proxy::summary::counted(path).map_or(0, |c| c.requests as usize);
         COUNTS.lock().insert(path.to_path_buf(), (len, n, header));
         return n;
     }
@@ -1048,64 +1128,22 @@ fn count_records(path: &Path) -> usize {
 }
 
 /// A finished session's requests over its time, in `SHAPE_BINS` slices: the
-/// list's sparkline. Read once per version of the file; a live session has
+/// list's sparkline, from the counts kept beside it. A live session has
 /// none (it is still growing).
-const SHAPE_BINS: usize = 24;
-static SHAPES: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, (u64, Vec<u32>)>>> =
-    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+#[cfg(test)]
+const SHAPE_BINS: usize = sonde_proxy::summary::SHAPE_BINS;
 
 fn shape_of(path: &Path) -> Vec<u32> {
-    let Ok(len) = std::fs::metadata(path).map(|m| m.len()) else {
-        return Vec::new();
-    };
     if !sonde_proxy::session::is_compressed(path) {
         return Vec::new();
     }
-    if let Some((l, s)) = SHAPES.lock().get(path)
-        && *l == len
-    {
-        return s.clone();
-    }
-    // the request's start, from its line, without reading the rest of it
-    let time_of = |l: &[u8]| -> Option<i64> {
-        let line = std::str::from_utf8(l).ok()?;
-        let at = line.find("\"time\":\"")? + 8;
-        let end = line[at..].find('"')? + at;
-        chrono::DateTime::parse_from_rfc3339(&line[at..end])
-            .ok()
-            .map(|t| t.timestamp_micros())
-    };
-    let times: Vec<i64> = sonde_proxy::session::reader(path)
-        .map(|r| {
-            r.split(b'\n')
-                .skip(1)
-                .filter_map(Result::ok)
-                .filter(|l| l.starts_with(b"{") && !l.starts_with(b"{\"log\""))
-                .filter_map(|l| time_of(&l))
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut bins = vec![0u32; SHAPE_BINS];
-    if let (Some(a), Some(b)) = (times.iter().min(), times.iter().max()) {
-        let span = (b - a).max(1) as f64;
-        for t in &times {
-            let i = (((t - a) as f64 / span) * SHAPE_BINS as f64) as usize;
-            bins[i.min(SHAPE_BINS - 1)] += 1;
-        }
-    }
-    SHAPES
-        .lock()
-        .insert(path.to_path_buf(), (len, bins.clone()));
-    bins
+    sonde_proxy::summary::counted(path)
+        .map(|c| c.shape)
+        .unwrap_or_default()
 }
 
 fn header_line(path: &Path) -> Option<String> {
-    let mut first = String::new();
-    sonde_proxy::session::reader(path)
-        .ok()?
-        .read_line(&mut first)
-        .ok()?;
-    Some(first)
+    sonde_proxy::session::header_line(path)
 }
 
 /// [`Sessions::code_change`]'s work: two runs' commits, the files between
@@ -1159,7 +1197,7 @@ fn code_change_of(before: &str, after: &str) -> Result<JsonValue, String> {
     ])?;
     // the later run's findings, by the file and line their requests came from
     let s = open_session(after)?;
-    let obs = observations(&s.records, &episodes(&s.records));
+    let obs = sonde_proxy::episode::observations_of(&s.header, &s.records, &episodes(&s.records));
     let rel = |file: &str| -> String {
         let full = dir.join(file);
         let full = full.canonicalize().unwrap_or(full);
@@ -1240,19 +1278,41 @@ impl Sessions {
                 if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
                     continue;
                 }
-                let Some(h) = header_of(&p) else { continue };
-                let created = h.created.to_rfc3339();
-                let mut row = json!({
-                    "path": p.to_string_lossy(),
-                    "name": p.file_name().map(|n| n.to_string_lossy().into_owned()),
-                    "title": p.file_name().and_then(|n| titles.get(&*n.to_string_lossy())),
-                    "created": created,
-                    "endpoint": h.endpoint,
-                    "command": h.command,
-                    "requests": count_records(&p),
-                    "shape": shape_of(&p),
-                    "live": live.as_deref() == Some(p.as_path()),
-                });
+                // a finished session is listed from the counts kept beside
+                // it: never read whole to be listed
+                let counted = sonde_proxy::session::is_compressed(&p)
+                    .then(|| sonde_proxy::summary::counted(&p))
+                    .flatten();
+                let mut row = match counted {
+                    Some(c) => json!({
+                        "created": c.created.to_rfc3339(),
+                        "endpoint": c.endpoint,
+                        "command": c.command,
+                        "requests": c.requests,
+                        "shape": c.shape,
+                        "seconds": c.seconds,
+                        "errors": c.errors,
+                        "program": c.name.or(c.program),
+                    }),
+                    None => {
+                        let Some(h) = header_of(&p) else { continue };
+                        json!({
+                            "created": h.created.to_rfc3339(),
+                            "endpoint": h.endpoint,
+                            "command": h.command,
+                            "requests": count_records(&p),
+                            "shape": shape_of(&p),
+                        })
+                    }
+                };
+                let created = row["created"].as_str().unwrap_or_default().to_string();
+                row["path"] = json!(p.to_string_lossy());
+                row["name"] = json!(p.file_name().map(|n| n.to_string_lossy().into_owned()));
+                row["title"] = json!(
+                    p.file_name()
+                        .and_then(|n| titles.get(&*n.to_string_lossy()))
+                );
+                row["live"] = json!(live.as_deref() == Some(p.as_path()));
                 // a run that was tried says how it stood (the small
                 // verdicts file, not the trials' sessions)
                 let marks = trial_marks(&p);
@@ -1266,18 +1326,67 @@ impl Sessions {
         JsonValue::Array(out.into_iter().map(|(_, v)| v).collect())
     }
 
-    /// A session: its header, summary, operations and observations, and the
-    /// notes said once instead of on each operation.
-    pub fn open(path: String) -> Result<JsonValue, String> {
-        Ok(with_trials(&*view_of(&path)?, &path))
-    }
-
-    /// [`Sessions::open`] off the interface's thread: what a window waits on
-    /// while a large session is read, or a live one grows.
-    pub async fn analyse(path: String) -> Result<JsonValue, String> {
-        tokio::task::spawn_blocking(move || view_of(&path).map(|v| with_trials(&v, &path)))
+    /// A session as a window opens it: its header, summary, signals,
+    /// profile and findings, the notes said once, and the first page of its
+    /// operations with how many there are (`episodesTotal`). Read and
+    /// analysed off the interface's thread, once per version of the file.
+    pub async fn view(path: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || view_of(&path))
             .await
             .map_err(err_msg)?
+    }
+
+    /// A range of a session's operations, sorted and narrowed as the table
+    /// asks: `{ total, offset, rows }`.
+    pub async fn episodes(path: String, query: JsonValue) -> Result<JsonValue, String> {
+        let q = query_of(query)?;
+        tokio::task::spawn_blocking(move || Ok(analysis_of(&path)?.1.page(&q)))
+            .await
+            .map_err(err_msg)?
+    }
+
+    /// One operation, with every one of its requests' ids.
+    pub fn episode(path: String, index: f64) -> Result<JsonValue, String> {
+        Ok(to_json(analysis_of(&path)?.1.episode(index as usize)))
+    }
+
+    /// The operation a request belongs to (its index).
+    pub fn episode_of(path: String, record_id: f64) -> Result<Option<f64>, String> {
+        Ok(analysis_of(&path)?
+            .1
+            .episode_of(record_id as u64)
+            .map(|i| i as f64))
+    }
+
+    /// The row the table shows an operation at under a query; -1 when the
+    /// query leaves it out.
+    pub fn episode_row(path: String, query: JsonValue, index: f64) -> Result<f64, String> {
+        Ok(analysis_of(&path)?
+            .1
+            .row_of(&query_of(query)?, index as usize)
+            .map_or(-1.0, |r| r as f64))
+    }
+
+    /// The operations running at a moment (an output line's), else the nearest.
+    pub fn episodes_at(path: String, time: String) -> Result<JsonValue, String> {
+        let at = chrono::DateTime::parse_from_rfc3339(&time)
+            .map_err(err_msg)?
+            .with_timezone(&chrono::Utc);
+        Ok(to_json(analysis_of(&path)?.1.episodes_at(at)))
+    }
+
+    /// A range of the operations a finding is about (the view lists the first).
+    pub fn observation_episodes(
+        path: String,
+        observation: f64,
+        offset: f64,
+        limit: f64,
+    ) -> Result<JsonValue, String> {
+        Ok(to_json(analysis_of(&path)?.1.finding_episodes(
+            observation as usize,
+            offset as usize,
+            limit as usize,
+        )))
     }
 
     /// Short rows for the records with these ids (an operation's requests).
@@ -1301,18 +1410,16 @@ impl Sessions {
 
     /// One record of a session, in full.
     pub fn record(path: String, id: f64) -> Result<JsonValue, String> {
-        let s = open_session(&path)?;
-        Ok(to_json(s.records.iter().find(|r| r.id == id as u64)))
+        Ok(to_json(full_record(&path, id as u64)?))
     }
 
     /// A session's record as `aws s3api` (`cli`) or unsigned curl (`curl`).
     pub fn copy(path: String, id: f64, kind: String) -> Result<Option<String>, String> {
-        let s = open_session(&path)?;
-        Ok(s.records.iter().find(|r| r.id == id as u64).map(|r| {
+        Ok(full_record(&path, id as u64)?.map(|r| {
             if kind == "curl" {
-                reqlog::copy::as_curl(r)
+                reqlog::copy::as_curl(&r)
             } else {
-                reqlog::copy::as_aws_cli(r)
+                reqlog::copy::as_aws_cli(&r)
             }
         }))
     }
@@ -1379,7 +1486,7 @@ impl Sessions {
     }
 
     /// What trying a session's program under faults would run, said before
-    /// it runs: `{ command, cwd, scenarios: [{ name, about }], project,
+    /// it runs: `{ command, cwd, scenarios: [{ name, about, maxTimes }], project,
     /// sharesPlace, cleanExit, readOnly }`. `project`: the scenarios are the
     /// `sonde.toml`'s own; `sharesPlace`: the command has no `{trial}` (or
     /// `SONDE_TRIAL`), so every run writes where the clean run wrote;
@@ -1393,7 +1500,14 @@ impl Sessions {
             "scenarios": plan
                 .scenarios
                 .iter()
-                .map(|s| json!({ "name": s.name, "about": s.about }))
+                .map(|s| json!({
+                    "name": s.name,
+                    "about": s.about,
+                    // the attempts in a row it may be asked to fail (`name:N`)
+                    "maxTimes": (!plan.project
+                        && sonde_proxy::fault::PRESSED.contains(&s.name.as_str()))
+                    .then_some(sonde_proxy::fault::MAX_TIMES),
+                }))
                 .collect::<Vec<_>>(),
             "project": plan.project,
             "sharesPlace": plan.shares_place,
@@ -1404,7 +1518,8 @@ impl Sessions {
 
     /// Tries a session's program under faults: its recorded command runs
     /// again in its recorded folder, once per scenario (`scenarios` by
-    /// name; none: the plan's), each run recorded to
+    /// name, `slowdown:3` to fail each request's first three attempts;
+    /// none: the plan's), each run recorded to
     /// `trials/<run>.<scenario>.sonde` and judged against the clean run.
     /// Events: `{ scenario, state: "running" }`, the program's output as
     /// `{ data, scenario }`, then `{ scenario, state: "done", trial }`.
@@ -1443,10 +1558,12 @@ impl Sessions {
         impl Drop for Trying {
             fn drop(&mut self) {
                 TRYING.store(false, std::sync::atomic::Ordering::SeqCst);
+                TRIAL_OF.lock().take();
             }
         }
         let _trying = Trying;
         TRIAL_STOPPED.store(false, SeqCst);
+        *TRIAL_OF.lock() = Some(file.clone());
         let clean_exit = read_exit(&file).unwrap_or(0);
         // a new trial replaces the last one's verdicts and sessions
         sonde_proxy::trial::remove(&file);
@@ -1505,7 +1622,7 @@ impl Sessions {
     /// What replaying a session on `endpoint` would send: the plan, the
     /// prefix it would write under, the buckets, whether sonde is read-only.
     pub fn replay_plan(path: String, endpoint: String) -> Result<JsonValue, String> {
-        let original = open_session(&path)?;
+        let original = full_session(&path)?;
         let s = sonde();
         let base = s.client(&endpoint).map_err(crate::state::err)?;
         let opts = ReplayOptions {
@@ -1537,7 +1654,7 @@ impl Sessions {
                 "read-only mode is on: turn it off in Settings to replay (a replay writes under its prefix)",
             )));
         }
-        let original = open_session(&path)?;
+        let original = full_session(&path)?;
         let base = s.client(&endpoint).map_err(crate::state::err)?;
         let out = sonde_proxy::session::fresh_path(
             &s.paths().sessions(),
@@ -1592,8 +1709,8 @@ impl Sessions {
                 sonde_proxy::profile::profile(&b.records, &price(&b)),
             );
             let (oa, ob) = (
-                observations(&a.records, &episodes(&a.records)),
-                observations(&b.records, &episodes(&b.records)),
+                sonde_proxy::episode::observations_of(&a.header, &a.records, &episodes(&a.records)),
+                sonde_proxy::episode::observations_of(&b.header, &b.records, &episodes(&b.records)),
             );
             Ok(to_json(
                 sonde_proxy::profile::compare_runs((&a.records, &pa, &oa), (&b.records, &pb, &ob))
@@ -1734,7 +1851,11 @@ impl Sessions {
                             &s.records,
                             &crate::state::request_prices_for(&s.header.endpoint),
                         );
-                        let ob = observations(&s.records, &episodes(&s.records));
+                        let ob = sonde_proxy::episode::observations_of(
+                            &s.header,
+                            &s.records,
+                            &episodes(&s.records),
+                        );
                         let pt = sonde_proxy::program::run_point(
                             p,
                             &s.header.created.to_rfc3339(),
@@ -2069,7 +2190,7 @@ impl Sessions {
                 "this build has no web viewer: `sonde share` makes the page",
             ));
         }
-        let session = open_session(&path)?;
+        let session = full_session(&path)?;
         let stem = Path::new(&path)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -2113,6 +2234,15 @@ impl Sessions {
             }
         };
         Ok(json!({ "dir": dir.to_string_lossy(), "url": url }))
+    }
+
+    /// The app is quitting: ends the program being recorded and a running
+    /// trial, and writes the recording as a finished session, within the
+    /// 200 ms a quitting app has. `{ program, trial, session }`: whether a
+    /// program was ended, whether a trial was, and the session written (none
+    /// for a trial, which keeps nothing when it is cut short).
+    pub async fn quit() -> JsonValue {
+        end_for_quit().await
     }
 
     /// Stops recording; the session file's path. No longer the recording
@@ -2518,6 +2648,137 @@ mod tests {
         assert_eq!(open_session(&p).unwrap().records.len(), 1);
     }
 
+    /// A session of `n` requests, each an operation of its own, the later
+    /// the quicker; every seventh a write, one in fifty failed.
+    fn many(path: &Path, n: u64) {
+        use reqlog::Sink;
+        let w =
+            SessionWriter::create(path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        for i in 0..n {
+            w.write(&reqlog::Record {
+                id: i + 1,
+                time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 100)
+                    .unwrap(),
+                method: if i % 7 == 0 { "PUT" } else { "GET" }.into(),
+                operation: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
+                url: format!("http://s3/b/data/k{i:05}"),
+                bucket: Some("b".into()),
+                key: Some(format!("data/k{i:05}")),
+                status: Some(if i % 50 == 3 { 500 } else { 200 }),
+                latency_ms: 1.0 + (n - i) as f64 / 10.0,
+                request_headers: vec![
+                    reqlog::Header::new("authorization", "AWS4-HMAC-SHA256 Credential=…"),
+                    reqlog::Header::new("user-agent", "aws-sdk-java/2.25"),
+                ],
+                ..Default::default()
+            });
+        }
+        w.flush().unwrap();
+    }
+
+    #[test]
+    fn a_view_is_the_first_page_of_operations_and_the_rest_come_in_ranges() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many.sonde");
+        many(&path, 1200);
+        let p = path.to_string_lossy().into_owned();
+        let v = view_of(&p).unwrap();
+        assert_eq!(v["summary"]["requests"], 1200);
+        assert_eq!(v["episodesTotal"], 1200);
+        assert_eq!(
+            v["episodes"].as_array().unwrap().len(),
+            sonde_proxy::view::PAGE
+        );
+        assert_eq!(v["episodes"][2]["index"], 2);
+        assert_eq!(v["episodes"][2]["requests"], 1);
+        assert!(
+            v["episodes"][2].get("title").is_none(),
+            "said by its phrases"
+        );
+        assert!(v["summary"]["operations"][0]["p99Ms"].is_number());
+        // the calls a table makes: a range in its order, one operation, where
+        // a request and a moment are, the row an operation stands at
+        let (_, a) = analysis_of(&p).unwrap();
+        let page = a.page(
+            &query_of(json!({ "offset": 1000, "sort": "duration", "descending": true })).unwrap(),
+        );
+        assert_eq!(
+            (&page["total"], &page["offset"]),
+            (&json!(1200), &json!(1000))
+        );
+        assert_eq!(page["rows"].as_array().unwrap().len(), 200);
+        assert_eq!(page["rows"][0]["index"], 1000, "the earliest took longest");
+        let failed = a.page(&query_of(json!({ "failed": true, "text": "K0000" })).unwrap());
+        assert_eq!(failed["total"], 1, "{failed}");
+        assert_eq!(failed["rows"][0]["index"], 3);
+        assert_eq!(query_of(JsonValue::Null).unwrap(), Default::default());
+        assert!(query_of(json!({ "sort": "colour" })).is_err());
+        assert_eq!(
+            Sessions::episode(p.clone(), 700.0).unwrap()["records"],
+            json!([701])
+        );
+        assert_eq!(
+            Sessions::episode(p.clone(), 7000.0).unwrap(),
+            JsonValue::Null
+        );
+        assert_eq!(Sessions::episode_of(p.clone(), 701.0).unwrap(), Some(700.0));
+        assert_eq!(Sessions::episode_of(p.clone(), 7001.0).unwrap(), None);
+        let backwards = json!({ "descending": true });
+        assert_eq!(
+            Sessions::episode_row(p.clone(), backwards.clone(), 0.0).unwrap(),
+            1199.0
+        );
+        assert_eq!(
+            Sessions::episode_row(p.clone(), json!({ "failed": true }), 0.0).unwrap(),
+            -1.0
+        );
+        let at = Sessions::episodes_at(p.clone(), "2023-11-14T22:13:20.050Z".into()).unwrap();
+        assert_eq!(at, json!([0]), "the first request was under way then");
+        assert!(Sessions::episodes_at(p.clone(), "then".into()).is_err());
+    }
+
+    #[test]
+    fn a_request_of_a_session_kept_lean_is_read_from_its_file_in_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lean.sonde");
+        many(&path, 300);
+        sonde_proxy::session::compress(&path).unwrap();
+        // (sessions past `LEAN_FROM` on disk are kept so)
+        assert!(kept_lean(LEAN_FROM + 1, true) && !kept_lean(LEAN_FROM, true));
+        assert!(
+            !kept_lean(LEAN_FROM * 5, false),
+            "a live file is ten times its compressed size"
+        );
+        let lean = Session::open_lean(&path).unwrap();
+        assert!(lean.records[41].url.is_empty());
+        let full = record_from_file(&path, &lean, 42).unwrap().unwrap();
+        assert_eq!(full.url, "http://s3/b/data/k00041");
+        assert!(
+            full.request_headers
+                .iter()
+                .any(|h| h.name == "authorization")
+        );
+        assert_eq!(record_from_file(&path, &lean, 4200).unwrap(), None);
+    }
+
+    #[test]
+    fn a_finished_session_is_listed_from_the_counts_kept_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("listed.sonde");
+        many(&path, 120);
+        // live: counted as it grows, nothing kept
+        assert_eq!(count_records(&path), 120);
+        assert!(!sonde_proxy::summary::counted_file(&path).exists());
+        sonde_proxy::session::compress(&path).unwrap();
+        assert_eq!(count_records(&path), 120);
+        assert_eq!(shape_of(&path).iter().sum::<u32>(), 120);
+        let kept = sonde_proxy::summary::kept(&path).expect("kept beside it");
+        assert_eq!((kept.requests, kept.errors), (120, 3));
+        // gone with the session
+        forget(&path);
+        assert!(!sonde_proxy::summary::counted_file(&path).exists());
+    }
+
     #[test]
     fn an_analysis_is_kept_until_the_file_changes() {
         use reqlog::Sink;
@@ -2537,15 +2798,17 @@ mod tests {
         };
         w.write(&rec(1));
         let p = path.to_string_lossy().into_owned();
-        let a = view_of(&p).unwrap();
+        let a = analysis_of(&p).unwrap().1;
         assert!(
-            Arc::ptr_eq(&a, &view_of(&p).unwrap()),
+            Arc::ptr_eq(&a, &analysis_of(&p).unwrap().1),
             "unchanged: the same analysis"
         );
-        assert_eq!(a["summary"]["requests"], 1);
+        assert_eq!(a.summary.requests, 1);
+        assert_eq!(view_of(&p).unwrap()["summary"]["requests"], 1);
         w.write(&rec(2));
         let b = view_of(&p).unwrap();
         assert_eq!(b["summary"]["requests"], 2, "grown: analysed again");
+        assert_eq!(b["episodesTotal"], 2);
         assert!(Arc::ptr_eq(
             &open_session(&p).unwrap(),
             &open_session(&p).unwrap()
@@ -2610,7 +2873,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (clean, trial, _) = run_and_trial(dir.path(), "python job.py", None);
         // open, analyse, records, record, copy and log_lines read the same session
-        let view = with_trials(&view_of(&trial).unwrap(), &trial);
+        let view = view_of(&trial).unwrap();
         assert_eq!(view["summary"]["requests"], 2);
         assert_eq!(view["trial"]["scenario"], "slowdown");
         assert_eq!(view["trial"]["of"], "20260101-000000-job.sonde");
@@ -2629,7 +2892,7 @@ mod tests {
         let lines = Sessions::log_lines(trial.clone()).unwrap();
         assert!(lines.to_string().contains("trial output"), "{lines}");
         // a clean run without verdicts says nothing of trials
-        let view = with_trials(&view_of(&clean).unwrap(), &clean);
+        let view = view_of(&clean).unwrap();
         assert!(view.get("trial").is_none() && view.get("trials").is_none());
     }
 
@@ -2640,10 +2903,10 @@ mod tests {
         assert!(trial_marks(Path::new(&clean)).is_empty());
         // read before the verdicts were written: the analysis is kept, the
         // verdicts are read fresh
-        let before = view_of(&clean).unwrap();
+        let before = analysis_of(&clean).unwrap().1;
         sonde_proxy::trial::save(Path::new(&clean), std::slice::from_ref(&verdict)).unwrap();
-        assert!(Arc::ptr_eq(&before, &view_of(&clean).unwrap()));
-        let view = with_trials(&before, &clean);
+        assert!(Arc::ptr_eq(&before, &analysis_of(&clean).unwrap().1));
+        let view = view_of(&clean).unwrap();
         assert_eq!(view["trials"][0]["scenario"], "slowdown");
         assert_eq!(view["trials"][0]["standing"], to_json(verdict.standing));
         assert_eq!(view["trials"][0]["session"], trial.as_str());
@@ -2705,6 +2968,27 @@ mod tests {
         assert_eq!(one.len(), 1);
         assert_eq!(scenarios_named(&plan, &[]).unwrap().len(), names.len());
         assert!(scenarios_named(&plan, &["nope".into()]).is_err());
+        // pressed harder: the two that fail a request's first attempt, by a count
+        let hard = scenarios_named(&plan, &["slowdown:3".into(), "error".into()]).unwrap();
+        assert_eq!(
+            (hard[0].name.as_str(), hard[0].rules[0].times),
+            ("slowdown", 3)
+        );
+        assert_eq!(
+            hard[0].about,
+            "503 SlowDown on each request's first 3 attempts"
+        );
+        assert_eq!(hard[1].rules[0].times, 1);
+        for (spec, says) in [
+            ("slowdown:0", "from 1 to 5"),
+            ("slowdown:9", "from 1 to 5"),
+            ("slowdown:x", "from 1 to 5"),
+            ("cut-body:2", "only slowdown and error"),
+            ("nope:2", "no such scenario"),
+        ] {
+            let e = scenarios_named(&plan, &[spec.into()]).unwrap_err();
+            assert!(e.contains(says), "{spec}: {e}");
+        }
         // a trial is not tried again
         let t = Session::open(Path::new(&trial)).unwrap();
         assert!(trial_plan_of(&t).unwrap_err().contains("a trial itself"));
@@ -2725,6 +3009,67 @@ mod tests {
         }
     }
 
+    /// The bridge's own path for a large session, timed: what a window
+    /// asks for when it opens one (`view`), again (kept), a later page of
+    /// its operations, and the size of what crosses to the interface.
+    /// `SONDE_BIG_SESSION=<file> cargo test -p sonde-nsh -- --ignored
+    /// a_large_session --nocapture`.
+    #[test]
+    #[ignore = "needs a large session: SONDE_BIG_SESSION names it"]
+    fn a_large_session_through_the_bridge_is_timed() {
+        let Ok(path) = std::env::var("SONDE_BIG_SESSION") else {
+            return;
+        };
+        let t = std::time::Instant::now();
+        let view = view_of(&path).unwrap();
+        let first = t.elapsed();
+        let bytes = view.to_string().len();
+        let t = std::time::Instant::now();
+        let again = view_of(&path).unwrap();
+        let second = t.elapsed();
+        let total = again["episodesTotal"].as_u64().unwrap();
+        let q = query_of(json!({ "offset": total / 2, "limit": 200 })).unwrap();
+        let t = std::time::Instant::now();
+        let page = analysis_of(&path).unwrap().1.page(&q);
+        let paged = t.elapsed();
+        println!(
+            "{} requests, {total} operations: first view {first:?} ({} KiB of JSON), again {second:?}, a page from the middle {paged:?} ({} KiB)",
+            view["summary"]["requests"],
+            bytes / 1024,
+            page.to_string().len() / 1024
+        );
+    }
+
+    #[test]
+    fn a_trial_runs_the_command_as_written_with_only_its_place_changed() {
+        // several steps, a pipe, both quotes, an escape, a line break
+        let command = "cd etl; A='x y' python load.py \"s3://b/{trial}/in put\" | tee log-{trial}.txt && curl -s $AWS_ENDPOINT_URL/demo/missing.txt\ncurl -s x\\ y || true";
+        let dir = tempfile::tempdir().unwrap();
+        let (clean, _, _) = run_and_trial(dir.path(), command, None);
+        let plan = trial_plan_of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
+        assert_eq!(plan.command, command, "kept as written");
+        assert_eq!(
+            command_under(&plan.command, Some("slowdown")),
+            command.replace("{trial}", "slowdown")
+        );
+        assert_eq!(
+            command_under(&plan.command, None),
+            command.replace("{trial}", "clean")
+        );
+        // a shell given it runs each step: no separator is lost between two
+        #[cfg(unix)]
+        {
+            let out = std::process::Command::new("sh")
+                .args([
+                    "-c",
+                    &command_under("echo a-{trial}; echo 'b c' && echo \"d\" | cat", Some("x")),
+                ])
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), "a-x\nb c\nd\n");
+        }
+    }
+
     #[test]
     fn a_projects_own_scenarios_are_the_plan_when_its_sonde_toml_names_some() {
         let project = tempfile::tempdir().unwrap();
@@ -2733,7 +3078,7 @@ mod tests {
         std::fs::create_dir_all(project.path().join(".git")).unwrap();
         std::fs::write(
             project.path().join("sonde.toml"),
-            "[check]\nmax-requests = 10\n\n[[scenario]]\nname = \"flaky-puts\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\nprefix = \"out/\"\ntimes = 2\n\n[[scenario]]\nname = \"slow\"\nfault = \"delay 200ms\"\n",
+            "[check]\nmax-requests = 10\n\n[[scenario]]\nname = \"flaky-puts\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\nprefix = \"out/\"\ntimes = 2\n\n[[scenario]]\nname = \"lag\"\nfault = \"delay 200ms\"\n",
         )
         .unwrap();
         // found from the folder the command ran in, upwards
@@ -2748,7 +3093,13 @@ mod tests {
         let plan = trial_plan_of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
         assert!(plan.project);
         let names: Vec<_> = plan.scenarios.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, ["flaky-puts", "slow"]);
+        assert_eq!(names, ["flaky-puts", "lag"]);
+        // (its own times are sonde.toml's: not asked for here)
+        assert!(
+            scenarios_named(&plan, &["flaky-puts:3".into()])
+                .unwrap_err()
+                .contains("the project's own")
+        );
         // a built-in one can still be asked for by name
         assert_eq!(
             scenarios_named(&plan, &["flaky-puts".into(), "error".into()])
@@ -2756,6 +3107,22 @@ mod tests {
                 .len(),
             2
         );
+        // what the command line refuses is refused here: one reading
+        for (toml, says) in [
+            (
+                "[[scenario]]\nname = \"clean\"\nfault = \"500\"\n",
+                "run without faults",
+            ),
+            (
+                "[[scenario]]\nname = \"slow\"\nfault = \"500\"\n",
+                "one of sonde's own",
+            ),
+            ("[program]\nname = \"\"\n", "a program's name"),
+        ] {
+            std::fs::write(project.path().join("sonde.toml"), toml).unwrap();
+            let e = project_scenarios(&sub).unwrap_err();
+            assert!(e.contains(says), "{e}");
+        }
         // a scenario that does not read is said, not skipped
         std::fs::write(
             project.path().join("sonde.toml"),

@@ -109,7 +109,7 @@ export function resize(cols: number, rows: number) {
 
 async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: string | null) {
   try {
-    const v = await api.sessions.analyse(r.path);
+    const v = await api.sessions.view(r.path);
     // run again from a session: this run, compared with the one before it
     // (a run that made no request has nothing to compare)
     if (before && !killed && v.summary.requests > 0) {
@@ -141,7 +141,7 @@ async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: s
       return;
     }
     const warnings = v.observations.filter((o) => o.level === "warn").length;
-    const body = [t("run.bandRequests", { n: v.summary.requests }), t("figure.operationsN", { n: v.episodes.length }), ...(warnings ? [t("run.toLook", { n: warnings })] : [])].join(" · ");
+    const body = [t("run.bandRequests", { n: v.summary.requests }), t("figure.operationsN", { n: v.episodesTotal }), ...(warnings ? [t("run.toLook", { n: warnings })] : [])].join(" · ");
     const title = killed ? t("run.toastStopped", { command: programOf(cmd) ?? scrubCommand(cmd) }) : t("run.toastEnded", { command: programOf(cmd) ?? scrubCommand(cmd), code: String(r.exit ?? "?") });
     // read out to a screen reader wherever the focus is
     announce(`${title}. ${body}`);
@@ -286,4 +286,16 @@ export function followNotifications(open: (path: string) => void) {
   effect(() => {
     if (lifecycle() === "active") void Notifications.setBadge(0).catch(() => {});
   });
+}
+
+/** The app is quitting: ends the program being recorded (and what it started)
+ * and a running trial, and has the recording written as a finished session.
+ * Resolves once the file is whole; the system waits 200 ms for it. A trial
+ * cut short keeps nothing, as when it is stopped by hand. */
+export async function endForQuit(): Promise<void> {
+  try {
+    await api.sessions.quit();
+  } catch {
+    // nothing was being recorded, or the bridge has gone first: there is nothing left to end
+  }
 }

@@ -1,7 +1,7 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
 import { effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { count, middle, separators } from "../format";
 import { isAvailable, Menu } from "nsh/desktop";
@@ -32,11 +32,20 @@ export const TYPE = { caption: 11, small: 12, body: 13, heading: 15, title: 20 }
  * text and at a row's end, `default` (what `Icon` draws without a size) in
  * buttons, rows and notices, `large` in an icon tile. */
 export const ICON = { small: 12, default: 16, large: 20 } as const;
-/** Weight that is not a heading's: a status word, a counter, a mark in a
+/** Two weights, and no third: regular, and this one — bold (700), not
+ * semibold. A heading must be heavier than its text in every script: the
+ * CJK faces a system falls back to have a regular and a bold and nothing
+ * between (Noto Sans CJK and WenQuanYi on Linux, Microsoft YaHei on
+ * Windows; PingFang's heaviest stands for it on macOS), and a face with no
+ * bold is emboldened only when bold is asked for — at 600 a Chinese title
+ * was drawn regular beside the bold Latin in it. lint-kit fails
+ * `font-medium` and `font-semibold` anywhere.
+ *
+ * Weight that is not a heading's: a status word, a counter, a mark in a
  * chart. A heading is `Title` or `Heading`; text set heavier in a page is
  * `Strong`, and this class only where a prop takes classes, not children
  * (lint-kit asks each use for an `emphasis:` comment saying why). */
-export const EMPHASIS = "font-semibold";
+export const EMPHASIS = "font-bold";
 
 /** A table row's height for the user's text size: rows grow with their
  * text instead of clipping it; a terminal's rows are one cell. */
@@ -87,8 +96,9 @@ export const CONTROL = {
  * lines up with their titles, a hover and a selection, no stripes. */
 export const TABLE = {
   header: "bg-card border-b border-border",
-  headerCell: "px-2 text-caption font-medium text-muted-foreground",
-  cell: "px-2",
+  headerCell: "px-2 text-caption text-muted-foreground",
+  // (its text in the theme's own colour: a table that draws its cells itself was black on dark)
+  cell: "px-2 text-foreground",
   rowHover: "bg-row-hover",
   rowSelected: "bg-selection",
   fixedEdge: "border-r border-border",
@@ -106,6 +116,60 @@ export const READING = "w-full max-w-[560px]";
  * session's pane: under `short` the shape strip goes and the findings keep
  * to a line or two; from `tall` each finding has its lines in full. */
 export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as const;
+/** The sizes a page may name, each once: the least width a tile reads in
+ * (a session's signal, a comparison's fact with its two lines, a bucket's
+ * figure), how high a dialog's scrolling part grows before it scrolls, and
+ * a terminal's matrix. lint-kit fails a size constant or a literal least
+ * width in a page. */
+export const SIZES = { signalTile: 168, compareTile: 236, bucketTile: 200, capacityTile: 128, dialogScroll: 480, terminalMatrix: 640 } as const;
+/** The widths a page may give a control or a column of text, each named
+ * once (lint-kit fails a `w-N` and an arbitrary `[…]` size anywhere else):
+ * fields by what they hold, columns of a hand-set row by what stands in them. */
+export const WIDTH = {
+  /** a number: a count of days */
+  number: "w-28",
+  /** a short choice: how long a link lasts */
+  choice: "w-36",
+  /** a prefix, a bucket, a key's start */
+  field: "w-56",
+  /** a folder, a filter, a snapshot among snapshots */
+  long: "w-64",
+  /** a run among runs */
+  wide: "w-80",
+  /** a status and its code */
+  status: "w-12",
+  /** a size, at its column's end */
+  size: "w-20",
+  /** a standing's badge */
+  badge: "w-24",
+  /** a count in words ("28 operations") */
+  count: "w-28",
+  /** a date and time */
+  date: "w-36",
+  /** a tree row's chevron */
+  chevron: "w-3.5",
+  /** the title bar: the endpoint switcher, wide and tight; the search field's stand-in; the running program's pill at most */
+  switcher: "w-52",
+  switcherTight: "w-40",
+  search: "w-44",
+  pill: "max-w-[200px]",
+} as const;
+/** Surfaces and regions with a size of their own, each named once: the
+ * palette and its list, a toast, a diff's height, a centered note's and a
+ * centered card's width, a trend's least width, the program's share of a
+ * terminal's split. */
+export const SURFACE = {
+  switcherPopup: "min-w-[260px]",
+  palette: "w-[600px] max-w-[92%]",
+  paletteList: "max-h-[400px]",
+  paletteListTerminal: "max-h-[360px]",
+  toast: "w-[340px]",
+  diff: "h-[440px]",
+  note: "max-w-[520px]",
+  noteCard: "w-full max-w-[640px]",
+  trend: "min-w-[220px]",
+  terminalHalf: "h-[45%]",
+} as const;
 /** A row under the pointer, pressed, and chosen: one look in every list, tree and menu. */
 const ROW_STATE = "hover:bg-row-hover active:bg-muted selected:bg-selection";
 /** The row's look for the controls that take classes, not children: a tree's
@@ -183,10 +247,10 @@ const buttonClass: Record<Variant, string> = {
 };
 
 const buttonText: Record<Variant, string> = {
-  primary: "font-medium text-primary-foreground",
+  primary: "text-primary-foreground",
   outline: "text-foreground",
   ghost: "text-foreground",
-  destructive: "font-medium text-destructive-foreground",
+  destructive: "text-destructive-foreground",
 };
 
 const iconTint: Record<Variant, Tint> = {
@@ -274,7 +338,7 @@ export function Title(props: { children: JSX.Element; page?: boolean; /** at the
     <Text
       testID={props.testID}
       role="header"
-      class={`${terminal() ? "" : props.page ? "text-title" : props.small ? "text-body" : "text-heading"} font-semibold text-foreground ${props.mono ? "font-mono" : ""} ${props.center ? "text-center" : ""} ${props.lines === 1 ? "line-clamp-1" : props.lines === 2 ? "line-clamp-2" : ""} ${props.class ?? ""}`}
+      class={`${terminal() ? "" : props.page ? "text-title" : props.small ? "text-body" : "text-heading"} font-bold text-foreground ${props.mono ? "font-mono" : ""} ${props.center ? "text-center" : ""} ${props.lines === 1 ? "line-clamp-1" : props.lines === 2 ? "line-clamp-2" : ""} ${props.class ?? ""}`}
     >
       {props.children}
     </Text>
@@ -286,7 +350,7 @@ export function Title(props: { children: JSX.Element; page?: boolean; /** at the
  * small over a list (a day of sessions, the sidebar's lists). */
 export function Heading(props: { children: JSX.Element; count?: number; quiet?: boolean; mono?: boolean; class?: string; testID?: string }) {
   return (
-    <Text testID={props.testID} role="header" class={`${props.quiet ? "text-caption text-muted-foreground" : "text-body text-foreground"} font-semibold ${props.mono ? "font-mono" : ""} ${props.class ?? ""}`}>
+    <Text testID={props.testID} role="header" class={`${props.quiet ? "text-caption text-muted-foreground" : "text-body text-foreground"} font-bold ${props.mono ? "font-mono" : ""} ${props.class ?? ""}`}>
       {props.children}
       <If when={props.count !== undefined}>
         <Text class="font-normal text-muted-foreground">{` · ${count(props.count ?? 0)}`}</Text>
@@ -299,7 +363,7 @@ export function Heading(props: { children: JSX.Element; count?: number; quiet?: 
  * a run ended, a counter, a status. In `tone`'s color where it says an outcome. */
 export function Strong(props: { children: JSX.Element; class?: string; testID?: string }) {
   return (
-    <Text testID={props.testID} class={`text-body font-semibold ${props.class ?? "text-foreground"}`}>
+    <Text testID={props.testID} class={`text-body font-bold ${props.class ?? "text-foreground"}`}>
       {props.children}
     </Text>
   );
@@ -322,10 +386,10 @@ const CARD_PAD = { panel: "gap-3 p-4", tile: "gap-1 px-3 py-2", none: "overflow-
 /** The one card: `panel` for a group (the default), `tile` for a figure in a
  * row of them, `none` for a list that draws its own rows. With `onPress` the
  * whole card is a button (hover, focus, a press). Never one inside another. */
-export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD; class?: string; testID?: string; onPress?: () => void; label?: string; selected?: boolean }) {
+export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD; class?: string; testID?: string; onPress?: () => void; label?: string; selected?: boolean; /** its width, once laid out: for what it holds to fit itself to */ onWidth?: (points: number) => void }) {
   const cls = () => `${CARD} ${CARD_PAD[props.pad ?? "panel"]} ${props.class ?? ""}`;
   return (
-    <If when={props.onPress} else={<View testID={props.testID} class={cls()}>{props.children}</View>}>
+    <If when={props.onPress} else={<View testID={props.testID} class={cls()} onLayout={props.onWidth ? ({ bounds }) => props.onWidth?.(Math.round(bounds.size.width)) : undefined}>{props.children}</View>}>
       <BaseButton testID={props.testID} accessibilityLabel={props.label} selected={props.selected} onPress={() => props.onPress?.()} class={`${cls()} items-stretch hover:border-ring/40 hover:bg-muted/40 active:bg-muted selected:border-ring/60 ${FOCUS}`}>
         {props.children}
       </BaseButton>
@@ -362,10 +426,10 @@ export function ListRow(props: { children: JSX.Element; onPress?: () => void; se
 /** The one row that is only read: a line of a card's list under a hairline
  * (`first` has none), its parts on one middle (`top`: at their first line),
  * in one padding (12 by 8) wherever a card lists rows. */
-export function Row(props: { children: JSX.Element; first?: boolean; top?: boolean; wrap?: boolean; /** lines one under another (a job: what it is, then how far it got) */ stack?: boolean; class?: string; testID?: string }) {
+export function Row(props: { children: JSX.Element; first?: boolean; top?: boolean; wrap?: boolean; /** lines one under another (a job: what it is, then how far it got) */ stack?: boolean; /** under its hairline, what pads itself (a list that scrolls): no padding of the row's */ bare?: boolean; class?: string; testID?: string }) {
   const flow = () => (props.stack ? "gap-1" : `flex-row ${props.wrap ? "flex-wrap gap-x-3 gap-y-1" : "gap-3"} ${props.top ? "items-start" : "items-center"}`);
   return (
-    <View testID={props.testID} class={`${flow()} px-3 py-2 ${props.first ? "" : "border-t border-border"} ${props.class ?? ""}`}>
+    <View testID={props.testID} class={`${flow()} ${props.bare ? "" : "px-3 py-2"} ${props.first ? "" : "border-t border-border"} ${props.class ?? ""}`}>
       {props.children}
     </View>
   );
@@ -399,7 +463,8 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
       <If when={props.icon && look() === "full"}>
         <Icon name={props.icon!} size={ICON.small} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
       </If>
-      <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
+      {/* (on a line of its own with its figure, a long name takes a second line before it is cut) */}
+      <Text class={`min-w-0 flex-1 text-caption text-muted-foreground ${look() === "line" ? "line-clamp-2" : "line-clamp-1"}`}>{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
     </>
   );
   const chevron = () => (
@@ -407,7 +472,7 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
       <Icon name="chevron-right" size={ICON.small} />
     </If>
   );
-  const figure = () => <Text class={`text-heading font-semibold tabular-nums line-clamp-1 ${look() === "line" ? "shrink-0" : "min-w-0 flex-1"} ${tint()}`}>{props.value}</Text>;
+  const figure = () => <Text class={`text-heading font-bold tabular-nums line-clamp-1 ${look() === "line" ? "shrink-0" : "min-w-0 flex-1"} ${tint()}`}>{props.value}</Text>;
   return (
     <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress || look() !== "full" ? said() : undefined} onPress={props.onPress}>
       <If
@@ -470,7 +535,7 @@ export function Notice(props: { text: string; title?: string; tone?: "info" | "w
       </If>
       <View selectable class="min-w-0 flex-1 gap-1">
         <If when={props.title}>
-          <Text class="text-body font-medium text-foreground">{props.title}</Text>
+          <Text class="text-body font-bold text-foreground">{props.title}</Text>
         </If>
         <Text class="text-small leading-5 text-foreground">{props.text}</Text>
       </View>
@@ -525,7 +590,12 @@ export function Actions(props: { children: JSX.Element; note?: JSX.Element; clas
 
 /** Back to where this was opened from: one control, a chevron and the place's name. */
 export function Back(props: { label?: string; onPress: () => void; testID?: string }) {
-  return <Button small variant="ghost" icon="chevron-left" label={props.label ?? t("common.back")} onPress={props.onPress} testID={props.testID} class="-ml-2 self-start" />;
+  // (at its line's start: the row places it, the button sets no `self-start` of its own)
+  return (
+    <View class="flex-row">
+      <Button small variant="ghost" icon="chevron-left" label={props.label ?? t("common.back")} onPress={props.onPress} testID={props.testID} class="-ml-2" />
+    </View>
+  );
 }
 
 /** The head of a place or a panel's page: what it is, a line about it, and
@@ -552,22 +622,15 @@ export function PageHeader(props: { title?: string; subtitle?: string; mono?: bo
 }
 
 /** A figure in a line of them, without a card: the number, and under it
- * what it counts. `delta` says how it changed (better in the ok tone, worse
- * in the error's). With `preview`, a press (or Return) opens what the figure
+ * what it counts. With `preview`, a press (or Return) opens what the figure
  * is made of and Escape closes it (Native Shell's Popover): the keyboard,
  * touch and screen readers reach it as the pointer does. The one inline
  * figure; in a row of tiles, `Stat`. */
-export function Figure(props: { value: string; label: string; tone?: "plain" | "ok" | "warn" | "bad" | "quiet"; delta?: string; deltaTone?: "ok" | "bad" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
+export function Figure(props: { value: string; label: string; tone?: "plain" | "ok" | "warn" | "bad" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
   const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
-  const dt = () => ({ ok: "text-status-ok", bad: "text-status-server", quiet: "text-muted-foreground" })[props.deltaTone ?? "quiet"];
   const body = (
     <View class="gap-1">
-      <View class="flex-row items-baseline gap-2">
-        <Text class={`tabular-nums font-semibold ${props.small ? "text-body" : "text-heading"} ${tint()}`}>{props.value}</Text>
-        <If when={props.delta}>
-          <Text class={`tabular-nums text-caption font-medium ${dt()}`}>{props.delta}</Text>
-        </If>
-      </View>
+      <Text class={`tabular-nums font-bold ${props.small ? "text-body" : "text-heading"} ${tint()}`}>{props.value}</Text>
       <Text class="text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
     </View>
   );
@@ -592,58 +655,38 @@ export function Figure(props: { value: string; label: string; tone?: "plain" | "
   );
 }
 
-/** Figures in a line that never wraps mid-row: as many as the line's width
- * holds, in the order given (which is their rank), the rest left out — a
- * line of figures broken in two reads as two. The line measures itself;
- * each figure has `FIGURE_WIDTH` of it. */
-export const FIGURE_WIDTH = 124;
-/** How many figures a line `width` wide holds (all of them before it is measured; two at least). */
-export const figuresFit = (width: number, n: number) => (width > 0 ? Math.min(n, Math.max(2, Math.floor(width / FIGURE_WIDTH))) : n);
-export function Figures(props: { items: { /** whether it has anything to say now (a session's errors: only when there are some) */ show?: () => boolean; figure: JSX.Element }[]; testID?: string; label?: string }) {
-  const width = signal(0);
-  const on = (i: number) => props.items[i].show?.() ?? true;
-  // its place among those shown: the rank the line's room is given by
-  const rank = (i: number) => props.items.slice(0, i).filter((_, k) => on(k)).length;
-  const fit = () => figuresFit(width(), props.items.filter((_, k) => on(k)).length);
-  return (
-    <View testID={props.testID} accessibilityLabel={props.label} class="flex-row items-start" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
-      {props.items.map((f, i) => (
-        <View style={{ width: FIGURE_WIDTH }} class={on(i) && rank(i) < fit() ? "shrink-0 pr-4" : "hidden"}>
-          {f.figure}
-        </View>
-      ))}
-    </View>
-  );
-}
-
 /** How many tiles go in a row `width` wide, of `n` that each need `min`: all
  * abreast where they fit, else rows of equal count (four are 2×2, six 3×3,
- * five 3 and 2), never a row of all but one and never one column: where two
- * do not fit abreast they are two all the same, and `tight`. */
+ * five 3 and 2), never a row of all but one. Where not even two fit abreast
+ * as they read, each takes a line of its own (one column, and `line`: what
+ * it counts at the line's start, its figure at its end) — a tile is never
+ * so narrow that its label or its figure is cut. */
 export function tilesPerRow(width: number, n: number, min: number, gap = 12): number {
   if (width <= 0) return n;
   const fit = Math.max(1, Math.floor((width + gap) / (min + gap)));
   if (fit >= n) return n;
   const half = Math.ceil(n / 2);
-  return fit >= half ? half : Math.min(n, 2);
+  return fit >= half ? half : fit >= 2 ? 2 : 1;
 }
 /** How many tiles a single row `width` wide holds, of `n` that each need `min`: two at least. */
 export const tilesFit = (width: number, n: number, min: number, gap = 12) => (width > 0 ? Math.min(n, Math.max(2, Math.floor((width + gap) / (min + gap)))) : n);
 /** Tiles in rows by that rule: the row measures itself and gives each tile its width.
  * `ranked` keeps them to one row: as many as fit, in the order given (their
- * rank), the last ranked left out — as `Figures` does a line of figures.
+ * rank), the last ranked left out: a row of tiles broken in two reads as two.
  * A tile given as a function is told its `TileLook`: `line` in a pane under
- * `BREAK.short` (`short`: the rows under the tiles need the room), `tight`
- * where it is narrower than `min`, `full` otherwise. */
+ * `BREAK.short` (`short`: the rows under the tiles need the room) and where
+ * the tiles stand one to a row, `tight` where it is narrower than `min`,
+ * `full` otherwise. */
 export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => JSX.Element))[]; min?: number; testID?: string; ranked?: boolean; label?: string; /** the pane's height is under `BREAK.short` */ short?: boolean }) {
   const GAP = 12;
   const width = signal(0);
   const min = () => props.min ?? 144;
   const per = () => (props.ranked ? tilesFit(width(), props.items.length, min(), GAP) : tilesPerRow(width(), props.items.length, min(), GAP));
   const each = () => (width() > 0 ? Math.floor((width() - GAP * (per() - 1)) / per()) : undefined);
-  const look = (): TileLook => (props.short ? "line" : (each() ?? min()) < min() ? "tight" : "full");
+  const column = () => !props.ranked && per() === 1 && props.items.length > 1;
+  const look = (): TileLook => (props.short || column() ? "line" : (each() ?? min()) < min() ? "tight" : "full");
   return (
-    <View testID={props.testID} accessibilityLabel={props.label} class={`flex-row gap-3 ${props.ranked ? "" : "flex-wrap"}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+    <View testID={props.testID} accessibilityLabel={props.label} class={`flex-row ${column() ? "gap-2" : "gap-3"} ${props.ranked ? "" : "flex-wrap"}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
       {props.items.map((tile, i) => (
         <View style={each() ? { width: each() } : undefined} class={props.ranked && i >= per() ? "hidden" : each() ? "" : "min-w-36 flex-1"}>
           {typeof tile === "function" ? tile(look) : tile}
@@ -656,10 +699,11 @@ export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => 
 /** A modal dialog: one surface, one width per size, over the scrim. */
 const MODAL = { narrow: "w-[420px]", default: "w-[560px]", wide: "w-[880px]" } as const;
 
-export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string }) {
+export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string; /** what the dialog asks or says, in a sentence: a screen reader hears it after the dialog's name, as it opens */ describe?: string }) {
   return (
     <Dialog
       open={props.open}
+      accessibilityDescription={props.describe}
       onOpenChange={(e) => !e.open && props.onClose()}
       backdropClass={SCRIM}
       testID={props.testID}
@@ -692,7 +736,7 @@ export function Disclosure(props: { title: string; count?: number; open?: boolea
             <View class="group-aria-expanded:rotate-90 motion-safe:transition-transform motion-safe:duration-150">
               <Icon name="chevron-right" size={ICON.small} tint="muted-foreground" />
             </View>
-            <Text class="text-body font-semibold text-foreground">{props.title}</Text>
+            <Text class="text-body font-bold text-foreground">{props.title}</Text>
             <If when={props.count !== undefined}>
               <Text class="text-body text-muted-foreground">{`· ${count(props.count ?? 0)}`}</Text>
             </If>
@@ -723,8 +767,8 @@ const toneClass: Record<Tone, string> = {
 export function Badge(props: { label: string; tone?: Tone; testID?: string }) {
   const [bg, fg] = toneClass[props.tone ?? "neutral"].split(" ");
   return (
-    <View testID={props.testID} accessibilityLabel={props.label} class={`h-5 justify-center self-start rounded-full px-2 ${bg}`}>
-      <Text class={`text-small font-medium ${fg}`}>{props.label}</Text>
+    <View testID={props.testID} accessibilityLabel={props.label} class={`h-5 shrink-0 flex-row items-center rounded-full px-2 ${bg}`}>
+      <Text class={`text-small ${fg}`}>{props.label}</Text>
     </View>
   );
 }
@@ -777,8 +821,9 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxe
  * `leading` stands before the text inside the field (a prompt, an icon) and
  * `trailing` after it (an `IconButton inField`); `small` is the second
  * control height. A field that matters more is wider and in mono, never higher. */
-export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean }) {
+export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean; /** what is typed is refused: said under the field, drawn on its edge, and told to a screen reader (the field is `invalid`, the reason its description) */ error?: string | null; /** refused without words of its own here (the reason stands beside it, or is the label's): the edge and the state only */ invalid?: boolean }) {
   const boxed = () => !!props.leading || !!props.trailing;
+  const refused = () => !!props.error || !!props.invalid;
   const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} disabled:opacity-50`;
   const input = (cls: string) => (
     <Input
@@ -790,6 +835,8 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       autoCorrect={false}
       readonly={props.readonly}
       disabled={props.disabled}
+      accessibilityState={refused() ? { invalid: true } : undefined}
+      accessibilityDescription={props.error ?? undefined}
       onChange={({ value }) => props.onChange(value)}
       onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
       submitBehavior={props.onSubmit ? "submit" : undefined}
@@ -799,16 +846,32 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
       <If when={!props.bare}>
-        <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
+        <Text class="text-small text-muted-foreground">{props.label}</Text>
       </If>
-      <If when={boxed()} else={input(`${props.small ? CONTROL.small : CONTROL.field} rounded-(--radius) border border-input bg-background px-2 focus-visible:border-ring ${FOCUS} ${text()}`)}>
-        <View class={`${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box}`}>
+      <If when={boxed()} else={input(`${props.small ? CONTROL.small : CONTROL.field} rounded-(--radius) border ${refused() ? "border-fail" : "border-input"} bg-background px-2 focus-visible:border-ring ${FOCUS} ${text()}`)}>
+        <View class={`${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box} ${refused() ? "border-fail" : ""}`}>
           {props.leading}
           {input(`min-w-0 flex-1 ${text()}`)}
           {props.trailing}
         </View>
       </If>
+      {/* why it is refused, under it: the same words a screen reader is given as the field's description */}
+      <If when={props.error}>{(why) => <Text testID={props.testID ? `${props.testID}-error` : undefined} class="text-small text-fail">{why()}</Text>}</If>
     </View>
+  );
+}
+
+/** Where the keyboard rests when no field has it. On GTK a window whose
+ * focused field is unfocused by the program (a dialog opens after another
+ * window closed, a field goes with its page) gives its first text field the
+ * focus: the toolbar's endpoint then stood ringed, its name selected, in
+ * every picture (FINDINGS 22). The first text field is this one: nothing to
+ * see, nothing to read out, nothing to type into. */
+export function FocusRest() {
+  return (
+    <If when={platform.os === "linux" && !terminal()}>
+      <Input testID="focus-rest" value="" readonly accessibilityElementsHidden class="absolute left-0 top-0 h-px w-px opacity-0" />
+    </If>
   );
 }
 
@@ -818,7 +881,7 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
 export function Labeled(props: { label: string; children: JSX.Element; class?: string }) {
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
-      <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
+      <Text class="text-small text-muted-foreground">{props.label}</Text>
       <View class="min-h-8 flex-row items-center">{props.children}</View>
     </View>
   );
@@ -883,7 +946,7 @@ export function NumberField(props: { label: string; value: number | null; onChan
   if (props.bare) return <View class={props.class}>{input}</View>;
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
-      <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
+      <Text class="text-small text-muted-foreground">{props.label}</Text>
       {input}
     </View>
   );
@@ -936,7 +999,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
       <If when={props.label}>
-        <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
+        <Text class="text-small text-muted-foreground">{props.label}</Text>
       </If>
       <Select
         testID={props.testID}
@@ -949,7 +1012,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         offset={4}
         popupClass={POPUP}
         popupStyle={glass}
-        itemClass="rounded-sm px-2 py-1 text-body text-popover-foreground focus:bg-accent selected:font-semibold"
+        itemClass="rounded-sm px-2 py-1 text-body text-popover-foreground focus:bg-accent selected:font-bold"
         trigger={
           <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${FOCUS}`}>
             <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">
@@ -965,23 +1028,27 @@ export function Choice(props: { label?: string; value: string | null; items: { v
   );
 }
 
-/** One of a few views or modes: Tabs, a pill sliding behind the chosen one. */
-export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
+/** One of a few views or modes: Tabs, a pill sliding behind the chosen one.
+ * A view that has nothing to show here keeps its tab, `disabled` (dimmed,
+ * no press; `why` is what a screen reader hears after its name): tabs do
+ * not come and go with what they would show. */
+export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName; disabled?: boolean; why?: string }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
     <Tabs testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`} indicatorClass="inset-y-0.5 rounded-(--radius-sm) bg-background shadow-sm motion-safe:transition-all motion-safe:duration-200">
       <Each of={props.items} key={(i) => i.value}>
         {(item) => (
           <Tab
             testID={props.testID ? `${props.testID}-${item().value}` : undefined}
-            accessibilityLabel={item().title}
+            accessibilityLabel={item().disabled && item().why ? `${item().title}, ${item().why}` : item().title}
             selected={props.value === item().value}
+            disabled={item().disabled}
             onPress={() => props.onChange(item().value)}
-            class={`group ${CONTROL.segment} ${FOCUS}`}
+            class={`group ${CONTROL.segment} disabled:opacity-40 ${FOCUS}`}
           >
             <If when={item().icon}>
               <Icon name={item().icon!} size={12} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
-            <Text class="text-small text-muted-foreground group-selected:font-medium group-selected:text-foreground">{item().title}</Text>
+            <Text class="text-small text-muted-foreground group-selected:text-foreground">{item().title}</Text>
           </Tab>
         )}
       </Each>
@@ -1008,7 +1075,7 @@ export function Options(props: { value: string; items: { value: string; title: s
             <If when={item().icon}>
               <Icon name={item().icon!} size={12} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
-            <Text class="text-small text-muted-foreground group-checked:font-medium group-checked:text-foreground">{item().title}</Text>
+            <Text class="text-small text-muted-foreground group-checked:text-foreground">{item().title}</Text>
           </Radio>
         )}
       </Each>
@@ -1186,28 +1253,52 @@ export function sortRows<T>(rows: readonly T[], sort: DataTableSort | null, valu
 
 /** Rows of text as a table: Native Shell's DataTable (virtual, so every row,
  * sortable by a press on a title: by number where a cell reads as one), each
- * column as wide as what it holds. `max` is how many rows show before it scrolls. */
-export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number }) {
+ * column as wide as what it holds. `max` is how many rows show before it
+ * scrolls (every row is there: none is left out). `end` names the columns of
+ * figures, set at their cell's end under their titles; `fill` the one column
+ * that takes the room the others leave, so the table is as wide as its
+ * place; `cell` draws a cell its own way (a status with its dot), and
+ * returns nothing for the cells it leaves as text. */
+export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number; end?: number[]; fill?: number; cell?: (c: { column: number; text: string; /** the row's cells, as text */ cells: string[] }) => JSX.Element | undefined; testID?: string }) {
   const sort = signal<DataTableSort | null>(null);
-  // the widths measured by Native Shell once the rows are in (CJK, mono and proportional alike)
+  const width = signal(0);
+  // the widths measured by Native Shell once the rows are in (CJK, mono and proportional alike);
+  // a table with a column that fills keeps its own widths, which add up to its place
   let table: DataTableRef | undefined;
   effect(() => {
     props.rows;
-    if (terminal() || !table) return;
+    if (terminal() || !table || props.fill !== undefined) return;
     const t = table;
     setTimeout(() => props.columns.forEach((_, c) => void t.fitColumn(`c${c}`).catch(() => {})), 0);
   });
+  // a character's width, about: CJK is twice a Latin letter
+  const wide = (s: string) => [...s].reduce((n, ch) => n + (ch.charCodeAt(0) > 0x2e7f ? 2 : 1), 0);
   const per = () => (props.mono ? 7.4 : 6.6);
-  const columns = () =>
-    props.columns.map((title, c) => {
-      const longest = Math.max(title.length, ...props.rows.slice(0, 400).map((r) => (r[c] ?? "").length));
-      return { key: `c${c}`, title, width: Math.round(Math.min(360, Math.max(56, longest * per() + 20))), sortable: true };
+  const columns = () => {
+    const own = props.columns.map((title, c) => {
+      // a title has its sort mark beside it; a cell its inset
+      const longest = Math.max(wide(title) * per() + 44, ...props.rows.slice(0, 400).map((r) => wide(r[c] ?? "") * per() + 24));
+      return Math.round(Math.min(360, Math.max(56, longest)));
     });
-  const data = () => sortRows(props.rows, sort(), (r, key) => sortValue(r[Number(key.slice(1))] ?? "")).map((r) => Object.fromEntries(r.map((cell, c) => [`c${c}`, cell])));
+    const rest = own.reduce((n, w, c) => (c === props.fill ? n : n + w), 0);
+    return props.columns.map((title, c) => ({ key: `c${c}`, title, width: c === props.fill && width() > 0 ? Math.max(own[c], width() - rest - 2) : own[c], sortable: true, align: props.end?.includes(c) ? ("end" as const) : undefined }));
+  };
+  const sorted = () => sortRows(props.rows, sort(), (r, key) => sortValue(r[Number(key.slice(1))] ?? ""));
+  const data = () => sorted().map((r) => Object.fromEntries(r.map((cell, c) => [`c${c}`, cell])));
   const shown = () => Math.min(props.rows.length, props.max ?? 12);
+  const custom = () => !terminal() && (!!props.cell || !!props.end?.length);
+  const cell = (c: { row: number; key: string; text: string }) => {
+    const column = Number(c.key.slice(1));
+    const own = props.cell?.({ column, text: c.text, cells: sorted()[c.row] ?? [] });
+    const end = props.end?.includes(column);
+    const body = own ?? <Text class={`text-small text-foreground line-clamp-1 ${end ? "tabular-nums" : ""} ${props.mono ? "font-mono" : ""}`}>{c.text}</Text>;
+    // figures line up at their cell's end, under their titles
+    return end ? <View class="flex-1 items-end justify-center">{body}</View> : body;
+  };
   return (
     <DataTable
       ref={(r) => (table = r)}
+      testID={props.testID}
       columns={columns()}
       data={data()}
       sort={sort()}
@@ -1216,7 +1307,9 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
       fontFamily={props.mono ? token("font-mono") : undefined}
       rowHeight={rowHeight(ROW.dense)}
       classes={terminal() ? undefined : TABLE}
+      renderCell={custom() ? cell : undefined}
       class={CARD}
+      onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}
       style={terminal() ? undefined : { height: (shown() + 1) * (rowHeight(ROW.dense) ?? 26) + 2 }}
     />
   );
@@ -1273,6 +1366,106 @@ export function More(props: { actions: () => { label: string; icon?: IconName; r
       />
     </If>
   );
+}
+
+/** Commands in one row that never wraps: in rank order, as many as `room`
+ * (points) holds, each a small outline button; the rest behind `⋯`, never on
+ * a second line. Each button measures itself while it shows, so what does
+ * not fit is known without a threshold; before anything is measured all show. */
+export function ActionRow(props: { room: number; actions: () => { id: string; label: string; icon?: IconName; run: () => void; disabled?: boolean; tip?: string }[]; testID?: string }) {
+  const GAP = 8;
+  const widths = signal<Record<string, number>>({});
+  const shown = () => {
+    const list = props.actions();
+    const w = widths();
+    // a terminal lists them all; so does a row not measured yet
+    if (terminal() || list.some((a) => w[a.id] === undefined)) return list.length;
+    if (list.reduce((n, a) => n + w[a.id] + GAP, 0) <= props.room) return list.length;
+    // not all: room is kept for the `⋯` (an icon button and its gap)
+    let used = 28 + GAP;
+    let k = 0;
+    for (const a of list) {
+      if (used + w[a.id] + GAP > props.room) break;
+      used += w[a.id] + GAP;
+      k += 1;
+    }
+    return k;
+  };
+  return (
+    <View testID={props.testID} class="shrink-0 flex-row items-center gap-2">
+      <Each of={props.actions()} key={(a) => a.id}>
+        {(a, i) => (
+          <View
+            class={i() < shown() ? "" : "hidden"}
+            onLayout={({ bounds }) => {
+              const w = Math.round(bounds.size.width);
+              if (w > 0 && widths()[a().id] !== w) widths.set({ ...widths(), [a().id]: w });
+            }}
+          >
+            <Button small variant="outline" icon={a().icon} label={a().label} tip={a().tip} onPress={a().run} disabled={a().disabled} testID={a().id} />
+          </View>
+        )}
+      </Each>
+      <If when={shown() < props.actions().length}>
+        <More testID={props.testID ? `${props.testID}-more` : undefined} actions={() => props.actions().slice(shown())} />
+      </If>
+    </View>
+  );
+}
+
+/** A press area around what is not a button's label (a verdict's badge in a
+ * cell): hover, press and focus as every control, the place it stands in
+ * decided where it is placed. */
+export function Pressable(props: { label: string; onPress: () => void; children: JSX.Element; testID?: string }) {
+  return (
+    <BaseButton testID={props.testID} accessibilityLabel={props.label} onPress={props.onPress} class={`rounded-(--radius-sm) px-1 py-1 hover:bg-muted active:bg-muted ${FOCUS}`}>
+      {props.children}
+    </BaseButton>
+  );
+}
+
+/** A part of a path, as a link to it (Native Shell's Link: a screen reader
+ * hears a link, and which one is the current place). */
+export function Crumb(props: { href: string; onOpen: () => void; current?: boolean; label: string; children: JSX.Element; testID?: string }) {
+  return (
+    <Link testID={props.testID} href={props.href} openWith="app" onOpen={props.onOpen} current={props.current} accessibilityLabel={props.label} class={`flex-row items-center gap-1 rounded-(--radius-sm) px-1 py-1 hover:bg-muted ${FOCUS}`}>
+      {props.children}
+    </Link>
+  );
+}
+
+/** A value along a range, dragged or stepped with the arrows (Native Shell's Slider). */
+export function Scrubber(props: { label: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void; testID?: string }) {
+  return (
+    <Slider
+      testID={props.testID}
+      accessibilityLabel={props.label}
+      value={props.value}
+      min={props.min}
+      max={props.max}
+      step={props.step}
+      onChange={({ value }) => props.onChange(typeof value === "number" ? value : value[0])}
+      class="h-6 justify-center"
+      trackClass="h-1.5 rounded-full bg-muted"
+      indicatorClass="h-1.5 rounded-full bg-primary"
+      thumbClass="size-4 rounded-full border border-border bg-background shadow"
+    />
+  );
+}
+
+/** A short question before something goes for good, in the system's own
+ * alert: Cancel, and the commit in the destructive role. True when it was
+ * confirmed. */
+export async function confirmAlert(ask: { title: string; text: string; commit: string }): Promise<boolean> {
+  const { action } = await AlertDialog.show({
+    title: ask.title,
+    description: ask.text,
+    actions: [
+      { id: "cancel", label: t("common.cancel"), role: "cancel" },
+      { id: "commit", label: ask.commit, role: "destructive" },
+    ],
+  });
+  return action === "commit";
 }
 
 /** A right press (or Shift+F10) on `children` offers `actions` in Native

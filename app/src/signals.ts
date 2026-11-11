@@ -4,7 +4,7 @@
 // (crates/proxy/src/signals.rs); a page shared before 15.0 has none, and
 // its figures are read from the profile's slices instead.
 
-import { bytes, change, count, duration, percent, rate } from "./format";
+import { bytes, count, duration, percent, rate, transfer } from "./format";
 import { type Key, t } from "./i18n";
 import type { Profile, SessionSummary, SessionView, Signals } from "./types";
 
@@ -19,7 +19,23 @@ export interface SignalTile {
   tone: "plain" | "bad" | "quiet";
   /** Its line over the session, slice by slice (empty: nothing to draw). */
   series: number[];
+  /** What the line is of: counts as bars, a level as steps, a measure as a line. */
+  kind: "bars" | "steps" | "line";
 }
+
+/** Under this many requests a percentile is of too few to be told from its
+ * neighbours: said beside it wherever one is shown. */
+export const FEW = 20;
+
+/** A run too short to have a pace: under a second (Rust's own flag where
+ * the signals carry it), or of fewer than `FEW` requests. Its header says
+ * totals ("9 requests", "3.0 MiB"), never rates. */
+export function brief(s: Signals): boolean {
+  return !!s.short || (s.timed && (s.wallMs < 1000 || s.rate.requests < FEW));
+}
+/** A run of a handful of requests: no shape over its time to draw (a line of
+ * stray ticks), and counts where a run has shares ("2 of 9"). */
+export const handful = (s: Signals): boolean => s.rate.requests < FEW;
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
@@ -101,49 +117,95 @@ export function signalTiles(s: Signals): SignalTile[] {
   const retries = s.errors.retriesTotal > 0 ? [t("signal.retries", { n: count(s.errors.retriesTotal) })] : [];
   const wrong = [...failures(s), ...retries];
   const both = s.bytes.upBytes + s.bytes.downBytes;
+  // a run of a moment says totals; a handful of requests has no line over its time
+  const few = brief(s);
+  const some = handful(s);
+  const over = (series: number[]) => (s.timed && !some ? series : []);
+  // a percentile of a handful of requests is one of them: said
+  const tails = s.latency.p95Ms == null || s.latency.p99Ms == null ? "" : t(s.rate.requests < FEW ? "signal.tailsFew" : "signal.tails", { p95: duration(s.latency.p95Ms), p99: duration(s.latency.p99Ms), n: count(s.rate.requests) });
   return [
     {
       id: "rate",
-      label: t("signal.rate"),
-      value: s.rate.value == null ? none : t("signal.perSecond", { n: rate(s.rate.value) }),
-      detail: s.timed ? t("signal.requestsIn", { n: count(s.rate.requests), t: duration(s.wallMs) }) : t("run.bandRequests", { n: s.rate.requests }),
-      tone: s.rate.value == null ? "quiet" : "plain",
-      series: s.timed ? s.rate.series : [],
+      label: few ? t("signal.requests") : t("signal.rate"),
+      // ("9 requests"; with its line beside it the figure alone, under "Requests": nothing in a tile is cut)
+      value: few ? (some || !s.timed ? t("run.bandRequests", { n: s.rate.requests }) : count(s.rate.requests)) : s.rate.value == null ? none : t("signal.perSecond", { n: rate(s.rate.value) }),
+      detail: few ? t("signal.inTime", { t: duration(s.wallMs) }) : s.timed ? t("signal.requestsIn", { n: count(s.rate.requests), t: duration(s.wallMs) }) : t("run.bandRequests", { n: s.rate.requests }),
+      tone: !few && s.rate.value == null ? "quiet" : "plain",
+      series: over(s.rate.series),
+      kind: "bars",
     },
     {
       id: "errors",
       label: t("signal.errors"),
-      value: s.errors.value == null ? "—" : percent(s.errors.value),
+      // of a handful, how many; of a run, the share
+      value: some ? t("signal.failedOf", { n: count(s.errors.count), of: count(s.rate.requests) }) : s.errors.value == null ? "—" : percent(s.errors.value),
       detail: wrong.length ? wrong.join(" · ") : t("signal.noErrors"),
       tone: s.errors.count > 0 ? "bad" : "plain",
-      series: s.errors.series,
+      series: some ? [] : s.errors.series,
+      kind: "bars",
     },
     {
       id: "latency",
       label: t("signal.latency"),
       value: s.latency.p50Ms == null ? none : duration(s.latency.p50Ms),
-      detail: s.latency.p95Ms == null || s.latency.p99Ms == null ? "" : t("signal.tails", { p95: duration(s.latency.p95Ms), p99: duration(s.latency.p99Ms) }),
+      detail: tails,
       tone: s.latency.p50Ms == null ? "quiet" : "plain",
-      series: s.timed ? s.latency.series : [],
+      series: over(s.latency.series),
+      kind: "line",
     },
     {
       id: "bytes",
       label: t("signal.bytes"),
-      // a log without times still knows how much moved: the amount, not a pace
-      value: s.bytes.value == null ? bytes(both) : bytesRate(s.bytes.value),
-      detail: s.bytes.upPerSec == null || s.bytes.downPerSec == null ? `↑ ${bytes(s.bytes.upBytes)} ↓ ${bytes(s.bytes.downBytes)}` : `↑ ${bytesRate(s.bytes.upPerSec)} ↓ ${bytesRate(s.bytes.downPerSec)}`,
+      // a log without times still knows how much moved, and a run of a moment has no pace: the amount
+      value: few || s.bytes.value == null ? bytes(both) : bytesRate(s.bytes.value),
+      detail: few || s.bytes.upPerSec == null || s.bytes.downPerSec == null ? transfer(s.bytes.upBytes, s.bytes.downBytes) : transfer(s.bytes.upPerSec, s.bytes.downPerSec, bytesRate),
       tone: "plain",
-      series: s.timed ? s.bytes.series : [],
+      series: over(s.bytes.series),
+      kind: "bars",
     },
     {
       id: "inFlight",
       label: t("signal.inFlight"),
       value: s.inFlight.value == null ? none : count(s.inFlight.peak),
-      detail: s.inFlight.value == null ? "" : t("signal.peakAt", { t: duration(s.inFlight.peakAtMs) }),
+      detail: s.inFlight.value == null ? "" : some ? t("signal.ofRequests", { n: s.rate.requests }) : t("signal.peakAt", { t: duration(s.inFlight.peakAtMs) }),
       tone: s.inFlight.value == null ? "quiet" : "plain",
-      series: s.timed ? s.inFlight.series : [],
+      series: over(s.inFlight.series),
+      kind: "steps",
     },
   ];
+}
+
+/** One operation of a run: how many, what share failed, how long. */
+export interface OpStats {
+  operation: string;
+  count: number;
+  errorShare: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  p99Ms: number | null;
+  /** Under `FEW` requests: its percentiles are of too few to be told apart. */
+  few: boolean;
+}
+
+/** A run by operation: Rust's own table (`summary.operations`), or — a share
+ * made before 16.0 — what its profile's kinds hold of it (no p99, and a
+ * lookup that found nothing counted with its operation). */
+export function operationStats(v: Pick<SessionView, "summary" | "profile">): OpStats[] {
+  const own = v.summary.operations;
+  if (own?.length) return own.map((o) => ({ operation: o.operation, count: o.count, errorShare: o.errorShare, p50Ms: o.p50Ms, p95Ms: o.p95Ms, p99Ms: o.p99Ms, few: !!o.few || o.count < FEW }));
+  const timed = v.profile.timed !== false;
+  const by = new Map<string, OpStats & { top: number }>();
+  for (const g of v.profile.groups) {
+    const x = by.get(g.operation);
+    if (!x) by.set(g.operation, { operation: g.operation, count: g.requests, errorShare: g.errors, p50Ms: timed ? g.p50Ms : null, p95Ms: timed ? g.p95Ms : null, p99Ms: null, few: false, top: g.requests });
+    else {
+      // the percentiles of the larger of its two kinds: the profile holds no others
+      if (g.requests > x.top) (x.top = g.requests), (x.p50Ms = timed ? g.p50Ms : null), (x.p95Ms = timed ? g.p95Ms : null);
+      x.count += g.requests;
+      x.errorShare += g.errors;
+    }
+  }
+  return [...by.values()].map(({ top: _, ...o }) => ({ ...o, errorShare: o.count ? o.errorShare / o.count : 0, few: o.count < FEW })).sort((a, b) => b.count - a.count);
 }
 
 /** A size bucket by its upper bound, short enough for an axis: "empty", "≤ 1.0 KiB". */
@@ -161,18 +223,4 @@ export function sizeRange(leBytes: number): string {
 /** The share of S3's limit for a prefix a session's busiest second reached: the nearer of reads and writes. */
 export function nearestLimit(x: { readShare: number; writeShare: number }): { share: number; kind: "reads" | "writes" } {
   return x.writeShare > x.readShare ? { share: x.writeShare, kind: "writes" } : { share: x.readShare, kind: "reads" };
-}
-
-/** Two runs by their four signals, before and after: each tile says both
- * figures and by how much the second differs, where both can be said. */
-export function signalChanges(before: Signals, after: Signals): SignalTile[] {
-  const a = signalTiles(before);
-  const b = signalTiles(after);
-  const figure = (s: Signals, id: SignalId) => ({ rate: s.rate.value, errors: s.errors.value, latency: s.latency.p50Ms, bytes: s.bytes.value, inFlight: s.inFlight.value })[id];
-  return b.slice(0, 4).map((x, i) => {
-    const [u, v] = [figure(before, x.id), figure(after, x.id)];
-    // more failures or a longer wait is worse; the rest only differs
-    const worse = (x.id === "errors" || x.id === "latency") && u != null && v != null && v > u;
-    return { ...x, value: `${a[i].value} → ${x.value}`, detail: u == null || v == null || u === v ? x.detail : `${change(u, v)} · ${x.detail}`, tone: worse ? "bad" : "plain" };
-  });
 }

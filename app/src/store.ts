@@ -24,8 +24,6 @@ export type Section = "run" | "sessions" | StoreTab | SettingsTab | ActivityTab;
 
 /** Every place, as a terminal lists them. */
 export const AREAS: Area[] = ["run", "sessions", "store", "activity", "settings"];
-/** The places a window's sidebar holds. */
-export const PLACES: Area[] = ["run", "sessions", "store"];
 export const STORE_TABS: StoreTab[] = ["browse", "multipart", "versions", "capacity", "layouts", "probes"];
 export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints"];
 export const ACTIVITY_TABS: ActivityTab[] = ["requests", "jobs", "audit"];
@@ -82,6 +80,8 @@ export const endpointsMode = signal<"list" | "add" | "import">("list");
 /** The main window's width, as its shell measures it (windowSize() follows
  * whichever window has the focus). */
 export const shellWidth = signal(1280);
+/** The window's height, as its shell is laid out: what a surface over it may take. */
+export const shellHeight = signal(820);
 /** What the sidebar lists under the places: the current place's own list
  * (its sessions, its buckets, the commands run before), given by the place
  * while it is on screen. One left column for the whole window. */
@@ -291,8 +291,27 @@ export function openLink(url: string) {
  * read. Anyone can start the app with any arguments: only what a drop would
  * open is opened. */
 export function openLaunch(args: string[], cwd: string) {
-  const files = launchFiles(args, cwd);
+  const files = once(launchFiles(args, cwd));
   if (files.length) openPaths(files);
+}
+
+/** The files the system opened the app with (a double click on a `.sonde`,
+ * Open With, a drop on the app's icon; those that launched it included):
+ * opened as a drop on the window is. */
+export function openSystemFiles(paths: string[]) {
+  const files = once(paths.filter(Boolean));
+  if (files.length) openPaths(files);
+}
+
+/** Of `paths`, those not handed over a moment ago. Where the app runs once,
+ * a second launch with a file says so twice (its arguments, and the file
+ * the system opened it with): the file opens once, not as two sessions. */
+const handed = new Map<string, number>();
+export function once(paths: string[], now = Date.now(), within = 2000): string[] {
+  for (const [p, at] of handed) if (now - at > within) handed.delete(p);
+  const fresh = [...new Set(paths)].filter((p) => !handed.has(p));
+  for (const p of fresh) handed.set(p, now);
+  return fresh;
 }
 
 /** The files a launch names: its arguments that are no option and no link, a

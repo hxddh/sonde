@@ -2,14 +2,14 @@
 // markers, incomplete uploads, by storage class, prefix and size.
 
 import { cleanup, effect, Scroll, signal, Text, untracked, View } from "nsh";
-import { bytes, count, date, money } from "../format";
+import { bytes, count, day, money } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, notify, prefix, report } from "../store";
 import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
-import { Await, Bar, Button, Card, Empty, Field, Heading, More, Stat, SwitchRow, terminal, Tiles, ToolBar } from "../ui/kit";
+import { Await, Bar, Button, Card, Empty, Field, Heading, More, Stat, SwitchRow, terminal, Tiles, ToolBar, SIZES, WIDTH } from "../ui/kit";
 import { Chart, HALF } from "../ui/plots";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, PrefixMap, StackBar } from "../ui/charts";
@@ -108,7 +108,7 @@ export function Capacity() {
         <If when={terminal()}>
           <EndpointPicker />
           <BucketPicker />
-          <Field bare class="w-56" label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => (pfx.set(v), load())} mono />
+          <Field bare class={WIDTH.field} label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => (pfx.set(v), load())} mono />
         </If>
         {/* what the next scan counts: before the command, so Cancel coming and going moves nothing */}
         <SwitchRow label={t("du.includeMultipart")} checked={mpu()} onChange={(v) => mpu.set(v)} />
@@ -125,9 +125,9 @@ export function Capacity() {
             <View class="gap-4" testID="du-report">
               {/* the facts as figures: how big, how many of what, what it costs */}
               <Tiles
-                min={128}
+                min={SIZES.capacityTile}
                 items={[
-                  <Stat label={t("overview.size")} value={bytes(r().totalBytes)} detail={`${date(r().scannedAt)} · ${r().source}${r().versionsUnknown ? ` · ${t("du.versionsNotCounted")}` : ""}`} testID="du-size" />,
+                  <Stat label={t("overview.size")} value={bytes(r().totalBytes)} detail={`${day(r().scannedAt)} · ${r().source}${r().versionsUnknown ? ` · ${t("du.versionsNotCounted")}` : ""}`} testID="du-size" />,
                   <Stat label={t("nav.objects")} value={count(r().current.objects)} detail={`${t("du.current")} · ${bytes(r().current.bytes)}`} />,
                   <Stat label={t("browse.versions")} value={r().versionsUnknown ? "—" : count(r().noncurrent.objects)} detail={r().versionsUnknown ? t("du.versionsUnknown") : `${t("du.noncurrent")} · ${bytes(r().noncurrent.bytes)} · ${t("du.markers")}: ${count(r().deleteMarkers)}`} />,
                   <Stat label={t("du.multipart")} value={count(r().multipart.objects)} detail={bytes(r().multipart.bytes)} />,
@@ -150,7 +150,7 @@ export function Capacity() {
                 <Heading>{t("du.why")}</Heading>
                 <Each of={r().findings}>{(f, i) => <Text class="text-body text-foreground">{`• ${core(r().findingsText?.[i()], f())}`}</Text>}</Each>
               </Card>
-              <View class={terminal() ? "gap-4" : "flex-row flex-wrap gap-4"}>
+              <View class="flex-row flex-wrap gap-4 terminal:flex-col terminal:flex-nowrap">
                 <Chart class={HALF} title={t("du.byClass")} empty={r().byClass.length === 0 && t("common.empty")}>
                   <BarChart testID="du-classes" items={r().byClass.map((c) => ({ label: c.name, value: c.current.bytes + c.noncurrent.bytes }))} />
                 </Chart>

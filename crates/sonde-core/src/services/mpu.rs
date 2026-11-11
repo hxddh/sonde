@@ -359,7 +359,13 @@ pub fn plan_abort(s: &Sonde, endpoint: &str, bucket: &str, uploads: &[UploadRow]
                 ph!(
                     "plan.item.upload",
                     parts = u.parts,
-                    started = u.initiated.clone().unwrap_or_default()
+                    s = if u.parts == 1 { "" } else { "s" },
+                    // its day: the time of day says nothing of what is aborted
+                    started = u
+                        .initiated
+                        .as_deref()
+                        .map(|t| t.get(..10).unwrap_or(t))
+                        .unwrap_or_default()
                 ),
             )
         })

@@ -26,6 +26,7 @@ pub mod share;
 pub mod signals;
 pub mod summary;
 pub mod trial;
+pub mod view;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -658,6 +659,8 @@ fn constant_eq(a: &[u8], b: &[u8]) -> bool {
 const DROP_REQUEST: &[&str] = &[
     // where in the program a request came from: sonde's to read, not the store's
     callers::CALLER_HEADER,
+    // sonde's own name for a control body: one a program sends is not it
+    fault::BODY_HASH_HEADER,
     "host",
     "authorization",
     "x-amz-date",
@@ -740,6 +743,13 @@ pub fn empty_first_segment(host: &str, path: &str) -> bool {
         .strip_suffix(".localhost")
         .is_some_and(|b| !b.is_empty());
     !virtual_hosted && path.starts_with("//")
+}
+
+/// Whether a request's place has a `.` or `..` segment, in the bucket's
+/// position or in the key: what the proxy would record is not what the
+/// store would be asked for.
+pub fn dot_segment(bucket: Option<&str>, key: Option<&str>) -> bool {
+    bucket.is_some_and(|b| b == "." || b == "..") || key.is_some_and(s3raw::has_dot_segment)
 }
 
 /// Query pairs, decoded (`+` stays a plus: S3 clients encode spaces as %20).
@@ -849,7 +859,12 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         retries: 0,
         request_id: None,
         host_id: None,
-        request_headers: app_headers.iter().map(|(k, v)| Header::new(k, v)).collect(),
+        request_headers: app_headers
+            .iter()
+            // (a control body's hash is sonde's to say: see below)
+            .filter(|(k, _)| !k.eq_ignore_ascii_case(fault::BODY_HASH_HEADER))
+            .map(|(k, v)| Header::new(k, v))
+            .collect(),
         response_headers: Vec::new(),
         request_bytes: None,
         response_bytes: None,
@@ -895,10 +910,11 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         return Ok(xml_error(400, "InvalidURI", msg));
     }
 
-    // a `.` or `..` segment never reaches the store as the key it names: the
-    // HTTP library folds it, and `a/../b` would be signed and sent as `b`
-    if key.as_deref().is_some_and(s3raw::has_dot_segment) {
-        let msg = "sonde refused the request: its key has a . or .. segment, which would reach the store as another key";
+    // a `.` or `..` segment never reaches the store as the place it names:
+    // the HTTP library folds it, and `a/../b` would be signed and sent as
+    // `b`, `/../demo` as a listing of `demo`. The bucket's place as the key's.
+    if dot_segment(bucket.as_deref(), key.as_deref()) {
+        let msg = "sonde refused the request: its path has a . or .. segment, which would reach the store as another place";
         record.status = Some(400);
         record.error_body = Some(msg.into());
         record
@@ -992,17 +1008,30 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     // a trial's faults: answered here, delayed, or sent on with the answer
     // to be lost. The record says so, so that no reader blames the store.
-    let mut lose_answer = false;
+    let mut after = After::Forward;
     let fault = shared.cfg.faults.as_ref().and_then(|f| {
-        f.decide(
-            &method,
-            &operation,
-            bucket.as_deref(),
-            key.as_deref(),
-            &query,
-            body_hash.as_deref(),
-        )
+        f.decide(&fault::Asked {
+            method: &method,
+            op: &operation,
+            bucket: bucket.as_deref(),
+            key: key.as_deref(),
+            query: &query,
+            body_hash: body_hash.as_deref(),
+            headers: &app_headers,
+        })
         .map(|v| (f.name.clone(), v))
+    });
+    // a write that loses its race without being sent on is answered as any
+    // error in the store's place is
+    let fault = fault.map(|(name, v)| match v {
+        fault::Verdict::LoseRace { forward: false, .. } => (
+            name,
+            fault::Verdict::Answer {
+                status: 412,
+                code: "PreconditionFailed".into(),
+            },
+        ),
+        v => (name, v),
     });
     match fault {
         Some((name, fault::Verdict::Answer { status, code })) => {
@@ -1027,7 +1056,15 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
         Some((name, fault::Verdict::LoseAnswer)) => {
             record.injected = Some(name);
-            lose_answer = true;
+            after = After::LoseAnswer;
+        }
+        Some((name, fault::Verdict::LoseRace { met, .. })) => {
+            record.injected = Some(name);
+            after = After::LoseRace(met);
+        }
+        Some((name, fault::Verdict::CutBody { met })) => {
+            record.injected = Some(name);
+            after = After::CutBody(met);
         }
         None => {}
     }
@@ -1216,27 +1253,70 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.status = Some(status.as_u16());
     s3raw::fill_ids(&mut record, &headers);
     record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
-    if lose_answer {
+    // a fault that needed the store's answer first, and cannot be done to
+    // this one, was no fault: the answer goes through as the store's own
+    let mut cut: Option<(u64, u64)> = None;
+    let faults = shared.cfg.faults.as_deref();
+    match &after {
+        After::LoseRace(met) if !status.is_success() => {
+            // the store refused the write itself: its answer, not sonde's
+            if let Some(f) = faults {
+                f.unmeet(met);
+            }
+            record.injected = None;
+            after = After::Forward;
+        }
+        After::CutBody(met) => {
+            let whole = resp.content_length();
+            match whole.and_then(fault::cut_at) {
+                Some(at) if status.is_success() => cut = whole.map(|n| (at, n)),
+                _ => {
+                    if let Some(f) = faults {
+                        f.unmeet(met);
+                    }
+                    record.injected = None;
+                    after = After::Forward;
+                }
+            }
+        }
+        _ => {}
+    }
+    if matches!(after, After::LoseAnswer | After::LoseRace(_)) {
         // the store acted; the program is told it failed
         // (its body read and let go piece by piece: a lost GET of a large
         // object is not held in memory to be thrown away)
         drain(resp, idle).await;
         let name = record.injected.clone().unwrap_or_default();
-        let msg = format!(
-            "sonde lost the store's answer ({}) on purpose (scenario {name})",
-            status.as_u16()
-        );
+        let (told, code, msg) = if after == After::LoseAnswer {
+            (
+                500,
+                "InternalError",
+                format!(
+                    "sonde lost the store's answer ({}) on purpose (scenario {name})",
+                    status.as_u16()
+                ),
+            )
+        } else {
+            (
+                412,
+                "PreconditionFailed",
+                format!(
+                    "sonde answered that the write lost its race, on purpose (scenario {name}); the store made it ({})",
+                    status.as_u16()
+                ),
+            )
+        };
         record
             .response_headers
             .push(Header::new("x-sonde-store-status", status.as_str()));
         record
             .response_headers
             .push(Header::new("x-sonde-fault", &name));
-        record.status = Some(500);
-        record.error_body = Some(format!("InternalError: {msg}"));
+        record.status = Some(told);
+        record.error_body = Some(format!("{code}: {msg}"));
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
         shared.log.push(record);
-        return Ok(fault_error(500, "InternalError", &msg, &name));
+        return Ok(fault_error(told, code, &msg, &name));
     }
     let mut builder = Response::builder().status(status);
     for (k, v) in resp.headers() {
@@ -1244,6 +1324,23 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             builder = builder.header(k, v);
         }
     }
+    // a body to be cut: the status and the whole length go out as the
+    // store gave them, and the record says where the body will stop
+    let cutting = cut.map(|(at, whole)| {
+        let name = record.injected.clone().unwrap_or_default();
+        record
+            .response_headers
+            .push(Header::new("x-sonde-store-status", status.as_str()));
+        record
+            .response_headers
+            .push(Header::new("x-sonde-fault", &name));
+        record
+            .response_headers
+            .push(Header::new(CUT_HEADER, at.to_string()));
+        builder = std::mem::replace(&mut builder, Response::builder())
+            .header("x-sonde-fault", name.as_str());
+        Cutting { at, whole, name }
+    });
 
     if status.as_u16() >= 400 && method != "HEAD" {
         let body = tokio::time::timeout(idle, resp.bytes())
@@ -1270,8 +1367,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         fetched,
         read: 0,
         cut: None,
+        cutting: cutting.clone(),
     };
-    let stream = quiet_limited(resp.bytes_stream(), idle)
+    let body = match cutting {
+        Some(c) => cut_short(quiet_limited(resp.bytes_stream(), idle), c.at).left_stream(),
+        None => quiet_limited(resp.bytes_stream(), idle).right_stream(),
+    };
+    let stream = body
         // the closure owns the whole of `pending` (a method, not a field): it
         // goes, and the record is logged, when the body does
         .map(move |piece| match piece {
@@ -1289,6 +1391,67 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     Ok(builder
         .body(BodyExt::boxed(StreamBody::new(stream)))
         .expect("valid response"))
+}
+
+/// What is done with a request once it has been sent on.
+#[derive(Debug, PartialEq)]
+enum After {
+    /// The store's answer goes back as it is.
+    Forward,
+    /// The answer is replaced by a 500.
+    LoseAnswer,
+    /// A write the store made is answered 412.
+    LoseRace(fault::Met),
+    /// The answer's body stops part way.
+    CutBody(fault::Met),
+}
+
+/// The response header a record keeps the place of an injected cut in: the
+/// bytes of the body that went out.
+pub const CUT_HEADER: &str = "x-sonde-cut-at";
+
+/// How long a cut body's last bytes are given to leave before the
+/// connection is dropped.
+const CUT_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// A body sonde stops on purpose: after `at` of `whole` bytes.
+#[derive(Clone)]
+struct Cutting {
+    at: u64,
+    whole: u64,
+    name: String,
+}
+
+/// `body` up to `at` bytes, then an error: the connection drops with the
+/// rest unsent, as a store's does when it dies in the middle of an answer.
+fn cut_short(
+    body: impl futures::Stream<Item = std::io::Result<Bytes>> + Send + 'static,
+    at: u64,
+) -> impl futures::Stream<Item = std::io::Result<Bytes>> + Send + 'static {
+    futures::stream::unfold(
+        (Box::pin(body), 0u64, false),
+        move |(mut body, sent, done)| async move {
+            if done {
+                return None;
+            }
+            let stop = || std::io::Error::other("cut by sonde");
+            if sent >= at {
+                // what went out is on its way before the connection drops:
+                // an error at once would take the bytes not yet written
+                // with it
+                tokio::time::sleep(CUT_PAUSE).await;
+                return Some((Err(stop()), (body, sent, true)));
+            }
+            match body.next().await {
+                Some(Ok(chunk)) => {
+                    let take = ((at - sent) as usize).min(chunk.len());
+                    Some((Ok(chunk.slice(..take)), (body, sent + take as u64, false)))
+                }
+                Some(Err(e)) => Some((Err(e), (body, sent, true))),
+                None => Some((Err(stop()), (body, sent, true))),
+            }
+        },
+    )
 }
 
 /// A request body whole: the one read early, or the one still to read
@@ -1406,6 +1569,8 @@ struct Pending {
     /// Why the body ended before its end: the idle limit, or the store's
     /// connection.
     cut: Option<String>,
+    /// The cut sonde makes itself (a trial's scenario).
+    cutting: Option<Cutting>,
 }
 
 impl Pending {
@@ -1431,6 +1596,13 @@ impl Drop for Pending {
                 r.response_bytes = Some(self.read);
             }
             // a 200 with fewer bytes is not a clean 200
+            if let Some(c) = self.cutting.take() {
+                self.cut = None;
+                r.transport_error = Some(format!(
+                    "sonde cut the response body after {} of {} bytes on purpose (scenario {})",
+                    self.read, c.whole, c.name
+                ));
+            }
             if let Some(why) = self.cut.take() {
                 r.transport_error = Some(format!(
                     "the response body was cut after {} byte{}: {why}",
@@ -1525,6 +1697,22 @@ mod tests {
         assert!(!empty_first_segment("127.0.0.1:9000", "/"));
         // virtual-hosted: the key itself starts with a slash
         assert!(!empty_first_segment("data.localhost:9000", "//key"));
+    }
+
+    #[test]
+    fn a_dot_segment_is_refused_wherever_in_the_path_it_stands() {
+        let at = |path: &str| {
+            let (b, k) = parse_target("127.0.0.1:9000", path);
+            dot_segment(b.as_deref(), k.as_deref())
+        };
+        // the bucket's place: the store would be asked for a listing of `demo`
+        assert!(at("/%2e%2e/demo") && at("/../demo") && at("/./demo/k"));
+        assert!(at("/..") && at("/%2E"));
+        assert!(at("/b/a/../k") && at("/b/./k") && at("/b/k/%2e%2e"));
+        assert!(!at("/b/k") && !at("/b/.hidden") && !at("/b/a..b/k...") && !at("/.b/k"));
+        // virtual-hosted: the path is all key
+        let (b, k) = parse_target("data.localhost:9000", "/../k");
+        assert!(dot_segment(b.as_deref(), k.as_deref()));
     }
 }
 

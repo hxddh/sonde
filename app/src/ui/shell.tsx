@@ -2,7 +2,7 @@
 // toolbar), the sidebar with the places and the current place's list, and the
 // application's menus. A terminal has none of this (App.tsx's TerminalShell).
 
-import { ErrorBoundary, type JSX, platform, signal, Storage, Text, View, windowSize } from "nsh";
+import { ErrorBoundary, type JSX, platform, signal, Storage, Text, View } from "nsh";
 import { Button as BaseButton, Combobox, Toolbar as ToolbarGroup } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, titleBar } from "nsh/desktop";
 import { date } from "../format";
@@ -14,7 +14,7 @@ import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, op
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./sessionview";
-import { BREAK, Button, CONTROL, FOCUS, FOCUS_WITHIN, glass, ICON, IconButton, Kbd, material, Notice, POPUP, Strong, Tip } from "./kit";
+import { BREAK, Button, CONTROL, FOCUS, FOCUS_WITHIN, glass, ICON, IconButton, Kbd, material, Notice, POPUP, Strong, Tip, WIDTH, SURFACE, ListRow } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { sessionName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -118,9 +118,9 @@ export function EndpointSwitcher(props: { class?: string }) {
         if (v) useEndpoint(v);
       }}
       offset={4}
-      class={`${CONTROL.trigger} ${FOCUS_WITHIN} ${props.class ?? (shellWidth() >= BREAK.toolbar ? "w-52" : "w-40")}`}
+      class={`${CONTROL.trigger} ${FOCUS_WITHIN} ${props.class ?? (shellWidth() >= BREAK.toolbar ? WIDTH.switcher : WIDTH.switcherTight)}`}
       inputClass="min-w-0 flex-1 text-body text-foreground placeholder:text-foreground"
-      popupClass={`min-w-[260px] ${POPUP}`}
+      popupClass={`${SURFACE.switcherPopup} ${POPUP}`}
       popupStyle={glass}
       itemClass="group rounded-(--radius-sm) px-2 py-1 focus:bg-accent"
       prefix={<Icon name="server" />}
@@ -139,10 +139,10 @@ export function EndpointSwitcher(props: { class?: string }) {
         );
       }}
       footer={
-        <BaseButton testID="manage-endpoints" accessibilityLabel={t("endpoints.manage")} onPress={() => go("endpoints")} class="mt-1 flex-row items-center gap-2 rounded-(--radius-sm) border-t border-border px-2 py-1 hover:bg-muted">
+        <ListRow divided testID="manage-endpoints" label={t("endpoints.manage")} onPress={() => go("endpoints")}>
           <Icon name="settings" size={ICON.small} />
           <Text class="text-small text-muted-foreground">{t("endpoints.manage")}</Text>
-        </BaseButton>
+        </ListRow>
       }
     />
   );
@@ -158,10 +158,10 @@ function RunningPill() {
           accessibilityLabel={t("run.running")}
           onPress={() => go("run")}
           tooltip={<Tip text={scrubCommand(r().command)} />}
-          class={`h-7 max-w-[200px] flex-row items-center gap-2 rounded-(--radius) border border-primary/40 bg-primary/10 px-2 hover:bg-primary/15 ${FOCUS}`}
+          class={`h-7 ${WIDTH.pill} flex-row items-center gap-2 rounded-(--radius) border border-primary/40 bg-primary/10 px-2 hover:bg-primary/15 ${FOCUS}`}
         >
           <View class="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />
-          <Text class="text-small font-medium text-primary line-clamp-1">{programOf(r().command) ?? ""}</Text>
+          <Text class="text-small text-primary line-clamp-1">{programOf(r().command) ?? ""}</Text>
         </BaseButton>
       )}
     </If>
@@ -177,7 +177,7 @@ function SearchButton() {
       testID="palette"
       accessibilityLabel={t("palette.open")}
       onPress={() => paletteOpen.set(true)}
-      class={`${CONTROL.trigger} w-44 ${FOCUS}`}
+      class={`${CONTROL.trigger} ${WIDTH.search} ${FOCUS}`}
     >
       <Icon name="search" />
       <Text class="flex-1 text-body text-muted-foreground">{t("palette.open")}</Text>
@@ -244,7 +244,7 @@ function Place(props: { area: Area; open: (a: Area) => void }) {
       class={`h-8 flex-row items-center gap-2 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent ${FOCUS}`}
     >
       <Icon name={AREA_ICON[props.area]} tint={on() ? "sidebar-accent-foreground" : "muted-foreground"} />
-      <Text class={on() ? "flex-1 text-body font-medium text-sidebar-accent-foreground" : "flex-1 text-body text-sidebar-foreground"}>{areaLabel(props.area)}</Text>
+      <Text class={on() ? "flex-1 text-body text-sidebar-accent-foreground" : "flex-1 text-body text-sidebar-foreground"}>{areaLabel(props.area)}</Text>
       <If when={props.area === "run" && running()}>
         <View class="size-1.5 rounded-full bg-primary" />
       </If>

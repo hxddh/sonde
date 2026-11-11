@@ -16,8 +16,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Native Shell, pinned (docs/decisions.md D-002)
-  NSH_REV: 744d950af0db9967fd927ec9f245be23e3732905
+  # Native Shell, pinned (docs/decisions.md D-002): the tag v0.5.0
+  NSH_REV: f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1
 
 jobs:
   lint:
@@ -34,7 +34,7 @@ jobs:
       - run: cargo clippy -p sonde-cli --features tui --all-targets -- -D warnings
       - run: cd app && nsh check
       - name: Tables fit where they are shown; every word in every language
-        run: python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py
+        run: python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py && python3 scripts/lint-charts.py
       - name: nsh build reports no warnings
         run: |
           cd app && nsh build App.tsx 2>&1 | tee build.log
@@ -50,6 +50,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+      # sessions of any size, held: a million requests read and analysed in
+      # 15 s and 2 GB, an outage and small uploads of 300 thousand in 10 s,
+      # the app's first view of 100 thousand in 2 s (optimised, as released)
+      - name: Budgets of a large session
+        if: runner.os == 'Linux'
+        run: cargo test --release -p sonde-proxy --test budgets -- --ignored --nocapture
 
   integration:
     runs-on: ubuntu-24.04

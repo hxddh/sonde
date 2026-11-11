@@ -272,7 +272,13 @@ pub fn findings(r: &DuReport) -> Vec<String> {
 pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
     let mut f: Vec<(u64, Vec<Phrase>)> = Vec::new();
     let t = r.total_bytes;
-    let pct1 = |part: u64, whole: u64| format!("{:.1}", pct(part, whole));
+    // a share as it reads: whole from 10% up, a decimal under it, never "0.0"
+    let pct1 = |part: u64, whole: u64| match pct(part, whole) {
+        p if p >= 9.95 => format!("{p:.0}"),
+        p if p > 0.0 && p < 0.05 => "<0.1".to_string(),
+        p => format!("{p:.1}"),
+    };
+    let s = |n: u64| if n == 1 { "" } else { "s" };
     // old versions that could not be listed are unknown, never 0 B
     let unknown = r
         .versions_unknown
@@ -289,7 +295,11 @@ pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
             first.push(ph!("du.empty.current"));
         }
         if r.delete_markers > 0 {
-            first.push(ph!("du.empty.markers", n = r.delete_markers));
+            first.push(ph!(
+                "du.empty.markers",
+                n = r.delete_markers,
+                s = s(r.delete_markers)
+            ));
         }
         first.push(ph!("du.stop"));
         let mut v = vec![first];
@@ -305,6 +315,7 @@ pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
             "du.current",
             size = human_bytes(r.current.bytes),
             n = r.current.objects,
+            s = s(r.current.objects),
             pct = pct1(r.current.bytes, t)
         )],
     ));
@@ -313,6 +324,7 @@ pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
             "du.noncurrent",
             size = human_bytes(r.noncurrent.bytes),
             n = r.noncurrent.objects,
+            s = s(r.noncurrent.objects),
             pct = pct1(r.noncurrent.bytes, t)
         )];
         if pct(r.noncurrent.bytes, t) > 20.0 {
@@ -327,6 +339,7 @@ pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
                 "du.multipart",
                 size = human_bytes(r.multipart.bytes),
                 n = r.multipart.objects,
+                s = s(r.multipart.objects),
                 pct = pct1(r.multipart.bytes, t)
             )],
         ));
@@ -336,10 +349,12 @@ pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
             ph!(
                 "du.markers.many",
                 n = r.delete_markers,
-                objects = r.current.objects
+                objects = r.current.objects,
+                ms = s(r.delete_markers),
+                s = s(r.current.objects)
             )
         } else {
-            ph!("du.markers", n = r.delete_markers)
+            ph!("du.markers", n = r.delete_markers, s = s(r.delete_markers))
         };
         f.push((0, vec![s]));
     }
@@ -811,7 +826,7 @@ mod tests {
         check(&r);
         assert_eq!(
             r.findings[0],
-            "b/x/ holds no bytes in current objects but 1 delete markers."
+            "b/x/ holds no bytes in current objects but 1 delete marker."
         );
     }
 

@@ -508,12 +508,53 @@ export interface Episode {
   notesText?: Phrase[];
 }
 
+/** An operation as a table and the inspector read it (crates/proxy/src/view.rs): an `Episode` by its
+ * index, with how many requests it has and the first of their ids. A view carries a page of these;
+ * the rest are asked for in ranges. */
+export interface EpisodeRow extends Omit<Episode, "title"> {
+  /** Its index among the session's operations in time order: what findings and events name. It does not change with sorting or filtering. */
+  index: number;
+  /** Rust's English, only where the phrases do not say it. */
+  title?: string;
+  /** How many requests it has. */
+  requests: number;
+  /** Its requests' ids: at most the first 64 in a page (`Sessions.episode` has them all). */
+  records: number[];
+  /** A lookup that found nothing. */
+  miss?: true;
+}
+
+/** How the operations' table asks for its rows: sorted and narrowed in Rust. */
+export interface EpisodeQuery {
+  offset?: number;
+  limit?: number;
+  sort?: "time" | "duration" | "requests";
+  descending?: boolean;
+  /** Only the operations of this finding. */
+  finding?: number;
+  /** Only the operations running in this window, in ms from the session's first operation's start. */
+  slice?: [number, number];
+  text?: string;
+  failed?: boolean;
+}
+
+/** A range of a session's operations: `rows[i]` is the table's row `offset + i`, of `total` that match. */
+export interface EpisodePage {
+  total: number;
+  offset: number;
+  rows: EpisodeRow[];
+}
+
 export interface Observation {
   level: "warn" | "info";
   text: string;
   phrases?: Phrase[];
-  /** The episodes it is about, by index. */
+  /** The episodes it is about, by index: in a view, the first 200 of `episodesTotal`. */
   episodes: number[];
+  /** How many operations it is about. */
+  episodesTotal?: number;
+  /** Its first operation's start (where it stands on the session's shape); absent when it names none. */
+  firstStart?: string;
   /** The requests it bears on (findings come ranked by it, warnings first). */
   impact?: number;
   /** What acting on it would save, when that can be counted. */
@@ -542,6 +583,8 @@ export interface WhatIf {
 }
 
 export interface SessionSummary {
+  /** The run by operation, busiest first (absent before 16.0). */
+  operations?: { operation: string; count: number; errors: number; misses: number; errorShare: number; bytesUp: number; bytesDown: number; p50Ms: number; p95Ms: number; p99Ms: number; maxMs: number; few?: true }[];
   requests: number;
   errors: number;
   misses: number;
@@ -695,7 +738,15 @@ export interface Trial {
   cleanWallMs?: number;
   leftUploads: number;
   wroteTwice: number;
+  /** The attempts in a row it failed at each request, when asked to press harder than once (`slowdown:3`). */
+  times?: number | null;
   reasons: string[];
+  /** The same reasons as phrases, each a sentence of one or more (`trial.why.*`); absent in a verdict kept before 16.0. */
+  reasonsText?: { key: string; args?: Record<string, string> }[][];
+  /** The request the verdict turns on, when it is not "survived": its operation, `bucket/key`, and the program's line when the run named callers. */
+  where?: { operation: string; key: string; caller?: string } | null;
+  /** What to change, as a phrase (`trial.advice.*`: the app has its words in both languages). */
+  advice?: { key: string; args?: Record<string, string> } | null;
   /** The trial's own session (an absolute path), when it is still there. */
   session?: string | null;
 }
@@ -747,6 +798,8 @@ export interface SizeBucket {
  * with its line over the session's slices (crates/proxy/src/signals.rs). A figure
  * that cannot be said (no time, no request) is null, never 0. */
 export interface Signals {
+  /** A run too short to have a pace (under a second, or a handful of requests): totals are said, not rates. Absent before 16.0. */
+  short?: boolean;
   timed: boolean;
   wallMs: number;
   binMs: number;
@@ -779,7 +832,8 @@ export interface Signals {
 export interface TrialPlan {
   command: string;
   cwd: string | null;
-  scenarios: { name: string; about: string }[];
+  /** `maxTimes`: the attempts in a row it may be asked to fail (`name:N`), for the two that take a count. */
+  scenarios: { name: string; about: string; maxTimes?: number | null }[];
   /** The scenarios are sonde.toml's own. */
   project: boolean;
   /** The command names no `{trial}`: the runs write where the clean run wrote. */
@@ -812,9 +866,21 @@ export interface SessionView {
   summary: SessionSummary;
   profile: Profile;
   whatIf?: WhatIf | null;
-  episodes: Episode[];
+  /** The first page of the session's operations (500 in time order), of `episodesTotal`. */
+  episodes: EpisodeRow[];
+  /** How many operations the session has. */
+  episodesTotal: number;
+  /** Its first operation's start and its last operation's end; null when it has none. */
+  span: { start: string; end: string } | null;
+  /** Its operations by family: how many of each format and of each kind. */
+  families: { formats: Record<string, number>; kinds: Record<string, number> };
   observations: Observation[];
   sharedNotes: string[];
+}
+
+/** A session whole, every operation in it: what `sonde share` writes into a page (`Episode`s with their English titles). */
+export interface WholeSession extends Omit<SessionView, "episodes" | "episodesTotal" | "span" | "families"> {
+  episodes: Episode[];
 }
 
 export interface RecordingView {

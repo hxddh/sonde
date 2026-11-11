@@ -795,23 +795,39 @@ pub fn check_markdown(
     check_markdown_with(c, currency, since, findings, &[])
 }
 
-/// What a check found, in a few words: the budget's verdict and the
-/// trials', each said as what it is. A run within its budget that broke
-/// under a trial failed, and is not "over budget".
+/// What a check found, in a few words: the budget's verdict, the
+/// baseline's and the trials', each said as what it is. A run within its
+/// budget that is past its baseline is not "over budget", and one that
+/// broke under a trial failed whatever its figures.
 pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     use crate::trial::Standing;
     let broke = trials.iter().any(|t| t.standing == Standing::Broke);
     let tried = trials.iter().any(|t| t.standing != Standing::Untested);
-    let within = c.verdicts.iter().all(|v| v.ok);
-    match (c.verdicts.is_empty(), within, broke) {
-        (true, _, true) => "broke under a trial".into(),
-        (true, _, false) if tried => "did not break under its trials".into(),
-        (true, _, false) if !trials.is_empty() => "nothing was tried".into(),
-        (true, _, false) => "nothing checked".into(),
-        (false, true, false) => "within budget".into(),
-        (false, true, true) => "within budget, and broke under a trial".into(),
-        (false, false, false) => "over budget".into(),
-        (false, false, true) => "over budget, and broke under a trial".into(),
+    let of = |against: &str| {
+        let mut rows = c
+            .verdicts
+            .iter()
+            .filter(|v| v.against == against)
+            .peekable();
+        // (none, or whether every one passed)
+        rows.peek().is_some().then(|| rows.all(|v| v.ok))
+    };
+    let held = match (of("budget"), of("baseline")) {
+        (None, None) if c.verdicts.is_empty() => None,
+        (Some(false), Some(false)) => Some("over budget and past its baseline"),
+        (Some(false), _) => Some("over budget"),
+        (_, Some(false)) => Some("past its baseline"),
+        (None, Some(true)) => Some("within its baseline"),
+        (Some(true), Some(true)) => Some("within budget and its baseline"),
+        _ => Some("within budget"),
+    };
+    match (held, broke) {
+        (None, true) => "broke under a trial".into(),
+        (None, false) if tried => "did not break under its trials".into(),
+        (None, false) if !trials.is_empty() => "nothing was tried".into(),
+        (None, false) => "nothing checked".into(),
+        (Some(held), false) => held.into(),
+        (Some(held), true) => format!("{held}, and broke under a trial"),
     }
 }
 
@@ -834,6 +850,50 @@ pub fn trial_mark(s: crate::trial::Standing) -> &'static str {
         Standing::Broke => "FAIL",
         Standing::Untested => "skip",
     }
+}
+
+/// A Markdown table whose columns line up as text too (a comment is read
+/// in a log as often as rendered): every cell as wide as its column,
+/// figures to the right (`right`).
+fn md_table(head: &[&str], right: &[bool], rows: &[Vec<String>]) -> String {
+    let width = |t: &str| t.chars().count();
+    let w: Vec<usize> = (0..head.len())
+        .map(|i| {
+            rows.iter()
+                .map(|r| width(&r[i]))
+                .chain([width(head[i]), 3])
+                .max()
+                .unwrap_or(3)
+        })
+        .collect();
+    let line = |cells: &mut dyn Iterator<Item = (usize, String)>| {
+        let cells: Vec<String> = cells
+            .map(|(i, c)| {
+                let pad = " ".repeat(w[i].saturating_sub(width(&c)));
+                if right[i] {
+                    format!("{pad}{c}")
+                } else {
+                    format!("{c}{pad}")
+                }
+            })
+            .collect();
+        format!("| {} |\n", cells.join(" | "))
+    };
+    let mut t = line(&mut head.iter().map(|h| h.to_string()).enumerate());
+    t.push_str(&line(&mut (0..head.len()).map(|i| {
+        (
+            i,
+            if right[i] {
+                format!("{}:", "-".repeat(w[i] - 1))
+            } else {
+                "-".repeat(w[i])
+            },
+        )
+    })));
+    for r in rows {
+        t.push_str(&line(&mut r.iter().cloned().enumerate()));
+    }
+    t
 }
 
 /// [`check_markdown`], with the run's trials: their rows, and a heading
@@ -860,34 +920,45 @@ pub fn check_markdown_with(
         }
     );
     if !c.verdicts.is_empty() {
-        md.push_str("\n| | | run | limit | from |\n|---|---|---:|---:|---|\n");
-    }
-    for v in &c.verdicts {
-        md.push_str(&format!(
-            "| {} | {} | {} | ≤ {} | {} |\n",
-            match v.over() {
-                Some(over) => format!("**FAIL** {over}"),
-                None => "pass".to_string(),
-            },
-            v.label(),
-            shown(v.what, v.value),
-            shown(v.what, v.limit),
-            v.against
+        let rows: Vec<Vec<String>> = c
+            .verdicts
+            .iter()
+            .map(|v| {
+                vec![
+                    match v.over() {
+                        Some(over) => format!("**FAIL** {over}"),
+                        None => "pass".to_string(),
+                    },
+                    v.label().to_string(),
+                    shown(v.what, v.value),
+                    format!("≤ {}", shown(v.what, v.limit)),
+                    v.against.to_string(),
+                ]
+            })
+            .collect();
+        md.push('\n');
+        md.push_str(&md_table(
+            &["", "", "run", "limit", "from"],
+            &[false, false, true, true, false],
+            &rows,
         ));
     }
     if !trials.is_empty() {
-        md.push_str("\n| | under | |\n|---|---|---|\n");
-        for t in trials {
-            md.push_str(&format!(
-                "| {} | {} | {} |\n",
-                match trial_mark(t.standing) {
-                    "FAIL" => "**FAIL**",
-                    mark => mark,
-                },
-                md_text(&t.scenario),
-                md_text(&t.line())
-            ));
-        }
+        let rows: Vec<Vec<String>> = trials
+            .iter()
+            .map(|t| {
+                vec![
+                    match trial_mark(t.standing) {
+                        "FAIL" => "**FAIL**".to_string(),
+                        mark => mark.to_string(),
+                    },
+                    md_text(&t.asked()),
+                    md_text(&t.line()),
+                ]
+            })
+            .collect();
+        md.push('\n');
+        md.push_str(&md_table(&["", "under", ""], &[false, false, false], &rows));
     }
     if let Some(t) = &since {
         md.push_str(&format!("\n**Since** {}\n", md_text(t)));
@@ -928,6 +999,18 @@ mod tests {
     use crate::episode::{episodes, observations};
     use crate::profile::{RequestPrices, profile};
     use chrono::DateTime;
+
+    /// A table's row as its cells, whatever they are padded to.
+    fn squeezed(md: &str) -> String {
+        let mut out = String::new();
+        for w in md.split(' ').filter(|w| !w.is_empty()) {
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push(' ');
+            }
+            out.push_str(w);
+        }
+        out
+    }
 
     #[test]
     fn damaged_baselines_are_an_error_and_missing_ones_are_none() {
@@ -1232,7 +1315,19 @@ mod tests {
         assert_eq!(row("waiting", "baseline").over(), None, "it passed");
         let md = check_markdown(&c, "USD", None, &[]);
         assert!(
-            md.contains("| **FAIL** +23% | requests | 123 | ≤ 100 | budget |"),
+            squeezed(&md).contains("| **FAIL** +23% | requests | 123 | ≤ 100 | budget |"),
+            "{md}"
+        );
+        // the columns line up as text: every row as long as the heading's
+        let rows: Vec<&str> = md.lines().filter(|l| l.starts_with('|')).collect();
+        assert!(rows.len() > 3, "{md}");
+        assert!(
+            rows.iter()
+                .all(|r| r.chars().count() == rows[0].chars().count()),
+            "{md}"
+        );
+        assert!(
+            md.starts_with("### sonde: over budget and past its baseline"),
             "{md}"
         );
     }
@@ -1281,11 +1376,11 @@ mod tests {
         );
         assert!(!md.contains("over budget"), "{md}");
         assert!(
-            md.contains("| **FAIL** | slowdown | exited 1 \\| really |"),
+            squeezed(&md).contains("| **FAIL** | slowdown | exited 1 \\| really |"),
             "{md}"
         );
         assert!(
-            md.contains("| warn | slowdown |"),
+            squeezed(&md).contains("| warn | slowdown |"),
             "degraded is not a pass: {md}"
         );
     }
@@ -1332,9 +1427,11 @@ mod tests {
         assert_eq!((row.value, row.label()), (0.0, "new warnings"));
         let md = check_markdown(&c, "USD", None, &o);
         assert!(
-            md.contains("| pass | new warnings | 0 | ≤ 0 | baseline |"),
+            squeezed(&md).contains("| pass | new warnings | 0 | ≤ 0 | baseline |"),
             "{md}"
         );
+        // held to a baseline alone, and within it: not "within budget"
+        assert!(md.starts_with("### sonde: within its baseline"), "{md}");
     }
 
     #[test]

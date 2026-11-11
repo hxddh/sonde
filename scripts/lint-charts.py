@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chart lint: one chart system (app/src/ui/plots.tsx), counted.
+"""Chart lint: one chart system (app/src/ui/plots/, its constants in system.tsx), counted.
 
 14.0 counted 24 one-off charts: five row pitches, three left edges, three
 treemap heights, four legend gaps, two swatch shapes, two tooltips, two
@@ -16,17 +16,31 @@ a chart bypasses the system:
 - treemap: every `<Treemap` plot is `TREEMAP` high;
 - legend: swatches only in `Legend`; tooltip: every interactive `<Plot` has
   `<ChartTip`, placed by the pointer at one offset; fade: `INACTIVE` only;
-  outline: `HOVER` only.
+  outline: `HOVER` only;
+- time axis: one (`TimeAxis`, its ticks from `timeTicks`): a `PlotAxis` that
+  writes a moment (`sinceTick`, a row's `tMs`) anywhere else fails, as does
+  a chart named in `OVER_TIME` that draws no `<TimeAxis`;
+- value scale: every chart named in `COUNTS` has a `<ValueAxis` (zero and
+  the peak, with its unit);
+- bars: thickness only from `BARS`/`CELLS`, tips only from `TIP`, heights
+  only the named ones (`PLOT`, `SHAPE`, `STRIP`, `STACK`, `SHAPE_STRIP`, `MARK`,
+  `TREEMAP`, `FLOWS`): a literal `paddingInner:`, `cornerRadii={…}` or `h-N`
+  outside system.tsx fails, in a chart file and on a chart in a page;
+- latency's two tones (`latency-body`, `latency-tail` in theme.json) pass a
+  contrast check of 3:1 against each other and against the card, light and dark.
 Run by lint-kit.py, so CI's lint step covers it.
 """
+import json
+import math
 import re
 import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
 app = root / "app" / "src"
-plots = app / "ui" / "plots.tsx"
-SYSTEM = [plots, app / "ui" / "charts.tsx"]
+plots = app / "ui" / "plots" / "system.tsx"
+FAMILIES = sorted((app / "ui" / "plots").glob("*.tsx"))
+SYSTEM = FAMILIES + [app / "ui" / "charts.tsx"]
 files = sorted(app.rglob("*.tsx")) + sorted((root / "viewer").glob("*.tsx"))
 failed = False
 
@@ -46,11 +60,29 @@ names = lambda const: re.findall(r'"([\w ]+)"', re.search(rf"export const {const
 CHARTS = names("CHARTS")
 MARKS = [m.split()[0] for m in names("MARKS")]
 FRAMED = names("FRAMED")
+everything = "\n".join(p.read_text() for p in SYSTEM)
+
+
+def body_of(name):
+    m = re.search(rf"^export function {name}\(.*?^}}", everything, re.S | re.M)
+    return m.group(0) if m else ""
+
+
 for name in FRAMED:
-    body = re.search(rf"^export function {name}\(.*?^}}", src, re.S | re.M)
-    if not body or "<Chart" not in body.group(0):
-        print(f"app/src/ui/plots.tsx:1: [chart] {name} is named in FRAMED and draws no <Chart> frame")
+    if "<Chart" not in body_of(name):
+        print(f"{rel(plots)}:1: [chart] {name} is named in FRAMED and draws no <Chart> frame")
         failed = True
+OVER_TIME = names("OVER_TIME")
+COUNTS = names("COUNTS")
+for name in OVER_TIME:
+    if "<TimeAxis" not in body_of(name):
+        say(plots, 1, f"{name} is a chart over time and draws no <TimeAxis>: the one time axis")
+for name in COUNTS:
+    if "<ValueAxis" not in body_of(name):
+        say(plots, 1, f"{name} is a chart of counts and has no <ValueAxis>: zero and the peak, with its unit")
+for name in OVER_TIME + COUNTS:
+    if name not in CHARTS and name not in MARKS:
+        say(plots, 1, f"{name} is named in OVER_TIME or COUNTS and is no chart")
 
 
 def functions(text):
@@ -60,7 +92,8 @@ def functions(text):
     return [(name, a, (starts[i + 1][1] - 1) if i + 1 < len(starts) else total) for i, (name, a) in enumerate(starts)]
 
 
-counts = {"frames": 0, "plots": 0, "legends": 0, "tooltips": 0}
+counts = {"frames": 0, "plots": 0, "legends": 0, "tooltips": 0, "time": 0, "value": 0}
+HEIGHT = re.compile(r"(?<![\w-])h-(?!full\b|px\b)[\w.\[\]]+")
 pitches, edges = set(), set()
 for p in files:
     text = p.read_text()
@@ -72,6 +105,8 @@ for p in files:
     for m in re.finditer(r"<Chart\b.*?</Chart>", text, re.S):
         framed.update(range(text[: m.start()].count("\n") + 1, text[: m.end()].count("\n") + 2))
     counts["frames"] += len(re.findall(r"<Chart\b", text)) if p != plots else 0
+    counts["time"] += len(re.findall(r"<TimeAxis\b", text))
+    counts["value"] += len(re.findall(r"<ValueAxis\b", text))
     for n, line in enumerate(lines, 1):
         if "<Plot" in line and re.search(r"<Plot\b", line):
             counts["plots"] += 1
@@ -98,6 +133,18 @@ for p in files:
                 strip = name == "SessionShape" and " strip" in line
                 if n not in framed and "body:" not in line and not strip and not re.search(r"body: \(\) =>", "\n".join(lines[max(0, n - 4) : n])):
                     say(p, n, f"<{name}> outside the frame: put it in a <Chart> (or a chart descriptor's body)")
+        # one time axis: a moment is written on an axis by TimeAxis only
+        if "<PlotAxis" in line and re.search(r"sinceTick|tMs\b", line) and inside(n) != "TimeAxis":
+            say(p, n, "a time axis of its own: <TimeAxis domain={…} /> (slices={n} on a band scale)")
+        # one of each measure: thickness, tip and height are the system's
+        if p != plots:
+            if re.search(r"paddingInner: [\d.]|paddingOuter: [\d.]", line):
+                say(p, n, "a bar thickness of its own: BARS or CELLS")
+            if re.search(r"(?:cornerRadii|nodeCornerRadius|paddingInner)=\{[\d{]", line):
+                say(p, n, "a tip radius of its own: TIP")
+            chart_here = p in SYSTEM or any(re.search(rf"<{name}\b", line) for name in CHARTS + MARKS)
+            if chart_here and HEIGHT.search(re.sub(r"//.*|\{/\*.*?\*/\}", "", line)) and "stroke-" not in line:
+                say(p, n, f"a chart height of its own ({HEIGHT.search(line).group(0)}): PLOT, SHAPE, STRIP, STACK, SHAPE_STRIP, MARK, TREEMAP or FLOWS")
         if p in SYSTEM or "Plot" in text:
             for m in re.finditer(r"\.length \* (\d+)", line):
                 if p in SYSTEM:
@@ -117,17 +164,45 @@ for p in files:
             say(p, n, "a legend swatch by hand: Legend")
         if re.search(r"<Legend\b", line):
             counts["legends"] += 1
-        if re.search(r"\bfunction (?:Tip|Legend|ChartTip|Chart)\b", line) and p != plots and not (p.name == "kit.tsx" and "function Tip(" in line):
-            say(p, n, "a second frame, legend or tooltip: plots.tsx has the one")
+        if re.search(r"\bfunction (?:Tip|Legend|ChartTip|Chart|TimeAxis|ValueAxis)\b", line) and p != plots and not (p.name == "kit.tsx" and "function Tip(" in line):
+            say(p, n, "a second frame, legend, tooltip or axis: plots/system.tsx has the one")
 
 pitch = re.findall(r"^export const PITCH = (\d+);", src, re.M)
 if pitch != ["28"]:
     say(plots, 1, f"the row pitch is 28, once: found {pitch}")
 if len(edges) != 1:
     say(plots, 1, f"one left edge: found {sorted(edges)}")
-for const in ("TREEMAP", "INACTIVE", "HOVER", "GUTTER", "PITCH"):
+for const in ("TREEMAP", "INACTIVE", "HOVER", "GUTTER", "PITCH", "PLOT", "SHAPE", "STRIP", "STACK", "BARS", "CELLS", "TIP", "MARK"):
     for p in files:
         if p != plots and re.search(rf"^(?:export )?const {const} = ", p.read_text(), re.M):
-            say(p, 1, f"{const} mirrored: import it from plots.tsx")
-print(f"charts: {counts['plots']} plots in {len(CHARTS)} charts and {len(MARKS)} marks; {counts['frames']} frames used; row pitch {'/'.join(pitch)}; left edge {'/'.join(sorted(edges))}; {counts['legends']} uses of the one legend; {counts['tooltips']} of the one tooltip: {'failed' if failed else 'ok'}")
+            say(p, 1, f"{const} mirrored: import it from plots")
+    if len(re.findall(rf"^export const {const} = ", src, re.M)) != 1:
+        say(plots, 1, f"{const} is defined once in system.tsx")
+
+
+# latency's two tones: told apart from each other and from the card, in light and in dark
+def luminance(oklch):
+    L, C, H = [float(x) for x in re.match(r"oklch\(([\d.]+) ([\d.]+) ([\d.]+)", oklch).groups()]
+    a, b = C * math.cos(math.radians(H)), C * math.sin(math.radians(H))
+    l, m, s = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, (L - 0.1055613458 * a - 0.0638541728 * b) ** 3, (L - 0.0894841775 * a - 1.2914855480 * b) ** 3
+    rgb = (4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)
+    r, g, bl = [min(1.0, max(0.0, x)) for x in rgb]
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+
+
+def contrast(x, y):
+    hi, lo = sorted([luminance(x), luminance(y)], reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+theme = json.loads((root / "app" / "theme.json").read_text())["cssVars"]
+tones = []
+for mode in ("light", "dark"):
+    t = theme[mode]
+    pairs = {"body/card": contrast(t["latency-body"], t["card"]), "tail/card": contrast(t["latency-tail"], t["card"]), "body/tail": contrast(t["latency-body"], t["latency-tail"])}
+    tones.append(f"{mode} " + " ".join(f"{k} {v:.1f}" for k, v in pairs.items()))
+    for k, v in pairs.items():
+        if v < 3:
+            say(root / "app" / "theme.json", 1, f"latency's tones, {mode}: {k} is {v:.2f}:1, under 3:1")
+print(f"charts: {counts['plots']} plots in {len(CHARTS)} charts and {len(MARKS)} marks; {counts['frames']} frames used; row pitch {'/'.join(pitch)}; left edge {'/'.join(sorted(edges))}; {counts['legends']} uses of the one legend; {counts['tooltips']} of the one tooltip; {counts['time']} uses of the one time axis over {len(OVER_TIME)} charts; {counts['value']} of the one value scale over {len(COUNTS)}; latency's tones {'; '.join(tones)}: {'failed' if failed else 'ok'}")
 sys.exit(1 if failed else 0)

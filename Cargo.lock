@@ -1073,7 +1073,7 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "decoders"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "apache-avro",
  "async-trait",
@@ -2713,8 +2713,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-base"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "chrono",
  "html5ever",
@@ -2737,8 +2737,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-core"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "cap-std",
  "crc32fast",
@@ -2773,8 +2773,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-dev"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "base64 0.22.1",
  "dunce",
@@ -2786,8 +2786,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-engine"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -2807,13 +2807,13 @@ dependencies = [
 
 [[package]]
 name = "nsh-i18n"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 
 [[package]]
 name = "nsh-js"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "futures-util",
  "getrandom 0.4.3",
@@ -2835,8 +2835,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-macros"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "imagesize",
  "proc-macro2",
@@ -2848,8 +2848,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-package"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
@@ -2863,8 +2863,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-platform-tui"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -2883,8 +2883,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-testing"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",
@@ -2899,8 +2899,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-tui-host"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -2917,8 +2917,8 @@ dependencies = [
 
 [[package]]
 name = "nsh-updater"
-version = "0.4.0"
-source = "git+https://github.com/longbridge/nsh?rev=744d950af0db9967fd927ec9f245be23e3732905#744d950af0db9967fd927ec9f245be23e3732905"
+version = "0.5.0"
+source = "git+https://github.com/longbridge/nsh?rev=f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1#f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
@@ -3447,7 +3447,7 @@ dependencies = [
 
 [[package]]
 name = "probes"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3910,7 +3910,7 @@ dependencies = [
 
 [[package]]
 name = "reqlog"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "chrono",
  "parking_lot",
@@ -4220,7 +4220,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "s3raw"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4653,7 +4653,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-cli"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4679,6 +4679,7 @@ dependencies = [
  "ratatui-crossterm",
  "reqlog",
  "reqwest",
+ "rustix",
  "s3raw",
  "serde",
  "serde_json",
@@ -4692,7 +4693,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-core"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4723,7 +4724,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-nsh"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4735,6 +4736,7 @@ dependencies = [
  "portable-pty",
  "probes",
  "reqlog",
+ "rustix",
  "s3raw",
  "serde",
  "serde_json",
@@ -4747,7 +4749,7 @@ dependencies = [
 
 [[package]]
 name = "sonde-proxy"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",

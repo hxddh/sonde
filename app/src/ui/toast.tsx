@@ -13,7 +13,7 @@ import { Toast, type ToastEntry, ToastManager, ToastStack } from "nsh/base";
 import { currentWindow, focusedWindow, isAvailable } from "nsh/desktop";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
-import { Button, EMPHASIS, glass, IconButton, POPUP, Strong, terminal } from "./kit";
+import { Button, EMPHASIS, glass, IconButton, POPUP, Strong, terminal, SURFACE } from "./kit";
 
 export type ToastKind = "success" | "error" | "warning" | "info";
 
@@ -147,7 +147,7 @@ function Item(props: { entry: ToastEntry }) {
       transitionStatus={props.entry.status}
       accessibilityLabel={[content().title, content().description].filter(Boolean).join(". ")}
       onDismissRequest={() => dismissToast(props.entry.id)}
-      class={`${POPUP} w-[340px] flex-row items-start gap-2 px-3 py-3 motion-safe:transition-all motion-safe:duration-200 motion-safe:ease-out`}
+      class={`${POPUP} ${SURFACE.toast} flex-row items-start gap-2 px-3 py-3 motion-safe:transition-all motion-safe:duration-200 motion-safe:ease-out`}
       style={glass}
       startingClass="opacity-0 translate-y-3"
       endingClass="opacity-0 scale-95"
@@ -161,7 +161,7 @@ function Item(props: { entry: ToastEntry }) {
         )}
       </If>
       <View class="min-w-0 flex-1 gap-1">
-        <Text class="text-body font-medium text-popover-foreground">{content().title}</Text>
+        <Strong class="text-popover-foreground">{content().title}</Strong>
         <If when={content().description}>
           <Text class="text-small text-muted-foreground line-clamp-3">{content().description}</Text>
         </If>
@@ -200,7 +200,7 @@ export function Toaster() {
   });
   const mine = () => shown().filter((e) => (windowOf()[e.id] ?? mainWindow) === own);
   const stack = (
-    <ToastStack closeOnEscape={false} placement={terminal() ? "bottomCenter" : "bottomRight"} class={terminal() ? "w-full" : "w-[340px]"} onExpandedChange={(e) => expanded.set(e.expanded)}>
+    <ToastStack closeOnEscape={false} placement={terminal() ? "bottomCenter" : "bottomRight"} class={terminal() ? "w-full" : SURFACE.toast} onExpandedChange={(e) => expanded.set(e.expanded)}>
       <Each of={mine()} key={(e: ToastEntry) => e.id}>
         {(entry) => <Item entry={entry()} />}
       </Each>

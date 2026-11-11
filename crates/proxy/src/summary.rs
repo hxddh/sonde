@@ -2,8 +2,9 @@
 
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
 use reqlog::Record;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,11 +13,22 @@ pub struct OpStats {
     pub count: u64,
     pub errors: u64,
     pub misses: u64,
+    /// The share of its requests that failed, 0 to 1.
+    pub error_share: f64,
     pub bytes_up: u64,
     pub bytes_down: u64,
     pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub p99_ms: f64,
     pub max_ms: f64,
+    /// Fewer than [`FEW`] requests: its percentiles are of too few to tell
+    /// apart, and are shown as such.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub few: bool,
 }
+
+/// Requests below which an operation's percentiles say little.
+pub const FEW: u64 = 20;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,6 +138,10 @@ pub fn summarize(records: &[Record]) -> Summary {
         .map(|(mut o, mut lat)| {
             lat.sort_by(|a, b| a.total_cmp(b));
             o.p50_ms = crate::profile::percentile(&lat, 0.5);
+            o.p95_ms = crate::profile::percentile(&lat, 0.95);
+            o.p99_ms = crate::profile::percentile(&lat, 0.99);
+            o.error_share = o.errors as f64 / o.count.max(1) as f64;
+            o.few = o.count < FEW;
             o
         })
         .collect();
@@ -135,6 +151,326 @@ pub fn summarize(records: &[Record]) -> Summary {
     s.error_codes
         .sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     s
+}
+
+/// What a session file holds, counted once and kept beside it
+/// (`<name>.summary.json`): listing sessions, and holding a run to an earlier
+/// one, read this and never the session whole. It is of one version of the
+/// file (its length and the time it was written): another is counted again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Counted {
+    pub version: u32,
+    pub len: u64,
+    pub modified_ms: u64,
+    pub created: DateTime<Utc>,
+    pub endpoint: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    /// The program's name, when it has one, and the key its runs go by.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub program: Option<String>,
+    /// Recorded from a program's own requests (not a replay, an import, a trial).
+    pub recording: bool,
+    #[serde(default)]
+    pub git: Option<crate::session::GitStamp>,
+    pub requests: u64,
+    pub errors: u64,
+    pub misses: u64,
+    pub seconds: f64,
+    pub bytes_up: u64,
+    pub bytes_down: u64,
+    /// Its requests over its time, in [`SHAPE_BINS`] slices.
+    pub shape: Vec<u32>,
+    /// The figures a baseline and a program's history need, once the
+    /// session has been analysed ([`figures`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub figures: Option<Figures>,
+}
+
+/// A run's figures, with the prices its cost was reckoned at (other prices:
+/// reckoned again) and the warnings it had, as [`crate::profile::finding_identity`] names them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Figures {
+    pub prices: crate::profile::RequestPrices,
+    pub point: crate::program::RunPoint,
+    pub warnings: Vec<String>,
+}
+
+pub const COUNTED_VERSION: u32 = 1;
+pub const SHAPE_BINS: usize = 24;
+
+/// Where a session's counts are kept: `<name>.summary.json` beside it.
+pub fn counted_file(session: &std::path::Path) -> std::path::PathBuf {
+    let name = session
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stem = name.strip_suffix(".sonde").unwrap_or(&name);
+    session.with_file_name(format!("{stem}.summary.json"))
+}
+
+/// Removes a session's counts: when the session is removed.
+pub fn forget(session: &std::path::Path) {
+    let _ = std::fs::remove_file(counted_file(session));
+}
+
+/// What of a record's line the counts read: the rest of the line is skipped,
+/// not parsed.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CountedLine<'a> {
+    #[serde(default)]
+    time: Option<DateTime<Utc>>,
+    #[serde(borrow, default)]
+    method: std::borrow::Cow<'a, str>,
+    #[serde(default)]
+    status: Option<u16>,
+    #[serde(default)]
+    latency_ms: f64,
+    #[serde(default)]
+    request_bytes: Option<u64>,
+    #[serde(default)]
+    response_bytes: Option<u64>,
+    #[serde(default)]
+    error_body: Option<String>,
+    #[serde(default)]
+    transport_error: Option<serde::de::IgnoredAny>,
+}
+
+/// A session's counts, taken a line at a time: the same figures as
+/// [`summarize`] of its records.
+#[derive(Default)]
+pub struct Counter {
+    requests: u64,
+    errors: u64,
+    misses: u64,
+    bytes_up: u64,
+    bytes_down: u64,
+    first: Option<i64>,
+    last: Option<i64>,
+    starts: Vec<i64>,
+}
+
+impl Counter {
+    /// A line of a session file after its header: a record, the program's
+    /// output, or a line cut short (not counted).
+    pub fn line(&mut self, line: &[u8]) {
+        if !line.starts_with(b"{") || line.starts_with(b"{\"log\"") {
+            return;
+        }
+        let Ok(r) = serde_json::from_slice::<CountedLine>(line) else {
+            return;
+        };
+        let error = r.status.is_none_or(|s| s >= 400) || r.transport_error.is_some();
+        let miss = r.status == Some(404)
+            && (r.method == "GET" || r.method == "HEAD")
+            && !r
+                .error_body
+                .as_deref()
+                .is_some_and(|b| b.contains("<Code>NoSuchBucket</Code>"));
+        let latency_us = (r.latency_ms.clamp(0.0, reqlog::MAX_LATENCY_MS) * 1000.0) as i64;
+        self.add(
+            r.time.map(|t| t.timestamp_micros()),
+            latency_us,
+            error,
+            miss,
+            r.request_bytes.unwrap_or(0),
+            r.response_bytes.unwrap_or(0),
+        );
+    }
+
+    pub fn record(&mut self, r: &Record) {
+        self.add(
+            Some(r.time.timestamp_micros()),
+            r.latency_us(),
+            r.is_error(),
+            is_miss(r),
+            r.request_bytes.unwrap_or(0),
+            r.response_bytes.unwrap_or(0),
+        );
+    }
+
+    fn add(
+        &mut self,
+        start: Option<i64>,
+        latency_us: i64,
+        error: bool,
+        miss: bool,
+        up: u64,
+        down: u64,
+    ) {
+        self.requests += 1;
+        self.misses += u64::from(miss);
+        self.errors += u64::from(error && !miss);
+        self.bytes_up += up;
+        self.bytes_down += if error { 0 } else { down };
+        // (a line another tool wrote may have no time: counted, not placed)
+        let Some(start) = start else { return };
+        let end = start + latency_us;
+        self.first = Some(self.first.map_or(start, |f| f.min(start)));
+        self.last = Some(self.last.map_or(end, |l| l.max(end)));
+        self.starts.push(start);
+    }
+
+    /// The counts, of the file as it is now.
+    pub fn finish(
+        self,
+        session: &std::path::Path,
+        header: &crate::session::SessionHeader,
+    ) -> Counted {
+        let (len, modified_ms) = stamp(session).unwrap_or((0, 0));
+        let mut shape = vec![0u32; SHAPE_BINS];
+        if let (Some(a), Some(b)) = (self.starts.iter().min(), self.starts.iter().max()) {
+            let span = (b - a).max(1) as f64;
+            for t in &self.starts {
+                let i = (((t - a) as f64 / span) * SHAPE_BINS as f64) as usize;
+                shape[i.min(SHAPE_BINS - 1)] += 1;
+            }
+        }
+        Counted {
+            version: COUNTED_VERSION,
+            len,
+            modified_ms,
+            created: header.created,
+            endpoint: header.endpoint.clone(),
+            command: header.command.clone(),
+            name: header.name.clone(),
+            program: crate::program::key_of(header),
+            recording: header.is_recording(),
+            git: header.git.clone(),
+            requests: self.requests,
+            errors: self.errors,
+            misses: self.misses,
+            seconds: match (self.first, self.last) {
+                (Some(f), Some(l)) => (l - f) as f64 / 1e6,
+                _ => 0.0,
+            },
+            bytes_up: self.bytes_up,
+            bytes_down: self.bytes_down,
+            shape,
+            figures: None,
+        }
+    }
+}
+
+/// A file's length and when it was last written, in ms.
+fn stamp(path: &std::path::Path) -> Option<(u64, u64)> {
+    let m = std::fs::metadata(path).ok()?;
+    let at = m
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64);
+    Some((m.len(), at))
+}
+
+/// The counts kept beside a session, when they are of the file as it is now.
+pub fn kept(session: &std::path::Path) -> Option<Counted> {
+    let c: Counted = serde_json::from_slice(&std::fs::read(counted_file(session)).ok()?).ok()?;
+    (c.version == COUNTED_VERSION && Some((c.len, c.modified_ms)) == stamp(session)).then_some(c)
+}
+
+/// Keeps a session's counts beside it. A failure to write is no error: they
+/// are counted again next time.
+pub fn keep(session: &std::path::Path, c: &Counted) {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let file = counted_file(session);
+    // a name of its own: the app and the CLI may write at the same time
+    let tmp = file.with_extension(format!(
+        "json.{}.{}.tmp",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let written = serde_json::to_vec(c)
+        .ok()
+        .and_then(|b| std::fs::write(&tmp, b).ok())
+        .and_then(|_| std::fs::rename(&tmp, &file).ok());
+    if written.is_none() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// A session's counts: those kept beside it, or counted now in one pass over
+/// its lines (no record is built) and, for a finished session, kept. `None`
+/// when the file is not a session.
+pub fn counted(session: &std::path::Path) -> Option<Counted> {
+    if let Some(c) = kept(session) {
+        return Some(c);
+    }
+    let mut lines = crate::session::Lines::open(session).ok()?;
+    let header: crate::session::SessionHeader = serde_json::from_slice(lines.line().ok()??).ok()?;
+    let mut n = Counter::default();
+    // what reads is counted: a file cut short still lists
+    while let Ok(Some(l)) = lines.line() {
+        n.line(l);
+    }
+    let c = n.finish(session, &header);
+    // a live recording is still growing: its counts would be stale at once
+    if crate::session::is_compressed(session) {
+        keep(session, &c);
+    }
+    Some(c)
+}
+
+/// A run's figures at `prices`: those kept beside it, or the session read
+/// and analysed now and its figures kept. With them, its counts.
+pub fn figures(
+    session: &std::path::Path,
+    prices: &crate::profile::RequestPrices,
+) -> Option<(Counted, Figures)> {
+    let path = session.to_string_lossy().into_owned();
+    if let Some(c) = kept(session)
+        && let Some(f) = c.figures.clone().filter(|f| f.prices == *prices)
+    {
+        let mut f = f;
+        // as it is named now: the folder may have moved
+        f.point.path = path;
+        return Some((c, f));
+    }
+    let s = crate::session::Session::open_lean(session).ok()?;
+    let f = figures_of(&path, &s, prices);
+    let mut n = Counter::default();
+    for r in &s.records {
+        n.record(r);
+    }
+    let mut c = n.finish(session, &s.header);
+    c.figures = Some(f.clone());
+    if crate::session::is_compressed(session) {
+        keep(session, &c);
+    }
+    Some((c, f))
+}
+
+/// The figures of a session already read.
+pub fn figures_of(
+    path: &str,
+    s: &crate::session::Session,
+    prices: &crate::profile::RequestPrices,
+) -> Figures {
+    let crate::view::Analysis {
+        profile,
+        observations: findings,
+        ..
+    } = crate::view::Analysis::of(s, prices);
+    Figures {
+        prices: prices.clone(),
+        point: crate::program::run_point(
+            path,
+            &s.header.created.to_rfc3339(),
+            &s.records,
+            &profile,
+            &findings,
+        ),
+        warnings: findings
+            .iter()
+            .filter(|o| o.level == "warn")
+            .map(crate::profile::finding_identity)
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -197,5 +533,132 @@ mod tests {
         assert!(s.error_codes.contains(&("503 SlowDown".into(), 1)));
         assert!(s.error_codes.contains(&("refused by sonde".into(), 1)));
         assert_eq!(summarize(&[]), Summary::default());
+    }
+
+    #[test]
+    fn an_operation_has_its_error_share_and_its_tail_and_says_when_it_is_of_few() {
+        let mut rs: Vec<Record> = (0..100)
+            .map(|i| {
+                rec(
+                    "GetObject",
+                    if i < 5 { 500 } else { 200 },
+                    f64::from(i + 1),
+                    i64::from(i),
+                )
+            })
+            .collect();
+        rs.push(rec("PutObject", 200, 7.0, 500));
+        let s = summarize(&rs);
+        let get = &s.operations[0];
+        assert_eq!((get.count, get.errors), (100, 5));
+        assert_eq!(get.error_share, 0.05);
+        assert_eq!(
+            (get.p50_ms, get.p95_ms, get.p99_ms, get.max_ms),
+            (50.0, 95.0, 99.0, 100.0)
+        );
+        assert!(!get.few);
+        let put = &s.operations[1];
+        assert!(put.few, "one request has no percentiles to speak of");
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["operations"][0]["errorShare"], 0.05);
+        assert_eq!(json["operations"][0]["p99Ms"], 99.0);
+        assert!(json["operations"][0].get("few").is_none());
+        assert_eq!(json["operations"][1]["few"], true);
+    }
+
+    /// A fixture copied into a sessions folder, compressed or not.
+    fn fixture(dir: &std::path::Path, name: &str, compressed: bool) -> std::path::PathBuf {
+        let from = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        let to = dir.join(name);
+        std::fs::copy(from, &to).unwrap();
+        if compressed {
+            crate::session::compress(&to).unwrap();
+        }
+        to
+    }
+
+    #[test]
+    fn what_is_counted_a_line_at_a_time_is_what_the_records_sum_to() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "slatedb.sonde",
+            "sdk-python.sonde",
+            "iceberg.sonde",
+            "delta.sonde",
+        ] {
+            let path = fixture(dir.path(), name, true);
+            let s = crate::session::Session::open(&path).unwrap();
+            let sum = summarize(&s.records);
+            let c = counted(&path).unwrap();
+            assert_eq!(
+                (c.requests, c.errors, c.misses, c.bytes_up, c.bytes_down),
+                (
+                    sum.requests,
+                    sum.errors,
+                    sum.misses,
+                    sum.bytes_up,
+                    sum.bytes_down
+                ),
+                "{name}"
+            );
+            // (to the microsecond: the one rounds each time, the other their difference)
+            assert!((c.seconds - sum.seconds).abs() < 2e-6, "{name}");
+            assert_eq!(c.shape.len(), SHAPE_BINS);
+            assert_eq!(
+                u64::from(c.shape.iter().sum::<u32>()),
+                sum.requests,
+                "{name}"
+            );
+            assert_eq!(c.created, s.header.created);
+        }
+    }
+
+    #[test]
+    fn counts_are_kept_beside_a_finished_session_and_go_when_it_changes_or_is_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        // a live (uncompressed) session is counted and nothing is kept
+        let live = fixture(dir.path(), "slatedb.sonde", false);
+        assert_eq!(counted(&live).unwrap().requests, 172);
+        assert!(!counted_file(&live).exists());
+        // a finished one keeps its counts: the next listing reads only those
+        crate::session::compress(&live).unwrap();
+        let first = counted(&live).unwrap();
+        assert!(counted_file(&live).exists());
+        assert_eq!(
+            counted_file(&live).file_name().unwrap(),
+            "slatedb.summary.json"
+        );
+        assert_eq!(kept(&live), Some(first.clone()));
+        // another file in its place (another length): counted again
+        let other = fixture(dir.path(), "delta.sonde", true);
+        std::fs::copy(&other, &live).unwrap();
+        assert_eq!(kept(&live), None);
+        assert_eq!(counted(&live).unwrap().requests, 49);
+        forget(&live);
+        assert!(!counted_file(&live).exists());
+    }
+
+    #[test]
+    fn a_runs_figures_are_reckoned_once_and_again_at_other_prices() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(dir.path(), "sdk-python.sonde", true);
+        let prices = crate::profile::RequestPrices::default();
+        let (c, f) = figures(&path, &prices).unwrap();
+        assert_eq!((c.requests, f.point.requests), (13, 13));
+        assert!(f.point.cost > 0.0);
+        // kept: the same answer from the small file
+        let again = kept(&path).unwrap();
+        assert_eq!(again.figures.as_ref(), Some(&f));
+        assert_eq!(figures(&path, &prices).unwrap().1, f);
+        // other prices are another cost
+        let dear = crate::profile::RequestPrices {
+            per_1000_writes: 50.0,
+            ..prices
+        };
+        let (_, g) = figures(&path, &dear).unwrap();
+        assert!(g.point.cost > f.point.cost * 100.0);
+        assert_eq!(kept(&path).unwrap().figures.unwrap().prices, dear);
     }
 }

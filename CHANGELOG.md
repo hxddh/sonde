@@ -4,6 +4,81 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [16.0.0] - 2026-11-11
+
+A verdict to trust, sessions of any size, charts that can be read. The review this came from is
+[docs/review-15.0.md](docs/review-15.0.md); every row of it is in this version.
+
+### Added
+
+- **Two trial scenarios.** `cut-body`: a download's headers and length go out and its body stops half way; the
+  verdict says whether the program resumed from the cut, read the whole again, or took the half as the whole.
+  `lost-race`: a conditional write (`If-None-Match: *`, `If-Match`) is answered 412 though the clean run won it;
+  faults are counted by commit, so the next number is that commit's retry; a fenced SlateDB writer that stops is
+  right. Both are chosen from what the clean run did. See [docs/trials.md](docs/trials.md).
+- **A broke verdict says where**: the request, the line of code when callers are known, and the SDK's own setting
+  to change, in the CLI, in `check` (every format) and in the app.
+- **A table per operation** at the head of the Time pane and in `show`: requests, the share that failed, p50, p95
+  and p99, percentiles of fewer than 20 requests marked. Error rate over time; a latency heat map; a trial drawn
+  over its clean run on one axis, with a rule at each fault.
+- `show --all`; `check -f json` has `noBaseline`; `summary.operations[]` has `errorShare`, `p95Ms`, `p99Ms`, `few`.
+- A `.sonde` file opens from the system (a double click, Open With, a drop on the icon). Quitting the app ends
+  the program being recorded and a running trial, and writes the session.
+- **How hard a trial presses**: `--fault slowdown:3` or `error:3` fails a request's first three attempts in a row
+  (1 to 5); the app's dialog has the same dial, and a verdict row reads `slowdown:3`.
+- A live operations table follows its end. A refused field says why under itself, and says so to a screen reader.
+
+### Changed
+
+- **Sessions of any size.** A session is read as a stream and analysed in one pass: a million requests in `show`
+  take 7 s and 1.8 GiB (45 s and 7.3 GB), `show -f json`, `share --json` and `export` are written as they are made
+  (they could not run past 500 thousand), `share --html` keeps to 2000 operations and says so (328 MB), `sessions`
+  reads what was counted beside each file (24 s every call), and the app's view of a session is its first 500
+  operations and the totals, the rest read as the table scrolls, sorted and filtered in Rust (351 MB). Budgets are
+  kept by a test in CI.
+- **One time axis** on every chart over time, a value scale and a whole legend on every chart of counts, each kept
+  by the chart lint. The histogram's bars are labelled by their counts. A card is as high as its content.
+- **A run under a second, or of fewer than 20 requests, says totals**, not rates, and draws no sparkline.
+- `show` says each fact once, in one form; a sparkline is as wide as its slices and says what a bar is.
+- A whole-second log (`import`) is spread over its seconds and the session says so: no in-flight figure and no
+  "one after another" finding are made of it.
+- `check` with `baseline = "auto"` and no baseline yet checks the budget and says there is none; a missing baseline
+  names the program and any baseline of the same executable under other arguments. `check --init` writes
+  `[program] name`.
+- 408 owes a retry, in trials, episodes and signals alike; 501 owes none.
+- A trial's session is found by its name; a program's name titles `share` pages and is OTLP's `service.name`;
+  `export --to` posts in parts.
+- A trial says each fact once, in the reader's language. Capacity's sentences have their singulars and whole
+  shares (`98%`). A request's time is written one way everywhere ("Nov 7, 2026, 00:22:25.074").
+- Native Shell 0.5.0; the macOS icon is inset as the system's are.
+
+### Fixed
+
+- **With `{trial}` or `SONDE_TRIAL` in the key, a program that never retries was "survived"**: no request of the
+  trial matched the clean run. The run's own name is taken out of a key before requests are matched.
+- A request the clean run itself failed was owed a retry; a loop that polls for a fixed time was "degraded"; a
+  wait was measured across senders; jitter was judged of waits too short to tell; "written twice" was said of
+  deletes; `--fault x --fault x` ran twice into one file; an interrupt left the program's children running.
+- **Two analyses were quadratic**: retries in an outage (374 s at 100 thousand requests, now 0.5 s) and the
+  small-multipart finding (22 s, now 0.5 s).
+- **The built-in store answered every body on a kept connection in 41–46 ms** (now 0.1 ms): the tour's first
+  finding was that. It honours `If-None-Match`, `If-Match` and `DeleteObjects`.
+- The gzip limit covered `import` only; one absurd line aborted `show`. Dot segments were refused in the key and
+  not in the bucket's place. A replay could not remove what it wrote on a store without `DeleteObjects`, and
+  counted what remained twice.
+- On Windows a trial started from the app never began: the pseudo-console waits to be told where the cursor
+  is, and a trial's output has no terminal to answer. sonde answers it.
+- A retry in the signals was any later request of the same key, however much later. Requests sonde answered
+  itself were priced.
+- The app: a finding's advice opened under another finding; three time axes in one pane; tiles and tables cut
+  figures and dates; Run's actions wrapped ragged; Compare said each fact twice; Chinese headings had no weight,
+  and one word stood for Run, Runs and the button. In dark, tables that draw their own cells were black on
+  dark. On Linux a window's first field was drawn focused and selected.
+
+### Removed
+
+- `Sessions.open` and `Sessions.analyse` in the bridge (the paged view replaces them); `.runpoints.json`.
+
 ## [15.0.0] - 2026-11-11
 
 One reading of a run: four signals, one chart system, one way to draw each thing — and a verdict that is right.

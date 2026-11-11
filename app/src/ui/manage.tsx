@@ -2,13 +2,12 @@
 // as a web page. Each is in the session's context menu and its ⋯ menu.
 
 import { effect, openUrl, signal, untracked } from "nsh";
-import { AlertDialog } from "nsh/base";
 import { t } from "../i18n";
 import { api } from "../native";
 import { forgetRun } from "../run";
 import { copy, notify, report, sessionsChanged } from "../store";
 import type { SessionInfo } from "../types";
-import { Actions, Button, Field, Modal, Title } from "./kit";
+import { Actions, Button, Field, Modal, Title, confirmAlert } from "./kit";
 import { programOf } from "./sessionview";
 import { toast } from "./toast";
 
@@ -63,15 +62,7 @@ export function RenameDialog(props: { window?: string }) {
 
 /** Asks, then removes a session's file. Resolves whether it went. */
 export async function removeSession(s: SessionInfo, removed?: () => void): Promise<boolean> {
-  const { action } = await AlertDialog.show({
-    title: t("sessions.removeTitle", { name: sessionName(s) }),
-    description: t("sessions.removeText", { n: s.requests }),
-    actions: [
-      { id: "cancel", label: t("common.cancel"), role: "cancel" },
-      { id: "remove", label: t("sessions.remove"), role: "destructive" },
-    ],
-  });
-  if (action !== "remove") return false;
+  if (!(await confirmAlert({ title: t("sessions.removeTitle", { name: sessionName(s) }), text: t("sessions.removeText", { n: s.requests }), commit: t("sessions.remove") }))) return false;
   try {
     await api.sessions.remove(s.path);
     // Run no longer offers to open or run again what is gone

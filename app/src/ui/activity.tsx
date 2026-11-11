@@ -4,9 +4,9 @@
 // its own in a terminal.
 
 import { batch, cleanup, computed, effect, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
-import { AlertDialog, DataTable } from "nsh/base";
+import { DataTable } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
-import { ago, clock, count, date, middle, duration } from "../format";
+import { clock, count, date, middle, duration, since } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api } from "../native";
@@ -14,7 +14,7 @@ import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, openSession, report, sessionsChanged } from "../store";
 import type { AuditEntry, JobInfo, RecordSummary, RequestFilter } from "../types";
 import { iconSvg } from "./icon";
-import { Badge, Bar, Button, Card, Empty, IconButton, Options, PanelHeader, terminal, Row, ROW, rowHeight, SearchField, Segmented, type Tone, TYPE, TABLE } from "./kit";
+import { Badge, Bar, Button, Card, Empty, IconButton, Options, PanelHeader, terminal, Row, ROW, rowHeight, SearchField, Segmented, type Tone, TYPE, TABLE, confirmAlert } from "./kit";
 import { StatusMark } from "./sessionview";
 
 export const activityOpen = signal(false);
@@ -51,6 +51,9 @@ function throttled(f: () => void, ms: number): () => void {
 
 const TAB_LABEL: Record<ActivityTab, () => string> = { requests: () => t("activity.requests"), jobs: () => t("activity.jobs"), audit: () => t("activity.changes") };
 
+/** The least room a request's target has in the table. */
+const TARGET = 120;
+
 function Requests() {
   const text = signal("");
   const errors = signal(false);
@@ -84,15 +87,7 @@ function Requests() {
   });
   // the log is gone for good: asked first, and what was open in it closes
   const clear = async () => {
-    const { action } = await AlertDialog.show({
-      title: t("requests.clearTitle"),
-      description: t("requests.clearText"),
-      actions: [
-        { id: "cancel", label: t("common.cancel"), role: "cancel" },
-        { id: "clear", label: t("common.clear"), role: "destructive" },
-      ],
-    });
-    if (action !== "clear") return;
+    if (!(await confirmAlert({ title: t("requests.clearTitle"), text: t("requests.clearText"), commit: t("common.clear") }))) return;
     try {
       api.clearRequests();
       batch(() => {
@@ -132,6 +127,8 @@ function Requests() {
       { label: t("requests.clear"), icon: iconSvg("trash"), onSelect: () => void clear() },
     ]);
   };
+  // the table's own width: its target column takes what the others leave
+  const tableWidth = signal(0);
   const list = () => (
     <View class="min-h-0 flex-1 gap-2">
       <View class="flex-row items-center gap-2">
@@ -151,7 +148,7 @@ function Requests() {
           <IconButton icon="ellipsis" label={t("common.more")} onPress={more} testID="requests-more" />
         </If>
       </View>
-      <Card pad="none" class="min-h-0 flex-1">
+      <Card pad="none" class="min-h-0 flex-1" onWidth={(w) => tableWidth.set(w)}>
       <DataTable
         testID="requests"
         accessibilityLabel={t("activity.requests")}
@@ -159,14 +156,15 @@ function Requests() {
         columns={[
           // a dot and the code, as StatusMark draws them
           ...(terminal() ? [] : [{ key: "status", title: "", width: 52, resizable: false }]),
-          // fits the panel: no column cut at its edge
-          { key: "operation", title: t("requests.operation"), width: 164 },
-          { key: "target", title: t("activity.target"), width: 148, minWidth: 100 },
-          { key: "latency", title: t("sessions.took"), width: 96, align: "end" as const },
+          // fits the panel: the figures keep what they need, the operation its longest name's
+          // room, and the target takes all the rest (the table measures itself)
+          { key: "operation", title: t("requests.operation"), width: 196 },
+          { key: "target", title: t("activity.target"), width: tableWidth() > 0 ? Math.max(TARGET, tableWidth() - (terminal() ? 0 : 52) - 196 - 92 - 104 - 2) : TARGET, minWidth: 100 },
+          { key: "latency", title: t("sessions.took"), width: 92, align: "end" as const },
           // to the millisecond, as operations show theirs
-          { key: "time", title: t("column.time"), width: 110 },
+          { key: "time", title: t("column.time"), width: 104 },
         ]}
-        data={rows().map((r) => ({ status: r.status === null ? "—" : `${r.status}`, operation: r.operation, target: middle(r.target, 30), latency: duration(r.latencyMs), time: clock(r.time, "ms") }))}
+        data={rows().map((r) => ({ status: r.status === null ? "—" : `${r.status}`, operation: r.operation, target: terminal() ? middle(r.target, 30) : r.target, latency: duration(r.latencyMs), time: clock(r.time, "ms") }))}
         fontSize={TYPE.body}
         rowHeight={rowHeight(ROW.table)}
         classes={terminal() ? undefined : TABLE}
@@ -177,7 +175,13 @@ function Requests() {
                 const r = rows()[c.row];
                 if (c.key === "status" && r) return <StatusMark status={r.status} />;
                 if (c.key === "latency") return <View class="flex-1 items-end justify-center"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View>;
-                return <Text class={`line-clamp-1 ${c.key === "operation" ? "text-body text-foreground" : "font-mono text-caption text-muted-foreground"}`}>{c.text}</Text>;
+                // a long name or key is cut in its middle, by the text itself: both its ends tell two apart
+                if (c.key === "time") return <Text class="font-mono text-caption text-muted-foreground">{c.text}</Text>;
+                return (
+                  <Text class={`line-clamp-1 ${c.key === "operation" ? "text-body text-foreground" : "font-mono text-caption text-muted-foreground"}`} style={{ textOverflow: "ellipsis-middle" }}>
+                    {c.text}
+                  </Text>
+                );
               }
         }
         rowSelectable
@@ -211,7 +215,7 @@ function Jobs() {
   const now = signal(Date.now());
   const clockTick = setInterval(() => now.set(Date.now()), 30000);
   cleanup(() => clearInterval(clockTick));
-  const age = (started: string) => (now(), ago(started));
+  const age = (started: string) => (now(), duration(since(started), "age"));
   return (
     <If when={jobs().length > 0} else={<Empty icon="timer" text={t("jobs.none")} />}>
       <Scroll class="flex-1" contentClass="pb-4">
@@ -223,7 +227,7 @@ function Jobs() {
                   <View class="shrink-0">
                     <Badge tone={JOB_TONE[j().state] ?? "neutral"} label={t(`jobs.state.${j().state}` as never)} />
                   </View>
-                  <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{core(j().titleText, j().title)}</Text>
+                  <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{core(j().titleText, j().title)}</Text>
                   <Text class="shrink-0 text-caption text-muted-foreground">{age(j().started)}</Text>
                   <If when={j().state === "running"}>
                     <Button small variant="outline" label={t("jobs.cancel")} onPress={() => api.cancelJob(j().id)} />
@@ -269,7 +273,7 @@ function Changes() {
                   <View class="shrink-0">
                     <Badge tone={outcome(e()).tone} label={outcome(e()).label} />
                   </View>
-                  <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{[actionLabel(e().action), [e().endpoint, e().bucket].filter(Boolean).join("/")].filter(Boolean).join(" · ")}</Text>
+                  <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{[actionLabel(e().action), [e().endpoint, e().bucket].filter(Boolean).join("/")].filter(Boolean).join(" · ")}</Text>
                   <If when={e().stage !== "started"}>
                     <Text class="shrink-0 tabular-nums text-caption text-muted-foreground">{t("matrix.of", { n: count(e().succeeded), of: count(e().items) })}</Text>
                   </If>

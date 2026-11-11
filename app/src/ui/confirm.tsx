@@ -21,6 +21,12 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
     typed.set("");
     props.onClose(o);
   };
+  // what is typed cannot become the words asked for: said under the field (while it still can, nothing is)
+  const mismatch = () => {
+    const want = props.plan?.confirm ?? "";
+    const got = typed().trim();
+    return got && !want.startsWith(got) ? t("confirm.mismatch", { value: want }) : null;
+  };
   // what the commit needs: writes allowed, nothing running, and the words typed
   const ready = () => !readOnly() && !running() && props.plan !== null && typed().trim() === props.plan.confirm;
   const run = async () => {
@@ -54,6 +60,10 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
   return (
     <Modal
       open={props.plan !== null}
+      // what will be done, heard as the dialog opens
+      describe={props.plan ? core(props.plan.summaryText, props.plan.summary) : undefined}
+      // (a table of what will go needs the room: its keys, ids and what each is are never cut to fit)
+      size={props.plan?.items.length ? "wide" : "default"}
       // while it runs it stays: what it did is shown, and the lists rescanned
       onClose={() => !running() && close(null)}
     >
@@ -64,7 +74,7 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
             <Heading>{t("confirm.dryRun")}</Heading>
             <Text class="text-body text-popover-foreground">{core(p().summaryText, p().summary)}</Text>
             <If when={p().items.length > 0}>
-              <SimpleTable max={12} columns={[t("confirm.colKey"), t("confirm.colVersion"), t("confirm.colSize"), ""]} rows={p().items.map((i) => [i.key, i.id ?? "", i.bytes === null ? "" : bytes(i.bytes), core(i.detailText, i.detail)])} />
+              <SimpleTable max={12} fill={3} end={[2]} columns={[t("confirm.colKey"), t("confirm.colVersion"), t("confirm.colSize"), t("confirm.colDetail")]} rows={p().items.map((i) => [i.key, i.id ?? "", i.bytes === null ? "" : bytes(i.bytes), core(i.detailText, i.detail)])} />
             </If>
             <If when={p().document}>
               {(doc) => (
@@ -83,7 +93,7 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
               }
             >
               {/* Return commits, once what is typed matches */}
-              <Field label={t("confirm.type", { hint: core(p().confirmHintText, p().confirmHint), value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} onSubmit={run} testID="confirm-input" mono />
+              <Field label={t("confirm.type", { hint: core(p().confirmHintText, p().confirmHint), value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} onSubmit={run} testID="confirm-input" mono error={mismatch()} />
             </If>
             <Actions>
               <Button variant="ghost" label={t("common.cancel")} onPress={() => close(null)} disabled={running()} testID="confirm-cancel" />

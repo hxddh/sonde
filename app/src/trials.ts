@@ -2,14 +2,26 @@
 // other, and what the bridge says of each as it goes (`Sessions.trial`'s
 // events), folded into the list the dialog shows.
 
-import { type Key, t } from "./i18n";
+import { t } from "./i18n";
 import type { Trial, TrialEvent } from "./types";
 
 /** A scenario as people say it ("The store asks to slow down"); one sonde has
  * no words for yet (a project's own) keeps its name. Its id stands beside it
  * in mono where it is listed: what `sonde run --trial` is given. */
-const SCENARIOS = ["slowdown", "error", "lost-answer", "fail-complete", "slow", "s3-limits"];
-export const scenarioLabel = (name: string): string => (SCENARIOS.includes(name) ? t(`scenario.${name}` as Key) : name);
+export const SCENARIOS = ["slowdown", "error", "lost-answer", "fail-complete", "cut-body", "lost-race", "slow", "s3-limits"] as const;
+const known = (name: string): name is (typeof SCENARIOS)[number] => (SCENARIOS as readonly string[]).includes(name);
+export const scenarioLabel = (name: string): string => (known(name) ? t(`scenario.${name}`) : name);
+/** What a scenario does and how hard it presses, in a line: sonde's own words
+ * for the ones it knows (`times` above 1: its first attempts, for the two
+ * that can be pressed harder); a project's own scenario (`own`: sonde.toml
+ * may give a known name other rules) and one sonde has no words for keep the
+ * line the plan gives. */
+export const scenarioAbout = (name: string, about: string, own = false, times = 1): string => {
+  if (!known(name) || own) return about;
+  if (times > 1 && name === "slowdown") return t("scenario.times.slowdown", { n: times });
+  if (times > 1 && name === "error") return t("scenario.times.error", { n: times });
+  return t(`scenario.about.${name}`);
+};
 
 /** One scenario of a trial: yet to run, running, or done with how the program stood. */
 export interface TrialStep {

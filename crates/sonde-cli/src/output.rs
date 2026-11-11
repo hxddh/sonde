@@ -39,13 +39,25 @@ pub fn unsupported(format: Format, command: &str, formats: &[Format]) -> Option<
     })
 }
 
-/// A count with its noun: `1 request`, `3 requests`, `1 error`.
+/// A count with its noun: `1 request`, `3 requests`, `10,004 requests`.
 pub fn count(n: usize, one: &str) -> String {
     if n == 1 {
         format!("1 {one}")
     } else {
-        format!("{n} {one}s")
+        format!("{} {one}s", grouped(n as u64))
     }
+}
+
+/// A whole number as every command writes one: 1234567 as `1,234,567`
+/// (the signals' own writer: one way, everywhere).
+pub fn grouped(n: u64) -> String {
+    sonde_proxy::signals::count_text(n as usize)
+}
+
+/// A length of time as every command writes one: `0.4 ms`, `217 ms`,
+/// `12.5 s`, `2m 26s` (the signals' own writer).
+pub fn duration(ms: f64) -> String {
+    sonde_proxy::signals::ms_text(ms)
 }
 
 /// Prints rows as an aligned table (wide characters counted as two).

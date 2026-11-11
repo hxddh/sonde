@@ -4,160 +4,23 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type ContextMenuEvent, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
+import { Clipboard, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
-import { isAvailable } from "nsh/desktop";
-import { bytes, change, clock, count, date, day, duration, hm, middle, percent } from "../format";
+import { change, clock, count, date, duration, middle, transfer } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { Chart, sessionStory, Sparkline, timed, Waterfall } from "./plots";
+import { Chart, sessionStory, Sparkline, timed, Waterfall, MARK } from "./plots";
 import { type SignalId, signalsOf, signalTiles } from "../signals";
-import { worstStanding } from "../trials";
-import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
+import type { Operations } from "../operations";
+import type { EpisodeRow, LogLine, Observation, RecordSummary, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, InWindowMenu, ListRow, Options, Path, Row, ROW, rowHeight, Stat, Strong, TABLE, terminal, type TileLook, Tiles, Title, TYPE } from "./kit";
+import { Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH } from "./kit";
 import { rememberedSize } from "./sizes";
 
-const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
-// steps that set the stage for the program rather than being it
-const STAGE = new Set(["cd", "sleep", "echo", "export", "set", "source", ".", "true", "time", "nice", "exec", "printf", "wait", "nohup"]);
+import { commandLine } from "../command";
 
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
-/** A command's shell words as typed, quotes kept (`TOKEN="ab cd"` is one
- * word), and `;`, `&&`, `||`, `|`, `&` as words of their own: as sonde's
- * own reading of a command (program.rs) has them. */
-function shellWords(command: string): string[] {
-  const words: string[] = [];
-  let word = "";
-  let quote: string | null = null;
-  const flush = () => {
-    if (word) words.push(word);
-    word = "";
-  };
-  for (let i = 0; i < command.length; i++) {
-    const c = command[i];
-    if (quote) {
-      word += c;
-      if (c === "\\" && quote === '"' && i + 1 < command.length) word += command[++i];
-      else if (c === quote) quote = null;
-    } else if (c === "'" || c === '"') {
-      quote = c;
-      word += c;
-    } else if (c === "\\" && /[\s\\'";|&$`]/.test(command[i + 1] ?? "")) {
-      // an escape only before what it escapes: C:\Python\x.exe is a path
-      word += c + (command[++i] ?? "");
-    } else if (c === ";" || c === "|" || c === "&") {
-      flush();
-      words.push(c !== ";" && command[i + 1] === c ? c + command[++i] : c);
-    } else if (/\s/.test(c)) flush();
-    else word += c;
-  }
-  flush();
-  return words;
-}
-
-const SEPARATOR = new Set([";", "&&", "||", "|", "&"]);
-
-/** A word with any secret in it hidden: a variable's value, an option that
- * names a secret (`--password=…`), and both inside a quoted command given
- * to a shell (`sh -c 'KEY=… python x.py'`). */
-function scrubWord(word: string): string {
-  const eq = word.indexOf("=");
-  if (eq > 0) {
-    const name = word.slice(0, eq);
-    if (ASSIGNMENT.test(word)) return `${name}=…`;
-    if (name.startsWith("-") && /secret|password|passwd|token|key|credential/i.test(name)) return `${name}=…`;
-  }
-  for (const q of ["'", '"']) {
-    if (word.length >= 2 && word.startsWith(q) && word.endsWith(q) && word.includes("=")) return `${q}${scrubCommand(word.slice(1, -1))}${q}`;
-  }
-  return word;
-}
-
-/** sonde's own words where a command would be: a replay, a watch of logs, an import. */
-const OWN_WORDS = ["replay of ", "logs of ", "imported from "];
-
-/** A command the user ran — not sonde's own `replay of …`, `logs of …` or `imported from …`. */
-export function ranCommand(command?: string | null): boolean {
-  const c = command?.trim();
-  return !!c && !OWN_WORDS.some((w) => c.startsWith(w));
-}
-
-/** The session's title line: `$ command` for a run, sonde's own words otherwise. */
-export function commandLine(command: string): string {
-  return ranCommand(command) ? `$ ${scrubCommand(command)}` : command;
-}
-
-/** The command with the value of every variable it sets hidden
- * (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole, the rest as typed: what
- * a list, a tooltip or a notification shows. */
-export function scrubCommand(command: string): string {
-  let out = "";
-  let i = 0;
-  const text = command.trim();
-  while (i < text.length) {
-    // a word starts here: an assignment's value runs to the word's end, quotes included
-    if (/\s/.test(text[i]) || ";|&".includes(text[i])) {
-      out += text[i++];
-      continue;
-    }
-    let j = i;
-    let quote: string | null = null;
-    while (j < text.length) {
-      const c = text[j];
-      if (quote) {
-        if (c === "\\" && quote === '"') j++;
-        else if (c === quote) quote = null;
-      } else if (c === "'" || c === '"') quote = c;
-      else if (c === "\\") j++;
-      else if (/\s/.test(c) || ";|&".includes(c)) break;
-      j++;
-    }
-    out += scrubWord(text.slice(i, j));
-    i = j;
-  }
-  return out;
-}
-
-/** What a command runs, for lists: its program's name (past the variables
- * it sets, `env` and its options, never one of their values; of a compound
- * command the first that is not a step setting the stage), or the command
- * itself, scrubbed, when it starts with the shell's own words. */
-export function programOf(command: string | null | undefined): string | null {
-  if (!command) return null;
-  const words = shellWords(command);
-  let first: string | null = null;
-  let part: string[] = [];
-  const parts: string[][] = [];
-  for (const w of words) {
-    if (SEPARATOR.has(w)) {
-      parts.push(part);
-      part = [];
-    } else part.push(w);
-  }
-  parts.push(part);
-  for (const p of parts) {
-    let i = 0;
-    while (i < p.length) {
-      if (ASSIGNMENT.test(p[i])) i++;
-      else if (p[i] === "env") {
-        i++;
-        while (i < p.length && (ASSIGNMENT.test(p[i]) || p[i].startsWith("-"))) i += ["-u", "-C", "--unset", "--chdir"].includes(p[i]) ? 2 : 1;
-      } else break;
-    }
-    const w = p[i];
-    if (!w) continue;
-    if (SHELL.has(w)) {
-      const c = scrubCommand(command);
-      return c.length > 40 ? `${c.slice(0, 40)}…` : c;
-    }
-    const name = w.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() || null;
-    if (name && !STAGE.has(name)) return name;
-    first ??= name;
-  }
-  return first;
-}
+export { commandLine, programOf, ranCommand, scrubCommand } from "../command";
+export { SessionList, tellApart } from "./sessionlist";
 
 export { clock };
 
@@ -166,12 +29,12 @@ const time = (iso: string) => new Date(iso).getTime();
 export type Tone = "ok" | "miss" | "client" | "server" | "refused";
 
 /** How an operation ended, as a status color: lookups that found nothing are not errors. */
-export function episodeTone(e: Episode): Tone {
+export function episodeTone(e: Pick<EpisodeRow, "outcome" | "miss" | "notFound" | "requests">): Tone {
   if (e.outcome.kind === "refused") return "refused";
   if (e.outcome.kind === "failed") return /^4\d\d/.test(e.outcome.detail) ? "client" : "server";
-  if (e.kind === "probe" || e.title.includes("found nothing")) return "miss";
+  if (e.miss) return "miss";
   // every request a lookup that found nothing
-  if (e.notFound && e.notFound === e.records.length) return "miss";
+  if (e.notFound && e.notFound === e.requests) return "miss";
   return "ok";
 }
 
@@ -198,7 +61,6 @@ const TONE_BAR: Record<Tone, string> = {
   server: "bg-status-server",
   refused: "bg-status-refused",
 };
-export const toneText = (t: Tone) => TONE_TEXT[t];
 
 /** An HTTP status, the same everywhere: a dot in its tone and the code, a
  * success quiet, anything else in its tone (none: the request never got
@@ -220,28 +82,23 @@ export function StatusMark(props: { status: number | null; text?: string; inject
 
 const FORMAT_TEXT: Record<string, string> = { SlateDB: "text-fmt-slatedb", Iceberg: "text-fmt-iceberg", Delta: "text-fmt-delta", Lance: "text-fmt-lance" };
 /** An operation's kind as a tag, in the app's language. */
-const kindLabel = (k: Episode["kind"]): string => (k === "multipart" ? t("kind.multipart") : k === "retry" ? t("kind.retry") : k === "listing" ? t("kind.listing") : k === "probe" ? t("kind.probe") : "");
+const kindLabel = (k: EpisodeRow["kind"]): string => (k === "multipart" ? t("kind.multipart") : k === "retry" ? t("kind.retry") : k === "listing" ? t("kind.listing") : k === "probe" ? t("kind.probe") : "");
 
 /** What kind of thing an operation is: its storage format, else its kind. */
-function family(e: Episode): { label: string; class: string } {
+function family(e: Pick<EpisodeRow, "format" | "kind">): { label: string; class: string } {
   if (e.format) return { label: e.format, class: FORMAT_TEXT[e.format] ?? "text-fmt-other" };
   const k = kindLabel(e.kind);
   return k ? { label: k, class: e.kind === "multipart" ? "text-fmt-mpu" : "text-fmt-other" } : { label: "", class: "" };
 }
 
 /** How long an operation ran, in ms (a number: `duration` writes it). */
-export const episodeMs = (e: Episode) => time(e.end) - time(e.start);
+export const episodeMs = (e: Pick<EpisodeRow, "start" | "end">) => time(e.end) - time(e.start);
 
-/** The session's span in time: its first start, its last end. */
+/** The session's span in time: its first operation's start, its last one's end. */
 export function span(v: SessionView): [number, number] {
-  if (!v.episodes.length) return [0, 1];
-  let a = Infinity;
-  let b = -Infinity;
-  for (const e of v.episodes) {
-    a = Math.min(a, time(e.start));
-    b = Math.max(b, time(e.end));
-  }
-  return [a, Math.max(b, a + 1)];
+  if (!v.span) return [0, 1];
+  const a = time(v.span.start);
+  return [a, Math.max(time(v.span.end), a + 1)];
 }
 
 /** The commit a run's code was at, as a person reads it: a1b2c3d (main), changed. */
@@ -254,10 +111,10 @@ export function gitText(g: SessionView["header"]["git"]): string {
 export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
-    const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: duration(s().seconds * 1000) })];
+    const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.episodesTotal) }), secs: duration(s().seconds * 1000) })];
     if (s().errors) parts.push(t("timeline.errors", { n: s().errors }));
     if (s().misses) parts.push(t("timeline.notFound", { n: s().misses }));
-    parts.push(`↑${bytes(s().bytesUp)} ↓${bytes(s().bytesDown)}`);
+    parts.push(transfer(s().bytesUp, s().bytesDown));
     return parts.join(" · ");
   };
   const command = () => props.view.header.command;
@@ -292,7 +149,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           tone={x().tone}
           hint={props.onSignal ? t("signal.open") : undefined}
           onPress={props.onSignal ? () => props.onSignal?.(SIGNALS[i]) : undefined}
-          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class="h-5 w-16 shrink-0" fill={x().tone === "bad" ? "fill-status-server/80" : undefined} />}
+          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class={MARK.tile} kind={x().kind} tone={x().tone === "bad" ? "bad" : "plain"} />}
         />
       </If>
     );
@@ -317,15 +174,14 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
       {/* one reading of a run: rate, errors, latency, bytes, and how many at once; each opens its chart */}
       {/* (a page shared before sessions had a profile: its figures in a line) */}
       <If when={tiles().length > 0} else={<Text testID="session-summary" accessibilityLabel={line()} class="tabular-nums text-small text-muted-foreground">{line()}</Text>}>
-        <Tiles ranked short={props.short} min={SIGNAL_TILE} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
+        <Tiles ranked short={props.short} min={SIZES.signalTile} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
       </If>
     </View>
   );
 }
 
-/** The signals in rank order, and the least width a tile of one reads in. */
+/** The signals in rank order (the least width a tile of one reads in is the kit's `SIZES.signalTile`). */
 const SIGNALS: SignalId[] = ["rate", "errors", "latency", "bytes", "inFlight"];
-const SIGNAL_TILE = 168;
 
 const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3" } as const;
 type Sdk = keyof typeof SDKS | "config";
@@ -350,6 +206,9 @@ function ExpectButton(props: { o: Observation; onExpect?: (o: Observation) => vo
   );
 }
 
+/** A fix's code as written, without the blank lines around it. */
+const sample = (code: string) => code.replace(/^\s*\n|\s+$/g, "");
+
 function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: the pane's own, kept from finding to finding */ sdk: { (): Sdk; set: (s: Sdk) => void }; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
   const fixSdk = props.sdk;
   const fixes = () => props.o.fixes ?? [];
@@ -366,6 +225,9 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
         <Icon name="sparkles" size={ICON.small} />
         <Heading class="flex-1">{t("fix.title")}</Heading>
         <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: sdkTitle(f.sdk) }))} onChange={(v) => fixSdk.set(v as Sdk)} />
+        <If when={shown() && !terminal()}>
+          <Button small variant="ghost" icon="copy" label={t("fix.copy")} onPress={() => shown() && void Clipboard.writeText(sample(shown()!.code)).catch(() => {})} testID="fix-copy" />
+        </If>
         {/* or no change: a habit kept on purpose, which sonde check then expects */}
         <ExpectButton o={props.o} onExpect={props.onExpect} />
       </View>
@@ -397,11 +259,12 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
       <If when={shown()}>
         {(f) => (
           <If when={!terminal()} else={<Text class="font-mono text-foreground">{f().code}</Text>}>
-            {/* highlighted, with a copy button over it (Native Shell's TextView) */}
+            {/* highlighted; a line too long for the card scrolls sideways under its own indicator (Native Shell's
+                TextView); its Copy is beside the SDKs, so no row stands empty over the code for it */}
             <TextView
               testID="fix-code"
-              markdown={`\`\`\`${LANG[f().sdk]}\n${f().code}\n\`\`\``}
-              codeBlockActions={[{ id: "copy", label: t("fix.copy") }]}
+              // (the sample as written, without the blank lines around it)
+              markdown={`\`\`\`${LANG[f().sdk]}\n${sample(f().code)}\n\`\`\``}
               classes={{ codeBlock: "rounded-(--radius) border border-border bg-background p-2 font-mono text-small" }}
             />
           </If>
@@ -413,11 +276,8 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
 
 /** Where each finding begins, by its number in the list: for the shape. */
 export function findingMarks(v: SessionView): { tMs: number; n: number }[] {
-  const t0 = v.episodes.length ? Date.parse(v.episodes[0].start) : 0;
-  return v.observations.flatMap((o, i) => {
-    const e = o.episodes?.length ? v.episodes[o.episodes[0]] : undefined;
-    return e ? [{ tMs: Math.max(0, Date.parse(e.start) - t0), n: i + 1 }] : [];
-  });
+  const t0 = v.span ? Date.parse(v.span.start) : 0;
+  return v.observations.flatMap((o, i) => (o.firstStart ? [{ tMs: Math.max(0, Date.parse(o.firstStart) - t0), n: i + 1 }] : []));
 }
 
 /** Acting on every finding at once, as an estimate: requests, waiting, cost. */
@@ -436,16 +296,21 @@ export function whatIfText(v: SessionView): string | null {
  * about. `compact` (beside a run's live operations): the sentences only. */
 export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
-  // a finding pressed brings its fixes into view, under the list
+  /** How many operations a finding is about (a view lists the first of them only). */
+  const about = (o: Observation) => o.episodesTotal ?? o.episodes?.length ?? 0;
+  // a finding pressed opens what to change inside its own row, under its title; the row comes
+  // to the top of the findings' room, so its title stays in view over its advice
   // (Native Shell's `reveal`: the scroll views around a view bring it to show)
-  let fixes: ViewRef | undefined;
-  const showFixes = () => fixes?.reveal({ vertical: "nearest" });
-  effect(() => {
+  const places: (ViewRef | undefined)[] = [];
+  const showChosen = () => {
     const f = props.filter;
-    if (f == null || !props.view.observations[f]?.fixes?.length) return;
-    // another finding's fixes in the same panel; a panel that has just come reveals itself
-    showFixes();
+    if (f != null) places[f]?.reveal({ vertical: "start" });
+  };
+  effect(() => {
+    if (props.filter != null) showChosen();
   });
+  /** Whether a finding has anything to open: its fixes, or (the app's own) a line for sonde.toml. */
+  const advised = (o: Observation) => !!o.fixes?.length || !!(props.onExpect && o.identity);
   const list = () => props.view.observations.slice(0, props.max ?? props.view.observations.length);
   if (terminal()) {
     return (
@@ -459,7 +324,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
                 testID={`observation-${i()}`}
                 label={observationText(o())}
                 selected={props.filter === i()}
-                disabled={!props.onFilter || !o().episodes?.length}
+                disabled={!props.onFilter || !about(o())}
                 onPress={() => press(i())}
               >
                 <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
@@ -482,9 +347,11 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   const saving = (v: () => string, i: () => number) => (
     <View class="shrink-0 flex-row items-center gap-1">
       <Icon name="trending-down" size={ICON.small} tint="info" />
-      <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small font-medium text-info">{v()}</Text>
+      <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small text-info">{v()}</Text>
     </View>
   );
+  /** A finding whose advice is open under it, with fixes: the advice says why and what it saves. */
+  const opened = (o: () => Observation, i: () => number) => !props.compact && props.filter === i() && !!o().fixes?.length;
   const row = (o: () => Observation, i: () => number) => (
     <ListRow
       divided
@@ -493,7 +360,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       testID={`observation-${i()}`}
       label={observationText(o())}
       selected={props.filter === i()}
-      disabled={!props.onFilter || !o().episodes?.length}
+      disabled={!props.onFilter || !about(o())}
       onPress={() => press(i())}
       class={dense() ? "py-1" : ""}
       // by rank as the pane narrows: the finding's words keep their width; what acting on it
@@ -501,10 +368,10 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       trailing={
         <>
           <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
-          <If when={props.onFilter && o().episodes?.length}>
-            <View class={`${props.narrow ? "" : "w-28"} flex-row items-center justify-end gap-1`}>
+          <If when={props.onFilter && about(o())}>
+            <View class={`${props.narrow ? "" : WIDTH.count} flex-row items-center justify-end gap-1`}>
               <If when={!props.narrow}>
-                <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: o().episodes.length })}</Text>
+                <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: count(about(o())) })}</Text>
               </If>
               <Icon name={props.filter === i() ? "x" : "chevron-right"} size={ICON.small} />
             </View>
@@ -519,39 +386,42 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       </View>
       <View class="min-w-0 flex-1 gap-1">
         <Text class={`text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
-        <If when={(!dense() || props.filter === i()) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
-        <If when={(!dense() || props.filter === i()) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
+        {/* why it matters and what acting on it saves: here, or (the finding opened, with fixes) once, in its advice */}
+        <If when={(!dense() || props.filter === i()) && !opened(o, i) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
+        <If when={(!dense() || props.filter === i()) && !opened(o, i) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
       </View>
     </ListRow>
   );
   const findings = () => (
     // a short window keeps room for the operations: the findings scroll
     <Scroll class={`overflow-hidden ${CARD}`} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
-      <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
-      {/* the finding pressed: what to change, in the findings' own room */}
-      <If when={!props.compact && props.filter != null && props.view.observations[props.filter!] && (props.view.observations[props.filter!].fixes?.length || (props.onExpect && props.view.observations[props.filter!].identity)) ? props.view.observations[props.filter!] : null}>
-        {(o) => (
-          <View
-            ref={(r) => {
-              fixes = r;
-              showFixes();
-            }}
-            class="border-t border-border p-3"
-          >
-            <If
-              when={o().fixes?.length}
-              else={
-                <View class="flex-row items-center gap-2">
-                  <Text class="min-w-0 flex-1 text-small text-muted-foreground">{t("expect.hint")}</Text>
-                  <ExpectButton o={o()} onExpect={props.onExpect} />
-                </View>
-              }
-            >
-              <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} />
+      <Each of={list()}>
+        {(o: () => Observation, i) => (
+          <View ref={(r) => (places[i()] = r)}>
+            {row(o, i)}
+            {/* the finding pressed: what to change, inside its own row — never under another finding's title */}
+            <If when={!props.compact && props.filter === i() && advised(o())}>
+              <View
+                testID="finding-advice"
+                ref={() => showChosen()}
+                class="border-t border-border bg-muted/40 p-3"
+              >
+                <If
+                  when={o().fixes?.length}
+                  else={
+                    <View class="flex-row items-center gap-2">
+                      <Text class="min-w-0 flex-1 text-small text-muted-foreground">{t("expect.hint")}</Text>
+                      <ExpectButton o={o()} onExpect={props.onExpect} />
+                    </View>
+                  }
+                >
+                  <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} />
+                </If>
+              </View>
             </If>
           </View>
         )}
-      </If>
+      </Each>
     </Scroll>
   );
   return (
@@ -582,6 +452,13 @@ const tableClasses = {
   resizeHandle: "bg-transparent group-hover:bg-border",
 };
 
+/** Whether a table following its end goes to its newest row: rows were added
+ * (`total` of them now, `known` before) and its view ended at the last row
+ * there was (`endSeen`: the end of the rows in view at its last report, or 0
+ * when it has reported none). A reader who went up to look at a row is left
+ * there; back at the end, the table follows again. */
+export const followsEnd = (total: number, known: number, endSeen: number): boolean => total > known && endSeen >= known;
+
 /** A session's operations: outcome, time, family, title, requests, duration,
  * place in the session's time and notes. `rows` (default all) are the
  * episodes shown, by index; events name episodes by index too. */
@@ -592,15 +469,12 @@ const kept = (key: keyof typeof opsWidths, fallback: number) => untracked(() => 
 /** The operations as a table to paste (tab-separated), in the order given:
  * figures as plain numbers in one unit each, named in the column's title —
  * what the table shows ("840 ms", "2.35 s") would not sort or sum. */
-export function operationsText(view: SessionView, order: number[]): string {
+export function operationsText(view: SessionView, rows: EpisodeRow[]): string {
   const plain = (s: string) => s.replace(/[\t\r\n]+/g, " ");
   const head = [t("column.time"), t("column.operation"), t("column.requests"), t("sessions.tookMs"), t("column.notes")];
-  const rows = order.flatMap((i) => {
-    const e = view.episodes[i];
-    // plain numbers on purpose (to sort and sum where they are pasted): not `count()`, not `duration()`
-    return e ? [[e.start, plain(episodeTitle(e)), `${e.records.length}`, `${Math.round(episodeMs(e) * 1000) / 1000}`, plain(episodeNotes(e, view.sharedNotes).join(" · "))]] : [];
-  });
-  return [head, ...rows].map((r) => r.join("\t")).join("\n");
+  // plain numbers on purpose (to sort and sum where they are pasted): not `count()`, not `duration()`
+  const body = rows.map((e) => [e.start, plain(episodeTitle(e)), `${e.requests}`, `${Math.round(episodeMs(e) * 1000) / 1000}`, plain(episodeNotes(e, view.sharedNotes).join(" · "))]);
+  return [head, ...body].map((r) => r.join("\t")).join("\n");
 }
 
 /** The operations' columns by rank. The outcome's dot, the operation and how
@@ -627,33 +501,44 @@ export function operationColumns(width: number, wanted: { format: boolean; bar: 
 
 export function OperationsTable(props: {
   view: SessionView;
-  rows?: number[];
-  onSelect: (i: number) => void;
-  onContextMenu?: (i: number) => void;
+  /** The rows: a window over however many operations there are, sorted and narrowed where they are kept. */
+  source: Operations;
+  /** A row pressed: its operation, by index. */
+  onSelect: (index: number) => void;
+  onContextMenu?: (index: number) => void;
   ref?: (r: DataTableRef) => void;
+  /** The operations marked (chosen, or running when an output line was printed), by index. */
   highlight?: number[];
   compact?: boolean;
-  /** Gets the order the table shows the operations in (sorted by a column, or as given). */
-  order?: (shown: () => number[]) => void;
+  /** A session still being recorded: the table opens at its newest operation and stays at its end as more arrive, until the reader scrolls up (back at the end, it follows again). */
+  follow?: boolean;
 }) {
-  const notes = (e: Episode) => episodeNotes(e, props.view.sharedNotes).join(" · ");
-  // the slowest or busiest first, at a press on their column's title
+  const notes = (e: EpisodeRow) => episodeNotes(e, props.view.sharedNotes).join(" · ");
+  // the slowest or busiest first, at a press on their column's title: sorted where the operations are kept
   const sort = signal<DataTableSort | null>(null);
-  const shown = () => {
-    const list = props.rows ?? props.view.episodes.map((_, i) => i);
-    const s = sort();
-    if (!s) return list;
-    const by = (i: number) => {
-      const e = props.view.episodes[i];
-      return s.key === "duration" ? episodeMs(e) : s.key === "requests" ? e.records.length : time(e.start);
-    };
-    const dir = s.direction === "descending" ? -1 : 1;
-    return [...list].sort((a, b) => (by(a) - by(b)) * dir || a - b);
+  const sortBy = (next: DataTableSort | null) => {
+    sort.set(next);
+    const { sort: _, descending: __, ...rest } = props.source.query();
+    props.source.ask(next ? { ...rest, sort: next.key === "duration" ? "duration" : next.key === "requests" ? "requests" : "time", descending: next.direction === "descending" } : rest);
   };
-  props.order?.(() => shown());
-  const formats = () => props.view.episodes.some((e) => family(e).label);
+  // following the end: where the table's view ended at its last report, against how many rows there were then
+  let table: DataTableRef | undefined;
+  let endSeen = 0;
+  let known = 0;
+  effect(() => {
+    const n = props.source.total();
+    const follows = !!props.follow && sort() === null;
+    untracked(() => {
+      if (follows && followsEnd(n, known, endSeen)) setTimeout(() => table?.scrollToRow(n - 1), 0);
+      known = n;
+    });
+  });
+  const held = () => props.source.rows();
+  const start = () => props.source.start();
+  const formats = () => Object.keys(props.view.families.formats).length > 0 || ["multipart", "retry", "listing", "probe"].some((k) => (props.view.families.kinds[k] ?? 0) > 0);
   const range = () => span(props.view);
-  const ep = (row: number) => props.view.episodes[shown()[row]];
+  // a row of the table (counted from the first of them all) as the operation it shows, once its page is held
+  const ep = (row: number): EpisodeRow | undefined => held()[row - start()];
   // the table's own width decides what it shows (`operationColumns`); the operation's name takes the rest
   const width = signal(0);
   const layout = () =>
@@ -690,26 +575,18 @@ export function OperationsTable(props: {
     const order: OpColumn[] = terminal() ? (["time", "format", "title", "requests", "duration", "notes"] as OpColumn[]).filter((k) => l.shown.includes(k)) : l.shown;
     return order.map(column);
   };
-  const data = () => {
-    // the name is cut for the room it has, not at a fixed length
-    const room = Math.max(24, Math.floor((titleWidth() - 12) / 6.4));
-    // a key is cut in its middle (its end tells two apart); a sentence is left to the cell, which cuts its end
-    const fit = (text: string) => (text.includes("/") ? middle(text, room) : text);
-    return shown().map((i) => {
-      const e = props.view.episodes[i];
-      return {
-        status: episodeTone(e),
-        time: clock(e.start),
-        format: family(e).label,
-        // cut in the middle: the end of a key is what tells two apart
-        title: terminal() ? middle(e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72) : fit(episodeTitle(e)),
-        requests: count(e.records.length),
-        duration: duration(episodeMs(e)),
-        bar: "",
-        notes: notes(e),
-      };
-    });
-  };
+  const data = () =>
+    held().map((e) => ({
+      status: episodeTone(e),
+      time: clock(e.start),
+      format: family(e).label,
+      // a terminal cuts it by a count of characters; a window where it runs out of room (the cell's own middle ellipsis)
+      title: terminal() ? middle(e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72) : episodeTitle(e),
+      requests: count(e.requests),
+      duration: duration(episodeMs(e)),
+      bar: "",
+      notes: notes(e),
+    }));
   const cell = (c: { row: number; key: string; text: string }) => {
     const e = ep(c.row);
     if (!e) return <Text class="text-body">{c.text}</Text>;
@@ -729,7 +606,12 @@ export function OperationsTable(props: {
           </View>
         );
       case "title":
-        return <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e)]}`}>{c.text}</Text>;
+        // cut in its middle, by the text itself: a name's end (a key's file, an id) is what tells two rows apart
+        return (
+          <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e)]}`} style={{ textOverflow: "ellipsis-middle" }}>
+            {c.text}
+          </Text>
+        );
       case "bar": {
         const [a, b] = range();
         const total = b - a;
@@ -761,12 +643,22 @@ export function OperationsTable(props: {
   return (
     <View class={`min-h-0 flex-1 ${CARD}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
     <DataTable
-      ref={props.ref}
+      ref={(r) => {
+        table = r;
+        props.ref?.(r);
+      }}
       testID="operations"
       accessibilityLabel={t("sessions.operations")}
       class="min-h-0 flex-1"
       columns={columns()}
+      // the rows held, of however many there are: the table asks for the rest as it scrolls
       data={data()}
+      dataStart={start()}
+      rowCount={props.source.total()}
+      onVisibleRowsChange={({ range }) => {
+        endSeen = range.end;
+        props.source.show(range.start, range.end);
+      }}
       fontSize={TYPE.body}
       rowHeight={rowHeight(ROW.table)}
       resizableColumns={!terminal()}
@@ -774,13 +666,16 @@ export function OperationsTable(props: {
         if (!props.compact && key in opsWidths) opsWidths[key as keyof typeof opsWidths].onResize({ size: width });
       }}
       classes={terminal() ? undefined : tableClasses}
-      rowClasses={shown().map((i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
+      rowClasses={held().map((e) => (props.highlight?.includes(e.index) ? "bg-selection" : ""))}
       renderCell={terminal() ? undefined : cell}
       rowSelectable
       sort={sort()}
-      onSortChange={({ sort: next }) => sort.set(next)}
-      onRowPress={({ row }) => props.onSelect(shown()[row])}
-      onContextMenu={props.onContextMenu ? (e) => { if (e.row !== undefined && e.row !== null) props.onContextMenu?.(shown()[e.row]); } : undefined}
+      onSortChange={({ sort: next }) => sortBy(next)}
+      onRowPress={({ row }) => {
+        const e = ep(row);
+        if (e) props.onSelect(e.index);
+      }}
+      onContextMenu={props.onContextMenu ? (e) => { const at = e.row === undefined || e.row === null ? undefined : ep(e.row); if (at) props.onContextMenu?.(at.index); } : undefined}
       empty={<Empty compact text={t("common.empty")} />}
     />
     </View>
@@ -813,7 +708,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
 }
 
 /** The output lines printed while an operation ran (or the last one before it). */
-export function linesOf(lines: LogLine[], e: Episode): number[] {
+export function linesOf(lines: LogLine[], e: Pick<EpisodeRow, "start" | "end">): number[] {
   const a = time(e.start);
   const b = time(e.end);
   const inside = lines.flatMap((l, i) => (time(l.time) >= a && time(l.time) <= b ? [i] : []));
@@ -825,32 +720,13 @@ export function linesOf(lines: LogLine[], e: Episode): number[] {
   return before >= 0 ? [before] : [];
 }
 
-/** The operations running when a line was printed, or else the nearest one.
- * Output is read a moment after it is written, so a line can come in just
- * after the request it announced: the nearest operation, before or after. */
-export function operationsAt(episodes: Episode[], line: LogLine): number[] {
-  const at = time(line.time);
-  const running = episodes.flatMap((e, i) => (time(e.start) <= at && at <= time(e.end) ? [i] : []));
-  if (running.length) return running;
-  let best = -1;
-  let gap = Infinity;
-  episodes.forEach((e, i) => {
-    const d = at < time(e.start) ? time(e.start) - at : at - time(e.end);
-    if (d < gap) {
-      gap = d;
-      best = i;
-    }
-  });
-  return best >= 0 ? [best] : [];
-}
-
 /** An operation in the inspector: what it is, its notes, its requests; `onRecord` opens one. */
-export function OperationView(props: { episode: Episode; shared: string[]; rows: RecordSummary[]; onRecord: (id: number) => void; onBack?: () => void; back?: JSX.Element }) {
+export function OperationView(props: { episode: EpisodeRow; shared: string[]; rows: RecordSummary[]; onRecord: (id: number) => void; onBack?: () => void; back?: JSX.Element }) {
   // one request of the operation: its status (a scenario's answer marked), what it was, how long it took
   const request = (r: () => RecordSummary, i: () => number) => (
     <View style={{ height: rowHeight(ROW.twoLine) }}>
       <ListRow divided first={i() === 0} testID={`op-request-${i()}`} label={`${r().operation} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 py-0" trailing={<><Text class="text-small tabular-nums text-muted-foreground">{duration(r().latencyMs)}</Text><Icon name="chevron-right" size={ICON.small} /></>}>
-        <View class="w-12">
+        <View class={WIDTH.status}>
           <StatusMark status={r().status} injected={r().injected} />
         </View>
         <View class="min-w-0 flex-1">
@@ -875,18 +751,19 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         <View class="flex-row items-center gap-2">
           {props.back}
           <If when={fam().label}>
-            <Text class={`text-small font-medium ${fam().class}`}>{fam().label}</Text>
+            <Text class={`text-small ${fam().class}`}>{fam().label}</Text>
           </If>
           <View class="flex-1" />
           <If when={e().outcome.kind !== "ok"}>
             <View class="flex-row items-center gap-2">
               <Dot tone={episodeTone(e())} />
-              <Text class={`text-small font-medium ${TONE_TEXT[episodeTone(e())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
+              {/* emphasis: how it failed, in its tone */}
+              <Text class={`text-small ${EMPHASIS} ${TONE_TEXT[episodeTone(e())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
             </View>
           </If>
         </View>
         <Title class="leading-5">{episodeTitle(e())}</Title>
-        <Text class="tabular-nums text-caption text-muted-foreground">{`${clock(e().start)} · ${duration(episodeMs(e()))} · ↑${bytes(e().bytesUp)} ↓${bytes(e().bytesDown)}`}</Text>
+        <Text class="tabular-nums text-caption text-muted-foreground">{`${clock(e().start)} · ${duration(episodeMs(e()))} · ${transfer(e().bytesUp, e().bytesDown)}`}</Text>
       </View>
       <If when={notes().length > 0}>
         <View class="gap-2">
@@ -907,7 +784,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         </Chart>
       </If>
       <View class="gap-2">
-        <Heading count={e().records.length}>{t("timeline.requestsOf")}</Heading>
+        <Heading count={e().requests}>{t("timeline.requestsOf")}</Heading>
         {/* a few are drawn whole; an operation may hold thousands of requests, and then only those in view are */}
         <If
           when={props.rows.length > 40}
@@ -930,147 +807,5 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         </If>
       </View>
     </View>
-  );
-}
-
-const DAY = 86400000;
-function dayLabel(iso: string): string {
-  const d = new Date(iso);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  // rounded: a day of 23 or 25 hours (a clock change) is still a day
-  const diff = Math.round((today.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / DAY);
-  if (diff <= 0) return t("time.today");
-  if (diff === 1) return t("time.yesterday");
-  return day(iso);
-}
-
-/** Arguments of one program's runs, each cut so that what tells it from the
- * others shows: where they all begin alike past a few words, that beginning
- * is said once as `…` and each shows the rest (`… --table orders`,
- * `… --table users`); alone, or already different at their start, they stay whole. */
-export function tellApart(args: string[]): string[] {
-  const distinct = [...new Set(args)];
-  if (distinct.length < 2) return args;
-  let common = distinct[0];
-  for (const a of distinct) while (!a.startsWith(common)) common = common.slice(0, -1);
-  // back to a word's edge; a short beginning is worth keeping whole
-  common = common.slice(0, common.lastIndexOf(" ") + 1);
-  if (common.length < 16) return args;
-  return args.map((a) => `… ${a.slice(common.length)}`);
-}
-
-/** The sessions, newest first, by day: the program (or the endpoint), its time and requests. */
-export function SessionList(props: {
-  sessions: SessionInfo[];
-  selected: string | null;
-  onSelect: (p: string) => void;
-  onContextMenu?: (s: SessionInfo, at?: { x: number; y: number }) => void;
-  /** The context menu's commands, offered to screen readers on each row. */
-  actions?: (s: SessionInfo) => { name: string; label: string; run: () => void }[];
-}) {
-  // one list, the days as headers that stay in view while their sessions scroll
-  type Row = { day: string } | { s: SessionInfo; i: number };
-  const rows = (): Row[] => {
-    const out: Row[] = [];
-    let last = "";
-    props.sessions.forEach((s, i) => {
-      const day = dayLabel(s.created);
-      if (day !== last) out.push({ day: (last = day) });
-      out.push({ s, i });
-    });
-    return out;
-  };
-  const dayOf = (r: Row) => ("day" in r ? r.day : null);
-  // runs of one program are told apart: by the argument that differs, and where the
-  // command is the same to the letter, by the second they started
-  const told = () => {
-    const by = new Map<string, SessionInfo[]>();
-    for (const x of props.sessions) by.set(name(x), [...(by.get(name(x)) ?? []), x]);
-    const out = new Map<string, { args: string; twin: boolean }>();
-    for (const group of by.values()) {
-      const shown = tellApart(group.map(args));
-      group.forEach((x, i) => out.set(x.path, { args: shown[i], twin: group.some((y) => y !== x && args(y) === args(x)) }));
-    }
-    return out;
-  };
-  const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
-  const name = (s: SessionInfo) => s.title || programOf(s.command) || s.endpoint;
-  // the rest of the command after its program, scrubbed; the whole of it when
-  // the program is not its first word (`cd etl && python load.py`)
-  const args = (s: SessionInfo) => {
-    const p = programOf(s.command);
-    if (s.title || !s.command || !p || p.endsWith("…")) return "";
-    const c = scrubCommand(s.command);
-    const [first, ...rest] = c.split(" ");
-    if (first.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() === p) return rest.join(" ");
-    return c === p ? "" : c;
-  };
-  // where the system has no menus to pop up (a terminal, the web): the
-  // same commands in Native Shell's own, on a right press or Shift+F10
-  const inWindowMenu = (x: () => { s: SessionInfo; i: number }, body: JSX.Element) => (
-    <InWindowMenu enabled={!props.onContextMenu && !!props.actions && !isAvailable} actions={() => (props.actions?.(x().s) ?? []).filter((a) => a.name !== "window")}>
-      {body}
-    </InWindowMenu>
-  );
-  const row = (x: () => { s: SessionInfo; i: number }) => inWindowMenu(x,
-    <View
-      onContextMenu={props.onContextMenu ? (e: ContextMenuEvent) => props.onContextMenu!(x().s, e.pagePosition) : undefined}
-      accessibilityActions={props.actions?.(x().s).map(({ name, label }) => ({ name, label }))}
-      onAccessibilityAction={props.actions ? ({ actionName }) => props.actions!(x().s).find((a) => a.name === actionName)?.run() : undefined}
-    >
-    <ListRow
-      lines={2}
-      testID={`session-${x().i}`}
-      label={x().s.title ?? (x().s.command ? scrubCommand(x().s.command!) : x().s.name)}
-      selected={props.selected === x().s.path}
-      onPress={() => props.onSelect(x().s.path)}
-      class="mb-1"
-    >
-      <View class="flex-row items-center gap-2">
-        <If when={x().s.live}>
-          <Dot tone="live" label={t("timeline.live")} />
-        </If>
-        <Text class="min-w-0 shrink text-body font-medium text-foreground line-clamp-1">{name(x().s)}</Text>
-        <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{told().get(x().s.path)?.args ?? args(x().s)}</Text>
-        {/* the same command run again: its time at the row's end, to the second */}
-        <If when={told().get(x().s.path)?.twin}>
-          <Text testID="session-time" class="shrink-0 tabular-nums text-caption font-medium text-foreground">{clock(x().s.created, "s")}</Text>
-        </If>
-      </View>
-      <View class="flex-row items-center gap-2">
-        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{`${hm(x().s.created)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
-        {/* tried under faults, and the program broke: said on its row */}
-        <If when={worstStanding(x().s.trials) === "broke"}>
-          <Badge testID="session-broke" label={t("trial.brokeBadge")} tone="fail" />
-        </If>
-        <If when={x().s.shape?.length}>
-          <Sparkline shape={x().s.shape!} id={x().s.path} />
-        </If>
-      </View>
-    </ListRow>
-    </View>,
-  );
-  return (
-    <List
-      testID="session-list"
-      class="flex-1"
-      each={rows()}
-      stickyHeaderIndices={headers()}
-      estimatedItemSize={46}
-      keyExtractor={(r) => ("day" in r ? `day:${r.day}` : r.s.path)}
-      scrollbar={false}
-    >
-      {(r) => (
-        // a recycled cell: what it shows follows the item it is given
-        <If when={dayOf(r())} else={row(() => r() as { s: SessionInfo; i: number })}>
-          {(day) => (
-            <View class={`${terminal() ? "" : "bg-sidebar"} px-2 pb-1 pt-2`}>
-              <Heading quiet>{day()}</Heading>
-            </View>
-          )}
-        </If>
-      )}
-    </List>
   );
 }

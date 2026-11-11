@@ -1,19 +1,190 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// A header's name or value: text that the records repeating it share. A
+/// session of a million requests says `user-agent` and its value a million
+/// times; kept once each, a record's headers are a third of the size. It
+/// reads as a `str` everywhere, and is written to a file as one.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Text(std::sync::Arc<str>);
+
+/// How many texts a thread remembers to share (the newest at each place).
+const SHARED: usize = 2048;
+/// Longer texts are not looked for: they are seldom repeated.
+const SHARED_LEN: usize = 512;
+
+thread_local! {
+    static RECENT: std::cell::RefCell<Vec<Option<std::sync::Arc<str>>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl Text {
+    /// `s` as a text: the one a recent equal text is kept as, when there is one.
+    pub fn new(s: &str) -> Text {
+        if s.len() > SHARED_LEN {
+            return Text(s.into());
+        }
+        // FNV-1a
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in s.as_bytes() {
+            h = (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        let at = (h ^ (h >> 32)) as usize % SHARED;
+        RECENT
+            .try_with(|recent| {
+                let mut recent = recent.borrow_mut();
+                if recent.is_empty() {
+                    recent.resize(SHARED, None);
+                }
+                match &recent[at] {
+                    Some(t) if **t == *s => Text(t.clone()),
+                    _ => {
+                        let t: std::sync::Arc<str> = s.into();
+                        recent[at] = Some(t.clone());
+                        Text(t)
+                    }
+                }
+            })
+            .unwrap_or_else(|_| Text(s.into()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for Text {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for Text {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for Text {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for Text {
+    fn default() -> Self {
+        Text::new("")
+    }
+}
+
+impl std::fmt::Debug for Text {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&*self.0, f)
+    }
+}
+
+impl std::fmt::Display for Text {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&str> for Text {
+    fn from(s: &str) -> Self {
+        Text::new(s)
+    }
+}
+
+impl From<String> for Text {
+    fn from(s: String) -> Self {
+        Text::new(&s)
+    }
+}
+
+impl From<&String> for Text {
+    fn from(s: &String) -> Self {
+        Text::new(s)
+    }
+}
+
+impl From<Text> for String {
+    fn from(t: Text) -> Self {
+        t.0.as_ref().to_owned()
+    }
+}
+
+impl PartialEq<str> for Text {
+    fn eq(&self, other: &str) -> bool {
+        &*self.0 == other
+    }
+}
+
+impl PartialEq<&str> for Text {
+    fn eq(&self, other: &&str) -> bool {
+        &*self.0 == *other
+    }
+}
+
+impl PartialEq<String> for Text {
+    fn eq(&self, other: &String) -> bool {
+        &*self.0 == other.as_str()
+    }
+}
+
+impl PartialEq<Text> for str {
+    fn eq(&self, other: &Text) -> bool {
+        self == &*other.0
+    }
+}
+
+impl PartialEq<Text> for &str {
+    fn eq(&self, other: &Text) -> bool {
+        *self == &*other.0
+    }
+}
+
+impl PartialEq<Text> for String {
+    fn eq(&self, other: &Text) -> bool {
+        self.as_str() == &*other.0
+    }
+}
+
+impl Serialize for Text {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Text {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = Text;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a string")
+            }
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Text, E> {
+                Ok(Text::new(s))
+            }
+        }
+        d.deserialize_str(V)
+    }
+}
+
 /// One header, as sent or received (names keep their case on the wire;
 /// comparisons ignore it).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Header {
-    pub name: String,
-    pub value: String,
+    pub name: Text,
+    pub value: Text,
 }
 
 impl Header {
-    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn new(name: impl AsRef<str>, value: impl AsRef<str>) -> Self {
         Header {
-            name: name.into(),
-            value: value.into(),
+            name: Text::new(name.as_ref()),
+            value: Text::new(value.as_ref()),
         }
     }
 }
@@ -148,7 +319,7 @@ impl Record {
             .iter_mut()
             .chain(self.response_headers.iter_mut())
         {
-            h.value = crate::redact::redact_header(&h.name, &h.value);
+            h.value = crate::redact::redact_header(&h.name, &h.value).into();
         }
         if let Some(body) = &mut self.error_body {
             if body.len() > MAX_ERROR_BODY {

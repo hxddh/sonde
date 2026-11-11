@@ -11,6 +11,9 @@ pub struct Running {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// The program's process id: in its terminal it leads a session, and
+    /// so a process group, of its own.
+    pid: Option<u32>,
 }
 
 impl Running {
@@ -32,9 +35,25 @@ impl Running {
             .is_ok()
     }
 
+    /// Ends the program and every process it started in its group (a
+    /// supervisor's children, a shell's pipeline), as `sonde run` does when
+    /// it is interrupted: not its first process alone.
     pub fn kill(&mut self) -> bool {
-        self.killer.kill().is_ok()
+        let group = self.pid.is_some_and(kill_group);
+        self.killer.kill().is_ok() || group
     }
+}
+
+/// Kills the process group `pid` leads. Whether the signal was sent.
+#[cfg(unix)]
+fn kill_group(pid: u32) -> bool {
+    use rustix::process::{Pid, Signal, kill_process_group};
+    Pid::from_raw(pid as i32).is_some_and(|p| kill_process_group(p, Signal::KILL).is_ok())
+}
+
+#[cfg(not(unix))]
+fn kill_group(_pid: u32) -> bool {
+    false
 }
 
 type Spawned = (
@@ -98,6 +117,7 @@ pub fn spawn(
     let mut reader = pair.master.try_clone_reader()?;
     let writer = pair.master.take_writer()?;
     let killer = child.clone_killer();
+    let pid = child.process_id();
     let (out_tx, out_rx) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         let mut buf = [0u8; 16 * 1024];
@@ -124,6 +144,7 @@ pub fn spawn(
             writer,
             master: pair.master,
             killer,
+            pid,
         },
     ))
 }
@@ -200,5 +221,41 @@ mod tests {
         }
         assert!(out.contains("set [] tty"), "{out:?}");
         assert_eq!(exit.await.unwrap(), Some(0));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod group {
+    #[tokio::test]
+    async fn killing_a_program_ends_what_it_started_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        // a supervisor: its child outlives it unless the group goes
+        let command = format!("sleep 300 & echo $! > {}; wait", pidfile.display());
+        let (_out, exit, mut running) = super::spawn(&command, None, &[], &[], 80, 24).unwrap();
+        for _ in 0..200 {
+            if std::fs::read_to_string(&pidfile).is_ok_and(|p| !p.trim().is_empty()) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        let child = std::fs::read_to_string(&pidfile).unwrap();
+        let alive = || {
+            std::process::Command::new("kill")
+                .args(["-0", child.trim()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        assert!(alive());
+        assert!(running.kill());
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), exit).await;
+        for _ in 0..200 {
+            if !alive() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert!(!alive(), "the program's own process went with it");
     }
 }

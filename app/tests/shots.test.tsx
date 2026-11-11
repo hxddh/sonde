@@ -5,6 +5,7 @@
 // visual record CI keeps of each build.
 
 import { type App, open, test } from "nsh/test";
+import { runAction } from "./helpers";
 
 const dir = (globalThis as any).process?.env?.SONDE_SHOTS ?? "shots";
 
@@ -19,7 +20,9 @@ function command(cmd: boolean) {
   const get = (k: string) => `${curl} -o ${sink} ${url}/demo/${k} && echo fetched ${k}`;
   // small objects, one of 3 MiB (its first byte against the rest of it), a key that is not
   // there (a miss) and a bucket that is not (a failure: the errors chart has something to draw)
-  return [...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
+  // a pause first: a trial of it runs long enough to be seen running
+  const pause = cmd ? "ping -n 3 127.0.0.1 >NUL" : "sleep 1.5";
+  return [pause, ...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
 }
 
 interface Variant {
@@ -74,15 +77,83 @@ for (const v of variants) {
       await app.window("settings").pressClose();
     }
     await shot("02-run");
+    // recording a program started elsewhere: what it asks before it starts
+    if (app.shows("id:record")) {
+      await app.press("id:record");
+      await app.waitFor("id:record-start");
+      await shot("02a-record");
+      await app.press("id:record-cancel");
+    }
     // which shell Run uses: cmd.exe on Windows (no probe run: it would sit in every list)
     const env = (globalThis as any).process?.env ?? {};
-    const cmd = (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
+    // (asked of the app: the demo's own sample command, left in the field, is written for the shell Run uses;
+    // a test has no process to ask, and its own `platform` is not the window's)
+    const sample = String((await app.value("id:run-command")) ?? "");
+    const cmd = sample.includes("%AWS_ENDPOINT_URL%") || (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
+    // the sample said which shell: no second guess is owed
+    const sure = sample.includes("AWS_ENDPOINT_URL");
+    // (the demo left its own first command in the field: typed after it, the two ran as one)
+    await app.clear("id:run-command");
     await app.type("id:run-command", command(cmd));
     // (the button follows the field a frame later)
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });
+    // (the other shell's form, should the sample not have said and the first have reached no store)
+    if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
+      await app.clear("id:run-command");
+      await app.type("id:run-command", command(!cmd));
+      await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
+      await app.press("id:run-start");
+      await app.waitUntil(() => !app.shows("id:run-no-requests"), { timeout: 20000 });
+      await app.waitFor("id:run-ended", { timeout: 20000 });
+    }
     await shot("02b-ran");
+    // the same command under faults: said before it runs, followed as it goes, its verdicts
+    await runAction(app, "run-try");
+    await app.waitFor("id:trial-plan", { timeout: 10000 });
+    // (a trial runs the program again: where sonde is still read-only, that goes off for it)
+    if (app.shows("id:trial-read-only")) {
+      await app.press("id:trial-close");
+      await app.keyboard.press("mod+,");
+      await app.waitFor("id:screen-settings-area");
+      await app.press("id:tab-settings");
+      await app.waitFor("id:read-only");
+      await app.press("id:read-only");
+      await app.wait(300);
+      await app.window("settings").pressClose();
+      await runAction(app, "run-try");
+      await app.waitFor("id:trial-plan", { timeout: 10000 });
+    }
+    await shot("02e-trial-plan");
+    await app.press("id:trial-start");
+    await app.waitFor("id:trial-progress", { timeout: 10000 });
+    await app.screenshot(`${dir}/${v.name}-02f-trial-running.png`);
+    await app.waitFor("id:trial-elapsed");
+    await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 90000 });
+    await shot("02g-trial-done");
+    // closed, the run opens on its Runs pane, where the verdicts stay
+    await app.press("id:trial-close");
+    await app.waitFor("id:history-trials", { timeout: 10000 });
+    await shot("02h-runs-verdicts");
+    // a trial's own session: its notice, the faults' moments on its shape, and the run over its clean run
+    await app.press("id:trial-slowdown");
+    await app.waitFor("id:trial-note", { timeout: 10000 });
+    await app.wait(600);
+    await shot("02i-trial-session");
+    await app.press("id:session-pane-mode-time");
+    await app.waitFor("id:time-pane");
+    await app.wait(900);
+    await shot("02j-trial-time");
+    await app.press("id:trial-open-clean");
+    await app.waitFor("id:trial-note", { state: "gone", timeout: 10000 });
+    await app.waitFor("id:session-summary", { timeout: 10000 });
+    // the program's output lined up with what it did
+    if (app.enabled("id:session-pane-mode-aligned")) {
+      await app.press("id:session-pane-mode-aligned");
+      await app.waitFor("id:output", { timeout: 5000 });
+      await shot("02k-output");
+    }
     // the run's own session: what failed over its time, and the first byte against the rest
     await go("sessions");
     await app.waitFor("id:session-summary", { timeout: 10000 });
@@ -98,6 +169,11 @@ for (const v of variants) {
     }
 
     await go("sessions");
+    // the programs run here, each over its runs
+    await app.press("id:sessions-by-programs");
+    await app.wait(700);
+    await shot("03p-programs");
+    await app.press("id:sessions-by-runs");
     await app.press("id:open-example");
     // read off the interface's thread: there once its header is (a variant after the first
     // opens on the example already, and reads it again as the list changes: let that settle)
@@ -161,9 +237,19 @@ for (const v of variants) {
     if (run) {
       await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });
+      // (each run's signals and the charts arrive after the figures: a picture taken at once showed "Not timed" over empty charts)
+      await app.wait(1500);
       await shot("03h-runs");
       await app.press("id:compare-back");
     } else if (app.menu()) await app.closeMenu();
+
+    // what a replay on another store would send, said before it runs
+    await app.waitFor("id:replay-open", { timeout: 10000 });
+    await app.press("id:replay-open");
+    await app.waitFor("id:replay-plan", { timeout: 10000 });
+    await shot("03q-replay-plan");
+    await app.press("id:replay-cancel");
+    await app.waitFor("id:replay-plan", { state: "gone" });
 
     await go("store");
     // the buckets are listed from the store: there when the listing is in
@@ -181,6 +267,36 @@ for (const v of variants) {
     await app.press("id:overview-multipart");
     await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
     await shot("04d-uploads");
+    // a change to the store: the plan, and the typed confirmation
+    await app.press("id:plan-abort");
+    await app.waitFor("id:confirm-dialog");
+    await shot("04e-confirm");
+    await app.press("id:confirm-cancel");
+    await app.waitFor("id:confirm-dialog", { state: "gone" });
+    await app.press("id:sheet-close");
+    // a key's versions over time
+    await app.press("id:overview-versions");
+    await app.waitFor("id:screen-versions");
+    await app.type("id:version-key", "config/app.yaml");
+    await app.press("id:load-versions");
+    await app.waitFor("id:timeline", { timeout: 10000 });
+    await shot("04f-versions");
+    await app.press("id:sheet-close");
+    // why the bucket is this big
+    await app.press("id:overview-capacity");
+    await app.waitFor("id:du-findings", { timeout: 15000 });
+    await app.wait(600);
+    await shot("04g-capacity");
+    await app.press("id:sheet-close");
+    // a table format's layout, decoded
+    if (!app.shows("id:bucket-demo-layouts")) await app.keyboard.press("mod+b");
+    await app.press("id:bucket-demo-layouts");
+    await app.waitFor("id:overview-layouts", { timeout: 15000 });
+    await app.press("id:overview-layouts");
+    await app.waitFor("id:analyze-slatedb", { timeout: 15000 });
+    await app.press("id:analyze-slatedb");
+    await app.waitFor("id:layout-report", { timeout: 15000 });
+    await shot("04h-layouts");
     await app.press("id:sheet-close");
 
     await app.keyboard.press("mod+shift+a");

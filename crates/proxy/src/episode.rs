@@ -380,10 +380,12 @@ fn refused(r: &Record) -> bool {
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
 }
 
-fn s3_code(r: &Record) -> Option<String> {
+/// S3's code in an error body, as it stands there (nothing is copied:
+/// [`retryable`] asks of every record).
+fn s3_code(r: &Record) -> Option<&str> {
     let b = r.error_body.as_deref()?;
     let start = b.find("<Code>")? + 6;
-    Some(b[start..start + b[start..].find("</Code>")?].to_string())
+    Some(&b[start..start + b[start..].find("</Code>")?])
 }
 
 fn failure(r: &Record) -> Option<String> {
@@ -426,18 +428,13 @@ fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
 }
 
 fn human(b: u64) -> String {
-    const U: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut v = b as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < U.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{b} B")
-    } else {
-        format!("{v:.1} {}", U[i])
-    }
+    human_bytes(b)
+}
+
+/// A size as it is written everywhere: the one ladder
+/// ([`crate::signals::bytes_text`]).
+pub(crate) fn human_bytes(b: u64) -> String {
+    crate::signals::bytes_text(b as f64)
 }
 
 /// Payload bytes a request uploads (not the XML of Create / Complete).
@@ -539,6 +536,9 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     let mut buffers: Vec<(Format, Vec<&Record>)> = Vec::new();
     let mut probe: Vec<&Record> = Vec::new();
     let mut listing: Vec<&Record> = Vec::new();
+    // requests that are nothing more: most of a large session, made into
+    // operations together once the rest is placed
+    let mut alone: Vec<&Record> = Vec::new();
     for unit in items {
         // a unit's last record stands for it: the Complete of an upload
         let r = *unit.last().expect("units are not empty");
@@ -583,8 +583,9 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
             probe.push(r);
             continue;
         }
-        out.push(single(r));
+        alone.push(r);
     }
+    out.extend(singles(&alone));
     for (f, rs) in buffers {
         out.push(loose(f, rs));
     }
@@ -613,6 +614,33 @@ fn flush_idle(
             i += 1;
         }
     }
+}
+
+/// Each request an operation of its own ([`single`]), on the cores there
+/// are: a session of a million requests is mostly these, and each is a
+/// title and its phrases to write. (The operations are sorted by their
+/// start afterwards: the order they are made in is not seen.)
+fn singles(rs: &[&Record]) -> Vec<Episode> {
+    const WORTH: usize = 20_000;
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
+    if threads < 2 || rs.len() < WORTH {
+        return rs.iter().map(|r| single(r)).collect();
+    }
+    let each = rs.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        let parts: Vec<_> = rs
+            .chunks(each)
+            .map(|part| scope.spawn(move || part.iter().map(|r| single(r)).collect::<Vec<_>>()))
+            .collect();
+        let mut out = Vec::with_capacity(rs.len());
+        for part in parts {
+            match part.join() {
+                Ok(made) => out.extend(made),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+        out
+    })
 }
 
 fn single(r: &Record) -> Episode {
@@ -705,25 +733,46 @@ fn multipart<'a>(
     out: &mut Vec<Episode>,
 ) -> Vec<Vec<&'a Record>> {
     let mut units = Vec::new();
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
     // upload id → record indexes; creates wait for the first upload id seen on their key
     let mut groups: Vec<(Option<String>, String, Vec<usize>)> = Vec::new();
-    let mut by_id: HashMap<String, usize> = HashMap::new();
-    for (i, r) in sorted.iter().enumerate() {
-        let key = format!(
+    let mut by_id: HashMap<&str, usize> = HashMap::new();
+    // by key, the uploads no part has named yet: the one whose creates have
+    // all failed so far (a create tried again joins it; there is one at
+    // most), and those a create began, oldest first
+    #[derive(Default)]
+    struct Waiting {
+        failed: Option<usize>,
+        begun: VecDeque<usize>,
+    }
+    let mut waiting: HashMap<String, Waiting> = HashMap::new();
+    let key_of = |r: &Record| {
+        format!(
             "{}/{}",
             r.bucket.as_deref().unwrap_or(""),
             r.key.as_deref().unwrap_or("")
-        );
+        )
+    };
+    for (i, r) in sorted.iter().enumerate() {
         match r.operation.as_str() {
             // a Create that failed and was tried again is part of the upload that followed
             "CreateMultipartUpload" => {
-                let retried = groups.iter().rposition(|(gid, k, idx)| {
-                    gid.is_none() && *k == key && idx.iter().all(|&j| sorted[j].is_error())
-                });
-                match retried {
-                    Some(g) => groups[g].2.push(i),
-                    _ => groups.push((None, key, vec![i])),
+                let key = key_of(r);
+                let w = waiting.entry(key.clone()).or_default();
+                let g = match w.failed.take() {
+                    Some(g) => {
+                        groups[g].2.push(i);
+                        g
+                    }
+                    None => {
+                        groups.push((None, key, vec![i]));
+                        groups.len() - 1
+                    }
+                };
+                if r.is_error() {
+                    w.failed = Some(g);
+                } else {
+                    w.begun.push_back(g);
                 }
             }
             "UploadPart"
@@ -731,24 +780,23 @@ fn multipart<'a>(
             | "CompleteMultipartUpload"
             | "AbortMultipartUpload"
             | "ListParts" => {
-                let Some(id) = query(r, "uploadId").map(str::to_string) else {
+                let Some(id) = query(r, "uploadId") else {
                     continue;
                 };
-                let g = match by_id.get(&id) {
+                let g = match by_id.get(id) {
                     Some(&g) => g,
                     None => {
+                        let key = key_of(r);
                         // the upload a successful Create began
-                        let pending = groups.iter().position(|(gid, k, idx)| {
-                            gid.is_none() && *k == key && idx.iter().any(|&j| !sorted[j].is_error())
-                        });
+                        let pending = waiting.get_mut(&key).and_then(|w| w.begun.pop_front());
                         let g = match pending {
                             Some(g) => g,
                             None => {
-                                groups.push((None, key.clone(), Vec::new()));
+                                groups.push((None, key, Vec::new()));
                                 groups.len() - 1
                             }
                         };
-                        groups[g].0 = Some(id.clone());
+                        groups[g].0 = Some(id.to_string());
                         by_id.insert(id, g);
                         g
                     }
@@ -825,11 +873,19 @@ fn sondes_fault(r: &Record) -> bool {
     r.injected.is_some() && response_header(r, "x-sonde-fault").is_some()
 }
 
-/// Whether a client is expected to send the request again: no answer, a 5xx
-/// that says so, or the store asking for fewer.
+/// The statuses a retry is owed for: the ones the AWS SDKs send again. A 501
+/// or a 505 is the store's answer however often it is asked, like a 404. The
+/// trial's verdict and the retries read from a session both go by this.
+pub fn status_owes_retry(status: u16) -> bool {
+    matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
+}
+
+/// Whether a client is expected to send the request again: no answer (or
+/// one cut short), a status that says so ([`status_owes_retry`]), or the
+/// store asking for fewer.
 pub(crate) fn retryable(r: &Record) -> bool {
     r.transport_error.is_some()
-        || matches!(r.status, Some(500 | 502 | 503 | 504 | 429))
+        || r.status.is_some_and(status_owes_retry)
         || s3_code(r).is_some_and(|c| c == "SlowDown" || c == "RequestTimeout")
 }
 
@@ -843,29 +899,55 @@ fn retries<'a>(
     out: &mut Vec<Episode>,
 ) -> Vec<Vec<&'a Record>> {
     let mut units = Vec::new();
-    let same = |a: &Record, b: &Record| {
-        a.method == b.method && a.bucket == b.bucket && a.key == b.key && a.query == b.query
-    };
-    let mut i = 0;
-    while i < sorted.len() {
+    // a request's identity: what a retry of it repeats
+    type Identity<'r> = (
+        &'r str,
+        Option<&'r str>,
+        Option<&'r str>,
+        &'r [(String, String)],
+    );
+    fn identity<'r>(r: &'r Record) -> Identity<'r> {
+        (
+            r.method.as_str(),
+            r.bucket.as_deref(),
+            r.key.as_deref(),
+            r.query.as_slice(),
+        )
+    }
+    // the records of each identity a retryable failure has, in time order: a
+    // failure looks for its retry among them, not among every later request
+    // (an outage is thousands of failures, each of a key of its own)
+    let mut of: std::collections::HashMap<Identity, Vec<usize>> = Default::default();
+    for (i, r) in sorted.iter().enumerate() {
+        if !used[i] && retryable(r) {
+            of.entry(identity(r)).or_default();
+        }
+    }
+    if of.is_empty() {
+        return units;
+    }
+    for (i, r) in sorted.iter().enumerate() {
+        if let Some(same) = of.get_mut(&identity(r)) {
+            same.push(i);
+        }
+    }
+    for i in 0..sorted.len() {
         if used[i] || !retryable(sorted[i]) {
-            i += 1;
             continue;
         }
+        let same = &of[&identity(sorted[i])];
         let mut chain = vec![i];
-        let mut j = i + 1;
-        while j < sorted.len() {
+        for &j in &same[same.partition_point(|&j| j <= i)..] {
             let last = sorted[*chain.last().unwrap()];
             if (sorted[j].time - last.time).num_seconds() > 60 {
                 break;
             }
-            if !used[j] && same(sorted[j], last) {
+            if !used[j] {
                 chain.push(j);
                 if !retryable(sorted[j]) {
                     break;
                 }
             }
-            j += 1;
         }
         if chain.len() > 1 {
             for &c in &chain {
@@ -875,7 +957,6 @@ fn retries<'a>(
             let last = *rs.last().expect("a chain has records");
             if tables.format_of(last).is_some() && is_write(last) && !retryable(last) {
                 units.push(rs);
-                i += 1;
                 continue;
             }
             let first = failure(rs[0]).unwrap_or_default();
@@ -899,7 +980,6 @@ fn retries<'a>(
             e.note(p("retry.wait", &[("ms", format!("{wait:.0}"))]));
             out.push(e);
         }
-        i += 1;
     }
     units
 }
@@ -1319,15 +1399,55 @@ pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)>
     out
 }
 
+/// Something for each request, by its id. A session's ids are 1 to n (or
+/// near it): a table by id then, with no hashing; a map when they are not.
+enum ById<V> {
+    Table(u64, Vec<Option<V>>),
+    Map(std::collections::HashMap<u64, V>),
+}
+
+impl<V> ById<V> {
+    /// Of `n` ids or so, given twice over (once to see how they lie).
+    fn of<I: Iterator<Item = (u64, V)>>(n: usize, pairs: impl Fn() -> I) -> ById<V> {
+        let (mut low, mut high) = (u64::MAX, 0);
+        for (id, _) in pairs() {
+            (low, high) = (low.min(id), high.max(id));
+        }
+        if low > high {
+            return ById::Table(0, Vec::new());
+        }
+        let span = high - low;
+        if span > 4 * n as u64 + 1024 {
+            return ById::Map(pairs().collect());
+        }
+        let mut table: Vec<Option<V>> = Vec::new();
+        table.resize_with(span as usize + 1, || None);
+        for (id, v) in pairs() {
+            table[(id - low) as usize] = Some(v);
+        }
+        ById::Table(low, table)
+    }
+
+    fn get(&self, id: &u64) -> Option<&V> {
+        match self {
+            ById::Table(low, table) => table.get(id.checked_sub(*low)? as usize)?.as_ref(),
+            ById::Map(map) => map.get(id),
+        }
+    }
+}
+
 /// What stands out across a session's requests and episodes.
 pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
     use std::collections::{BTreeSet, HashMap};
+    // each record by its id: read once, for every finding that names requests
+    let by_id: ById<&Record> = ById::of(records.len(), || records.iter().map(|r| (r.id, r)));
     // which episode each record belongs to
-    let owner: HashMap<u64, usize> = episodes
-        .iter()
-        .enumerate()
-        .flat_map(|(i, e)| e.records.iter().map(move |r| (*r, i)))
-        .collect();
+    let owner: ById<usize> = ById::of(records.len(), || {
+        episodes
+            .iter()
+            .enumerate()
+            .flat_map(|(i, e)| e.records.iter().map(move |r| (*r, i)))
+    });
     let of_records = |ids: &mut dyn Iterator<Item = u64>| -> Vec<usize> {
         ids.filter_map(|id| owner.get(&id).copied())
             .collect::<BTreeSet<_>>()
@@ -1508,7 +1628,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     let mut uploads: Vec<(usize, u64, bool, Vec<u64>)> = uploads.into_values().collect();
     {
         use std::collections::VecDeque;
-        let at: HashMap<u64, &Record> = records.iter().map(|r| (r.id, r)).collect();
+        let at = &by_id;
         let mut creates: HashMap<(Option<&str>, Option<&str>), VecDeque<&Record>> = HashMap::new();
         let mut sorted: Vec<&Record> = records
             .iter()
@@ -1568,19 +1688,15 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 small
                     .iter()
                     .flat_map(|u| u.3.iter().copied())
-                    .filter(|id| {
-                        records
-                            .iter()
-                            .find(|r| r.id == *id)
-                            .is_some_and(|r| r.operation != "UploadPart")
-                    })
+                    .filter(|id| by_id.get(id).is_some_and(|r| r.operation != "UploadPart"))
                     .collect(),
             ),
         );
     }
     let races: Vec<u64> = records
         .iter()
-        .filter(|r| r.status == Some(412))
+        // a 412 sonde answered itself (a trial's lost race) is not the store's
+        .filter(|r| r.status == Some(412) && !sondes_fault(r))
         .map(|r| r.id)
         .collect();
     if !races.is_empty() {
@@ -1595,19 +1711,21 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .weigh(races.len(), 0, total),
         );
     }
-    // the same key read again and again
-    let mut reads: HashMap<String, Vec<u64>> = HashMap::new();
+    // the same key read again and again (counted by the records' own
+    // names: only a hot key's is written out)
+    let mut reads: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
     for r in records
         .iter()
         .filter(|r| r.method == "GET" || r.method == "HEAD")
     {
         if let (Some(b), Some(k)) = (&r.bucket, &r.key) {
-            reads.entry(format!("{b}/{k}")).or_default().push(r.id);
+            reads.entry((b, k)).or_default().push(r.id);
         }
     }
     let mut hot: Vec<(String, Vec<u64>)> = reads
         .into_iter()
         .filter(|(_, ids)| ids.len() >= 10 && ids.len() * 10 >= total)
+        .map(|((b, k), ids)| (format!("{b}/{k}"), ids))
         .collect();
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     for (k, ids) in hot.into_iter().take(3) {
@@ -1756,11 +1874,11 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     // a prefix near what S3 serves one prefix a second
     {
         use crate::profile::{
-            READS_PER_PREFIX, WRITES_PER_PREFIX, is_read, peak_second, prefix_of,
+            READS_PER_PREFIX, WRITES_PER_PREFIX, is_read, peak_second, prefix_named, prefix_parts,
         };
-        let mut per: HashMap<String, (Vec<i64>, Vec<i64>, Vec<u64>, usize)> = HashMap::new();
+        let mut per: HashMap<(&str, &str), (Vec<i64>, Vec<i64>, Vec<u64>, usize)> = HashMap::new();
         for r in records {
-            let e = per.entry(prefix_of(r)).or_default();
+            let e = per.entry(prefix_parts(r)).or_default();
             if is_read(r) {
                 e.0.push(r.time.timestamp_micros());
             } else {
@@ -1781,6 +1899,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 (pw, WRITES_PER_PREFIX, false)
             };
             if n * 2 >= limit {
+                let prefix = prefix_named(prefix.0, prefix.1);
                 hot.push((prefix, n, limit, read, ids, throttled));
             }
         }
@@ -1910,7 +2029,6 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .then((b.level == "warn").cmp(&(a.level == "warn")))
             .then(b.impact.cmp(&a.impact))
     });
-    let by_id: HashMap<u64, &Record> = records.iter().map(|r| (r.id, r)).collect();
     for o in &mut out {
         if let Some(first) = o.phrases.first() {
             o.fixes = crate::fixes::for_key(first.key);
@@ -1928,10 +2046,130 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     out
 }
 
+/// [`observations`] of a session, read with its header: a session whose
+/// times are to the second (an imported log's:
+/// [`crate::session::SessionHeader::whole_seconds`]) says nothing that
+/// depends on where in its second a request began. Requests "one after
+/// another" are not found in it (spread over their second they all look
+/// so), and a throttling is said without how many were in flight.
+pub fn observations_of(
+    header: &crate::session::SessionHeader,
+    records: &[Record],
+    episodes: &[Episode],
+) -> Vec<Observation> {
+    let mut out = observations(records, episodes);
+    if !header.whole_seconds {
+        return out;
+    }
+    let key = |o: &Observation| o.phrases.first().map_or("", |p| p.key);
+    out.retain(|o| key(o) != "obs.serial");
+    for o in &mut out {
+        if key(o) == "obs.throttled" {
+            let said = &o.phrases[0];
+            let phrase = p(
+                "obs.throttled.rate",
+                &[
+                    ("n", said.args.get("n").cloned().unwrap_or_default()),
+                    ("s", said.args.get("s").cloned().unwrap_or_default()),
+                ],
+            );
+            o.text = phrase.en();
+            o.phrases = vec![phrase];
+            o.fixes = crate::fixes::for_key("obs.throttled.rate");
+            o.identity = crate::profile::finding_identity(o);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use reqlog::Header;
+
+    #[test]
+    fn a_failures_retry_is_the_next_request_of_its_own_name_within_a_minute() {
+        let at = |id: u64, ms: i64, key: &str, status: u16| Record {
+            id,
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + ms).unwrap(),
+            method: "GET".into(),
+            operation: "GetObject".into(),
+            bucket: Some("b".into()),
+            key: Some(key.into()),
+            status: Some(status),
+            latency_ms: 5.0,
+            ..Default::default()
+        };
+        // an outage's worth of other keys between a failure and its retry
+        let mut rs = vec![at(1, 0, "a", 503)];
+        rs.extend((0..200).map(|i| at(10 + i, 10 + i as i64, &format!("other/{i}"), 503)));
+        rs.push(at(2, 500, "a", 503));
+        rs.push(at(3, 900, "a", 200));
+        // the same key again much later is another request, not a retry
+        rs.push(at(4, 900 + 61_000, "a", 503));
+        rs.push(at(5, 900 + 200_000, "a", 200));
+        let eps = episodes(&rs);
+        let retried: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Retry).collect();
+        assert_eq!(retried.len(), 1, "{eps:#?}");
+        assert_eq!(retried[0].records, [1, 2, 3]);
+        assert_eq!(retried[0].title, "GetObject a retried 2× after 503");
+        // every other failure stands alone: 200 keys, and the late one
+        assert_eq!(eps.len(), 1 + 200 + 2);
+    }
+
+    #[test]
+    fn creates_go_to_their_uploads_in_order_whatever_else_shares_the_key() {
+        let at = |id: u64, ms: i64, op: &str, q: &[(&str, &str)], status: u16| Record {
+            id,
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + ms).unwrap(),
+            method: if op == "UploadPart" { "PUT" } else { "POST" }.into(),
+            operation: op.into(),
+            bucket: Some("b".into()),
+            key: Some("big".into()),
+            query: q
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            status: Some(status),
+            request_bytes: Some(if op == "UploadPart" { 8 << 20 } else { 0 }),
+            latency_ms: 5.0,
+            ..Default::default()
+        };
+        let rs = vec![
+            // a create that failed and was tried again, then its upload
+            at(1, 0, "CreateMultipartUpload", &[("uploads", "")], 500),
+            at(2, 10, "CreateMultipartUpload", &[("uploads", "")], 200),
+            // a second upload of the same key begun before the first's parts
+            at(3, 20, "CreateMultipartUpload", &[("uploads", "")], 200),
+            at(
+                4,
+                30,
+                "UploadPart",
+                &[("partNumber", "1"), ("uploadId", "A")],
+                200,
+            ),
+            at(
+                5,
+                40,
+                "UploadPart",
+                &[("partNumber", "1"), ("uploadId", "B")],
+                200,
+            ),
+            at(6, 50, "CompleteMultipartUpload", &[("uploadId", "A")], 200),
+            at(7, 60, "CompleteMultipartUpload", &[("uploadId", "B")], 200),
+            // a create that failed and was never tried again began nothing
+            at(8, 70, "CreateMultipartUpload", &[("uploads", "")], 500),
+        ];
+        let eps = episodes(&rs);
+        let uploads: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Multipart).collect();
+        assert_eq!(uploads.len(), 2, "{eps:#?}");
+        assert_eq!(uploads[0].records, [1, 2, 4, 6]);
+        assert_eq!(uploads[1].records, [3, 5, 7]);
+        assert!(
+            eps.iter()
+                .any(|e| e.kind == Kind::Request && e.records == [8])
+        );
+    }
 
     fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u16) -> Record {
         Record {

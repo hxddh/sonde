@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use clap::{Args, Subcommand};
 use sonde_core::Sonde;
-use sonde_proxy::session::read_header;
 
 use crate::output::{self, Format};
 
@@ -44,6 +43,9 @@ struct Row {
     path: String,
     created: String,
     program: Option<String>,
+    /// The program's name, when it was given one.
+    #[serde(skip)]
+    named: Option<String>,
     endpoint: String,
     bytes: u64,
     /// What it holds: its requests, how long they spanned, how many failed.
@@ -56,7 +58,9 @@ struct Row {
     trials: Option<&'static str>,
 }
 
-/// The sessions in the data directory, newest first.
+/// The sessions in the data directory, newest first: each from the counts
+/// kept beside it (`<name>.summary.json`, made the first time it is listed
+/// and when it is recorded), never from the session read whole.
 fn rows(s: &Sonde) -> Vec<Row> {
     let dir = s.paths().sessions();
     let mut out: Vec<Row> = std::fs::read_dir(&dir)
@@ -68,21 +72,18 @@ fn rows(s: &Sonde) -> Vec<Row> {
             if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
                 return None;
             }
-            let h = read_header(&p)?;
-            // (a file that does not read is still listed, by its header)
-            let sum = sonde_proxy::session::Session::open(&p)
-                .ok()
-                .map(|s| sonde_proxy::summary::summarize(&s.records));
+            let c = sonde_proxy::summary::counted(&p)?;
             Some(Row {
                 name: p.file_name()?.to_string_lossy().into_owned(),
                 path: p.to_string_lossy().into_owned(),
-                created: h.created.to_rfc3339(),
-                program: sonde_proxy::program::key_of(&h),
-                endpoint: h.endpoint,
+                created: c.created.to_rfc3339(),
+                program: c.program,
+                named: c.name.filter(|n| !n.trim().is_empty()),
+                endpoint: c.endpoint,
                 bytes: e.metadata().map(|m| m.len()).unwrap_or(0),
-                requests: sum.as_ref().map_or(0, |s| s.requests),
-                seconds: sum.as_ref().map_or(0.0, |s| s.seconds),
-                errors: sum.as_ref().map_or(0, |s| s.errors),
+                requests: c.requests,
+                seconds: c.seconds,
+                errors: c.errors,
                 trials: sonde_proxy::trial::worst(&sonde_proxy::trial::load(&p)).map(|s| s.label()),
             })
         })
@@ -91,13 +92,60 @@ fn rows(s: &Sonde) -> Vec<Row> {
     out
 }
 
+/// How wide the terminal is: `COLUMNS` when it is set, else the terminal's
+/// own answer. None when the output is not a terminal (a file, a pipe):
+/// nothing is cut for one.
+fn terminal_width() -> Option<usize> {
+    if let Some(n) = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|c| c.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+    {
+        return Some(n);
+    }
+    #[cfg(unix)]
+    {
+        use std::io::IsTerminal;
+        let out = std::io::stdout();
+        if out.is_terminal() {
+            return rustix::termios::tcgetwinsize(&out)
+                .ok()
+                .map(|w| w.ws_col as usize)
+                .filter(|n| *n > 0);
+        }
+    }
+    None
+}
+
+/// `text` in `room` characters: its start and its end, the middle left out
+/// (a command's end is its arguments, which tell two runs apart).
+fn middle(text: &str, room: usize) -> String {
+    let n = text.chars().count();
+    if n <= room || room < 5 {
+        return text.to_string();
+    }
+    let head = (room - 1) / 2;
+    let tail = room - 1 - head;
+    let start: String = text.chars().take(head).collect();
+    let end: String = text.chars().skip(n - tail).collect();
+    format!("{start}…{end}")
+}
+
 /// A session named on the command line: a path, or a name in the sessions directory.
 pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
     if f.exists() {
         return f.clone();
     }
+    // by name: a session of the sessions folder, with `.sonde` or without;
+    // then a trial's session, which is kept in `trials/` there
     let dir = s.paths().sessions();
-    for cand in [dir.join(f), dir.join(format!("{}.sonde", f.display()))] {
+    let named = format!("{}.sonde", f.display());
+    for cand in [
+        dir.join(f),
+        dir.join(&named),
+        dir.join("trials").join(f),
+        dir.join("trials").join(&named),
+    ] {
         if cand.is_file() {
             return cand;
         }
@@ -118,6 +166,25 @@ pub fn open(s: &Sonde, f: &PathBuf) -> anyhow::Result<(PathBuf, sonde_proxy::ses
         )));
     }
     let session = sonde_proxy::session::Session::open(&file)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    Ok((file, session))
+}
+
+/// [`open`] for what a session amounts to (its operations, findings,
+/// figures): its records without what no analysis reads.
+pub fn open_lean(
+    s: &Sonde,
+    f: &PathBuf,
+) -> anyhow::Result<(PathBuf, sonde_proxy::session::Session)> {
+    let file = resolve(s, f);
+    if !file.exists() {
+        return Err(super::usage(format!(
+            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            f.display(),
+            s.paths().sessions().display()
+        )));
+    }
+    let session = sonde_proxy::session::Session::open_lean(&file)
         .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
     Ok((file, session))
 }
@@ -156,22 +223,49 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     })
                     .unwrap_or_default()
             };
-            let rows: Vec<Vec<String>> = all
+            let mut rows: Vec<Vec<String>> = all
                 .iter()
                 .map(|r| {
                     vec![
                         r.name.clone(),
                         local(&r.created),
-                        r.program.clone().unwrap_or_default(),
+                        // its name, when it has one; else its command
+                        r.named.clone().or(r.program.clone()).unwrap_or_default(),
                         r.endpoint.clone(),
-                        r.requests.to_string(),
-                        sonde_proxy::program::ms_text(r.seconds * 1000.0),
-                        r.errors.to_string(),
+                        output::grouped(r.requests),
+                        output::duration(r.seconds * 1000.0),
+                        output::grouped(r.errors),
                         r.trials.unwrap_or("").to_string(),
                         output::bytes(r.bytes),
                     ]
                 })
                 .collect();
+            // a command may be a line long: in a terminal it is cut in its
+            // middle so that every row fits (a file or a pipe gets it whole)
+            if matches!(a.format, Format::Table)
+                && let Some(width) = terminal_width()
+            {
+                const PROGRAM: usize = 2;
+                let heads = [
+                    "session", "recorded", "program", "endpoint", "requests", "took", "errors",
+                    "trials", "size",
+                ];
+                let others: usize = (0..heads.len())
+                    .filter(|i| *i != PROGRAM)
+                    .map(|i| {
+                        rows.iter()
+                            .map(|r| r[i].chars().count())
+                            .chain([heads[i].chars().count()])
+                            .max()
+                            .unwrap_or(0)
+                            + 2
+                    })
+                    .sum();
+                let room = width.saturating_sub(others).max(16);
+                for r in &mut rows {
+                    r[PROGRAM] = middle(&r[PROGRAM], room);
+                }
+            }
             output::print(
                 a.format,
                 &[
@@ -198,10 +292,25 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 .skip(*keep)
                 .filter(|r| !baselines.contains(&r.name))
                 .collect();
+            if gone.is_empty() {
+                // said, not silence: nothing was past the newest N
+                println!(
+                    "nothing to remove: {} here, {} kept{}",
+                    output::count(all.len(), "session"),
+                    keep,
+                    if all.len() > *keep {
+                        " and the rest baselines"
+                    } else {
+                        ""
+                    }
+                );
+            }
             for r in &gone {
                 if *yes {
                     std::fs::remove_file(&r.path)?;
                     sonde_proxy::trial::remove(std::path::Path::new(&r.path));
+                    // and what was counted of it, kept beside it
+                    sonde_proxy::summary::forget(std::path::Path::new(&r.path));
                 }
                 println!(
                     "{}{}",
@@ -288,9 +397,9 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             path.display()
         ),
         None => eprintln!(
-            "{} from a {} → {}",
+            "{} from {} → {}",
             output::count(session.records.len(), "request"),
-            source.name(),
+            source.a(),
             path.display()
         ),
     }
@@ -322,6 +431,16 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             lines(imported.not_requests)
         );
     }
+    if imported.other_hosts > 0 {
+        eprintln!(
+            "  {} left out: requests to other hosts, not to S3",
+            if imported.other_hosts == 1 {
+                "1 entry".to_string()
+            } else {
+                format!("{} entries", output::grouped(imported.other_hosts as u64))
+            }
+        );
+    }
     super::record::show_file(s, &path).await
 }
 
@@ -346,28 +465,71 @@ pub async fn export(s: &Arc<Sonde>, a: &ExportArgs) -> anyhow::Result<i32> {
         Some(f) => resolve(s, f),
         None => super::record::newest_session(s)?,
     };
-    let (_, session) = open(s, &file)?;
+    // spans are made of what the analysis reads: nothing else is kept
+    let (_, session) = open_lean(s, &file)?;
     let _ = a.otlp;
-    let doc = sonde_proxy::otlp::traces(&session);
     match (&a.to, &a.out) {
         (Some(url), _) => {
-            let resp = reqwest::Client::new()
-                .post(url)
-                .header("content-type", "application/json")
-                .body(serde_json::to_vec(&doc)?)
-                .send()
-                .await?;
-            if !resp.status().is_success() {
-                eprintln!("sonde: {url} answered {}", resp.status());
-                return Ok(70);
+            // a collector takes a request of a few MiB (4 MiB is the usual
+            // limit), not a session's worth: sent in batches under it
+            const BATCH: usize = 3 << 20;
+            let requests = session.records.len();
+            // made on another thread, a part ahead of the one being sent:
+            // the session's worth of JSON is never held at once
+            let (parts, mut made) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+            let making = tokio::task::spawn_blocking(move || {
+                sonde_proxy::otlp::batches(&session, BATCH, &mut |part| {
+                    parts
+                        .blocking_send(part)
+                        .map_err(|_| std::io::Error::other("sending stopped"))
+                })
+            });
+            let client = reqwest::Client::new();
+            let mut sent = 0;
+            while let Some(body) = made.recv().await {
+                let resp = client
+                    .post(url)
+                    .header("content-type", "application/json")
+                    .body(body)
+                    .send()
+                    .await?;
+                if !resp.status().is_success() {
+                    eprintln!(
+                        "sonde: {url} answered {}{}",
+                        resp.status(),
+                        if sent > 0 {
+                            format!(" to part {} (the {sent} before it were taken)", sent + 1)
+                        } else {
+                            String::new()
+                        }
+                    );
+                    return Ok(70);
+                }
+                sent += 1;
             }
+            making.await??;
             eprintln!(
-                "{} sent to {url} as traces",
-                output::count(session.records.len(), "request")
+                "{} sent to {url} as traces{}",
+                output::count(requests, "request"),
+                if sent > 1 {
+                    format!(", in {sent} parts")
+                } else {
+                    String::new()
+                }
             );
         }
-        (None, Some(p)) => std::fs::write(p, serde_json::to_vec_pretty(&doc)?)?,
-        (None, None) => println!("{}", output::json(&doc)),
+        // written as it is made: a span at a time
+        (None, Some(p)) => {
+            let out = std::io::BufWriter::new(std::fs::File::create(p)?);
+            sonde_proxy::otlp::write_traces(&session, out, true)?;
+        }
+        (None, None) => {
+            use std::io::Write;
+            let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+            sonde_proxy::otlp::write_traces(&session, &mut out, true)?;
+            out.write_all(b"\n")?;
+            out.flush()?;
+        }
     }
     Ok(0)
 }

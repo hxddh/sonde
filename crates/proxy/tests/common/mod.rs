@@ -32,6 +32,12 @@ pub struct State {
     pub versions: Vec<(String, String, String, bool)>,
     /// Every request: `METHOD /path?query`, and its body as text.
     pub log: Vec<(String, String)>,
+    /// `DeleteObjects` is answered 501, as a store without it does.
+    pub no_batch_delete: bool,
+    /// Keys no delete removes (a batch names them among its errors).
+    pub undeletable: Vec<String>,
+    /// Multipart uploads are not aborted (the answer is 500).
+    pub no_abort: bool,
 }
 
 impl State {
@@ -204,6 +210,7 @@ async fn serve(
                 ),
             )
         }
+        ("POST", None) if has("delete") && s.no_batch_delete => err(501, "NotImplemented"),
         ("POST", None) if has("delete") => {
             let xml = String::from_utf8_lossy(&body).to_string();
             let mut out = String::from("<DeleteResult>");
@@ -211,6 +218,12 @@ async fn serve(
                 let Some(k) = tags(object, "Key").first().copied() else {
                     continue;
                 };
+                if s.undeletable.iter().any(|u| u == k) {
+                    out.push_str(&format!(
+                        "<Error><Key>{k}</Key><Code>AccessDenied</Code></Error>"
+                    ));
+                    continue;
+                }
                 match tags(object, "VersionId").first() {
                     Some(v) => s
                         .versions
@@ -283,6 +296,30 @@ async fn serve(
             reply(200, &[], out)
         }
         ("GET" | "HEAD", Some(k)) => match s.buckets.get(&bucket).and_then(|o| o.get(&k)) {
+            // `bytes=a-` and `bytes=a-b`: enough to resume a download
+            Some((d, e)) if m == "GET" && header("range").is_some() => {
+                let range = header("range").unwrap_or_default();
+                let (a, b) = range
+                    .strip_prefix("bytes=")
+                    .and_then(|r| r.split_once('-'))
+                    .unwrap_or(("0", ""));
+                let first: usize = a.parse().unwrap_or(0);
+                let last: usize = b
+                    .parse()
+                    .unwrap_or(usize::MAX)
+                    .min(d.len().saturating_sub(1));
+                if first >= d.len() || last < first {
+                    return Ok(err(416, "InvalidRange"));
+                }
+                reply(
+                    206,
+                    &[
+                        ("etag", e.clone()),
+                        ("content-range", format!("bytes {first}-{last}/{}", d.len())),
+                    ],
+                    d[first..=last].to_vec(),
+                )
+            }
             Some((d, e)) => {
                 let len = d.len().to_string();
                 reply(
@@ -294,6 +331,8 @@ async fn serve(
             None if m == "HEAD" => reply(404, &[], ""),
             None => err(404, "NoSuchKey"),
         },
+        ("DELETE", Some(_)) if has("uploadId") && s.no_abort => err(500, "InternalError"),
+        ("DELETE", Some(k)) if s.undeletable.contains(&k) => err(403, "AccessDenied"),
         ("DELETE", Some(k)) if has("uploadId") => {
             s.uploads.remove(&get("uploadId").unwrap());
             let _ = k;
