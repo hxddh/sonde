@@ -5,6 +5,7 @@ use super::{meta, setup_failed};
 use crate::Probe;
 use crate::cx::{ProbeCx, data, etag_of};
 use crate::model::{Category, Judgement, ProbeMeta, Steps, Verdict};
+use crate::phrase::ph;
 
 pub fn probes() -> Vec<Box<dyn Probe>> {
     vec![
@@ -18,9 +19,9 @@ pub fn probes() -> Vec<Box<dyn Probe>> {
 /// A 501 / NotImplemented, or a write that ignored the condition.
 fn unsupported_or(steps: &Steps, j: Judgement) -> Judgement {
     if let Some(s) = steps.any_not_implemented() {
-        return Judgement::new(
+        return Judgement::say(
             Verdict::Unsupported,
-            format!("not implemented ({})", s.describe()),
+            ph!("judge.cond.notImplemented", p1 = s.describe()),
             steps,
         );
     }
@@ -55,25 +56,25 @@ impl Probe for PutIfNoneMatch {
             return j;
         }
         let j = if !first.ok() {
-            Judgement::new(
-                Verdict::Fail,
-                "a create-only PUT of a new key was refused",
-                s,
-            )
+            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-none-match.fail"), s)
         } else if second.ok() {
-            Judgement::new(
-                Verdict::Fail,
-                "If-None-Match: * was ignored: the existing object was overwritten",
+            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-none-match.fail.2"), s)
+        } else if second.is(412) {
+            Judgement::say(Verdict::Pass, ph!("judge.cond.put-if-none-match.pass"), s)
+        } else if second.is(409) {
+            Judgement::say(
+                Verdict::Differs,
+                ph!("judge.cond.put-if-none-match.differs"),
                 s,
             )
-        } else if second.is(412) {
-            Judgement::new(Verdict::Pass, "refused with 412 as AWS does", s)
-        } else if second.is(409) {
-            Judgement::new(Verdict::Differs, "refused with 409 instead of 412", s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("refused with {:?} {:?}", second.status, second.code),
+                ph!(
+                    "judge.cond.put-if-none-match.differs.2",
+                    p1 = format!("{:?}", second.status),
+                    p2 = format!("{:?}", second.code)
+                ),
                 s,
             )
         };
@@ -81,7 +82,7 @@ impl Probe for PutIfNoneMatch {
             && read.ok()
             && read.body != String::from_utf8_lossy(&data(16, 1))
         {
-            Judgement::new(Verdict::Fail, "refused, yet the body changed", s)
+            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-none-match.fail.3"), s)
         } else {
             j
         };
@@ -133,36 +134,30 @@ impl Probe for PutIfMatch {
         }
         let (stale, current, missing) = (s.at("stale"), s.at("current"), s.at("missing"));
         let j = if stale.ok() {
-            Judgement::new(
-                Verdict::Fail,
-                "If-Match was ignored: a stale ETag overwrote the object",
-                s,
-            )
+            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail"), s)
         } else if !current.ok() {
-            Judgement::new(Verdict::Fail, "the current ETag was refused", s)
+            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail.2"), s)
         } else if missing.ok() {
             // an object written that must not be: the guarantee broke
-            Judgement::new(
-                Verdict::Fail,
-                "If-Match was ignored on a missing key: the object was created",
-                s,
-            )
+            Judgement::say(Verdict::Fail, ph!("judge.cond.put-if-match.fail.3"), s)
         } else if stale.is(412) && missing.is(404) {
-            Judgement::new(
-                Verdict::Pass,
-                "412 on a stale ETag, 404 on a missing key",
-                s,
-            )
+            Judgement::say(Verdict::Pass, ph!("judge.cond.put-if-match.pass"), s)
         } else if stale.is(412) {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("missing key answered {:?} instead of 404", missing.status),
+                ph!(
+                    "judge.cond.put-if-match.differs",
+                    p1 = format!("{:?}", missing.status)
+                ),
                 s,
             )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("stale ETag answered {:?} instead of 412", stale.status),
+                ph!(
+                    "judge.cond.put-if-match.differs.2",
+                    p1 = format!("{:?}", stale.status)
+                ),
                 s,
             )
         };
@@ -228,23 +223,20 @@ impl Probe for CopyIfMatch {
             s.at("dest-exists"),
         );
         let j = if wrong.ok() {
-            Judgement::new(Verdict::Fail, "copy-source-if-match was ignored", s)
+            Judgement::say(Verdict::Fail, ph!("judge.cond.copy-if-match.fail"), s)
         } else if !right.ok() {
-            Judgement::new(Verdict::Fail, "a copy with the right source ETag failed", s)
+            Judgement::say(Verdict::Fail, ph!("judge.cond.copy-if-match.fail.2"), s)
         } else if exists.ok() {
-            Judgement::new(
-                Verdict::Differs,
-                "If-None-Match: * on the copy destination is ignored (AWS refuses with 412)",
-                s,
-            )
+            Judgement::say(Verdict::Differs, ph!("judge.cond.copy-if-match.differs"), s)
         } else if wrong.is(412) && exists.is(412) {
-            Judgement::new(Verdict::Pass, "both conditions enforced with 412", s)
+            Judgement::say(Verdict::Pass, ph!("judge.cond.copy-if-match.pass"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "conditions enforced with {:?} / {:?}",
-                    wrong.status, exists.status
+                ph!(
+                    "judge.cond.copy-if-match.differs.2",
+                    p1 = format!("{:?}", wrong.status),
+                    p2 = format!("{:?}", exists.status)
                 ),
                 s,
             )
@@ -300,23 +292,31 @@ impl Probe for CompleteIfNoneMatch {
         }
         let (complete, head) = (s.at("complete"), s.at("head"));
         let j = if complete.ok() {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Fail,
-                "If-None-Match: * was ignored: the upload replaced the existing object",
+                ph!("judge.cond.complete-if-none-match.fail"),
                 s,
             )
         } else if complete.is(412) && head.header("content-length") == Some("8") {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Pass,
-                "refused with 412; the existing object kept",
+                ph!("judge.cond.complete-if-none-match.pass"),
                 s,
             )
         } else if complete.is(412) {
-            Judgement::new(Verdict::Fail, "refused, but the existing object changed", s)
+            Judgement::say(
+                Verdict::Fail,
+                ph!("judge.cond.complete-if-none-match.fail.2"),
+                s,
+            )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("refused with {:?} {:?}", complete.status, complete.code),
+                ph!(
+                    "judge.cond.complete-if-none-match.differs",
+                    p1 = format!("{:?}", complete.status),
+                    p2 = format!("{:?}", complete.code)
+                ),
                 s,
             )
         };

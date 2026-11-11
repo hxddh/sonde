@@ -9,13 +9,14 @@
 //! One pass over the records and a few sorts: a million requests are read as
 //! readily as a hundred.
 
-use std::collections::BTreeMap;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
 
 use reqlog::Record;
 use serde::Serialize;
 
 use crate::profile::{
-    Class, READS_PER_PREFIX, RequestPrices, Timeline, WRITES_PER_PREFIX, class, end_us, percentile,
+    Class, READS_PER_PREFIX, RequestPrices, Timeline, WRITES_PER_PREFIX, class, end_us,
     prefix_stats, price, reached_store, start_us,
 };
 use crate::summary::is_failure;
@@ -349,9 +350,33 @@ fn class_name(r: &Record) -> &'static str {
     }
 }
 
+/// [`percentile`] of values in any order: the same figure, without sorting
+/// them all (they are left partly ordered).
+fn quantile(v: &mut [f64], q: f64) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    let i = ((v.len() as f64 * q).ceil() as usize).clamp(1, v.len()) - 1;
+    *v.select_nth_unstable_by(i, f64::total_cmp).1
+}
+
+/// The median, p95 and p99 of values in any order: the highest first, and
+/// each of the others among what is left under it.
+fn bands(v: &mut [f64]) -> (f64, f64, f64) {
+    if v.is_empty() {
+        return (0.0, 0.0, 0.0);
+    }
+    let at = |q: f64| ((v.len() as f64 * q).ceil() as usize).clamp(1, v.len()) - 1;
+    let (i50, i95, i99) = (at(0.5), at(0.95), at(0.99));
+    let p99 = *v.select_nth_unstable_by(i99, f64::total_cmp).1;
+    let v = &mut v[..=i99];
+    let p95 = *v.select_nth_unstable_by(i95, f64::total_cmp).1;
+    let v = &mut v[..=i95];
+    (*v.select_nth_unstable_by(i50, f64::total_cmp).1, p95, p99)
+}
+
 fn median(v: &mut [f64]) -> f64 {
-    v.sort_unstable_by(f64::total_cmp);
-    percentile(v, 0.5)
+    quantile(v, 0.5)
 }
 
 pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
@@ -380,7 +405,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     let mut moved_all: Vec<f64> = Vec::new();
     let mut statuses: BTreeMap<(Option<u16>, Option<&str>), StatusRow> = BTreeMap::new();
     let mut amount = 0f64;
-    let (mut starts, mut ends): (Vec<i64>, Vec<i64>) = (Vec::new(), Vec::new());
+    let mut spans: Vec<(i64, i64)> = Vec::new();
 
     for r in records {
         let Some(tl) = &tl else { break };
@@ -480,56 +505,63 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         // a request that took no time is never in flight (the profile's rule)
         let e = end_us(r);
         if e > s {
-            starts.push(s);
-            ends.push(e);
+            spans.push((s, e));
         }
     }
 
     // latency: the whole run's and each slice's, by the profile's definition
-    all.sort_unstable_by(f64::total_cmp);
-    let q = |p: f64| timed.then(|| percentile(&all, p));
+    let whole = bands(&mut all);
+    let (whole50, whole95, whole99) = (
+        timed.then_some(whole.0),
+        timed.then_some(whole.1),
+        timed.then_some(whole.2),
+    );
     let (mut p50, mut p95, mut p99) = (zeros(), zeros(), zeros());
     for (i, l) in took.iter_mut().enumerate() {
         if l.is_empty() {
             continue;
         }
-        l.sort_unstable_by(f64::total_cmp);
-        (p50[i], p95[i], p99[i]) = (
-            percentile(l, 0.5),
-            percentile(l, 0.95),
-            percentile(l, 0.99),
-        );
+        (p50[i], p95[i], p99[i]) = bands(l);
     }
 
-    // in flight: starts and ends merged in time, an end before a start at
-    // one instant; each slice keeps the most it saw, what ran into it included
-    starts.sort_unstable();
-    ends.sort_unstable();
+    // in flight: the requests in the order they started, the ends of those
+    // still running kept by time (as many as are in flight, never all of
+    // them); an end before a start at one instant. Each slice keeps the most
+    // it saw, what ran into it included
+    if !spans.is_sorted() {
+        spans.sort_unstable();
+    }
     let mut in_flight = zeros();
     let (mut level, mut peak, mut peak_at) = (0usize, 0usize, 0f64);
-    if let Some(tl) = &tl {
-        let (mut si, mut ei, mut cur) = (0, 0, 0usize);
-        while si < starts.len() || ei < ends.len() {
-            let end = ei < ends.len() && (si >= starts.len() || ends[ei] <= starts[si]);
-            let t = if end { ends[ei] } else { starts[si] };
-            let b = tl.bin_at(t);
-            while cur < b {
-                cur += 1;
-                in_flight[cur] = level as f64;
-            }
-            if end {
-                ei += 1;
-                level = level.saturating_sub(1);
-            } else {
-                si += 1;
-                level += 1;
-                if level > peak {
-                    peak = level;
-                    peak_at = (t - t0) as f64 / 1000.0;
-                }
-                in_flight[b] = in_flight[b].max(level as f64);
-            }
+    // a slice is a whole number of ms: its edges are counted, not divided for
+    let bin_us = (bin_ms * 1000.0).round() as i64;
+    let mut cur = 0usize;
+    let mut running: BinaryHeap<Reverse<i64>> = BinaryHeap::new();
+    let mut reach = |t: i64, level: usize, in_flight: &mut Vec<f64>| {
+        while cur + 1 < bins && t >= t0 + (cur as i64 + 1) * bin_us {
+            cur += 1;
+            in_flight[cur] = level as f64;
         }
+        cur
+    };
+    for (s, e) in spans {
+        while let Some(Reverse(end)) = running.peek().copied().filter(|end| end.0 <= s) {
+            running.pop();
+            reach(end, level, &mut in_flight);
+            level -= 1;
+        }
+        let at = reach(s, level, &mut in_flight);
+        level += 1;
+        if level > peak {
+            peak = level;
+            peak_at = (s - t0) as f64 / 1000.0;
+        }
+        in_flight[at] = in_flight[at].max(level as f64);
+        running.push(Reverse(e));
+    }
+    while let Some(Reverse(end)) = running.pop() {
+        reach(end, level, &mut in_flight);
+        level -= 1;
     }
 
     // a run that took no time has no rate
@@ -619,12 +651,12 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
             retries_total,
         },
         latency: Latency {
-            value: q(0.5),
+            value: whole50,
             unit: "ms",
             series: if timed { p50 } else { Vec::new() },
-            p50_ms: q(0.5),
-            p95_ms: q(0.95),
-            p99_ms: q(0.99),
+            p50_ms: whole50,
+            p95_ms: whole95,
+            p99_ms: whole99,
             p95: if timed { p95 } else { Vec::new() },
             p99: if timed { p99 } else { Vec::new() },
         },
@@ -716,7 +748,11 @@ fn paint(s: &str, code: &str, color: bool) -> String {
 
 fn ms_text(v: f64) -> String {
     if v >= 60_000.0 {
-        format!("{}m {:02}s", (v / 60_000.0) as u64, (v % 60_000.0 / 1000.0) as u64)
+        format!(
+            "{}m {:02}s",
+            (v / 60_000.0) as u64,
+            (v % 60_000.0 / 1000.0) as u64
+        )
     } else if v >= 1000.0 {
         format!("{:.1} s", v / 1000.0)
     } else if v >= 0.95 {
@@ -745,7 +781,7 @@ fn count_text(n: usize) -> String {
     let d = n.to_string();
     let mut out = String::with_capacity(d.len() + d.len() / 3);
     for (i, c) in d.chars().enumerate() {
-        if i > 0 && (d.len() - i) % 3 == 0 {
+        if i > 0 && (d.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -787,24 +823,25 @@ pub fn text(s: &Signals, color: bool) -> String {
         return out;
     }
     // the figures in one column, the lines under one another
-    let mut line = |label: &str, figure: String, tone: Option<&str>, series: &[f64], rest: String| {
-        let pad = " ".repeat(24usize.saturating_sub(figure.chars().count()));
-        let figure = match tone {
-            Some(t) => paint(&figure, t, color),
-            None => figure,
+    let mut line =
+        |label: &str, figure: String, tone: Option<&str>, series: &[f64], rest: String| {
+            let pad = " ".repeat(30usize.saturating_sub(figure.chars().count()));
+            let figure = match tone {
+                Some(t) => paint(&figure, t, color),
+                None => figure,
+            };
+            let spark = if series.is_empty() {
+                " ".repeat(SPARK_COLUMNS)
+            } else {
+                sparkline(series, SPARK_COLUMNS)
+            };
+            let row = format!(
+                "{}{figure}{pad}{spark}  {rest}",
+                paint(&format!("{label:<9}"), "2", color)
+            );
+            out.push_str(row.trim_end());
+            out.push('\n');
         };
-        let spark = if series.is_empty() {
-            " ".repeat(SPARK_COLUMNS)
-        } else {
-            sparkline(series, SPARK_COLUMNS)
-        };
-        let row = format!(
-            "{}{figure}{pad}{spark}  {rest}",
-            paint(&format!("{label:<9}"), "2", color)
-        );
-        out.push_str(row.trim_end());
-        out.push('\n');
-    };
 
     let at_once = if s.in_flight.peak > 1 {
         format!(", {} at once at most", count_text(s.in_flight.peak))

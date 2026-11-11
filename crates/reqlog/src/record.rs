@@ -96,6 +96,10 @@ pub struct RecordSummary {
     /// Time to the response's first byte, when measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_byte_ms: Option<f64>,
+    /// The fault scenario sonde answered this request under (a trial's
+    /// injected failure or delay): the row is marked, not the store blamed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub injected: Option<String>,
 }
 
 /// Operations whose body is a small control document (XML or JSON) rather
@@ -202,6 +206,7 @@ impl Record {
             retries: self.retries,
             request_id: self.request_id.clone(),
             first_byte_ms: self.first_byte_ms,
+            injected: self.injected.clone(),
         }
     }
 }

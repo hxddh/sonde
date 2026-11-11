@@ -39,6 +39,15 @@ pub fn unsupported(format: Format, command: &str, formats: &[Format]) -> Option<
     })
 }
 
+/// A count with its noun: `1 request`, `3 requests`, `1 error`.
+pub fn count(n: usize, one: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{n} {one}s")
+    }
+}
+
 /// Prints rows as an aligned table (wide characters counted as two).
 pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
     let width = |s: &str| {

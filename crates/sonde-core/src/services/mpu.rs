@@ -512,7 +512,12 @@ mod tests {
             assert!(!v.message.is_empty());
             assert_eq!(phrase::en(&v.message_text), v.message);
             let json = serde_json::to_value(&v).unwrap();
-            assert!(json["messageText"][0]["key"].as_str().unwrap().starts_with("lifecycle."));
+            assert!(
+                json["messageText"][0]["key"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("lifecycle.")
+            );
         }
         assert_eq!(
             judge_lifecycle(Some(&lc), "", 7).status,

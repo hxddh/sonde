@@ -1,22 +1,19 @@
 // Capacity's charts, on Native Shell's Plot in windows; in a terminal, a
-// table and a sentence. Their frame, motion and tooltip are the session
-// charts' (`plots.tsx`): one chart language in the app.
+// table and a sentence. Every constant they are drawn with (the gutter, the
+// row pitch, the tooltip, the legend, the fade) is the chart system's, from
+// `plots.tsx`; each is the body of a `Chart` frame.
 
-import { AXIS_LABEL, GUTTER, MOTION } from "./plots";
 import { signal, Text, View } from "nsh";
 import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, count, pct } from "../format";
 import { t } from "../i18n";
-import { ChartTip, Legend, SimpleTable, terminal, textual } from "./kit";
+import { SimpleTable, terminal, textual } from "./kit";
+import { AREA_VALUE, AXIS_LABEL, axisName, ChartNote, ChartTip, CROSS_BAND, GROUP_LABEL, GUTTER, HOVER, INACTIVE, Legend, MOTION, rowsHeight, TREEMAP } from "./plots";
 
 const PALETTE = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;
-// plots.tsx's own (not exported there): a row's pitch, the band under the pointer, how far the rest fades
-const PITCH = 28;
-const CROSS_BAND = "w-full h-full rounded-(--radius-sm) bg-foreground/5";
-const INACTIVE = 0.4;
 
 /** Bars across of `items`, the value and its share at each bar's end. */
-export function BarChart(props: { items: { label: string; value: number; sub?: string }[]; height?: number; testID?: string; unit?: "bytes" | "count" }) {
+export function BarChart(props: { items: { label: string; value: number; sub?: string }[]; testID?: string; unit?: "bytes" | "count" }) {
   const fmt = (v: number) => (props.unit === "count" ? count(v) : bytes(v));
   const total = () => props.items.reduce((s, i) => s + i.value, 0);
   const hovered = signal<number | null>(null);
@@ -48,20 +45,21 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
         crossLineClass={CROSS_BAND}
         tooltipPlacement="pointer"
         tooltipOffset={10}
-        tooltipContent={<If when={tip()}>{(x) => <ChartTip title={x().title} lines={x().lines} />}</If>}
+        tooltipContent={<ChartTip tip={tip()} />}
         onHoverChange={({ index }) => hovered.set(index)}
         class={GUTTER}
-        style={{ height: props.height ?? Math.max(48, props.items.length * PITCH + 8) }}
+        style={{ height: rowsHeight(props.items.length) }}
       >
         <Bar value="value" class="fill-chart-1" cornerRadii={{ topRight: 3, bottomRight: 3 }} inactiveOpacity={INACTIVE} label={(_, i) => figures(props.items[i].value)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
-        <PlotAxis placement="left" format={(i) => props.items[i]?.label ?? ""} labelClass={AXIS_LABEL} />
+        <PlotAxis placement="left" format={(i) => axisName(props.items[i]?.label ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
     </If>
   );
 }
 
-/** One bar of the parts of a whole, with a legend. */
-export function StackBar(props: { parts: { label: string; value: number }[]; testID?: string; format?: (v: number) => string }) {
+/** One bar of the parts of a whole, with a legend; `note` says what the bar
+ * leaves out (versions that could not be counted). */
+export function StackBar(props: { parts: { label: string; value: number }[]; testID?: string; format?: (v: number) => string; note?: string }) {
   const fmt = (v: number) => (props.format ?? bytes)(v);
   const sum = () => props.parts.reduce((s, p) => s + p.value, 0);
   const total = () => Math.max(1, sum());
@@ -82,18 +80,19 @@ export function StackBar(props: { parts: { label: string; value: number }[]; tes
           // the whole, and each part of it: one row, so the pointer is over all of them
           tooltipPlacement="pointer"
           tooltipOffset={10}
-          tooltipContent={
-            <If when={hovered() !== null}>
-              <ChartTip title={fmt(sum())} lines={props.parts.map(part)} />
-            </If>
-          }
+          tooltipContent={<ChartTip tip={hovered() !== null ? { title: fmt(sum()), lines: props.parts.map(part) } : null} />}
           onHoverChange={({ index }) => hovered.set(index)}
-          class="h-3.5 overflow-hidden rounded-full bg-muted"
+          // one bar, not rows
+          class="h-3 overflow-hidden rounded-full bg-muted"
         >
           <Each of={props.parts}>{(_, i) => <Bar value={`p${i()}`} stack="parts" class={`fill-${PALETTE[i() % PALETTE.length]}`} />}</Each>
         </Plot>
       </If>
-      <Legend square items={props.parts.map((p, i) => ({ label: part(p), swatch: `bg-${PALETTE[i % PALETTE.length]}` }))} />
+      <Legend items={props.parts.map((p, i) => ({ label: part(p), swatch: `bg-${PALETTE[i % PALETTE.length]}` }))}>
+        <If when={props.note}>
+          <ChartNote testID="stack-note">{props.note}</ChartNote>
+        </If>
+      </Legend>
     </View>
   );
 }
@@ -133,9 +132,9 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
         motion={MOTION}
         tooltipPlacement="pointer"
         tooltipOffset={10}
-        tooltipContent={<If when={tip()}>{(x) => <ChartTip title={x().title} lines={x().lines} />}</If>}
+        tooltipContent={<ChartTip tip={tip()} />}
         onHoverChange={({ index }) => hovered.set(index)}
-        class="h-64"
+        class={TREEMAP}
       >
         <Treemap
           id="id"
@@ -147,13 +146,13 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
           leafClass={(_, i) => `fill-${color(rows()[i].group)}/70`}
           groupClass={(_, i) => `fill-${color(rows()[i].group)}/15`}
           groupLabel="label"
-          groupLabelClass="px-2 text-caption font-semibold text-foreground"
-          inactiveOpacity={0.55}
+          groupLabelClass={GROUP_LABEL}
+          inactiveOpacity={INACTIVE}
           label="label"
           valueLabel={(_, v) => `${bytes(v)} · ${pct(v, total())}`}
           labelClass="p-2 text-small font-medium text-foreground"
-          valueLabelClass="text-caption font-normal text-muted-foreground"
-          hoverClass="rounded-(--radius-sm) outline-2 outline-foreground"
+          valueLabelClass={AREA_VALUE}
+          hoverClass={HOVER}
         />
       </Plot>
     </If>

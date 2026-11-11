@@ -5,13 +5,29 @@
 // whether a prefix ran into its limits. A stretch picked on the timeline
 // zooms every chart drawn over time.
 
-import { batch, effect, Scroll, signal, Text, untracked, View } from "nsh";
+import { batch, effect, type JSX, Scroll, signal, Text, untracked, View } from "nsh";
 import { t } from "../i18n";
 import { count, duration } from "../format";
 import type { SessionView } from "../types";
 import { Button, Notice, Options, terminal } from "./kit";
 import { findingMarks } from "./sessionview";
-import { Chains, Chart, Distribution, timed, Flows, Heat, KindsOverTime, Lanes, PrefixMeasure, type PrefixMeasureKind, PrefixUse, Pressure, requestsOf, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
+import { Chains, Chart, Distribution, timed, Flows, focusOf, HALF, Heat, KindsOverTime, Lanes, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, Pressure, requestsOf, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
+
+/** A chart of the pane: when it has anything to show, its frame's words and
+ * control, and its body. The pane is a list of these drawn by one loop, so
+ * no chart has a frame of its own. `wide` takes the board's whole width;
+ * the others go two abreast where there is room. */
+interface ChartSpec {
+  id: string;
+  when: () => boolean;
+  wide?: boolean;
+  title: () => string;
+  text?: () => string;
+  action?: () => JSX.Element;
+  legend?: () => LegendItem[];
+  testID?: string;
+  body: () => JSX.Element;
+}
 
 /** The Time pane of a session. */
 export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void }) {
@@ -53,102 +69,100 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
     if (binMs !== undefined && b !== binMs) untracked(() => batch(() => (zoom.set(null), zoomFrom.set(null))));
     binMs = b;
   });
-  // the board: charts side by side where the pane is wide, one under another where it is not
-  const half = terminal() ? "" : "min-w-[420px] flex-1";
-  const row = terminal() ? "gap-2" : "flex-row flex-wrap items-stretch gap-4";
+  // the moment the pointer rests on in one chart, marked in the others: this pane's own
+  const focus = focusOf();
+  const unzoom = () => batch(() => (zoom.set(null), zoomFrom.set(null)));
+  const graphic = () => !terminal();
+  // in the order a question about S3 runs: when, how long, what ran at once, where the time
+  // went, how it was spread, what pushed back, what waited, where by prefix, when and where, and
+  // (the widest, so the last) where requests went
+  const charts: ChartSpec[] = [
+    {
+      // the whole session, its findings marked; the stretch picked here is what every chart over time shows
+      id: "timeline",
+      wide: true,
+      when: () => graphic() && shaped(),
+      title: () => t("timeline.title"),
+      text: () => (zoom() ? t("timeline.zoomed", { a: duration(zoomMs()![0]), b: duration(zoomMs()![1]) }) : zoomFrom() !== null ? t("timeline.zoomFrom", { t: duration((zoomFrom() ?? 0) * p().binMs) }) : t("timeline.hint")),
+      action: () => (
+        <If when={zoom() || zoomFrom() !== null}>
+          <Button small variant="outline" icon="x" label={t("timeline.unzoom")} onPress={unzoom} testID="zoom-reset" />
+        </If>
+      ),
+      // what the numbers over the slices are
+      legend: () => (findingMarks(props.view).length > 0 ? [{ label: t("shape.findingMarks"), swatch: "bg-warn" }] : []),
+      body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} range={zoom()} slice={zoomFrom()} onSlice={pick} focus={focus} class="mb-6 mt-4 h-28 w-full" testID="time-shape" />,
+    },
+    {
+      // every request, when it ran or how large it was (a press opens it), or the busiest kinds each over time
+      id: "scatter",
+      when: () => graphic() && timed(p()) && p().samples.length > 1,
+      title: () => t("scatter.title"),
+      // above what a session keeps of its requests, the dots are of a sample: said
+      text: () => (scatterBy() === "kinds" ? t("kinds.title") : `${t("scatter.text", { n: shown(), p95: duration(p().p95Ms ?? 0) })}${p().samples.length < requestsOf(p()) ? ` · ${t("plots.sampled", { n: count(p().samples.length), of: count(requestsOf(p())) })}` : ""}`),
+      action: () => <Options testID="scatter-by" value={scatterBy()} items={[{ value: "time", title: t("scatter.byTime") }, { value: "size", title: t("scatter.bySize") }, ...((p().groupRate?.length ?? 0) > 0 ? [{ value: "kinds", title: t("scatter.byKind") }] : [])]} onChange={(v) => scatterBy.set(v as "time" | "size" | "kinds")} />,
+      body: () => (
+        <If when={scatterBy() === "kinds"} else={<RequestScatter profile={p()} by={scatterBy() === "size" ? "size" : "time"} domainMs={zoomMs()} onRequest={props.onRequest} />}>
+          <KindsOverTime profile={p()} domainMs={zoomMs()} />
+        </If>
+      ),
+    },
+    {
+      // what ran at once, what waited: each request on its lane
+      id: "lanes",
+      testID: "lanes-chart",
+      when: () => graphic() && timed(p()) && p().samples.length > 1,
+      title: () => t("lanes.title"),
+      text: () => t("lanes.hint"),
+      body: () => <Lanes profile={p()} domainMs={zoomMs()} onRequest={props.onRequest} focus={focus} />,
+    },
+    {
+      id: "spent",
+      when: () => timed(p()),
+      title: () => t("profile.spentTitle"),
+      text: () => t("profile.spentHint"),
+      action: () => (
+        <If when={(p().callers?.length ?? 0) > 0}>
+          <Options testID="spent-by" value={spentBy()} items={[{ value: "kind", title: t("spent.byKind") }, { value: "code", title: t("spent.byCode") }]} onChange={(v) => spentBy.set(v as "kind" | "code")} />
+        </If>
+      ),
+      body: () => <TimeSpent profile={p()} by={spentBy()} />,
+    },
+    { id: "distribution", when: () => !!p().latency?.length, title: () => t("dist.title"), text: () => t("dist.hint"), body: () => <Distribution profile={p()} /> },
+    { id: "pressure", when: pushedBack, title: () => t("pressure.title"), text: () => t("pressure.hint"), body: () => <Pressure profile={p()} range={zoom()} /> },
+    { id: "chains", when: () => !!p().chains?.length, title: () => t("chains.title"), text: () => t("chains.hint"), body: () => <Chains profile={p()} /> },
+    {
+      // where by prefix: how many, what they cost, how near the limit
+      id: "prefixes",
+      when: () => p().prefixes.some((x) => x.prefix !== "other"),
+      title: () => t("prefixUse.title"),
+      text: () => t("prefixUse.hint"),
+      action: () => <PrefixMeasure profile={p()} value={measure()} onChange={(m) => measure.set(m)} />,
+      body: () => <PrefixUse profile={p()} measure={measure()} />,
+    },
+    { id: "heat", when: () => !!p().heat?.length, title: () => t("heat.title"), text: () => t("heat.hint"), body: () => <Heat profile={p()} range={zoom()} /> },
+    { id: "flows", wide: true, testID: "flows-chart", when: () => graphic() && !!p().flows?.length, title: () => t("flows.title"), text: () => t("flows.hint"), body: () => <Flows profile={p()} /> },
+  ];
   return (
-    <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-4 pb-2"}>
+    <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "flex-row flex-wrap items-stretch gap-4 pb-2"}>
       {/* the figures are the session header's; here, a terminal's sentence */}
       <If when={terminal() && timed(p())}>
         <Text class="text-foreground">{shapeSentence(p())}</Text>
       </If>
       {/* a log without times (CloudTrail): when and what, never how long */}
       <If when={!timed(p())}>
-        <Notice testID="untimed" text={t("profile.untimed")} />
+        <View class="w-full">
+          <Notice testID="untimed" text={t("profile.untimed")} />
+        </View>
       </If>
-      {/* when: the whole session, its findings marked; the stretch picked here is what every chart over time shows */}
-      <If when={!terminal() && shaped()}>
-        <Chart
-          title={t("timeline.title")}
-          text={zoom() ? t("timeline.zoomed", { a: duration(zoomMs()![0]), b: duration(zoomMs()![1]) }) : zoomFrom() !== null ? t("timeline.zoomFrom", { t: duration((zoomFrom() ?? 0) * p().binMs) }) : t("timeline.hint")}
-          action={
-            <If when={zoom() || zoomFrom() !== null}>
-              <Button small variant="outline" icon="x" label={t("timeline.unzoom")} onPress={() => batch(() => (zoom.set(null), zoomFrom.set(null)))} testID="zoom-reset" />
-            </If>
-          }
-        >
-          <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} range={zoom()} slice={zoomFrom()} onSlice={pick} class="mb-6 mt-4 h-28 w-full" testID="time-shape" />
-        </Chart>
-      </If>
-      <View class={row}>
-        {/* how long: every request, when it ran or how large it was; a press opens it */}
-        <If when={!terminal() && timed(p()) && p().samples.length > 1}>
-          <Chart
-            class={half}
-            title={t("scatter.title")}
-            // above what a session keeps of its requests, the dots are of a sample: said
-            text={scatterBy() === "kinds" ? t("kinds.title") : `${t("scatter.text", { n: shown(), p95: duration(p().p95Ms ?? 0) })}${p().samples.length < requestsOf(p()) ? ` · ${t("plots.sampled", { n: count(p().samples.length), of: count(requestsOf(p())) })}` : ""}`}
-            action={<Options testID="scatter-by" value={scatterBy()} items={[{ value: "time", title: t("scatter.byTime") }, { value: "size", title: t("scatter.bySize") }, ...((p().groupRate?.length ?? 0) > 0 ? [{ value: "kinds", title: t("scatter.byKind") }] : [])]} onChange={(v) => scatterBy.set(v as "time" | "size" | "kinds")} />}
-          >
-            {/* every request, or the busiest kinds each over time (their median to p95) */}
-            <If when={scatterBy() === "kinds"} else={<RequestScatter profile={p()} by={scatterBy() === "size" ? "size" : "time"} domainMs={zoomMs()} onRequest={props.onRequest} />}>
-              <KindsOverTime profile={p()} domainMs={zoomMs()} />
-            </If>
+      {/* the board: every chart in the one frame, by one loop */}
+      <Each of={charts.filter((c) => c.when())} key={(c) => c.id}>
+        {(c) => (
+          <Chart class={terminal() ? "" : c().wide ? "w-full" : HALF} testID={c().testID} title={c().title()} text={c().text?.()} action={c().action?.()} legend={c().legend?.()}>
+            {c().body()}
           </Chart>
-        </If>
-        {/* what ran at once, what waited: each request on its lane */}
-        <If when={!terminal() && timed(p()) && p().samples.length > 1}>
-          <Chart class={half} testID="lanes-chart" title={t("lanes.title")} text={t("lanes.hint")}>
-            <Lanes profile={p()} domainMs={zoomMs()} onRequest={props.onRequest} />
-          </Chart>
-        </If>
-        <If when={timed(p())}>
-          <Chart
-            class={half}
-            title={t("profile.spentTitle")}
-            text={t("profile.spentHint")}
-            action={
-              <If when={(p().callers?.length ?? 0) > 0}>
-                <Options testID="spent-by" value={spentBy()} items={[{ value: "kind", title: t("spent.byKind") }, { value: "code", title: t("spent.byCode") }]} onChange={(v) => spentBy.set(v as "kind" | "code")} />
-              </If>
-            }
-          >
-            <TimeSpent profile={p()} by={spentBy()} />
-          </Chart>
-        </If>
-        <If when={p().latency?.length}>
-          <Chart class={half} title={t("dist.title")} text={t("dist.hint")}>
-            <Distribution profile={p()} />
-          </Chart>
-        </If>
-        <If when={pushedBack()}>
-          <Chart class={half} title={t("pressure.title")} text={t("pressure.hint")}>
-            <Pressure profile={p()} range={zoom()} />
-          </Chart>
-        </If>
-        <If when={p().chains?.length}>
-          <Chart class={half} title={t("chains.title")} text={t("chains.hint")}>
-            <Chains profile={p()} />
-          </Chart>
-        </If>
-        {/* where by prefix: how many, what they cost, how near the limit; then over time */}
-        <If when={p().prefixes.some((x) => x.prefix !== "other")}>
-          <Chart class={half} title={t("prefixUse.title")} text={t("prefixUse.hint")} action={<PrefixMeasure profile={p()} value={measure()} onChange={(m) => measure.set(m)} />}>
-            <PrefixUse profile={p()} measure={measure()} />
-          </Chart>
-        </If>
-        <If when={p().heat?.length}>
-          <Chart class={half} title={t("heat.title")} text={t("heat.hint")}>
-            <Heat profile={p()} range={zoom()} />
-          </Chart>
-        </If>
-      </View>
-      {/* where requests went, operation → prefix → outcome: the widest, so the last */}
-      <If when={!terminal() && p().flows?.length}>
-        <Chart title={t("flows.title")} text={t("flows.hint")} testID="flows-chart">
-          <Flows profile={p()} />
-        </Chart>
-      </If>
+        )}
+      </Each>
     </Scroll>
   );
 }

@@ -183,11 +183,10 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     let meta: Value = match serde_json::from_slice(&src.get(&meta_key, None).await?) {
         Ok(v) => v,
         Err(e) => {
-            l.issues
-                .push(issue(
-                    Severity::Error,
-                    ph!("iceberg.notjson", key = meta_key, error = e),
-                ));
+            l.issues.push(issue(
+                Severity::Error,
+                ph!("iceberg.notjson", key = meta_key, error = e),
+            ));
             l.decoded = false;
             l.say_headline(ph!("iceberg.headline.unreadable"));
             return Ok(l);
@@ -240,10 +239,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             manifests: 0,
         };
         let Some(list) = &info.manifest_list else {
-            l.issues.push(issue(
-                Severity::Info,
-                ph!("iceberg.inline", id = info.id),
-            ));
+            l.issues
+                .push(issue(Severity::Info, ph!("iceberg.inline", id = info.id)));
             snaps.push(info);
             continue;
         };
@@ -253,7 +250,12 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             Err(e) => {
                 l.issues.push(issue(
                     Severity::Error,
-                    ph!("iceberg.list.unreadable", id = info.id, key = list_key, error = e),
+                    ph!(
+                        "iceberg.list.unreadable",
+                        id = info.id,
+                        key = list_key,
+                        error = e
+                    ),
                 ));
                 snaps.push(info);
                 continue;
@@ -297,12 +299,10 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                                 ));
                             }
                         }
-                        Err(e) => l
-                            .issues
-                            .push(issue(
-                                Severity::Error,
-                                ph!("iceberg.manifest.bad", key = key, error = e),
-                            )),
+                        Err(e) => l.issues.push(issue(
+                            Severity::Error,
+                            ph!("iceberg.manifest.bad", key = key, error = e),
+                        )),
                     },
                     Err(e) => l.issues.push(issue(
                         Severity::Error,
@@ -383,10 +383,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         ));
     }
     for m in &missing {
-        l.issues.push(issue(
-            Severity::Error,
-            ph!("referenced.missing", key = m),
-        ));
+        l.issues
+            .push(issue(Severity::Error, ph!("referenced.missing", key = m)));
     }
     if !expirable.is_empty() {
         l.issues.push(issue(

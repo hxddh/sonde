@@ -5,6 +5,7 @@ use super::{meta, setup_failed};
 use crate::Probe;
 use crate::cx::{ProbeCx, data};
 use crate::model::{Category, Judgement, ProbeMeta, Steps, Verdict};
+use crate::phrase::ph;
 
 pub fn probes() -> Vec<Box<dyn Probe>> {
     vec![
@@ -68,30 +69,36 @@ impl Probe for ListAfterWrite {
                 .count();
         let listed: usize = s.at("listed").body.parse().unwrap_or(0);
         if !s.at("list").ok() {
-            return Judgement::new(Verdict::Error, "the listing failed", s);
+            return Judgement::say(
+                Verdict::Error,
+                ph!("judge.consistency.list-after-write.error"),
+                s,
+            );
         }
         // a pass needs writes to list: none acknowledged is "could not run"
         if puts == 0 {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Error,
-                format!(
-                    "could not run: no write was acknowledged ({})",
-                    s.at("put-0").describe()
+                ph!(
+                    "judge.consistency.list-after-write.error.2",
+                    p1 = s.at("put-0").describe()
                 ),
                 s,
             );
         }
         if listed == puts {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Pass,
-                format!("all {puts} writes listed at once"),
+                ph!("judge.consistency.list-after-write.pass", puts = puts),
                 s,
             )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Fail,
-                format!(
-                    "only {listed} of {puts} acknowledged writes listed: listings are eventually consistent"
+                ph!(
+                    "judge.consistency.list-after-write.fail",
+                    listed = listed,
+                    puts = puts
                 ),
                 s,
             )
@@ -131,11 +138,18 @@ impl Probe for ReadAfterOverwrite {
             .filter(|i| s.at(&format!("get-{i}")).body != format!("version-{i}"))
             .collect();
         if stale.is_empty() {
-            Judgement::new(Verdict::Pass, "every read saw the latest write", s)
+            Judgement::say(
+                Verdict::Pass,
+                ph!("judge.consistency.read-after-overwrite.pass"),
+                s,
+            )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Fail,
-                format!("{} of 5 reads returned an older body", stale.len()),
+                ph!(
+                    "judge.consistency.read-after-overwrite.fail",
+                    p1 = stale.len()
+                ),
                 s,
             )
         }
@@ -170,15 +184,24 @@ impl Probe for ReadAfterDelete {
         }
         let (get, head) = (s.at("get"), s.at("head"));
         if get.ok() || head.ok() {
-            Judgement::new(Verdict::Fail, "the deleted object was still readable", s)
+            Judgement::say(
+                Verdict::Fail,
+                ph!("judge.consistency.read-after-delete.fail"),
+                s,
+            )
         } else if get.is(404) && head.is(404) {
-            Judgement::new(Verdict::Pass, "404 at once", s)
+            Judgement::say(
+                Verdict::Pass,
+                ph!("judge.consistency.read-after-delete.pass"),
+                s,
+            )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "answered {:?} / {:?} instead of 404",
-                    get.status, head.status
+                ph!(
+                    "judge.consistency.read-after-delete.differs",
+                    p1 = format!("{:?}", get.status),
+                    p2 = format!("{:?}", head.status)
                 ),
                 s,
             )

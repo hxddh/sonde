@@ -230,22 +230,43 @@ pub const FACTS: &[&str] = &[
 pub const TEMPLATES: &[(&str, &str)] = &[
     ("raw", "{text}"),
     // TEMPLATES-BEGIN
-    ("cadence.closed", "The {format} format is not published: sonde does not decode it. Shown: prefix statistics and write cadence from the listing only."),
+    (
+        "cadence.closed",
+        "The {format} format is not published: sonde does not decode it. Shown: prefix statistics and write cadence from the listing only.",
+    ),
     ("cadence.objects", "{n} objects"),
-    ("cadence.pause", "a write pause of {s} s against a median interval of {ms} ms"),
+    (
+        "cadence.pause",
+        "a write pause of {s} s against a median interval of {ms} ms",
+    ),
     ("cadence.busiest", "{n} objects per {min} min"),
-    ("cadence.headline", "{format}: {n} objects ({size}), cadence only"),
-    ("cadence.headline.closed", " — format not published, not decoded"),
+    (
+        "cadence.headline",
+        "{format}: {n} objects ({size}), cadence only",
+    ),
+    (
+        "cadence.headline.closed",
+        " — format not published, not decoded",
+    ),
     ("decode.failed", "{key}: cannot decode: {error}"),
     ("unexpected.object", "unexpected object {key} ({size})"),
     ("headline.errors", " — errors found"),
-    ("slate.skipped", "{n} older manifests not decoded (only the newest {max})"),
+    (
+        "slate.skipped",
+        "{n} older manifests not decoded (only the newest {max})",
+    ),
     ("slate.headline.none", "no manifest found"),
     ("slate.headline.undecoded", "no manifest could be decoded"),
     ("slate.manifest", "manifest {id}"),
-    ("slate.manifest.detail", "writer epoch {writer}, compactor epoch {compactor}, L0 {l0}, runs {runs}, WAL replay after {wal}"),
+    (
+        "slate.manifest.detail",
+        "writer epoch {writer}, compactor epoch {compactor}, L0 {l0}, runs {runs}, WAL replay after {wal}",
+    ),
     ("slate.fence.writer", "writer epoch {from} → {to}"),
-    ("slate.fence.writer.detail", "a new writer fenced the previous one"),
+    (
+        "slate.fence.writer.detail",
+        "a new writer fenced the previous one",
+    ),
     ("slate.fence.compactor", "compactor epoch {from} → {to}"),
     ("slate.fence.compactor.detail", "a new compactor took over"),
     ("slate.wal", "WAL {id}"),
@@ -254,60 +275,138 @@ pub const TEMPLATES: &[(&str, &str)] = &[
     ("slate.gap.one", "WAL {id} is missing"),
     ("slate.gap.many", "WAL {from}–{to} are missing"),
     ("slate.gap.lost", ": entries not yet in L0 are lost"),
-    ("slate.gap.flushed", " (already flushed; collected out of order)"),
-    ("slate.sst.missing", "compacted/{name}.sst is referenced by the manifest but missing"),
-    ("slate.orphans", "{n} compacted SSTs ({size}) are referenced by no manifest or checkpoint: orphans awaiting GC"),
-    ("slate.gclag", "{n} WAL SSTs ({size}) were flushed to L0 but not collected; the oldest is {hours} h old (GC lag)"),
-    ("slate.gclag.fact", "{n} WAL SSTs ({size}) flushed but kept; {orphans} orphan SSTs; {manifests} superseded manifests"),
-    ("slate.headline", "SlateDB: manifest {id}, writer epoch {epoch}, {wals} WAL SSTs ({pending} pending), {l0} L0 + {runs} sorted runs"),
+    (
+        "slate.gap.flushed",
+        " (already flushed; collected out of order)",
+    ),
+    (
+        "slate.sst.missing",
+        "compacted/{name}.sst is referenced by the manifest but missing",
+    ),
+    (
+        "slate.orphans",
+        "{n} compacted SSTs ({size}) are referenced by no manifest or checkpoint: orphans awaiting GC",
+    ),
+    (
+        "slate.gclag",
+        "{n} WAL SSTs ({size}) were flushed to L0 but not collected; the oldest is {hours} h old (GC lag)",
+    ),
+    (
+        "slate.gclag.fact",
+        "{n} WAL SSTs ({size}) flushed but kept; {orphans} orphan SSTs; {manifests} superseded manifests",
+    ),
+    (
+        "slate.headline",
+        "SlateDB: manifest {id}, writer epoch {epoch}, {wals} WAL SSTs ({pending} pending), {l0} L0 + {runs} sorted runs",
+    ),
     ("none", "none"),
     ("referenced.missing", "{key} is referenced but missing"),
     ("iceberg.headline.none", "no metadata.json"),
     ("iceberg.notjson", "{key}: not JSON: {error}"),
     ("iceberg.headline.unreadable", "unreadable metadata.json"),
-    ("iceberg.version.unknown", "unknown Iceberg format-version {v} (sonde decodes 1, 2 and 3); not decoded"),
-    ("iceberg.headline.unknown", "Iceberg format-version {v}: unknown, not decoded"),
-    ("iceberg.inline", "snapshot {id} uses inline manifests (format v1 `manifests`)"),
-    ("iceberg.list.unreadable", "snapshot {id}: manifest list {key} unreadable: {error}"),
+    (
+        "iceberg.version.unknown",
+        "unknown Iceberg format-version {v} (sonde decodes 1, 2 and 3); not decoded",
+    ),
+    (
+        "iceberg.headline.unknown",
+        "Iceberg format-version {v}: unknown, not decoded",
+    ),
+    (
+        "iceberg.inline",
+        "snapshot {id} uses inline manifests (format v1 `manifests`)",
+    ),
+    (
+        "iceberg.list.unreadable",
+        "snapshot {id}: manifest list {key} unreadable: {error}",
+    ),
     ("iceberg.manifest.bad", "manifest {key}: {error}"),
-    ("iceberg.manifest.missing", "manifest {key} is missing: {error}"),
-    ("iceberg.orphans", "{n} data files ({size}) are referenced by no snapshot: orphans (failed writes, or files of expired snapshots not deleted); remove_orphan_files reclaims them"),
-    ("iceberg.expirable", "{n} snapshots are older than {days} days and not referenced: expire_snapshots would drop them and free {size} in {files} files"),
-    ("iceberg.expirable.fact", "{n} (max age {days} d, keep {keep})"),
+    (
+        "iceberg.manifest.missing",
+        "manifest {key} is missing: {error}",
+    ),
+    (
+        "iceberg.orphans",
+        "{n} data files ({size}) are referenced by no snapshot: orphans (failed writes, or files of expired snapshots not deleted); remove_orphan_files reclaims them",
+    ),
+    (
+        "iceberg.expirable",
+        "{n} snapshots are older than {days} days and not referenced: expire_snapshots would drop them and free {size} in {files} files",
+    ),
+    (
+        "iceberg.expirable.fact",
+        "{n} (max age {days} d, keep {keep})",
+    ),
     ("iceberg.snapshot", "snapshot {id} ({op})"),
     ("iceberg.snapshot.detail", "{n} live files"),
     ("iceberg.headline", "Iceberg v{v}: {n} snapshots, "),
     ("iceberg.headline.current", "current {id}"),
     ("iceberg.headline.nocurrent", "current none"),
-    ("iceberg.headline.rest", ", {files} live files ({size}), {orphans} orphans, {expirable} expirable"),
+    (
+        "iceberg.headline.rest",
+        ", {files} live files ({size}), {orphans} orphans, {expirable} expirable",
+    ),
     ("lakefs.notgraveler", "{key}: not a graveler table ({why})"),
-    ("lakefs.range.missing", "range {id} is listed by a metarange but missing"),
-    ("lakefs.unreferenced", "{n} data objects ({size}) are referenced by no committed range: uncommitted (staged) writes, or garbage for lakeFS's GC"),
-    ("lakefs.kv", "Commit history, branches and tags are kept in lakeFS's KV store, not in object storage: each metarange below is one committed tree"),
+    (
+        "lakefs.range.missing",
+        "range {id} is listed by a metarange but missing",
+    ),
+    (
+        "lakefs.unreferenced",
+        "{n} data objects ({size}) are referenced by no committed range: uncommitted (staged) writes, or garbage for lakeFS's GC",
+    ),
+    (
+        "lakefs.kv",
+        "Commit history, branches and tags are kept in lakeFS's KV store, not in object storage: each metarange below is one committed tree",
+    ),
     ("lakefs.tree", "tree {id}"),
     ("lakefs.tree.detail", "{ranges} ranges, {entries} entries"),
     ("lakefs.unreferenced.detail", "unreferenced"),
     ("lakefs.committed.detail", "committed"),
-    ("lakefs.headline", "lakeFS: {trees} committed trees, {ranges} ranges, {data} data objects ({unreferenced} unreferenced)"),
+    (
+        "lakefs.headline",
+        "lakeFS: {trees} committed trees, {ranges} ranges, {data} data objects ({unreferenced} unreferenced)",
+    ),
     ("wp.unexpected", "unexpected object {key}"),
     ("wp.crc", "{key}: a record fails its CRC32"),
-    ("wp.footer.version", "{key}: unknown footer version {v} (sonde decodes 5 and 6); not decoded"),
+    (
+        "wp.footer.version",
+        "{key}: unknown footer version {v} (sonde decodes 5 and 6); not decoded",
+    ),
     ("wp.state.unknown", "unknown version"),
-    ("wp.index.count", "{key}: {n} index records for {blocks} blocks"),
-    ("wp.blocks.missing", "log {log} segment {seg}: footer lists {n} blocks, {have} exist"),
+    (
+        "wp.index.count",
+        "{key}: {n} index records for {blocks} blocks",
+    ),
+    (
+        "wp.blocks.missing",
+        "log {log} segment {seg}: footer lists {n} blocks, {have} exist",
+    ),
     ("wp.state.compacted", "sealed, compacted"),
     ("wp.state.sealed", "sealed"),
     ("wp.sealed", "log {log} segment {seg} sealed"),
     ("wp.footer.none", "{key}: no footer record"),
     ("wp.state.corrupt", "corrupt footer"),
-    ("wp.blocks.gaps", "log {log} segment {seg}: block ids {from}–{to} have gaps"),
-    ("wp.version", "{key}: unknown format version {v} (sonde decodes 5 and 6); not decoded"),
-    ("wp.block.name", "{key}: names block {n} but holds block {holds}"),
+    (
+        "wp.blocks.gaps",
+        "log {log} segment {seg}: block ids {from}–{to} have gaps",
+    ),
+    (
+        "wp.version",
+        "{key}: unknown format version {v} (sonde decodes 5 and 6); not decoded",
+    ),
+    (
+        "wp.block.name",
+        "{key}: names block {n} but holds block {holds}",
+    ),
     ("wp.block.noheader", "{key}: no block header"),
     ("wp.state.locked", "active (locked)"),
     ("wp.state.active", "active"),
     ("wp.started", "log {log} segment {seg} started"),
-    ("wp.headline", "Woodpecker: {logs} logs, {segs} segments ({sealed} sealed, {active} active), {entries} entries"),
+    (
+        "wp.headline",
+        "Woodpecker: {logs} logs, {segs} segments ({sealed} sealed, {active} active), {entries} entries",
+    ),
     // TEMPLATES-END
 ];
 
@@ -325,10 +424,7 @@ mod tests {
     fn no_key_is_listed_twice() {
         let all = templates();
         for (i, (k, _)) in all.iter().enumerate() {
-            assert!(
-                all[..i].iter().all(|(o, _)| o != k),
-                "{k} is listed twice"
-            );
+            assert!(all[..i].iter().all(|(o, _)| o != k), "{k} is listed twice");
         }
     }
 

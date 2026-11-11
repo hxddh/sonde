@@ -1,6 +1,8 @@
 use reqlog::Record;
 use serde::{Deserialize, Serialize};
 
+use crate::phrase::{self, Phrase};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Category {
@@ -62,6 +64,14 @@ pub struct ProbeMeta {
     pub description: String,
     /// What AWS S3 does, the reference the verdict compares with.
     pub aws_behavior: String,
+    /// The title, description and AWS behaviour as phrases
+    /// (`probe.<id>.title`, `.description`, `.aws`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub title_text: Vec<Phrase>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub description_text: Vec<Phrase>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aws_behavior_text: Vec<Phrase>,
     pub needs: Vec<Needs>,
 }
 
@@ -173,15 +183,43 @@ pub struct Judgement {
     pub verdict: Verdict,
     pub summary: String,
     pub observations: Vec<String>,
+    /// The summary as phrases, and each observation as a text of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub summary_text: Vec<Phrase>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observations_text: Vec<Vec<Phrase>>,
 }
 
 impl Judgement {
-    pub fn new(verdict: Verdict, summary: impl Into<String>, steps: &Steps) -> Self {
-        Judgement {
+    /// A verdict with its summary as phrases (and their English); the
+    /// steps are its first observations.
+    pub fn say(verdict: Verdict, summary: impl Into<Vec<Phrase>>, steps: &Steps) -> Self {
+        let summary_text = summary.into();
+        let mut j = Judgement {
             verdict,
-            summary: summary.into(),
-            observations: steps.0.iter().map(Step::describe).collect(),
+            summary: phrase::en(&summary_text),
+            observations: vec![],
+            summary_text,
+            observations_text: vec![],
+        };
+        for s in &steps.0 {
+            // a step is statuses and codes: said as it is
+            j.observe(phrase::raw(s.describe()));
         }
+        j
+    }
+
+    /// Adds an observation.
+    pub fn observe(&mut self, text: impl Into<Vec<Phrase>>) {
+        let text = text.into();
+        self.observations.push(phrase::en(&text));
+        self.observations_text.push(text);
+    }
+
+    /// Says `text` before the summary (what overrides the verdict).
+    pub fn preface(&mut self, text: Phrase) {
+        self.summary_text.insert(0, text);
+        self.summary = phrase::en(&self.summary_text);
     }
 }
 
@@ -193,6 +231,10 @@ pub struct ProbeResult {
     pub verdict: Verdict,
     pub summary: String,
     pub observations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub summary_text: Vec<Phrase>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observations_text: Vec<Vec<Phrase>>,
     pub steps: Vec<Step>,
     /// The raw requests and responses, redacted.
     pub exchanges: Vec<Record>,

@@ -212,7 +212,12 @@ pub fn plan_delete_versions(
     let items = targets
         .iter()
         .map(|(k, v, b)| {
-            PlanItem::new(k.clone(), Some(v.clone()), *b, ph!("plan.item.version", v = v))
+            PlanItem::new(
+                k.clone(),
+                Some(v.clone()),
+                *b,
+                ph!("plan.item.version", v = v),
+            )
         })
         .collect();
     s.guard()

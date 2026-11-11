@@ -1,14 +1,15 @@
 // "Why is this bucket so big?": current vs noncurrent bytes, delete
 // markers, incomplete uploads, by storage class, prefix and size.
 
-import { cleanup, Scroll, signal, Text, View } from "nsh";
+import { cleanup, effect, Scroll, signal, Text, untracked, View } from "nsh";
 import { bytes, count, date, money } from "../format";
 import { t } from "../i18n";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, notify, prefix, report } from "../store";
 import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
-import { Await, Bar, Button, Card, Empty, Field, Heading, More, Stat, SwitchRow, terminal, ToolBar } from "../ui/kit";
+import { Await, Bar, Button, Card, Empty, Field, Heading, More, Stat, SwitchRow, terminal, Tiles, ToolBar } from "../ui/kit";
+import { Chart, HALF } from "../ui/plots";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, PrefixMap, StackBar } from "../ui/charts";
 
@@ -20,37 +21,66 @@ export function Capacity() {
   // why the first scan gave nothing: said in place, with Try again
   const failure = signal<string | null>(null);
   let job: string | null = null;
+  // the place (endpoint, bucket, prefix) the scan under way is of
+  let scanning: string | null = null;
   cleanup(() => {
     if (job) api.cancelJob(job);
   });
   const load = () => {
     const ep = endpoint();
     const b = bucket();
-    if (ep && b) result.set(api.duCached(ep, b, pfx()));
+    result.set(ep && b ? api.duCached(ep, b, pfx()) : null);
   };
-  load();
+  // the place shown: what a scan's answer is held against
+  let shown = "";
   const scan = async () => {
     const ep = endpoint();
     const b = bucket();
-    if (!ep || !b || progress() !== null) return;
-    // busy from the press: a second one starts no second scan
+    if (!ep || !b) return;
+    const of = shown;
+    // busy from the press: a second one starts no second scan (one for another bucket takes its place)
+    if (progress() !== null && scanning === of) return;
+    scanning = of;
     progress.set(t("common.loading"));
     failure.set(null);
+    const p = pfx();
+    let mine: string | null = null;
     try {
-      job = await api.duScan(ep, b, pfx(), mpu());
-      const r = await watch<DuReport>(job, (e) => e.type === "Progress" && progress.set(`${e.progress.message} · ${bytes(e.progress.bytes)}`));
-      result.set(r);
-      remember(ep, b, pfx(), { size: r });
+      mine = job = await api.duScan(ep, b, p, mpu());
+      const r = await watch<DuReport>(mine, (e) => e.type === "Progress" && shown === of && progress.set(`${e.progress.message} · ${bytes(e.progress.bytes)}`));
+      remember(ep, b, p, { size: r });
+      // the answer of a place since left is kept for it, not shown here
+      if (shown === of) result.set(r);
     } catch (e) {
       const err = asError(e);
       // over a report already shown, a toast; with nothing to show, the reason in its place
-      if (err.kind !== "cancelled") result() ? report(e) : failure.set(err.message);
+      if (err.kind !== "cancelled" && shown === of) result() ? report(e) : failure.set(err.message);
     }
-    job = null;
+    if (scanning !== of) return;
+    if (job === mine) job = null;
+    scanning = null;
     progress.set(null);
   };
-  // asked for from a window: measured now, unless it was already
-  if (!terminal() && !result()) void scan();
+  // the sheet follows the endpoint, the bucket and the prefix: another one's
+  // report is never left under this one's name, nor its scan left running
+  effect(() => {
+    const key = `${endpoint()}\n${bucket()}\n${pfx()}`;
+    if (key === shown) return;
+    const first = shown === "";
+    shown = key;
+    untracked(() => {
+      if (!first && job) api.cancelJob(job);
+      failure.set(null);
+      try {
+        load();
+      } catch (e) {
+        result.set(null);
+        report(e);
+      }
+      // asked for from a window: measured now, unless it was already
+      if (!terminal() && !result()) void scan();
+    });
+  });
   const exportAs = (f: "json" | "csv") => {
     try {
       notify(t("common.exportedTo", { path: api.duExport(endpoint()!, bucket()!, pfx(), f) }));
@@ -58,7 +88,6 @@ export function Capacity() {
       report(e);
     }
   };
-  const TILE = "min-w-32 flex-1";
   return (
     <Scroll testID="screen-capacity" class="flex-1" contentClass="gap-4 p-4">
       <ToolBar
@@ -94,41 +123,43 @@ export function Capacity() {
           {(r) => (
             <View class="gap-4" testID="du-report">
               {/* the facts as figures: how big, how many of what, what it costs */}
-              <View class="flex-row flex-wrap gap-3">
-                <Stat class={TILE} label={t("overview.size")} value={bytes(r().totalBytes)} detail={`${date(r().scannedAt)} · ${r().source}`} testID="du-size" />
-                <Stat class={TILE} label={t("nav.objects")} value={count(r().current.objects)} detail={`${t("du.current")} · ${bytes(r().current.bytes)}`} />
-                <Stat class={TILE} label={t("browse.versions")} value={r().versionsUnknown ? "—" : count(r().noncurrent.objects)} detail={r().versionsUnknown ? t("du.versionsUnknown") : `${t("du.noncurrent")} · ${bytes(r().noncurrent.bytes)} · ${t("du.markers")}: ${count(r().deleteMarkers)}`} />
-                <Stat class={TILE} label={t("du.multipart")} value={count(r().multipart.objects)} detail={bytes(r().multipart.bytes)} />
-                <Stat class={TILE} label={t("du.costMonth")} value={money(r().costPerMonth, r().currency)} detail={`${t("du.cost")} · ${t("du.requests", { n: count(r().requests) })}`} />
-              </View>
-              <Card>
+              <Tiles
+                min={128}
+                items={[
+                  <Stat label={t("overview.size")} value={bytes(r().totalBytes)} detail={`${date(r().scannedAt)} · ${r().source}${r().versionsUnknown ? ` · ${t("du.versionsNotCounted")}` : ""}`} testID="du-size" />,
+                  <Stat label={t("nav.objects")} value={count(r().current.objects)} detail={`${t("du.current")} · ${bytes(r().current.bytes)}`} />,
+                  <Stat label={t("browse.versions")} value={r().versionsUnknown ? "—" : count(r().noncurrent.objects)} detail={r().versionsUnknown ? t("du.versionsUnknown") : `${t("du.noncurrent")} · ${bytes(r().noncurrent.bytes)} · ${t("du.markers")}: ${count(r().deleteMarkers)}`} />,
+                  <Stat label={t("du.multipart")} value={count(r().multipart.objects)} detail={bytes(r().multipart.bytes)} />,
+                  <Stat label={t("du.costMonth")} value={money(r().costPerMonth, r().currency)} detail={`${t("du.cost")} · ${t("du.requests", { n: count(r().requests) })}`} />,
+                ]}
+              />
+              <Chart title={t("du.parts")}>
                 <StackBar
                   testID="du-stack"
+                  // versions that could not be listed are not a part of nothing: left out, and said
                   parts={[
                     { label: t("du.current"), value: r().current.bytes },
-                    { label: t("du.noncurrent"), value: r().noncurrent.bytes },
+                    ...(r().versionsUnknown ? [] : [{ label: t("du.noncurrent"), value: r().noncurrent.bytes }]),
                     { label: t("du.multipart"), value: r().multipart.bytes },
                   ]}
+                  note={r().versionsUnknown ? t("du.versionsNotCounted") : undefined}
                 />
-              </Card>
+              </Chart>
               <Card testID="du-findings">
                 <Heading>{t("du.why")}</Heading>
                 <Each of={r().findings}>{(f) => <Text class="text-body text-foreground">{`• ${f()}`}</Text>}</Each>
               </Card>
               <View class={terminal() ? "gap-4" : "flex-row flex-wrap gap-4"}>
-                <Card class="min-w-80 flex-1">
-                  <Heading>{t("du.byClass")}</Heading>
+                <Chart class={HALF} title={t("du.byClass")} empty={r().byClass.length === 0 && t("common.empty")}>
                   <BarChart testID="du-classes" items={r().byClass.map((c) => ({ label: c.name, value: c.current.bytes + c.noncurrent.bytes }))} />
-                </Card>
-                <Card class="min-w-80 flex-1">
-                  <Heading>{t("du.bySize")}</Heading>
+                </Chart>
+                <Chart class={HALF} title={t("du.bySize")} empty={r().bySize.length === 0 && t("common.empty")}>
                   <BarChart unit="count" items={r().bySize.map((b) => ({ label: b.label, value: b.objects }))} />
-                </Card>
+                </Chart>
               </View>
-              <Card>
-                <Heading>{t("du.byPrefix")}</Heading>
+              <Chart title={t("du.byPrefix")} empty={r().byPrefix.length === 0 && t("common.empty")}>
                 <PrefixMap testID="du-prefixes" items={r().byPrefix.slice(0, 24).map((p) => ({ label: p.name, value: p.current.bytes + p.noncurrent.bytes }))} />
-              </Card>
+              </Chart>
             </View>
           )}
         </If>

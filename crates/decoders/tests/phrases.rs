@@ -30,7 +30,11 @@ async fn every_text_is_phrases() {
     for l in &all {
         assert!(!l.headline.is_empty());
         assert_eq!(en(&l.headline_text), l.headline);
-        for f in l.facts.iter().chain(l.snapshots.iter().flat_map(|s| &s.facts)) {
+        for f in l
+            .facts
+            .iter()
+            .chain(l.snapshots.iter().flat_map(|s| &s.facts))
+        {
             assert_eq!(en(&f.label_text), f.label);
             if !f.value_text.is_empty() {
                 assert_eq!(en(&f.value_text), f.value);
@@ -48,7 +52,10 @@ async fn every_text_is_phrases() {
             assert_eq!(en(&e.detail_text), e.detail);
         }
     }
-    assert!(issues > 3 && events > 10, "{issues} issues, {events} events");
+    assert!(
+        issues > 3 && events > 10,
+        "{issues} issues, {events} events"
+    );
 }
 
 #[test]

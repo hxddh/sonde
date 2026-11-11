@@ -24,31 +24,32 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 #[command(name = "sonde", version, about = "See what your software does to S3: its requests recorded, read as operations, replayed elsewhere", long_about = None)]
 pub struct Cli {
     /// Configuration directory (default: $SONDE_CONFIG_DIR or the platform's).
-    #[arg(long, global = true, env = "SONDE_CONFIG_DIR")]
+    #[arg(long, global = true, env = "SONDE_CONFIG_DIR", help_heading = "Global options")]
     config_dir: Option<std::path::PathBuf>,
     /// Data directory (sessions, request log, scans, probe runs, audit log).
-    #[arg(long, global = true, env = "SONDE_DATA_DIR")]
+    #[arg(long, global = true, env = "SONDE_DATA_DIR", help_heading = "Global options")]
     data_dir: Option<std::path::PathBuf>,
     /// Use an endpoint not in the configuration: its URL (credentials from the AWS default chain).
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     url: Option<String>,
     /// Region for --url.
-    #[arg(long, global = true, default_value = "us-east-1")]
+    #[arg(long, global = true, default_value = "us-east-1", help_heading = "Global options")]
     pub region: String,
     /// Path-style addressing for --url.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     pub path_style: bool,
     /// A PEM CA bundle for --url.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     pub ca_file: Option<std::path::PathBuf>,
     /// Requests per second per job.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     rate: Option<f64>,
     /// Requests in flight per job.
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help_heading = "Global options")]
     concurrency: Option<usize>,
-    /// Write the request log of this run (redacted) to a file: .har or .json.
-    #[arg(long, global = true)]
+    /// Write sonde's own requests of this run (redacted) to a file: .har or
+    /// .json. Not for run, proxy and watch: what they record is the session.
+    #[arg(long, global = true, help_heading = "Global options")]
     log_out: Option<std::path::PathBuf>,
     #[command(subcommand)]
     command: Command,
@@ -68,7 +69,7 @@ enum Command {
     Watch(cmd::record::WatchArgs),
     /// Production traffic as a session: an S3 server access log, CloudTrail events or a HAR.
     Import(cmd::sessions::ImportArgs),
-    /// A session for other tools: OpenTelemetry traces (`--otlp`), to a file or a collector.
+    /// A session for other tools: OpenTelemetry traces, to a file or a collector.
     Export(cmd::sessions::ExportArgs),
     /// Print a recorded session.
     Show(cmd::record::ShowArgs),
@@ -145,8 +146,46 @@ fn grouped(cmd: clap::Command) -> clap::Command {
             help.push_str(&format!("  {name:<width$}  {about}\n"));
         }
     }
-    help.push_str("\nOptions:\n{options}");
-    cmd.help_template(help)
+    help.push_str("\n{options}");
+    scoped(cmd.help_template(help))
+}
+
+/// The commands that only read what is on this machine: a session's file,
+/// the configuration. The options that say which store to talk to, and how
+/// fast, are not theirs.
+const READS_FILES: &[&str] = &[
+    "sessions", "show", "compare", "check", "diff", "share", "export", "import",
+];
+
+/// The options of the endpoint and of the pace, which a command that reads
+/// files has no use for: left out of its help (they are still taken, as
+/// every global option is).
+const OF_THE_STORE: &[&str] = &[
+    "url",
+    "region",
+    "path_style",
+    "ca_file",
+    "rate",
+    "concurrency",
+    "log_out",
+];
+
+/// The command tree with each command's help showing the global options
+/// it can use.
+fn scoped(mut cmd: clap::Command) -> clap::Command {
+    // (global options reach the subcommands when the tree is built)
+    cmd.build();
+    for name in READS_FILES {
+        cmd = cmd.mut_subcommand(name, |mut sub| {
+            for id in OF_THE_STORE {
+                if sub.get_arguments().any(|a| a.get_id() == id) {
+                    sub = sub.mut_arg(id, |a| a.hide(true));
+                }
+            }
+            sub
+        });
+    }
+    cmd
 }
 
 fn main() -> ExitCode {
@@ -184,6 +223,23 @@ fn main() -> ExitCode {
         .build()
         .expect("tokio runtime");
     let code = rt.block_on(async {
+        // run, proxy and watch record the program's requests, not sonde's: the
+        // file would be written empty
+        if let (Some(path), Some(what)) = (
+            &cli.log_out,
+            match &cli.command {
+                Command::Run(_) => Some("run"),
+                Command::Proxy(_) => Some("proxy"),
+                Command::Watch(_) => Some("watch"),
+                _ => None,
+            },
+        ) {
+            eprintln!(
+                "sonde: --log-out {} is not for `sonde {what}`: it writes sonde's own requests, and {what} sends none. What the program sent is the session file (-o FILE, or the one named when it ends); `sonde show FILE -f json` has every request, `sonde export FILE` its traces.",
+                path.display()
+            );
+            return 64;
+        }
         let sonde = match cmd::open(&cli) {
             Ok(s) => s,
             Err(e) => {
@@ -215,8 +271,13 @@ fn main() -> ExitCode {
         };
         let code = match code {
             Ok(c) => c,
-            Err(e) => {
+            // a mistake in the command or in sonde.toml: 64, as the docs say
+            Err(e) if e.downcast_ref::<cmd::Usage>().is_some() => {
                 eprintln!("sonde: {e:#}");
+                64
+            }
+            Err(e) => {
+                eprintln!("sonde: {}", cmd::said(&sonde, &format!("{e:#}")));
                 if let Some(s3) = e.downcast_ref::<s3raw::S3Error>() {
                     if let Some(id) = s3.record_id
                         && let Some(r) = sonde.log().get(id)

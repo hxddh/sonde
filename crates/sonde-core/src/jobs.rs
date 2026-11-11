@@ -458,7 +458,7 @@ mod tests {
             },
         );
         jobs.wait(&id).await.unwrap();
-        let info = jobs.get(&id).unwrap();
+        let info = jobs.info(&id).unwrap();
         assert_eq!(info.title, "Capacity scan b/p/");
         assert_eq!(en(&info.title_text), info.title);
         assert_eq!(info.progress.message, "3 objects");
@@ -468,7 +468,7 @@ mod tests {
         assert_eq!(v["progress"]["messageText"][0]["args"]["n"], "3");
         // words given as they are stay words, and old JSON still reads
         let plain = jobs.spawn("t", "plain", 1, None, |_| async { Ok(Value::Null) });
-        assert_eq!(jobs.get(&plain).unwrap().title, "plain");
+        assert_eq!(jobs.info(&plain).unwrap().title, "plain");
         let old: Progress =
             serde_json::from_str(r#"{"done":1,"total":null,"bytes":0,"message":"x"}"#).unwrap();
         assert!(old.message_text.is_empty());

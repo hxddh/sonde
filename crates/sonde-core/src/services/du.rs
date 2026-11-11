@@ -379,10 +379,7 @@ pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
     if objects > 1000 && pct(small, objects) > 50.0 {
         f.push((
             0,
-            vec![ph!(
-                "du.small",
-                pct = format!("{:.0}", pct(small, objects))
-            )],
+            vec![ph!("du.small", pct = format!("{:.0}", pct(small, objects)))],
         ));
     }
     f.sort_by_key(|x| std::cmp::Reverse(x.0));
@@ -762,8 +759,17 @@ mod tests {
         let row: Slice = serde_json::from_value(v["byPrefix"][0].clone()).unwrap();
         assert!(!row.versions_unknown);
         r.versions_not_counted("AccessDenied (403)".into());
-        assert!(r.by_class.iter().chain(&r.by_prefix).all(|x| x.versions_unknown));
-        assert!(r.findings[0].contains("were not counted"), "{:?}", r.findings);
+        assert!(
+            r.by_class
+                .iter()
+                .chain(&r.by_prefix)
+                .all(|x| x.versions_unknown)
+        );
+        assert!(
+            r.findings[0].contains("were not counted"),
+            "{:?}",
+            r.findings
+        );
     }
 
     #[test]
@@ -792,9 +798,9 @@ mod tests {
             }
         };
         check(&r);
-        assert!(r.findings.iter().any(|f| f.ends_with(
-            "A NoncurrentVersionExpiration lifecycle rule would reclaim them."
-        )));
+        assert!(r.findings.iter().any(|f| {
+            f.ends_with("A NoncurrentVersionExpiration lifecycle rule would reclaim them.")
+        }));
         r.versions_not_counted("AccessDenied (403)".into());
         check(&r);
         // and the empty one, with its three parts

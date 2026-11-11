@@ -169,10 +169,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     for o in &objects {
         let rel = o.key.strip_prefix(root).unwrap_or(&o.key);
         let Some((log, seg, name)) = parse_key(rel) else {
-            l.issues.push(issue(
-                Severity::Info,
-                ph!("wp.unexpected", key = o.key),
-            ));
+            l.issues
+                .push(issue(Severity::Info, ph!("wp.unexpected", key = o.key)));
             continue;
         };
         let s = segs.entry((log, seg)).or_default();
@@ -228,10 +226,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             let b = src.get(&f.key, None).await?;
             let recs = records(&b);
             if recs.iter().any(|r| !r.crc_ok) {
-                l.issues.push(issue(
-                    Severity::Error,
-                    ph!("wp.crc", key = f.key),
-                ));
+                l.issues
+                    .push(issue(Severity::Error, ph!("wp.crc", key = f.key)));
             }
             match recs.iter().rev().find(|r| r.kind == FOOTER) {
                 Some(fr) => {
@@ -293,14 +289,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                         lac = ft.lac.map(|x| x.to_string()).unwrap_or_else(|| "—".into());
                     }
                     sealed += 1;
-                    sealed_events
-                        .push((f.last_modified, ph!("wp.sealed", log = log, seg = seg)));
+                    sealed_events.push((f.last_modified, ph!("wp.sealed", log = log, seg = seg)));
                 }
                 None => {
-                    l.issues.push(issue(
-                        Severity::Error,
-                        ph!("wp.footer.none", key = f.key),
-                    ));
+                    l.issues
+                        .push(issue(Severity::Error, ph!("wp.footer.none", key = f.key)));
                     state = ph!("wp.state.corrupt");
                     nblocks = s.blocks.len().to_string();
                     entries = "?".into();

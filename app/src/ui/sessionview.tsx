@@ -5,15 +5,15 @@
 // (sonde share) both draw with these.
 
 import { type ContextMenuEvent, effect, type JSX, List, Scroll, type ScrollRef, signal, Text, token, untracked, View } from "nsh";
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, Popover, TextView } from "nsh/base";
+import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
-import { bytes, change, clock, count, date, day, duration, hm, middle } from "../format";
+import { bytes, change, clock, count, date, day, duration, hm, middle, percent } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { cost, groupName, sessionStory, SessionShape, Sparkline, timed, Waterfall } from "./plots";
+import { Chart, cost, groupName, sessionStory, Sparkline, timed, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Button, CARD, Dot, Empty, FOCUS, Heading, InWindowMenu, ListRow, Options, POPUP, ROW, ROW_STATE, rowHeight, TABLE, terminal, TYPE } from "./kit";
+import { Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, Figure, Figures, Heading, ICON, InWindowMenu, ListRow, Options, Row, ROW, rowHeight, Strong, TABLE, terminal, Title, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -206,7 +206,8 @@ export function StatusMark(props: { status: number | null; text?: string }) {
   return (
     <View class="flex-row items-center gap-2">
       <Dot tone={tone()} />
-      <Text class={`font-mono text-caption tabular-nums ${tone() === "ok" ? "text-muted-foreground" : `font-semibold ${TONE_TEXT[tone()]}`}`}>{props.text ?? (props.status === null ? "—" : String(props.status))}</Text>
+      {/* emphasis: a status that is not a success stands out in its tone */}
+      <Text class={`font-mono text-caption tabular-nums ${tone() === "ok" ? "text-muted-foreground" : `${EMPHASIS} ${TONE_TEXT[tone()]}`}`}>{props.text ?? (props.status === null ? "—" : `${props.status}`)}</Text>
     </View>
   );
 }
@@ -237,37 +238,6 @@ export function span(v: SessionView): [number, number] {
   return [a, Math.max(b, a + 1)];
 }
 
-/** A figure: a number, and what it counts. With `preview`, a press (or
- * Return) opens what it is made of, and Escape closes it (Native Shell's
- * Popover): the keyboard, touch and screen readers reach it as the pointer
- * does. */
-export function Figure(props: { value: string; label: string; tone?: Tone; preview?: JSX.Element; testID?: string }) {
-  const body = (
-    <View class="gap-1">
-      <Text class={`tabular-nums text-heading font-semibold ${props.tone ? TONE_TEXT[props.tone] : "text-foreground"}`}>{props.value}</Text>
-      <Text class="text-caption text-muted-foreground">{props.label}</Text>
-    </View>
-  );
-  if (!props.preview || terminal()) return <View testID={props.testID} class="px-2 py-1">{body}</View>;
-  return (
-    <Popover
-      placement="bottom"
-      align="start"
-      offset={6}
-      trigger={
-        <BaseButton testID={props.testID} accessibilityLabel={`${props.value} ${props.label}`} class={`rounded-(--radius-sm) px-2 py-1 hover:bg-muted active:bg-muted ${FOCUS}`}>
-          {body}
-        </BaseButton>
-      }
-      popupClass={`w-[300px] gap-2 ${POPUP} p-3`}
-      popupStartingClass="opacity-0 -translate-y-1"
-      popupEndingClass="opacity-0"
-    >
-      {props.preview}
-    </Popover>
-  );
-}
-
 /** What a session's requests were, by kind: a figure's preview. */
 function KindsPreview(props: { profile: Profile; by: "requests" | "time" }) {
   const rows = () => [...props.profile.groups].sort((a, b) => (props.by === "requests" ? b.requests - a.requests : b.busyMs - a.busyMs)).slice(0, 5);
@@ -282,7 +252,7 @@ function KindsPreview(props: { profile: Profile; by: "requests" | "time" }) {
           <View class="gap-1">
             <View class="flex-row items-baseline gap-2">
               <Text class="min-w-0 flex-1 text-small text-popover-foreground line-clamp-1">{groupName(g())}</Text>
-              <Text class="tabular-nums text-caption text-muted-foreground">{props.by === "requests" ? String(g().requests) : duration(g().busyMs)}</Text>
+              <Text class="tabular-nums text-caption text-muted-foreground">{props.by === "requests" ? count(g().requests) : duration(g().busyMs)}</Text>
             </View>
             <View class="h-1 overflow-hidden rounded-full bg-muted">
               <View class="h-full rounded-full bg-chart-1" style={{ width: `${Math.max(2, Math.round((value(g()) * 100) / total()))}%` }} />
@@ -314,7 +284,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element 
   if (terminal()) {
     return (
       <View class="gap-0">
-        <Text class="font-semibold text-foreground">{command() ? commandLine(command()!) : props.view.header.endpoint}</Text>
+        <Title>{command() ? commandLine(command()!) : props.view.header.endpoint}</Title>
         <Text class="text-muted-foreground" testID="session-summary">
           {line()}
         </Text>
@@ -322,54 +292,51 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element 
       </View>
     );
   }
+  const profile = () => props.view.profile;
   return (
     <View class="gap-3">
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
-          <Text class="font-mono text-body font-semibold text-foreground line-clamp-2">
+          <Title mono lines={2} class="text-body">
             {command() ? commandLine(command()!) : props.view.header.endpoint}
-          </Text>
+          </Title>
           <Text class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git)].filter(Boolean).join(" · ")}</Text>
-          {/* the session in a sentence: where its time went, and the first thing to do */}
-          <If when={props.view.profile?.groups.length}>
-            <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(props.view.profile, props.view.observations)}</Text>
+          {/* the session in a sentence: where its time went, and the first thing to do. It wraps
+              to two lines as the pane narrows; what is past them is cut at the second line's end */}
+          <If when={profile()?.groups.length}>
+            <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(profile(), props.view.observations)}</Text>
           </If>
         </View>
         {props.actions}
       </View>
-      <View testID="session-summary" accessibilityLabel={line()} class="-ml-2 flex-row flex-wrap">
-          <Figure testID="figure-requests" value={count(s().requests)} label={t("figure.requests")} preview={props.view.profile?.groups.length ? <KindsPreview profile={props.view.profile} by="requests" /> : undefined} />
-          <Figure value={count(props.view.episodes.length)} label={t("figure.operations")} />
-          <Figure value={duration(s().seconds * 1000)} label={t("figure.took")} />
-          {/* the program's time on S3: one figure, with its share, and what it was made of */}
-          <If when={props.view.profile?.groups.length && timed(props.view.profile)}>
-            <Figure testID="profile-waiting" value={duration(props.view.profile.busyMs)} label={`${t("profile.waiting")} · ${Math.round((props.view.profile.busyMs * 100) / Math.max(props.view.profile.wallMs, 1e-9))}%`} preview={<KindsPreview profile={props.view.profile} by="time" />} />
-          </If>
-          <If when={props.view.profile && props.view.profile.cost.amount > 0}>
-            <Figure testID="profile-cost" value={cost(props.view.profile.cost.amount, props.view.profile.cost.currency)} label={t("profile.cost")} />
-          </If>
-          <If when={s().errors > 0}>
-            <Figure value={count(s().errors)} label={t("figure.errors")} tone="server" />
-          </If>
-          <If when={s().misses > 0}>
-            <Figure value={count(s().misses)} label={t("figure.notFound")} />
-          </If>
-        </View>
+      {/* by rank: as the pane narrows the line holds fewer figures, the last ones go first, none wraps */}
+      <Figures
+        testID="session-summary"
+        label={line()}
+        items={[
+          { figure: <Figure testID="figure-requests" value={count(s().requests)} label={t("figure.requests")} preview={profile()?.groups.length ? <KindsPreview profile={profile()} by="requests" /> : undefined} /> },
+          // the program's time on S3: one figure, with its share, and what it was made of
+          { show: () => !!profile()?.groups.length && timed(profile()), figure: <Figure testID="profile-waiting" value={duration(profile()?.busyMs ?? 0)} label={`${t("profile.waiting")} · ${percent((profile()?.busyMs ?? 0) / Math.max(profile()?.wallMs ?? 0, 1e-9))}`} preview={profile() ? <KindsPreview profile={profile()} by="time" /> : undefined} /> },
+          { show: () => s().errors > 0, figure: <Figure value={count(s().errors)} label={t("figure.errors")} tone="bad" /> },
+          { figure: <Figure value={duration(s().seconds * 1000)} label={t("figure.took")} /> },
+          { show: () => !!profile() && profile().cost.amount > 0, figure: <Figure testID="profile-cost" value={profile() ? cost(profile().cost.amount, profile().cost.currency) : ""} label={t("profile.cost")} /> },
+          { figure: <Figure value={count(props.view.episodes.length)} label={t("figure.operations")} /> },
+          { show: () => s().misses > 0, figure: <Figure value={count(s().misses)} label={t("figure.notFound")} /> },
+        ]}
+      />
     </View>
   );
 }
 
-/** Whether a session's findings are folded away (kept while the app runs). */
-const findingsOpen = signal(true);
-
-const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3", config: "Bucket" } as const;
+const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3" } as const;
+type Sdk = keyof typeof SDKS | "config";
+/** A fix's tab: the SDK's own name, or (a change to the bucket, not the program) "Bucket" in the reader's language. */
+const sdkTitle = (sdk: Sdk) => (sdk === "config" ? t("fix.bucket") : SDKS[sdk]);
 const LANG = { python: "python", java: "java", go: "go", js: "javascript", config: "xml" } as const;
-/** The SDK the fixes are shown for, kept while the app runs. */
-const fixSdk = signal<keyof typeof SDKS>("python");
 
 /** What to change for a finding: its fix in each SDK, one shown. */
 /** The fix's SDK for the program's own: its user agent named it. */
-const sdkOfAgent = (sdk: string | undefined): keyof typeof SDKS | null => {
+const sdkOfAgent = (sdk: string | undefined): Sdk | null => {
   if (!sdk) return null;
   const s = sdk.toLowerCase();
   return s.startsWith("boto") || s.startsWith("aws-cli") || s.startsWith("s3fs") ? "python" : s.includes("java") || s.includes("hadoop") ? "java" : s.includes("go") ? "go" : s.includes("-js") ? "js" : null;
@@ -384,7 +351,8 @@ function ExpectButton(props: { o: Observation; onExpect?: (o: Observation) => vo
   );
 }
 
-function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
+function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: the pane's own, kept from finding to finding */ sdk: { (): Sdk; set: (s: Sdk) => void }; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
+  const fixSdk = props.sdk;
   const fixes = () => props.o.fixes ?? [];
   // the program's own SDK first, when its requests said which; else the one last chosen
   const own = () => sdkOfAgent(props.o.sdk);
@@ -396,9 +364,9 @@ function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void;
   return (
     <View testID="fix" class="gap-2">
       <View class="flex-row flex-wrap items-center gap-2">
-        <Icon name="sparkles" size={12} />
-        <Text role="header" class="flex-1 text-small font-semibold text-foreground">{t("fix.title")}</Text>
-        <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: SDKS[f.sdk] }))} onChange={(v) => fixSdk.set(v as keyof typeof SDKS)} />
+        <Icon name="sparkles" size={ICON.small} />
+        <Heading class="flex-1">{t("fix.title")}</Heading>
+        <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: sdkTitle(f.sdk) }))} onChange={(v) => fixSdk.set(v as Sdk)} />
         {/* or no change: a habit kept on purpose, which sonde check then expects */}
         <ExpectButton o={props.o} onExpect={props.onExpect} />
       </View>
@@ -408,7 +376,8 @@ function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void;
           <TextView
             testID="fix-why"
             markdown={`${why()}${observationSaving(props.o) ? `\n\n**${observationSaving(props.o)}**` : ""}`}
-            classes={{ paragraph: "text-small leading-snug text-muted-foreground", strong: "font-semibold text-info" }}
+            // emphasis: what the change saves, within the reason for it
+            classes={{ paragraph: "text-small leading-snug text-muted-foreground", strong: `${EMPHASIS} text-info` }}
           />
         )}
       </If>
@@ -417,23 +386,11 @@ function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void;
         <View testID="fix-callers" class="gap-1">
           <Each of={props.o.callers!} key={(c) => c.place}>
             {(c) => (
-              // a shared page cannot open the code: the place is said, not offered
-              <If
-                when={props.onOpenCode}
-                else={
-                  <View class="flex-row items-center gap-2 px-2 py-1">
-                    <Icon name="file" size={12} />
-                    <Text class="min-w-0 flex-1 font-mono text-small text-foreground line-clamp-1">{c().place}</Text>
-                    <Text class="tabular-nums text-caption text-muted-foreground">{t("run.bandRequests", { n: c().requests })}</Text>
-                  </View>
-                }
-              >
-                <ListRow label={t("fix.openCode", { place: c().place })} onPress={() => props.onOpenCode?.(c().place)} class="py-1">
-                  <Icon name="file" size={12} />
-                  <Text class="min-w-0 flex-1 font-mono text-small text-primary line-clamp-1">{c().place}</Text>
-                  <Text class="tabular-nums text-caption text-muted-foreground">{t("run.bandRequests", { n: c().requests })}</Text>
-                </ListRow>
-              </If>
+              // a shared page cannot open the code: the place is said, not offered (a row that does nothing on a press)
+              <ListRow label={props.onOpenCode ? t("fix.openCode", { place: c().place }) : c().place} disabled={!props.onOpenCode} onPress={() => props.onOpenCode?.(c().place)} trailing={<Text class="tabular-nums text-caption text-muted-foreground">{t("run.bandRequests", { n: c().requests })}</Text>}>
+                <Icon name="file" size={ICON.small} />
+                <Text class={`min-w-0 flex-1 font-mono text-small line-clamp-1 ${props.onOpenCode ? "text-primary" : "text-foreground"}`}>{c().place}</Text>
+              </ListRow>
             )}
           </Each>
         </View>
@@ -495,20 +452,19 @@ export function Observations(props: { view: SessionView; filter?: number | null;
           <Each of={list()}>
             {(o, i) => (
               // a finding narrows the operations to its own, as on the desktop
-              <BaseButton
+              <ListRow
                 testID={`observation-${i()}`}
-                accessibilityLabel={observationText(o())}
+                label={observationText(o())}
                 selected={props.filter === i()}
                 disabled={!props.onFilter || !o().episodes?.length}
                 onPress={() => press(i())}
-                class="focus:bg-row-hover selected:bg-selection"
               >
                 <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
                   {o().level === "warn" ? "! " : "· "}
                   {observationText(o())}
                   <If when={!props.compact && observationSaving(o())}>{(s) => <Text class="text-status-ok">{` — ${s()}`}</Text>}</If>
                 </Text>
-              </BaseButton>
+              </ListRow>
             )}
           </Each>
         </View>
@@ -517,92 +473,96 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   }
   // a line each, but the one chosen in full
   const dense = () => props.compact || !!props.dense;
+  // whether the findings are folded away, and the SDK their fixes are shown for: this pane's own
+  const open = signal(true);
+  const fixSdk = signal<Sdk>("python");
+  const saving = (v: () => string, i: () => number) => (
+    <View class="shrink-0 flex-row items-center gap-1">
+      <Icon name="trending-down" size={ICON.small} tint="info" />
+      <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small font-medium text-info">{v()}</Text>
+    </View>
+  );
   const row = (o: () => Observation, i: () => number) => (
-    <BaseButton
+    <ListRow
+      divided
+      top
+      first={i() === 0}
       testID={`observation-${i()}`}
-      accessibilityLabel={observationText(o())}
+      label={observationText(o())}
       selected={props.filter === i()}
       disabled={!props.onFilter || !o().episodes?.length}
       onPress={() => press(i())}
-      class={`group flex-row items-start gap-2 px-3 ${dense() ? "py-1" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${FOCUS} ${i() > 0 ? "border-t border-border" : ""}`}
+      class={dense() ? "py-1" : ""}
+      // by rank as the pane narrows: the finding's words keep their width; what acting on it
+      // saves goes first, then the count's words (its chevron stays)
+      trailing={
+        <>
+          <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
+          <If when={props.onFilter && o().episodes?.length}>
+            <View class={`${props.narrow ? "" : "w-28"} flex-row items-center justify-end gap-1`}>
+              <If when={!props.narrow}>
+                <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: o().episodes.length })}</Text>
+              </If>
+              <Icon name={props.filter === i() ? "x" : "chevron-right"} size={ICON.small} />
+            </View>
+          </If>
+        </>
+      }
     >
       {/* its number, in its level's tone: where it stands on the session's shape */}
-      <View class={`mt-1 size-4 items-center justify-center rounded-full ${o().level === "warn" ? "bg-warn/15" : "bg-muted"}`}>
-        <Text class={`tabular-nums text-caption font-semibold ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{String(i() + 1)}</Text>
+      <View class={`mt-1 size-4 shrink-0 items-center justify-center rounded-full ${o().level === "warn" ? "bg-warn/15" : "bg-muted"}`}>
+        {/* emphasis: the number the shape marks this finding with */}
+        <Text class={`tabular-nums text-caption ${EMPHASIS} ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{count(i() + 1)}</Text>
       </View>
       <View class="min-w-0 flex-1 gap-1">
         <Text class={`text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
         <If when={(!dense() || props.filter === i()) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
-        <If when={(!dense() || props.filter === i()) && !props.compact && observationSaving(o())}>
-          {(v) => (
-            <View class="flex-row items-center gap-1 pt-1">
-              <Icon name="trending-down" size={12} tint="info" />
-              <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small font-medium text-info">{v()}</Text>
-            </View>
-          )}
-        </If>
+        <If when={(!dense() || props.filter === i()) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
       </View>
-      {/* a line each: what acting on it saves, at the row's end */}
-      <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && observationSaving(o())}>
-        {(v) => (
-          <View class="h-5 shrink-0 flex-row items-center gap-1">
-            <Icon name="trending-down" size={12} tint="info" />
-            <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small font-medium text-info">{v()}</Text>
+    </ListRow>
+  );
+  const findings = () => (
+    // a short window keeps room for the operations: the findings scroll
+    <Scroll ref={(r) => (scroller = r)} class={`overflow-hidden ${CARD}`} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
+      <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
+      {/* the finding pressed: what to change, in the findings' own room */}
+      <If when={!props.compact && props.filter != null && props.view.observations[props.filter!] && (props.view.observations[props.filter!].fixes?.length || (props.onExpect && props.view.observations[props.filter!].identity)) ? props.view.observations[props.filter!] : null}>
+        {(o) => (
+          <View class="border-t border-border p-3">
+            <If
+              when={o().fixes?.length}
+              else={
+                <View class="flex-row items-center gap-2">
+                  <Text class="min-w-0 flex-1 text-small text-muted-foreground">{t("expect.hint")}</Text>
+                  <ExpectButton o={o()} onExpect={props.onExpect} />
+                </View>
+              }
+            >
+              <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} />
+            </If>
           </View>
         )}
       </If>
-      <If when={props.onFilter && o().episodes?.length}>
-        <View class="h-5 w-28 shrink-0 flex-row items-center justify-end gap-1">
-          <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: o().episodes.length })}</Text>
-          <Icon name={props.filter === i() ? "x" : "chevron-right"} size={12} />
-        </View>
-      </If>
-    </BaseButton>
+    </Scroll>
   );
   return (
     <If when={props.view.observations.length > 0}>
-      {/* the findings open and close under their heading (Native Shell's Accordion) */}
-      <Accordion value={props.compact || findingsOpen() ? ["findings"] : []} onChange={(e) => findingsOpen.set(e.value.includes("findings"))}>
-        <AccordionItem value="findings" testID="observations" class="gap-2">
-          <If when={!props.compact}>
-            <AccordionHeader level={3} class="flex-row flex-wrap items-center gap-x-3 gap-y-1">
-              <AccordionTrigger testID="observations-toggle" class={`group flex-row items-center gap-2 rounded-(--radius-sm) py-1 pr-1 ${FOCUS}`}>
-                <View class="group-aria-expanded:rotate-90 motion-safe:transition-transform motion-safe:duration-150">
-                  <Icon name="chevron-right" size={12} tint="muted-foreground" />
-                </View>
-                <Text class="text-body font-semibold text-foreground">{t("obs.title")}</Text>
-                <Text class="text-body text-muted-foreground">{`· ${props.view.observations.length}`}</Text>
-              </AccordionTrigger>
-              {/* what acting on them saves: the section's subtitle, not a third voice */}
-              <If when={whatIfText(props.view)}>{(w) => <Text testID="what-if" class="min-w-0 flex-1 tabular-nums text-small text-muted-foreground line-clamp-1">{w()}</Text>}</If>
-            </AccordionHeader>
-          </If>
-          <AccordionPanel reveal accessibilityLabel={t("obs.title")}>
-            {/* a short window keeps room for the operations: the findings scroll */}
-            <Scroll ref={(r) => (scroller = r)} class={`overflow-hidden ${CARD}`} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
-              <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
-              {/* the finding pressed: what to change, in the findings' own room */}
-              <If when={!props.compact && props.filter != null && props.view.observations[props.filter!] && (props.view.observations[props.filter!].fixes?.length || (props.onExpect && props.view.observations[props.filter!].identity)) ? props.view.observations[props.filter!] : null}>
-                {(o) => (
-                  <View class="border-t border-border p-3">
-                    <If
-                      when={o().fixes?.length}
-                      else={
-                        <View class="flex-row items-center gap-2">
-                          <Text class="min-w-0 flex-1 text-small text-muted-foreground">{t("expect.hint")}</Text>
-                          <ExpectButton o={o()} onExpect={props.onExpect} />
-                        </View>
-                      }
-                    >
-                      <FixPanel o={o()} onOpenCode={props.onOpenCode} onExpect={props.onExpect} />
-                    </If>
-                  </View>
-                )}
-              </If>
-            </Scroll>
-          </AccordionPanel>
-        </AccordionItem>
-      </Accordion>
+      {/* beside a run's live operations: the sentences only, under no heading */}
+      <If when={!props.compact} else={<View testID="observations">{findings()}</View>}>
+        {/* the findings open and close under their heading; what acting on them saves is the
+            section's subtitle beside it, not a third voice */}
+        <Disclosure
+          title={t("obs.title")}
+          count={props.view.observations.length}
+          expanded={open()}
+          onToggle={(o) => open.set(o)}
+          itemTestID="observations"
+          testID="observations-toggle"
+          trailing={<If when={whatIfText(props.view)}>{(w) => <Text testID="what-if" class="min-w-0 flex-1 tabular-nums text-small text-muted-foreground line-clamp-1">{w()}</Text>}</If>}
+        >
+          {findings()}
+        </Disclosure>
+      </If>
     </If>
   );
 }
@@ -628,9 +588,37 @@ export function operationsText(view: SessionView, order: number[]): string {
   const head = [t("column.time"), t("column.operation"), t("column.requests"), t("sessions.tookMs"), t("column.notes")];
   const rows = order.flatMap((i) => {
     const e = view.episodes[i];
-    return e ? [[e.start, plain(episodeTitle(e)), String(e.records.length), String(Number(episodeMs(e).toFixed(3))), plain(episodeNotes(e, view.sharedNotes).join(" · "))]] : [];
+    // plain numbers on purpose (to sort and sum where they are pasted): not `count()`, not `duration()`
+    return e ? [[e.start, plain(episodeTitle(e)), `${e.records.length}`, `${Math.round(episodeMs(e) * 1000) / 1000}`, plain(episodeNotes(e, view.sharedNotes).join(" · "))]] : [];
   });
   return [head, ...rows].map((r) => r.join("\t")).join("\n");
+}
+
+/** The operations' columns by rank. The outcome's dot, the operation and how
+ * long it took always show; then, while the operation keeps `OP_NAME` of
+ * room: requests, time, when (its bar), format, notes — in that order, so a
+ * table that narrows loses its last-ranked columns whole and none is ever
+ * clipped. They stand in rank order too: DataTable keeps a column's state
+ * by its place, so only columns at the end may go. */
+export type OpColumn = "status" | "title" | "duration" | "requests" | "time" | "bar" | "format" | "notes";
+export const OP_NAME = 240;
+const OP_WIDTH: Record<Exclude<OpColumn, "title" | "bar" | "notes">, number> = { status: 26, duration: 96, requests: 92, time: 110, format: 86 };
+const OP_RANKED = ["requests", "time", "bar", "format", "notes"] as const;
+/** Which columns a table `width` wide shows (0: not measured yet, all that are
+ * wanted), and the room the operation's name has. */
+export function operationColumns(width: number, wanted: { format: boolean; bar: boolean; notes: boolean }, sized: { bar: number; notes: number }): { shown: OpColumn[]; title: number; widths: Record<string, number> } {
+  const widths: Record<string, number> = { ...OP_WIDTH, bar: sized.bar, notes: sized.notes };
+  const want = (c: (typeof OP_RANKED)[number]) => (c === "format" ? wanted.format : c === "bar" ? wanted.bar : c === "notes" ? wanted.notes : true);
+  const shown: OpColumn[] = ["status", "title", "duration"];
+  let used = widths.status + widths.duration;
+  for (const c of OP_RANKED) {
+    if (!want(c)) continue;
+    // the first that does not fit goes, and all ranked after it with it
+    if (width > 0 && width - used - widths[c] - 2 < OP_NAME) break;
+    shown.push(c);
+    used += widths[c];
+  }
+  return { shown, title: width > 0 ? Math.max(160, width - used - 2) : 340, widths };
 }
 
 export function OperationsTable(props: {
@@ -662,52 +650,45 @@ export function OperationsTable(props: {
   const formats = () => props.view.episodes.some((e) => family(e).label);
   const range = () => span(props.view);
   const ep = (row: number) => props.view.episodes[shown()[row]];
-  // the table's own width decides what it shows: the notes, then the bars,
-  // then the families go as it narrows; the operation's name takes the rest
+  // the table's own width decides what it shows (`operationColumns`); the operation's name takes the rest
   const width = signal(0);
-  // the operation's name keeps at least this much; the others give way to it
-  const NAME = 240;
-  const columns = () => {
-    const w = terminal() ? 0 : width();
-    const wanted = {
+  const layout = () =>
+    operationColumns(
+      terminal() ? 0 : width(),
       // beside the output or a terminal there is no room for a tag most rows do not have
-      format: formats() && !props.compact,
-      bar: !terminal() && !props.compact,
-      notes: !props.compact,
+      { format: formats() && !props.compact, bar: !terminal() && !props.compact, notes: !props.compact },
+      { bar: kept("bar", 150), notes: kept("notes", 320) },
+    );
+  const titleWidth = () => (terminal() || width() > 0 ? layout().title : props.compact ? 220 : 340);
+  const columns = () => {
+    const l = layout();
+    const column = (key: OpColumn) => {
+      switch (key) {
+        case "status":
+          return { key, title: "", width: l.widths.status, resizable: false, selectable: false };
+        case "title":
+          return { key, title: t("column.operation"), width: titleWidth(), minWidth: 160 };
+        case "duration":
+          return { key, title: t("sessions.took"), width: l.widths.duration, align: "end" as const, sortable: true };
+        case "requests":
+          return { key, title: t("column.requests"), width: l.widths.requests, align: "end" as const, sortable: true };
+        case "time":
+          return { key, title: t("column.time"), width: l.widths.time, sortable: true };
+        case "bar":
+          return { key, title: t("column.when"), width: l.widths.bar, minWidth: 80 };
+        case "format":
+          return { key, title: t("column.format"), width: l.widths.format };
+        case "notes":
+          return { key, title: t("column.notes"), width: l.widths.notes, minWidth: 120 };
+      }
     };
-    const make = (on: typeof wanted) => {
-      const fixed = [
-        ...(terminal() ? [] : [{ key: "status", title: "", width: 26, resizable: false, selectable: false }]),
-        { key: "time", title: t("column.time"), width: 110, sortable: true },
-        ...(on.format ? [{ key: "format", title: "", width: 86 }] : []),
-      ];
-      const after = [
-        { key: "requests", title: t("column.requests"), width: 92, align: "end" as const, sortable: true },
-        { key: "duration", title: t("sessions.took"), width: 96, align: "end" as const, sortable: true },
-        ...(on.bar ? [{ key: "bar", title: t("column.when"), width: kept("bar", 150), minWidth: 80 }] : []),
-        ...(on.notes ? [{ key: "notes", title: t("column.notes"), width: kept("notes", 320), minWidth: 120 }] : []),
-      ];
-      return { fixed, after, used: [...fixed, ...after].reduce((n, c) => n + c.width, 0) };
-    };
-    // the notes, then the bars go while the name lacks room: only columns at
-    // the end (DataTable keeps a column's state by its place, so one taken
-    // from the middle would leave the titles a column off)
-    let on = { ...wanted };
-    let m = make(on);
-    for (const drop of ["notes", "bar"] as const) {
-      if (!w || w - m.used - 2 >= NAME) break;
-      on = { ...on, [drop]: false };
-      m = make(on);
-    }
-    const fill = w ? Math.max(160, w - m.used - 2) : props.compact ? 220 : 340;
-    titleWidth = fill;
-    return [...m.fixed, { key: "title", title: t("column.operation"), width: fill, minWidth: 160 }, ...m.after];
+    // a terminal draws no dot and reads left to right as a log does: when, what, how many, how long
+    const order: OpColumn[] = terminal() ? (["time", "format", "title", "requests", "duration", "notes"] as OpColumn[]).filter((k) => l.shown.includes(k)) : l.shown;
+    return order.map(column);
   };
-  // the name is cut for the room it has, not at a fixed length
-  let titleWidth = 340;
   const data = () => {
-    columns();
-    const room = Math.max(24, Math.floor((titleWidth - 12) / 6.4));
+    // the name is cut for the room it has, not at a fixed length
+    const room = Math.max(24, Math.floor((titleWidth() - 12) / 6.4));
     // a key is cut in its middle (its end tells two apart); a sentence is left to the cell, which cuts its end
     const fit = (text: string) => (text.includes("/") ? middle(text, room) : text);
     return shown().map((i) => {
@@ -738,7 +719,7 @@ export function OperationsTable(props: {
       case "format":
         // what wrote it, as a tag: a mark in its color and its name, quiet
         return (
-          <View class="flex-1 flex-row items-center gap-2">
+          <View class="flex-1 flex-row items-center gap-1">
             <View class={`size-1.5 rounded-full ${family(e).class.replace("text-", "bg-")}`} />
             <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{c.text}</Text>
           </View>
@@ -796,7 +777,7 @@ export function OperationsTable(props: {
       onSortChange={({ sort: next }) => sort.set(next)}
       onRowPress={({ row }) => props.onSelect(shown()[row])}
       onContextMenu={props.onContextMenu ? (e) => { if (e.row !== undefined && e.row !== null) props.onContextMenu?.(shown()[e.row]); } : undefined}
-      empty={<Empty text={t("common.empty")} />}
+      empty={<Empty compact text={t("common.empty")} />}
     />
     </View>
   );
@@ -822,7 +803,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       rowClasses={props.lines.map((_, i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
       rowSelectable
       onRowPress={({ row }) => props.onSelect(row)}
-      empty={<Empty text={t("common.empty")} />}
+      empty={<Empty compact text={t("common.empty")} />}
     />
   );
 }
@@ -870,7 +851,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         <View class="flex-row items-center gap-2">
           {props.back}
           <If when={fam().label}>
-            <Text class={`text-small font-semibold ${fam().class}`}>{fam().label}</Text>
+            <Text class={`text-small font-medium ${fam().class}`}>{fam().label}</Text>
           </If>
           <View class="flex-1" />
           <If when={e().outcome.kind !== "ok"}>
@@ -880,9 +861,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
             </View>
           </If>
         </View>
-        <Text class="text-heading font-semibold leading-5 text-foreground">
-          {episodeTitle(e())}
-        </Text>
+        <Title class="leading-5">{episodeTitle(e())}</Title>
         <Text class="tabular-nums text-caption text-muted-foreground">{`${clock(e().start)} · ${duration(episodeMs(e()))} · ↑${bytes(e().bytesUp)} ↓${bytes(e().bytesDown)}`}</Text>
       </View>
       <If when={notes().length > 0}>
@@ -890,16 +869,21 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
           <Each of={notes()}>
             {(n) => (
               <View class="flex-row gap-2">
-                <View class="h-5 justify-center"><View class="size-1 rounded-full bg-muted-foreground" /></View>
+                <View class="min-h-5 justify-center"><View class="size-1 rounded-full bg-muted-foreground" /></View>
                 <Text class="flex-1 text-body leading-5 text-foreground">{n()}</Text>
               </View>
             )}
           </Each>
         </View>
       </If>
-      <View class="gap-1">
+      {/* its requests in time, in the one chart frame: a bar from each one's start to its end */}
+      <If when={!terminal() && props.rows.length > 1}>
+        <Chart title={t("waterfall.title")} text={t("profile.waterfallText", { n: props.rows.length, time: duration(Math.max(1, ...props.rows.map((r) => new Date(r.time).getTime() + r.latencyMs)) - Math.min(...props.rows.map((r) => new Date(r.time).getTime()))) })}>
+          <Waterfall records={props.rows} onRecord={props.onRecord} />
+        </Chart>
+      </If>
+      <View class="gap-2">
         <Heading count={e().records.length}>{t("timeline.requestsOf")}</Heading>
-        <Waterfall records={props.rows} onRecord={props.onRecord} />
         {/* an operation may hold thousands of requests: only those in view are drawn */}
         <List
           testID="op-requests"
@@ -910,8 +894,8 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
           style={{ height: Math.min(props.rows.length, 10) * (rowHeight(ROW.twoLine) ?? 32) + 2 }}
         >
             {(r, i) => (
-              <View style={{ height: rowHeight(ROW.twoLine) }} class={i() > 0 ? "border-t border-border" : ""}>
-                <ListRow testID={`op-request-${i()}`} label={`${r().operation} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 rounded-none px-3">
+              <View style={{ height: rowHeight(ROW.twoLine) }}>
+                <ListRow divided first={i() === 0} testID={`op-request-${i()}`} label={`${r().operation} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 py-0" trailing={<><Text class="text-small tabular-nums text-muted-foreground">{duration(r().latencyMs)}</Text><Icon name="chevron-right" size={ICON.small} /></>}>
                   <View class="w-12">
                     <StatusMark status={r().status} />
                   </View>
@@ -919,8 +903,6 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
                     <Text class="text-small text-foreground line-clamp-1">{r().operation}</Text>
                     <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{middle(r().target, 40)}</Text>
                   </View>
-                  <Text class="text-small tabular-nums text-muted-foreground">{duration(r().latencyMs)}</Text>
-                  <Icon name="chevron-right" size={12} />
                 </ListRow>
               </View>
             )}
@@ -940,6 +922,21 @@ function dayLabel(iso: string): string {
   if (diff <= 0) return t("time.today");
   if (diff === 1) return t("time.yesterday");
   return day(iso);
+}
+
+/** Arguments of one program's runs, each cut so that what tells it from the
+ * others shows: where they all begin alike past a few words, that beginning
+ * is said once as `…` and each shows the rest (`… --table orders`,
+ * `… --table users`); alone, or already different at their start, they stay whole. */
+export function tellApart(args: string[]): string[] {
+  const distinct = [...new Set(args)];
+  if (distinct.length < 2) return args;
+  let common = distinct[0];
+  for (const a of distinct) while (!a.startsWith(common)) common = common.slice(0, -1);
+  // back to a word's edge; a short beginning is worth keeping whole
+  common = common.slice(0, common.lastIndexOf(" ") + 1);
+  if (common.length < 16) return args;
+  return args.map((a) => `… ${a.slice(common.length)}`);
 }
 
 /** The sessions, newest first, by day: the program (or the endpoint), its time and requests. */
@@ -964,6 +961,18 @@ export function SessionList(props: {
     return out;
   };
   const dayOf = (r: Row) => ("day" in r ? r.day : null);
+  // runs of one program are told apart: by the argument that differs, and where the
+  // command is the same to the letter, by the second they started
+  const told = () => {
+    const by = new Map<string, SessionInfo[]>();
+    for (const x of props.sessions) by.set(name(x), [...(by.get(name(x)) ?? []), x]);
+    const out = new Map<string, { args: string; twin: boolean }>();
+    for (const group of by.values()) {
+      const shown = tellApart(group.map(args));
+      group.forEach((x, i) => out.set(x.path, { args: shown[i], twin: group.some((y) => y !== x && args(y) === args(x)) }));
+    }
+    return out;
+  };
   const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
   const name = (s: SessionInfo) => s.title || programOf(s.command) || s.endpoint;
   // the rest of the command after its program, scrubbed; the whole of it when
@@ -989,19 +998,24 @@ export function SessionList(props: {
       accessibilityActions={props.actions?.(x().s).map(({ name, label }) => ({ name, label }))}
       onAccessibilityAction={props.actions ? ({ actionName }) => props.actions!(x().s).find((a) => a.name === actionName)?.run() : undefined}
     >
-    <BaseButton
+    <ListRow
+      lines={2}
       testID={`session-${x().i}`}
-      accessibilityLabel={x().s.title ?? (x().s.command ? scrubCommand(x().s.command!) : x().s.name)}
+      label={x().s.title ?? (x().s.command ? scrubCommand(x().s.command!) : x().s.name)}
       selected={props.selected === x().s.path}
       onPress={() => props.onSelect(x().s.path)}
-      class={`mb-1 gap-1 rounded-(--radius-sm) px-2 py-1 ${ROW_STATE} ${FOCUS}`}
+      class="mb-1"
     >
       <View class="flex-row items-center gap-2">
         <If when={x().s.live}>
           <Dot tone="live" label={t("timeline.live")} />
         </If>
         <Text class="min-w-0 shrink text-body font-medium text-foreground line-clamp-1">{name(x().s)}</Text>
-        <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{args(x().s)}</Text>
+        <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{told().get(x().s.path)?.args ?? args(x().s)}</Text>
+        {/* the same command run again: its time at the row's end, to the second */}
+        <If when={told().get(x().s.path)?.twin}>
+          <Text testID="session-time" class="shrink-0 tabular-nums text-caption font-medium text-foreground">{clock(x().s.created, "s")}</Text>
+        </If>
       </View>
       <View class="flex-row items-center gap-2">
         <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{`${hm(x().s.created)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
@@ -1009,7 +1023,7 @@ export function SessionList(props: {
           <Sparkline shape={x().s.shape!} id={x().s.path} />
         </If>
       </View>
-    </BaseButton>
+    </ListRow>
     </View>,
   );
   return (
@@ -1027,9 +1041,7 @@ export function SessionList(props: {
         <If when={dayOf(r())} else={row(() => r() as { s: SessionInfo; i: number })}>
           {(day) => (
             <View class={`${terminal() ? "" : "bg-sidebar"} px-2 pb-1 pt-2`}>
-              <Text role="header" class="text-caption font-medium text-muted-foreground">
-                {day()}
-              </Text>
+              <Heading quiet>{day()}</Heading>
             </View>
           )}
         </If>

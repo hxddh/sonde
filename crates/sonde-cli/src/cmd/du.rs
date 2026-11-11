@@ -140,7 +140,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
             );
             println!("\nWhy so big:");
             for f in &r.findings {
-                println!("  • {f}");
+                println!("  • {}", super::said(s, f));
             }
         }
     }

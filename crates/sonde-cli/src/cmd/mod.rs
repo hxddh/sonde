@@ -15,6 +15,36 @@ use sonde_core::{CredentialSource, EndpointConfig, Paths, Sonde, Vendor};
 
 use crate::Cli;
 
+/// A mistake in the command or in a file sonde is configured by
+/// (`sonde.toml`): exit 64, not the 70 of an operation that failed.
+#[derive(Debug)]
+pub struct Usage(pub String);
+
+impl std::fmt::Display for Usage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Usage {}
+
+pub fn usage(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(Usage(msg.into()))
+}
+
+/// An error as the CLI says it: where sonde's own text points at the app
+/// (its Settings, its Multipart place), what to do from a terminal.
+pub fn said(s: &Sonde, text: &str) -> String {
+    text.replace(
+        "turn it off in Settings",
+        &format!(
+            "set `read-only = false` under [settings] in {}",
+            s.paths().config_file().display()
+        ),
+    )
+    .replace("See Multipart.", "See `sonde mpu scan`.")
+}
+
 /// The endpoint id `--url` registers for one run.
 pub const ADHOC: &str = "adhoc";
 
@@ -64,7 +94,7 @@ pub fn endpoint(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
     match all.len() {
         1 => Ok(all[0].id.clone()),
         0 => anyhow::bail!(
-            "no endpoint configured: pass --url, or add one to {}",
+            "no endpoint configured: add one with `sonde endpoints add ID URL` (kept in {}), or name one for this run with `--url URL --path-style`",
             s.paths().config_file().display()
         ),
         _ => anyhow::bail!(

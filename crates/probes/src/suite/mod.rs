@@ -10,6 +10,7 @@ pub mod range;
 
 use crate::Probe;
 use crate::model::{Category, Judgement, Needs, ProbeMeta, Steps, Verdict};
+use crate::phrase::{Phrase, ph};
 
 /// `Error` when a step the probe only prepares with (`labels`: the object
 /// it then tests on) did not succeed: the probe could not run, which is
@@ -20,9 +21,9 @@ pub(crate) fn setup_failed(s: &Steps, labels: &[&str]) -> Option<Judgement> {
         return None;
     }
     let failed = labels.iter().map(|l| s.at(l)).find(|x| !x.ok())?;
-    Some(Judgement::new(
+    Some(Judgement::say(
         Verdict::Error,
-        format!("could not run: setup failed ({})", failed.describe()),
+        ph!("judge.setup.failed", p1 = failed.describe()),
         s,
     ))
 }
@@ -40,12 +41,9 @@ pub(crate) fn write_refused(s: &Steps, labels: &[&str]) -> Option<Judgement> {
                     Some("AccessDenied" | "AllAccessDisabled" | "InvalidAccessKeyId")
                 ))
     })?;
-    Some(Judgement::new(
+    Some(Judgement::say(
         Verdict::Error,
-        format!(
-            "could not run: the write was not allowed ({})",
-            failed.describe()
-        ),
+        ph!("judge.setup.refused", p1 = failed.describe()),
         s,
     ))
 }
@@ -64,6 +62,9 @@ pub(crate) fn meta(
         title: title.into(),
         description: description.into(),
         aws_behavior: aws.into(),
+        title_text: vec![Phrase::new(format!("probe.{id}.title"), &[])],
+        description_text: vec![Phrase::new(format!("probe.{id}.description"), &[])],
+        aws_behavior_text: vec![Phrase::new(format!("probe.{id}.aws"), &[])],
         needs: needs.to_vec(),
     }
 }

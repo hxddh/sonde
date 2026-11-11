@@ -937,3 +937,161 @@ async fn a_lost_answer_is_a_write_the_store_made_and_the_program_was_not_told() 
         .no_retry();
     assert_eq!(app.send_raw(get).await.unwrap().status, 200);
 }
+
+#[tokio::test]
+async fn a_key_with_a_dot_segment_is_refused_and_never_reaches_another_key() {
+    let (proxy, _app, log, up) = setup(Policy::Allow).await;
+    for path in [
+        "/data/a/../g1",
+        "/data/a/./g1",
+        "/data/a/%2e%2e/g1",
+        "/data/..",
+    ] {
+        for method in ["GET", "DELETE"] {
+            let answer = raw(&proxy, method, path).await;
+            assert!(answer.starts_with("HTTP/1.1 400"), "{path}: {answer}");
+            assert!(answer.contains(". or .. segment"), "{answer}");
+        }
+    }
+    assert!(up.calls.lock().is_empty(), "{:?}", up.calls.lock());
+    let rec = &log.list(&reqlog::Filter::default(), 1)[0];
+    assert_eq!(rec.status, Some(400));
+    assert!(
+        rec.response_headers
+            .iter()
+            .any(|h| h.name == "x-sonde-proxy" && h.value == "refused"),
+        "recorded as refused"
+    );
+    // a dot in a name is a name
+    let answer = raw(&proxy, "GET", "/data/a/..b/.c").await;
+    assert!(!answer.starts_with("HTTP/1.1 400"), "{answer}");
+}
+
+#[tokio::test]
+async fn two_batches_of_deletes_each_meet_the_fault_and_each_has_its_retry() {
+    let (_proxy, app, log, up) = setup_faults("slowdown").await;
+    let batch = |keys: &[&str]| {
+        let objects: String = keys
+            .iter()
+            .map(|k| format!("<Object><Key>{k}</Key></Object>"))
+            .collect();
+        S3Request::new("DeleteObjects", http::Method::POST)
+            .bucket("data")
+            .query("delete", "")
+            .body(Body::from(format!("<Delete>{objects}</Delete>")))
+            .no_retry()
+    };
+    let send = |keys: &'static [&'static str]| {
+        let (app, req) = (app.clone(), batch(keys));
+        async move { app.send_raw(req).await.unwrap().status }
+    };
+    assert_eq!(send(&["a", "b"]).await, 503);
+    assert_eq!(
+        send(&["c", "d"]).await,
+        503,
+        "the second batch is a request of its own, not the first one's retry"
+    );
+    assert!(up.calls.lock().is_empty());
+    assert_eq!(send(&["c", "d"]).await, 204);
+    assert_eq!(send(&["a", "b"]).await, 204);
+    assert_eq!(up.calls.lock().len(), 2);
+    // and the records are told apart as the faults told the requests apart
+    let recs = log.list(&reqlog::Filter::default(), 10);
+    let mut names: Vec<String> = recs.iter().map(sonde_proxy::fault::identity_of).collect();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert!(recs.iter().all(|r| r.request_body.is_some()), "kept on a failed one too");
+    // read as a trial: both failed, both sent again
+    let clean: Vec<reqlog::Record> = recs
+        .iter()
+        .filter(|r| r.injected.is_none())
+        .cloned()
+        .collect();
+    let t = sonde_proxy::trial::judge(
+        &sonde_proxy::fault::scenario("slowdown").unwrap(),
+        &clean,
+        0,
+        &recs,
+        0,
+    );
+    assert_eq!((t.faults, t.retried), (2, 2), "{}", t.line());
+}
+
+#[tokio::test]
+async fn a_lost_answer_on_a_large_read_is_not_held_to_be_thrown_away() {
+    // 64 MiB dripped out: the proxy answers its 500 once the store answered,
+    // having read 8 MiB of it at most
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let written = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let count = written.clone();
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let count = count.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 8192];
+                if s.read(&mut buf).await.unwrap_or(0) == 0 {
+                    return;
+                }
+                let total: u64 = 64 << 20;
+                let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {total}\r\n\r\n");
+                if s.write_all(head.as_bytes()).await.is_err() {
+                    return;
+                }
+                let piece = vec![7u8; 1 << 20];
+                for _ in 0..64 {
+                    if s.write_all(&piece).await.is_err() {
+                        return;
+                    }
+                    count.fetch_add(1 << 20, std::sync::atomic::Ordering::SeqCst);
+                }
+            });
+        }
+    });
+    let log = RequestLog::default();
+    let target = client(&format!("http://{addr}"), REAL_KEY, REAL_SECRET, RequestLog::default());
+    let all = sonde_proxy::fault::Scenario {
+        name: "lose-all".into(),
+        about: String::new(),
+        rules: vec![sonde_proxy::fault::Rule {
+            on: Vec::new(),
+            prefix: String::new(),
+            effect: sonde_proxy::fault::Effect::LostAnswer,
+            times: 1,
+        }],
+    };
+    let proxy = Proxy::start(
+        target,
+        log.clone(),
+        ProxyConfig {
+            faults: Some(Arc::new(sonde_proxy::fault::Faults::new(&all))),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let cfg = ClientConfig::new("app", &proxy.url(), "us-east-1").unwrap();
+    let (key, secret) = proxy.client_keys();
+    let app = S3Client::new(
+        cfg,
+        Arc::new(StaticProvider(Some(Credentials::new(key, secret, None)))),
+        RequestLog::default(),
+    )
+    .unwrap();
+    let get = S3Request::new("GetObject", http::Method::GET)
+        .bucket("data")
+        .key("big")
+        .no_retry();
+    let r = app.send_raw(get).await.unwrap();
+    assert_eq!(r.status, 500);
+    let sent = written.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        sent < 40 << 20,
+        "the store had sent {sent} bytes: the whole body was read"
+    );
+    let rec = &log.list(&reqlog::Filter::default(), 1)[0];
+    assert_eq!(rec.injected.as_deref(), Some("lose-all"));
+}

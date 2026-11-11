@@ -1647,7 +1647,6 @@ export function DistributionCompare(props: { latency: [{ leMs: number | null; n:
         {/* a log scale ticks at its decades: 1 ms, 10 ms, 100 ms, never 3.16 ms */}
         <PlotAxis tickValues={decades(rows()[0].x, rows()[rows().length - 1].x)} format={(v) => duration(10 ** v)} labelClass={TIME_TICK} />
       </Plot>
-      <Legend items={[{ label: props.names[0], swatch: "bg-muted-foreground/70" }, { label: props.names[1], swatch: "bg-chart-1" }]} />
     </If>
   );
 }

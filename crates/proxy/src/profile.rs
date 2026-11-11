@@ -428,6 +428,18 @@ pub fn prefix_groups<'a>(
     folders: impl Iterator<Item = &'a str>,
     max: usize,
 ) -> Vec<(String, usize)> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for f in folders {
+        *counts.entry(f).or_default() += 1;
+    }
+    fold_folders(counts.into_iter(), max)
+}
+
+/// [`prefix_groups`] of folders each named once, with its requests.
+fn fold_folders<'a>(
+    counts: impl Iterator<Item = (&'a str, usize)>,
+    max: usize,
+) -> Vec<(String, usize)> {
     use std::cmp::Reverse;
     /// A group: its requests, whether a key lies right in it, and the
     /// folders of the session folded into it.
@@ -437,12 +449,7 @@ pub fn prefix_groups<'a>(
         own: bool,
         folded: usize,
     }
-    let mut counts: HashMap<&str, usize> = HashMap::new();
-    for f in folders {
-        *counts.entry(f).or_default() += 1;
-    }
     let mut groups: BTreeMap<String, G> = counts
-        .into_iter()
         .map(|(f, requests)| {
             let g = G {
                 requests,
@@ -726,61 +733,110 @@ pub fn prefix_stats(
     records: &[Record],
     prices: &RequestPrices,
 ) -> (Vec<(String, usize)>, Vec<PrefixStat>) {
-    let price = |r: &Record| price(r, prices);
-    // prefixes: their requests, their busiest second, and when
-    // at the depth that tells the folders apart, the quiet ones folded into the folder above
-    let folders: Vec<String> = records.iter().map(folder_of).collect();
-    let shown = prefix_groups(folders.iter().map(String::as_str), MAX_PREFIXES);
-    let mut per: HashMap<&str, Vec<&Record>> = HashMap::new();
-    for (r, f) in records.iter().zip(&folders) {
-        per.entry(prefix_for(&shown, f).unwrap_or("/"))
-            .or_default()
-            .push(r);
+    // each folder named once, however many requests went to it: a session
+    // has far fewer folders than requests
+    let mut ids: HashMap<(&str, &str), usize> = HashMap::new();
+    let mut names: Vec<(String, usize)> = Vec::new();
+    let mut last: Option<(&str, &str, usize)> = None;
+    let of: Vec<usize> = records
+        .iter()
+        .map(|r| {
+            let b = r.bucket.as_deref().unwrap_or("");
+            let k = r.key.as_deref().unwrap_or("");
+            let dir = k.rfind('/').map_or("", |i| &k[..=i]);
+            // a run of requests to one folder is looked up once
+            let id = match last {
+                Some((lb, ld, id)) if lb == b && ld == dir => id,
+                _ => *ids.entry((b, dir)).or_insert_with(|| {
+                    names.push((folder_of(r), 0));
+                    names.len() - 1
+                }),
+            };
+            last = Some((b, dir, id));
+            names[id].1 += 1;
+            id
+        })
+        .collect();
+    // two (bucket, folder) pairs can spell one name ("" and "a/", "a" and ""):
+    // counted together
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for (f, n) in &names {
+        *counts.entry(f.as_str()).or_default() += n;
     }
+    // at the depth that tells the folders apart, the quiet ones folded into the folder above
+    let shown = fold_folders(counts.iter().map(|(f, n)| (*f, *n)), MAX_PREFIXES);
+    // the groups by their requests: the busiest each a prefix, the rest "other"
+    let mut requests: BTreeMap<&str, usize> = BTreeMap::new();
+    let group: Vec<&str> = names
+        .iter()
+        .map(|(f, n)| {
+            let g = prefix_for(&shown, f).unwrap_or("/");
+            *requests.entry(g).or_default() += n;
+            g
+        })
+        .collect();
+    let mut ranked: Vec<(&str, usize)> = requests.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    let slots = ranked.len().min(MAX_PREFIXES + 1);
+    let slot: Vec<usize> = group
+        .iter()
+        .map(|g| {
+            let at = ranked.iter().position(|(name, _)| name == g).unwrap_or(0);
+            at.min(MAX_PREFIXES)
+        })
+        .collect();
     let under: HashMap<&str, usize> = shown.iter().map(|(g, n)| (g.as_str(), *n)).collect();
-    let mut ranked: Vec<(String, Vec<&Record>)> =
-        per.into_iter().map(|(g, rs)| (g.to_string(), rs)).collect();
-    ranked.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
-    let stat = |prefix: String, rs: &[&Record]| {
-        let mut all: Vec<i64> = rs.iter().map(|r| start_us(r)).collect();
-        let mut reads: Vec<i64> = rs
-            .iter()
-            .filter(|r| is_read(r))
-            .map(|r| start_us(r))
-            .collect();
-        let mut writes: Vec<i64> = rs
-            .iter()
-            .filter(|r| !is_read(r))
-            .map(|r| start_us(r))
-            .collect();
-        all.sort_unstable();
-        reads.sort_unstable();
-        writes.sort_unstable();
-        PrefixStat {
-            folders: under.get(prefix.as_str()).copied().unwrap_or(0),
-            prefix,
-            requests: rs.len(),
-            reads: reads.len(),
-            writes: writes.len(),
-            errors: rs.iter().filter(|r| r.is_error() && !is_miss(r)).count(),
-            peak_per_second: peak_second(&all),
-            peak_reads: peak_second(&reads),
-            peak_writes: peak_second(&writes),
-            cost: rs.iter().map(|r| price(r)).sum(),
+    let mut prefixes: Vec<PrefixStat> = (0..slots)
+        .map(|i| {
+            let prefix = if i < MAX_PREFIXES {
+                ranked[i].0
+            } else {
+                "other"
+            };
+            PrefixStat {
+                folders: under.get(prefix).copied().unwrap_or(0),
+                prefix: prefix.to_string(),
+                requests: 0,
+                reads: 0,
+                writes: 0,
+                errors: 0,
+                peak_per_second: 0,
+                peak_reads: 0,
+                peak_writes: 0,
+                cost: 0.0,
+            }
+        })
+        .collect();
+    // their requests, and when: for the busiest second of reads and of writes
+    let mut all: Vec<Vec<i64>> = vec![Vec::new(); slots];
+    let mut reads: Vec<Vec<i64>> = vec![Vec::new(); slots];
+    let mut writes: Vec<Vec<i64>> = vec![Vec::new(); slots];
+    for (r, id) in records.iter().zip(of) {
+        let i = slot[id];
+        let p = &mut prefixes[i];
+        p.requests += 1;
+        p.errors += usize::from(r.is_error() && !is_miss(r));
+        p.cost += price(r, prices);
+        let t = start_us(r);
+        all[i].push(t);
+        if is_read(r) {
+            reads[i].push(t);
+        } else {
+            writes[i].push(t);
         }
+    }
+    // records are mostly in the order they started: sorted only when not
+    let peak = |times: &mut Vec<i64>| {
+        if !times.is_sorted() {
+            times.sort_unstable();
+        }
+        peak_second(times)
     };
-    let mut prefixes: Vec<PrefixStat> = ranked
-        .iter()
-        .take(MAX_PREFIXES)
-        .map(|(p, rs)| stat(p.clone(), rs))
-        .collect();
-    let rest: Vec<&Record> = ranked
-        .iter()
-        .skip(MAX_PREFIXES)
-        .flat_map(|(_, rs)| rs.iter().copied())
-        .collect();
-    if !rest.is_empty() {
-        prefixes.push(stat("other".into(), &rest));
+    for (i, p) in prefixes.iter_mut().enumerate() {
+        (p.reads, p.writes) = (reads[i].len(), writes[i].len());
+        p.peak_per_second = peak(&mut all[i]);
+        p.peak_reads = peak(&mut reads[i]);
+        p.peak_writes = peak(&mut writes[i]);
     }
     (shown, prefixes)
 }
@@ -1832,7 +1888,9 @@ mod tests {
         let groups = prefix_groups(folders.iter().map(String::as_str), MAX_PREFIXES);
         assert_eq!(groups.len(), 10);
         assert!(
-            groups.iter().all(|(g, n)| g.ends_with("/a/b/c/") && *n == 0),
+            groups
+                .iter()
+                .all(|(g, n)| g.ends_with("/a/b/c/") && *n == 0),
             "{groups:?}"
         );
     }

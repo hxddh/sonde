@@ -1464,8 +1464,15 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .filter(|r| retryable(r) && !sondes_fault(r))
         .map(|r| r.id)
         .collect();
+    let injected_ids: std::collections::HashSet<u64> = records
+        .iter()
+        .filter(|r| sondes_fault(r))
+        .map(|r| r.id)
+        .collect();
     let retries = of_episodes(&|e| {
-        e.kind == Kind::Retry && e.records.iter().any(|id| own_failure.contains(id))
+        e.kind == Kind::Retry
+            && (e.records.iter().any(|id| own_failure.contains(id))
+                || !e.records.iter().any(|id| injected_ids.contains(id)))
     });
     let retried: usize = retries.iter().map(|&i| episodes[i].requests() - 1).sum();
     if retried > 0 {
@@ -1968,6 +1975,105 @@ mod tests {
             obs.iter()
                 .any(|o| o.text == "2 requests repeated after a retryable failure")
         );
+    }
+
+    #[test]
+    fn a_trials_fault_is_said_first_and_its_503s_are_not_the_stores() {
+        let fault = |mut r: Record| {
+            r.injected = Some("slowdown".into());
+            r.response_headers
+                .push(Header::new("x-sonde-fault", "slowdown"));
+            r
+        };
+        let mut rs = Vec::new();
+        for i in 0..6u64 {
+            let key = format!("k{i}");
+            let at = i as i64 * 300;
+            rs.push(fault(rec(i * 2 + 1, at, "PUT", "PutObject", Some(&key), 503)));
+            rs.push(rec(i * 2 + 2, at + 110, "PUT", "PutObject", Some(&key), 200));
+        }
+        let obs = observations(&rs, &episodes(&rs));
+        assert_eq!(obs[0].phrases[0].key, "obs.injected", "{obs:#?}");
+        let keys: Vec<&str> = obs.iter().map(|o| o.phrases[0].key).collect();
+        assert!(
+            !keys.iter().any(|k| k.starts_with("obs.throttled") || *k == "obs.retried"),
+            "the store asked for nothing: {keys:?}"
+        );
+        // a 503 of the store's own, in the same session, is still the store's
+        let mut own = rec(90, 5000, "GET", "GetObject", Some("z"), 503);
+        own.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+        rs.push(own);
+        rs.push(rec(91, 5200, "GET", "GetObject", Some("z"), 200));
+        let obs = observations(&rs, &episodes(&rs));
+        assert_eq!(obs[0].phrases[0].key, "obs.injected");
+        let throttled = obs
+            .iter()
+            .find(|o| o.phrases[0].key.starts_with("obs.throttled"))
+            .expect("the store's own 503");
+        assert_eq!(throttled.phrases[0].args["n"], "1");
+        assert!(obs.iter().any(|o| o.text == "1 request repeated after a retryable failure"));
+    }
+
+    #[test]
+    fn an_upload_the_store_completed_is_complete_though_the_program_was_told_500() {
+        let mut create = rec(1, 0, "POST", "CreateMultipartUpload", Some("big"), 200);
+        create.query = vec![("uploads".into(), String::new())];
+        let q = [("uploadId", "u1")];
+        let part = with_query(
+            rec(2, 10, "PUT", "UploadPart", Some("big"), 200),
+            &[("uploadId", "u1"), ("partNumber", "1")],
+        );
+        let mut lost = with_query(
+            rec(3, 20, "POST", "CompleteMultipartUpload", Some("big"), 500),
+            &q,
+        );
+        lost.injected = Some("lost-answer".into());
+        lost.response_headers
+            .push(Header::new("x-sonde-store-status", "200"));
+        lost.response_headers
+            .push(Header::new("x-sonde-fault", "lost-answer"));
+        let mut again = with_query(
+            rec(4, 130, "POST", "CompleteMultipartUpload", Some("big"), 404),
+            &q,
+        );
+        again.error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
+        let abort = with_query(
+            rec(5, 140, "DELETE", "AbortMultipartUpload", Some("big"), 404),
+            &q,
+        );
+        let rs = [create, part, lost, again, abort];
+        let eps = episodes(&rs);
+        let upload = eps.iter().find(|e| e.kind == Kind::Multipart).unwrap();
+        assert!(
+            !upload.title.contains("aborted") && !upload.title.contains("not completed"),
+            "{}",
+            upload.title
+        );
+        let obs = observations(&rs, &eps);
+        assert!(
+            !obs.iter().any(|o| o.phrases[0].key == "obs.unfinished"),
+            "{obs:#?}"
+        );
+    }
+
+    #[test]
+    fn a_delta_table_under_a_data_folder_keeps_its_files() {
+        let rs = [
+            rec(1, 0, "PUT", "PutObject", Some("lake/data/events/part-00000-a.snappy.parquet"), 200),
+            rec(2, 10, "PUT", "PutObject", Some("lake/data/events/day=1/f1.parquet"), 200),
+            rec(
+                3,
+                20,
+                "PUT",
+                "PutObject",
+                Some("lake/data/events/_delta_log/00000000000000000001.json"),
+                200,
+            ),
+        ];
+        let eps = episodes(&rs);
+        assert_eq!(eps.len(), 1, "{eps:#?}");
+        assert_eq!(eps[0].format, Some(Format::Delta));
+        assert_eq!(eps[0].records, vec![1, 2, 3], "the files are the commit's");
     }
 
     #[test]

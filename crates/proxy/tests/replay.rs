@@ -390,3 +390,67 @@ async fn a_bucket_that_is_not_there_yet_holds_nothing() {
     assert_eq!(run.plan.requests, 1);
     assert_eq!(run.removed, 0);
 }
+
+#[tokio::test]
+async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote() {
+    let store = MiniS3::start(true).await;
+    store.state.lock().versioned = true;
+    let target = client(&store.url, RequestLog::default());
+    target
+        .send_raw(S3Request::new("CreateBucket", http::Method::PUT).bucket("data"))
+        .await
+        .unwrap();
+    // something of the bucket's own, with a version, outside the prefix
+    target
+        .send_raw(
+            S3Request::new("PutObject", http::Method::PUT)
+                .bucket("data")
+                .key("mine.txt")
+                .body(Body::from("x")),
+        )
+        .await
+        .unwrap();
+    let put = |id: u64, key: &str| reqlog::Record {
+        id,
+        operation: "PutObject".into(),
+        method: "PUT".into(),
+        bucket: Some("data".into()),
+        key: Some(key.into()),
+        status: Some(200),
+        request_bytes: Some(4),
+        ..Default::default()
+    };
+    let session = sonde_proxy::session::Session {
+        header: sonde_proxy::session::SessionHeader::new("t", "http://x", "us-east-1", None),
+        // one key written twice: two versions of it
+        records: vec![put(1, "a"), put(2, "a"), put(3, "dir/b")],
+        logs: Vec::new(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let opts = ReplayOptions {
+        prefix: "rp1/".into(),
+        buckets: vec![],
+    };
+    let run = sonde_proxy::replay::replay_to_file(
+        &target,
+        &session,
+        &opts,
+        &dir.path().join("r.sonde"),
+        false,
+        |_, _| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(run.removed, 2, "the two objects");
+    // three versions written, and a delete marker for each object deleted
+    assert_eq!(run.removed_versions, 5);
+    assert_eq!(run.remaining, 0);
+    let left: Vec<String> = store
+        .state
+        .lock()
+        .versions
+        .iter()
+        .map(|(_, k, _, _)| k.clone())
+        .collect();
+    assert_eq!(left, ["mine.txt"], "nothing under the prefix, all outside it");
+}

@@ -27,6 +27,11 @@ pub struct SessionHeader {
     /// The recorded command line, when sonde started it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The program's name, when it was given one (`sonde.toml`'s
+    /// `[program] name`, or `--name`): its runs and its baseline go by it,
+    /// whatever its arguments were this time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// The folder the command ran in: running it again runs it there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
@@ -108,11 +113,23 @@ impl SessionHeader {
             url: url.into(),
             region: region.into(),
             command,
+            name: None,
             cwd: None,
             git: None,
             scenario: None,
             trial_of: None,
         }
+    }
+
+    /// Whether the session was recorded from a program's own requests
+    /// (`sonde run`, `proxy`, `watch`): not a replay, an import or a trial.
+    /// "The newest session" is the newest of these.
+    pub fn is_recording(&self) -> bool {
+        self.scenario.is_none()
+            && self.trial_of.is_none()
+            && self.command.as_deref().is_none_or(|c| {
+                !c.starts_with("replay of ") && !c.starts_with("imported from ")
+            })
     }
 
     /// The folder the program runs in, and the commit its code is at there.

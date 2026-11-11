@@ -103,6 +103,10 @@ pub struct Change {
     pub after: Option<Verdict>,
     pub before_summary: Option<String>,
     pub after_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before_summary_text: Vec<crate::phrase::Phrase>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_summary_text: Vec<crate::phrase::Phrase>,
     /// Same verdict, but other statuses or codes in the steps.
     pub steps_changed: bool,
 }
@@ -134,6 +138,8 @@ pub fn diff(a: &Run, b: &Run) -> Vec<Change> {
                 after: y.map(|r| r.verdict),
                 before_summary: x.map(|r| r.summary.clone()),
                 after_summary: y.map(|r| r.summary.clone()),
+                before_summary_text: x.map(|r| r.summary_text.clone()).unwrap_or_default(),
+                after_summary_text: y.map(|r| r.summary_text.clone()).unwrap_or_default(),
                 steps_changed,
             })
         })
@@ -161,6 +167,8 @@ mod tests {
                 verdict: v,
                 summary: "s".into(),
                 observations: vec![],
+                summary_text: vec![],
+                observations_text: vec![],
                 steps: vec![Step {
                     label: "x".into(),
                     status: Some(status),

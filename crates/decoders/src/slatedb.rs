@@ -341,7 +341,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                 l.timeline.push(Event::new(
                     *t,
                     "fence",
-                    ph!("slate.fence.writer", from = p.writer_epoch, to = m.writer_epoch),
+                    ph!(
+                        "slate.fence.writer",
+                        from = p.writer_epoch,
+                        to = m.writer_epoch
+                    ),
                     ph!("slate.fence.writer.detail"),
                 ));
             }
@@ -429,10 +433,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     let now = Utc::now();
     let oldest_gc = gc_wal.iter().filter_map(|o| o.last_modified).min();
     for n in &missing {
-        l.issues.push(issue(
-            Severity::Error,
-            ph!("slate.sst.missing", name = n),
-        ));
+        l.issues
+            .push(issue(Severity::Error, ph!("slate.sst.missing", name = n)));
     }
     if !unreferenced.is_empty() {
         l.issues.push(issue(

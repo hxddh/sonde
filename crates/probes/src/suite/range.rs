@@ -4,6 +4,7 @@ use super::meta;
 use crate::Probe;
 use crate::cx::ProbeCx;
 use crate::model::{Category, Judgement, ProbeMeta, Steps, Verdict};
+use crate::phrase::{ph, raw};
 
 pub fn probes() -> Vec<Box<dyn Probe>> {
     vec![
@@ -68,15 +69,15 @@ impl Probe for Bounds {
             }
         }
         if !wrong_body.is_empty() {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Fail,
-                format!("wrong bytes for {}", wrong_body.join(", ")),
+                ph!("judge.range.bounds.fail", p1 = wrong_body.join(", ")),
                 s,
             )
         } else if other.is_empty() {
-            Judgement::new(Verdict::Pass, "every boundary as AWS answers it", s)
+            Judgement::say(Verdict::Pass, ph!("judge.range.bounds.pass"), s)
         } else {
-            Judgement::new(Verdict::Differs, other.join("; "), s)
+            Judgement::say(Verdict::Differs, raw(other.join("; ")), s)
         }
     }
 }
@@ -106,29 +107,29 @@ impl Probe for MultiRange {
         }
         let g = s.at("get");
         if g.is(200) && g.body == BODY {
-            Judgement::new(Verdict::Pass, "ignored: 200 with the whole object", s)
+            Judgement::say(Verdict::Pass, ph!("judge.range.multi.pass"), s)
         } else if g.is(206)
             && g.header("content-type")
                 .is_some_and(|c| c.starts_with("multipart/byteranges"))
         {
-            Judgement::new(
-                Verdict::Differs,
-                "served as multipart/byteranges (AWS returns the whole object)",
-                s,
-            )
+            Judgement::say(Verdict::Differs, ph!("judge.range.multi.differs"), s)
         } else if g.is(206) {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "206 with Content-Range {:?}: only one range served",
-                    g.header("content-range")
+                ph!(
+                    "judge.range.multi.differs.2",
+                    p1 = format!("{:?}", g.header("content-range"))
                 ),
                 s,
             )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("answered {:?} {:?}", g.status, g.code),
+                ph!(
+                    "judge.range.multi.differs.3",
+                    p1 = format!("{:?}", g.status),
+                    p2 = format!("{:?}", g.code)
+                ),
                 s,
             )
         }
@@ -163,20 +164,25 @@ impl Probe for Unsatisfiable {
         }
         let (past, empty) = (s.at("past"), s.at("empty"));
         if past.ok() {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Differs,
-                format!("a range past the end answered {:?}", past.status),
+                ph!(
+                    "judge.range.unsatisfiable.differs",
+                    p1 = format!("{:?}", past.status)
+                ),
                 s,
             );
         }
         if past.is(416) && past.code.as_deref() == Some("InvalidRange") && empty.is(416) {
-            Judgement::new(Verdict::Pass, "416 InvalidRange", s)
+            Judgement::say(Verdict::Pass, ph!("judge.range.unsatisfiable.pass"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "past the end {:?} {:?}; empty object {:?}",
-                    past.status, past.code, empty.status
+                ph!(
+                    "judge.range.unsatisfiable.differs.2",
+                    p1 = format!("{:?}", past.status),
+                    p2 = format!("{:?}", past.code),
+                    p3 = format!("{:?}", empty.status)
                 ),
                 s,
             )

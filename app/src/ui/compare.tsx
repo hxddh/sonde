@@ -10,9 +10,9 @@ import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange, SessionInfo } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Figure, Modal, Muted, Notice, PageHeader, ROW, rowHeight, Section, TABLE, terminal, Title, TYPE } from "./kit";
+import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Figure, Heading, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, TABLE, terminal, Title, TYPE } from "./kit";
 import { fileName, sessionName } from "./manage";
-import { cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency } from "./plots";
+import { Chart, cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
   compared: number;
@@ -57,52 +57,40 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
           </View>
         }
       >
-        <Section plain title={t("compare.byKind")} description={t("compare.byKindHint")}>
+        <Chart title={t("compare.byKind")} text={t("compare.byKindHint")}>
           <RunBars change={c()} />
-        </Section>
+        </Chart>
         {/* where it changed: each prefix by the later run's requests, colored by how they moved */}
         <If when={(c().prefixes?.length ?? 0) > 1}>
-          <Section plain title={t("prefixChange.title")} description={t("prefixChange.hint")}>
+          <Chart title={t("prefixChange.title")} text={t("prefixChange.hint")}>
             <PrefixChangeMap prefixes={c().prefixes!} />
-          </Section>
+          </Chart>
         </If>
         {/* both runs' latency: where the curves part says for which requests it changed */}
         <If when={c().latency && c().latency![0].length > 1 && c().latency![1].length > 1}>
-          <Section plain title={t("cdf.title")} description={t("cdf.hint")}>
+          <Chart title={t("cdf.title")} text={t("cdf.hint")} legend={[{ label: t("profile.before"), swatch: "bg-muted-foreground/70" }, { label: t("profile.after"), swatch: "bg-chart-1" }]}>
             <DistributionCompare latency={c().latency!} names={[t("profile.before"), t("profile.after")]} />
-          </Section>
+          </Chart>
         </If>
         <If when={findings() > 0}>
-          <Section plain title={t("obs.title")}>
-            <View class="gap-2">
-              <Each of={c().resolved}>
-                {(x) => (
-                  <View class="flex-row items-start gap-2">
-                    <View class="h-5 shrink-0 justify-center">
-                      <Icon name="circle-check" tint="status-ok" />
+          <View class="gap-2">
+            <Heading>{t("obs.title")}</Heading>
+            <Card pad="none">
+              <Each of={[...c().resolved.map((x) => ({ x, gone: true })), ...c().appeared.map((x) => ({ x, gone: false }))]}>
+                {(f, i) => (
+                  <Row top first={i() === 0}>
+                    <View class="min-h-5 shrink-0 justify-center">
+                      <Icon name={f().gone ? "circle-check" : "triangle-alert"} tint={f().gone ? "status-ok" : "warn"} />
                     </View>
                     <Text class="min-w-0 flex-1 text-body leading-5 text-foreground">
-                      <Text class="font-medium text-status-ok">{`${t("profile.resolved")} · `}</Text>
-                      {say(x().phrases, x().text)}
+                      <Text class={`font-medium ${f().gone ? "text-status-ok" : "text-warn"}`}>{`${f().gone ? t("profile.resolved") : t("profile.appeared")} · `}</Text>
+                      {say(f().x.phrases, f().x.text)}
                     </Text>
-                  </View>
+                  </Row>
                 )}
               </Each>
-              <Each of={c().appeared}>
-                {(x) => (
-                  <View class="flex-row items-start gap-2">
-                    <View class="h-5 shrink-0 justify-center">
-                      <Icon name="triangle-alert" tint="warn" />
-                    </View>
-                    <Text class="min-w-0 flex-1 text-body leading-5 text-foreground">
-                      <Text class="font-medium text-warn">{`${t("profile.appeared")} · `}</Text>
-                      {say(x().phrases, x().text)}
-                    </Text>
-                  </View>
-                )}
-              </Each>
-            </View>
-          </Section>
+            </Card>
+          </View>
         </If>
       </If>
     </Scroll>
@@ -170,22 +158,22 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
         {d.comparison.differences.length ? ` · ${t("compare.differ", { n: d.comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
       </Text>
       <If when={d.latency?.length}>
-        <Section plain title={t("latency.title")} description={t("latency.hint")}>
+        <Chart title={t("latency.title")} text={t("latency.hint")}>
           <StoreLatency changes={d.latency!} names={d.endpoints ?? ["A", "B"]} />
-        </Section>
+        </Chart>
       </If>
       <If when={d.comparison.differences.length > 0}>
         <Card pad="none" testID="compare-differences">
           <Each of={d.comparison.differences}>
             {(x, i) => (
-              <View class={`flex-row flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 ${i() > 0 ? "border-t border-border" : ""}`}>
+              <Row wrap first={i() === 0}>
                 <View class="shrink-0">
                   <Badge label={t("compare.times", { n: x().count })} tone="fail" />
                 </View>
                 <Text class="text-body font-medium text-foreground">{x().operation}</Text>
                 <Text class="font-mono text-small text-foreground">{`${x().original} → ${x().replay}`}</Text>
                 <Muted class="min-w-0 flex-1 text-small line-clamp-1">{[x().example, x().conditions.join(", ")].filter(Boolean).join(" · ")}</Muted>
-              </View>
+              </Row>
             )}
           </Each>
         </Card>

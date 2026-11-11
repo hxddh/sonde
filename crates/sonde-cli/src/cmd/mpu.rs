@@ -177,8 +177,9 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &MpuArgs) -> anyhow::Result<i32>
             println!("{}", plan.summary);
             let Some(c) = confirm else {
                 println!(
-                    "dry run: to abort, run again with --confirm {} (and read-only mode off)",
-                    plan.confirm
+                    "dry run: to abort, run again with --confirm {} (and `read-only = false` under [settings] in {})",
+                    plan.confirm,
+                    s.paths().config_file().display()
                 );
                 return Ok(4);
             };
@@ -205,8 +206,9 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &MpuArgs) -> anyhow::Result<i32>
             );
             let Some(c) = confirm else {
                 println!(
-                    "\ndry run: to apply, run again with --confirm {} (and read-only mode off)",
-                    plan.confirm
+                    "\ndry run: to apply, run again with --confirm {} (and `read-only = false` under [settings] in {})",
+                    plan.confirm,
+                    s.paths().config_file().display()
                 );
                 return Ok(4);
             };

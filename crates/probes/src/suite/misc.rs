@@ -8,6 +8,7 @@ use super::meta;
 use crate::Probe;
 use crate::cx::{ProbeCx, data};
 use crate::model::{Category, Judgement, Needs, ProbeMeta, Steps, Verdict};
+use crate::phrase::ph;
 
 pub fn probes() -> Vec<Box<dyn Probe>> {
     vec![
@@ -87,33 +88,40 @@ impl Probe for PresignExpiry {
             return j;
         }
         if let Some(clock) = s.get("clock") {
-            return Judgement::new(Verdict::Error, format!("could not run: {}", clock.body), s);
+            return Judgement::say(
+                Verdict::Error,
+                ph!("judge.presign.expiry.error", p1 = clock.body),
+                s,
+            );
         }
         if !fresh.ok() {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Fail,
-                format!("a fresh presigned URL was refused: {}", fresh.describe()),
+                ph!("judge.presign.expiry.fail", p1 = fresh.describe()),
                 s,
             );
         }
         if expired.ok() {
-            return Judgement::new(Verdict::Fail, "an expired presigned URL still works", s);
+            return Judgement::say(Verdict::Fail, ph!("judge.presign.expiry.fail.2"), s);
         }
         if expired.is(403) && (long.is(400) || long.is(403)) {
-            Judgement::new(Verdict::Pass, "expiry enforced; 7-day maximum enforced", s)
+            Judgement::say(Verdict::Pass, ph!("judge.presign.expiry.pass"), s)
         } else if expired.is(403) {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "expiry enforced, but X-Amz-Expires=604801 answered {:?}",
-                    long.status
+                ph!(
+                    "judge.presign.expiry.differs",
+                    p1 = format!("{:?}", long.status)
                 ),
                 s,
             )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("an expired URL answered {:?}", expired.status),
+                ph!(
+                    "judge.presign.expiry.differs.2",
+                    p1 = format!("{:?}", expired.status)
+                ),
                 s,
             )
         }
@@ -194,25 +202,29 @@ impl Probe for ClockSkew {
             return j;
         }
         if !small.ok() {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Differs,
-                format!("5 minutes of skew refused: {}", small.describe()),
+                ph!("judge.presign.clock-skew.differs", p1 = small.describe()),
                 s,
             );
         }
         if big.ok() || behind.ok() {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Differs,
-                "20 minutes of skew accepted (AWS allows 15)",
+                ph!("judge.presign.clock-skew.differs.2"),
                 s,
             );
         }
         if get.code.as_deref() == Some("RequestTimeTooSkewed") {
-            Judgement::new(Verdict::Pass, "15-minute window, RequestTimeTooSkewed", s)
+            Judgement::say(Verdict::Pass, ph!("judge.presign.clock-skew.pass"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("skew refused with {:?} {:?}", get.status, get.code),
+                ph!(
+                    "judge.presign.clock-skew.differs.3",
+                    p1 = format!("{:?}", get.status),
+                    p2 = format!("{:?}", get.code)
+                ),
                 s,
             )
         }
@@ -258,27 +270,27 @@ impl Probe for MetadataLimit {
             return j;
         }
         if !under.ok() {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Differs,
-                format!("1.9 KiB of metadata refused: {}", under.describe()),
+                ph!("judge.meta.size-limit.differs", p1 = under.describe()),
                 s,
             );
         }
         if head.header("x-amz-meta-m").map(|v| v.len()) != Some(1900) {
-            return Judgement::new(Verdict::Fail, "metadata not returned verbatim", s);
+            return Judgement::say(Verdict::Fail, ph!("judge.meta.size-limit.fail"), s);
         }
         if over.ok() {
-            Judgement::new(
-                Verdict::Differs,
-                "2.1 KiB of metadata accepted (AWS limit: 2 KiB)",
-                s,
-            )
+            Judgement::say(Verdict::Differs, ph!("judge.meta.size-limit.differs.2"), s)
         } else if over.code.as_deref() == Some("MetadataTooLarge") {
-            Judgement::new(Verdict::Pass, "2 KiB limit with MetadataTooLarge", s)
+            Judgement::say(Verdict::Pass, ph!("judge.meta.size-limit.pass"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("over the limit: {:?} {:?}", over.status, over.code),
+                ph!(
+                    "judge.meta.size-limit.differs.3",
+                    p1 = format!("{:?}", over.status),
+                    p2 = format!("{:?}", over.code)
+                ),
                 s,
             )
         }
@@ -340,17 +352,17 @@ impl Probe for VersionIdFormat {
     }
     fn judge(&self, s: &Steps) -> Judgement {
         if s.get("create-bucket").is_none() {
-            return Judgement::new(
-                Verdict::Skipped,
-                "needs a temporary bucket (allow bucket creation)",
-                s,
-            );
+            return Judgement::say(Verdict::Skipped, ph!("judge.version.id-format.skipped"), s);
         }
         if !s.at("create-bucket").ok() {
-            return Judgement::new(Verdict::Error, "could not create a temporary bucket", s);
+            return Judgement::say(Verdict::Error, ph!("judge.version.id-format.error"), s);
         }
         if !s.at("enable").ok() {
-            return Judgement::new(Verdict::Unsupported, "versioning could not be enabled", s);
+            return Judgement::say(
+                Verdict::Unsupported,
+                ph!("judge.version.id-format.unsupported"),
+                s,
+            );
         }
         let ids: Vec<String> = s
             .at("ids")
@@ -360,29 +372,30 @@ impl Probe for VersionIdFormat {
             .map(String::from)
             .collect();
         if ids.len() < 2 || ids.iter().any(|i| i.is_empty()) {
-            return Judgement::new(
-                Verdict::Fail,
-                "PUT on a versioned bucket returned no x-amz-version-id",
-                s,
-            );
+            return Judgement::say(Verdict::Fail, ph!("judge.version.id-format.fail"), s);
         }
         if ids[0] == ids[1] {
-            return Judgement::new(Verdict::Fail, "two writes got the same version id", s);
+            return Judgement::say(Verdict::Fail, ph!("judge.version.id-format.fail.2"), s);
         }
         let shape = version_id_shape(&ids[0]);
         let mut j = if shape.starts_with("aws-like") {
-            Judgement::new(Verdict::Pass, format!("unique ids, {shape}"), s)
+            Judgement::say(
+                Verdict::Pass,
+                ph!("judge.version.id-format.pass", shape = shape),
+                s,
+            )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "unique ids, but {shape} ({}): code assuming AWS's shape may break",
-                    ids[0]
+                ph!(
+                    "judge.version.id-format.differs",
+                    shape = shape,
+                    p1 = ids[0]
                 ),
                 s,
             )
         };
-        j.observations.push(format!("ids: {}", ids.join(", ")));
+        j.observe(ph!("obs.ids", ids = ids.join(", ")));
         j
     }
 }
@@ -448,11 +461,7 @@ impl Probe for ObjectLock {
     }
     fn judge(&self, s: &Steps) -> Judgement {
         if s.get("create-bucket").is_none() {
-            return Judgement::new(
-                Verdict::Skipped,
-                "needs a temporary bucket (allow bucket creation)",
-                s,
-            );
+            return Judgement::say(Verdict::Skipped, ph!("judge.lock.retention.skipped"), s);
         }
         let (create, put, ret, del) = (
             s.at("create-bucket"),
@@ -461,37 +470,31 @@ impl Probe for ObjectLock {
             s.at("delete-version"),
         );
         if !create.ok() {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Unsupported,
-                format!(
-                    "a bucket with Object Lock could not be created: {}",
-                    create.describe()
-                ),
+                ph!("judge.lock.retention.unsupported", p1 = create.describe()),
                 s,
             );
         }
         if !put.ok() {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Unsupported,
-                format!("a PUT with retention was refused: {}", put.describe()),
+                ph!("judge.lock.retention.unsupported.2", p1 = put.describe()),
                 s,
             );
         }
         if del.ok() {
-            return Judgement::new(
-                Verdict::Fail,
-                "a version under GOVERNANCE retention was deleted without bypass",
-                s,
-            );
+            return Judgement::say(Verdict::Fail, ph!("judge.lock.retention.fail"), s);
         }
         if del.is(403) && ret.ok() && ret.body.contains("GOVERNANCE") {
-            Judgement::new(Verdict::Pass, "retention enforced and reported", s)
+            Judgement::say(Verdict::Pass, ph!("judge.lock.retention.pass"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "delete refused with {:?}; retention read {:?}",
-                    del.status, ret.status
+                ph!(
+                    "judge.lock.retention.differs",
+                    p1 = format!("{:?}", del.status),
+                    p2 = format!("{:?}", ret.status)
                 ),
                 s,
             )
@@ -562,43 +565,36 @@ impl Probe for SseC {
         }
         if !put.ok() {
             if !https && put.is(400) {
-                return Judgement::new(
-                    Verdict::Pass,
-                    "refused over HTTP, as AWS does (run over HTTPS to probe further)",
-                    s,
-                );
+                return Judgement::say(Verdict::Pass, ph!("judge.sse-c.pass"), s);
             }
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Unsupported,
-                format!("SSE-C refused: {}", put.describe()),
+                ph!("judge.sse-c.unsupported", p1 = put.describe()),
                 s,
             );
         }
         if none.ok() || wrong.ok() {
-            return Judgement::new(Verdict::Fail, "the object was readable without its key", s);
+            return Judgement::say(Verdict::Fail, ph!("judge.sse-c.fail"), s);
         }
         if !right.ok() || right.body != "secret" {
-            return Judgement::new(
-                Verdict::Fail,
-                "the right key did not read the object back",
-                s,
-            );
+            return Judgement::say(Verdict::Fail, ph!("judge.sse-c.fail.2"), s);
         }
         let mut j = if none.is(400) && wrong.is(403) {
-            Judgement::new(Verdict::Pass, "key required and checked", s)
+            Judgement::say(Verdict::Pass, ph!("judge.sse-c.pass.2"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("no key → {:?}, wrong key → {:?}", none.status, wrong.status),
+                ph!(
+                    "judge.sse-c.differs",
+                    p1 = format!("{:?}", none.status),
+                    p2 = format!("{:?}", wrong.status)
+                ),
                 s,
             )
         };
         if !https {
             j.verdict = Verdict::Differs;
-            j.summary = format!(
-                "SSE-C accepted over plain HTTP (AWS refuses); {}",
-                j.summary
-            );
+            j.preface(ph!("judge.sse-c.http"));
         }
         j
     }
@@ -644,26 +640,22 @@ impl Probe for ExpressAppend {
         }
         if append.not_implemented() || (!append.ok() && head.header("content-length") == Some("5"))
         {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Unsupported,
-                format!("no appends: {}", append.describe()),
+                ph!("judge.express.append.unsupported", p1 = append.describe()),
                 s,
             );
         }
         let len = head.header("content-length").unwrap_or("?");
         match len {
             "8" if !wrong.ok() => {
-                Judgement::new(Verdict::Pass, "appended; a wrong offset refused", s)
+                Judgement::say(Verdict::Pass, ph!("judge.express.append.pass"), s)
             }
-            "8" => Judgement::new(Verdict::Fail, "a wrong offset was accepted", s),
-            "3" => Judgement::new(
-                Verdict::Fail,
-                "the header was ignored: the append replaced the object",
-                s,
-            ),
-            other => Judgement::new(
+            "8" => Judgement::say(Verdict::Fail, ph!("judge.express.append.fail"), s),
+            "3" => Judgement::say(Verdict::Fail, ph!("judge.express.append.fail.2"), s),
+            other => Judgement::say(
                 Verdict::Differs,
-                format!("object length {other} after the appends"),
+                ph!("judge.express.append.differs", other = other),
                 s,
             ),
         }

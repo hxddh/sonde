@@ -544,15 +544,52 @@ export function Figure(props: { value: string; label: string; tone?: "plain" | "
 }
 
 /** Figures in a line that never wraps mid-row: as many as the line's width
- * holds, in the order given (which is their rank), the rest dropped — a
- * figure cut in two lines reads as two. `width` is the line's, as its pane
- * measures it; each figure is given `FIGURE_WIDTH` of it. */
+ * holds, in the order given (which is their rank), the rest left out — a
+ * line of figures broken in two reads as two. The line measures itself;
+ * each figure has `FIGURE_WIDTH` of it. */
 export const FIGURE_WIDTH = 124;
-export function Figures(props: { width: number; children: JSX.Element[]; testID?: string; label?: string }) {
-  const room = () => (props.width > 0 ? Math.max(2, Math.floor(props.width / FIGURE_WIDTH)) : props.children.length);
+/** How many figures a line `width` wide holds (all of them before it is measured; two at least). */
+export const figuresFit = (width: number, n: number) => (width > 0 ? Math.min(n, Math.max(2, Math.floor(width / FIGURE_WIDTH))) : n);
+export function Figures(props: { items: { /** whether it has anything to say now (a session's errors: only when there are some) */ show?: () => boolean; figure: JSX.Element }[]; testID?: string; label?: string }) {
+  const width = signal(0);
+  const on = (i: number) => props.items[i].show?.() ?? true;
+  // its place among those shown: the rank the line's room is given by
+  const rank = (i: number) => props.items.slice(0, i).filter((_, k) => on(k)).length;
+  const fit = () => figuresFit(width(), props.items.filter((_, k) => on(k)).length);
   return (
-    <View testID={props.testID} accessibilityLabel={props.label} class="flex-row items-start overflow-hidden">
-      <Each of={props.children.slice(0, room())}>{(f) => <View style={{ width: FIGURE_WIDTH }} class="shrink-0 pr-4">{f()}</View>}</Each>
+    <View testID={props.testID} accessibilityLabel={props.label} class="flex-row items-start overflow-hidden" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+      {props.items.map((f, i) => (
+        <View style={{ width: FIGURE_WIDTH }} class={on(i) && rank(i) < fit() ? "shrink-0 pr-4" : "hidden"}>
+          {f.figure}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** How many tiles go in a row `width` wide, of `n` that each need `min`: all
+ * abreast where they fit, else rows of equal count (four are 2×2, six 3×3,
+ * five 3 and 2), never a row of all but one. */
+export function tilesPerRow(width: number, n: number, min: number, gap = 12): number {
+  if (width <= 0) return n;
+  const fit = Math.max(1, Math.floor((width + gap) / (min + gap)));
+  if (fit >= n) return n;
+  const half = Math.ceil(n / 2);
+  return fit >= half ? half : Math.min(fit, 2);
+}
+/** Tiles in rows by that rule: the row measures itself and gives each tile its width. */
+export function Tiles(props: { items: JSX.Element[]; min?: number; testID?: string }) {
+  const GAP = 12;
+  const width = signal(0);
+  const per = () => tilesPerRow(width(), props.items.length, props.min ?? 144, GAP);
+  const each = () => (width() > 0 ? Math.floor((width() - GAP * (per() - 1)) / per()) : undefined);
+  return (
+    <View testID={props.testID} class="flex-row flex-wrap gap-3" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+      {props.items.map((tile) => (
+        <View style={each() ? { width: each() } : undefined} class={each() ? "" : "min-w-36 flex-1"}>
+          {tile}
+        </View>
+      ))}
     </View>
   );
 }

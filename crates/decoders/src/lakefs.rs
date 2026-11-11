@@ -180,10 +180,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         .filter(|r| !ranges.contains_key(*r))
         .collect();
     for d in &dangling {
-        l.issues.push(issue(
-            Severity::Error,
-            ph!("lakefs.range.missing", id = d),
-        ));
+        l.issues
+            .push(issue(Severity::Error, ph!("lakefs.range.missing", id = d)));
     }
     if !unreferenced.is_empty() {
         l.issues.push(issue(
@@ -251,7 +249,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                 *t,
                 "commit",
                 ph!("lakefs.tree", id = short(id)),
-                ph!("lakefs.tree.detail", ranges = rs.len(), entries = entries.len()),
+                ph!(
+                    "lakefs.tree.detail",
+                    ranges = rs.len(),
+                    entries = entries.len()
+                ),
             )
             .at(format!("{root}_lakefs/{id}")),
         );

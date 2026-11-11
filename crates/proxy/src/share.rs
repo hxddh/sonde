@@ -165,6 +165,7 @@ mod tests {
                 url: String::new(),
                 region: String::new(),
                 command: Some("AWS_SECRET_ACCESS_KEY=hunter2 python etl.py".into()),
+                name: None,
                 cwd: None,
                 git: None,
                 scenario: None,

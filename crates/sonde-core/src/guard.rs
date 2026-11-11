@@ -338,7 +338,10 @@ mod tests {
         assert!(back.summary_text.is_empty());
         let item = PlanItem::new("k", None, None, ph!("plan.item.version", v = "v1"));
         assert_eq!(item.detail, "version v1");
-        assert_eq!(serde_json::to_value(&item).unwrap()["detailText"][0]["key"], "plan.item.version");
+        assert_eq!(
+            serde_json::to_value(&item).unwrap()["detailText"][0]["key"],
+            "plan.item.version"
+        );
     }
 
     #[test]

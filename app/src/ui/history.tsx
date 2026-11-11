@@ -3,13 +3,13 @@
 
 import { List, resource, Scroll, signal, Text, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
-import { count, date, day, duration, money } from "../format";
-import { t } from "../i18n";
+import { count, date, day, duration, factor, money } from "../format";
+import { type Key, t } from "../i18n";
 import { api } from "../native";
 import { copy, report, sessionsChanged, sessionsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ListRow, Modal, Muted, Notice, PageHeader, POPUP, Section, SimpleTable, Title, terminal, textual } from "./kit";
+import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, Section, SimpleTable, Title, terminal, textual } from "./kit";
 import { cost, RunTrend, Sparkline } from "./plots";
 import { programOf, scrubCommand } from "./sessionview";
 
@@ -27,7 +27,7 @@ export function trialText(x: Trial): string {
     const [lo, , hi] = x.backoffMs;
     parts.push(hi - lo < 1 ? t("trial.after", { t: duration(lo) }) : t(x.jitter ? "trial.afterJitter" : "trial.afterStep", { lo: duration(lo), hi: duration(hi) }));
   }
-  if (x.cleanRequests > 0 && x.requests !== x.cleanRequests) parts.push(t("trial.load", { x: (x.requests / x.cleanRequests).toFixed(1) }));
+  if (x.cleanRequests > 0 && x.requests !== x.cleanRequests) parts.push(t("trial.load", { x: factor(x.requests / x.cleanRequests) }));
   if (x.wroteTwice > 0) parts.push(t("trial.twice", { n: count(x.wroteTwice) }));
   if (x.leftUploads > 0) parts.push(t("trial.left", { n: count(x.leftUploads) }));
   if (x.droppedReads > 0) parts.push(t("trial.gaveUp", { n: count(x.droppedReads) }));
@@ -37,6 +37,12 @@ export function trialText(x: Trial): string {
   return parts.join(" · ");
 }
 
+/** A scenario as people say it ("The store asks to slow down"); one sonde has
+ * no words for yet keeps its own name. Its id stands beside it in mono: what
+ * `sonde run --trial` is given. */
+const SCENARIOS = ["slowdown", "error", "lost-answer", "fail-complete", "slow", "s3-limits"];
+export const scenarioLabel = (name: string): string => (SCENARIOS.includes(name) ? t(`scenario.${name}` as Key) : name);
+
 /** The run under faults: a row a scenario, its standing first; a press opens the trial's own session. */
 function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void }) {
   return (
@@ -44,10 +50,15 @@ function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void }) {
       <Card pad="tile">
         <Each of={props.trials} key={(x) => x.scenario}>
           {(x) => (
-            <ListRow testID={`trial-${x().scenario}`} label={`${t(`trial.${x().standing}` as never)}: ${x().scenario}`} onPress={() => x().session && props.onOpen?.(x().session!)}>
+            <ListRow top testID={`trial-${x().scenario}`} label={`${t(`trial.${x().standing}` as never)}: ${scenarioLabel(x().scenario)}`} disabled={!x().session || !props.onOpen} onPress={() => x().session && props.onOpen?.(x().session!)}>
               <Badge label={t(`trial.${x().standing}` as never)} tone={STANDING[x().standing]} />
-              <Text class="w-28 font-mono text-small text-foreground">{x().scenario}</Text>
-              <Muted class="min-w-0 flex-1 text-small">{trialText(x())}</Muted>
+              <View class="min-w-0 flex-1 gap-1">
+                <View class="flex-row flex-wrap items-baseline gap-x-2">
+                  <Text class="text-body text-foreground">{scenarioLabel(x().scenario)}</Text>
+                  <Text testID="trial-id" class="font-mono text-caption text-muted-foreground">{x().scenario}</Text>
+                </View>
+                <Muted class="text-small">{trialText(x())}</Muted>
+              </View>
             </ListRow>
           )}
         </Each>
@@ -95,7 +106,7 @@ const commitText = (g?: GitStamp | null) => (g ? `${g.commit.slice(0, 7)}${g.dir
 
 /** Where the program went past its baseline: the run, its commit, the last
  * within; and the code that changed between them, a press away. */
-function SinceRow(props: { h: ProgramHistory; onOpen?: (path: string) => void }) {
+function SinceRow(props: { h: ProgramHistory }) {
   const s = () => props.h.since!;
   const open = signal(false);
   const text = () =>
@@ -173,9 +184,10 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 /** The Runs pane of a session: its program over its runs. */
 export function HistoryPane(props: { path: string; onOpen?: (path: string) => void }) {
   // a failure is said as one (with Try again), never as "one run so far"
+  // read again when the sessions change: a run ended, one was deleted, a baseline set elsewhere
   const h = resource(
-    () => props.path,
-    (p) => api.sessions.history(p),
+    () => [props.path, sessionsTick()] as const,
+    ([p]) => api.sessions.history(p),
   );
   const isBase = () => h()?.baseline === props.path;
   const toggle = () => {
@@ -241,13 +253,13 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                     <View testID="history-range" class={CONTROL.trigger}>
                       <Icon name="calendar-clock" />
                       <Text class="text-small text-foreground">{rangeText()}</Text>
-                      <Icon name="chevron-down" size={12} />
+                      <Icon name="chevron-down" size={ICON.small} />
                     </View>
                   }
                 />
               </If>
               {/* one button, its words the action: set, or (already the baseline) clear */}
-              <Button small variant="outline" icon={isBase() ? undefined : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} onPress={toggle} testID="history-baseline" />
+              <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : undefined} onPress={toggle} testID="history-baseline" />
             </PageHeader>
             <If when={x().check}>
               <Verdicts h={x()} />
@@ -256,9 +268,9 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
               <Trials trials={x().trials!} onOpen={props.onOpen} />
             </If>
             <If when={x().since}>
-              <SinceRow h={x()} onOpen={props.onOpen} />
+              <SinceRow h={x()} />
             </If>
-            <If when={shown(x()).runs.length > 0 && x().runs.length > 1} else={<Muted class="text-small">{x().runs.length > 1 ? t("history.noneInRange") : t("history.none")}</Muted>}>
+            <If when={shown(x()).runs.length > 0 && x().runs.length > 1} else={<Empty compact text={x().runs.length > 1 ? t("history.noneInRange") : t("history.none")} />}>
               <If
                 when={!textual()}
                 else={<SimpleTable columns={[t("column.time"), t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={shown(x()).runs.map((r) => [date(r.created), n(r.requests), duration(r.busyMs), cost(r.cost, r.currency)])} />}
@@ -304,14 +316,14 @@ export function ProgramList(props: { onOpen: (path: string) => void }) {
     <Await loading={programs.loading() && !programs()} error={programs.error()} retry={() => programs.refetch()}>
     <If when={programs()}>
       {(list) => (
-        <If when={list().length > 0} else={<Muted class="px-2 text-small">{t("programs.none")}</Muted>}>
+        <If when={list().length > 0} else={<Empty compact text={t("programs.none")} />}>
           <List testID="program-list" class="flex-1" each={list()} keyExtractor={(p) => p.program} estimatedItemSize={terminal() ? 2 : 52} scrollbar={false}>
             {(p) => (
               <ListRow
                 testID="program-row"
                 label={`${programOf(p().program) ?? scrubCommand(p().program)}, ${t("programs.runs", { n: p().runs })}${p().regressed ? `, ${t("programs.regressed")}` : ""}`}
                 onPress={() => p().latest && props.onOpen(p().latest!)}
-                class="flex-col items-stretch gap-1"
+                lines={2}
               >
                 <View class="flex-row items-center gap-2">
                   <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{programOf(p().program) ?? scrubCommand(p().program)}</Text>

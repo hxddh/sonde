@@ -13,6 +13,7 @@ use sonde_core::guard::AuditEntry;
 use sonde_core::{Action, JobCtx, Progress, Sonde};
 
 use crate::model::{Needs, ProbeResult, Run, Steps, Verdict};
+use crate::phrase::{Phrase, ph, raw};
 use crate::{Probe, ProbeCx};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -73,7 +74,7 @@ pub fn spawn(s: &Arc<Sonde>, endpoints: &[String], opts: RunOptions) -> Vec<Stri
             // cooperative: a cancelled run still removes what its probe wrote
             s.jobs().spawn_cooperative(
                 "probe",
-                &format!("Probes on {ep}"),
+                ph!("job.probes", endpoint = ep),
                 4,
                 s.settings().rate_limit,
                 move |ctx| async move {
@@ -157,16 +158,16 @@ pub async fn run_endpoint(
             break;
         }
         let meta = probe.meta();
-        ctx.progress(Progress {
-            done: i as u64,
-            total: Some(total),
-            bytes: 0,
-            message: meta.id.clone(),
-        });
+        ctx.progress(Progress::say(
+            i as u64,
+            Some(total),
+            0,
+            raw(meta.id.clone()),
+        ));
         let tag = format!("{}:{}", ctx.id, meta.id);
         let started = Instant::now();
         let result = if meta.needs.contains(&Needs::Slow) && !opts.include_slow {
-            skipped(&meta, "slow probes are off")
+            skipped(&meta, ph!("judge.skipped.slow"))
         } else {
             let client = base.for_job(Some(tag.clone()), Some(ctx.throttle.clone()));
             let prefix = format!("sonde-probe/{run_id}/{}/", meta.id);
@@ -182,12 +183,12 @@ pub async fn run_endpoint(
                 _ = ctx.cancel.cancelled() => None,
             };
             if timed_out.is_none() {
-                ctx.progress(Progress {
-                    done: i as u64,
-                    total: Some(total),
-                    bytes: 0,
-                    message: format!("cancelled: cleaning up after {}", meta.id),
-                });
+                ctx.progress(Progress::say(
+                    i as u64,
+                    Some(total),
+                    0,
+                    ph!("progress.probe.cancelled", id = meta.id),
+                ));
             }
             let steps = cx.steps();
             let left = cleanup(&client, &opts.bucket, &prefix, &cx.temp_buckets()).await;
@@ -199,9 +200,11 @@ pub async fn run_endpoint(
             let mut j = probe.judge(&steps);
             if timed_out {
                 j.verdict = Verdict::Error;
-                j.summary = format!("timed out after {} s; {}", opts.timeout_secs, j.summary);
+                j.preface(ph!("judge.timedOut", secs = opts.timeout_secs));
             }
-            j.observations.extend(left.iter().map(|l| said(l)));
+            for l in &left {
+                j.observe(said_text(l));
+            }
             record_fixture(cfg.vendor.id(), &meta.id, j.verdict, &steps);
             let exchanges = s
                 .log()
@@ -226,6 +229,8 @@ pub async fn run_endpoint(
                 verdict: j.verdict,
                 summary: j.summary,
                 observations: j.observations,
+                summary_text: j.summary_text,
+                observations_text: j.observations_text,
                 steps: steps.0,
                 exchanges,
                 duration_ms: 0.0,
@@ -259,25 +264,28 @@ pub async fn run_endpoint(
     if cancelled {
         // a cancelled job has no result: its last message says what stayed
         if !leftovers.is_empty() {
-            ctx.progress(Progress {
-                done: results.len() as u64,
-                total: Some(total),
-                bytes: 0,
-                message: format!("cancelled; {}", said_all(&leftovers)),
-            });
+            ctx.progress(Progress::say(
+                results.len() as u64,
+                Some(total),
+                0,
+                vec![
+                    ph!("progress.probe.cancelledLeft"),
+                    raw(said_all(&leftovers)),
+                ],
+            ));
         }
         return Err(S3Error::cancelled());
     }
-    ctx.progress(Progress {
-        done: total,
-        total: Some(total),
-        bytes: 0,
-        message: if leftovers.is_empty() {
-            "done".into()
+    ctx.progress(Progress::say(
+        total,
+        Some(total),
+        0,
+        if leftovers.is_empty() {
+            vec![ph!("progress.probe.done")]
         } else {
-            format!("done; {}", said_all(&leftovers))
+            vec![ph!("progress.probe.doneLeft"), raw(said_all(&leftovers))]
         },
-    });
+    ));
     Ok(Run {
         id: run_id,
         endpoint: endpoint.into(),
@@ -291,13 +299,15 @@ pub async fn run_endpoint(
     })
 }
 
-fn skipped(meta: &crate::ProbeMeta, why: &str) -> ProbeResult {
+fn skipped(meta: &crate::ProbeMeta, why: Phrase) -> ProbeResult {
     ProbeResult {
         id: meta.id.clone(),
         category: meta.category,
         verdict: Verdict::Skipped,
-        summary: why.into(),
+        summary: crate::phrase::say(&why),
         observations: vec![],
+        summary_text: vec![why],
+        observations_text: vec![],
         steps: vec![],
         exchanges: vec![],
         duration_ms: 0.0,
@@ -314,6 +324,15 @@ fn said(l: &str) -> String {
         l.to_string()
     } else {
         format!("left behind: {l}")
+    }
+}
+
+/// [`said`] as a phrase: what was left is the store's words, said as it is.
+fn said_text(l: &str) -> Phrase {
+    if l.starts_with(UNCHECKED) {
+        raw(l)
+    } else {
+        ph!("obs.leftBehind", what = l)
     }
 }
 
