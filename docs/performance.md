@@ -101,9 +101,44 @@ synthetic session of a million requests (a mix of PUT, HEAD, LIST and GET over
 
 The app reads a session once per version of its file and keeps the analysis;
 a live recording is read in steps (only the lines appended since the last
-look), and each finished run's history figures are kept in
-`sessions/.runpoints.json`, so a program's history of 30 runs reads no session
-twice.
+look), and each finished run's figures are kept in a small file beside it
+(`sessions/<name>.summary.json`), so a program's history of 30 runs reads no
+session twice.
+
+## Sessions of any size (16.0.0)
+
+The 8.0.0 figures above are of records without headers. A recorded request has
+fifteen or so (a user agent, a signature, ids): a million of them are 124 MiB
+compressed and 1.5 GiB of JSON lines. 15.0 read that in 45 s and 7.3 GB, could
+not write it as JSON at all, and took minutes on two shapes (an outage whose
+failures are never retried; small files uploaded in parts). 16.0, same
+sessions, same machine (4 cores), release build:
+
+| | 10 thousand | 100 thousand | 1 million | 15.0 at 1 million |
+| --- | --- | --- | --- | --- |
+| `sonde show` | 0.1 s, 30 MiB | 0.7 s, 203 MiB | 7.4 s, 1.8 GiB | 45 s, 7.3 GB |
+| `sonde check --baseline` | 0.2 s, 36 MiB | 1.5 s, 236 MiB | 17 s, 2.0 GiB | 99 s, 11 GB |
+| `sonde show -f json` | 0.3 s, 33 MiB | 3.5 s, 212 MiB | 34 s, 1.8 GiB | could not (over 12 GB) |
+| `sonde share --json`, `sonde export` | 0.3 s, 33 MiB | 3 s, 187 MiB | 32 s, 1.7 GiB | could not |
+| `sonde share --html` | 0.1 s, 0.85 MB page | 0.9 s, 0.85 MB page | 9.9 s, 0.85 MB page | 328 MB page |
+| `sonde sessions`, one such file | at once | at once | at once (5.7 s the one time it is counted) | 24 s, 4.8 GB, every call |
+| The app's first view | 610 KiB | 640 KiB | 634 KiB | 351 MB |
+
+What changed: a session is read as a stream and parsed on every core, never
+held as text; the analyses read a lean record (the headers no finding reads
+are not kept, and a header's name and value are shared between the records
+that repeat them); the operations, the signals and the profile are worked out
+at once on separate threads, once per command; the two quadratic loops are
+linear (300 thousand requests of either shape: 1.9 s, where 100 thousand
+took 374 s and 22 s); JSON is written as it is
+made, a request at a time from the file; the app is sent a page of operations
+and asks for the rest in ranges.
+
+The budgets are a test, `crates/proxy/tests/budgets.rs`, which CI runs
+optimised (`cargo test --release -p sonde-proxy --test budgets -- --ignored`):
+a million requests read and analysed in 15 s and 2 GiB of peak memory (8 s and
+1.75 GiB here), an outage and small uploads of 300 thousand each in 10 s (2 s),
+the app's first view of 100 thousand in 2 s (0.9 s).
 
 ## Long jobs
 

@@ -462,7 +462,8 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
       <If when={props.icon && look() === "full"}>
         <Icon name={props.icon!} size={ICON.small} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
       </If>
-      <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
+      {/* (on a line of its own with its figure, a long name takes a second line before it is cut) */}
+      <Text class={`min-w-0 flex-1 text-caption text-muted-foreground ${look() === "line" ? "line-clamp-2" : "line-clamp-1"}`}>{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
     </>
   );
   const chevron = () => (

@@ -4,7 +4,7 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type ContextMenuEvent, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
+import { Clipboard, type ContextMenuEvent, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
 import { change, clock, count, date, day, duration, hm, middle, transfer } from "../format";
@@ -344,6 +344,9 @@ function ExpectButton(props: { o: Observation; onExpect?: (o: Observation) => vo
   );
 }
 
+/** A fix's code as written, without the blank lines around it. */
+const sample = (code: string) => code.replace(/^\s*\n|\s+$/g, "");
+
 function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: the pane's own, kept from finding to finding */ sdk: { (): Sdk; set: (s: Sdk) => void }; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
   const fixSdk = props.sdk;
   const fixes = () => props.o.fixes ?? [];
@@ -360,6 +363,9 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
         <Icon name="sparkles" size={ICON.small} />
         <Heading class="flex-1">{t("fix.title")}</Heading>
         <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: sdkTitle(f.sdk) }))} onChange={(v) => fixSdk.set(v as Sdk)} />
+        <If when={shown() && !terminal()}>
+          <Button small variant="ghost" icon="copy" label={t("fix.copy")} onPress={() => shown() && void Clipboard.writeText(sample(shown()!.code)).catch(() => {})} testID="fix-copy" />
+        </If>
         {/* or no change: a habit kept on purpose, which sonde check then expects */}
         <ExpectButton o={props.o} onExpect={props.onExpect} />
       </View>
@@ -391,12 +397,12 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
       <If when={shown()}>
         {(f) => (
           <If when={!terminal()} else={<Text class="font-mono text-foreground">{f().code}</Text>}>
-            {/* highlighted, with a copy button over it (Native Shell's TextView) */}
+            {/* highlighted; a line too long for the card scrolls sideways under its own indicator (Native Shell's
+                TextView); its Copy is beside the SDKs, so no row stands empty over the code for it */}
             <TextView
               testID="fix-code"
               // (the sample as written, without the blank lines around it)
-              markdown={`\`\`\`${LANG[f().sdk]}\n${f().code.replace(/^\s*\n|\s+$/g, "")}\n\`\`\``}
-              codeBlockActions={[{ id: "copy", label: t("fix.copy") }]}
+              markdown={`\`\`\`${LANG[f().sdk]}\n${sample(f().code)}\n\`\`\``}
               classes={{ codeBlock: "rounded-(--radius) border border-border bg-background p-2 font-mono text-small" }}
             />
           </If>

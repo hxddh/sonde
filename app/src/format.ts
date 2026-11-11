@@ -160,17 +160,25 @@ export function change(a: number, b: number): string {
   return r === 0 ? `${sign}<1%` : `${sign}${r}%`;
 }
 
-/** What a run's requests cost, as people read it: a session's often cost
- * thousandths of a cent, which read as a thousand runs' worth
- * ("0.28 USD per 1,000 runs"). */
-export function cost(v: number, currency: string): string {
-  if (!Number.isFinite(v) || v < 0) return `— ${currency}`;
+/** A cost as its figure and its unit apart: a session's requests often cost
+ * thousandths of a cent, which read as a thousand runs' worth ("0.28" in
+ * "USD per 1,000 runs"). Two costs in one unit can then be said with the
+ * unit once. */
+export function costParts(v: number, currency: string): { figure: string; unit: string; per1000: boolean } {
+  if (!Number.isFinite(v) || v < 0) return { figure: "—", unit: currency, per1000: false };
   if (v > 0 && v < 0.01) {
     const k = v * 1000;
-    const s = k < 0.01 ? Number(k.toPrecision(2)).toString() : k.toFixed(2);
-    return t("cost.perThousand", { v: s, cur: currency });
+    return { figure: k < 0.01 ? Number(k.toPrecision(2)).toString() : k.toFixed(2), unit: t("cost.unitPerThousand", { cur: currency }), per1000: true };
   }
-  return `${v.toFixed(2)} ${currency}`;
+  return { figure: v.toFixed(2), unit: currency, per1000: false };
+}
+
+/** What a run's requests cost, as people read it: "0.42 USD", or (under a
+ * cent) "0.28 USD per 1,000 runs". */
+export function cost(v: number, currency: string): string {
+  const c = costParts(v, currency);
+  // (a language says the figure and its unit in its own order)
+  return c.per1000 ? t("cost.perThousand", { v: c.figure, cur: currency }) : `${c.figure} ${c.unit}`;
 }
 
 /** A moment on the reader's clock, to the precision its list needs:

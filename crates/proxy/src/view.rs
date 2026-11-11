@@ -382,23 +382,6 @@ impl Analysis {
         v.insert("sharedNotes".into(), json!(self.shared_notes));
         v
     }
-
-    /// The view as it was before pages: every operation, each with its
-    /// title. For what has not moved to pages yet.
-    pub fn whole(&self, path: &str, header: &crate::session::SessionHeader) -> Value {
-        json!({
-            "path": path,
-            "header": header,
-            "summary": self.summary,
-            "profile": self.profile,
-            "signals": self.signals,
-            "whatIf": self.what_if,
-            "injected": self.injected,
-            "episodes": self.episodes,
-            "observations": self.observations,
-            "sharedNotes": self.shared_notes,
-        })
-    }
 }
 
 /// Anything that serializes, as a JSON value (null when it cannot be).

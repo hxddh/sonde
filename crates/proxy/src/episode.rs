@@ -536,6 +536,9 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     let mut buffers: Vec<(Format, Vec<&Record>)> = Vec::new();
     let mut probe: Vec<&Record> = Vec::new();
     let mut listing: Vec<&Record> = Vec::new();
+    // requests that are nothing more: most of a large session, made into
+    // operations together once the rest is placed
+    let mut alone: Vec<&Record> = Vec::new();
     for unit in items {
         // a unit's last record stands for it: the Complete of an upload
         let r = *unit.last().expect("units are not empty");
@@ -580,8 +583,9 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
             probe.push(r);
             continue;
         }
-        out.push(single(r));
+        alone.push(r);
     }
+    out.extend(singles(&alone));
     for (f, rs) in buffers {
         out.push(loose(f, rs));
     }
@@ -610,6 +614,33 @@ fn flush_idle(
             i += 1;
         }
     }
+}
+
+/// Each request an operation of its own ([`single`]), on the cores there
+/// are: a session of a million requests is mostly these, and each is a
+/// title and its phrases to write. (The operations are sorted by their
+/// start afterwards: the order they are made in is not seen.)
+fn singles(rs: &[&Record]) -> Vec<Episode> {
+    const WORTH: usize = 20_000;
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
+    if threads < 2 || rs.len() < WORTH {
+        return rs.iter().map(|r| single(r)).collect();
+    }
+    let each = rs.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        let parts: Vec<_> = rs
+            .chunks(each)
+            .map(|part| scope.spawn(move || part.iter().map(|r| single(r)).collect::<Vec<_>>()))
+            .collect();
+        let mut out = Vec::with_capacity(rs.len());
+        for part in parts {
+            match part.join() {
+                Ok(made) => out.extend(made),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+        out
+    })
 }
 
 fn single(r: &Record) -> Episode {
@@ -1368,17 +1399,55 @@ pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)>
     out
 }
 
+/// Something for each request, by its id. A session's ids are 1 to n (or
+/// near it): a table by id then, with no hashing; a map when they are not.
+enum ById<V> {
+    Table(u64, Vec<Option<V>>),
+    Map(std::collections::HashMap<u64, V>),
+}
+
+impl<V> ById<V> {
+    /// Of `n` ids or so, given twice over (once to see how they lie).
+    fn of<I: Iterator<Item = (u64, V)>>(n: usize, pairs: impl Fn() -> I) -> ById<V> {
+        let (mut low, mut high) = (u64::MAX, 0);
+        for (id, _) in pairs() {
+            (low, high) = (low.min(id), high.max(id));
+        }
+        if low > high {
+            return ById::Table(0, Vec::new());
+        }
+        let span = high - low;
+        if span > 4 * n as u64 + 1024 {
+            return ById::Map(pairs().collect());
+        }
+        let mut table: Vec<Option<V>> = Vec::new();
+        table.resize_with(span as usize + 1, || None);
+        for (id, v) in pairs() {
+            table[(id - low) as usize] = Some(v);
+        }
+        ById::Table(low, table)
+    }
+
+    fn get(&self, id: &u64) -> Option<&V> {
+        match self {
+            ById::Table(low, table) => table.get(id.checked_sub(*low)? as usize)?.as_ref(),
+            ById::Map(map) => map.get(id),
+        }
+    }
+}
+
 /// What stands out across a session's requests and episodes.
 pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
     use std::collections::{BTreeSet, HashMap};
     // each record by its id: read once, for every finding that names requests
-    let by_id: HashMap<u64, &Record> = records.iter().map(|r| (r.id, r)).collect();
+    let by_id: ById<&Record> = ById::of(records.len(), || records.iter().map(|r| (r.id, r)));
     // which episode each record belongs to
-    let owner: HashMap<u64, usize> = episodes
-        .iter()
-        .enumerate()
-        .flat_map(|(i, e)| e.records.iter().map(move |r| (*r, i)))
-        .collect();
+    let owner: ById<usize> = ById::of(records.len(), || {
+        episodes
+            .iter()
+            .enumerate()
+            .flat_map(|(i, e)| e.records.iter().map(move |r| (*r, i)))
+    });
     let of_records = |ids: &mut dyn Iterator<Item = u64>| -> Vec<usize> {
         ids.filter_map(|id| owner.get(&id).copied())
             .collect::<BTreeSet<_>>()

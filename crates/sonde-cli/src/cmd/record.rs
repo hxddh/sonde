@@ -2743,7 +2743,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             &pr,
             &ob,
         );
-        Ok((point, session.records, pr, ob, session.header))
+        // (its records are let go here: two sessions are never held at once)
+        Ok((point, pr, ob, session.header))
     };
     if !file.exists() {
         return Err(super::usage(format!(
@@ -2753,7 +2754,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         )));
     }
     let run = read(&file)?;
-    let header = run.4.clone();
+    let header = run.3.clone();
     if a.init {
         return init_project(a, &run.0, &header);
     }
@@ -2816,11 +2817,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         Some(p) => Some(super::sessions::resolve(s, &PathBuf::from(p))),
     };
-    // the baseline: its figures and its findings (its records are let go)
-    let base = base_path
-        .as_ref()
-        .map(|p| read(p).map(|(point, _, pr, ob, header)| (point, pr, ob, header)))
-        .transpose()?;
+    // the baseline: its figures and its findings
+    let base = base_path.as_ref().map(read).transpose()?;
     if let Some(why) = &no_baseline {
         eprintln!("{why}");
     }
@@ -2871,10 +2869,10 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             .map(|_| a.tolerance.or(project.tolerance).unwrap_or(10.0) / 100.0),
         no_new_warnings: a.no_new_warnings || project.no_new_warnings,
     };
+    // (a run is held by its figures and its findings: `check` reads no
+    // record of it, nor of its baseline)
     let c = check(
-        (&run.0, &run.1, &run.2, &run.3),
-        // (a baseline is held by its figures and its findings: `check`
-        // reads no record of it)
+        (&run.0, &[][..], &run.1, &run.2),
         base.as_ref().map(|b| (&b.0, &[][..], &b.1, &b.2[..])),
         &budget,
     );
@@ -3000,7 +2998,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 gh_escape(w)
             );
         }
-        for f in run.3.iter().take(10) {
+        for f in run.2.iter().take(10) {
             // what the project expects is said, never warned of
             let level = if f.level == "warn" && !sonde_proxy::program::expected(f, &budget.expect) {
                 "warning"
@@ -3027,7 +3025,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 &c,
                 &run.0.currency,
                 since_text.as_deref(),
-                &run.3,
+                &run.2,
                 &trials
             )
         );

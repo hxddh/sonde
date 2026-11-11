@@ -3,7 +3,7 @@
 
 import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, DiffView } from "nsh/base";
-import { change, count, date, duration, percent, rate, transfer } from "../format";
+import { change, count, date, duration, percent, rate, transfer, costParts } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
@@ -36,6 +36,7 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
   type Fact = { id: string; label: string; a: number | null; b: number | null; text: (v: number) => string; detail?: () => string; series?: (x: Signals) => number[]; kind?: "bars" | "line" };
   const of = <T,>(f: (x: Signals) => T): [T, T] | null => (s() ? [f(s()![0]), f(s()![1])] : null);
   const pair = (a: string, b: string) => (a === b ? a : `${a} → ${b}`);
+  const oneUnit = () => costParts(c().cost[0], c().currency).per1000 === costParts(c().cost[1], c().currency).per1000;
   const facts = (): Fact[] => {
     const pace = of((x) => (brief(x) || x.rate.value == null ? null : t("signal.perSecond", { n: rate(x.rate.value) })));
     const share = of((x) => percent(x.errors.value ?? 0));
@@ -47,7 +48,8 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
       { id: "errors", label: t("signal.errors"), a: c().errors[0], b: c().errors[1], text: n, detail: () => (share ? pair(share[0], share[1]) : ""), series: (x) => x.errors.series },
       { id: "latency", label: t("signal.latency"), a: p50?.[0] ?? null, b: p50?.[1] ?? null, text: duration, detail: () => (p95 && p95[0] && p95[1] ? pair(p95[0], p95[1]) : ""), series: (x) => x.latency.series, kind: "line" },
       { id: "waiting", label: t("compare.waiting"), a: c().busyMs[0], b: c().busyMs[1], text: duration, detail: () => t("compare.took", { t: pair(duration(c().wallMs[0]), duration(c().wallMs[1])) }) },
-      { id: "cost", label: t("compare.cost"), a: c().cost[0], b: c().cost[1], text: (v) => cost(v, c().currency), detail: () => (moved ? pair(moved[0], moved[1]) : "") },
+      // (both in one unit: the unit is said once, with the tile's name, so the two figures fit)
+      { id: "cost", label: oneUnit() ? `${t("compare.cost")} · ${costParts(c().cost[1], c().currency).unit}` : t("compare.cost"), a: c().cost[0], b: c().cost[1], text: (v) => (oneUnit() ? costParts(v, c().currency).figure : cost(v, c().currency)), detail: () => (moved ? pair(moved[0], moved[1]) : "") },
     ];
   };
   const tile = (f: () => Fact) => {
@@ -55,7 +57,8 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     const same = () => known() && (Math.abs(f().b! - f().a!) < 1e-9 || f().text(f().a!) === f().text(f().b!));
     const value = () => (!known() ? t("signal.notTimed") : same() ? f().text(f().a!) : `${f().text(f().a!)} → ${f().text(f().b!)}`);
     // how much it changed, then what else there is to say of it; the same in both runs: said so, no "−0%"
-    const detail = () => [!known() ? "" : same() ? t("compare.sameBoth") : change(f().a!, f().b!), f().detail?.() ?? ""].filter(Boolean).join(" · ");
+    // (from nothing there is no share to say: the two figures say it)
+    const detail = () => [!known() ? "" : same() ? t("compare.sameBoth") : f().a === 0 ? "" : change(f().a!, f().b!), f().detail?.() ?? ""].filter(Boolean).join(" · ");
     const tone = () => (!known() || same() || !c().sameProgram ? "plain" : f().b! < f().a! ? "ok" : "bad");
     const lines = () => (f().series && s() && !handful(s()![0]) && !handful(s()![1]) ? [f().series!(s()![0]), f().series!(s()![1])] : null);
     return (

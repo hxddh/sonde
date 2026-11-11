@@ -13,10 +13,15 @@ use sonde_proxy::session::Session;
 use sonde_proxy::view::Analysis;
 
 /// One at a time: the peak of memory is the process's, and the clock is
-/// kinder to a test that has the cores to itself.
+/// kinder to a test that has the cores to itself. The million goes first
+/// (the others give it a moment to take its turn): its peak is then its own,
+/// not what the tests before it left behind.
 static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn alone() -> std::sync::MutexGuard<'static, ()> {
+fn alone(first: bool) -> std::sync::MutexGuard<'static, ()> {
+    if !first {
+        std::thread::sleep(Duration::from_millis(500));
+    }
     ONE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -53,7 +58,7 @@ fn read_as_show(path: &std::path::Path) -> (Duration, usize, Analysis) {
 #[test]
 #[ignore = "a million requests: run in release, as CI does"]
 fn a_million_requests_are_read_in_fifteen_seconds_and_two_gigabytes() {
-    let _alone = alone();
+    let _alone = alone(true);
     let dir = tempfile::tempdir().expect("a folder");
     let path = dir.path().join("million.sonde");
     let n = support::lake(1_000_000, &path, 1);
@@ -80,7 +85,7 @@ fn a_million_requests_are_read_in_fifteen_seconds_and_two_gigabytes() {
 #[test]
 #[ignore = "three hundred thousand requests: run in release, as CI does"]
 fn an_outage_of_three_hundred_thousand_requests_is_read_in_ten_seconds() {
-    let _alone = alone();
+    let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
     let path = dir.path().join("outage.sonde");
     support::outage(300_000, &path);
@@ -93,7 +98,7 @@ fn an_outage_of_three_hundred_thousand_requests_is_read_in_ten_seconds() {
 #[test]
 #[ignore = "three hundred thousand requests: run in release, as CI does"]
 fn small_uploads_of_three_hundred_thousand_requests_are_read_in_ten_seconds() {
-    let _alone = alone();
+    let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
     let path = dir.path().join("uploads.sonde");
     support::small_uploads(300_000, &path);
@@ -113,7 +118,7 @@ fn small_uploads_of_three_hundred_thousand_requests_are_read_in_ten_seconds() {
 #[test]
 #[ignore = "a hundred thousand requests: run in release, as CI does"]
 fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_in_two_seconds() {
-    let _alone = alone();
+    let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
     let path = dir.path().join("view.sonde");
     let n = support::lake(100_000, &path, 2);

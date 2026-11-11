@@ -361,22 +361,25 @@ fn full_record(path: &str, id: u64) -> Result<Option<reqlog::Record>, String> {
     if !lean {
         return Ok(s.records.iter().find(|r| r.id == id).cloned());
     }
+    record_from_file(Path::new(path), &s, id)
+}
+
+/// One record in full from a session's file, for a session read lean (`s`:
+/// it has the ids the reading gave the file's records).
+fn record_from_file(path: &Path, s: &Session, id: u64) -> Result<Option<reqlog::Record>, String> {
     if !s.records.iter().any(|r| r.id == id) {
         return Ok(None);
     }
     let mut found = None;
     // read to where it is, and no further
-    let read = sonde_proxy::share::each_record(
-        Path::new(path),
-        &mut s.records.iter().map(|r| r.id),
-        &mut |r| {
+    let read =
+        sonde_proxy::share::each_record(path, &mut s.records.iter().map(|r| r.id), &mut |r| {
             if r.id == id {
                 found = Some(r);
                 return Err(std::io::Error::other("found"));
             }
             Ok(())
-        },
-    );
+        });
     match (found, read) {
         (Some(r), _) => Ok(Some(r)),
         (None, Err(e)) => Err(err_msg(e)),
@@ -496,13 +499,6 @@ fn view_of(path: &str) -> Result<JsonValue, String> {
         JsonValue::Object(a.view(path, &s.header)),
         path,
     ))
-}
-
-/// What [`Sessions::open`] returned before the view had pages: every
-/// operation at once. Kept while a screen still asks for it.
-fn whole_view_of(path: &str) -> Result<JsonValue, String> {
-    let (s, a) = analysis_of(path)?;
-    Ok(with_trials(a.whole(path, &s.header), path))
 }
 
 /// A page's query as the interface sends it.
@@ -1254,20 +1250,6 @@ impl Sessions {
         }
         out.sort_by(|a, b| b.0.cmp(&a.0));
         JsonValue::Array(out.into_iter().map(|(_, v)| v).collect())
-    }
-
-    /// A session with every operation at once: as it was before the view
-    /// had pages. Kept while a screen still asks for it; [`Sessions::view`]
-    /// is what does not grow with the session.
-    pub fn open(path: String) -> Result<JsonValue, String> {
-        whole_view_of(&path)
-    }
-
-    /// [`Sessions::open`] off the interface's thread.
-    pub async fn analyse(path: String) -> Result<JsonValue, String> {
-        tokio::task::spawn_blocking(move || whole_view_of(&path))
-            .await
-            .map_err(err_msg)?
     }
 
     /// A session as a window opens it: its header, summary, signals,
@@ -2573,6 +2555,137 @@ mod tests {
         assert_eq!(open_session(&p).unwrap().records.len(), 1);
     }
 
+    /// A session of `n` requests, each an operation of its own, the later
+    /// the quicker; every seventh a write, one in fifty failed.
+    fn many(path: &Path, n: u64) {
+        use reqlog::Sink;
+        let w =
+            SessionWriter::create(path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        for i in 0..n {
+            w.write(&reqlog::Record {
+                id: i + 1,
+                time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * 100)
+                    .unwrap(),
+                method: if i % 7 == 0 { "PUT" } else { "GET" }.into(),
+                operation: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
+                url: format!("http://s3/b/data/k{i:05}"),
+                bucket: Some("b".into()),
+                key: Some(format!("data/k{i:05}")),
+                status: Some(if i % 50 == 3 { 500 } else { 200 }),
+                latency_ms: 1.0 + (n - i) as f64 / 10.0,
+                request_headers: vec![
+                    reqlog::Header::new("authorization", "AWS4-HMAC-SHA256 Credential=…"),
+                    reqlog::Header::new("user-agent", "aws-sdk-java/2.25"),
+                ],
+                ..Default::default()
+            });
+        }
+        w.flush().unwrap();
+    }
+
+    #[test]
+    fn a_view_is_the_first_page_of_operations_and_the_rest_come_in_ranges() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many.sonde");
+        many(&path, 1200);
+        let p = path.to_string_lossy().into_owned();
+        let v = view_of(&p).unwrap();
+        assert_eq!(v["summary"]["requests"], 1200);
+        assert_eq!(v["episodesTotal"], 1200);
+        assert_eq!(
+            v["episodes"].as_array().unwrap().len(),
+            sonde_proxy::view::PAGE
+        );
+        assert_eq!(v["episodes"][2]["index"], 2);
+        assert_eq!(v["episodes"][2]["requests"], 1);
+        assert!(
+            v["episodes"][2].get("title").is_none(),
+            "said by its phrases"
+        );
+        assert!(v["summary"]["operations"][0]["p99Ms"].is_number());
+        // the calls a table makes: a range in its order, one operation, where
+        // a request and a moment are, the row an operation stands at
+        let (_, a) = analysis_of(&p).unwrap();
+        let page = a.page(
+            &query_of(json!({ "offset": 1000, "sort": "duration", "descending": true })).unwrap(),
+        );
+        assert_eq!(
+            (&page["total"], &page["offset"]),
+            (&json!(1200), &json!(1000))
+        );
+        assert_eq!(page["rows"].as_array().unwrap().len(), 200);
+        assert_eq!(page["rows"][0]["index"], 1000, "the earliest took longest");
+        let failed = a.page(&query_of(json!({ "failed": true, "text": "K0000" })).unwrap());
+        assert_eq!(failed["total"], 1, "{failed}");
+        assert_eq!(failed["rows"][0]["index"], 3);
+        assert_eq!(query_of(JsonValue::Null).unwrap(), Default::default());
+        assert!(query_of(json!({ "sort": "colour" })).is_err());
+        assert_eq!(
+            Sessions::episode(p.clone(), 700.0).unwrap()["records"],
+            json!([701])
+        );
+        assert_eq!(
+            Sessions::episode(p.clone(), 7000.0).unwrap(),
+            JsonValue::Null
+        );
+        assert_eq!(Sessions::episode_of(p.clone(), 701.0).unwrap(), Some(700.0));
+        assert_eq!(Sessions::episode_of(p.clone(), 7001.0).unwrap(), None);
+        let backwards = json!({ "descending": true });
+        assert_eq!(
+            Sessions::episode_row(p.clone(), backwards.clone(), 0.0).unwrap(),
+            1199.0
+        );
+        assert_eq!(
+            Sessions::episode_row(p.clone(), json!({ "failed": true }), 0.0).unwrap(),
+            -1.0
+        );
+        let at = Sessions::episodes_at(p.clone(), "2023-11-14T22:13:20.050Z".into()).unwrap();
+        assert_eq!(at, json!([0]), "the first request was under way then");
+        assert!(Sessions::episodes_at(p.clone(), "then".into()).is_err());
+    }
+
+    #[test]
+    fn a_request_of_a_session_kept_lean_is_read_from_its_file_in_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lean.sonde");
+        many(&path, 300);
+        sonde_proxy::session::compress(&path).unwrap();
+        // (sessions past `LEAN_FROM` on disk are kept so)
+        assert!(kept_lean(LEAN_FROM + 1, true) && !kept_lean(LEAN_FROM, true));
+        assert!(
+            !kept_lean(LEAN_FROM * 5, false),
+            "a live file is ten times its compressed size"
+        );
+        let lean = Session::open_lean(&path).unwrap();
+        assert!(lean.records[41].url.is_empty());
+        let full = record_from_file(&path, &lean, 42).unwrap().unwrap();
+        assert_eq!(full.url, "http://s3/b/data/k00041");
+        assert!(
+            full.request_headers
+                .iter()
+                .any(|h| h.name == "authorization")
+        );
+        assert_eq!(record_from_file(&path, &lean, 4200).unwrap(), None);
+    }
+
+    #[test]
+    fn a_finished_session_is_listed_from_the_counts_kept_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("listed.sonde");
+        many(&path, 120);
+        // live: counted as it grows, nothing kept
+        assert_eq!(count_records(&path), 120);
+        assert!(!sonde_proxy::summary::counted_file(&path).exists());
+        sonde_proxy::session::compress(&path).unwrap();
+        assert_eq!(count_records(&path), 120);
+        assert_eq!(shape_of(&path).iter().sum::<u32>(), 120);
+        let kept = sonde_proxy::summary::kept(&path).expect("kept beside it");
+        assert_eq!((kept.requests, kept.errors), (120, 3));
+        // gone with the session
+        forget(&path);
+        assert!(!sonde_proxy::summary::counted_file(&path).exists());
+    }
+
     #[test]
     fn an_analysis_is_kept_until_the_file_changes() {
         use reqlog::Sink;
@@ -2669,8 +2782,6 @@ mod tests {
         // open, analyse, records, record, copy and log_lines read the same session
         let view = view_of(&trial).unwrap();
         assert_eq!(view["summary"]["requests"], 2);
-        // and as it was asked for before the view had pages
-        assert_eq!(whole_view_of(&trial).unwrap()["trial"], view["trial"]);
         assert_eq!(view["trial"]["scenario"], "slowdown");
         assert_eq!(view["trial"]["of"], "20260101-000000-job.sonde");
         assert_eq!(view["trial"]["clean"], clean.as_str());

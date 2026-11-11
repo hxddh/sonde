@@ -267,8 +267,9 @@ export function Endpoints() {
           <If when={!terminal() && endpoints().length > 0}>
             <Button variant="outline" label={t("compat.open")} tip={t("compat.hint")} onPress={() => openCompatWindow()} testID="open-compat" />
           </If>
-          <Button variant="outline" label={t("endpoints.import")} onPress={() => mode.set("import")} testID="import-endpoints" />
-          <Button variant="primary" icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} testID="add-endpoint" />
+          {/* one primary at a time: while a form is open its Save is the one, and these wait for it */}
+          <Button variant="outline" label={t("endpoints.import")} onPress={() => mode.set("import")} disabled={mode() !== "list"} testID="import-endpoints" />
+          <Button variant={mode() === "list" ? "primary" : "outline"} icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} disabled={mode() !== "list"} testID="add-endpoint" />
         </PageHeader>
         {/* the form in place, a card of its own: a sheet in the Settings
             window would cover its tabs and lose its icons (nsh-issues) */}

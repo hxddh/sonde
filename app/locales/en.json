@@ -690,7 +690,6 @@
  "run.resizeOperations": "Resize the program and its operations",
  "requests.asSession": "Open as a session",
  "welcome.or": "or",
- "cost.perThousand": "%{v} %{cur} per 1,000 runs",
  "run.emptyNotKept": "The run made no requests: it will not be kept",
  "run.keepEmpty": "Keep",
  "probes.writes": "A run writes test objects under %{bucket}/sonde-probe/ and deletes them when it ends (with temporary buckets on, it also creates and deletes buckets named sonde-probe-…). Use a bucket you can write to, not one holding data you need.",
@@ -1035,5 +1034,7 @@
  "trial.gaveUp.one": "gave up on 1 request",
  "trial.droppedWrites.one": "1 write never sent again",
  "trial.left.one": "1 upload left unfinished",
- "sessions.copiedFirst": "Copied the first %{n} of %{of} operations"
+ "sessions.copiedFirst": "Copied the first %{n} of %{of} operations",
+ "cost.unitPerThousand": "%{cur} per 1,000 runs",
+ "cost.perThousand": "%{v} %{cur} per 1,000 runs"
 }

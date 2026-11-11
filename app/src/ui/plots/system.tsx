@@ -153,7 +153,8 @@ export function timeTicks(domain: [number, number]): number[] {
   const pow = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 5, 10].map((m) => m * pow).find((x) => x >= raw - 1e-9) ?? 10 * pow;
   const out: number[] = [];
-  for (let k = Math.ceil(a / step - 1e-9); k * step <= b + 1e-9; k++) out.push(k * step);
+  // (`|| 0`: the first of them is 0, never −0)
+  for (let k = Math.ceil(a / step - 1e-9); k * step <= b + 1e-9; k++) out.push(k * step || 0);
   return out;
 }
 

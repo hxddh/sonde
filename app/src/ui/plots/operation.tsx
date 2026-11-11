@@ -4,7 +4,7 @@ import { signal } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { Bar, Plot, PlotAxis } from "nsh/base/plot";
 import { duration } from "../../format";
-import { t } from "../../i18n";
+import { lang, t } from "../../i18n";
 import type { Observation, Profile, RecordSummary } from "../../types";
 import { observationSaving, observationText } from "../../phrases";
 import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, TICK_ROOM, groupName, pct, rowsHeight, statusTone, tipValue, tones, tail, TimeAxis, BARS, TIP } from "./system";
@@ -109,5 +109,6 @@ export function sessionStory(p: Profile, findings: Observation[]): string {
     const saving = observationSaving(first);
     parts.push(saving ? t("story.saving", { saving }) : t("story.finding", { finding: observationText(first) }));
   }
-  return parts.join(" ");
+  // (Chinese sets no space between two sentences)
+  return parts.join(lang() === "zh" ? "" : " ");
 }

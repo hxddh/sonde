@@ -50,6 +50,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+      # sessions of any size, held: a million requests read and analysed in
+      # 15 s and 2 GB, an outage and small uploads of 300 thousand in 10 s,
+      # the app's first view of 100 thousand in 2 s (optimised, as released)
+      - name: Budgets of a large session
+        if: runner.os == 'Linux'
+        run: cargo test --release -p sonde-proxy --test budgets -- --ignored --nocapture
 
   integration:
     runs-on: ubuntu-24.04

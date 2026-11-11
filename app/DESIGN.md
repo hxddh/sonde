@@ -189,10 +189,11 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   no card inside a card.
 - **Popups** (menus, selects, the endpoint switcher): `POPUP` — the popover surface,
   one border, one radius, one shadow, and glass on macOS.
-- **Side panels** (Activity, a bucket's detail, the endpoint form, a narrow window's
-  inspector): `SidePanel` in three widths (narrow 420, default 600, wide 760) with a
-  `PanelHeader`; they start below the title bar and close with Escape, the scrim or
-  Close.
+- **Side panels** (Activity, a bucket's detail, a narrow window's inspector): `SidePanel`
+  in three widths (narrow 420, default 600, wide 760) with a `PanelHeader`; they start
+  below the title bar and close with Escape, the scrim or Close. The endpoint form is a
+  card in place over the list, which stays under it (a sheet in the Settings window
+  would cover its tabs); while it is open its Save is the page's one primary.
 - **Dialogs**: short decisions only (a typed confirmation, the replay target), over
   the scrim.
 

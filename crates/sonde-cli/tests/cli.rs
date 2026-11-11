@@ -902,3 +902,310 @@ fn check_init_leaves_the_limits_of_time_for_a_person_to_set() {
     assert_eq!(c.status.code(), Some(64), "{}", stderr(&c));
     assert!(stderr(&c).contains("sonde.toml"), "{}", stderr(&c));
 }
+
+/// The demo's session, and where it is.
+fn demo_file(dirs: &Path) -> std::path::PathBuf {
+    let name = demo_session(dirs);
+    dirs.join("data/sessions").join(format!("{name}.sonde"))
+}
+
+/// A recorded session of `command` in the sessions folder, made of a
+/// fixture's requests.
+fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::path::PathBuf {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../proxy/tests/fixtures/sdk-python.sonde");
+    let text = std::fs::read_to_string(fixture).unwrap();
+    let (header, records) = text.split_once('\n').unwrap();
+    let mut header: serde_json::Value = serde_json::from_str(header).unwrap();
+    header["command"] = command.into();
+    header["created"] = created.into();
+    let dir = dirs.join("data/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(name);
+    std::fs::write(&file, format!("{header}\n{records}")).unwrap();
+    file
+}
+
+#[test]
+fn sessions_are_listed_from_what_was_counted_beside_them() {
+    let t = tempfile::tempdir().unwrap();
+    let file = demo_file(t.path());
+    // counted when it was recorded: a small file beside it
+    let counted = file.with_file_name(format!(
+        "{}.summary.json",
+        file.file_stem().unwrap().to_string_lossy()
+    ));
+    assert!(counted.is_file(), "{}", counted.display());
+    let listed: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
+    assert_eq!(listed[0]["requests"], 28, "{listed}");
+    assert_eq!(listed[0]["program"], "sonde demo");
+    assert!(listed[0]["seconds"].as_f64().unwrap() > 0.0);
+    // one that is missing is made by the listing (a session of before 16)
+    std::fs::remove_file(&counted).unwrap();
+    assert!(stdout(&sonde(t.path(), &["sessions"])).contains("sonde demo"));
+    assert!(counted.is_file());
+    // nothing past the newest five: said, not silence
+    let kept = sonde(t.path(), &["sessions", "prune", "--keep", "5", "--yes"]);
+    assert!(
+        stdout(&kept).contains("nothing to remove: 1 session here"),
+        "{}",
+        stdout(&kept)
+    );
+    assert!(file.is_file());
+    // removed, and what was counted of it with it
+    let gone = sonde(t.path(), &["sessions", "prune", "--keep", "0", "--yes"]);
+    assert!(stdout(&gone).contains("deleted "), "{}", stdout(&gone));
+    assert!(!file.exists() && !counted.exists());
+}
+
+#[test]
+fn a_long_command_is_cut_in_its_middle_to_fit_the_terminal() {
+    let t = tempfile::tempdir().unwrap();
+    let long = format!(
+        "python /srv/jobs/etl/load.py --table warehouse.events {}--day 2026-11-10",
+        "--partition p ".repeat(12)
+    );
+    session_of(t.path(), "long.sonde", &long, "2026-11-10T02:00:00Z");
+    let narrow = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .arg("sessions")
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .env("COLUMNS", "110")
+        .output()
+        .unwrap();
+    let table = stdout(&narrow);
+    let row = table.lines().find(|l| l.starts_with("long.sonde")).unwrap();
+    assert!(
+        row.chars().count() <= 110,
+        "{} columns:\n{table}",
+        row.chars().count()
+    );
+    // its start and its end: the arguments tell two runs apart
+    assert!(
+        row.contains("python /srv") && row.contains("…") && row.contains("2026-11-10"),
+        "{row}"
+    );
+    // not a terminal, and no width given: whole (and whole as JSON always)
+    let piped = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .arg("sessions")
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .env_remove("COLUMNS")
+        .output()
+        .unwrap();
+    assert!(stdout(&piped).contains(&long), "{}", stdout(&piped));
+}
+
+#[test]
+fn a_trials_session_is_found_by_its_name() {
+    let t = tempfile::tempdir().unwrap();
+    let file = demo_file(t.path());
+    let trials = file.with_file_name("trials");
+    std::fs::create_dir_all(&trials).unwrap();
+    std::fs::copy(&file, trials.join("run.slowdown.sonde")).unwrap();
+    for name in [
+        "run.slowdown",
+        "run.slowdown.sonde",
+        "trials/run.slowdown.sonde",
+    ] {
+        let o = sonde(t.path(), &["show", name, "--summary"]);
+        assert_eq!(o.status.code(), Some(0), "{name}: {}", stderr(&o));
+        assert!(stdout(&o).contains("28 requests"), "{name}");
+    }
+}
+
+#[test]
+fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
+    let t = tempfile::tempdir().unwrap();
+    // 2,400 requests a second apart, every hundredth refused
+    let mut log = String::new();
+    for i in 0..2400 {
+        let (status, code) = if i % 100 == 7 {
+            ("403", "AccessDenied")
+        } else {
+            ("200", "-")
+        };
+        log.push_str(&format!(
+            "79a5 lake [06/Feb/2031:{:02}:{:02}:{:02} +0000] 192.0.2.3 - ID{i} REST.PUT.OBJECT t/k{i} \"PUT /lake/t/k{i} HTTP/1.1\" {status} {code} - 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n",
+            i / 3600,
+            i / 60 % 60,
+            i % 60
+        ));
+    }
+    let file = t.path().join("day.log");
+    std::fs::write(&file, log).unwrap();
+    let out = t.path().join("day.sonde");
+    let o = sonde(
+        t.path(),
+        &[
+            "import",
+            file.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let out = out.to_str().unwrap();
+    // only what failed, in every format
+    let failed: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["show", out, "--errors", "-f", "json"],
+    )))
+    .unwrap();
+    assert_eq!(failed["records"].as_array().unwrap().len(), 24);
+    assert_eq!(failed["episodes"].as_array().unwrap().len(), 24);
+    assert_eq!(
+        failed["summary"]["requests"], 2400,
+        "the summary is of the session"
+    );
+    let all: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["show", out, "-f", "json"]))).unwrap();
+    assert_eq!(all["records"].as_array().unwrap().len(), 2400);
+    assert_eq!(all["records"][7]["status"], 403);
+    // a long session: its first and last hundred, and how many are between
+    let shown = stdout(&sonde(t.path(), &["show", out]));
+    assert!(
+        shown.contains("… 2,200 operations between these: `--all` prints them"),
+        "{}",
+        &shown[..shown.len().min(2000)]
+    );
+    assert!(shown.contains("t/k99 ") && shown.contains("t/k2300 ") && !shown.contains("t/k1200 "));
+    // the summary is always there, each figure once
+    assert_eq!(shown.matches("2,400 requests").count(), 1, "{shown}");
+    assert!(shown.contains("PutObject"));
+    let whole = stdout(&sonde(t.path(), &["show", out, "--all"]));
+    assert!(whole.contains("t/k1200 ") && !whole.contains("between these"));
+    // its times are a log's, to the second: said, with what is not known
+    assert!(shown.contains("its times are to the second"), "{shown}");
+    assert!(!shown.contains("at once at most"), "{shown}");
+}
+
+#[test]
+fn a_missing_baseline_names_the_program_and_the_one_its_other_arguments_have() {
+    let t = tempfile::tempdir().unwrap();
+    let monday = session_of(
+        t.path(),
+        "monday.sonde",
+        "python etl.py --day 1",
+        "2026-11-09T02:00:00Z",
+    );
+    let tuesday = session_of(
+        t.path(),
+        "tuesday.sonde",
+        "python etl.py --day 2",
+        "2026-11-10T02:00:00Z",
+    );
+    let set = sonde(
+        t.path(),
+        &["check", monday.to_str().unwrap(), "--set-baseline"],
+    );
+    assert_eq!(set.status.code(), Some(0), "{}", stderr(&set));
+    // the next day's run is another command: no baseline of its own, and the
+    // budget is what decides
+    let c = sonde(
+        t.path(),
+        &[
+            "check",
+            tuesday.to_str().unwrap(),
+            "--baseline",
+            "auto",
+            "--max-requests",
+            "100",
+            "-f",
+            "json",
+        ],
+    );
+    let err = stderr(&c);
+    assert_eq!(c.status.code(), Some(0), "{err}");
+    assert!(
+        err.contains("no baseline yet for program `python etl.py --day 2`"),
+        "{err}"
+    );
+    assert!(
+        err.contains("there is one for `python etl.py --day 1`")
+            && err.contains("name = \"etl\"")
+            && err.contains("sonde run --name etl"),
+        "{err}"
+    );
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
+    assert_eq!(doc["passed"], true);
+    assert_eq!(doc["verdict"], "within budget (no baseline yet)");
+    assert!(
+        doc["noBaseline"]
+            .as_str()
+            .unwrap()
+            .contains("no baseline yet")
+    );
+    // held to it by name: past it is "past its baseline", not "over budget"
+    let c = sonde(
+        t.path(),
+        &[
+            "check",
+            tuesday.to_str().unwrap(),
+            "--baseline",
+            monday.to_str().unwrap(),
+            "--tolerance",
+            "0",
+            "-f",
+            "github",
+        ],
+    );
+    assert!(
+        stdout(&c).contains("sonde: within its baseline"),
+        "{}",
+        stdout(&c)
+    );
+    // and `check --init` gives the program the name its runs then share
+    let cfg = t.path().join("sonde.toml");
+    let init = sonde(
+        t.path(),
+        &[
+            "check",
+            tuesday.to_str().unwrap(),
+            "--init",
+            "--config",
+            cfg.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    assert!(
+        stderr(&init).contains("[program] name = \"etl\""),
+        "{}",
+        stderr(&init)
+    );
+    assert!(
+        std::fs::read_to_string(&cfg)
+            .unwrap()
+            .contains("[program]\nname = \"etl\"\n")
+    );
+}
+
+#[test]
+fn a_check_of_trials_alone_has_no_failed_budget_inside_it() {
+    let t = tempfile::tempdir().unwrap();
+    let file = session_of(
+        t.path(),
+        "run.sonde",
+        "python etl.py",
+        "2026-11-09T02:00:00Z",
+    );
+    // a verdict beside the run: it broke under a scenario
+    let verdicts = file.with_file_name("run.trials.json");
+    std::fs::write(
+        &verdicts,
+        r#"[{"scenario":"slowdown","about":"503 SlowDown","standing":"broke","exit":1,"cleanExit":0,
+            "faults":2,"retried":0,"droppedReads":0,"droppedWrites":2,"attempts":1,"requests":10,
+            "cleanRequests":13,"leftUploads":0,"wroteTwice":0,"reasons":["exited 1"]}]"#,
+    )
+    .unwrap();
+    let c = sonde(t.path(), &["check", file.to_str().unwrap(), "-f", "json"]);
+    assert_eq!(c.status.code(), Some(1), "{}{}", stdout(&c), stderr(&c));
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
+    assert_eq!(doc["passed"], false, "{doc}");
+    assert_eq!(doc["check"]["verdicts"], serde_json::json!([]));
+    assert_eq!(
+        doc["check"]["passed"], true,
+        "nothing was checked: nothing failed there"
+    );
+}

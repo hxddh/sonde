@@ -690,7 +690,6 @@
  "run.resizeOperations": "调整程序与操作的宽度",
  "requests.asSession": "作为会话打开",
  "welcome.or": "或者",
- "cost.perThousand": "每 1,000 次运行 %{v} %{cur}",
  "run.emptyNotKept": "这次运行没有请求：不会保留",
  "run.keepEmpty": "保留",
  "probes.writes": "运行会在 %{bucket}/sonde-probe/ 下写入测试对象，结束时删除（开启临时桶时，还会创建并删除名为 sonde-probe-… 的桶）。请使用可写入、且不存放重要数据的桶。",
@@ -1035,5 +1034,7 @@
  "trial.gaveUp.one": "放弃了 %{n} 个请求",
  "trial.droppedWrites.one": "%{n} 次写入没有再发送",
  "trial.left.one": "留下 %{n} 个未完成的分片上传",
- "sessions.copiedFirst": "已复制 %{of} 个操作中的前 %{n} 个"
+ "sessions.copiedFirst": "已复制 %{of} 个操作中的前 %{n} 个",
+ "cost.unitPerThousand": "每 1,000 次运行，%{cur}",
+ "cost.perThousand": "每 1,000 次运行 %{v} %{cur}"
 }
