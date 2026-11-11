@@ -4,7 +4,6 @@
 // $SONDE_SHOTS (default ./shots), one PNG per state, for review and for the
 // visual record CI keeps of each build.
 
-import { platform } from "nsh";
 import { type App, open, test } from "nsh/test";
 import { runAction } from "./helpers";
 
@@ -87,8 +86,9 @@ for (const v of variants) {
     }
     // which shell Run uses: cmd.exe on Windows (no probe run: it would sit in every list)
     const env = (globalThis as any).process?.env ?? {};
-    // (asked of the app's own runtime, as Welcome's sample command asks: a test has no process to ask)
-    const cmd = platform.os === "windows" || (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
+    // (asked of the app: the demo's own sample command, left in the field, is written for the shell Run uses;
+    // a test has no process to ask, and its own `platform` is not the window's)
+    const cmd = String((await app.value("id:run-command")) ?? "").includes("%AWS_ENDPOINT_URL%") || (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
     // (the demo left its own first command in the field: typed after it, the two ran as one)
     await app.clear("id:run-command");
     await app.type("id:run-command", command(cmd));
@@ -96,6 +96,15 @@ for (const v of variants) {
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });
+    // (the other shell's form, should the first have reached no store: the tour needs a run with requests)
+    if (app.shows("id:run-no-requests")) {
+      await app.clear("id:run-command");
+      await app.type("id:run-command", command(!cmd));
+      await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
+      await app.press("id:run-start");
+      await app.waitUntil(() => !app.shows("id:run-no-requests"), { timeout: 20000 });
+      await app.waitFor("id:run-ended", { timeout: 20000 });
+    }
     await shot("02b-ran");
     // the same command under faults: said before it runs, followed as it goes, its verdicts
     await runAction(app, "run-try");
