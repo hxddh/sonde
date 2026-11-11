@@ -600,7 +600,8 @@ fn print_summary(
     // the four signals, each with its line over the run
     let signals =
         sonde_proxy::signals::text(&sonde_proxy::signals::signals(records, prices), color);
-    for line in signals.lines() {
+    // a run's own summary keeps to the four lines; `sonde show` has the tables too
+    for line in signals.lines().take(if stdout { usize::MAX } else { 4 }) {
         say(line.to_string());
     }
     let prof = profile(records, prices);
