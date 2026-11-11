@@ -140,7 +140,7 @@ for (const v of variants) {
     await shot("03o-errors");
     // the same program run twice: before and after
     await app.press("id:compare-open");
-    const run = app.menu()?.map((m) => m.label).find((l) => l.startsWith("curl"));
+    const run = app.menu()?.map((m) => m.label).find((l) => l.includes("curl"));
     if (run) {
       await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });

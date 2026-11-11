@@ -839,7 +839,7 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
             <Bar base="start" value="firstEnd" color="tone" cornerRadii={2} inactiveOpacity={INACTIVE} stagger={0.4} />
           </If>
           <PlotAxis placement="left" format={(i) => tail(short(rows()[i]?.target ?? ""), GUTTER_CHARS - 2)} labelClass={`${AXIS_LABEL} font-mono text-caption`} />
-          <PlotAxis ticks={4} format={(v) => (v === 0 ? "0" : duration(v))} labelClass={TIME_TICK} />
+          <PlotAxis ticks={3} format={(v) => (v === 0 ? "0" : duration(v))} labelClass={TIME_TICK} />
         </Plot>
         <If when={anyFirst() || props.records.length > WATERFALL_ROWS}>
           <Legend gutter items={anyFirst() ? [{ label: t("waterfall.firstByteKey"), swatch: "bg-bar" }, { label: t("waterfall.bodyKey"), swatch: "bg-bar/45" }] : []}>

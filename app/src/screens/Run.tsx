@@ -204,10 +204,11 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
         )}
       </If>
       <If when={verdictText()}>{(v) => <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "pass" : "fail"} />}</If>
-      <View class="flex-1" />
       {/* a run that sent nothing kept no session (the toast said so): it is run again from its command */}
       <If when={r() && r()!.removed}>
+        <View class="ms-auto">
         <Button small variant="primary" icon="play" label={t("sessions.runAgain")} onPress={() => start(r()!.command, r()!.endpoint)} disabled={!r()!.command.trim()} testID="run-again-empty" />
+        </View>
       </If>
       <If when={trying() && r() && !r()!.removed}>
         <TrialDialog
@@ -223,7 +224,8 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
         />
       </If>
       <If when={r() && !r()!.removed}>
-        <View class="flex-row flex-wrap items-center gap-2">
+        {/* at the band's end; where they do not fit beside the figures, on a line of their own */}
+        <View class="ms-auto min-w-0 max-w-full shrink flex-row flex-wrap items-center justify-end gap-2">
           {/* the demo done: the next step is the user's own program and store */}
           <If when={endpoint() === "demo"}>
             <Button small variant="outline" icon="plus" label={t("run.nowYours")} tip={t("run.nowYoursHint")} onPress={() => (endpointsMode.set("add"), go("endpoints"))} testID="run-now-yours" />

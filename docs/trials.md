@@ -121,8 +121,15 @@ And the standing:
 - The verdicts are kept beside the run (`<run>.trials.json`); each names its session by file name, never by path.
   `sonde check` prints them as rows (`pass` survived, `warn` degraded, `FAIL` broke, `skip` untested) and **fails
   when the program broke, with a budget or without one**; `-f json` carries them as `trials`, with `passed` and
-  `verdict` for the whole. `sonde sessions` shows the worst standing of each run's trials. The app shows them on the
-  run's **Runs** pane.
+  `verdict` for the whole. `sonde sessions` shows the worst standing of each run's trials.
+- In the app a trial starts from **Try under faults…** — on Run once a run has ended, and on a session's **Runs**
+  pane. A dialog says first what will run: the scenarios the run's own requests call for (or the project's), each
+  with a box to leave it out; that every run writes where the clean run wrote when the command names no `{trial}`;
+  and that nothing runs while sonde is read-only. Then it follows the trial scenario by scenario, and Cancel ends
+  it and keeps nothing. The verdicts stay on the run's Runs pane, each with why it is not "survived"; a row opens
+  that trial's session, which says under its title that it is a trial (and of which run, with the way back), has no
+  Runs of its own and is not run again, renamed or set as a baseline. Requests sonde answered are marked "Injected
+  by sonde" wherever requests are listed and on the charts; the sessions list marks a run whose trial broke.
 - Deleting a run (`sonde sessions prune`, the app) removes its verdicts and the files in its `trials/` folder that
   are named for it, and nothing else: what a `.trials.json` says is never used as a path.
 - `sonde run --trial` exits with the command's own status when the clean run failed (and tries nothing), 130 or 143

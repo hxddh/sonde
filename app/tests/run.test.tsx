@@ -188,9 +188,20 @@ test("a session's time: where it went, and two runs before and after", async () 
   // the shape of the session beside its figures (the example's: the session shown before it goes first)
   await app.waitFor("id:session-shape", { timeout: 10000 });
   expect(app.shows("label:/^Waiting on S3 .* of .*; up to 8 requests in flight/")).toBe(true);
-  await app.press("id:session-pane-mode-time");
+  // the header's four signals and in flight: a figure each, and a press opens the signal's chart on the Time pane
+  for (const id of ["rate", "errors", "latency", "bytes", "inFlight"]) expect(app.shows(`id:signal-${id}`)).toBe(true);
+  expect(app.shows("label:/^Rate: 368\/s, 172 requests in 467 ms, shows its chart$/")).toBe(true);
+  expect(app.shows("label:/^Errors: 0%, No request failed/")).toBe(true);
+  await app.press("id:signal-latency");
   await app.waitFor("id:time-pane");
-  expect(app.shows("text:Where the time went")).toBe(true);
+  await app.waitFor("id:latency-over-time");
+  // the board in its groups, each chart in the one frame
+  expect(app.shows("text:Latency")).toBe(true);
+  expect(app.shows("id:board-traffic")).toBe(true);
+  expect(app.shows("id:time-shape")).toBe(true);
+  await app.waitFor("text:Where the time went");
+  // (the pane scrolls its chart into view a moment after it is laid out)
+  await app.wait(200);
   // its part of the waiting: requests at once count once, the kinds add up to it
   expect(app.shows("label:/^Most of the waiting: PutObject, \\d+%/")).toBe(true);
   expect(app.shows("id:profile-cost")).toBe(true);
@@ -215,6 +226,10 @@ test("a session's time: where it went, and two runs before and after", async () 
   await app.waitFor("id:run-change", { timeout: 10000 });
   expect(app.shows("id:run-change-requests")).toBe(true);
   expect(app.shows("text:/^172 → /")).toBe(true);
+  // the four signals side by side, before and after, in the header's own tiles
+  await app.waitFor("id:compare-signals", { timeout: 10000 });
+  expect(app.shows("id:compare-signal-latency")).toBe(true);
+  expect(app.shows("text:/^368\/s → /")).toBe(true);
   expect(app.shows("id:other-program")).toBe(true);
   expect(app.shows("text:/^Gone · /")).toBe(false);
 });

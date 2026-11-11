@@ -48,7 +48,7 @@ font is measured narrower than it is drawn — FINDINGS 15.)
 
 Theme tokens only (`theme.json`, light and dark). Status has its own roles —
 `status-ok`, `status-miss`, `status-client`, `status-server`, `status-refused`,
-`warn`, `info` — and formats theirs (`fmt-*`); never a palette color in a page. The
+`status-injected` (a fault scenario's answer, never the store's), `warn`, `info` — and formats theirs (`fmt-*`); never a palette color in a page. The
 scrim under modal layers is `bg-scrim`. Color never carries meaning alone: a dot sits
 next to a status code, a warning has its icon and its words.
 
@@ -64,15 +64,15 @@ piece wraps one nsh export with the theme's tokens:
 | `ListRow`, `Row` | `Button`, `View` | the one row a press opens (hover, pressed, selected, focus; `lines={2}`, `divided` in a card, `trailing`), and the one row that is only read (a hairline, 12 by 8). `ROWS` for a tree's and the palette's items, which take classes |
 | `Title`, `Heading`, `Strong` | `Text` | the two heading levels (`page` for an introduction's one title; `quiet` over a list), and words set heavier that are not a heading |
 | `Field`, `SearchField`, `NumberField`, `Choice`, `Check`, `SwitchRow` | `Input`, `NumberInput`, `Select`, `Checkbox`, `Switch` | forms; a switch's label is its own |
-| `Segmented`, `Options` | `Tabs`, `ToggleGroup` | what a place shows; a value of a few |
+| `Segmented`, `Options` | `Tabs`, `RadioGroup` | what a place shows; a value of a few (a set of radios: one is checked) |
 | `Disclosure` | `Accordion` | a section that opens under its heading |
 | `SidePanel` + `PanelHeader`, `Modal` + `Actions` | `Sheet`, `Dialog` | supplementary work; short decisions, their foot always Cancel then the commit, at the end |
-| `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). No third figure. `Tiles` lays tiles in rows of equal count, `Figures` a line of figures that never wraps |
-| `IconTile`, `ICON` | — | the one tile an icon stands in; an icon's three sizes |
+| `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). A `Stat` may carry a `mark` (a `Sparkline`: a signal's line over its session). No third figure. `Tiles` lays tiles in rows of equal count, `Figures` a line of figures that never wraps |
+| `Icon`, `IconTile`, `ICON` | `Image` (the icon's SVG, tinted by a token) | an icon; the one tile an icon stands in; an icon's three sizes |
 | `Notice` | — | the one banner: a note, a caution or what went wrong, with what can be done at its end |
 | `Await` | — | anything fetched, in its three states said truly: on its way, failed (why, Try again), there |
 | `PageHeader`, `SideHeader`, `Back` | — | the head of a page, of a list in the sidebar, and the one way back |
-| `Path` | `Text` | a path or key cut in its middle, heard whole |
+| `Path` | `Text` | a path or key cut in its middle (the text's own `ellipsis-middle`), heard whole |
 | `TABLE`, `ROW`, `SimpleTable` | `DataTable` | every table's classes and row heights; rows of text |
 | `Badge`, `Dot`, `KeyValue`, `Kbd`, `Empty`, `Loading` | — | display only; `Empty` is the one way to say nothing is here (`compact` inside a chart, a list or a card) |
 
@@ -121,8 +121,11 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   session's pane — under `short` (600) the shape strip goes and the findings keep to a line or two, from `tall` (880)
   each finding has its lines in full. A pane measures itself (`onLayout`); nothing reads the focused window's size.
 - **A pane that narrows reflows by rule**, never by clipping:
-  - *figures first*: a line of figures (`Figures`) holds as many as fit, in rank order (a session's: requests,
-    waiting, errors, took, cost, operations, not found); the last ranked go, none wraps;
+  - *figures first*: a line of figures (`Figures`) or of ranked tiles (`Tiles ranked`) holds as many as fit, in
+    rank order; the last ranked go, none wraps. A session's header is its **four signals — rate, errors, latency,
+    bytes — and in flight**, a tile each (a figure, its line over the session, one line of detail; a press opens
+    its chart on the Time pane): in flight goes first, then bytes. A figure a log without times cannot give says
+    "Not timed", never 0;
   - *then columns by rank* (`fitColumns`): a table shows its always-columns, then the ranked ones while the column
     that takes the rest keeps its room; the first that does not fit goes with every one ranked after it. The
     operations: the outcome, the operation and Took stay; then requests, time, when, format, notes. The objects: name
@@ -143,7 +146,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 
 | Concept | Rule |
 |---|---|
-| HTTP status | `StatusMark`: a dot and the code in mono; success quiet, anything else in its tone |
+| HTTP status | `StatusMark`: a dot and the code in mono; success quiet, anything else in its tone; a request a fault scenario answered in the injected tone, and said so in words beside it |
 | Count | `count()`, tabular, never mono; a section's count is "Title · n" |
 | Size | `bytes()`, tabular, at the end of its column |
 | Duration | `duration()` (0.4 ms, 840 ms, 2.35 s, 3 min 05 s). One word per meaning: **Took** for how long an operation or a run lasted, **Waiting** for a program's time on the store, **Latency** for one request |
@@ -200,7 +203,7 @@ defined nowhere else, and `scripts/lint-charts.py` counts them.
 
 - **One question per chart**, said in words beside it and in its `accessibilityLabel`: what it shows and what stands
   out ("Most of the waiting: PutObject, 65%"). A terminal gets the sentence and a table.
-- **One frame** (`Chart`), used by every chart — the Time pane's ten, Capacity's, Compare's, the trends, the
+- **One frame** (`Chart`), used by every chart — the Time pane's (in four titled groups at most: Traffic, Latency, Errors, Where), Capacity's, Compare's, the trends, the
   waterfall, Run's live panel, the shared page: a card with the question as its title, a sentence that answers it
   (it wraps, never cut), how it is cut at the title's end (`action`), the plot, its `legend`, and `empty` said in
   the plot's room. The Time pane is a list of chart descriptors drawn by one loop. `CHARTS` names the chart
@@ -213,14 +216,15 @@ defined nowhere else, and `scripts/lint-charts.py` counts them.
 - **One row pitch**: 28 (`PITCH`, `rowsHeight(n)`) for every chart of rows (time spent, chains, the waterfall, the
   heat map, the dumbbells, the kinds over time, Capacity's bars). Charts that are not rows have a height of their
   own, each named once: a map of areas (`TREEMAP`, one height for all three), requests against time or size
-  (`PLOT`), lanes (as many as ran at once), flows (`FLOWS`), and the thin strips (pressure, the trends, the stack).
+  (`PLOT`), lanes (as many as ran at once), flows (`FLOWS`), and the thin strips (the trends, the stack).
 - **One legend** (`Legend`): a round swatch, one gap, in a row that wraps, with what else is to be said under the
   chart after it (`ChartNote`). **One tooltip** (`ChartTip`): the popup surface, a title and a line or two of
   figures, beside the pointer at one offset — every chart has one, Flows, the trends and the distribution
   comparison included. **One fade** (`INACTIVE`, 0.4) for what the pointer is not on, **one outline** (`HOVER`) for
   what it is on, one band or line under it (`CROSS_BAND`, `CROSS_LINE`).
 - **Colors are roles.** Outcomes in their status tokens (`bar` for ok, `status-miss`, `status-client`,
-  `status-server`); a quantity in `chart-1`, a second in `chart-4`; tails and percentiles in a quiet
+  `status-server`; `status-injected` for what a fault scenario answered, whatever it looked like); a quantity in
+  `chart-1`, a second in `chart-4`; tails and percentiles in a quiet
   `muted-foreground` (dashed for a line), never an error's color; retries in `info`; before is
   `muted-foreground/30`, after its outcome (`status-ok` fewer, `status-server` more). What a selection leaves out
   turns `bar-track`, it does not disappear.
