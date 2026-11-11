@@ -6,7 +6,7 @@
 import { batch, cleanup, computed, effect, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { AlertDialog, DataTable } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
-import { ago, clock, count, date, middle, ms } from "../format";
+import { ago, clock, count, date, middle, duration } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { RecordDetail } from "../screens/Requests";
@@ -165,7 +165,7 @@ function Requests() {
           // to the millisecond, as operations show theirs
           { key: "time", title: t("column.time"), width: 110 },
         ]}
-        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: ms(r.latencyMs), time: clock(r.time, "ms") }))}
+        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: duration(r.latencyMs), time: clock(r.time, "ms") }))}
         fontSize={TYPE.body}
         rowHeight={rowHeight(ROW.table)}
         classes={terminal() ? undefined : TABLE}

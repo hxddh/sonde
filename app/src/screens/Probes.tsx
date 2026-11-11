@@ -4,7 +4,7 @@
 
 import { cleanup, Scroll, signal, Text, View } from "nsh";
 import { Button as BaseButton, DataTable } from "nsh/base";
-import { count, date, ms } from "../format";
+import { count, date, duration } from "../format";
 import { t } from "../i18n";
 import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
@@ -29,7 +29,7 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
         <Heading>{t("probes.observed")}</Heading>
         <Text class="text-body font-medium text-foreground">{props.result.summary}</Text>
         <Each of={props.result.observations}>{(o) => <Mono>{o()}</Mono>}</Each>
-        <Muted>{ms(props.result.durationMs)}</Muted>
+        <Muted>{duration(props.result.durationMs)}</Muted>
       </Card>
       <Heading>{t("probes.exchanges")}</Heading>
       {/* each request as the inspector draws one: its status mark, its headers boxed, its error body as a document */}
@@ -94,7 +94,7 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
               const c = row.cells[i];
               if (!c) return <Text class="text-small text-muted-foreground">—</Text>;
               return (
-                <BaseButton testID={`cell-${row.probe.id}-${i}`} accessibilityLabel={`${row.probe.id} ${props.matrix.columns[i].name} ${verdictLabel(c.verdict)}`} onPress={() => props.onOpen(row.probe, i)} class={`self-start rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted active:bg-muted ${FOCUS}`}>
+                <BaseButton testID={`cell-${row.probe.id}-${i}`} accessibilityLabel={`${row.probe.id} ${props.matrix.columns[i].name} ${verdictLabel(c.verdict)}`} onPress={() => props.onOpen(row.probe, i)} class={`self-start rounded-(--radius-sm) px-1 py-1 hover:bg-muted active:bg-muted ${FOCUS}`}>
                   <Badge label={`${SYMBOL[c.verdict]} ${verdictLabel(c.verdict)}`} tone={verdictTone(c.verdict)} />
                 </BaseButton>
               );
@@ -206,7 +206,7 @@ export function Probes() {
       <If
         when={detail()}
         else={
-          <Scroll testID="screen-probes" class="flex-1" contentClass="gap-4 p-5">
+          <Scroll testID="screen-probes" class="flex-1" contentClass="gap-4 p-4">
             <PageHeader title={t("compat.title")} subtitle={t("compat.hint")}>
               <More
                 testID="probe-more"
@@ -275,7 +275,7 @@ export function Probes() {
         }
       >
         {(d) => (
-          <Scroll class="flex-1" contentClass="p-5">
+          <Scroll class="flex-1" contentClass="p-4">
             <CellDetail probe={d().probe} result={d().result} endpointName={d().name} onBack={() => open.set(null)} />
           </Scroll>
         )}

@@ -10,7 +10,7 @@ import { copy, report, sessionsChanged, sessionsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
 import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ListRow, Modal, Muted, Notice, PageHeader, POPUP, Section, SimpleTable, Title, terminal, textual } from "./kit";
-import { cost, offset, RunTrend, Sparkline } from "./plots";
+import { cost, RunTrend, Sparkline } from "./plots";
 import { programOf, scrubCommand } from "./sessionview";
 
 /** How high a dialog's scrolling part (a comment, a file's diff) grows before it scrolls: one cap for all. */
@@ -107,7 +107,7 @@ function SinceRow(props: { h: ProgramHistory; onOpen?: (path: string) => void })
   const canDiff = () => !!(s().lastWithin && s().firstPastCommit && s().lastWithinCommit && s().firstPastCommit!.commit !== s().lastWithinCommit!.commit);
   return (
     <View testID="history-since" class="flex-row items-center gap-2">
-      <Icon name="git-compare-arrows" size={14} tint="warn" />
+      <Icon name="git-compare-arrows" tint="warn" />
       <Text class="min-w-0 flex-1 tabular-nums text-small text-foreground">{text()}</Text>
       <If when={!terminal() && canDiff()}>
         <Button small variant="outline" icon="git-compare-arrows" label={t("history.codeChangeOpen")} onPress={() => open.set(true)} testID="history-code-change" />
@@ -239,7 +239,7 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                   trigger={
                     // a small outline button, as the baseline's beside it
                     <View testID="history-range" class={CONTROL.trigger}>
-                      <Icon name="calendar-clock" size={14} />
+                      <Icon name="calendar-clock" />
                       <Text class="text-small text-foreground">{rangeText()}</Text>
                       <Icon name="chevron-down" size={12} />
                     </View>
@@ -261,11 +261,11 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
             <If when={shown(x()).runs.length > 0 && x().runs.length > 1} else={<Muted class="text-small">{x().runs.length > 1 ? t("history.noneInRange") : t("history.none")}</Muted>}>
               <If
                 when={!textual()}
-                else={<SimpleTable columns={[t("column.time"), t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={shown(x()).runs.map((r) => [date(r.created), n(r.requests), offset(r.busyMs), cost(r.cost, r.currency)])} />}
+                else={<SimpleTable columns={[t("column.time"), t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={shown(x()).runs.map((r) => [date(r.created), n(r.requests), duration(r.busyMs), cost(r.cost, r.currency)])} />}
               >
                 <View class="flex-row flex-wrap gap-3">
                   <RunTrend history={shown(x())} measure="requests" title={t("figure.requests")} format={n} onOpen={props.onOpen} />
-                  <RunTrend history={shown(x())} measure="busyMs" title={t("profile.waiting")} format={offset} onOpen={props.onOpen} />
+                  <RunTrend history={shown(x())} measure="busyMs" title={t("profile.waiting")} format={duration} onOpen={props.onOpen} />
                   <RunTrend history={shown(x())} measure="cost" title={t("profile.cost")} format={(v) => cost(v, x().runs[0]?.currency ?? "USD")} onOpen={props.onOpen} />
                   <RunTrend history={shown(x())} measure="warnings" title={t("obs.warnings")} format={n} onOpen={props.onOpen} />
                 </View>

@@ -12,6 +12,7 @@ use serde_json::json;
 
 use crate::Sonde;
 use crate::jobs::{JobCtx, Progress};
+use crate::phrase::ph;
 
 /// A bucket as a decoder source: read-only (ListObjectsV2 and GET).
 pub struct S3Source {
@@ -55,12 +56,12 @@ impl Source for S3Source {
                 }
             }));
             if let Some(c) = &self.ctx {
-                c.progress(Progress {
-                    done: out.len() as u64,
-                    total: None,
-                    bytes: 0,
-                    message: format!("listed {} objects", out.len()),
-                });
+                c.progress(Progress::say(
+                    out.len() as u64,
+                    None,
+                    0,
+                    ph!("progress.listed", n = out.len()),
+                ));
             }
             if out.len() >= self.max_objects
                 || !page.is_truncated
@@ -96,7 +97,7 @@ pub fn detect(s: &Arc<Sonde>, endpoint: &str, bucket: &str, prefix: &str) -> Str
     let settings = s.settings();
     s.jobs().spawn(
         "layout-detect",
-        &format!("Detect layouts in {b}/{p}"),
+        ph!("job.layoutDetect", bucket = b, prefix = p),
         settings.concurrency,
         settings.rate_limit,
         move |ctx| async move {
@@ -125,7 +126,7 @@ pub fn analyze(s: &Arc<Sonde>, endpoint: &str, bucket: &str, format: Format, roo
     let settings = s.settings();
     s.jobs().spawn(
         "layout",
-        &format!("{} at {b}/{r}", format.label()),
+        ph!("job.layout", format = format.label(), bucket = b, root = r),
         settings.concurrency,
         settings.rate_limit,
         move |ctx| async move {

@@ -7,11 +7,11 @@
 
 import { batch, effect, Scroll, signal, Text, untracked, View } from "nsh";
 import { t } from "../i18n";
-import { count, ms } from "../format";
+import { count, duration } from "../format";
 import type { SessionView } from "../types";
 import { Button, Notice, Options, terminal } from "./kit";
 import { findingMarks } from "./sessionview";
-import { Chains, Chart, Distribution, timed, Flows, Heat, KindsOverTime, Lanes, offset, PrefixMeasure, type PrefixMeasureKind, PrefixUse, Pressure, requestsOf, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
+import { Chains, Chart, Distribution, timed, Flows, Heat, KindsOverTime, Lanes, PrefixMeasure, type PrefixMeasureKind, PrefixUse, Pressure, requestsOf, RequestScatter, SessionShape, shapeSentence, TimeSpent } from "./plots";
 
 /** The Time pane of a session. */
 export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void }) {
@@ -70,14 +70,14 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       <If when={!terminal() && shaped()}>
         <Chart
           title={t("timeline.title")}
-          text={zoom() ? t("timeline.zoomed", { a: offset(zoomMs()![0]), b: offset(zoomMs()![1]) }) : zoomFrom() !== null ? t("timeline.zoomFrom", { t: offset((zoomFrom() ?? 0) * p().binMs) }) : t("timeline.hint")}
+          text={zoom() ? t("timeline.zoomed", { a: duration(zoomMs()![0]), b: duration(zoomMs()![1]) }) : zoomFrom() !== null ? t("timeline.zoomFrom", { t: duration((zoomFrom() ?? 0) * p().binMs) }) : t("timeline.hint")}
           action={
             <If when={zoom() || zoomFrom() !== null}>
               <Button small variant="outline" icon="x" label={t("timeline.unzoom")} onPress={() => batch(() => (zoom.set(null), zoomFrom.set(null)))} testID="zoom-reset" />
             </If>
           }
         >
-          <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} range={zoom()} slice={zoomFrom()} onSlice={pick} class="mb-5 mt-4 h-28 w-full" testID="time-shape" />
+          <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} range={zoom()} slice={zoomFrom()} onSlice={pick} class="mb-6 mt-4 h-28 w-full" testID="time-shape" />
         </Chart>
       </If>
       <View class={row}>
@@ -87,7 +87,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
             class={half}
             title={t("scatter.title")}
             // above what a session keeps of its requests, the dots are of a sample: said
-            text={scatterBy() === "kinds" ? t("kinds.title") : `${t("scatter.text", { n: shown(), p95: ms(p().p95Ms ?? 0) })}${p().samples.length < requestsOf(p()) ? ` · ${t("plots.sampled", { n: count(p().samples.length), of: count(requestsOf(p())) })}` : ""}`}
+            text={scatterBy() === "kinds" ? t("kinds.title") : `${t("scatter.text", { n: shown(), p95: duration(p().p95Ms ?? 0) })}${p().samples.length < requestsOf(p()) ? ` · ${t("plots.sampled", { n: count(p().samples.length), of: count(requestsOf(p())) })}` : ""}`}
             action={<Options testID="scatter-by" value={scatterBy()} items={[{ value: "time", title: t("scatter.byTime") }, { value: "size", title: t("scatter.bySize") }, ...((p().groupRate?.length ?? 0) > 0 ? [{ value: "kinds", title: t("scatter.byKind") }] : [])]} onChange={(v) => scatterBy.set(v as "time" | "size" | "kinds")} />}
           >
             {/* every request, or the busiest kinds each over time (their median to p95) */}

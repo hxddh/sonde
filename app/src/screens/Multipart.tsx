@@ -180,7 +180,7 @@ export function Multipart() {
                         : (c) =>
                             c.key === "flag" ? (
                               c.text ? (
-                                <Icon name="triangle-alert" size={13} tint="warn" />
+                                <Icon name="triangle-alert" size={12} tint="warn" />
                               ) : (
                                 <View />
                               )

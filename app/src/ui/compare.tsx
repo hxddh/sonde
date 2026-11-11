@@ -3,7 +3,7 @@
 
 import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, DiffView } from "nsh/base";
-import { change, count, date, ms } from "../format";
+import { change, count, date, duration } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
@@ -12,7 +12,7 @@ import type { LatencyChange, RunChange, SessionInfo } from "../types";
 import { Icon } from "./icon";
 import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Figure, Modal, Muted, Notice, PageHeader, ROW, rowHeight, Section, TABLE, terminal, Title, TYPE } from "./kit";
 import { fileName, sessionName } from "./manage";
-import { cost, DistributionCompare, groupName, offset, PrefixChangeMap, RunBars, StoreLatency } from "./plots";
+import { cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
   compared: number;
@@ -43,8 +43,8 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
       <Card>
         <View class="flex-row flex-wrap gap-x-6 gap-y-3">
           <Delta testID="run-change-requests" label={t("figure.requests")} a={c().requests[0]} b={c().requests[1]} text={n} />
-          <Delta label={t("profile.waiting")} a={c().busyMs[0]} b={c().busyMs[1]} text={offset} />
-          <Delta label={t("figure.took")} a={c().wallMs[0]} b={c().wallMs[1]} text={offset} />
+          <Delta label={t("profile.waiting")} a={c().busyMs[0]} b={c().busyMs[1]} text={duration} />
+          <Delta label={t("figure.took")} a={c().wallMs[0]} b={c().wallMs[1]} text={duration} />
           <Delta label={t("figure.errors")} a={c().errors[0]} b={c().errors[1]} text={n} />
           <Delta label={t("profile.cost")} a={c().cost[0]} b={c().cost[1]} text={(v) => cost(v, c().currency)} />
         </View>
@@ -79,7 +79,7 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
                 {(x) => (
                   <View class="flex-row items-start gap-2">
                     <View class="h-5 shrink-0 justify-center">
-                      <Icon name="circle-check" size={14} tint="status-ok" />
+                      <Icon name="circle-check" tint="status-ok" />
                     </View>
                     <Text class="min-w-0 flex-1 text-body leading-5 text-foreground">
                       <Text class="font-medium text-status-ok">{`${t("profile.resolved")} · `}</Text>
@@ -92,7 +92,7 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
                 {(x) => (
                   <View class="flex-row items-start gap-2">
                     <View class="h-5 shrink-0 justify-center">
-                      <Icon name="triangle-alert" size={14} tint="warn" />
+                      <Icon name="triangle-alert" tint="warn" />
                     </View>
                     <Text class="min-w-0 flex-1 text-body leading-5 text-foreground">
                       <Text class="font-medium text-warn">{`${t("profile.appeared")} · `}</Text>
@@ -265,8 +265,8 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
     { what: t("matrix.differ"), recorded: "—", ...Object.fromEntries(props.runs.map((r, i) => [`s${i}`, t("matrix.of", { n: r.differ, of: r.compared })])) },
     ...kinds().map((k) => ({
       what: `${groupName(k)} · p95`,
-      recorded: ms(k.p95Ms[0]),
-      ...Object.fromEntries(props.runs.map((r, i) => [`s${i}`, p95(r, k) === undefined ? "" : ms(p95(r, k)!)])),
+      recorded: duration(k.p95Ms[0]),
+      ...Object.fromEntries(props.runs.map((r, i) => [`s${i}`, p95(r, k) === undefined ? "" : duration(p95(r, k)!)])),
     })),
   ];
   return (

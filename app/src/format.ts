@@ -123,9 +123,6 @@ export function duration(v: number): string {
   return `${sign}${Math.floor(m / 60)} h ${p2(m % 60)} min`;
 }
 
-/** A request's or an operation's time: `duration`, under its older name. */
-export const ms = duration;
-
 /** A share as people read it: whole percents, "<1%" for a sliver, "0%" for none. */
 export function percent(fraction: number): string {
   if (!Number.isFinite(fraction) || fraction === 0) return "0%";

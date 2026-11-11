@@ -27,9 +27,9 @@ function Breadcrumbs() {
   return (
     <View class="min-w-0 flex-row flex-wrap items-center gap-1">
       {/* links of the path (the last one the place shown): screen readers hear them so */}
-      <Link testID="crumb-root" href={`s3://${bucket()}/`} openWith="app" onOpen={() => prefix.set("")} current={parts().length === 0} accessibilityLabel={bucket() ?? ""} class={`flex-row items-center gap-1 rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted ${FOCUS}`}>
+      <Link testID="crumb-root" href={`s3://${bucket()}/`} openWith="app" onOpen={() => prefix.set("")} current={parts().length === 0} accessibilityLabel={bucket() ?? ""} class={`flex-row items-center gap-1 rounded-(--radius-sm) px-1 py-1 hover:bg-muted ${FOCUS}`}>
         <If when={!terminal()}>
-          <Icon name="database" size={14} tint="foreground" />
+          <Icon name="database" tint="foreground" />
         </If>
         <Text class="text-body font-semibold text-foreground">{bucket()}</Text>
       </Link>
@@ -39,7 +39,7 @@ function Breadcrumbs() {
             <If when={!terminal()} else={<Text class="text-muted-foreground">/</Text>}>
               <Icon name="chevron-right" size={12} />
             </If>
-            <Link href={`s3://${bucket()}/${p().prefix}`} openWith="app" onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} accessibilityLabel={p().name} class={`rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted ${FOCUS}`}>
+            <Link href={`s3://${bucket()}/${p().prefix}`} openWith="app" onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} accessibilityLabel={p().name} class={`rounded-(--radius-sm) px-1 py-1 hover:bg-muted ${FOCUS}`}>
               <Text class={i() === parts().length - 1 ? "text-body font-medium text-foreground" : "text-body text-muted-foreground"}>{p().name}</Text>
             </Link>
           </View>
@@ -464,7 +464,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                   {(h) => (
                     <ListRow label={h().key} selected={props.selected === h().key} onPress={() => props.onSelect(h())}>
                       <View class="shrink-0">
-                        <Icon name={h().isPrefix ? "folder" : "file"} size={14} tint="muted-foreground" />
+                        <Icon name={h().isPrefix ? "folder" : "file"} tint="muted-foreground" />
                       </View>
                       <Path path={h().key} max={96} class="min-w-0 flex-1 text-foreground" />
                     </ListRow>
@@ -511,7 +511,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                       const folder = rows()[c.row - start()]?.isPrefix ?? false;
                       return (
                         <View class="flex-1 flex-row items-center gap-2">
-                          <Icon name={folder ? "folder" : "file"} size={14} tint={folder ? "foreground" : "muted-foreground"} />
+                          <Icon name={folder ? "folder" : "file"} tint={folder ? "foreground" : "muted-foreground"} />
                           <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${folder ? "font-medium text-foreground" : "text-foreground"}`}>{c.text}</Text>
                         </View>
                       );
@@ -574,7 +574,7 @@ export function Browse() {
           when={terminal()}
           else={
             <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("browse.resizeDetail")}>
-              <ResizablePanel minSize={420} class="min-w-0 gap-3 px-5 py-4">
+              <ResizablePanel minSize={420} class="min-w-0 gap-3 px-4 py-4">
                 <Overview />
                 <Objects onSelect={(e) => selected.set(e)} selected={selected()?.key ?? null} />
               </ResizablePanel>

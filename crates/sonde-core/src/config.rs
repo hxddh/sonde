@@ -51,17 +51,25 @@ pub enum CredentialSource {
 
 impl CredentialSource {
     pub fn describe(&self) -> String {
+        crate::phrase::say(&self.describe_text())
+    }
+
+    /// [`Self::describe`] as a phrase.
+    pub fn describe_text(&self) -> crate::Phrase {
+        use crate::phrase::ph;
         match self {
-            CredentialSource::Default => "default chain".into(),
-            CredentialSource::Profile { name } => format!("profile {name}"),
+            CredentialSource::Default => ph!("cred.default"),
+            CredentialSource::Profile { name } => ph!("cred.profile", name = name),
             CredentialSource::Env {
                 access_key_id_var, ..
-            } => format!("env ${access_key_id_var}"),
-            CredentialSource::Imds => "instance role (IMDSv2)".into(),
-            CredentialSource::WebIdentity { role_arn, .. } => format!("web identity {role_arn}"),
-            CredentialSource::Process { .. } => "credential_process".into(),
-            CredentialSource::Static { .. } => "static keys (config file)".into(),
-            CredentialSource::Anonymous => "anonymous".into(),
+            } => ph!("cred.env", var = access_key_id_var),
+            CredentialSource::Imds => ph!("cred.imds"),
+            CredentialSource::WebIdentity { role_arn, .. } => {
+                ph!("cred.webIdentity", role = role_arn)
+            }
+            CredentialSource::Process { .. } => ph!("cred.process"),
+            CredentialSource::Static { .. } => ph!("cred.static"),
+            CredentialSource::Anonymous => ph!("cred.anonymous"),
         }
     }
 }

@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 
 use crate::model::*;
+use crate::ph;
 use crate::source::{ObjectMeta, Source, SourceError};
 
 pub const KNOWN_VERSIONS: &[u16] = &[5, 6];
@@ -170,7 +171,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         let Some((log, seg, name)) = parse_key(rel) else {
             l.issues.push(issue(
                 Severity::Info,
-                format!("unexpected object {}", o.key),
+                ph!("wp.unexpected", key = o.key),
             ));
             continue;
         };
@@ -200,7 +201,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         ],
     );
     let mut versions = std::collections::BTreeSet::new();
-    let mut sealed_events: Vec<(Option<DateTime<Utc>>, String)> = vec![];
+    let mut sealed_events: Vec<(Option<DateTime<Utc>>, crate::Phrase)> = vec![];
     let (mut sealed, mut active, mut entries_total) = (0, 0, 0i64);
     for ((log, seg), s) in &segs {
         let bytes: u64 = s
@@ -229,7 +230,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             if recs.iter().any(|r| !r.crc_ok) {
                 l.issues.push(issue(
                     Severity::Error,
-                    format!("{}: a record fails its CRC32", f.key),
+                    ph!("wp.crc", key = f.key),
                 ));
             }
             match recs.iter().rev().find(|r| r.kind == FOOTER) {
@@ -237,8 +238,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                     let ft = footer(&fr.payload);
                     versions.insert(ft.version);
                     if !KNOWN_VERSIONS.contains(&ft.version) {
-                        l.issues.push(issue(Severity::Error, format!("{}: unknown footer version {} (sonde decodes 5 and 6); not decoded", f.key, ft.version)));
-                        state = "unknown version".to_string();
+                        l.issues.push(issue(
+                            Severity::Error,
+                            ph!("wp.footer.version", key = f.key, v = ft.version),
+                        ));
+                        state = ph!("wp.state.unknown");
                         nblocks = String::from("?");
                         entries = String::from("?");
                         lac = String::from("?");
@@ -254,11 +258,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                         if idx.len() as i32 != ft.total_blocks {
                             l.issues.push(issue(
                                 Severity::Warning,
-                                format!(
-                                    "{}: {} index records for {} blocks",
-                                    f.key,
-                                    idx.len(),
-                                    ft.total_blocks
+                                ph!(
+                                    "wp.index.count",
+                                    key = f.key,
+                                    n = idx.len(),
+                                    blocks = ft.total_blocks
                                 ),
                             ));
                         }
@@ -270,16 +274,19 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                         if (have as i32) < ft.total_blocks {
                             l.issues.push(issue(
                                 Severity::Error,
-                                format!(
-                                    "log {log} segment {seg}: footer lists {} blocks, {} exist",
-                                    ft.total_blocks, have
+                                ph!(
+                                    "wp.blocks.missing",
+                                    log = log,
+                                    seg = seg,
+                                    n = ft.total_blocks,
+                                    have = have
                                 ),
                             ));
                         }
                         state = if ft.compacted {
-                            "sealed, compacted".into()
+                            ph!("wp.state.compacted")
                         } else {
-                            "sealed".into()
+                            ph!("wp.state.sealed")
                         };
                         nblocks = ft.total_blocks.to_string();
                         entries = n_entries.to_string();
@@ -287,14 +294,14 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                     }
                     sealed += 1;
                     sealed_events
-                        .push((f.last_modified, format!("log {log} segment {seg} sealed")));
+                        .push((f.last_modified, ph!("wp.sealed", log = log, seg = seg)));
                 }
                 None => {
                     l.issues.push(issue(
                         Severity::Error,
-                        format!("{}: no footer record", f.key),
+                        ph!("wp.footer.none", key = f.key),
                     ));
-                    state = "corrupt footer".into();
+                    state = ph!("wp.state.corrupt");
                     nblocks = s.blocks.len().to_string();
                     entries = "?".into();
                     lac = "?".into();
@@ -311,7 +318,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             {
                 l.issues.push(issue(
                     Severity::Error,
-                    format!("log {log} segment {seg}: block ids {a}–{b} have gaps"),
+                    ph!("wp.blocks.gaps", log = log, seg = seg, from = a, to = b),
                 ));
             }
             for (n, o) in &s.blocks {
@@ -321,7 +328,10 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                     let v = le_u16(&h.payload, 0);
                     versions.insert(v);
                     if !KNOWN_VERSIONS.contains(&v) {
-                        l.issues.push(issue(Severity::Error, format!("{}: unknown format version {v} (sonde decodes 5 and 6); not decoded", o.key)));
+                        l.issues.push(issue(
+                            Severity::Error,
+                            ph!("wp.version", key = o.key, v = v),
+                        ));
                     }
                 }
                 match recs.iter().find(|r| r.kind == BLOCK_HEADER) {
@@ -330,7 +340,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                         if bn as i64 != *n {
                             l.issues.push(issue(
                                 Severity::Warning,
-                                format!("{}: names block {n} but holds block {bn}", o.key),
+                                ph!("wp.block.name", key = o.key, n = n, holds = bn),
                             ));
                         }
                         first_e = first_e.or(Some(f));
@@ -338,7 +348,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                     }
                     None => l.issues.push(issue(
                         Severity::Warning,
-                        format!("{}: no block header", o.key),
+                        ph!("wp.block.noheader", key = o.key),
                     )),
                 }
             }
@@ -348,22 +358,24 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             };
             entries_total += n;
             state = if s.lock {
-                "active (locked)".into()
+                ph!("wp.state.locked")
             } else {
-                "active".into()
+                ph!("wp.state.active")
             };
             nblocks = s.blocks.len().to_string();
             entries = n.to_string();
             lac = "—".into();
         }
-        l.timeline.push(Event {
-            time: first,
-            kind: "segment".into(),
-            label: format!("log {log} segment {seg} started"),
-            detail: state.clone(),
-            key: None,
-            bytes: Some(bytes),
-        });
+        l.timeline.push(
+            Event::new(
+                first,
+                "segment",
+                ph!("wp.started", log = log, seg = seg),
+                state.clone(),
+            )
+            .sized(bytes),
+        );
+        let state = crate::phrase::say(&state);
         table.row(vec![
             log.to_string(),
             seg.to_string(),
@@ -377,14 +389,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         ]);
     }
     for (t, label) in &sealed_events {
-        l.timeline.push(Event {
-            time: *t,
-            kind: "seal".into(),
-            label: label.clone(),
-            detail: String::new(),
-            key: None,
-            bytes: None,
-        });
+        l.timeline
+            .push(Event::new(*t, "seal", label.clone(), vec![]));
     }
     l.format_version = Some(
         versions
@@ -427,14 +433,14 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             tables: vec![],
         });
     }
-    l.headline = format!(
-        "Woodpecker: {} logs, {} segments ({} sealed, {} active), {} entries",
-        logs.len(),
-        segs.len(),
-        sealed,
-        active,
-        entries_total
-    );
+    l.say_headline(ph!(
+        "wp.headline",
+        logs = logs.len(),
+        segs = segs.len(),
+        sealed = sealed,
+        active = active,
+        entries = entries_total
+    ));
     Ok(l)
 }
 

@@ -7,10 +7,10 @@
 import { type ContextMenuEvent, effect, type JSX, List, Scroll, type ScrollRef, signal, Text, token, untracked, View } from "nsh";
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, DataTable, type DataTableRef, type DataTableSort, Popover, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
-import { bytes, change, clock, count, date, day, duration as took, hm, middle, ms } from "../format";
+import { bytes, change, clock, count, date, day, duration, hm, middle } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { cost, groupName, offset, sessionStory, SessionShape, Sparkline, timed, Waterfall } from "./plots";
+import { cost, groupName, sessionStory, SessionShape, Sparkline, timed, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
 import { Button, CARD, Dot, Empty, FOCUS, Heading, InWindowMenu, ListRow, Options, POPUP, ROW, ROW_STATE, rowHeight, TABLE, terminal, TYPE } from "./kit";
@@ -204,7 +204,7 @@ export const toneText = (t: Tone) => TONE_TEXT[t];
 export function StatusMark(props: { status: number | null; text?: string }) {
   const tone = () => statusTone(props.status);
   return (
-    <View class="flex-row items-center gap-1.5">
+    <View class="flex-row items-center gap-2">
       <Dot tone={tone()} />
       <Text class={`font-mono text-caption tabular-nums ${tone() === "ok" ? "text-muted-foreground" : `font-semibold ${TONE_TEXT[tone()]}`}`}>{props.text ?? (props.status === null ? "—" : String(props.status))}</Text>
     </View>
@@ -222,7 +222,8 @@ function family(e: Episode): { label: string; class: string } {
   return k ? { label: k, class: e.kind === "multipart" ? "text-fmt-mpu" : "text-fmt-other" } : { label: "", class: "" };
 }
 
-export const duration = (e: Episode) => time(e.end) - time(e.start);
+/** How long an operation ran, in ms (a number: `duration` writes it). */
+export const episodeMs = (e: Episode) => time(e.end) - time(e.start);
 
 /** The session's span in time: its first start, its last end. */
 export function span(v: SessionView): [number, number] {
@@ -242,7 +243,7 @@ export function span(v: SessionView): [number, number] {
  * does. */
 export function Figure(props: { value: string; label: string; tone?: Tone; preview?: JSX.Element; testID?: string }) {
   const body = (
-    <View class="gap-0.5">
+    <View class="gap-1">
       <Text class={`tabular-nums text-heading font-semibold ${props.tone ? TONE_TEXT[props.tone] : "text-foreground"}`}>{props.value}</Text>
       <Text class="text-caption text-muted-foreground">{props.label}</Text>
     </View>
@@ -274,14 +275,14 @@ function KindsPreview(props: { profile: Profile; by: "requests" | "time" }) {
   const total = () => rows().reduce((m, g) => Math.max(m, props.by === "requests" ? g.requests : g.busyMs), 0) || 1;
   const value = (g: ProfileGroup) => (props.by === "requests" ? g.requests : g.busyMs);
   return (
-    <View testID={`preview-${props.by}`} class="gap-1.5">
+    <View testID={`preview-${props.by}`} class="gap-2">
       <Text class="text-caption font-medium text-muted-foreground">{props.by === "requests" ? t("figure.requests") : t("profile.spentTitle")}</Text>
       <Each of={rows()}>
         {(g) => (
-          <View class="gap-0.5">
+          <View class="gap-1">
             <View class="flex-row items-baseline gap-2">
               <Text class="min-w-0 flex-1 text-small text-popover-foreground line-clamp-1">{groupName(g())}</Text>
-              <Text class="tabular-nums text-caption text-muted-foreground">{props.by === "requests" ? String(g().requests) : offset(g().busyMs)}</Text>
+              <Text class="tabular-nums text-caption text-muted-foreground">{props.by === "requests" ? String(g().requests) : duration(g().busyMs)}</Text>
             </View>
             <View class="h-1 overflow-hidden rounded-full bg-muted">
               <View class="h-full rounded-full bg-chart-1" style={{ width: `${Math.max(2, Math.round((value(g()) * 100) / total()))}%` }} />
@@ -303,7 +304,7 @@ export function gitText(g: SessionView["header"]["git"]): string {
 export function SessionHeader(props: { view: SessionView; actions?: JSX.Element }) {
   const s = () => props.view.summary;
   const line = () => {
-    const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: took(s().seconds * 1000) })];
+    const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: duration(s().seconds * 1000) })];
     if (s().errors) parts.push(t("timeline.errors", { n: s().errors }));
     if (s().misses) parts.push(t("timeline.notFound", { n: s().misses }));
     parts.push(`↑${bytes(s().bytesUp)} ↓${bytes(s().bytesDown)}`);
@@ -339,10 +340,10 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element 
       <View testID="session-summary" accessibilityLabel={line()} class="-ml-2 flex-row flex-wrap">
           <Figure testID="figure-requests" value={count(s().requests)} label={t("figure.requests")} preview={props.view.profile?.groups.length ? <KindsPreview profile={props.view.profile} by="requests" /> : undefined} />
           <Figure value={count(props.view.episodes.length)} label={t("figure.operations")} />
-          <Figure value={offset(s().seconds * 1000)} label={t("figure.took")} />
+          <Figure value={duration(s().seconds * 1000)} label={t("figure.took")} />
           {/* the program's time on S3: one figure, with its share, and what it was made of */}
           <If when={props.view.profile?.groups.length && timed(props.view.profile)}>
-            <Figure testID="profile-waiting" value={offset(props.view.profile.busyMs)} label={`${t("profile.waiting")} · ${Math.round((props.view.profile.busyMs * 100) / Math.max(props.view.profile.wallMs, 1e-9))}%`} preview={<KindsPreview profile={props.view.profile} by="time" />} />
+            <Figure testID="profile-waiting" value={duration(props.view.profile.busyMs)} label={`${t("profile.waiting")} · ${Math.round((props.view.profile.busyMs * 100) / Math.max(props.view.profile.wallMs, 1e-9))}%`} preview={<KindsPreview profile={props.view.profile} by="time" />} />
           </If>
           <If when={props.view.profile && props.view.profile.cost.amount > 0}>
             <Figure testID="profile-cost" value={cost(props.view.profile.cost.amount, props.view.profile.cost.currency)} label={t("profile.cost")} />
@@ -395,7 +396,7 @@ function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void;
   return (
     <View testID="fix" class="gap-2">
       <View class="flex-row flex-wrap items-center gap-2">
-        <Icon name="sparkles" size={13} />
+        <Icon name="sparkles" size={12} />
         <Text role="header" class="flex-1 text-small font-semibold text-foreground">{t("fix.title")}</Text>
         <Options testID="fix-sdk" value={shown()?.sdk ?? ""} items={fixes().map((f) => ({ value: f.sdk, title: SDKS[f.sdk] }))} onChange={(v) => fixSdk.set(v as keyof typeof SDKS)} />
         {/* or no change: a habit kept on purpose, which sonde check then expects */}
@@ -413,7 +414,7 @@ function FixPanel(props: { o: Observation; onOpenCode?: (place: string) => void;
       </If>
       {/* where in the program, when it said: the place to change */}
       <If when={props.o.callers?.length}>
-        <View testID="fix-callers" class="gap-0.5">
+        <View testID="fix-callers" class="gap-1">
           <Each of={props.o.callers!} key={(c) => c.place}>
             {(c) => (
               // a shared page cannot open the code: the place is said, not offered
@@ -471,7 +472,7 @@ export function whatIfText(v: SessionView): string | null {
   const cut = w.cost[0] > 0 ? change(w.cost[0], w.cost[1]) : "—";
   // a log without times says nothing of waiting
   if (!timed(v.profile)) return t("whatIf.untimed", { n: w.findings, a: w.requests[0], b: w.requests[1], cut });
-  return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: offset(w.waitingMs[0]), wb: offset(w.waitingMs[1]), cut });
+  return t("whatIf.text", { n: w.findings, a: w.requests[0], b: w.requests[1], wa: duration(w.waitingMs[0]), wb: duration(w.waitingMs[1]), cut });
 }
 
 /** What stands out in a session — its core result. Each finding says what
@@ -523,18 +524,18 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       selected={props.filter === i()}
       disabled={!props.onFilter || !o().episodes?.length}
       onPress={() => press(i())}
-      class={`group flex-row items-start gap-2 px-3 ${dense() ? "py-1.5" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${FOCUS} ${i() > 0 ? "border-t border-border" : ""}`}
+      class={`group flex-row items-start gap-2 px-3 ${dense() ? "py-1" : "py-2"} hover:bg-row-hover selected:bg-selection disabled:hover:bg-transparent ${FOCUS} ${i() > 0 ? "border-t border-border" : ""}`}
     >
       {/* its number, in its level's tone: where it stands on the session's shape */}
-      <View class={`mt-0.5 size-4 items-center justify-center rounded-full ${o().level === "warn" ? "bg-warn/15" : "bg-muted"}`}>
+      <View class={`mt-1 size-4 items-center justify-center rounded-full ${o().level === "warn" ? "bg-warn/15" : "bg-muted"}`}>
         <Text class={`tabular-nums text-caption font-semibold ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{String(i() + 1)}</Text>
       </View>
-      <View class="min-w-0 flex-1 gap-0.5">
+      <View class="min-w-0 flex-1 gap-1">
         <Text class={`text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
         <If when={(!dense() || props.filter === i()) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
         <If when={(!dense() || props.filter === i()) && !props.compact && observationSaving(o())}>
           {(v) => (
-            <View class="flex-row items-center gap-1 pt-0.5">
+            <View class="flex-row items-center gap-1 pt-1">
               <Icon name="trending-down" size={12} tint="info" />
               <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small font-medium text-info">{v()}</Text>
             </View>
@@ -565,9 +566,9 @@ export function Observations(props: { view: SessionView; filter?: number | null;
         <AccordionItem value="findings" testID="observations" class="gap-2">
           <If when={!props.compact}>
             <AccordionHeader level={3} class="flex-row flex-wrap items-center gap-x-3 gap-y-1">
-              <AccordionTrigger testID="observations-toggle" class={`group flex-row items-center gap-1.5 rounded-(--radius-sm) py-0.5 pr-1 ${FOCUS}`}>
+              <AccordionTrigger testID="observations-toggle" class={`group flex-row items-center gap-2 rounded-(--radius-sm) py-1 pr-1 ${FOCUS}`}>
                 <View class="group-aria-expanded:rotate-90 motion-safe:transition-transform motion-safe:duration-150">
-                  <Icon name="chevron-right" size={13} tint="muted-foreground" />
+                  <Icon name="chevron-right" size={12} tint="muted-foreground" />
                 </View>
                 <Text class="text-body font-semibold text-foreground">{t("obs.title")}</Text>
                 <Text class="text-body text-muted-foreground">{`· ${props.view.observations.length}`}</Text>
@@ -627,7 +628,7 @@ export function operationsText(view: SessionView, order: number[]): string {
   const head = [t("column.time"), t("column.operation"), t("column.requests"), t("sessions.tookMs"), t("column.notes")];
   const rows = order.flatMap((i) => {
     const e = view.episodes[i];
-    return e ? [[e.start, plain(episodeTitle(e)), String(e.records.length), String(Number(duration(e).toFixed(3))), plain(episodeNotes(e, view.sharedNotes).join(" · "))]] : [];
+    return e ? [[e.start, plain(episodeTitle(e)), String(e.records.length), String(Number(episodeMs(e).toFixed(3))), plain(episodeNotes(e, view.sharedNotes).join(" · "))]] : [];
   });
   return [head, ...rows].map((r) => r.join("\t")).join("\n");
 }
@@ -652,7 +653,7 @@ export function OperationsTable(props: {
     if (!s) return list;
     const by = (i: number) => {
       const e = props.view.episodes[i];
-      return s.key === "duration" ? duration(e) : s.key === "requests" ? e.records.length : time(e.start);
+      return s.key === "duration" ? episodeMs(e) : s.key === "requests" ? e.records.length : time(e.start);
     };
     const dir = s.direction === "descending" ? -1 : 1;
     return [...list].sort((a, b) => (by(a) - by(b)) * dir || a - b);
@@ -718,7 +719,7 @@ export function OperationsTable(props: {
         // cut in the middle: the end of a key is what tells two apart
         title: terminal() ? middle(e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72) : fit(episodeTitle(e)),
         requests: count(e.records.length),
-        duration: ms(duration(e)),
+        duration: duration(episodeMs(e)),
         bar: "",
         notes: notes(e),
       };
@@ -737,7 +738,7 @@ export function OperationsTable(props: {
       case "format":
         // what wrote it, as a tag: a mark in its color and its name, quiet
         return (
-          <View class="flex-1 flex-row items-center gap-1.5">
+          <View class="flex-1 flex-row items-center gap-2">
             <View class={`size-1.5 rounded-full ${family(e).class.replace("text-", "bg-")}`} />
             <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{c.text}</Text>
           </View>
@@ -748,7 +749,7 @@ export function OperationsTable(props: {
         const [a, b] = range();
         const total = b - a;
         const left = Math.max(0, (time(e.start) - a) / total);
-        const width = Math.max(0.006, duration(e) / total);
+        const width = Math.max(0.006, episodeMs(e) / total);
         return (
           <View class="flex-1 flex-row items-center">
             <View class="h-1.5 flex-1 flex-row overflow-hidden rounded-full bg-bar-track">
@@ -865,7 +866,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
   const fam = () => family(e());
   return (
     <View class="gap-4" testID="operation-detail">
-      <View class="gap-1.5">
+      <View class="gap-2">
         <View class="flex-row items-center gap-2">
           {props.back}
           <If when={fam().label}>
@@ -873,7 +874,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
           </If>
           <View class="flex-1" />
           <If when={e().outcome.kind !== "ok"}>
-            <View class="flex-row items-center gap-1.5">
+            <View class="flex-row items-center gap-2">
               <Dot tone={episodeTone(e())} />
               <Text class={`text-small font-medium ${TONE_TEXT[episodeTone(e())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
             </View>
@@ -882,10 +883,10 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         <Text class="text-heading font-semibold leading-5 text-foreground">
           {episodeTitle(e())}
         </Text>
-        <Text class="tabular-nums text-caption text-muted-foreground">{`${clock(e().start)} · ${ms(duration(e()))} · ↑${bytes(e().bytesUp)} ↓${bytes(e().bytesDown)}`}</Text>
+        <Text class="tabular-nums text-caption text-muted-foreground">{`${clock(e().start)} · ${duration(episodeMs(e()))} · ↑${bytes(e().bytesUp)} ↓${bytes(e().bytesDown)}`}</Text>
       </View>
       <If when={notes().length > 0}>
-        <View class="gap-1.5">
+        <View class="gap-2">
           <Each of={notes()}>
             {(n) => (
               <View class="flex-row gap-2">
@@ -918,8 +919,8 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
                     <Text class="text-small text-foreground line-clamp-1">{r().operation}</Text>
                     <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{middle(r().target, 40)}</Text>
                   </View>
-                  <Text class="text-small tabular-nums text-muted-foreground">{ms(r().latencyMs)}</Text>
-                  <Icon name="chevron-right" size={13} />
+                  <Text class="text-small tabular-nums text-muted-foreground">{duration(r().latencyMs)}</Text>
+                  <Icon name="chevron-right" size={12} />
                 </ListRow>
               </View>
             )}
@@ -993,7 +994,7 @@ export function SessionList(props: {
       accessibilityLabel={x().s.title ?? (x().s.command ? scrubCommand(x().s.command!) : x().s.name)}
       selected={props.selected === x().s.path}
       onPress={() => props.onSelect(x().s.path)}
-      class={`mb-0.5 gap-0.5 rounded-(--radius-sm) px-2 py-1.5 ${ROW_STATE} ${FOCUS}`}
+      class={`mb-1 gap-1 rounded-(--radius-sm) px-2 py-1 ${ROW_STATE} ${FOCUS}`}
     >
       <View class="flex-row items-center gap-2">
         <If when={x().s.live}>

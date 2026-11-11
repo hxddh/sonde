@@ -145,12 +145,7 @@ mod tests {
         s.set_settings(st).unwrap();
         // a directory where the log file should be
         std::fs::create_dir_all(s.paths().audit_log()).unwrap();
-        let item = PlanItem {
-            key: "k".into(),
-            id: Some("v".into()),
-            bytes: None,
-            detail: String::new(),
-        };
+        let item = PlanItem::new("k", Some("v".into()), None, vec![]);
         let plan = s
             .guard()
             .plan(Action::DeleteVersions, "e", "b", vec![item], None, None);
@@ -175,12 +170,7 @@ mod tests {
         let mut st = s.settings();
         st.read_only = false;
         s.set_settings(st).unwrap();
-        let item = PlanItem {
-            key: "k".into(),
-            id: Some("v".into()),
-            bytes: None,
-            detail: String::new(),
-        };
+        let item = PlanItem::new("k", Some("v".into()), None, vec![]);
         let plan = s
             .guard()
             .plan(Action::DeleteVersions, "e", "b", vec![item], None, None);

@@ -23,6 +23,7 @@ pub mod replay;
 pub mod report;
 pub mod session;
 pub mod share;
+pub mod signals;
 pub mod summary;
 pub mod trial;
 

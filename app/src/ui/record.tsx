@@ -4,7 +4,7 @@
 
 import { type JSX, signal, Text, View } from "nsh";
 import { Editor, type EditorDiagnostic } from "nsh/base";
-import { bytes, count, day, ms } from "../format";
+import { bytes, count, day, duration } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
 import { Back, Disclosure, KeyValue, Notice, terminal } from "./kit";
@@ -106,8 +106,8 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
     [
       [t("column.time"), `${day(r().time)} ${clock(r().time)}`],
       [t("common.endpoint"), r().endpoint],
-      [t("requests.latency"), ms(r().latencyMs)],
-      ...(r().firstByteMs != null ? [[t("requests.firstByte"), ms(r().firstByteMs!)] as [string, string]] : []),
+      [t("requests.latency"), duration(r().latencyMs)],
+      ...(r().firstByteMs != null ? [[t("requests.firstByte"), duration(r().firstByteMs!)] as [string, string]] : []),
       ...(r().requester ? [[t("requests.requester"), r().requester!] as [string, string]] : []),
       [t("requests.size"), `↑${bytes(r().requestBytes ?? 0)} ↓${bytes(r().responseBytes ?? 0)}`],
       [t("requests.retries"), count(r().retries)],

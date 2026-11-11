@@ -84,12 +84,12 @@ function Breadcrumb() {
     return crumb();
   };
   return (
-    <View class="min-w-0 flex-row items-center gap-1.5">
+    <View class="min-w-0 flex-row items-center gap-2">
       <Text class="text-body font-semibold text-foreground">{areaLabel(area())}</Text>
       <If when={detail()}>
         {(d) => (
           <>
-            <Icon name="chevron-right" size={13} />
+            <Icon name="chevron-right" size={12} />
             <Text class="min-w-0 shrink text-body text-muted-foreground line-clamp-1">{d()}</Text>
           </>
         )}
@@ -118,9 +118,9 @@ export function EndpointSwitcher(props: { class?: string }) {
       inputClass="min-w-0 flex-1 text-body text-foreground placeholder:text-foreground"
       popupClass={`min-w-[260px] ${POPUP}`}
       popupStyle={glass}
-      itemClass="group rounded-(--radius-sm) px-2 py-1.5 focus:bg-accent"
-      prefix={<Icon name="server" size={14} />}
-      triggerButton={<Icon name="chevrons-up-down" size={13} />}
+      itemClass="group rounded-(--radius-sm) px-2 py-1 focus:bg-accent"
+      prefix={<Icon name="server" />}
+      triggerButton={<Icon name="chevrons-up-down" size={12} />}
       empty={<Text class="px-2 py-2 text-small text-muted-foreground">{t("endpoints.noneYet")}</Text>}
       renderItem={(item) => {
         const e = endpoints().find((x) => x.id === item.value);
@@ -135,8 +135,8 @@ export function EndpointSwitcher(props: { class?: string }) {
         );
       }}
       footer={
-        <BaseButton testID="manage-endpoints" accessibilityLabel={t("endpoints.manage")} onPress={() => go("endpoints")} class="mt-1 flex-row items-center gap-2 rounded-(--radius-sm) border-t border-border px-2 py-1.5 hover:bg-muted">
-          <Icon name="settings" size={13} />
+        <BaseButton testID="manage-endpoints" accessibilityLabel={t("endpoints.manage")} onPress={() => go("endpoints")} class="mt-1 flex-row items-center gap-2 rounded-(--radius-sm) border-t border-border px-2 py-1 hover:bg-muted">
+          <Icon name="settings" size={12} />
           <Text class="text-small text-muted-foreground">{t("endpoints.manage")}</Text>
         </BaseButton>
       }
@@ -175,7 +175,7 @@ function SearchButton() {
       onPress={() => paletteOpen.set(true)}
       class={`${CONTROL.trigger} w-44 ${FOCUS}`}
     >
-      <Icon name="search" size={14} />
+      <Icon name="search" />
       <Text class="flex-1 text-body text-muted-foreground">{t("palette.open")}</Text>
       <Kbd keys="mod+k" />
     </BaseButton>
@@ -206,8 +206,8 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       <If
         when={readOnly()}
         else={
-          <BaseButton testID="toolbar-lock" accessibilityLabel={t("common.readOnlyOff")} tooltip={<Tip text={t("settings.readOnlyHint")} />} onPress={() => go("settings")} class={`h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-warn/50 bg-warn/10 px-2 hover:bg-warn/15 ${FOCUS}`}>
-            <Icon name="lock-open" size={13} tint="warn" />
+          <BaseButton testID="toolbar-lock" accessibilityLabel={t("common.readOnlyOff")} tooltip={<Tip text={t("settings.readOnlyHint")} />} onPress={() => go("settings")} class={`h-7 flex-row items-center gap-2 rounded-(--radius) border border-warn/50 bg-warn/10 px-2 hover:bg-warn/15 ${FOCUS}`}>
+            <Icon name="lock-open" size={12} tint="warn" />
             <Text class="text-small text-warn">{t("common.readOnlyOff")}</Text>
           </BaseButton>
         }
@@ -239,7 +239,7 @@ function Place(props: { area: Area; open: (a: Area) => void }) {
       tooltip={<Tip text={areaLabel(props.area)} shortcut={AREA_KEY[props.area]} />}
       class={`h-8 flex-row items-center gap-2 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent ${FOCUS}`}
     >
-      <Icon name={AREA_ICON[props.area]} size={16} tint={on() ? "sidebar-accent-foreground" : "muted-foreground"} />
+      <Icon name={AREA_ICON[props.area]} tint={on() ? "sidebar-accent-foreground" : "muted-foreground"} />
       <Text class={on() ? "flex-1 text-body font-medium text-sidebar-accent-foreground" : "flex-1 text-body text-sidebar-foreground"}>{areaLabel(props.area)}</Text>
       <If when={props.area === "run" && running()}>
         <View class="size-1.5 rounded-full bg-primary" />
@@ -259,7 +259,7 @@ export function Sidebar(props: { open: (a: Area) => void }) {
     <If when={sidebarOpen()}>
       <View testID="sidebar" class={`flex-1 ${windowMaterial() ? "bg-sidebar/40" : "bg-sidebar"} pt-3`}>
         {/* the places: one stop of Tab, ↑ and ↓ between them */}
-        <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="shrink-0 gap-0.5 px-2">
+        <ToolbarGroup axis="vertical" accessibilityLabel={t("sidebar.places")} class="shrink-0 gap-1 px-2">
           <Place area="run" open={props.open} />
           <Place area="sessions" open={props.open} />
           <Place area="store" open={props.open} />

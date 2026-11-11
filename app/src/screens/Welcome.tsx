@@ -65,7 +65,7 @@ export function Welcome() {
   };
 
   return (
-    <View testID="welcome" class="flex-1 items-center justify-center p-8">
+    <View testID="welcome" class="flex-1 items-center justify-center p-6">
       <View class={terminal() ? "w-full gap-2" : `${READING} gap-6`}>
         <View class="gap-2">
           <Text class="text-title font-semibold text-foreground">{t("welcome.title")}</Text>

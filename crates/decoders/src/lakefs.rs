@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use chrono::{DateTime, Utc};
 
 use crate::model::*;
+use crate::ph;
 use crate::source::{ObjectMeta, Source, SourceError};
 use crate::sstable::{self, pb_bytes, pb_int, protobuf, svarint};
 
@@ -147,7 +148,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             }
             Sst::Unknown(why) => l.issues.push(issue(
                 Severity::Warning,
-                format!("{}: not a graveler table ({why})", o.key),
+                ph!("lakefs.notgraveler", key = o.key, why = why),
             )),
         }
     }
@@ -181,13 +182,20 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     for d in &dangling {
         l.issues.push(issue(
             Severity::Error,
-            format!("range {d} is listed by a metarange but missing"),
+            ph!("lakefs.range.missing", id = d),
         ));
     }
     if !unreferenced.is_empty() {
-        l.issues.push(issue(Severity::Info, format!("{} data objects ({}) are referenced by no committed range: uncommitted (staged) writes, or garbage for lakeFS's GC", unreferenced.len(), human_bytes(unreferenced.iter().map(|o| o.size).sum()))));
+        l.issues.push(issue(
+            Severity::Info,
+            ph!(
+                "lakefs.unreferenced",
+                n = unreferenced.len(),
+                size = human_bytes(unreferenced.iter().map(|o| o.size).sum())
+            ),
+        ));
     }
-    l.issues.push(issue(Severity::Info, "Commit history, branches and tags are kept in lakeFS's KV store, not in object storage: each metarange below is one committed tree".to_string()));
+    l.issues.push(issue(Severity::Info, ph!("lakefs.kv")));
     l.facts = vec![
         fact("Metaranges (committed trees)", metaranges.len()),
         fact("Ranges", ranges.len()),
@@ -238,14 +246,15 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             entries.len().to_string(),
             human_bytes(entries.iter().map(|e| e.size).sum()),
         ]);
-        l.timeline.push(Event {
-            time: *t,
-            kind: "commit".into(),
-            label: format!("tree {}", short(id)),
-            detail: format!("{} ranges, {} entries", rs.len(), entries.len()),
-            key: Some(format!("{root}_lakefs/{id}")),
-            bytes: None,
-        });
+        l.timeline.push(
+            Event::new(
+                *t,
+                "commit",
+                ph!("lakefs.tree", id = short(id)),
+                ph!("lakefs.tree.detail", ranges = rs.len(), entries = entries.len()),
+            )
+            .at(format!("{root}_lakefs/{id}")),
+        );
         let mut files = Table::new(
             "Paths → objects",
             &["path", "physical address", "size", "modified"],
@@ -279,28 +288,30 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         ]);
     }
     for o in &data {
-        l.timeline.push(Event {
-            time: o.last_modified,
-            kind: "object".into(),
-            label: rel(o),
-            detail: if unreferenced_keys.contains(o.key.as_str()) {
-                "unreferenced".into()
-            } else {
-                "committed".into()
-            },
-            key: Some(o.key.clone()),
-            bytes: Some(o.size),
-        });
+        l.timeline.push(
+            Event::new(
+                o.last_modified,
+                "object",
+                raw(rel(o)),
+                if unreferenced_keys.contains(o.key.as_str()) {
+                    ph!("lakefs.unreferenced.detail")
+                } else {
+                    ph!("lakefs.committed.detail")
+                },
+            )
+            .at(o.key.clone())
+            .sized(o.size),
+        );
     }
     l.tables = vec![mt, rt];
     l.timeline.sort_by_key(|e| e.time);
-    l.headline = format!(
-        "lakeFS: {} committed trees, {} ranges, {} data objects ({} unreferenced)",
-        metaranges.len(),
-        ranges.len(),
-        data.len(),
-        unreferenced.len()
-    );
+    l.say_headline(ph!(
+        "lakefs.headline",
+        trees = metaranges.len(),
+        ranges = ranges.len(),
+        data = data.len(),
+        unreferenced = unreferenced.len()
+    ));
     Ok(l)
 }
 

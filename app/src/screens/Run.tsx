@@ -7,7 +7,7 @@
 import { cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View } from "nsh";
 import { Input, ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
-import { change, count, elapsed, ms, percent } from "../format";
+import { change, count, elapsed, duration, percent } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
@@ -18,7 +18,7 @@ import { Icon } from "../ui/icon";
 import { Badge, Button, Card, CARD, CONTROL, Dot, Empty, Figure, IconButton, KeyValue, ListRow, Options, SideHeader, terminal, SPLIT_HANDLE } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
-import { LatencyBand, liveFigures, offset, SessionShape, sessionStory } from "../ui/plots";
+import { LatencyBand, liveFigures, SessionShape, sessionStory } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
 
 const POLICIES = (): { value: Policy; title: string; icon: "shield-check" | "ban" | "lock" }[] => [
@@ -58,7 +58,7 @@ function CommandBar() {
     <View class="gap-2">
       {/* the command: a field like any other, a size up, with what runs it at its end */}
       <View class="flex-row items-center gap-2">
-        <View class={`h-10 min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background pl-3 pr-1.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50`}>
+        <View class={`h-10 min-w-0 flex-1 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background pl-3 pr-2 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50`}>
           <Text class="font-mono text-body font-semibold text-muted-foreground">$</Text>
           <Input
             testID="run-command"
@@ -85,8 +85,8 @@ function CommandBar() {
       </View>
       {/* where it runs, where its requests go, what it may do: one row, one height */}
       <View class="flex-row flex-wrap items-center gap-x-3 gap-y-2">
-        <View class={`${CONTROL.small} w-64 flex-row items-center gap-1.5 rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring`}>
-          <Icon name="folder" size={14} />
+        <View class={`${CONTROL.small} w-64 flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring`}>
+          <Icon name="folder" />
           <Input
             testID="run-cwd"
             value={cwd()}
@@ -98,8 +98,8 @@ function CommandBar() {
             class="min-w-0 flex-1 font-mono text-small text-foreground placeholder:text-muted-foreground"
           />
         </View>
-        <View class="min-w-0 flex-1 flex-row items-center gap-1.5">
-          <Icon name="server" size={14} />
+        <View class="min-w-0 flex-1 flex-row items-center gap-2">
+          <Icon name="server" />
           <Text class="min-w-0 flex-1 text-small text-muted-foreground line-clamp-1">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
         </View>
         <Options testID="run-policy" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
@@ -195,7 +195,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
               <Text class="tabular-nums text-small text-foreground">{t("run.bandMisses", { n: x().misses })}</Text>
             </If>
             <If when={r()}>
-              <Text class="tabular-nums text-small text-muted-foreground">{offset(x().seconds * 1000)}</Text>
+              <Text class="tabular-nums text-small text-muted-foreground">{duration(x().seconds * 1000)}</Text>
             </If>
             <If when={r() && warnings() > 0}>
               <Text class="text-small text-warn">{t("run.toLook", { n: warnings() })}</Text>
@@ -241,7 +241,7 @@ function LivePanel(props: { profile: Profile }) {
         <Figure small testID="live-rate" value={f().perSecond.toFixed(f().perSecond < 10 ? 1 : 0)} label={t("live.perSecond")} />
         <Figure small testID="live-failed" value={percent(f().failedShare)} label={t("live.failed")} tone={f().failedShare > 0 ? "bad" : "plain"} />
         <Figure small testID="live-in-flight" value={count(f().inFlight)} label={t("live.inFlight")} />
-        <Figure small testID="live-p95" value={ms(f().p95)} label={t("live.p95")} />
+        <Figure small testID="live-p95" value={duration(f().p95)} label={t("live.p95")} />
       </View>
       <If when={shaped()}>
         <View class="flex-row gap-4">
@@ -376,7 +376,7 @@ function Recent() {
     <View class="flex-1">
       <SideHeader title={t("run.recent")} />
       <If when={history().length > 0} else={<Text class="px-4 text-small text-muted-foreground">{t("run.recentNone")}</Text>}>
-        <Scroll class="min-h-0 flex-1" contentClass="gap-0.5 px-2 pb-2" scrollbar={false}>
+        <Scroll class="min-h-0 flex-1" contentClass="gap-1 px-2 pb-2" scrollbar={false}>
           <Each of={history().slice(0, 30)}>
             {(c) => (
               <ListRow label={scrubCommand(c())} selected={command() === c()} onPress={() => command.set(c())} class="items-start">
@@ -397,7 +397,7 @@ export function Run() {
   const active = () => running() !== null || lastRun() !== null;
   if (!terminal()) cleanup(showInSidebar("run", () => <Recent />));
   return (
-    <View class={terminal() ? "flex-1 gap-1 p-1" : "flex-1 gap-4 px-5 pb-5 pt-4"} testID="screen-run">
+    <View class={terminal() ? "flex-1 gap-1 p-1" : "flex-1 gap-4 px-4 pb-4 pt-4"} testID="screen-run">
       <CommandBar />
       <If when={active()} else={<Intro />}>
         <If

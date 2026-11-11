@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Sonde;
 use crate::guard::{Action, Plan, PlanItem};
+use crate::phrase::ph;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -181,21 +182,21 @@ pub async fn plan_restore(
         .versions
         .iter()
         .find(|v| !v.is_delete_marker)
-        .map(|v| v.version_id.clone())
-        .unwrap_or_else(|| "nothing (no older version)".into());
+        .map(|v| v.version_id.clone());
+    let detail = match restores {
+        Some(v) => ph!("plan.item.restore", marker = latest.version_id, version = v),
+        None => ph!("plan.item.restore.nothing", marker = latest.version_id),
+    };
     Ok(s.guard().plan(
         Action::RestoreObject,
         endpoint,
         bucket,
-        vec![PlanItem {
-            key: key.into(),
-            id: Some(latest.version_id.clone()),
-            bytes: None,
-            detail: format!(
-                "delete marker {}; version {restores} becomes current",
-                latest.version_id
-            ),
-        }],
+        vec![PlanItem::new(
+            key,
+            Some(latest.version_id.clone()),
+            None,
+            detail,
+        )],
         None,
         None,
     ))
@@ -210,11 +211,8 @@ pub fn plan_delete_versions(
 ) -> Plan {
     let items = targets
         .iter()
-        .map(|(k, v, b)| PlanItem {
-            key: k.clone(),
-            id: Some(v.clone()),
-            bytes: *b,
-            detail: format!("version {v}"),
+        .map(|(k, v, b)| {
+            PlanItem::new(k.clone(), Some(v.clone()), *b, ph!("plan.item.version", v = v))
         })
         .collect();
     s.guard()
@@ -230,12 +228,7 @@ pub fn plan_delete_objects(
 ) -> Plan {
     let items = keys
         .iter()
-        .map(|(k, b)| PlanItem {
-            key: k.clone(),
-            id: None,
-            bytes: *b,
-            detail: "delete (adds a delete marker when versioning is on)".into(),
-        })
+        .map(|(k, b)| PlanItem::new(k.clone(), None, *b, ph!("plan.item.delete")))
         .collect();
     s.guard()
         .plan(Action::DeleteObjects, endpoint, bucket, items, None, None)

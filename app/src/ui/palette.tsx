@@ -222,7 +222,7 @@ export function Palette() {
         }}
         onCancel={close}
         onQueryChange={({ query }) => typed.set(query)}
-        searchPrefix={terminal() ? undefined : <Icon name="search" size={16} />}
+        searchPrefix={terminal() ? undefined : <Icon name="search" />}
         searchBarClass={terminal() ? undefined : "h-12 flex-row items-center gap-2 border-b border-border px-4"}
         searchClass={terminal() ? "text-foreground" : "flex-1 text-heading text-foreground placeholder:text-muted-foreground"}
         listClass={terminal() ? "max-h-[360px]" : "max-h-[400px] p-1"}
@@ -236,7 +236,7 @@ export function Palette() {
                 const a = byId().get(entry.id);
                 return (
                   <View class={`${CONTROL.field} flex-row items-center gap-2`}>
-                    <Icon name={a?.icon ?? "chevron-right"} size={15} tint={a?.checked ? "primary" : "muted-foreground"} />
+                    <Icon name={a?.icon ?? "chevron-right"} tint={a?.checked ? "primary" : "muted-foreground"} />
                     <Text class={`min-w-0 shrink text-body line-clamp-1 ${a?.id.startsWith("cmd:") ? "font-mono text-small" : ""} ${a?.checked ? "font-medium text-primary" : "text-popover-foreground"}`}>{entry.label}</Text>
                     <If when={a?.hint}>
                       <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{a!.hint!}</Text>
@@ -245,7 +245,7 @@ export function Palette() {
                       <View class="flex-1" />
                     </If>
                     <If when={a?.checked}>
-                      <Icon name="check" size={14} tint="primary" />
+                      <Icon name="check" tint="primary" />
                     </If>
                     <If when={a?.shortcut}>
                       <Kbd keys={a!.shortcut!} />

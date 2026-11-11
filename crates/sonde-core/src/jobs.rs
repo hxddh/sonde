@@ -12,6 +12,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use decoders::Phrase;
 use parking_lot::Mutex;
 use s3raw::{S3Error, Throttle};
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,46 @@ pub struct Progress {
     pub total: Option<u64>,
     pub bytes: u64,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_text: Vec<Phrase>,
+}
+
+impl Progress {
+    /// Progress with its message as phrases (and their English).
+    pub fn say(done: u64, total: Option<u64>, bytes: u64, text: impl Into<Vec<Phrase>>) -> Self {
+        let message_text = text.into();
+        Progress {
+            done,
+            total,
+            bytes,
+            message: crate::phrase::en(&message_text),
+            message_text,
+        }
+    }
+}
+
+/// A job's title: phrases, or words given as they are.
+pub struct Title(pub Vec<Phrase>);
+
+impl From<Phrase> for Title {
+    fn from(p: Phrase) -> Self {
+        Title(vec![p])
+    }
+}
+impl From<Vec<Phrase>> for Title {
+    fn from(p: Vec<Phrase>) -> Self {
+        Title(p)
+    }
+}
+impl From<&str> for Title {
+    fn from(text: &str) -> Self {
+        Title(vec![crate::phrase::raw(text)])
+    }
+}
+impl From<&String> for Title {
+    fn from(text: &String) -> Self {
+        Title(vec![crate::phrase::raw(text.as_str())])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,6 +109,8 @@ pub struct JobInfo {
     pub id: String,
     pub kind: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub title_text: Vec<Phrase>,
     pub state: JobState,
     pub progress: Progress,
     pub started: DateTime<Utc>,
@@ -163,7 +206,7 @@ impl JobManager {
     pub fn spawn<F, Fut>(
         &self,
         kind: &str,
-        title: &str,
+        title: impl Into<Title>,
         concurrency: usize,
         rate: Option<f64>,
         work: F,
@@ -182,7 +225,7 @@ impl JobManager {
     pub fn spawn_cooperative<F, Fut>(
         &self,
         kind: &str,
-        title: &str,
+        title: impl Into<Title>,
         concurrency: usize,
         rate: Option<f64>,
         work: F,
@@ -197,7 +240,7 @@ impl JobManager {
     fn start<F, Fut>(
         &self,
         kind: &str,
-        title: &str,
+        title: impl Into<Title>,
         concurrency: usize,
         rate: Option<f64>,
         cooperative: bool,
@@ -207,6 +250,7 @@ impl JobManager {
         F: FnOnce(JobCtx) -> Fut + Send + 'static,
         Fut: Future<Output = Result<Value, S3Error>> + Send + 'static,
     {
+        let title_text = title.into().0;
         let id = format!(
             "{kind}-{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
@@ -217,7 +261,8 @@ impl JobManager {
         let info = JobInfo {
             id: id.clone(),
             kind: kind.into(),
-            title: title.into(),
+            title: crate::phrase::en(&title_text),
+            title_text,
             state: JobState::Running,
             progress: Progress::default(),
             started: Utc::now(),

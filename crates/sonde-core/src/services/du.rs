@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::Sonde;
 use crate::guard::human_bytes;
 use crate::jobs::{JobCtx, Progress};
+use crate::phrase::{self, Phrase, ph};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +37,10 @@ pub struct Slice {
     pub current: Agg,
     pub noncurrent: Agg,
     pub delete_markers: u64,
+    /// The report's `versions_unknown`, said on the row: its noncurrent
+    /// figures and delete markers were not counted, which is not zero.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub versions_unknown: bool,
 }
 
 impl Slice {
@@ -73,6 +78,9 @@ pub struct DuReport {
     pub by_size: Vec<SizeBand>,
     /// Findings, the largest contributor first.
     pub findings: Vec<String>,
+    /// The findings as phrases, one text each, in the same order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings_text: Vec<Vec<Phrase>>,
     pub cost_per_month: f64,
     pub currency: String,
     pub scanned_at: String,
@@ -82,6 +90,24 @@ pub struct DuReport {
     /// counted", not "none". `None`: they were counted.
     #[serde(default)]
     pub versions_unknown: Option<String>,
+}
+
+impl DuReport {
+    /// Writes the findings from the figures.
+    pub fn say_findings(&mut self) {
+        self.findings_text = findings_text(self);
+        self.findings = self.findings_text.iter().map(|t| phrase::en(t)).collect();
+    }
+
+    /// The versions could not be listed: the report and each of its rows
+    /// say so, and the findings with them.
+    pub fn versions_not_counted(&mut self, why: String) {
+        self.versions_unknown = Some(why);
+        for row in self.by_class.iter_mut().chain(self.by_prefix.iter_mut()) {
+            row.versions_unknown = true;
+        }
+        self.say_findings();
+    }
 }
 
 const KIB: u64 = 1024;
@@ -217,13 +243,14 @@ impl Accumulator {
             by_prefix,
             by_size: self.bands,
             findings: vec![],
+            findings_text: vec![],
             cost_per_month,
             currency: prices.currency,
             scanned_at: Utc::now().to_rfc3339(),
             requests,
             versions_unknown: None,
         };
-        r.findings = findings(&r);
+        r.say_findings();
         r
     }
 }
@@ -238,33 +265,34 @@ fn pct(part: u64, whole: u64) -> f64 {
 
 /// The report's findings, biggest first.
 pub fn findings(r: &DuReport) -> Vec<String> {
-    let mut f: Vec<(u64, String)> = Vec::new();
+    findings_text(r).iter().map(|t| phrase::en(t)).collect()
+}
+
+/// The findings as phrases: one text a finding, in [`findings`]' order.
+pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
+    let mut f: Vec<(u64, Vec<Phrase>)> = Vec::new();
     let t = r.total_bytes;
+    let pct1 = |part: u64, whole: u64| format!("{:.1}", pct(part, whole));
     // old versions that could not be listed are unknown, never 0 B
-    let unknown = r.versions_unknown.as_ref().map(|why| {
-        format!(
-            "Noncurrent versions and delete markers were not counted: this key may not list versions ({why}). What they hold is unknown, and the total is of current objects only."
-        )
-    });
+    let unknown = r
+        .versions_unknown
+        .as_ref()
+        .map(|why| vec![ph!("du.versionsUnknown", why = why)]);
     if t == 0 {
-        let mut v = vec![format!(
-            "{} holds no bytes{}{}.",
-            if r.prefix.is_empty() {
-                r.bucket.clone()
-            } else {
-                format!("{}/{}", r.bucket, r.prefix)
-            },
-            if r.versions_unknown.is_some() {
-                " in current objects"
-            } else {
-                ""
-            },
-            if r.delete_markers > 0 {
-                format!(" but {} delete markers", r.delete_markers)
-            } else {
-                String::new()
-            }
-        )];
+        let place = if r.prefix.is_empty() {
+            r.bucket.clone()
+        } else {
+            format!("{}/{}", r.bucket, r.prefix)
+        };
+        let mut first = vec![ph!("du.empty", place = place)];
+        if r.versions_unknown.is_some() {
+            first.push(ph!("du.empty.current"));
+        }
+        if r.delete_markers > 0 {
+            first.push(ph!("du.empty.markers", n = r.delete_markers));
+        }
+        first.push(ph!("du.stop"));
+        let mut v = vec![first];
         v.extend(unknown);
         return v;
     }
@@ -273,38 +301,47 @@ pub fn findings(r: &DuReport) -> Vec<String> {
     }
     f.push((
         r.current.bytes,
-        format!(
-            "Current versions: {} in {} objects ({:.1}%).",
-            human_bytes(r.current.bytes),
-            r.current.objects,
-            pct(r.current.bytes, t)
-        ),
+        vec![ph!(
+            "du.current",
+            size = human_bytes(r.current.bytes),
+            n = r.current.objects,
+            pct = pct1(r.current.bytes, t)
+        )],
     ));
     if r.noncurrent.bytes > 0 {
-        let mut s = format!(
-            "Noncurrent versions: {} in {} versions ({:.1}%), invisible to plain listings.",
-            human_bytes(r.noncurrent.bytes),
-            r.noncurrent.objects,
-            pct(r.noncurrent.bytes, t)
-        );
+        let mut s = vec![ph!(
+            "du.noncurrent",
+            size = human_bytes(r.noncurrent.bytes),
+            n = r.noncurrent.objects,
+            pct = pct1(r.noncurrent.bytes, t)
+        )];
         if pct(r.noncurrent.bytes, t) > 20.0 {
-            s.push_str(" A NoncurrentVersionExpiration lifecycle rule would reclaim them.");
+            s.push(ph!("du.noncurrent.rule"));
         }
         f.push((r.noncurrent.bytes, s));
     }
     if r.multipart.bytes > 0 {
-        f.push((r.multipart.bytes, format!("Incomplete multipart uploads: {} in {} uploads ({:.1}%), billed but not listed as objects. See Multipart.", human_bytes(r.multipart.bytes), r.multipart.objects, pct(r.multipart.bytes, t))));
+        f.push((
+            r.multipart.bytes,
+            vec![ph!(
+                "du.multipart",
+                size = human_bytes(r.multipart.bytes),
+                n = r.multipart.objects,
+                pct = pct1(r.multipart.bytes, t)
+            )],
+        ));
     }
     if r.delete_markers > 0 {
         let s = if r.delete_markers > r.current.objects {
-            format!(
-                "{} delete markers, more than the {} current objects: listings slow down; ExpiredObjectDeleteMarker cleans up the ones with no versions left.",
-                r.delete_markers, r.current.objects
+            ph!(
+                "du.markers.many",
+                n = r.delete_markers,
+                objects = r.current.objects
             )
         } else {
-            format!("{} delete markers.", r.delete_markers)
+            ph!("du.markers", n = r.delete_markers)
         };
-        f.push((0, s));
+        f.push((0, vec![s]));
     }
     if let Some(p) = r.by_prefix.first()
         && r.by_prefix.len() > 1
@@ -312,12 +349,12 @@ pub fn findings(r: &DuReport) -> Vec<String> {
     {
         f.push((
             p.total_bytes(),
-            format!(
-                "Prefix {} holds {:.1}% of the bytes ({}).",
-                p.name,
-                pct(p.total_bytes(), t),
-                human_bytes(p.total_bytes())
-            ),
+            vec![ph!(
+                "du.prefix",
+                prefix = p.name,
+                pct = pct1(p.total_bytes(), t),
+                size = human_bytes(p.total_bytes())
+            )],
         ));
     }
     if let Some(c) = r.by_class.first()
@@ -325,11 +362,11 @@ pub fn findings(r: &DuReport) -> Vec<String> {
     {
         f.push((
             c.total_bytes() / 2,
-            format!(
-                "Storage class {} holds {:.1}% of the bytes.",
-                c.name,
-                pct(c.total_bytes(), t)
-            ),
+            vec![ph!(
+                "du.class",
+                class = c.name,
+                pct = pct1(c.total_bytes(), t)
+            )],
         ));
     }
     let small: u64 = r
@@ -340,7 +377,13 @@ pub fn findings(r: &DuReport) -> Vec<String> {
         .sum();
     let objects = r.current.objects + r.noncurrent.objects;
     if objects > 1000 && pct(small, objects) > 50.0 {
-        f.push((0, format!("{:.0}% of objects are under 128 KiB: request costs dominate, and IA classes bill each as 128 KiB.", pct(small, objects))));
+        f.push((
+            0,
+            vec![ph!(
+                "du.small",
+                pct = format!("{:.0}", pct(small, objects))
+            )],
+        ));
     }
     f.sort_by_key(|x| std::cmp::Reverse(x.0));
     f.into_iter().map(|x| x.1).collect()
@@ -363,7 +406,7 @@ pub fn scan(
     let settings = s.settings();
     s.jobs().spawn(
         "du",
-        &format!("Capacity scan {b}/{p}"),
+        ph!("job.du", bucket = b, prefix = p),
         settings.concurrency,
         settings.rate_limit,
         move |ctx| async move {
@@ -416,16 +459,16 @@ pub async fn scan_inner(
         for d in &page.delete_marker {
             acc.delete_marker(&d.key);
         }
-        ctx.progress(Progress {
-            done: acc.current.objects + acc.noncurrent.objects,
-            total: None,
-            bytes: acc.current.bytes + acc.noncurrent.bytes,
-            message: format!(
-                "{} versions, {} delete markers",
-                acc.current.objects + acc.noncurrent.objects,
-                acc.delete_markers
+        ctx.progress(Progress::say(
+            acc.current.objects + acc.noncurrent.objects,
+            None,
+            acc.current.bytes + acc.noncurrent.bytes,
+            ph!(
+                "progress.versions",
+                n = acc.current.objects + acc.noncurrent.objects,
+                markers = acc.delete_markers
             ),
-        });
+        ));
         if !page.is_truncated || page.next_key_marker.is_none() {
             break;
         }
@@ -451,12 +494,12 @@ pub async fn scan_inner(
             for o in &page.contents {
                 acc.object(&o.key, o.size, o.storage_class.as_deref(), true);
             }
-            ctx.progress(Progress {
-                done: acc.current.objects,
-                total: None,
-                bytes: acc.current.bytes,
-                message: format!("{} objects", acc.current.objects),
-            });
+            ctx.progress(Progress::say(
+                acc.current.objects,
+                None,
+                acc.current.bytes,
+                ph!("progress.objects", n = acc.current.objects),
+            ));
             if !page.is_truncated || page.next_continuation_token.is_none() {
                 break;
             }
@@ -480,16 +523,14 @@ pub async fn scan_inner(
         Agg::default()
     };
     let mut report = acc.finish(s, ep, b, source, multipart, requests);
-    if versions_unknown.is_some() {
-        report.versions_unknown = versions_unknown;
-        report.findings = findings(&report);
+    if let Some(why) = versions_unknown {
+        report.versions_not_counted(why);
     }
     if let Some(e) = uncounted {
         // zero here is "unknown", and the report must say so
-        report.findings.insert(
-            0,
-            format!("Incomplete multipart uploads were not counted: {e}"),
-        );
+        let said = vec![ph!("du.multipart.uncounted", error = e)];
+        report.findings.insert(0, phrase::en(&said));
+        report.findings_text.insert(0, said);
     }
     Ok(report)
 }
@@ -684,6 +725,11 @@ mod tests {
         );
         let v = serde_json::to_value(&r).unwrap();
         assert!(v["versionsUnknown"].is_string(), "{v}");
+        // each row says it too: its noncurrent zero is "not counted"
+        assert_eq!(v["byClass"][0]["versionsUnknown"], true, "{v}");
+        assert_eq!(v["byPrefix"][0]["versionsUnknown"], true, "{v}");
+        assert_eq!(v["findingsText"][0][0]["key"], "du.multipart.uncounted");
+        assert_eq!(v["findingsText"][1][0]["key"], "du.versionsUnknown");
         // and the cached report says so too
         let cached = load_cache(&s, "e", "b", "").unwrap();
         assert_eq!(cached.versions_unknown, r.versions_unknown);
@@ -696,8 +742,71 @@ mod tests {
         let r = Accumulator::new("").finish(&s, "e", "b", "ListObjectVersions", Agg::default(), 1);
         let mut v = serde_json::to_value(&r).unwrap();
         v.as_object_mut().unwrap().remove("versionsUnknown");
+        v.as_object_mut().unwrap().remove("findingsText");
         let old: DuReport = serde_json::from_value(v).unwrap();
         assert_eq!(old.versions_unknown, None);
+        assert!(old.findings_text.is_empty());
+    }
+
+    #[test]
+    fn a_row_whose_versions_were_counted_does_not_carry_the_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let mut acc = Accumulator::new("");
+        acc.object("a/x", 10, None, true);
+        acc.object("b/y", 5, Some("GLACIER"), false);
+        let mut r = acc.finish(&s, "e", "b", "ListObjectVersions", Agg::default(), 1);
+        let v = serde_json::to_value(&r).unwrap();
+        assert!(v["byClass"][0].get("versionsUnknown").is_none(), "{v}");
+        // a row saved before 15 loads as counted
+        let row: Slice = serde_json::from_value(v["byPrefix"][0].clone()).unwrap();
+        assert!(!row.versions_unknown);
+        r.versions_not_counted("AccessDenied (403)".into());
+        assert!(r.by_class.iter().chain(&r.by_prefix).all(|x| x.versions_unknown));
+        assert!(r.findings[0].contains("were not counted"), "{:?}", r.findings);
+    }
+
+    #[test]
+    fn every_finding_is_phrases_that_say_its_english() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
+        let mut acc = Accumulator::new("");
+        for i in 0..1200 {
+            acc.object(&format!("logs/{i}"), 100, None, true);
+        }
+        acc.object("big/old", 900_000, Some("GLACIER"), false);
+        for i in 0..1300 {
+            acc.delete_marker(&format!("gone/{i}"));
+        }
+        let mp = Agg {
+            objects: 2,
+            bytes: 50_000,
+        };
+        let mut r = acc.finish(&s, "e", "b", "ListObjectVersions", mp, 1);
+        assert!(r.findings.len() >= 7, "{:?}", r.findings);
+        let check = |r: &DuReport| {
+            assert_eq!(r.findings.len(), r.findings_text.len());
+            for (said, text) in r.findings.iter().zip(&r.findings_text) {
+                assert!(!said.is_empty());
+                assert_eq!(&phrase::en(text), said);
+            }
+        };
+        check(&r);
+        assert!(r.findings.iter().any(|f| f.ends_with(
+            "A NoncurrentVersionExpiration lifecycle rule would reclaim them."
+        )));
+        r.versions_not_counted("AccessDenied (403)".into());
+        check(&r);
+        // and the empty one, with its three parts
+        let mut acc = Accumulator::new("x/");
+        acc.delete_marker("x/gone");
+        let mut r = acc.finish(&s, "e", "b", "ListObjectsV2", Agg::default(), 1);
+        r.versions_not_counted("AccessDenied (403)".into());
+        check(&r);
+        assert_eq!(
+            r.findings[0],
+            "b/x/ holds no bytes in current objects but 1 delete markers."
+        );
     }
 
     #[test]
@@ -705,7 +814,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = Sonde::open(crate::Paths::rooted(dir.path())).unwrap();
         let mut r = Accumulator::new("").finish(&s, "e", "b", "ListObjectsV2", Agg::default(), 1);
-        r.versions_unknown = Some("AccessDenied (403)".into());
+        r.versions_not_counted("AccessDenied (403)".into());
+        assert_eq!(r.findings, findings(&r));
         let f = findings(&r);
         assert_eq!(f[0], "b holds no bytes in current objects.");
         assert!(f[1].contains("were not counted"), "{f:?}");

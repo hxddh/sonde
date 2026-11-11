@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Duration, DurationRound, Utc};
 
 use crate::model::*;
+use crate::ph;
 use crate::source::{ObjectMeta, Source, SourceError};
 
 pub fn detect(objects: &[ObjectMeta]) -> Vec<Detection> {
@@ -61,7 +62,10 @@ pub async fn analyze(src: &dyn Source, root: &str, format: Format) -> Result<Lay
     l.objects = objects.len() as u64;
     l.bytes = objects.iter().map(|o| o.size).sum();
     if matches!(format, Format::Turbopuffer | Format::Warpstream) {
-        l.issues.push(issue(Severity::Info, format!("The {} format is not published: sonde does not decode it. Shown: prefix statistics and write cadence from the listing only.", format.label())));
+        l.issues.push(issue(
+            Severity::Info,
+            ph!("cadence.closed", format = format.label()),
+        ));
     }
     // by sub-prefix (two levels)
     let mut by: BTreeMap<String, (u64, u64, Option<DateTime<Utc>>)> = BTreeMap::new();
@@ -141,23 +145,20 @@ pub async fn analyze(src: &dyn Source, root: &str, format: Format) -> Result<Lay
                 ],
                 tables: vec![],
             });
-            l.timeline.push(Event {
-                time: Some(*t),
-                kind: "writes".into(),
-                label: format!("{n} objects"),
-                detail: human_bytes(*b),
-                key: None,
-                bytes: Some(*b),
-            });
+            l.timeline.push(
+                Event::new(
+                    Some(*t),
+                    "writes",
+                    ph!("cadence.objects", n = n),
+                    raw(human_bytes(*b)),
+                )
+                .sized(*b),
+            );
         }
         if max_gap > median.max(1) * 20 && times.len() > 20 {
             l.issues.push(issue(
                 Severity::Warning,
-                format!(
-                    "a write pause of {} s against a median interval of {} ms",
-                    max_gap / 1000,
-                    median
-                ),
+                ph!("cadence.pause", s = max_gap / 1000, ms = median),
             ));
         }
         l.facts = vec![
@@ -176,9 +177,9 @@ pub async fn analyze(src: &dyn Source, root: &str, format: Format) -> Result<Lay
             fact("Median interval", format!("{median} ms")),
             fact("p99 interval", format!("{p99} ms")),
             fact("Longest pause", format!("{} s", max_gap / 1000)),
-            fact(
+            fact_said(
                 "Busiest interval",
-                format!("{busiest} objects per {} min", step.num_minutes()),
+                ph!("cadence.busiest", n = busiest, min = step.num_minutes()),
             ),
         ];
     } else {
@@ -188,16 +189,15 @@ pub async fn analyze(src: &dyn Source, root: &str, format: Format) -> Result<Lay
         ];
     }
     l.tables = vec![pt, ct];
-    l.headline = format!(
-        "{}: {} objects ({}), cadence only{}",
-        format.label(),
-        objects.len(),
-        human_bytes(l.bytes),
-        if format.decoded() {
-            ""
-        } else {
-            " — format not published, not decoded"
-        }
-    );
+    let mut headline = vec![ph!(
+        "cadence.headline",
+        format = format.label(),
+        n = objects.len(),
+        size = human_bytes(l.bytes)
+    )];
+    if !format.decoded() {
+        headline.push(ph!("cadence.headline.closed"));
+    }
+    l.say_headline(headline);
     Ok(l)
 }

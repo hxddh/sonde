@@ -91,7 +91,7 @@ export function SessionViewer(props: { data: SharedSession }) {
 
   const main = () => (
     <View class="min-h-0 flex-1">
-      <View class="gap-3 border-b border-border px-5 pb-3 pt-4">
+      <View class="gap-3 border-b border-border px-4 pb-3 pt-4">
         <View class="flex-row items-baseline gap-2">
           <Text class="text-heading font-bold text-foreground">sonde</Text>
           <Text class="text-small text-muted-foreground">{t("viewer.shared")}</Text>
@@ -99,7 +99,7 @@ export function SessionViewer(props: { data: SharedSession }) {
         <SessionHeader view={d} />
         <Observations view={d} filter={filter()} onFilter={(f) => filter.set(f)} />
       </View>
-      <View class="flex-row items-center px-5 py-2">
+      <View class="flex-row items-center px-4 py-2">
         <Segmented
           value={pane()}
           items={[
@@ -110,7 +110,7 @@ export function SessionViewer(props: { data: SharedSession }) {
           onChange={(p) => pane.set(p as Pane)}
         />
       </View>
-      <View class="min-h-0 flex-1 px-5 pb-4">{body()}</View>
+      <View class="min-h-0 flex-1 px-4 pb-4">{body()}</View>
     </View>
   );
 

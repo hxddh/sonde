@@ -192,7 +192,7 @@ function useBuckets() {
             <View
               testID={isBucket ? `bucket-${name}` : undefined}
               onContextMenu={isBucket ? () => menu(name) : undefined}
-              class="h-7 flex-row items-center gap-1.5 pr-2"
+              class="h-7 flex-row items-center gap-2 pr-2"
               style={{ paddingLeft: 4 + entry.depth * 14 }}
             >
               <View class="w-3.5 items-center">
@@ -200,7 +200,7 @@ function useBuckets() {
                   <Icon name={expanded().includes(entry.id) ? "chevron-down" : "chevron-right"} size={12} />
                 </If>
               </View>
-              <Icon name={isBucket ? "database" : expanded().includes(entry.id) ? "folder-open" : "folder"} size={14} tint={isBucket ? "foreground" : "muted-foreground"} />
+              <Icon name={isBucket ? "database" : expanded().includes(entry.id) ? "folder-open" : "folder"} tint={isBucket ? "foreground" : "muted-foreground"} />
               <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${waiting(entry.id) ? "text-muted-foreground" : "text-foreground"}`}>{name}</Text>
             </View>
           );

@@ -99,6 +99,55 @@ pub fn classify(
     name.to_string()
 }
 
+/// Operations named without a subresource table.
+const NAMED: &[&str] = &[
+    "ListBuckets",
+    "ListObjectsV2",
+    "ListObjectVersions",
+    "ListMultipartUploads",
+    "GetBucketLocation",
+    "ListObjects",
+    "HeadBucket",
+    "CreateBucket",
+    "DeleteBucket",
+    "DeleteObjects",
+    "ListParts",
+    "GetObjectAcl",
+    "GetObjectTagging",
+    "GetObjectAttributes",
+    "GetObjectRetention",
+    "GetObjectLegalHold",
+    "GetObject",
+    "HeadObject",
+    "UploadPartCopy",
+    "UploadPart",
+    "PutObjectTagging",
+    "PutObjectAcl",
+    "PutObjectRetention",
+    "PutObjectLegalHold",
+    "CopyObject",
+    "PutObject",
+    "CreateMultipartUpload",
+    "CompleteMultipartUpload",
+    "RestoreObject",
+    "SelectObjectContent",
+    "AbortMultipartUpload",
+    "DeleteObjectTagging",
+    "DeleteObject",
+];
+
+/// Every name [`classify`] gives a request it can name: what a fault
+/// scenario's `on` is checked against.
+pub fn operation_names() -> Vec<String> {
+    let mut all: Vec<String> = NAMED.iter().map(|n| n.to_string()).collect();
+    for (_, n) in BUCKET_SUBRESOURCES {
+        for verb in ["Get", "Put", "Delete"] {
+            all.push(format!("{verb}{n}"));
+        }
+    }
+    all
+}
+
 /// Whether an operation removes data (directly, or by a rule that will).
 pub fn is_destructive(op: &str) -> bool {
     op.starts_with("Delete")
@@ -118,6 +167,32 @@ mod tests {
                 None => (p.to_string(), String::new()),
             })
             .collect()
+    }
+
+    #[test]
+    fn every_name_a_request_is_given_is_a_name_a_scenario_may_say() {
+        let all = operation_names();
+        let none: &[(String, String)] = &[];
+        let copy = vec![("x-amz-copy-source".to_string(), "/b/k".to_string())];
+        let queries = [
+            "", "list-type=2", "versions", "uploads", "location", "delete", "lifecycle",
+            "versioning", "uploadId=u", "partNumber=1&uploadId=u", "acl", "tagging",
+            "attributes", "retention", "legal-hold", "restore", "select",
+        ];
+        for method in ["GET", "HEAD", "PUT", "POST", "DELETE"] {
+            for (bucket, key) in [(None, None), (Some("b"), None), (Some("b"), Some("k"))] {
+                for query in queries {
+                    let query: Vec<&str> = query.split('&').filter(|p| !p.is_empty()).collect();
+                    for headers in [none, &copy[..]] {
+                        let name = classify(method, bucket, key, &q(&query), headers);
+                        assert!(
+                            name == "Unknown" || all.contains(&name),
+                            "{name} is given and not listed"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

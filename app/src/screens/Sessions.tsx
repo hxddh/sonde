@@ -10,7 +10,7 @@
 import { batch, cleanup, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
 import { Button as BaseButton, createNavStack, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
-import { hm } from "../format";
+import { hm, duration } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
@@ -28,7 +28,7 @@ import { episodeTitle } from "../phrases";
 import { programOf, ranCommand, scrubCommand } from "../ui/sessionview";
 import { HistoryPane, ProgramList } from "../ui/history";
 import { TimePane } from "../ui/profile";
-import { offset, SessionShape } from "../ui/plots";
+import { SessionShape } from "../ui/plots";
 import { RecordDetail } from "./Requests";
 import { running, runAgain } from "../run";
 
@@ -296,10 +296,10 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           {findings(v)}
           <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeOutput")}>
             <ResizablePanel minSize={240}>
-              <View class="flex-1 pr-1.5">{output()}</View>
+              <View class="flex-1 pr-2">{output()}</View>
             </ResizablePanel>
             <ResizablePanel minSize={320}>
-              <View class="flex-1 pl-1.5">{operations(v)}</View>
+              <View class="flex-1 pl-2">{operations(v)}</View>
             </ResizablePanel>
           </ResizablePanelGroup>
         </View>
@@ -316,7 +316,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   };
 
   const actions = () => (
-    <View class="flex-row items-center gap-1.5">
+    <View class="flex-row items-center gap-2">
       {/* the program again, after a change: it opens compared with this run */}
       {/* the built-in demo is not saved: running a demo session again starts it */}
       <If when={ranCommand(view()?.header.command) && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
@@ -348,14 +348,14 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const w = window();
     if (!v || (f === null && !w)) return null;
     const n = rows()?.length ?? 0;
-    if (w) return t("profile.sliceFilter", { a: offset(w[0]), b: offset(w[1]), n, of: v.episodes.length });
+    if (w) return t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n, of: v.episodes.length });
     return t("sessions.filtered", { n, of: v.episodes.length });
   };
 
   const chip = () => (
     <If when={filterNote()}>
       {(n) => (
-        <BaseButton testID="clear-filter" accessibilityLabel={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), slice.set(null)))} class={`h-7 flex-row items-center gap-1.5 rounded-full bg-selection px-3 hover:bg-accent ${FOCUS}`}>
+        <BaseButton testID="clear-filter" accessibilityLabel={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), slice.set(null)))} class={`h-7 flex-row items-center gap-2 rounded-full bg-selection px-3 hover:bg-accent ${FOCUS}`}>
           <Text class="tabular-nums text-small text-foreground">{n()}</Text>
           <If when={!terminal()}>
             <Icon name="x" size={12} />
@@ -390,16 +390,16 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       }
     >
       <View class="min-h-0 flex-1">
-        <View class="shrink-0 px-5 pt-4">
+        <View class="shrink-0 px-4 pt-4">
           <SessionHeader view={v} actions={actions()} />
         </View>
-        <View class="shrink-0 flex-row items-center gap-3 border-b border-border px-5 pb-3 pt-3">
+        <View class="shrink-0 flex-row items-center gap-3 border-b border-border px-4 pb-3 pt-3">
           {tabs()}
           <View class="flex-1" />
           {/* what narrows the operations, said where they are */}
           <If when={pane() === "operations" || pane() === "aligned"}>{chip()}</If>
         </View>
-        <View class="min-h-0 flex-1 px-5 pb-4 pt-3">{body(v)}</View>
+        <View class="min-h-0 flex-1 px-4 pb-4 pt-3">{body(v)}</View>
       </View>
     </If>
   );
@@ -456,7 +456,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
             </If>
           }>
             {(other) => (
-              <View class={terminal() ? "flex-1" : "flex-1 px-5 py-4"}>
+              <View class={terminal() ? "flex-1" : "flex-1 px-4 py-4"}>
                 <CompareView a={props.path} b={other()} onClose={() => compareWith.set(null)} />
               </View>
             )}

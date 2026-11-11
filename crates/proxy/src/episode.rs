@@ -261,24 +261,30 @@ impl Tables {
         Tables { roots }
     }
 
-    /// Whether a data file's table was seen: its log under the same root.
-    fn backs(&self, bucket: &Option<String>, format: Format, key: &str) -> bool {
-        self.roots
-            .iter()
-            .any(|(b, f, root)| b == bucket && *f == format && key.starts_with(root.as_str()))
-    }
-
     /// The part a request's key names, when the session gives a reason to
     /// believe it: a data file counts only beside its table's log.
     fn part(&self, r: &Record) -> Option<Part> {
         let key = r.key.as_deref()?;
         let part = part_of(key)?;
         match part {
-            Part::IcebergData | Part::DeltaData if !self.backs(&r.bucket, part.format(), key) => {
-                None
-            }
+            Part::IcebergData | Part::DeltaData => self.data_part(&r.bucket, key),
             _ => Some(part),
         }
+    }
+
+    /// Whose data file a Parquet file is: the table's whose log the session
+    /// touched, the deepest when one table is under another. The path alone
+    /// does not say: a Delta table under `…/data/` has its files there too.
+    fn data_part(&self, bucket: &Option<String>, key: &str) -> Option<Part> {
+        self.roots
+            .iter()
+            .filter(|(b, _, root)| b == bucket && key.starts_with(root.as_str()))
+            .max_by_key(|(_, _, root)| root.len())
+            .and_then(|(_, f, _)| match f {
+                Format::Iceberg => Some(Part::IcebergData),
+                Format::Delta => Some(Part::DeltaData),
+                _ => None,
+            })
     }
 
     /// The format of a request: from its key, or from a listing's prefix.
@@ -293,11 +299,9 @@ impl Tables {
         let trimmed = prefix.trim_end_matches('/');
         match part_of(trimmed) {
             // a listing of a data file's path is of a table only when the table is
-            Some(p @ (Part::IcebergData | Part::DeltaData))
-                if !self.backs(&r.bucket, p.format(), trimmed) =>
-            {
-                None
-            }
+            Some(Part::IcebergData | Part::DeltaData) => self
+                .data_part(&r.bucket, trimmed)
+                .map(|p| p.format()),
             _ => listed_format(prefix).map(|(f, _)| f),
         }
     }
@@ -402,6 +406,13 @@ fn is_write(r: &Record) -> bool {
 
 fn header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
     r.request_headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_str())
+}
+
+fn response_header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
+    r.response_headers
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| h.value.as_str())
@@ -768,9 +779,7 @@ fn multipart<'a>(
             .filter(|r| r.operation == "UploadPart")
             .map(|r| r.request_bytes.unwrap_or(0))
             .sum();
-        let completed = rs
-            .iter()
-            .any(|r| r.operation == "CompleteMultipartUpload" && !r.is_error());
+        let completed = rs.iter().any(completes);
         let aborted = rs.iter().any(|r| r.operation == "AbortMultipartUpload");
         let formatted = tables.part(rs[0]).is_some();
         if completed && formatted {
@@ -800,6 +809,20 @@ fn multipart<'a>(
         out.push(e);
     }
     units
+}
+
+/// Whether a request completed its upload in the store: a Complete the
+/// store answered well, the program told so or not (a trial that loses the
+/// answer says what the store's was, in `x-sonde-store-status`).
+fn completes(r: &&Record) -> bool {
+    r.operation == "CompleteMultipartUpload"
+        && (!r.is_error()
+            || response_header(r, "x-sonde-store-status").is_some_and(|s| s.starts_with('2')))
+}
+
+/// Whether sonde failed the request in the store's place.
+fn sondes_fault(r: &Record) -> bool {
+    r.injected.is_some() && response_header(r, "x-sonde-fault").is_some()
 }
 
 fn retryable(r: &Record) -> bool {
@@ -1208,6 +1231,14 @@ pub struct Observation {
     /// … and time the program would not wait, in ms.
     #[serde(default, skip_serializing_if = "is_zero_ms")]
     pub saves_ms: f64,
+    /// The requests acting on it would not send, by id: what "acting on N
+    /// findings" takes away (their own waiting, their own price).
+    #[serde(skip)]
+    pub saved_ids: Vec<u64>,
+    /// The requests a saving of time alone is about (those sent one after
+    /// another), by id.
+    #[serde(skip)]
+    pub timed_ids: Vec<u64>,
     /// What to change in the program, by SDK.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fixes: Vec<crate::fixes::Fix>,
@@ -1232,6 +1263,12 @@ fn is_zero_ms(n: &f64) -> bool {
 }
 
 impl Observation {
+    /// Names the requests acting on it would not send.
+    fn saving_of(mut self, ids: Vec<u64>) -> Self {
+        self.saved_ids = ids;
+        self
+    }
+
     /// Weighs a finding: the requests it bears on and those acting on it would
     /// save (out of `total`).
     fn weigh(mut self, impact: usize, saves: usize, total: usize) -> Self {
@@ -1327,6 +1364,8 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             saving_text: None,
             saves_requests: 0,
             saves_ms: 0.0,
+            saved_ids: Vec::new(),
+            timed_ids: Vec::new(),
             fixes: Vec::new(),
             callers: Vec::new(),
             sdk: None,
@@ -1343,6 +1382,8 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         saving_text: None,
         saves_requests: 0,
         saves_ms: 0.0,
+        saved_ids: Vec::new(),
+            timed_ids: Vec::new(),
         fixes: Vec::new(),
         callers: Vec::new(),
         sdk: None,
@@ -1358,6 +1399,8 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         saving_text: None,
         saves_requests: 0,
         saves_ms: 0.0,
+        saved_ids: Vec::new(),
+            timed_ids: Vec::new(),
         fixes: Vec::new(),
         callers: Vec::new(),
         sdk: None,
@@ -1414,7 +1457,16 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .weigh(impact, 0, total),
         );
     }
-    let retries = of_episodes(&|e| e.kind == Kind::Retry);
+    // a retry after a fault sonde injected is the trial's doing, said by the
+    // finding above: only what followed the store's own failures is the store's
+    let own_failure: std::collections::HashSet<u64> = records
+        .iter()
+        .filter(|r| retryable(r) && !sondes_fault(r))
+        .map(|r| r.id)
+        .collect();
+    let retries = of_episodes(&|e| {
+        e.kind == Kind::Retry && e.records.iter().any(|id| own_failure.contains(id))
+    });
     let retried: usize = retries.iter().map(|&i| episodes[i].requests() - 1).sum();
     if retried > 0 {
         out.push(
@@ -1502,7 +1554,19 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 of_records(&mut small.iter().flat_map(|u| u.3.iter().copied())),
             )
             // one PUT for each: the rest of each upload's requests go
-            .weigh(impact, impact - small.len(), total),
+            .weigh(impact, impact - small.len(), total)
+            .saving_of(
+                small
+                    .iter()
+                    .flat_map(|u| u.3.iter().copied())
+                    .filter(|id| {
+                        records
+                            .iter()
+                            .find(|r| r.id == *id)
+                            .is_some_and(|r| r.operation != "UploadPart")
+                    })
+                    .collect(),
+            ),
         );
     }
     let races: Vec<u64> = records
@@ -1539,6 +1603,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     for (k, ids) in hot.into_iter().take(3) {
         let n = ids.len();
+        let again = ids[1..].to_vec();
         out.push(
             info(
                 p(
@@ -1552,7 +1617,8 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 of_records(&mut ids.into_iter()),
             )
             // a cache reads it once
-            .weigh(n, n - 1, total),
+            .weigh(n, n - 1, total)
+            .saving_of(again),
         );
     }
     // the same prefix listed again and again
@@ -1580,6 +1646,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     repeated.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     for (prefix_name, ids) in repeated.into_iter().take(3) {
         let n = ids.len();
+        let again = ids[1..].to_vec();
         out.push(
             info(
                 p(
@@ -1588,7 +1655,8 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 ),
                 of_records(&mut ids.into_iter()),
             )
-            .weigh(n, n - 1, total),
+            .weigh(n, n - 1, total)
+            .saving_of(again),
         );
     }
     // HEAD, then GET of the same object: the GET's answer has the HEAD's
@@ -1625,13 +1693,16 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 p("obs.headget", &[("n", checked.to_string())]),
                 of_records(&mut pairs.iter().copied()),
             )
-            .weigh(pairs.len(), checked, total),
+            .weigh(pairs.len(), checked, total)
+            // the HEAD of each pair
+            .saving_of(pairs.iter().step_by(2).copied().collect()),
         );
     }
     // throttled: and how many requests were in flight when it happened
+    // (the store's own: a 503 sonde answered in its place asks for nothing)
     let throttled: Vec<&Record> = records
         .iter()
-        .filter(|r| matches!(r.status, Some(503) | Some(429)))
+        .filter(|r| matches!(r.status, Some(503) | Some(429)) && !sondes_fault(r))
         .collect();
     if !throttled.is_empty() {
         let n = throttled.len();
@@ -1687,7 +1758,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 e.1.push(r.time.timestamp_micros());
             }
             e.2.push(r.id);
-            e.3 += matches!(r.status, Some(503) | Some(429)) as usize;
+            e.3 += (matches!(r.status, Some(503) | Some(429)) && !sondes_fault(r)) as usize;
         }
         let mut hot: Vec<(String, usize, usize, bool, Vec<u64>, usize)> = Vec::new();
         for (prefix, (mut reads, mut writes, ids, throttled)) in per {
@@ -1750,6 +1821,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 }
             };
             let ids: Vec<u64> = found.iter().flat_map(|c| c.ids.iter().copied()).collect();
+            let chained = ids.clone();
             let mut o = warn(
                 p(
                     "obs.serial",
@@ -1781,6 +1853,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             o.saving_text = Some(s.en());
             o.saving = Some(s);
             o.saves_ms = saved;
+            o.timed_ids = chained;
             out.push(o);
         }
     }
@@ -1820,9 +1893,12 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         }
     }
     // the most telling first: warnings, then by the requests they bear on
+    // (a trial's faults before all: what follows is read in their light)
+    let injects = |o: &Observation| o.phrases.first().is_some_and(|p| p.key == "obs.injected");
     out.sort_by(|a, b| {
-        (b.level == "warn")
-            .cmp(&(a.level == "warn"))
+        injects(b)
+            .cmp(&injects(a))
+            .then((b.level == "warn").cmp(&(a.level == "warn")))
             .then(b.impact.cmp(&a.impact))
     });
     let by_id: HashMap<u64, &Record> = records.iter().map(|r| (r.id, r)).collect();

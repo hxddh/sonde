@@ -220,7 +220,7 @@ pub fn for_key(key: &str) -> Vec<Fix> {
     }
 }
 
-/// A session after acting on every finding that counts a saving: an estimate.
+/// A session after acting on the findings that name what they save.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WhatIf {
@@ -229,37 +229,137 @@ pub struct WhatIf {
     pub waiting_ms: (f64, f64),
     pub cost: (f64, f64),
     pub currency: String,
-    /// The findings it counts.
+    /// The findings it counts, and how many findings there are with a
+    /// saving: fewer are counted when one does not name its requests.
     pub findings: usize,
+    pub of_findings: usize,
+    /// The kinds of the findings counted (`obs.hot`), as they are named.
+    pub counted: Vec<String>,
 }
 
-/// What acting on the findings would leave: their saved requests (at most
-/// nine in ten of the session's: findings can overlap), the waiting those
-/// requests took on average, and the time a finding counts itself.
+/// What acting on the findings would leave, measured and not estimated: the
+/// requests the findings name are taken out of the session, and the session
+/// without them is reckoned again. The waiting is the time with a request
+/// in flight among those left (a request that ran beside another saves
+/// nothing by going), the cost is the price of those left. A finding that
+/// saves time without removing a request (requests sent at once) takes its
+/// own figure off, when none of its requests is among those removed. A
+/// finding that does not name its requests is not counted.
 pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) -> Option<WhatIf> {
-    let counted: Vec<&Observation> = findings
+    let saving: Vec<&Observation> = findings
         .iter()
         .filter(|o| o.saves_requests > 0 || o.saves_ms > 0.0)
         .collect();
-    if counted.is_empty() || records.is_empty() {
+    if saving.is_empty() || records.is_empty() {
         return None;
     }
-    let total = records.len();
-    let saved = counted
+    let mut gone: std::collections::HashSet<u64> = Default::default();
+    let mut counted: Vec<&Observation> = Vec::new();
+    for o in saving.iter().filter(|o| o.saves_requests > 0) {
+        if o.saved_ids.is_empty() {
+            continue;
+        }
+        gone.extend(o.saved_ids.iter().copied());
+        counted.push(o);
+    }
+    // never the whole session: a request each finding keeps is among the ids
+    // it does not name
+    let left: Vec<Record> = records
         .iter()
-        .map(|o| o.saves_requests)
-        .sum::<usize>()
-        .min(total * 9 / 10);
-    let share = saved as f64 / total as f64;
-    let waiting_saved = (profile.busy_ms * share + counted.iter().map(|o| o.saves_ms).sum::<f64>())
-        .min(profile.busy_ms * 0.95);
+        .filter(|r| !gone.contains(&r.id))
+        .cloned()
+        .collect();
+    let mut waiting = crate::profile::busy_ms(&left);
+    for o in saving.iter().filter(|o| o.saves_requests == 0) {
+        // its figure was reckoned with every request there: with one of
+        // them gone it is another figure, and is left out
+        if o.timed_ids.is_empty()
+            || o.saves_ms > waiting
+            || o.timed_ids.iter().any(|id| gone.contains(id))
+        {
+            continue;
+        }
+        waiting -= o.saves_ms;
+        counted.push(o);
+    }
+    if counted.is_empty() {
+        return None;
+    }
+    let cost: f64 = left
+        .iter()
+        .map(|r| crate::profile::price(r, &profile.prices))
+        .sum();
     Some(WhatIf {
-        requests: (total, total - saved),
-        waiting_ms: (profile.busy_ms, profile.busy_ms - waiting_saved),
-        cost: (profile.cost.amount, profile.cost.amount * (1.0 - share)),
+        requests: (records.len(), left.len()),
+        waiting_ms: (profile.busy_ms, waiting.clamp(0.0, profile.busy_ms)),
+        cost: (profile.cost.amount, cost.min(profile.cost.amount)),
         currency: profile.cost.currency.clone(),
         findings: counted.len(),
+        of_findings: saving.len(),
+        counted: counted
+            .iter()
+            .filter_map(|o| o.phrases.first().map(|p| p.key.to_string()))
+            .collect(),
     })
+}
+
+impl WhatIf {
+    /// The line `sonde show` closes its findings with.
+    pub fn line(&self) -> String {
+        use crate::program::{money_text, ms_text};
+        let which = if self.findings < self.of_findings {
+            // which ones, when not all: the reader cannot guess
+            let mut kinds: Vec<&str> = self
+                .counted
+                .iter()
+                .map(|k| kind_name(k))
+                .collect();
+            kinds.dedup();
+            format!(
+                "{} of {} findings ({})",
+                self.findings,
+                self.of_findings,
+                kinds.join(", ")
+            )
+        } else {
+            format!(
+                "{} finding{}",
+                self.findings,
+                if self.findings == 1 { "" } else { "s" }
+            )
+        };
+        let mut parts = Vec::new();
+        if self.requests.0 != self.requests.1 {
+            parts.push(format!("{} → {} requests", self.requests.0, self.requests.1));
+        }
+        if ms_text(self.waiting_ms.0) != ms_text(self.waiting_ms.1) {
+            parts.push(format!(
+                "waiting {} → {}",
+                ms_text(self.waiting_ms.0),
+                ms_text(self.waiting_ms.1)
+            ));
+        }
+        let (before, after) = (
+            money_text(self.cost.0, &self.currency),
+            money_text(self.cost.1, &self.currency),
+        );
+        if before != after {
+            parts.push(format!("cost {before} → {after}"));
+        }
+        format!("acting on {which}: {}", parts.join(" · "))
+    }
+}
+
+/// A finding's kind in a few words, for naming which were counted.
+fn kind_name(key: &str) -> &'static str {
+    match key {
+        "obs.hot" => "a key read again and again",
+        "obs.listed" => "a prefix listed again and again",
+        "obs.headget" => "HEAD before GET",
+        "obs.small" => "small files uploaded in parts",
+        "obs.serial" => "requests one after another",
+        _ => "another",
+    }
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::Sonde;
 use crate::jobs::Progress;
+use crate::phrase::ph;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -337,7 +338,7 @@ pub fn download(s: &Arc<Sonde>, endpoint: &str, bucket: &str, key: &str, dest: P
     // cooperative: a cancelled download still gets to remove its partial file
     s.jobs().spawn_cooperative(
         "download",
-        &format!("Download {b}/{k}"),
+        ph!("job.download", bucket = b, key = k),
         1,
         settings.rate_limit,
         move |ctx| async move {
@@ -353,10 +354,12 @@ pub fn download(s: &Arc<Sonde>, endpoint: &str, bucket: &str, key: &str, dest: P
             {
                 // said where the job shows: the file is the user's to remove
                 tracing::warn!("partial download {} left behind: {e}", p.display());
-                ctx.progress(Progress {
-                    message: format!("left behind: {} ({e})", p.display()),
-                    ..Default::default()
-                });
+                ctx.progress(Progress::say(
+                    0,
+                    None,
+                    0,
+                    ph!("progress.leftBehind", path = p.display(), error = e),
+                ));
             }
             r
         },
@@ -396,12 +399,12 @@ async fn fetch(
             .await
             .map_err(|e| S3Error::config(e.to_string()))?;
         written += chunk.len() as u64;
-        ctx.progress(Progress {
-            done: written,
+        ctx.progress(Progress::say(
+            written,
             total,
-            bytes: written,
-            message: format!("{written} bytes"),
-        });
+            written,
+            ph!("progress.bytes", n = written),
+        ));
     }
     file.flush()
         .await
@@ -433,7 +436,7 @@ pub fn search(
     let settings = s.settings();
     s.jobs().spawn(
         "search",
-        &format!("Search {b}/{p}*{needle}*"),
+        ph!("job.search", bucket = b, prefix = p, needle = needle),
         1,
         settings.rate_limit,
         move |ctx| async move {
@@ -474,12 +477,12 @@ pub fn search(
                     ctx.partial(json!(hits));
                 }
                 found.extend(hits);
-                ctx.progress(Progress {
-                    done: scanned,
-                    total: None,
-                    bytes: 0,
-                    message: format!("{scanned} keys scanned, {} matches", found.len()),
-                });
+                ctx.progress(Progress::say(
+                    scanned,
+                    None,
+                    0,
+                    ph!("progress.search", n = scanned, found = found.len()),
+                ));
                 if found.len() >= limit
                     || !page.is_truncated
                     || page.next_continuation_token.is_none()

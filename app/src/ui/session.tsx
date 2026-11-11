@@ -49,10 +49,10 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
           <View class="flex-row items-center gap-3">
             <If when={!terminal()}>
               <View class="size-9 items-center justify-center rounded-(--radius) bg-muted">
-                <Icon name="radio" size={18} tint="foreground" />
+                <Icon name="radio" tint="foreground" />
               </View>
             </If>
-            <View class="min-w-0 flex-1 gap-0.5">
+            <View class="min-w-0 flex-1 gap-1">
               <Text class="text-body font-semibold text-foreground">{t("timeline.recordTitle")}</Text>
               <Text class="text-small text-muted-foreground">{t("timeline.recordHint")}</Text>
             </View>

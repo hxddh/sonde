@@ -150,11 +150,11 @@ function Item(props: { entry: ToastEntry }) {
       <If when={kind()}>
         {(k) => (
           <View class="pt-px">
-            <Icon name={KINDS[k()].icon} size={16} tint={KINDS[k()].tint} />
+            <Icon name={KINDS[k()].icon} tint={KINDS[k()].tint} />
           </View>
         )}
       </If>
-      <View class="min-w-0 flex-1 gap-0.5">
+      <View class="min-w-0 flex-1 gap-1">
         <Text class="text-body font-medium text-popover-foreground">{content().title}</Text>
         <If when={content().description}>
           <Text class="text-small text-muted-foreground line-clamp-3">{content().description}</Text>

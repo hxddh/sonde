@@ -102,7 +102,7 @@ export function Versions() {
                               <Dot tone={v().isDeleteMarker ? "miss" : "live"} />
                             </If>
                           </View>
-                          <View class="min-w-0 flex-1 gap-0.5">
+                          <View class="min-w-0 flex-1 gap-1">
                             <View class="flex-row items-center gap-2">
                               <Text class="text-body text-foreground">{date(v().lastModified)}</Text>
                               <If when={v().isLatest}>

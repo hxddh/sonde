@@ -2,7 +2,7 @@
 
 import { batch, effect, signal, Text, untracked, View } from "nsh";
 import { AlertDialog } from "nsh/base";
-import { count, ms as fmtMs } from "../format";
+import { count, duration } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
@@ -150,7 +150,7 @@ function TestResult(props: { report: ConnectivityReport }) {
     return [...(r().error ? [r().error!.message] : []), ...out.map(([k, v]) => `${k}: ${v}`)].join("\n");
   };
   return (
-    <Notice testID="test-result" tone={r().ok ? "info" : "error"} icon={r().ok ? "circle-check" : undefined} title={r().ok ? t("endpoints.reachable", { ms: fmtMs(r().latencyMs) }) : t("endpoints.unreachable")} text={facts()}>
+    <Notice testID="test-result" tone={r().ok ? "info" : "error"} icon={r().ok ? "circle-check" : undefined} title={r().ok ? t("endpoints.reachable", { ms: duration(r().latencyMs) }) : t("endpoints.unreachable")} text={facts()}>
       <If when={r().error && r().error!.recordId !== null && r().error!.recordId !== undefined}>
         <Button small label={t("common.showRequest")} onPress={() => showRequest(r().error!.recordId)} />
       </If>
@@ -249,10 +249,10 @@ export function Endpoints() {
         <View class="flex-row items-center gap-3">
           <If when={!terminal()}>
             <View class="size-8 shrink-0 items-center justify-center rounded-(--radius) bg-muted">
-              <Icon name="server" size={16} tint="foreground" />
+              <Icon name="server" tint="foreground" />
             </View>
           </If>
-          <View class="min-w-0 flex-1 gap-0.5">
+          <View class="min-w-0 flex-1 gap-1">
             <View class="flex-row items-center gap-2">
               <Text class="min-w-0 shrink text-body font-semibold text-foreground line-clamp-1">{e.name}</Text>
               <Badge label={e.vendorLabel} />

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fb::{Buf, FbError, Table as FbTable};
 use crate::model::*;
+use crate::ph;
 use crate::source::{ObjectMeta, Source, SourceError};
 
 pub const KNOWN_MANIFEST_VERSIONS: &[u16] = &[1, 2];
@@ -284,17 +285,17 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             }
             Err(e @ ManifestError::UnknownVersion(_)) => l
                 .issues
-                .push(issue(Severity::Error, format!("{}: {e}", o.key))),
+                .push(issue(Severity::Error, raw(format!("{}: {e}", o.key)))),
             Err(e) => l.issues.push(issue(
                 Severity::Error,
-                format!("{}: cannot decode: {e}", o.key),
+                ph!("decode.failed", key = o.key, error = e),
             )),
         }
     }
     if skipped > 0 {
         l.issues.push(issue(
             Severity::Info,
-            format!("{skipped} older manifests not decoded (only the newest {MAX_MANIFESTS})"),
+            ph!("slate.skipped", n = skipped, max = MAX_MANIFESTS),
         ));
     }
     l.format_version = Some(
@@ -305,11 +306,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             .join(", "),
     );
     let Some((latest_id, latest_time, latest)) = decoded.last().cloned() else {
-        l.headline = if manifests.is_empty() {
-            "no manifest found".into()
+        l.say_headline(if manifests.is_empty() {
+            ph!("slate.headline.none")
         } else {
-            "no manifest could be decoded".into()
-        };
+            ph!("slate.headline.undecoded")
+        });
         l.decoded = false;
         return Ok(l);
     };
@@ -318,45 +319,43 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     let mut prev: Option<&Manifest> = None;
     let mut fences = 0;
     for (id, t, m) in &decoded {
-        l.timeline.push(Event {
-            time: *t,
-            kind: "manifest".into(),
-            label: format!("manifest {id}"),
-            detail: format!(
-                "writer epoch {}, compactor epoch {}, L0 {}, runs {}, WAL replay after {}",
-                m.writer_epoch,
-                m.compactor_epoch,
-                m.l0.len(),
-                m.sorted_runs.len(),
-                m.replay_after_wal_id
-            ),
-            key: Some(format!("{root}manifest/{id:020}.manifest")),
-            bytes: None,
-        });
+        l.timeline.push(
+            Event::new(
+                *t,
+                "manifest",
+                ph!("slate.manifest", id = id),
+                ph!(
+                    "slate.manifest.detail",
+                    writer = m.writer_epoch,
+                    compactor = m.compactor_epoch,
+                    l0 = m.l0.len(),
+                    runs = m.sorted_runs.len(),
+                    wal = m.replay_after_wal_id
+                ),
+            )
+            .at(format!("{root}manifest/{id:020}.manifest")),
+        );
         if let Some(p) = prev {
             if m.writer_epoch != p.writer_epoch {
                 fences += 1;
-                l.timeline.push(Event {
-                    time: *t,
-                    kind: "fence".into(),
-                    label: format!("writer epoch {} → {}", p.writer_epoch, m.writer_epoch),
-                    detail: "a new writer fenced the previous one".into(),
-                    key: None,
-                    bytes: None,
-                });
+                l.timeline.push(Event::new(
+                    *t,
+                    "fence",
+                    ph!("slate.fence.writer", from = p.writer_epoch, to = m.writer_epoch),
+                    ph!("slate.fence.writer.detail"),
+                ));
             }
             if m.compactor_epoch != p.compactor_epoch {
-                l.timeline.push(Event {
-                    time: *t,
-                    kind: "fence".into(),
-                    label: format!(
-                        "compactor epoch {} → {}",
-                        p.compactor_epoch, m.compactor_epoch
+                l.timeline.push(Event::new(
+                    *t,
+                    "fence",
+                    ph!(
+                        "slate.fence.compactor",
+                        from = p.compactor_epoch,
+                        to = m.compactor_epoch
                     ),
-                    detail: "a new compactor took over".into(),
-                    key: None,
-                    bytes: None,
-                });
+                    ph!("slate.fence.compactor.detail"),
+                ));
             }
         }
         prev = Some(m);
@@ -364,25 +363,27 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
 
     // --- WAL ---
     for (id, o) in &wals {
-        l.timeline.push(Event {
-            time: o.last_modified,
-            kind: "wal".into(),
-            label: format!("WAL {id}"),
-            detail: if *id <= latest.replay_after_wal_id {
-                "flushed to L0 (GC-able)".into()
-            } else {
-                "not yet in L0".into()
-            },
-            key: Some(o.key.clone()),
-            bytes: Some(o.size),
-        });
+        l.timeline.push(
+            Event::new(
+                o.last_modified,
+                "wal",
+                ph!("slate.wal", id = id),
+                if *id <= latest.replay_after_wal_id {
+                    ph!("slate.wal.flushed")
+                } else {
+                    ph!("slate.wal.pending")
+                },
+            )
+            .at(o.key.clone())
+            .sized(o.size),
+        );
     }
     let gaps = wal_gaps(wals.keys().copied());
     for (s, e) in &gaps {
         let msg = if s == e {
-            format!("WAL {s} is missing")
+            ph!("slate.gap.one", id = s)
         } else {
-            format!("WAL {s}–{e} are missing")
+            ph!("slate.gap.many", from = s, to = e)
         };
         let sev = if *e > latest.replay_after_wal_id {
             Severity::Error
@@ -391,23 +392,16 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         };
         l.issues.push(issue(
             sev,
-            format!(
-                "{msg}{}",
+            vec![
+                msg.clone(),
                 if sev == Severity::Error {
-                    ": entries not yet in L0 are lost"
+                    ph!("slate.gap.lost")
                 } else {
-                    " (already flushed; collected out of order)"
-                }
-            ),
+                    ph!("slate.gap.flushed")
+                },
+            ],
         ));
-        l.timeline.push(Event {
-            time: None,
-            kind: "gap".into(),
-            label: msg,
-            detail: String::new(),
-            key: None,
-            bytes: None,
-        });
+        l.timeline.push(Event::new(None, "gap", msg, vec![]));
     }
 
     // --- references, GC lag, orphans ---
@@ -437,21 +431,36 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     for n in &missing {
         l.issues.push(issue(
             Severity::Error,
-            format!("compacted/{n}.sst is referenced by the manifest but missing"),
+            ph!("slate.sst.missing", name = n),
         ));
     }
     if !unreferenced.is_empty() {
-        l.issues.push(issue(Severity::Warning, format!("{} compacted SSTs ({}) are referenced by no manifest or checkpoint: orphans awaiting GC", unreferenced.len(), human_bytes(unreferenced.iter().map(|(_, o)| o.size).sum()))));
+        l.issues.push(issue(
+            Severity::Warning,
+            ph!(
+                "slate.orphans",
+                n = unreferenced.len(),
+                size = human_bytes(unreferenced.iter().map(|(_, o)| o.size).sum())
+            ),
+        ));
     }
     if let Some(t) = oldest_gc
         && (now - t).num_hours() >= 1
     {
-        l.issues.push(issue(Severity::Warning, format!("{} WAL SSTs ({}) were flushed to L0 but not collected; the oldest is {} h old (GC lag)", gc_wal.len(), human_bytes(gc_wal_bytes), (now - t).num_hours())));
+        l.issues.push(issue(
+            Severity::Warning,
+            ph!(
+                "slate.gclag",
+                n = gc_wal.len(),
+                size = human_bytes(gc_wal_bytes),
+                hours = (now - t).num_hours()
+            ),
+        ));
     }
     for o in &other {
         l.issues.push(issue(
             Severity::Info,
-            format!("unexpected object {} ({})", o.key, human_bytes(o.size)),
+            ph!("unexpected.object", key = o.key, size = human_bytes(o.size)),
         ));
     }
     let wal_tail = wals
@@ -504,14 +513,14 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                 human_bytes(compacted.values().map(|o| o.size).sum())
             ),
         ),
-        fact(
+        fact_said(
             "GC lag",
-            format!(
-                "{} WAL SSTs ({}) flushed but kept; {} orphan SSTs; {} superseded manifests",
-                gc_wal.len(),
-                human_bytes(gc_wal_bytes),
-                unreferenced.len(),
-                old_manifests
+            ph!(
+                "slate.gclag.fact",
+                n = gc_wal.len(),
+                size = human_bytes(gc_wal_bytes),
+                orphans = unreferenced.len(),
+                manifests = old_manifests
             ),
         ),
         fact("Checkpoints", latest.checkpoints.len()),
@@ -618,19 +627,19 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         });
     }
     l.timeline.sort_by_key(|e| e.time);
-    l.headline = format!(
-        "SlateDB: manifest {latest_id}, writer epoch {}, {} WAL SSTs ({} pending), {} L0 + {} sorted runs{}",
-        latest.writer_epoch,
-        wals.len(),
-        wal_tail,
-        latest.l0.len(),
-        latest.sorted_runs.len(),
-        if l.has_errors() {
-            " — errors found"
-        } else {
-            ""
-        }
-    );
+    let mut headline = vec![ph!(
+        "slate.headline",
+        id = latest_id,
+        epoch = latest.writer_epoch,
+        wals = wals.len(),
+        pending = wal_tail,
+        l0 = latest.l0.len(),
+        runs = latest.sorted_runs.len()
+    )];
+    if l.has_errors() {
+        headline.push(ph!("headline.errors"));
+    }
+    l.say_headline(headline);
     Ok(l)
 }
 

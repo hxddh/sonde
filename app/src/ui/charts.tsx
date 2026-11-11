@@ -147,11 +147,11 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
           leafClass={(_, i) => `fill-${color(rows()[i].group)}/70`}
           groupClass={(_, i) => `fill-${color(rows()[i].group)}/15`}
           groupLabel="label"
-          groupLabelClass="px-1.5 text-caption font-semibold text-foreground"
+          groupLabelClass="px-2 text-caption font-semibold text-foreground"
           inactiveOpacity={0.55}
           label="label"
           valueLabel={(_, v) => `${bytes(v)} · ${pct(v, total())}`}
-          labelClass="p-1.5 text-small font-medium text-foreground"
+          labelClass="p-2 text-small font-medium text-foreground"
           valueLabelClass="text-caption font-normal text-muted-foreground"
           hoverClass="rounded-(--radius-sm) outline-2 outline-foreground"
         />
