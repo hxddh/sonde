@@ -4,20 +4,21 @@
 // inspector from an operation to its requests to one request in full —
 // over the session's precomputed `session.json`.
 
-import { batch, computed, Scroll, signal, View } from "nsh";
+import { batch, computed, effect, Scroll, signal, untracked, View } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { duration } from "../app/src/format";
 import { t } from "../app/src/i18n";
-import type { Episode, LogLine, RecordSummary, RequestRecord, SessionView } from "../app/src/types";
+import { viewOfWhole, wholeOperations } from "../app/src/operations";
+import type { EpisodeRow, LogLine, RecordSummary, RequestRecord, WholeSession } from "../app/src/types";
 import { BREAK, Button, Muted, PanelHeader, Segmented, SPLIT_HANDLE, Strong } from "../app/src/ui/kit";
 import { SessionShape, SHAPE_STRIP, TICK_ROOM } from "../app/src/ui/plots";
 import { RecordView } from "../app/src/ui/record";
-import { findingMarks, linesOf, Observations, OperationsTable, OperationView, OutputTable, operationsAt, SessionHeader } from "../app/src/ui/sessionview";
+import { findingMarks, linesOf, Observations, OperationsTable, OperationView, OutputTable, SessionHeader } from "../app/src/ui/sessionview";
 import { TimePane } from "../app/src/ui/profile";
 import type { SignalId } from "../app/src/signals";
 
-/** What `sonde share` writes. */
-export interface SharedSession extends SessionView {
+/** What `sonde share` writes: the session whole, every operation and request in the page. */
+export interface SharedSession extends WholeSession {
   format: "sonde-share";
   version: number;
   records: RequestRecord[];
@@ -27,7 +28,10 @@ export interface SharedSession extends SessionView {
 type Pane = "operations" | "aligned" | "time";
 
 export function SessionViewer(props: { data: SharedSession }) {
-  const d = props.data;
+  // the page's session in the shape a view has, and its operations answered from the page as the
+  // app's are from the bridge: one table, one inspector, the same narrowing
+  const d = viewOfWhole(props.data);
+  const source = wholeOperations(() => d);
   const byId = new Map(d.records.map((r) => [r.id, r]));
   const op = signal<number | null>(null);
   const rec = signal<number | null>(null);
@@ -40,12 +44,10 @@ export function SessionViewer(props: { data: SharedSession }) {
   const showSignal = (id: SignalId) => batch(() => (reveal.set({ id, n: (reveal()?.n ?? 0) + 1 }), pane.set("time")));
   let opsRef: DataTableRef | undefined;
   let outRef: DataTableRef | undefined;
-  // the operations in the order their table shows them (sorted by a column)
-  let opsOrder: (() => number[]) | undefined;
 
-  const episode = computed<Episode | null>(() => {
+  const episode = computed<EpisodeRow | null>(() => {
     const i = op();
-    return i === null ? null : (d.episodes[i] ?? null);
+    return i === null ? null : source.episode(i);
   });
   // a request chosen on the Time pane has no operation open: the inspector shows it all the same
   const record = computed(() => (rec() === null ? null : (byId.get(rec()!) ?? null)));
@@ -60,39 +62,40 @@ export function SessionViewer(props: { data: SharedSession }) {
     const a = d.profile.rate[i]?.tMs ?? 0;
     return [a, a + d.profile.binMs];
   };
-  const start = d.episodes.reduce((m, e) => Math.min(m, new Date(e.start).getTime()), Infinity);
   /** The operations shown: all, those the chosen finding is about, and those running in the chosen slice. */
-  const shown = () => {
+  effect(() => {
     const f = filter();
     const w = window();
-    if (f === null && !w) return undefined;
-    const list = f === null ? d.episodes.map((_, i) => i) : (d.observations[f]?.episodes ?? []);
-    return w ? list.filter((i) => new Date(d.episodes[i].start).getTime() - start < w[1] && new Date(d.episodes[i].end).getTime() - start >= w[0]) : list;
-  };
+    untracked(() => {
+      const { finding: _, slice: __, ...kept } = source.query();
+      source.ask({ ...kept, ...(f === null ? {} : { finding: f }), ...(w ? { slice: w } : {}) });
+    });
+  });
   const filterNote = () => {
     const w = window();
     if (filter() === null && !w) return null;
-    const n = shown()?.length ?? 0;
-    return w ? t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n, of: d.episodes.length }) : t("sessions.filtered", { n, of: d.episodes.length });
+    const n = source.total();
+    return w ? t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n, of: d.episodesTotal }) : t("sessions.filtered", { n, of: d.episodesTotal });
   };
-  const rows = (e: Episode): RecordSummary[] => e.records.map((id) => byId.get(id)).filter((r): r is RequestRecord => !!r);
+  const rows = (e: EpisodeRow): RecordSummary[] => e.records.map((id) => byId.get(id)).filter((r): r is RequestRecord => !!r);
   const chooseOperation = (i: number) => {
     op.set(i);
     rec.set(null);
     opHighlight.set([i]);
-    const ls = linesOf(d.lines, d.episodes[i]);
+    const e = source.episode(i);
+    const ls = e ? linesOf(d.lines, e) : [];
     outHighlight.set(ls);
     if (ls.length) outRef?.scrollToRow(ls[0]);
   };
   const chooseLine = (i: number) => {
     outHighlight.set([i]);
-    const ops = operationsAt(d.episodes, d.lines[i]);
+    const ops = source.at(d.lines[i].time);
     opHighlight.set(ops);
     if (ops.length) {
       op.set(ops[0]);
       rec.set(null);
       // the row as the table shows it: sorted by a column, it is not the operation's index
-      const at = (opsOrder?.() ?? shown() ?? d.episodes.map((_, k) => k)).indexOf(ops[0]);
+      const at = source.rowOf(ops[0]);
       if (at >= 0) opsRef?.select({ row: at });
     }
   };
@@ -102,7 +105,7 @@ export function SessionViewer(props: { data: SharedSession }) {
     opHighlight.set([]);
   };
 
-  const operations = () => <OperationsTable view={d} rows={shown()} order={(o) => (opsOrder = o)} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || inspecting()} />;
+  const operations = () => <OperationsTable view={d} source={source} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || inspecting()} />;
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
   // the app's session page, read-only: its header, then what is shown of it (the tabs), then
   // the pane chosen — the shape of the session and what stands out over its operations

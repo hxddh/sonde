@@ -804,7 +804,11 @@ pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     let broke = trials.iter().any(|t| t.standing == Standing::Broke);
     let tried = trials.iter().any(|t| t.standing != Standing::Untested);
     let of = |against: &str| {
-        let mut rows = c.verdicts.iter().filter(|v| v.against == against).peekable();
+        let mut rows = c
+            .verdicts
+            .iter()
+            .filter(|v| v.against == against)
+            .peekable();
         // (none, or whether every one passed)
         rows.peek().is_some().then(|| rows.all(|v| v.ok))
     };
@@ -954,11 +958,7 @@ pub fn check_markdown_with(
             })
             .collect();
         md.push('\n');
-        md.push_str(&md_table(
-            &["", "under", ""],
-            &[false, false, false],
-            &rows,
-        ));
+        md.push_str(&md_table(&["", "under", ""], &[false, false, false], &rows));
     }
     if let Some(t) = &since {
         md.push_str(&format!("\n**Since** {}\n", md_text(t)));

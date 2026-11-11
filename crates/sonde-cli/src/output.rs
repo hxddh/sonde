@@ -48,35 +48,16 @@ pub fn count(n: usize, one: &str) -> String {
     }
 }
 
-/// A whole number as every command writes one: 1234567 as `1,234,567`.
+/// A whole number as every command writes one: 1234567 as `1,234,567`
+/// (the signals' own writer: one way, everywhere).
 pub fn grouped(n: u64) -> String {
-    let d = n.to_string();
-    let mut out = String::with_capacity(d.len() + d.len() / 3);
-    for (i, c) in d.chars().enumerate() {
-        if i > 0 && (d.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
+    sonde_proxy::signals::count_text(n as usize)
 }
 
 /// A length of time as every command writes one: `0.4 ms`, `217 ms`,
-/// `12.5 s`, `2m 26s`.
+/// `12.5 s`, `2m 26s` (the signals' own writer).
 pub fn duration(ms: f64) -> String {
-    if ms >= 60_000.0 {
-        format!(
-            "{}m {:02}s",
-            (ms / 60_000.0) as u64,
-            (ms % 60_000.0 / 1000.0) as u64
-        )
-    } else if ms >= 1000.0 {
-        format!("{:.1} s", ms / 1000.0)
-    } else if ms >= 0.95 || ms == 0.0 {
-        format!("{ms:.0} ms")
-    } else {
-        format!("{ms:.1} ms")
-    }
+    sonde_proxy::signals::ms_text(ms)
 }
 
 /// Prints rows as an aligned table (wide characters counted as two).

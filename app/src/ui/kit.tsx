@@ -1254,8 +1254,9 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
   const per = () => (props.mono ? 7.4 : 6.6);
   const columns = () => {
     const own = props.columns.map((title, c) => {
-      const longest = Math.max(wide(title) + (props.end?.includes(c) ? 3 : 0), ...props.rows.slice(0, 400).map((r) => wide(r[c] ?? "")));
-      return Math.round(Math.min(360, Math.max(56, longest * per() + 28)));
+      // a title has its sort mark beside it; a cell its inset
+      const longest = Math.max(wide(title) * per() + 44, ...props.rows.slice(0, 400).map((r) => wide(r[c] ?? "") * per() + 24));
+      return Math.round(Math.min(360, Math.max(56, longest)));
     });
     const rest = own.reduce((n, w, c) => (c === props.fill ? n : n + w), 0);
     return props.columns.map((title, c) => ({ key: `c${c}`, title, width: c === props.fill && width() > 0 ? Math.max(own[c], width() - rest - 2) : own[c], sortable: true, align: props.end?.includes(c) ? ("end" as const) : undefined }));

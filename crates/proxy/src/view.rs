@@ -11,7 +11,9 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::episode::{Episode, Kind, Observation, Outcome, episodes, observations, shared_notes};
+use crate::episode::{
+    Episode, Kind, Observation, Outcome, episodes, observations_of, shared_notes,
+};
 use crate::fixes::WhatIf;
 use crate::profile::{Profile, RequestPrices};
 use crate::session::Session;
@@ -97,17 +99,48 @@ fn millis(a: DateTime<Utc>, b: DateTime<Utc>) -> f64 {
     (b - a).num_microseconds().unwrap_or(0) as f64 / 1000.0
 }
 
+/// What a thread made, or its panic carried on.
+fn joined<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    match h.join() {
+        Ok(v) => v,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
 impl Analysis {
     pub fn of(s: &Session, prices: &RequestPrices) -> Analysis {
-        let episodes = episodes(&s.records);
-        let observations = observations(&s.records, &episodes);
+        Analysis::of_records(&s.header, &s.records, prices)
+    }
+
+    /// Everything a session amounts to, worked out once: its operations and
+    /// findings on this thread while its counts, its signals and where its
+    /// time went are reckoned on others (each reads every record, none
+    /// needs another's answer).
+    pub fn of_records(
+        header: &crate::session::SessionHeader,
+        records: &[reqlog::Record],
+        prices: &RequestPrices,
+    ) -> Analysis {
+        let (summary, signals, profile, episodes, observations) = std::thread::scope(|scope| {
+            let summary = scope.spawn(|| crate::summary::summarize(records));
+            let signals = scope.spawn(|| crate::signals::signals(records, prices));
+            let profile = scope.spawn(|| crate::profile::profile(records, prices));
+            let episodes = episodes(records);
+            let observations = observations_of(header, records, &episodes);
+            (
+                joined(summary),
+                joined(signals),
+                joined(profile),
+                episodes,
+                observations,
+            )
+        });
         let shared_notes = shared_notes(&episodes)
             .into_iter()
             .map(|(_, n, _, _)| n)
             .collect();
-        let profile = crate::profile::profile(&s.records, prices);
-        let what_if = crate::fixes::what_if(&s.records, &profile, &observations);
-        let mut owner = HashMap::with_capacity(s.records.len());
+        let what_if = crate::fixes::what_if(records, &profile, &observations);
+        let mut owner = HashMap::with_capacity(records.len());
         for (i, e) in episodes.iter().enumerate() {
             for id in &e.records {
                 owner.insert(*id, i as u32);
@@ -118,10 +151,9 @@ impl Analysis {
             Some((start, end))
         });
         Analysis {
-            summary: crate::summary::summarize(&s.records),
-            signals: crate::signals::signals(&s.records, prices),
-            injected: s
-                .records
+            summary,
+            signals,
+            injected: records
                 .iter()
                 .filter(|r| r.injected.is_some())
                 .map(|r| r.id)

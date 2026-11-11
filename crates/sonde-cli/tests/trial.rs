@@ -165,6 +165,17 @@ async fn program(what: &str) -> i32 {
                 1
             }
         }
+        // writes how much it read on its input
+        "stdin-size" => {
+            use std::io::Read;
+            let mut said = Vec::new();
+            std::io::stdin().read_to_end(&mut said).unwrap();
+            if ok(app.send_raw(put("size", &said.len().to_string())).await) {
+                0
+            } else {
+                1
+            }
+        }
         // one write, then fails
         "fails" => {
             let _ = app.send_raw(put("a", "1")).await;
@@ -520,7 +531,8 @@ async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
     assert_eq!(j.code, Some(1));
     let doc: serde_json::Value = serde_json::from_str(&j.stdout).expect(&j.stdout);
     assert_eq!(doc["passed"], false);
-    assert_eq!(doc["check"]["passed"], false);
+    // (the inner one is of the budget's rows, and none of those failed)
+    assert_eq!(doc["check"]["passed"], true);
     assert_eq!(doc["trials"][0]["standing"], "broke");
     for format in ["markdown", "github"] {
         let m = b.run(None, &["check", name, "-f", format]).await;
@@ -1530,4 +1542,47 @@ async fn an_interrupt_ends_what_the_program_started_too() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     assert!(!alive(), "the program's own process went with it");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_input_too_large_to_hold_is_fed_to_every_run_all_the_same() {
+    use tokio::io::AsyncWriteExt;
+    let b = Bench::new().await;
+    let mut c = b.sonde(Some("stdin-size"));
+    c.args(["run", "--fault", "slowdown", "-o", "run.sonde", "--"])
+        .args(the_program_command())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = c.spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    // past the 8 MiB sonde keeps in memory: kept in a file for the trial
+    const SIZE: usize = (9 << 20) + 5;
+    let piece = vec![b'x'; 1 << 20];
+    let mut left = SIZE;
+    while left > 0 {
+        let n = left.min(piece.len());
+        stdin.write_all(&piece[..n]).await.unwrap();
+        left -= n;
+    }
+    drop(stdin);
+    let o = out(child.wait_with_output().await.unwrap());
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    let all = trials(&b.path("run.sonde"));
+    let t = trial(&all, "slowdown");
+    assert_eq!(
+        (&t["exit"], &t["standing"]),
+        (&0.into(), &"survived".into()),
+        "{t:#}"
+    );
+    // the trial's run wrote last: it read every byte the clean run did
+    assert_eq!(
+        b.store.state.lock().buckets["data"]["size"].0,
+        SIZE.to_string().as_bytes()
+    );
+    assert_eq!(
+        b.store.sent("PUT /data/size").len(),
+        2,
+        "clean run and trial"
+    );
 }

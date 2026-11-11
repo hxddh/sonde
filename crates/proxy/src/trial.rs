@@ -137,6 +137,13 @@ pub struct Trial {
     /// Conditional writes answered 412 though they would have won.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub races: usize,
+    /// Of the races, the ones whose write the store had made (sonde let it
+    /// through) and which the program read back and did not write again,
+    /// making every other commit it meant to: the store holds what the
+    /// clean run's holds. Whether the program knew its own write, or would
+    /// have gone on the same over another writer's, the requests do not say.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub read_back: usize,
     /// A SlateDB writer that lost its race stopped and wrote nothing more:
     /// fenced, as the format means it. Its exit is not held against it.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -469,21 +476,16 @@ fn where_of(r: &Record) -> Where {
     }
 }
 
-/// The SDK's own setting for retries, from the changes sonde already
-/// advises for a throttled store ([`crate::fixes::for_key`]): its last line.
+/// The SDK's own setting that turns retries on ([`crate::fixes::retries_on`]).
 fn retry_setting(sdk: &str) -> Option<&'static str> {
     let name = sdk.split(' ').next().unwrap_or("");
-    let lang = match name {
+    crate::fixes::retries_on(match name {
         "boto3" | "botocore" | "aws-cli" | "s3fs" => "python",
         "aws-sdk-java" | "hadoop-aws" | "hadoop" => "java",
         "aws-sdk-go-v2" | "aws-sdk-go" => "go",
         "aws-sdk-js" => "js",
         _ => return None,
-    };
-    crate::fixes::for_key("obs.throttled")
-        .into_iter()
-        .find(|f| f.sdk == lang)
-        .and_then(|f| f.code.lines().last())
+    })
 }
 
 /// Reads the trial: `clean` is the run without faults, `run` the one with.
@@ -747,6 +749,9 @@ pub fn judge(
         let unretried = lost.len().min(short);
         let made_good = lost.len() - unretried;
         retried += made_good;
+        // every commit but the lost ones was made: with them in the store,
+        // it holds as many as the clean run's
+        let rest_made = short <= lost.len();
         for (n, &i) in lost.iter().enumerate() {
             let r = group[i];
             // the contested key written over without a condition: the
@@ -793,9 +798,8 @@ pub fn judge(
                     });
                 if slate && exit != 0 && !wrote_on {
                     fenced = true;
-                } else if looked && exit == clean_exit && !over {
+                } else if looked && rest_made && exit == clean_exit && !over {
                     read_back += 1;
-                    keep(&mut at_race, r);
                 } else {
                     unrun += 1;
                     keep(&mut at_race, r);
@@ -910,13 +914,6 @@ pub fn judge(
         reasons.push(format!(
             "{blind} lost write{} sent again with the same If-Match: a real writer's ETag would refuse it again",
             plural(blind)
-        ));
-    }
-    if read_back > 0 {
-        standing = Standing::Degraded;
-        reasons.push(format!(
-            "{read_back} lost write{} read back and not written again: right if the program knew its own write there (sonde let it through), a lost commit against a real writer",
-            plural(read_back)
         ));
     }
     let plain = dropped_writes - lost_writes;
@@ -1063,6 +1060,7 @@ pub fn judge(
         resumed,
         reread,
         races,
+        read_back,
         fenced,
         attempts,
         backoff_ms,
@@ -1213,6 +1211,15 @@ impl Trial {
                 } else {
                     format!(": {}", how.join(", "))
                 }
+            ));
+        }
+        if self.read_back > 0 {
+            parts.push(format!(
+                "{} lost write{} read back and not written again: the store has {} (sonde let {} through), so no commit is missing",
+                self.read_back,
+                plural(self.read_back),
+                if self.read_back == 1 { "it" } else { "them" },
+                if self.read_back == 1 { "it" } else { "them" },
             ));
         }
         if self.fenced {
@@ -2262,15 +2269,41 @@ mod tests {
         );
         assert_eq!(t.at.as_ref().unwrap().key, format!("b/{}", log(1)));
         assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.race");
-        // it reads the key it lost and stops: it may have found its own
-        // write there, which sonde let through. Not known, and said so
+        // it reads the key it lost, finds its write there (sonde let it
+        // through) and carries on: the store holds what the clean run's
+        // does, and nothing more
         let t = judge(&lost_race_scenario(), &clean, 0, &run[..3], 0);
-        assert_eq!(t.standing, Standing::Degraded, "{}", t.line());
-        assert!(
-            t.reasons[0].starts_with("1 lost write read back and not written again"),
-            "{:?}",
-            t.reasons
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        assert_eq!((t.read_back, t.retried, t.dropped_writes), (1, 0, 0));
+        assert_eq!((t.at.clone(), t.advice.clone()), (None, None));
+        assert_eq!(
+            t.line(),
+            "1 fault, 0 retried · 1 lost write read back and not written again: the store has it (sonde let it through), so no commit is missing · 1.5× the requests"
         );
+        // as Lance does: its other commits follow, each made
+        let more = vec![
+            create(1, 0, &log(1), 200),
+            create(2, 50, &log(2), 200),
+            create(3, 90, &log(3), 200),
+        ];
+        let lance = vec![
+            race(create(1, 0, &log(1), 412), Some(200)),
+            get(2, 10, &log(1), 200),
+            create(3, 50, &log(2), 200),
+            create(4, 90, &log(3), 200),
+        ];
+        let t = judge(&lost_race_scenario(), &more, 0, &lance, 0);
+        assert_eq!(
+            (t.standing, t.read_back),
+            (Standing::Survived, 1),
+            "{}",
+            t.line()
+        );
+        // read back, and a commit it meant to make after it never made
+        let t = judge(&lost_race_scenario(), &more, 0, &lance[..3], 0);
+        assert_eq!(t.standing, Standing::Broke, "{}", t.line());
+        // an If-Match answered without the store has nothing to read back
+        // (the next test), and a 412 never looked into is given up
         // two commits meant, the first lost and never run again
         let clean2 = vec![create(1, 0, &log(1), 200), create(2, 100, &log(2), 200)];
         let run2 = vec![

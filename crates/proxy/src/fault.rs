@@ -335,6 +335,98 @@ pub fn scenario(name: &str) -> Option<Scenario> {
     scenarios().into_iter().find(|s| s.name == name)
 }
 
+/// A scenario of a project's own, from what its `[[scenario]]` in
+/// `sonde.toml` says: checked and built in this one place, for the command
+/// line and for the app. `times` is 1 unless said (every attempt for a
+/// delay); 0 is every attempt.
+pub fn project_scenario(
+    name: &str,
+    fault: &str,
+    on: &[String],
+    prefix: &str,
+    times: Option<u32>,
+) -> Result<Scenario, String> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!(
+            "scenario {name:?}: a name is letters, digits, - and _"
+        ));
+    }
+    // `clean` is the run without faults: its name is each run's place
+    // (`{trial}`, SONDE_TRIAL), and a scenario by it would write there
+    if name == "clean" {
+        return Err(
+            "scenario clean: that is the name of the run without faults; give this one another name"
+                .into(),
+        );
+    }
+    // a scenario of the project's is run in a built-in one's place
+    // wherever it is named: one name, one meaning
+    if scenario(name).is_some() {
+        return Err(format!(
+            "scenario {name}: that is one of sonde's own scenarios; give this one another name"
+        ));
+    }
+    for op in on {
+        if !known_operation(op) {
+            return Err(format!(
+                "scenario {name}: on = {op:?} is no S3 operation sonde names (PutObject, GetObject, DeleteObjects, CompleteMultipartUpload, …; \"Put*\" matches by its start): it would meet no request"
+            ));
+        }
+    }
+    let effect = parse_effect(fault).map_err(|e| format!("scenario {name}: {e}"))?;
+    let every = matches!(effect, Effect::Delay { .. });
+    let mut about = fault.to_string();
+    if !on.is_empty() {
+        about.push_str(&format!(" on {}", on.join(", ")));
+    }
+    if !prefix.is_empty() {
+        about.push_str(&format!(" under {prefix}"));
+    }
+    Ok(Scenario {
+        name: name.to_string(),
+        about,
+        rules: vec![Rule {
+            on: on.to_vec(),
+            prefix: prefix.to_string(),
+            effect,
+            times: times.unwrap_or(if every { 0 } else { 1 }),
+            conditional: false,
+        }],
+    })
+}
+
+/// A project's scenarios, each as [`project_scenario`] made it: none may
+/// share a name.
+pub fn project_scenarios(
+    each: impl IntoIterator<Item = Result<Scenario, String>>,
+) -> Result<Vec<Scenario>, String> {
+    let mut all: Vec<Scenario> = Vec::new();
+    for s in each {
+        let s = s?;
+        if all.iter().any(|a| a.name == s.name) {
+            return Err(format!("scenario {}: named twice", s.name));
+        }
+        all.push(s);
+    }
+    Ok(all)
+}
+
+/// A program's name as `[program] name` of `sonde.toml` gives it: an empty
+/// one is a mistake (its runs are found by it), not no name.
+pub fn project_program_name(name: Option<&str>) -> Result<Option<String>, String> {
+    match name {
+        Some(n) if n.trim().is_empty() => Err(
+            "[program] name = \"\": a program's name is what its runs are found by; give it one or leave the line out"
+                .into(),
+        ),
+        n => Ok(n.map(str::to_string)),
+    }
+}
+
 /// A fault as written in `sonde.toml` or on the command line: `503 SlowDown`,
 /// `500`, `lost-answer`, `cut-body`, `lost-race`, `delay 200ms`. Nothing
 /// may follow it: `503 Slow Down` is a mistake, not a code named `Slow`.
@@ -828,6 +920,35 @@ mod tests {
         assert!(parse_effect("503 Slow Down").is_err());
         assert!(parse_effect("lost-answer twice").is_err());
         assert!(parse_effect("delay 200ms more").is_err());
+    }
+
+    #[test]
+    fn a_projects_scenario_is_checked_in_one_place() {
+        let made = |name: &str, fault: &str, on: &[&str]| {
+            let on: Vec<String> = on.iter().map(|s| s.to_string()).collect();
+            project_scenario(name, fault, &on, "", None)
+        };
+        let s = made("flaky", "503 SlowDown", &["Put*"]).unwrap();
+        assert_eq!(
+            (s.about.as_str(), s.rules[0].times),
+            ("503 SlowDown on Put*", 1)
+        );
+        assert_eq!(made("lag", "delay 2s", &[]).unwrap().rules[0].times, 0);
+        for (name, fault, on, says) in [
+            ("clean", "500", &[][..], "the run without faults"),
+            ("slowdown", "500", &[], "one of sonde's own"),
+            ("a b", "500", &[], "letters, digits"),
+            ("x", "503 Slow Down", &[], "one word too many"),
+            ("x", "500", &["PutObjekt"], "PutObjekt"),
+        ] {
+            let e = made(name, fault, on).unwrap_err();
+            assert!(e.contains(says), "{e}");
+        }
+        let twice = project_scenarios([made("a", "500", &[]), made("a", "503", &[])]);
+        assert_eq!(twice.unwrap_err(), "scenario a: named twice");
+        assert!(project_program_name(Some(" ")).is_err());
+        assert_eq!(project_program_name(None), Ok(None));
+        assert_eq!(project_program_name(Some("etl")), Ok(Some("etl".into())));
     }
 
     #[test]

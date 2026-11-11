@@ -451,8 +451,11 @@ pub fn figures_of(
     s: &crate::session::Session,
     prices: &crate::profile::RequestPrices,
 ) -> Figures {
-    let profile = crate::profile::profile(&s.records, prices);
-    let findings = crate::episode::observations(&s.records, &crate::episode::episodes(&s.records));
+    let crate::view::Analysis {
+        profile,
+        observations: findings,
+        ..
+    } = crate::view::Analysis::of(s, prices);
     Figures {
         prices: prices.clone(),
         point: crate::program::run_point(
@@ -530,5 +533,132 @@ mod tests {
         assert!(s.error_codes.contains(&("503 SlowDown".into(), 1)));
         assert!(s.error_codes.contains(&("refused by sonde".into(), 1)));
         assert_eq!(summarize(&[]), Summary::default());
+    }
+
+    #[test]
+    fn an_operation_has_its_error_share_and_its_tail_and_says_when_it_is_of_few() {
+        let mut rs: Vec<Record> = (0..100)
+            .map(|i| {
+                rec(
+                    "GetObject",
+                    if i < 5 { 500 } else { 200 },
+                    f64::from(i + 1),
+                    i64::from(i),
+                )
+            })
+            .collect();
+        rs.push(rec("PutObject", 200, 7.0, 500));
+        let s = summarize(&rs);
+        let get = &s.operations[0];
+        assert_eq!((get.count, get.errors), (100, 5));
+        assert_eq!(get.error_share, 0.05);
+        assert_eq!(
+            (get.p50_ms, get.p95_ms, get.p99_ms, get.max_ms),
+            (50.0, 95.0, 99.0, 100.0)
+        );
+        assert!(!get.few);
+        let put = &s.operations[1];
+        assert!(put.few, "one request has no percentiles to speak of");
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["operations"][0]["errorShare"], 0.05);
+        assert_eq!(json["operations"][0]["p99Ms"], 99.0);
+        assert!(json["operations"][0].get("few").is_none());
+        assert_eq!(json["operations"][1]["few"], true);
+    }
+
+    /// A fixture copied into a sessions folder, compressed or not.
+    fn fixture(dir: &std::path::Path, name: &str, compressed: bool) -> std::path::PathBuf {
+        let from = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        let to = dir.join(name);
+        std::fs::copy(from, &to).unwrap();
+        if compressed {
+            crate::session::compress(&to).unwrap();
+        }
+        to
+    }
+
+    #[test]
+    fn what_is_counted_a_line_at_a_time_is_what_the_records_sum_to() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "slatedb.sonde",
+            "sdk-python.sonde",
+            "iceberg.sonde",
+            "delta.sonde",
+        ] {
+            let path = fixture(dir.path(), name, true);
+            let s = crate::session::Session::open(&path).unwrap();
+            let sum = summarize(&s.records);
+            let c = counted(&path).unwrap();
+            assert_eq!(
+                (c.requests, c.errors, c.misses, c.bytes_up, c.bytes_down),
+                (
+                    sum.requests,
+                    sum.errors,
+                    sum.misses,
+                    sum.bytes_up,
+                    sum.bytes_down
+                ),
+                "{name}"
+            );
+            // (to the microsecond: the one rounds each time, the other their difference)
+            assert!((c.seconds - sum.seconds).abs() < 2e-6, "{name}");
+            assert_eq!(c.shape.len(), SHAPE_BINS);
+            assert_eq!(
+                u64::from(c.shape.iter().sum::<u32>()),
+                sum.requests,
+                "{name}"
+            );
+            assert_eq!(c.created, s.header.created);
+        }
+    }
+
+    #[test]
+    fn counts_are_kept_beside_a_finished_session_and_go_when_it_changes_or_is_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        // a live (uncompressed) session is counted and nothing is kept
+        let live = fixture(dir.path(), "slatedb.sonde", false);
+        assert_eq!(counted(&live).unwrap().requests, 172);
+        assert!(!counted_file(&live).exists());
+        // a finished one keeps its counts: the next listing reads only those
+        crate::session::compress(&live).unwrap();
+        let first = counted(&live).unwrap();
+        assert!(counted_file(&live).exists());
+        assert_eq!(
+            counted_file(&live).file_name().unwrap(),
+            "slatedb.summary.json"
+        );
+        assert_eq!(kept(&live), Some(first.clone()));
+        // another file in its place (another length): counted again
+        let other = fixture(dir.path(), "delta.sonde", true);
+        std::fs::copy(&other, &live).unwrap();
+        assert_eq!(kept(&live), None);
+        assert_eq!(counted(&live).unwrap().requests, 49);
+        forget(&live);
+        assert!(!counted_file(&live).exists());
+    }
+
+    #[test]
+    fn a_runs_figures_are_reckoned_once_and_again_at_other_prices() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(dir.path(), "sdk-python.sonde", true);
+        let prices = crate::profile::RequestPrices::default();
+        let (c, f) = figures(&path, &prices).unwrap();
+        assert_eq!((c.requests, f.point.requests), (13, 13));
+        assert!(f.point.cost > 0.0);
+        // kept: the same answer from the small file
+        let again = kept(&path).unwrap();
+        assert_eq!(again.figures.as_ref(), Some(&f));
+        assert_eq!(figures(&path, &prices).unwrap().1, f);
+        // other prices are another cost
+        let dear = crate::profile::RequestPrices {
+            per_1000_writes: 50.0,
+            ..prices
+        };
+        let (_, g) = figures(&path, &dear).unwrap();
+        assert!(g.point.cost > f.point.cost * 100.0);
+        assert_eq!(kept(&path).unwrap().figures.unwrap().prices, dear);
     }
 }

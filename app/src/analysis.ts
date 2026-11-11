@@ -17,7 +17,7 @@ export interface Analysis {
 
 /** `path`'s analysis, read again each time `tick` changes. */
 export function analysis(path: () => string | null, tick: () => unknown = () => 0): Analysis {
-  const r = resource(path, (p) => api.sessions.analyse(p));
+  const r = resource(path, (p) => api.sessions.view(p));
   let first = true;
   // a tick during a reading is kept for when it ends: the last one (a program
   // that just ended) must not be lost

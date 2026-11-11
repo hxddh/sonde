@@ -14,7 +14,7 @@ use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use serde_json::Value;
 
-use crate::episode::{episodes, observations, shared_notes};
+use crate::episode::{episodes, shared_notes};
 use crate::session::Session;
 use crate::summary::summarize;
 
@@ -240,7 +240,10 @@ pub fn write_session_json(
     w.field("format", &"sonde-share")?;
     w.field("header", &header)?;
     w.field("lines", &crate::logs::lines(&s.logs))?;
-    w.field("observations", &observations(&s.records, &eps))?;
+    w.field(
+        "observations",
+        &crate::episode::observations_of(&s.header, &s.records, &eps),
+    )?;
     w.field("profile", &crate::profile::profile(&s.records, prices))?;
     w.key("records")?;
     w.begin_array()?;
@@ -361,7 +364,69 @@ pub async fn serve(listener: tokio::net::TcpListener, dir: PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use super::inside;
+    use super::*;
+
+    #[test]
+    fn a_document_written_as_it_is_made_reads_as_one_built_whole() {
+        let v = serde_json::json!({
+            "b": [1, {"z": "two\nlines", "a": []}, [], {}],
+            "a": {"k": null, "deep": {"x": [true]}},
+            "empty": [],
+        });
+        for pretty in [true, false] {
+            let mut w = JsonOut::new(Vec::new(), pretty);
+            w.begin_object().unwrap();
+            w.field("a", &v["a"]).unwrap();
+            w.key("b").unwrap();
+            w.begin_array().unwrap();
+            w.value(&1).unwrap();
+            w.begin_object().unwrap();
+            w.array("a", Vec::<u8>::new()).unwrap();
+            w.field("z", &"two\nlines").unwrap();
+            w.end_object().unwrap();
+            w.begin_array().unwrap();
+            w.end_array().unwrap();
+            w.begin_object().unwrap();
+            w.end_object().unwrap();
+            w.end_array().unwrap();
+            w.array("empty", Vec::<u8>::new()).unwrap();
+            w.end_object().unwrap();
+            let text = String::from_utf8(w.finish().unwrap()).unwrap();
+            let whole = if pretty {
+                serde_json::to_string_pretty(&v).unwrap()
+            } else {
+                serde_json::to_string(&v).unwrap()
+            };
+            assert_eq!(text, whole);
+        }
+    }
+
+    #[test]
+    fn a_session_shared_from_a_lean_reading_and_its_file_is_the_same_document() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sdk-java.sonde");
+        let prices = crate::profile::RequestPrices::default();
+        let full = Session::open(&path).unwrap();
+        let mut whole = Vec::new();
+        write_session_json(&full, None, &prices, &mut whole).unwrap();
+        let lean = Session::open_lean(&path).unwrap();
+        let mut streamed = Vec::new();
+        write_session_json(&lean, Some(&path), &prices, &mut streamed).unwrap();
+        assert!(whole == streamed, "the two documents differ");
+        let doc: Value = serde_json::from_slice(&streamed).unwrap();
+        assert_eq!(doc["records"].as_array().unwrap().len(), full.records.len());
+        // every header is there, though the analysis never held them
+        assert!(
+            doc["records"][0]["requestHeaders"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["name"]
+                    .as_str()
+                    .unwrap()
+                    .eq_ignore_ascii_case("authorization"))
+        );
+        assert_eq!(session_json(&full, &prices), doc);
+    }
 
     #[test]
     fn a_shared_page_never_carries_a_secret_set_before_the_program() {
@@ -379,6 +444,7 @@ mod tests {
                 git: None,
                 scenario: None,
                 trial_of: None,
+                whole_seconds: false,
             },
             records: vec![],
             logs: vec![],

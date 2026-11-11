@@ -245,6 +245,74 @@ mod tests {
     use chrono::DateTime;
 
     #[test]
+    fn traces_written_a_span_at_a_time_and_in_batches_are_the_same_spans() {
+        let rec = |id: u64| reqlog::Record {
+            id,
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 10).unwrap(),
+            method: "GET".into(),
+            operation: "GetObject".into(),
+            bucket: Some("b".into()),
+            key: Some(format!("k{id}")),
+            status: Some(200),
+            latency_ms: 4.0,
+            ..Default::default()
+        };
+        let mut header = SessionHeader::new("e", "http://e", "r", Some("python etl.py".into()));
+        let unnamed = Session {
+            header: header.clone(),
+            records: (1..=300).map(rec).collect(),
+            logs: vec![],
+        };
+        let whole = traces(&unnamed);
+        let spans = |doc: &Value| -> Vec<Value> {
+            doc["resourceSpans"][0]["scopeSpans"][0]["spans"]
+                .as_array()
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(spans(&whole).len(), 600);
+        // pretty, as `sonde export` writes it: the same document
+        let mut text = Vec::new();
+        write_traces(&unnamed, &mut text, true).unwrap();
+        assert_eq!(
+            String::from_utf8(text).unwrap(),
+            serde_json::to_string_pretty(&whole).unwrap()
+        );
+        // in requests of 8 KiB or so: every span once, in order, each
+        // request a whole document with the resource
+        let mut parts: Vec<Vec<u8>> = Vec::new();
+        let n = batches(&unnamed, 8 << 10, &mut |b| {
+            parts.push(b);
+            Ok(())
+        })
+        .unwrap();
+        assert!(n > 5 && n == parts.len(), "{n} parts");
+        let mut all = Vec::new();
+        for p in &parts {
+            assert!(p.len() < 12 << 10, "{} bytes", p.len());
+            let doc: Value = serde_json::from_slice(p).unwrap();
+            assert_eq!(
+                doc["resourceSpans"][0]["resource"],
+                whole["resourceSpans"][0]["resource"]
+            );
+            all.extend(spans(&doc));
+        }
+        assert_eq!(all, spans(&whole));
+        // the program's name, when it has one, is the service
+        let service =
+            |s: &Session| traces(s)["resourceSpans"][0]["resource"]["attributes"][0].clone();
+        assert_eq!(service(&unnamed)["value"]["stringValue"], "python");
+        header.name = Some("nightly-etl".into());
+        let named = Session {
+            header,
+            records: vec![rec(1)],
+            logs: vec![],
+        };
+        assert_eq!(service(&named)["key"], "service.name");
+        assert_eq!(service(&named)["value"]["stringValue"], "nightly-etl");
+    }
+
+    #[test]
     fn each_operation_is_a_span_with_its_requests_under_it() {
         let rec = |id: u64, key: &str| reqlog::Record {
             id,

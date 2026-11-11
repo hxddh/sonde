@@ -283,8 +283,11 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
         );
         for (line, label) in lines.iter().zip(["rate", "errors", "latency", "bytes"]) {
             assert!(line.starts_with(label), "{name}: {line}");
+            // as wide as its slices, never wider than the line; none for no errors
             let bars = line.chars().filter(|c| ('▁'..='█').contains(c)).count();
-            assert_eq!(bars, SPARK_COLUMNS, "{name}: {line}");
+            let none = label == "errors" && sig.errors.count == 0;
+            let want = if none { 0 } else { sig.bins.min(SPARK_COLUMNS) };
+            assert_eq!(bars, want, "{name}: {line}");
         }
         assert!(!t.contains('\x1b'), "{name}");
         assert!(text(&sig, true).contains("\x1b[2mrate"), "{name}");
@@ -436,7 +439,8 @@ fn the_first_byte_is_told_from_the_rest_by_kind_of_request() {
     assert!(near(fb.share, 260.0 / 650.0));
     let t = text(&s, false);
     assert!(t.contains("first byte  40% of the time"), "{t}");
-    assert!(t.contains("GetObject") && t.contains("then 78 ms"), "{t}");
+    assert!(t.contains("first byte  then the rest"), "{t}");
+    assert!(t.contains("GetObject          5       22 ms  78 ms"), "{t}");
 }
 
 #[test]
@@ -620,9 +624,9 @@ fn a_prefix_past_half_of_s3s_limit_is_said_in_the_terminal() {
 #[test]
 fn a_sparkline_keeps_a_burst_and_shows_anything_above_nothing() {
     assert_eq!(sparkline(&[], 32), "");
-    assert_eq!(sparkline(&[0.0, 0.0], 4), "▁▁▁▁");
-    // fewer values than columns: each drawn wide
-    assert_eq!(sparkline(&[0.0, 8.0], 4), "▁▁██");
+    assert_eq!(sparkline(&[0.0, 0.0], 4), "▁▁");
+    // fewer values than columns: a bar each, none drawn wide
+    assert_eq!(sparkline(&[0.0, 8.0], 4), "▁█");
     // more: a column is the most of what it stands for
     let mut long = vec![0.0; 320];
     long[5] = 100.0;

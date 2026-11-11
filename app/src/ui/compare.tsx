@@ -12,7 +12,7 @@ import type { LatencyChange, RunChange, SessionInfo, Signals } from "../types";
 import { Icon } from "./icon";
 import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, Title, TYPE, EMPHASIS, SIZES, SURFACE } from "./kit";
 import { fileName, sessionName } from "./manage";
-import { brief, signalsOf } from "../signals";
+import { brief, handful, signalsOf } from "../signals";
 import { Chart, cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency, MARK, Sparkline } from "./plots";
 
 interface Comparison {
@@ -57,7 +57,7 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     // how much it changed, then what else there is to say of it; the same in both runs: said so, no "−0%"
     const detail = () => [!known() ? "" : same() ? t("compare.sameBoth") : change(f().a!, f().b!), f().detail?.() ?? ""].filter(Boolean).join(" · ");
     const tone = () => (!known() || same() || !c().sameProgram ? "plain" : f().b! < f().a! ? "ok" : "bad");
-    const lines = () => (f().series && s() && !brief(s()![0]) && !brief(s()![1]) ? [f().series!(s()![0]), f().series!(s()![1])] : null);
+    const lines = () => (f().series && s() && !handful(s()![0]) && !handful(s()![1]) ? [f().series!(s()![0]), f().series!(s()![1])] : null);
     return (
       <Stat
         testID={`compare-${f().id}`}
@@ -195,7 +195,7 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
     () => `${props.a}\n${props.b}`,
     async () => {
       try {
-        const [a, b] = await Promise.all([api.sessions.analyse(props.a), api.sessions.analyse(props.b)]);
+        const [a, b] = await Promise.all([api.sessions.view(props.a), api.sessions.view(props.b)]);
         const [x, y] = [signalsOf(a), signalsOf(b)];
         return x && y ? ([x, y] as [Signals, Signals]) : null;
       } catch {
@@ -456,7 +456,7 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
         }
       >
         <Actions>
-          <Button variant="ghost" label={t("common.cancel")} onPress={props.onClose} />
+          <Button variant="ghost" label={t("common.cancel")} onPress={props.onClose} testID="replay-cancel" />
           <Button variant="primary" label={busy() ? t("replay.running") : t("replay.run")} onPress={run} disabled={busy() || !plan() || plan()!.readOnly} testID="replay-run" />
         </Actions>
       </If>

@@ -19,6 +19,23 @@ const fn f(sdk: &'static str, code: &'static str) -> Fix {
     Fix { sdk, code }
 }
 
+/// The SDK's own setting that turns its retries on, by language (`python`,
+/// `java`, `go`, `js`): what a trial advises when a failed request was not
+/// sent again. Retries and nothing else: no pool, no adaptive mode.
+pub fn retries_on(sdk: &str) -> Option<&'static str> {
+    Some(match sdk {
+        "python" => {
+            "boto3.client(\"s3\", config=Config(retries={\"mode\": \"standard\", \"max_attempts\": 5}))"
+        }
+        "java" => {
+            "S3Client.builder().overrideConfiguration(o -> o.retryStrategy(RetryMode.STANDARD)).build()"
+        }
+        "go" => "config.LoadDefaultConfig(ctx, config.WithRetryMaxAttempts(5))",
+        "js" => "new S3Client({ maxAttempts: 5 })",
+        _ => return None,
+    })
+}
+
 /// The changes that act on a finding, by its phrase key.
 pub fn for_key(key: &str) -> Vec<Fix> {
     match key {
@@ -229,8 +246,8 @@ pub struct WhatIf {
     pub waiting_ms: (f64, f64),
     pub cost: (f64, f64),
     pub currency: String,
-    /// The findings it counts, and how many findings there are with a
-    /// saving: fewer are counted when one does not name its requests.
+    /// The findings it counts, and how many findings there are (all that are
+    /// listed with it): only those that name what they save are counted.
     pub findings: usize,
     pub of_findings: usize,
     /// The kinds of the findings counted (`obs.hot`), as they are named.
@@ -290,7 +307,7 @@ pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) 
         cost: (profile.cost.amount, cost.min(profile.cost.amount)),
         currency: profile.cost.currency.clone(),
         findings: counted.len(),
-        of_findings: saving.len(),
+        of_findings: findings.len(),
         counted: counted
             .iter()
             .filter_map(|o| o.phrases.first().map(|p| p.key.to_string()))
@@ -301,7 +318,8 @@ pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) 
 impl WhatIf {
     /// The line `sonde show` closes its findings with.
     pub fn line(&self) -> String {
-        use crate::program::{money_text, ms_text};
+        use crate::program::money_text;
+        use crate::signals::{count_text, ms_text};
         let which = if self.findings < self.of_findings {
             // which ones, when not all: the reader cannot guess
             let mut kinds: Vec<&str> = self.counted.iter().map(|k| kind_name(k)).collect();
@@ -323,7 +341,8 @@ impl WhatIf {
         if self.requests.0 != self.requests.1 {
             parts.push(format!(
                 "{} → {} requests",
-                self.requests.0, self.requests.1
+                count_text(self.requests.0),
+                count_text(self.requests.1)
             ));
         }
         if ms_text(self.waiting_ms.0) != ms_text(self.waiting_ms.1) {

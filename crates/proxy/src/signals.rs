@@ -845,25 +845,46 @@ const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 /// The width of a signal's line in the terminal.
 pub const SPARK_COLUMNS: usize = 32;
 
-/// A series as `columns` bars, each the most of the values it stands for (a
-/// burst is not averaged away); nothing is the lowest bar, anything at all
-/// is above it.
+/// What a column of a sparkline is of the slices it stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Column {
+    /// Their mean: a rate.
+    Mean,
+    /// The most of them: a burst or a tail is not averaged away.
+    Max,
+}
+
+/// A series as bars, [`Column::Max`] of the values each stands for.
 pub fn sparkline(series: &[f64], columns: usize) -> String {
+    sparkline_of(series, columns, Column::Max)
+}
+
+/// A series as `columns` bars at most: a series of fewer values is as wide
+/// as it is (a bar for each, none stretched), a longer one has `how` of the
+/// values each column stands for. Nothing is the lowest bar, anything at
+/// all is above it.
+pub fn sparkline_of(series: &[f64], columns: usize, how: Column) -> String {
     let len = series.len();
     if len == 0 || columns == 0 {
         return String::new();
     }
-    let max = series.iter().copied().fold(0.0, f64::max);
-    (0..columns)
+    let columns = columns.min(len);
+    let drawn: Vec<f64> = (0..columns)
         .map(|c| {
             let a = c * len / columns;
-            let b = if len <= columns {
-                a + 1
-            } else {
-                ((c + 1) * len).div_ceil(columns).clamp(a + 1, len)
-            };
-            let v = series[a..b].iter().copied().fold(0.0, f64::max);
-            if v <= 0.0 || max <= 0.0 {
+            let b = ((c + 1) * len).div_ceil(columns).clamp(a + 1, len);
+            let part = &series[a..b];
+            match how {
+                Column::Max => part.iter().copied().fold(0.0, f64::max),
+                Column::Mean => part.iter().sum::<f64>() / part.len() as f64,
+            }
+        })
+        .collect();
+    let max = drawn.iter().copied().fold(0.0, f64::max);
+    drawn
+        .iter()
+        .map(|v| {
+            if *v <= 0.0 || max <= 0.0 {
                 BARS[0]
             } else {
                 BARS[1 + ((v / max * 7.0) as usize).min(6)]
@@ -880,7 +901,9 @@ fn paint(s: &str, code: &str, color: bool) -> String {
     }
 }
 
-fn ms_text(v: f64) -> String {
+/// A length of time as sonde writes it: "0.4 ms", "12 ms", "1.5 s",
+/// "2m 26s".
+pub fn ms_text(v: f64) -> String {
     if v >= 60_000.0 {
         format!(
             "{}m {:02}s",
@@ -896,7 +919,9 @@ fn ms_text(v: f64) -> String {
     }
 }
 
-fn bytes_text(b: f64) -> String {
+/// A count of bytes as sonde writes it, on the one ladder: "0 B",
+/// "1.5 KiB", up to EiB (what a count of bytes can reach).
+pub fn bytes_text(b: f64) -> String {
     // the one ladder: as far as a count of bytes goes
     let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
     let (mut v, mut i) = (b.max(0.0), 0);
@@ -912,7 +937,7 @@ fn bytes_text(b: f64) -> String {
 }
 
 /// 1234567 as "1,234,567".
-fn count_text(n: usize) -> String {
+pub fn count_text(n: usize) -> String {
     let d = n.to_string();
     let mut out = String::with_capacity(d.len() + d.len() / 3);
     for (i, c) in d.chars().enumerate() {
@@ -925,7 +950,7 @@ fn count_text(n: usize) -> String {
 }
 
 /// "1 request", "1,234 requests".
-fn requests_text(n: usize) -> String {
+pub fn requests_text(n: usize) -> String {
     format!("{} request{}", count_text(n), if n == 1 { "" } else { "s" })
 }
 
@@ -957,54 +982,60 @@ const PREFIX_ROWS: usize = 3;
 /// The signals for a terminal: a line each for rate, errors, latency and
 /// bytes with its series as a sparkline, then what is there to say of the
 /// first byte, the cost by operation and the prefixes past half of S3's limit.
+///
+/// It follows a head line that has the requests, the time they took, the
+/// failures and the lookups that found nothing: none of those is said again
+/// here. This is the one place for the bytes, the most in flight and the
+/// cost.
 pub fn text(s: &Signals, color: bool) -> String {
     let mut out = String::new();
     if s.rate.requests == 0 {
         return out;
     }
     // the figures in one column, the lines under one another
-    let mut line =
-        |label: &str, figure: String, tone: Option<&str>, series: &[f64], rest: String| {
-            let pad = " ".repeat(30usize.saturating_sub(figure.chars().count()));
-            let figure = match tone {
-                Some(t) => paint(&figure, t, color),
-                None => figure,
-            };
-            let spark = if series.is_empty() {
-                " ".repeat(SPARK_COLUMNS)
-            } else {
-                sparkline(series, SPARK_COLUMNS)
-            };
-            let row = format!(
-                "{}{figure}{pad}{spark}  {rest}",
-                paint(&format!("{label:<9}"), "2", color)
-            );
-            out.push_str(row.trim_end());
-            out.push('\n');
+    let mut line = |label: &str,
+                    figure: String,
+                    tone: Option<&str>,
+                    series: &[f64],
+                    how: Column,
+                    rest: Vec<String>| {
+        // (a long figure still stands apart from what follows it)
+        let pad = " ".repeat(30usize.saturating_sub(figure.chars().count()).max(2));
+        let figure = match tone {
+            Some(t) => paint(&figure, t, color),
+            None => figure,
         };
-
-    let at_once = if s.in_flight.peak > 1 {
-        format!(", {} at once at most", count_text(s.in_flight.peak))
-    } else {
-        String::new()
+        // as wide as its slices, and the lines after it still in a column
+        let spark = sparkline_of(series, SPARK_COLUMNS, how);
+        let gap = " ".repeat(SPARK_COLUMNS - spark.chars().count());
+        let row = format!(
+            "{}{figure}{pad}{spark}{gap}  {}",
+            paint(&format!("{label:<9}"), "2", color),
+            rest.join(" · ")
+        );
+        out.push_str(row.trim_end());
+        out.push('\n');
     };
+    // what a bar is, said when it stands for more than one slice
+    let wide = s.bins > SPARK_COLUMNS;
+    let bar = |what: &str| wide.then(|| format!("a bar is {what}"));
+
+    let mut rest: Vec<String> = Vec::new();
+    if s.in_flight.peak > 1 {
+        rest.push(format!("{} at once at most", count_text(s.in_flight.peak)));
+    }
+    rest.extend(bar("the mean of its slices"));
     line(
         "rate",
         match s.rate.value {
             Some(v) => format!("{} req/s", rate_text(v)),
-            // too short for a rate: the total is the figure
-            None => requests_text(s.rate.requests),
+            // (the head line has the requests and the time)
+            None => "no rate: under a second".into(),
         },
         None,
         &s.rate.series,
-        match s.rate.value {
-            Some(_) => format!(
-                "{} in {}{at_once}",
-                requests_text(s.rate.requests),
-                ms_text(s.wall_ms)
-            ),
-            None => format!("in {}{at_once}", ms_text(s.wall_ms)),
-        },
+        Column::Mean,
+        rest,
     );
 
     let c = &s.errors.counts;
@@ -1029,6 +1060,11 @@ pub fn text(s: &Signals, color: bool) -> String {
             }
         ));
     }
+    let mut rest = vec![kinds.join(", ")];
+    rest.retain(|k| !k.is_empty());
+    if s.errors.count > 0 {
+        rest.extend(bar("the most in its slices"));
+    }
     line(
         "errors",
         if s.errors.count == 0 {
@@ -1041,8 +1077,14 @@ pub fn text(s: &Signals, color: bool) -> String {
             )
         },
         (s.errors.count > 0).then_some("31"),
-        &s.errors.series,
-        kinds.join(", "),
+        // no failure, no line of none
+        if s.errors.count == 0 {
+            &[]
+        } else {
+            &s.errors.series
+        },
+        Column::Max,
+        rest,
     );
 
     match (s.latency.p50_ms, s.latency.p95_ms, s.latency.p99_ms) {
@@ -1052,37 +1094,65 @@ pub fn text(s: &Signals, color: bool) -> String {
             None,
             // the tail is what moves
             &s.latency.p95,
-            format!("p95 {}, p99 {}", ms_text(p95), ms_text(p99)),
+            Column::Max,
+            vec![
+                format!("p95 {}, p99 {}", ms_text(p95), ms_text(p99)),
+                if wide {
+                    "a bar is the highest p95 of its slices".into()
+                } else {
+                    "a bar is a slice's p95".into()
+                },
+            ],
         ),
         // a log without times
-        _ => line("latency", "not recorded".into(), None, &[], String::new()),
+        _ => line(
+            "latency",
+            "not recorded".into(),
+            None,
+            &[],
+            Column::Max,
+            Vec::new(),
+        ),
     }
 
-    line(
-        "bytes",
-        match (s.bytes.up_per_sec, s.bytes.down_per_sec) {
-            (Some(u), Some(d)) => format!("↑ {}/s ↓ {}/s", bytes_text(u), bytes_text(d)),
-            _ => format!(
-                "↑ {} ↓ {}",
-                bytes_text(s.bytes.up_bytes as f64),
-                bytes_text(s.bytes.down_bytes as f64)
-            ),
-        },
-        None,
-        &s.bytes.series,
-        match s.bytes.up_per_sec {
-            Some(_) => format!(
+    // the one place for the bytes: every body, an error's answer too
+    let totals = format!(
+        "{} sent, {} received (error bodies too)",
+        bytes_text(s.bytes.up_bytes as f64),
+        bytes_text(s.bytes.down_bytes as f64)
+    );
+    let mut rest = Vec::new();
+    let figure = match (s.bytes.up_per_sec, s.bytes.down_per_sec) {
+        (Some(u), Some(d)) => {
+            rest.push(totals);
+            format!("↑ {}/s ↓ {}/s", bytes_text(u), bytes_text(d))
+        }
+        _ => {
+            rest.push("error bodies too".into());
+            format!(
                 "{} sent, {} received",
                 bytes_text(s.bytes.up_bytes as f64),
                 bytes_text(s.bytes.down_bytes as f64)
-            ),
-            None => "sent and received, in all".into(),
-        },
-    );
+            )
+        }
+    };
+    rest.extend(bar("the mean of its slices"));
+    line("bytes", figure, None, &s.bytes.series, Column::Mean, rest);
 
     let heading = |t: String| format!("{}\n", paint(&t, "1", color));
     let width = |names: &mut dyn Iterator<Item = &str>| {
-        names.map(|n| n.chars().count()).max().unwrap_or(0).min(40)
+        names
+            .map(|n| n.chars().count())
+            .max()
+            .unwrap_or(0)
+            .clamp("operation".len(), 40)
+    };
+    let more = |left: usize| {
+        if left == 0 {
+            String::new()
+        } else {
+            format!("  … and {} more\n", count_text(left))
+        }
     };
 
     if let Some(fb) = &s.first_byte {
@@ -1092,17 +1162,27 @@ pub fn text(s: &Signals, color: bool) -> String {
             "first byte  {} of the time is the wait for it",
             percent(fb.share)
         )));
+        out.push_str(&paint(
+            &format!(
+                "  {:<w$}  {:>9}  {:>10}  {}\n",
+                "operation", "requests", "first byte", "then the rest"
+            ),
+            "2",
+            color,
+        ));
         for k in rows {
             out.push_str(&format!(
-                "  {:<w$}  {:>9}  {:>8}  then {}\n",
+                "  {:<w$}  {:>9}  {:>10}  {}\n",
                 k.operation,
                 count_text(k.count),
                 ms_text(k.first_byte_ms),
                 ms_text(k.rest_ms),
             ));
         }
+        out.push_str(&more(fb.kinds.len() - rows.len()));
     }
 
+    let all_paid = s.cost.operations.iter().filter(|r| r.cost > 0.0).count();
     let paid: Vec<&CostRow> = s
         .cost
         .operations
@@ -1113,10 +1193,18 @@ pub fn text(s: &Signals, color: bool) -> String {
     if !paid.is_empty() {
         let w = width(&mut paid.iter().map(|r| r.operation.as_str()));
         out.push_str(&heading(format!(
-            "cost  {}",
+            "cost  {} for its requests",
             crate::program::money_text(s.cost.amount, &s.cost.currency)
         )));
-        for r in paid {
+        out.push_str(&paint(
+            &format!(
+                "  {:<w$}  {:>9}  {:>5}  {}\n",
+                "operation", "requests", "share", "cost"
+            ),
+            "2",
+            color,
+        ));
+        for r in &paid {
             out.push_str(&format!(
                 "  {:<w$}  {:>9}  {:>5}  {}\n",
                 r.operation,
@@ -1125,6 +1213,7 @@ pub fn text(s: &Signals, color: bool) -> String {
                 crate::program::money_text(r.cost, &s.cost.currency),
             ));
         }
+        out.push_str(&more(all_paid - paid.len()));
     }
 
     let mut near: Vec<&PrefixRate> = s
@@ -1280,19 +1369,34 @@ mod tests {
         assert_eq!(s.rate.requests, 1);
         let said = text(&s, false);
         let rate = said.lines().next().unwrap();
-        assert!(rate.starts_with("rate     1 request "), "{rate}");
-        assert!(rate.ends_with("in 2 ms"), "{rate}");
+        // the head line has the requests and the time: not said again
         assert!(
-            !said.contains("req/s") && !said.contains("1 requests"),
+            rate.starts_with("rate     no rate: under a second  "),
             "{said}"
         );
-        assert!(said.contains("↑ 0 B ↓ 10 B"), "{said}");
+        assert!(
+            !said.contains("req/s") && !said.contains("1 request"),
+            "{said}"
+        );
+        assert!(said.contains("0 B sent, 10 B received"), "{said}");
         // a run of a second and more has its rate
         let long = [get(1, 0, "k", 200), get(2, 1995, "k", 200)];
         let s = signals(&long, &RequestPrices::default());
         assert!(!s.short);
         assert_eq!(s.rate.value, Some(1.0));
-        assert!(text(&s, false).contains("2 requests in 2.0 s"));
+        let said = text(&s, false);
+        assert!(said.starts_with("rate     1.00 req/s"), "{said}");
+        assert!(
+            !said.contains("2 requests") && !said.contains("2.0 s"),
+            "{said}"
+        );
+        // no failure: no line drawn for none
+        let errors = said.lines().nth(1).unwrap();
+        assert_eq!(errors, "errors   none");
+        assert!(
+            said.contains("a bar is the highest p95 of its slices"),
+            "{said}"
+        );
     }
 
     #[test]
@@ -1312,7 +1416,50 @@ mod tests {
     }
 
     #[test]
+    fn a_sparkline_is_as_wide_as_its_slices_and_a_bar_is_their_mean_or_their_most() {
+        // fewer values than columns: a bar each, none stretched
+        assert_eq!(sparkline_of(&[0.0, 8.0], 4, Column::Mean), "▁█");
+        assert_eq!(sparkline(&[0.0, 8.0, 4.0], 32), "▁█▅");
+        // more: the mean for a rate, the most for a tail
+        let series = [0.0, 8.0, 4.0, 4.0];
+        assert_eq!(sparkline_of(&series, 2, Column::Mean), "██");
+        assert_eq!(sparkline_of(&series, 2, Column::Max), "█▅");
+    }
+
+    #[test]
+    fn the_tables_have_headings_and_say_what_they_left_out() {
+        let ops = [
+            "GetObject",
+            "PutObject",
+            "HeadObject",
+            "DeleteObject",
+            "CopyObject",
+            "ListObjectsV2",
+        ];
+        let records: Vec<Record> = ops
+            .iter()
+            .enumerate()
+            .map(|(i, op)| {
+                let mut r = get(i as u64, i as i64 * 400, "k", 200);
+                r.operation = op.to_string();
+                r.method = if *op == "GetObject" { "GET" } else { "PUT" }.into();
+                r.first_byte_ms = Some(2.0);
+                r
+            })
+            .collect();
+        let said = text(&signals(&records, &RequestPrices::default()), false);
+        assert!(
+            said.contains("  operation      requests  first byte  then the rest\n"),
+            "{said}"
+        );
+        assert!(said.contains("  … and 2 more\n"), "{said}");
+        assert!(said.contains("requests  share  cost\n"), "{said}");
+    }
+
+    #[test]
     fn bytes_are_written_on_one_ladder() {
+        assert_eq!(crate::episode::human_bytes(2048), "2.0 KiB");
+        assert_eq!(crate::episode::human_bytes(5 << 50), "5.0 PiB");
         assert_eq!(bytes_text(0.0), "0 B");
         assert_eq!(bytes_text(1536.0), "1.5 KiB");
         assert_eq!(bytes_text(600_000.0 * 1024f64.powi(4)), "585.9 PiB");

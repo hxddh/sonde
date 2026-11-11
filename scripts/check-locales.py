@@ -80,5 +80,28 @@ for k in en:
         continue
     print(f"en.json: {k} is used nowhere")
     bad += 1
-print(f"locales: {len(en)} keys, {families} of them by {len(FAMILIES)} listed families: " + ("ok" if not bad else f"{bad} problems"))
+# what sonde says of a session (app/src/phrases.ts): English is Rust's own templates, letter for
+# letter (crates/proxy/src/phrase.rs), and Chinese has a template for every one of them
+phrases = (top / "app" / "src" / "phrases.ts").read_text()
+rust = (top / "crates" / "proxy" / "src" / "phrase.rs").read_text()
+rust = rust[rust.index("fn template(key: &str)") :]
+rust = rust[: rust.index("\n}\n")]
+theirs = {m.group(1): json.loads('"' + m.group(2) + '"') for m in re.finditer(r'"([\w.]+)" => (?:\{\s*)?"((?:[^"\\]|\\.)*)"', rust)}
+
+
+def table(name):
+    body = phrases[phrases.index(f"const {name}: Record<string, string> = {{") :]
+    body = body[: body.index("\n};")]
+    return {m.group(1) or m.group(2): json.loads('"' + m.group(3) + '"') for m in re.finditer(r'^  (?:"([\w.]+)"|(\w+)): "((?:[^"\\]|\\.)*)",$', body, re.M)}
+
+
+ours, zh = table("en"), table("zh")
+for k in sorted(theirs.keys() | ours.keys()):
+    if theirs.get(k) != ours.get(k):
+        print(f"phrases.ts: en[{k!r}] is not Rust's template ({'missing in phrases.ts' if k not in ours else 'missing in phrase.rs' if k not in theirs else 'they differ'})")
+        bad += 1
+for k in sorted(theirs.keys() - zh.keys()):
+    print(f"phrases.ts: zh has no template for {k!r}")
+    bad += 1
+print(f"locales: {len(theirs)} phrases said from the templates of phrase.rs (en, zh); {len(en)} keys, {families} of them by {len(FAMILIES)} listed families: " + ("ok" if not bad else f"{bad} problems"))
 sys.exit(1 if bad else 0)

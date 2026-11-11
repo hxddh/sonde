@@ -1030,13 +1030,10 @@
  "scenario.about.s3-limits": "S3's rate for one prefix: 5,500 reads and 3,500 writes a second",
  "trial.limit": "The program may",
  "trial.stop": "Stop",
- "trial.advice.retries": "%{sdk} did not send it again: turn its retries on (%{setting})",
- "trial.advice.retry": "Send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry",
- "trial.advice.cut": "Check the bytes read against Content-Length, and read the rest (Range) or the whole again",
- "trial.advice.race": "On a 412, read the log again and write the next commit with its condition; never write the key without one",
  "trial.retried.one": "1 fault, %{m} retried",
  "trial.allRetried.one": "1 fault, retried",
  "trial.gaveUp.one": "gave up on 1 request",
  "trial.droppedWrites.one": "1 write never sent again",
- "trial.left.one": "1 upload left unfinished"
+ "trial.left.one": "1 upload left unfinished",
+ "sessions.copiedFirst": "Copied the first %{n} of %{of} operations"
 }

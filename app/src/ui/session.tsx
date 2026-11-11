@@ -6,11 +6,11 @@ import { signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
 import { copy, endpoint, endpoints, report } from "../store";
-import type { Episode, RecordingView } from "../types";
+import type { EpisodeRow, RecordingView } from "../types";
 import { Button, Card, Dot, Heading, IconTile, Options, terminal, Row } from "./kit";
 import { OperationView } from "./sessionview";
 
-export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList, statusTone } from "./sessionview";
+export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, SessionHeader, SessionList, statusTone } from "./sessionview";
 
 export type Policy = "allow" | "no-delete" | "read-only";
 
@@ -96,7 +96,8 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
   );
 }
 
-export function OperationDetail(props: { path: string; episode: Episode; shared: string[]; onRecord: (id: number) => void; onBack?: () => void }) {
+/** An operation in the inspector, its requests read from its session (`episode`: whole, with every request's id). */
+export function OperationDetail(props: { path: string; episode: EpisodeRow; shared: string[]; onRecord: (id: number) => void; onBack?: () => void }) {
   const rows = () => {
     try {
       return api.sessions.records(props.path, props.episode.records);

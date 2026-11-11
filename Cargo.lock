@@ -4736,6 +4736,7 @@ dependencies = [
  "portable-pty",
  "probes",
  "reqlog",
+ "rustix",
  "s3raw",
  "serde",
  "serde_json",

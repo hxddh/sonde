@@ -10,7 +10,7 @@ use nsh_core::prelude::*;
 use parking_lot::Mutex;
 use reqlog::RequestLog;
 use serde_json::json;
-use sonde_proxy::episode::{episodes, observations};
+use sonde_proxy::episode::episodes;
 use sonde_proxy::replay::{self, ReplayOptions};
 use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
 use sonde_proxy::view::Analysis;
@@ -334,7 +334,11 @@ fn stamp(path: &Path) -> Result<(u64, Option<std::time::SystemTime>), String> {
 const LEAN_FROM: u64 = 24 << 20;
 
 fn kept_lean(len: u64, compressed: bool) -> bool {
-    len > if compressed { LEAN_FROM } else { LEAN_FROM * 10 }
+    len > if compressed {
+        LEAN_FROM
+    } else {
+        LEAN_FROM * 10
+    }
 }
 
 fn open_session(path: &str) -> Result<Arc<Session>, String> {
@@ -685,13 +689,19 @@ fn project_scenarios(dir: &Path) -> Result<Vec<sonde_proxy::fault::Scenario>, St
     let said = |e: String| format!("{}: {e}", file.display());
     let text = std::fs::read_to_string(&file).map_err(|e| said(e.to_string()))?;
     let doc: toml::Table = toml::from_str(&text).map_err(|e| said(e.to_string()))?;
+    // (checked where the command line's are: one reading of sonde.toml)
+    let name = doc
+        .get("program")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str());
+    sonde_proxy::fault::project_program_name(name).map_err(said)?;
     let Some(list) = doc.get("scenario") else {
         return Ok(Vec::new());
     };
     let list = list
         .as_array()
         .ok_or_else(|| said("scenario is written [[scenario]]".into()))?;
-    list.iter().map(|t| scenario_of(t).map_err(said)).collect()
+    sonde_proxy::fault::project_scenarios(list.iter().map(scenario_of)).map_err(said)
 }
 
 /// One `[[scenario]]`: `name`, `fault` ("503 SlowDown", "500", "lost-answer",
@@ -706,15 +716,6 @@ fn scenario_of(t: &toml::Value) -> Result<sonde_proxy::fault::Scenario, String> 
         return Err(format!("scenario: unknown key {k}"));
     }
     let name = t.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(format!(
-            "scenario {name:?}: a name is letters, digits, - and _"
-        ));
-    }
     let fault = t
         .get("fault")
         .and_then(|v| v.as_str())
@@ -739,27 +740,7 @@ fn scenario_of(t: &toml::Value) -> Result<sonde_proxy::fault::Scenario, String> 
                 .ok_or_else(|| format!("scenario {name}: times is a count"))?,
         ),
     };
-    let effect =
-        sonde_proxy::fault::parse_effect(fault).map_err(|e| format!("scenario {name}: {e}"))?;
-    let every = matches!(effect, sonde_proxy::fault::Effect::Delay { .. });
-    let mut about = fault.to_string();
-    if !on.is_empty() {
-        about.push_str(&format!(" on {}", on.join(", ")));
-    }
-    if !prefix.is_empty() {
-        about.push_str(&format!(" under {prefix}"));
-    }
-    Ok(sonde_proxy::fault::Scenario {
-        name: name.to_string(),
-        about,
-        rules: vec![sonde_proxy::fault::Rule {
-            on,
-            prefix,
-            effect,
-            times: times.unwrap_or(if every { 0 } else { 1 }),
-            conditional: false,
-        }],
-    })
+    sonde_proxy::fault::project_scenario(name, fault, &on, &prefix, times)
 }
 
 /// What a trial of a session would run: the project's scenarios when its
@@ -1008,10 +989,8 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
     // kept on disk too, beside the session (`<name>.summary.json`): a
     // program's history reads 30 runs, and a finished run does not change
     let h = header_of(path)?;
-    let (_, figures) = sonde_proxy::summary::figures(
-        path,
-        &crate::state::request_prices_for(&h.endpoint),
-    )?;
+    let (_, figures) =
+        sonde_proxy::summary::figures(path, &crate::state::request_prices_for(&h.endpoint))?;
     POINTS
         .lock()
         .insert(path.to_path_buf(), (now, figures.point.clone()));
@@ -1148,7 +1127,7 @@ fn code_change_of(before: &str, after: &str) -> Result<JsonValue, String> {
     ])?;
     // the later run's findings, by the file and line their requests came from
     let s = open_session(after)?;
-    let obs = observations(&s.records, &episodes(&s.records));
+    let obs = sonde_proxy::episode::observations_of(&s.header, &s.records, &episodes(&s.records));
     let rel = |file: &str| -> String {
         let full = dir.join(file);
         let full = full.canonicalize().unwrap_or(full);
@@ -1259,7 +1238,10 @@ impl Sessions {
                 let created = row["created"].as_str().unwrap_or_default().to_string();
                 row["path"] = json!(p.to_string_lossy());
                 row["name"] = json!(p.file_name().map(|n| n.to_string_lossy().into_owned()));
-                row["title"] = json!(p.file_name().and_then(|n| titles.get(&*n.to_string_lossy())));
+                row["title"] = json!(
+                    p.file_name()
+                        .and_then(|n| titles.get(&*n.to_string_lossy()))
+                );
                 row["live"] = json!(live.as_deref() == Some(p.as_path()));
                 // a run that was tried says how it stood (the small
                 // verdicts file, not the trials' sessions)
@@ -1661,8 +1643,8 @@ impl Sessions {
                 sonde_proxy::profile::profile(&b.records, &price(&b)),
             );
             let (oa, ob) = (
-                observations(&a.records, &episodes(&a.records)),
-                observations(&b.records, &episodes(&b.records)),
+                sonde_proxy::episode::observations_of(&a.header, &a.records, &episodes(&a.records)),
+                sonde_proxy::episode::observations_of(&b.header, &b.records, &episodes(&b.records)),
             );
             Ok(to_json(
                 sonde_proxy::profile::compare_runs((&a.records, &pa, &oa), (&b.records, &pb, &ob))
@@ -1803,7 +1785,11 @@ impl Sessions {
                             &s.records,
                             &crate::state::request_prices_for(&s.header.endpoint),
                         );
-                        let ob = observations(&s.records, &episodes(&s.records));
+                        let ob = sonde_proxy::episode::observations_of(
+                            &s.header,
+                            &s.records,
+                            &episodes(&s.records),
+                        );
                         let pt = sonde_proxy::program::run_point(
                             p,
                             &s.header.created.to_rfc3339(),
@@ -2806,7 +2792,7 @@ mod tests {
         std::fs::create_dir_all(project.path().join(".git")).unwrap();
         std::fs::write(
             project.path().join("sonde.toml"),
-            "[check]\nmax-requests = 10\n\n[[scenario]]\nname = \"flaky-puts\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\nprefix = \"out/\"\ntimes = 2\n\n[[scenario]]\nname = \"slow\"\nfault = \"delay 200ms\"\n",
+            "[check]\nmax-requests = 10\n\n[[scenario]]\nname = \"flaky-puts\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\nprefix = \"out/\"\ntimes = 2\n\n[[scenario]]\nname = \"lag\"\nfault = \"delay 200ms\"\n",
         )
         .unwrap();
         // found from the folder the command ran in, upwards
@@ -2821,7 +2807,7 @@ mod tests {
         let plan = trial_plan_of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
         assert!(plan.project);
         let names: Vec<_> = plan.scenarios.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, ["flaky-puts", "slow"]);
+        assert_eq!(names, ["flaky-puts", "lag"]);
         // a built-in one can still be asked for by name
         assert_eq!(
             scenarios_named(&plan, &["flaky-puts".into(), "error".into()])
@@ -2829,6 +2815,22 @@ mod tests {
                 .len(),
             2
         );
+        // what the command line refuses is refused here: one reading
+        for (toml, says) in [
+            (
+                "[[scenario]]\nname = \"clean\"\nfault = \"500\"\n",
+                "run without faults",
+            ),
+            (
+                "[[scenario]]\nname = \"slow\"\nfault = \"500\"\n",
+                "one of sonde's own",
+            ),
+            ("[program]\nname = \"\"\n", "a program's name"),
+        ] {
+            std::fs::write(project.path().join("sonde.toml"), toml).unwrap();
+            let e = project_scenarios(&sub).unwrap_err();
+            assert!(e.contains(says), "{e}");
+        }
         // a scenario that does not read is said, not skipped
         std::fs::write(
             project.path().join("sonde.toml"),

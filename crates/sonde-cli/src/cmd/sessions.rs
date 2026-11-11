@@ -397,9 +397,9 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             path.display()
         ),
         None => eprintln!(
-            "{} from a {} → {}",
+            "{} from {} → {}",
             output::count(session.records.len(), "request"),
-            source.name(),
+            source.a(),
             path.display()
         ),
     }
@@ -429,6 +429,16 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
         eprintln!(
             "  {} left out: the store's own work (lifecycle, batch), not requests",
             lines(imported.not_requests)
+        );
+    }
+    if imported.other_hosts > 0 {
+        eprintln!(
+            "  {} left out: requests to other hosts, not to S3",
+            if imported.other_hosts == 1 {
+                "1 entry".to_string()
+            } else {
+                format!("{} entries", output::grouped(imported.other_hosts as u64))
+            }
         );
     }
     super::record::show_file(s, &path).await

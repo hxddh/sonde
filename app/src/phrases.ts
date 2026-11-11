@@ -6,7 +6,7 @@
 
 import { type CorePhrase, sayCoreText } from "./corephrases";
 import { type Key, lang, t } from "./i18n";
-import type { Episode, Observation, Phrase } from "./types";
+import type { EpisodeRow, Observation, Phrase } from "./types";
 
 const zh: Record<string, string> = {
   request: "{op} {target}",
@@ -83,7 +83,85 @@ const zh: Record<string, string> = {
   "obs.savesTime": "大约快 {time}（占等待时间的 {pct}%）",
 };
 
-const TEMPLATES: Record<string, Record<string, string>> = { zh };
+/** Rust's own English, template by template (crates/proxy/src/phrase.rs `template`): a view names an
+ * operation by its phrases alone, so English is said from them too. check-locales fails a template that
+ * differs from Rust's, and a key one side has and the other has not. */
+const en: Record<string, string> = {
+  request: "{op} {target}",
+  "request.prefix": "{prefix}",
+  size: " · {size}",
+  "cond.create": "conditional create (If-None-Match: *)",
+  "cond.write": "conditional write (If-Match)",
+  race: "lost a race: 412 Precondition Failed",
+  probe: "{n} lookups in {dir}, none found",
+  listing: "listed {bucket}/{prefix} in {n} pages",
+  mpu: "multipart upload {key} · {n} part{s} · {size}",
+  "mpu.aborted": " (aborted)",
+  "mpu.open": " (not completed)",
+  "mpu.billed": "the upload was never completed or aborted: its parts are billed",
+  retry: "{op} {target} retried {n}× after {first}",
+  "retry.wait": "{ms} ms until it succeeded or gave up",
+  "step.deleted": "deleted {file}",
+  "slate.manifest": "manifest {n} written",
+  "slate.wal.empty": "WAL {n} written empty (fencing marker)",
+  "slate.wal": "WAL {n} flushed · {size}",
+  "slate.sst": "SST flushed to L0 · {size}",
+  "slate.compactions": "compaction state {n} written",
+  "iceberg.metadata.v": "commit: table metadata v{v}",
+  "iceberg.metadata": "commit: table metadata",
+  "delta.commit": "commit {n}",
+  "lance.commit": "version {v} committed",
+  "lance.data": " · {n} data file{s} ({size})",
+  "lance.index": " · an index ({size})",
+  "lance.deletions": " · rows deleted",
+  "lance.read.v": "read version {v}",
+  "lance.read": "read the dataset",
+  "lance.ranges": " · {n} ranges of {files} file{s} ({size})",
+  "delta.checkpoint": "checkpoint written",
+  "delta.last": "_last_checkpoint updated",
+  "step.other": "{op} {key}",
+  "step.files": " · {n} file{s} ({size})",
+  "after.listing": "after listing {dir}/",
+  "after.reads": "after {n} read{s}",
+  "after.misses": "after {n} lookup{s} that found nothing",
+  "after.mixed": "after {n} reads ({m} found nothing)",
+  "loose.uncommitted": "{n} file{s} written, no commit followed ({size})",
+  "slate.walprobe": "looked for the newest WAL: probed ids {lo}…{hi}",
+  "read.manifest": "read manifest {n}",
+  "read.compactions": "read compaction state {n}",
+  "read.metadata": "read table metadata v{v}",
+  "read.commit": "read commit {n}",
+  "read.file": "read {file}",
+  "read.count": " ({n} requests)",
+  "loose.listed": "listed {dir}/",
+  "loose.misses": "{n} lookup{s} that found nothing",
+  "loose.reads": "{n} reads",
+  "obs.shared": "{n} {format} writes: ",
+  "obs.injected": "{n} request{s} met a fault sonde injected (scenario {scenario}): the errors and retries here are the trial's, not the store's",
+  "obs.unfinished": "{n} multipart upload{s} never completed or aborted: the parts stay billed until a lifecycle rule removes them",
+  "obs.orphans.one": "files were written with no commit after them: orphans unless a later commit adds them",
+  "obs.orphans": "{n} times files were written with no commit after them: orphans unless a later commit adds them",
+  "obs.retried": "{n} request{s} repeated after a retryable failure",
+  "obs.small": "{n} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do",
+  "obs.races": "{n} conditional write{s} lost a race (412): another writer got there first",
+  "obs.hot": "{key} was read {n} times ({pct}% of all requests)",
+  "obs.listed": "{prefix} was listed {n} times",
+  "obs.headget": "{n} objects were checked with HEAD and then read with GET: the GET alone answers both",
+  "obs.throttled": "{n} request{s} throttled (503 SlowDown or 429), each with {min} or more in flight: under {safe} at once would likely avoid it",
+  "obs.throttled.rate": "{n} request{s} throttled (503 SlowDown or 429): the store asked for fewer requests per second",
+  "obs.slow": "{n} request{s} took over {ms} ms against a median of {median} ms; the slowest, {op}, took {max} ms",
+  "obs.prefixrate.reads": "{prefix} took up to {n} reads a second, {pct}% of the {limit} S3 serves one prefix: spread its keys over more prefixes before it throttles",
+  "obs.prefixrate.writes": "{prefix} took up to {n} writes a second, {pct}% of the {limit} S3 serves one prefix: spread its keys over more prefixes before it throttles",
+  "obs.serial": "{n} requests ran one after another for {time}, each waiting for the one before: {k} at once would take about {fast}",
+  "obs.savesTime": "about {time} sooner ({pct}% of the time waiting)",
+  "obs.saves": "{n} fewer request{s} ({pct}% of the session)",
+  "trial.advice.retries": "{sdk} did not send it again: turn its retries on ({setting})",
+  "trial.advice.retry": "send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry",
+  "trial.advice.cut": "check the bytes read against Content-Length, and read the rest (Range) or the whole again",
+  "trial.advice.race": "on a 412, read the log again and write the next commit with its condition; never write the key without one",
+};
+
+const TEMPLATES: Record<string, Record<string, string>> = { en, zh };
 
 /** What sonde's services say (a finding, a verdict, a plan, a job, a probe's
  * sentence), in the reader's language: its phrases beside its English
@@ -95,23 +173,26 @@ export const core = (text: CorePhrase[] | undefined | null, en: string | null | 
 /** An endpoint's name as the reader sees it: the built-in demo's is the app's own word, in its language. */
 export const endpointName = (e: { id: string; name: string }): string => (e.id === "demo" ? t("endpoints.demoName") : e.name);
 
-/** `text` in the reader's language; `en` (Rust's English) when there is no template. */
-export function say(text: Phrase[] | undefined, en: string): string {
-  const table = TEMPLATES[lang()];
-  if (!table || !text?.length) return en;
+/** `text` in the reader's language, from its phrases; `fallback` (Rust's own English, where it was sent
+ * beside them) when a phrase has no template. English keeps a phrase's plural mark (`{s}`); Chinese has none. */
+export function say(text: Phrase[] | undefined, fallback: string | undefined): string {
+  const language = lang();
+  const table = TEMPLATES[language];
+  if (!table || !text?.length) return fallback ?? "";
   let out = "";
   for (const p of text) {
     const tpl = table[p.key];
-    if (tpl === undefined) return en;
-    out += tpl.replace(/\{(\w+)\}/g, (_, k: string) => (k === "s" ? "" : (p.args[k] ?? "")));
+    if (tpl === undefined) return fallback ?? "";
+    // one pass: an argument's own braces (a key named "{n}.json") are not read as a placeholder
+    out += tpl.replace(/\{(\w+)\}/g, (whole, k: string) => (k === "s" && language !== "en" ? "" : (p.args[k] ?? (k === "s" ? "" : whole))));
   }
   return out;
 }
 
-export const episodeTitle = (e: Episode) => say(e.titleText, e.title);
+export const episodeTitle = (e: Pick<EpisodeRow, "titleText" | "title">) => say(e.titleText, e.title);
 
 /** An episode's notes, those said once for the whole session left out. */
-export function episodeNotes(e: Episode, shared: string[]): string[] {
+export function episodeNotes(e: Pick<EpisodeRow, "notes" | "notesText">, shared: string[]): string[] {
   return e.notes.flatMap((n, i) => (shared.includes(n) ? [] : [say(e.notesText?.[i] ? [e.notesText[i]] : undefined, n)]));
 }
 

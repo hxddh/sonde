@@ -13,7 +13,8 @@ import { episodeNotes, episodeTitle, observationSaving, observationText, observa
 import { Chart, sessionStory, Sparkline, timed, Waterfall, MARK } from "./plots";
 import { type SignalId, signalsOf, signalTiles } from "../signals";
 import { worstStanding } from "../trials";
-import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
+import type { Operations } from "../operations";
+import type { EpisodeRow, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
 import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, InWindowMenu, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH } from "./kit";
 import { rememberedSize } from "./sizes";
@@ -166,12 +167,12 @@ const time = (iso: string) => new Date(iso).getTime();
 export type Tone = "ok" | "miss" | "client" | "server" | "refused";
 
 /** How an operation ended, as a status color: lookups that found nothing are not errors. */
-export function episodeTone(e: Episode): Tone {
+export function episodeTone(e: Pick<EpisodeRow, "outcome" | "miss" | "notFound" | "requests">): Tone {
   if (e.outcome.kind === "refused") return "refused";
   if (e.outcome.kind === "failed") return /^4\d\d/.test(e.outcome.detail) ? "client" : "server";
-  if (e.kind === "probe" || e.title.includes("found nothing")) return "miss";
+  if (e.miss) return "miss";
   // every request a lookup that found nothing
-  if (e.notFound && e.notFound === e.records.length) return "miss";
+  if (e.notFound && e.notFound === e.requests) return "miss";
   return "ok";
 }
 
@@ -219,28 +220,23 @@ export function StatusMark(props: { status: number | null; text?: string; inject
 
 const FORMAT_TEXT: Record<string, string> = { SlateDB: "text-fmt-slatedb", Iceberg: "text-fmt-iceberg", Delta: "text-fmt-delta", Lance: "text-fmt-lance" };
 /** An operation's kind as a tag, in the app's language. */
-const kindLabel = (k: Episode["kind"]): string => (k === "multipart" ? t("kind.multipart") : k === "retry" ? t("kind.retry") : k === "listing" ? t("kind.listing") : k === "probe" ? t("kind.probe") : "");
+const kindLabel = (k: EpisodeRow["kind"]): string => (k === "multipart" ? t("kind.multipart") : k === "retry" ? t("kind.retry") : k === "listing" ? t("kind.listing") : k === "probe" ? t("kind.probe") : "");
 
 /** What kind of thing an operation is: its storage format, else its kind. */
-function family(e: Episode): { label: string; class: string } {
+function family(e: Pick<EpisodeRow, "format" | "kind">): { label: string; class: string } {
   if (e.format) return { label: e.format, class: FORMAT_TEXT[e.format] ?? "text-fmt-other" };
   const k = kindLabel(e.kind);
   return k ? { label: k, class: e.kind === "multipart" ? "text-fmt-mpu" : "text-fmt-other" } : { label: "", class: "" };
 }
 
 /** How long an operation ran, in ms (a number: `duration` writes it). */
-export const episodeMs = (e: Episode) => time(e.end) - time(e.start);
+export const episodeMs = (e: Pick<EpisodeRow, "start" | "end">) => time(e.end) - time(e.start);
 
-/** The session's span in time: its first start, its last end. */
+/** The session's span in time: its first operation's start, its last one's end. */
 export function span(v: SessionView): [number, number] {
-  if (!v.episodes.length) return [0, 1];
-  let a = Infinity;
-  let b = -Infinity;
-  for (const e of v.episodes) {
-    a = Math.min(a, time(e.start));
-    b = Math.max(b, time(e.end));
-  }
-  return [a, Math.max(b, a + 1)];
+  if (!v.span) return [0, 1];
+  const a = time(v.span.start);
+  return [a, Math.max(time(v.span.end), a + 1)];
 }
 
 /** The commit a run's code was at, as a person reads it: a1b2c3d (main), changed. */
@@ -253,7 +249,7 @@ export function gitText(g: SessionView["header"]["git"]): string {
 export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
-    const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: duration(s().seconds * 1000) })];
+    const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.episodesTotal) }), secs: duration(s().seconds * 1000) })];
     if (s().errors) parts.push(t("timeline.errors", { n: s().errors }));
     if (s().misses) parts.push(t("timeline.notFound", { n: s().misses }));
     parts.push(transfer(s().bytesUp, s().bytesDown));
@@ -412,11 +408,8 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
 
 /** Where each finding begins, by its number in the list: for the shape. */
 export function findingMarks(v: SessionView): { tMs: number; n: number }[] {
-  const t0 = v.episodes.length ? Date.parse(v.episodes[0].start) : 0;
-  return v.observations.flatMap((o, i) => {
-    const e = o.episodes?.length ? v.episodes[o.episodes[0]] : undefined;
-    return e ? [{ tMs: Math.max(0, Date.parse(e.start) - t0), n: i + 1 }] : [];
-  });
+  const t0 = v.span ? Date.parse(v.span.start) : 0;
+  return v.observations.flatMap((o, i) => (o.firstStart ? [{ tMs: Math.max(0, Date.parse(o.firstStart) - t0), n: i + 1 }] : []));
 }
 
 /** Acting on every finding at once, as an estimate: requests, waiting, cost. */
@@ -435,6 +428,8 @@ export function whatIfText(v: SessionView): string | null {
  * about. `compact` (beside a run's live operations): the sentences only. */
 export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
+  /** How many operations a finding is about (a view lists the first of them only). */
+  const about = (o: Observation) => o.episodesTotal ?? o.episodes?.length ?? 0;
   // a finding pressed opens what to change inside its own row, under its title; the row comes
   // to the top of the findings' room, so its title stays in view over its advice
   // (Native Shell's `reveal`: the scroll views around a view bring it to show)
@@ -461,7 +456,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
                 testID={`observation-${i()}`}
                 label={observationText(o())}
                 selected={props.filter === i()}
-                disabled={!props.onFilter || !o().episodes?.length}
+                disabled={!props.onFilter || !about(o())}
                 onPress={() => press(i())}
               >
                 <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
@@ -487,6 +482,8 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small text-info">{v()}</Text>
     </View>
   );
+  /** A finding whose advice is open under it, with fixes: the advice says why and what it saves. */
+  const opened = (o: () => Observation, i: () => number) => !props.compact && props.filter === i() && !!o().fixes?.length;
   const row = (o: () => Observation, i: () => number) => (
     <ListRow
       divided
@@ -495,7 +492,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       testID={`observation-${i()}`}
       label={observationText(o())}
       selected={props.filter === i()}
-      disabled={!props.onFilter || !o().episodes?.length}
+      disabled={!props.onFilter || !about(o())}
       onPress={() => press(i())}
       class={dense() ? "py-1" : ""}
       // by rank as the pane narrows: the finding's words keep their width; what acting on it
@@ -503,10 +500,10 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       trailing={
         <>
           <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
-          <If when={props.onFilter && o().episodes?.length}>
+          <If when={props.onFilter && about(o())}>
             <View class={`${props.narrow ? "" : WIDTH.count} flex-row items-center justify-end gap-1`}>
               <If when={!props.narrow}>
-                <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: o().episodes.length })}</Text>
+                <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: count(about(o())) })}</Text>
               </If>
               <Icon name={props.filter === i() ? "x" : "chevron-right"} size={ICON.small} />
             </View>
@@ -521,8 +518,9 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       </View>
       <View class="min-w-0 flex-1 gap-1">
         <Text class={`text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
-        <If when={(!dense() || props.filter === i()) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
-        <If when={(!dense() || props.filter === i()) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
+        {/* why it matters and what acting on it saves: here, or (the finding opened, with fixes) once, in its advice */}
+        <If when={(!dense() || props.filter === i()) && !opened(o, i) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
+        <If when={(!dense() || props.filter === i()) && !opened(o, i) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
       </View>
     </ListRow>
   );
@@ -596,15 +594,12 @@ const kept = (key: keyof typeof opsWidths, fallback: number) => untracked(() => 
 /** The operations as a table to paste (tab-separated), in the order given:
  * figures as plain numbers in one unit each, named in the column's title —
  * what the table shows ("840 ms", "2.35 s") would not sort or sum. */
-export function operationsText(view: SessionView, order: number[]): string {
+export function operationsText(view: SessionView, rows: EpisodeRow[]): string {
   const plain = (s: string) => s.replace(/[\t\r\n]+/g, " ");
   const head = [t("column.time"), t("column.operation"), t("column.requests"), t("sessions.tookMs"), t("column.notes")];
-  const rows = order.flatMap((i) => {
-    const e = view.episodes[i];
-    // plain numbers on purpose (to sort and sum where they are pasted): not `count()`, not `duration()`
-    return e ? [[e.start, plain(episodeTitle(e)), `${e.records.length}`, `${Math.round(episodeMs(e) * 1000) / 1000}`, plain(episodeNotes(e, view.sharedNotes).join(" · "))]] : [];
-  });
-  return [head, ...rows].map((r) => r.join("\t")).join("\n");
+  // plain numbers on purpose (to sort and sum where they are pasted): not `count()`, not `duration()`
+  const body = rows.map((e) => [e.start, plain(episodeTitle(e)), `${e.requests}`, `${Math.round(episodeMs(e) * 1000) / 1000}`, plain(episodeNotes(e, view.sharedNotes).join(" · "))]);
+  return [head, ...body].map((r) => r.join("\t")).join("\n");
 }
 
 /** The operations' columns by rank. The outcome's dot, the operation and how
@@ -631,33 +626,30 @@ export function operationColumns(width: number, wanted: { format: boolean; bar: 
 
 export function OperationsTable(props: {
   view: SessionView;
-  rows?: number[];
-  onSelect: (i: number) => void;
-  onContextMenu?: (i: number) => void;
+  /** The rows: a window over however many operations there are, sorted and narrowed where they are kept. */
+  source: Operations;
+  /** A row pressed: its operation, by index. */
+  onSelect: (index: number) => void;
+  onContextMenu?: (index: number) => void;
   ref?: (r: DataTableRef) => void;
+  /** The operations marked (chosen, or running when an output line was printed), by index. */
   highlight?: number[];
   compact?: boolean;
-  /** Gets the order the table shows the operations in (sorted by a column, or as given). */
-  order?: (shown: () => number[]) => void;
 }) {
-  const notes = (e: Episode) => episodeNotes(e, props.view.sharedNotes).join(" · ");
-  // the slowest or busiest first, at a press on their column's title
+  const notes = (e: EpisodeRow) => episodeNotes(e, props.view.sharedNotes).join(" · ");
+  // the slowest or busiest first, at a press on their column's title: sorted where the operations are kept
   const sort = signal<DataTableSort | null>(null);
-  const shown = () => {
-    const list = props.rows ?? props.view.episodes.map((_, i) => i);
-    const s = sort();
-    if (!s) return list;
-    const by = (i: number) => {
-      const e = props.view.episodes[i];
-      return s.key === "duration" ? episodeMs(e) : s.key === "requests" ? e.records.length : time(e.start);
-    };
-    const dir = s.direction === "descending" ? -1 : 1;
-    return [...list].sort((a, b) => (by(a) - by(b)) * dir || a - b);
+  const sortBy = (next: DataTableSort | null) => {
+    sort.set(next);
+    const { sort: _, descending: __, ...rest } = props.source.query();
+    props.source.ask(next ? { ...rest, sort: next.key === "duration" ? "duration" : next.key === "requests" ? "requests" : "time", descending: next.direction === "descending" } : rest);
   };
-  props.order?.(() => shown());
-  const formats = () => props.view.episodes.some((e) => family(e).label);
+  const held = () => props.source.rows();
+  const start = () => props.source.start();
+  const formats = () => Object.keys(props.view.families.formats).length > 0 || ["multipart", "retry", "listing", "probe"].some((k) => (props.view.families.kinds[k] ?? 0) > 0);
   const range = () => span(props.view);
-  const ep = (row: number) => props.view.episodes[shown()[row]];
+  // a row of the table (counted from the first of them all) as the operation it shows, once its page is held
+  const ep = (row: number): EpisodeRow | undefined => held()[row - start()];
   // the table's own width decides what it shows (`operationColumns`); the operation's name takes the rest
   const width = signal(0);
   const layout = () =>
@@ -694,22 +686,18 @@ export function OperationsTable(props: {
     const order: OpColumn[] = terminal() ? (["time", "format", "title", "requests", "duration", "notes"] as OpColumn[]).filter((k) => l.shown.includes(k)) : l.shown;
     return order.map(column);
   };
-  const data = () => {
-    return shown().map((i) => {
-      const e = props.view.episodes[i];
-      return {
-        status: episodeTone(e),
-        time: clock(e.start),
-        format: family(e).label,
-        // a terminal cuts it by a count of characters; a window where it runs out of room (the cell's own middle ellipsis)
-        title: terminal() ? middle(e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72) : episodeTitle(e),
-        requests: count(e.records.length),
-        duration: duration(episodeMs(e)),
-        bar: "",
-        notes: notes(e),
-      };
-    });
-  };
+  const data = () =>
+    held().map((e) => ({
+      status: episodeTone(e),
+      time: clock(e.start),
+      format: family(e).label,
+      // a terminal cuts it by a count of characters; a window where it runs out of room (the cell's own middle ellipsis)
+      title: terminal() ? middle(e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72) : episodeTitle(e),
+      requests: count(e.requests),
+      duration: duration(episodeMs(e)),
+      bar: "",
+      notes: notes(e),
+    }));
   const cell = (c: { row: number; key: string; text: string }) => {
     const e = ep(c.row);
     if (!e) return <Text class="text-body">{c.text}</Text>;
@@ -771,7 +759,11 @@ export function OperationsTable(props: {
       accessibilityLabel={t("sessions.operations")}
       class="min-h-0 flex-1"
       columns={columns()}
+      // the rows held, of however many there are: the table asks for the rest as it scrolls
       data={data()}
+      dataStart={start()}
+      rowCount={props.source.total()}
+      onVisibleRowsChange={({ range }) => props.source.show(range.start, range.end)}
       fontSize={TYPE.body}
       rowHeight={rowHeight(ROW.table)}
       resizableColumns={!terminal()}
@@ -779,13 +771,16 @@ export function OperationsTable(props: {
         if (!props.compact && key in opsWidths) opsWidths[key as keyof typeof opsWidths].onResize({ size: width });
       }}
       classes={terminal() ? undefined : tableClasses}
-      rowClasses={shown().map((i) => (props.highlight?.includes(i) ? "bg-selection" : ""))}
+      rowClasses={held().map((e) => (props.highlight?.includes(e.index) ? "bg-selection" : ""))}
       renderCell={terminal() ? undefined : cell}
       rowSelectable
       sort={sort()}
-      onSortChange={({ sort: next }) => sort.set(next)}
-      onRowPress={({ row }) => props.onSelect(shown()[row])}
-      onContextMenu={props.onContextMenu ? (e) => { if (e.row !== undefined && e.row !== null) props.onContextMenu?.(shown()[e.row]); } : undefined}
+      onSortChange={({ sort: next }) => sortBy(next)}
+      onRowPress={({ row }) => {
+        const e = ep(row);
+        if (e) props.onSelect(e.index);
+      }}
+      onContextMenu={props.onContextMenu ? (e) => { const at = e.row === undefined || e.row === null ? undefined : ep(e.row); if (at) props.onContextMenu?.(at.index); } : undefined}
       empty={<Empty compact text={t("common.empty")} />}
     />
     </View>
@@ -818,7 +813,7 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
 }
 
 /** The output lines printed while an operation ran (or the last one before it). */
-export function linesOf(lines: LogLine[], e: Episode): number[] {
+export function linesOf(lines: LogLine[], e: Pick<EpisodeRow, "start" | "end">): number[] {
   const a = time(e.start);
   const b = time(e.end);
   const inside = lines.flatMap((l, i) => (time(l.time) >= a && time(l.time) <= b ? [i] : []));
@@ -830,27 +825,8 @@ export function linesOf(lines: LogLine[], e: Episode): number[] {
   return before >= 0 ? [before] : [];
 }
 
-/** The operations running when a line was printed, or else the nearest one.
- * Output is read a moment after it is written, so a line can come in just
- * after the request it announced: the nearest operation, before or after. */
-export function operationsAt(episodes: Episode[], line: LogLine): number[] {
-  const at = time(line.time);
-  const running = episodes.flatMap((e, i) => (time(e.start) <= at && at <= time(e.end) ? [i] : []));
-  if (running.length) return running;
-  let best = -1;
-  let gap = Infinity;
-  episodes.forEach((e, i) => {
-    const d = at < time(e.start) ? time(e.start) - at : at - time(e.end);
-    if (d < gap) {
-      gap = d;
-      best = i;
-    }
-  });
-  return best >= 0 ? [best] : [];
-}
-
 /** An operation in the inspector: what it is, its notes, its requests; `onRecord` opens one. */
-export function OperationView(props: { episode: Episode; shared: string[]; rows: RecordSummary[]; onRecord: (id: number) => void; onBack?: () => void; back?: JSX.Element }) {
+export function OperationView(props: { episode: EpisodeRow; shared: string[]; rows: RecordSummary[]; onRecord: (id: number) => void; onBack?: () => void; back?: JSX.Element }) {
   // one request of the operation: its status (a scenario's answer marked), what it was, how long it took
   const request = (r: () => RecordSummary, i: () => number) => (
     <View style={{ height: rowHeight(ROW.twoLine) }}>
@@ -913,7 +889,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         </Chart>
       </If>
       <View class="gap-2">
-        <Heading count={e().records.length}>{t("timeline.requestsOf")}</Heading>
+        <Heading count={e().requests}>{t("timeline.requestsOf")}</Heading>
         {/* a few are drawn whole; an operation may hold thousands of requests, and then only those in view are */}
         <If
           when={props.rows.length > 40}

@@ -380,10 +380,12 @@ fn refused(r: &Record) -> bool {
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
 }
 
-fn s3_code(r: &Record) -> Option<String> {
+/// S3's code in an error body, as it stands there (nothing is copied:
+/// [`retryable`] asks of every record).
+fn s3_code(r: &Record) -> Option<&str> {
     let b = r.error_body.as_deref()?;
     let start = b.find("<Code>")? + 6;
-    Some(b[start..start + b[start..].find("</Code>")?].to_string())
+    Some(&b[start..start + b[start..].find("</Code>")?])
 }
 
 fn failure(r: &Record) -> Option<String> {
@@ -426,18 +428,13 @@ fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
 }
 
 fn human(b: u64) -> String {
-    const U: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut v = b as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < U.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{b} B")
-    } else {
-        format!("{v:.1} {}", U[i])
-    }
+    human_bytes(b)
+}
+
+/// A size as it is written everywhere: the one ladder
+/// ([`crate::signals::bytes_text`]).
+pub(crate) fn human_bytes(b: u64) -> String {
+    crate::signals::bytes_text(b as f64)
 }
 
 /// Payload bytes a request uploads (not the XML of Create / Complete).
@@ -1645,19 +1642,21 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .weigh(races.len(), 0, total),
         );
     }
-    // the same key read again and again
-    let mut reads: HashMap<String, Vec<u64>> = HashMap::new();
+    // the same key read again and again (counted by the records' own
+    // names: only a hot key's is written out)
+    let mut reads: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
     for r in records
         .iter()
         .filter(|r| r.method == "GET" || r.method == "HEAD")
     {
         if let (Some(b), Some(k)) = (&r.bucket, &r.key) {
-            reads.entry(format!("{b}/{k}")).or_default().push(r.id);
+            reads.entry((b, k)).or_default().push(r.id);
         }
     }
     let mut hot: Vec<(String, Vec<u64>)> = reads
         .into_iter()
         .filter(|(_, ids)| ids.len() >= 10 && ids.len() * 10 >= total)
+        .map(|((b, k), ids)| (format!("{b}/{k}"), ids))
         .collect();
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     for (k, ids) in hot.into_iter().take(3) {
@@ -1806,11 +1805,11 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     // a prefix near what S3 serves one prefix a second
     {
         use crate::profile::{
-            READS_PER_PREFIX, WRITES_PER_PREFIX, is_read, peak_second, prefix_of,
+            READS_PER_PREFIX, WRITES_PER_PREFIX, is_read, peak_second, prefix_named, prefix_parts,
         };
-        let mut per: HashMap<String, (Vec<i64>, Vec<i64>, Vec<u64>, usize)> = HashMap::new();
+        let mut per: HashMap<(&str, &str), (Vec<i64>, Vec<i64>, Vec<u64>, usize)> = HashMap::new();
         for r in records {
-            let e = per.entry(prefix_of(r)).or_default();
+            let e = per.entry(prefix_parts(r)).or_default();
             if is_read(r) {
                 e.0.push(r.time.timestamp_micros());
             } else {
@@ -1831,6 +1830,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 (pw, WRITES_PER_PREFIX, false)
             };
             if n * 2 >= limit {
+                let prefix = prefix_named(prefix.0, prefix.1);
                 hot.push((prefix, n, limit, read, ids, throttled));
             }
         }
@@ -1977,10 +1977,130 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     out
 }
 
+/// [`observations`] of a session, read with its header: a session whose
+/// times are to the second (an imported log's:
+/// [`crate::session::SessionHeader::whole_seconds`]) says nothing that
+/// depends on where in its second a request began. Requests "one after
+/// another" are not found in it (spread over their second they all look
+/// so), and a throttling is said without how many were in flight.
+pub fn observations_of(
+    header: &crate::session::SessionHeader,
+    records: &[Record],
+    episodes: &[Episode],
+) -> Vec<Observation> {
+    let mut out = observations(records, episodes);
+    if !header.whole_seconds {
+        return out;
+    }
+    let key = |o: &Observation| o.phrases.first().map_or("", |p| p.key);
+    out.retain(|o| key(o) != "obs.serial");
+    for o in &mut out {
+        if key(o) == "obs.throttled" {
+            let said = &o.phrases[0];
+            let phrase = p(
+                "obs.throttled.rate",
+                &[
+                    ("n", said.args.get("n").cloned().unwrap_or_default()),
+                    ("s", said.args.get("s").cloned().unwrap_or_default()),
+                ],
+            );
+            o.text = phrase.en();
+            o.phrases = vec![phrase];
+            o.fixes = crate::fixes::for_key("obs.throttled.rate");
+            o.identity = crate::profile::finding_identity(o);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use reqlog::Header;
+
+    #[test]
+    fn a_failures_retry_is_the_next_request_of_its_own_name_within_a_minute() {
+        let at = |id: u64, ms: i64, key: &str, status: u16| Record {
+            id,
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + ms).unwrap(),
+            method: "GET".into(),
+            operation: "GetObject".into(),
+            bucket: Some("b".into()),
+            key: Some(key.into()),
+            status: Some(status),
+            latency_ms: 5.0,
+            ..Default::default()
+        };
+        // an outage's worth of other keys between a failure and its retry
+        let mut rs = vec![at(1, 0, "a", 503)];
+        rs.extend((0..200).map(|i| at(10 + i, 10 + i as i64, &format!("other/{i}"), 503)));
+        rs.push(at(2, 500, "a", 503));
+        rs.push(at(3, 900, "a", 200));
+        // the same key again much later is another request, not a retry
+        rs.push(at(4, 900 + 61_000, "a", 503));
+        rs.push(at(5, 900 + 200_000, "a", 200));
+        let eps = episodes(&rs);
+        let retried: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Retry).collect();
+        assert_eq!(retried.len(), 1, "{eps:#?}");
+        assert_eq!(retried[0].records, [1, 2, 3]);
+        assert_eq!(retried[0].title, "GetObject a retried 2× after 503");
+        // every other failure stands alone: 200 keys, and the late one
+        assert_eq!(eps.len(), 1 + 200 + 2);
+    }
+
+    #[test]
+    fn creates_go_to_their_uploads_in_order_whatever_else_shares_the_key() {
+        let at = |id: u64, ms: i64, op: &str, q: &[(&str, &str)], status: u16| Record {
+            id,
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + ms).unwrap(),
+            method: if op == "UploadPart" { "PUT" } else { "POST" }.into(),
+            operation: op.into(),
+            bucket: Some("b".into()),
+            key: Some("big".into()),
+            query: q
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            status: Some(status),
+            request_bytes: Some(if op == "UploadPart" { 8 << 20 } else { 0 }),
+            latency_ms: 5.0,
+            ..Default::default()
+        };
+        let rs = vec![
+            // a create that failed and was tried again, then its upload
+            at(1, 0, "CreateMultipartUpload", &[("uploads", "")], 500),
+            at(2, 10, "CreateMultipartUpload", &[("uploads", "")], 200),
+            // a second upload of the same key begun before the first's parts
+            at(3, 20, "CreateMultipartUpload", &[("uploads", "")], 200),
+            at(
+                4,
+                30,
+                "UploadPart",
+                &[("partNumber", "1"), ("uploadId", "A")],
+                200,
+            ),
+            at(
+                5,
+                40,
+                "UploadPart",
+                &[("partNumber", "1"), ("uploadId", "B")],
+                200,
+            ),
+            at(6, 50, "CompleteMultipartUpload", &[("uploadId", "A")], 200),
+            at(7, 60, "CompleteMultipartUpload", &[("uploadId", "B")], 200),
+            // a create that failed and was never tried again began nothing
+            at(8, 70, "CreateMultipartUpload", &[("uploads", "")], 500),
+        ];
+        let eps = episodes(&rs);
+        let uploads: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Multipart).collect();
+        assert_eq!(uploads.len(), 2, "{eps:#?}");
+        assert_eq!(uploads[0].records, [1, 2, 4, 6]);
+        assert_eq!(uploads[1].records, [3, 5, 7]);
+        assert!(
+            eps.iter()
+                .any(|e| e.kind == Kind::Request && e.records == [8])
+        );
+    }
 
     fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u16) -> Record {
         Record {

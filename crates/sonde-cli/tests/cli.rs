@@ -194,13 +194,29 @@ fn a_probe_run_named_on_the_command_line_is_not_held_to_read_only_mode() {
 fn check_holds_a_run_to_its_programs_baseline() {
     let t = tempfile::tempdir().unwrap();
     assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
-    // nothing to hold it to yet
-    assert_eq!(
-        sonde(t.path(), &["check", "--baseline", "auto"])
-            .status
-            .code(),
-        Some(64)
+    // no baseline yet is no mistake (a first run in CI has none): it is
+    // said, with the program it is of, and the run is not failed for it
+    let first = sonde(t.path(), &["check", "--baseline", "auto"]);
+    let err = String::from_utf8_lossy(&first.stderr).into_owned();
+    assert_eq!(first.status.code(), Some(0), "{err}");
+    assert!(err.contains("no baseline yet for program `"), "{err}");
+    assert!(
+        stdout(&first).contains("nothing checked"),
+        "{}",
+        stdout(&first)
     );
+    // with a budget, the budget is what decides
+    let over = sonde(
+        t.path(),
+        &["check", "--baseline", "auto", "--max-requests", "1"],
+    );
+    assert_eq!(over.status.code(), Some(1));
+    assert!(
+        stdout(&over).contains("over budget (no baseline yet)"),
+        "{}",
+        stdout(&over)
+    );
+    // nothing at all to hold it to is still a mistake in the command
     assert_eq!(sonde(t.path(), &["check"]).status.code(), Some(64));
     let set = sonde(
         t.path(),
@@ -345,11 +361,17 @@ fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
     );
     let md = stdout(&c);
     assert!(md.starts_with("### sonde: over budget"), "{md}");
+    // (the table's columns line up as text: cells are padded)
+    let cells = md
+        .split(' ')
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
-        md.contains("| **FAIL** +2700% | requests | 28 | ≤ 1 |"),
+        cells.contains("| **FAIL** +2700% | requests | 28 | ≤ 1 |"),
         "{md}"
     );
-    assert!(md.contains("| pass | waiting |"), "{md}");
+    assert!(cells.contains("| pass | waiting |"), "{md}");
     // a flag still wins over the file
     let c = sonde(
         t.path(),
@@ -449,7 +471,7 @@ fn a_gzipped_log_is_imported_and_its_odd_lines_are_counted() {
     let err = String::from_utf8_lossy(&o.stderr).into_owned();
     assert_eq!(o.status.code(), Some(0), "{err}");
     assert!(
-        err.contains("1 request from a S3 server access log"),
+        err.contains("1 request from an S3 server access log"),
         "{err}"
     );
     assert!(err.contains("1 line could not be read"), "{err}");
@@ -504,7 +526,8 @@ fn a_folder_of_logs_is_imported_as_one_session() {
         at("t/one") < at("t/two") && at("t/two") < at("t/three"),
         "{shown}"
     );
-    assert!(shown.contains("to lake-logs"), "{shown}");
+    // named by the store the log is of, not by the folder it was in
+    assert!(shown.contains("to s3.amazonaws.com"), "{shown}");
 
     // a folder with no log in it is a mistake in the command
     let none = t.path().join("none");

@@ -13,6 +13,7 @@ import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { count, duration, hm } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
+import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { away, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
@@ -22,7 +23,7 @@ import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, P
 import { Toaster } from "../ui/toast";
 import { fileName, removeSession, rename, RenameDialog, sessionName, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
-import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList } from "../ui/session";
+import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, SessionHeader, SessionList } from "../ui/session";
 import { findingMarks, operationsText } from "../ui/sessionview";
 import { episodeTitle } from "../phrases";
 import { programOf, ranCommand } from "../ui/sessionview";
@@ -38,6 +39,12 @@ type Pane = "operations" | "aligned" | "time" | "runs";
 
 const program = programOf;
 
+/** Around the findings' card in the pane's body: the body's padding, the findings' heading and the gaps (points). */
+const FINDINGS_HEAD = 28 + 36 + 12;
+/** The least the operations keep under the findings: their titles and two rows, with the card's border. */
+const OPERATIONS_LEAST = 31 + 2 * 30 + 2;
+/** How many operations "Copy operations as a table" takes: what a paste into a sheet or a ticket holds well. */
+const COPY_ROWS = 20000;
 /** The inspector's width, as the user leaves it. */
 const inspectorWidth = rememberedSize("sessions.inspector", 420);
 
@@ -96,11 +103,14 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     cleanup(() => crumb.set(null));
   }
 
-  const episode = () => {
+  // its operations: the first page with the view, the rest in pages as the table scrolls,
+  // sorted and narrowed where they are kept (a session of a hundred thousand is never whole here)
+  const source = pagedOperations(() => props.path, view);
+  // the operation chosen, whole (every request's id): read once per choice, and again when the session is
+  const episode = computed(() => {
     const i = op();
-    const v = view();
-    return i === null || !v ? null : (v.episodes[i] ?? null);
-  };
+    return i === null || !view() ? null : source.episode(i);
+  });
   // read once per request chosen: the inspector asks for it in several places
   const record = computed(() => {
     const id = rec();
@@ -122,24 +132,16 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const a = v.profile.rate[i]?.tMs ?? 0;
     return [a, a + v.profile.binMs];
   };
-  /** The operations shown: all, those the chosen finding is about, and those running in the chosen slice. */
-  const rows = () => {
-    const v = view();
-    if (!v) return undefined;
+  /** The operations shown: all, those the chosen finding is about, and those running in the chosen slice —
+   * narrowed where they are kept, whatever order the table has them in. */
+  effect(() => {
     const f = filter();
     const w = window();
-    if (f === null && !w) return undefined;
-    let list = f === null ? v.episodes.map((_, i) => i) : (v.observations[f]?.episodes ?? []);
-    if (w) {
-      // from the first request, as the shape counts
-      const start = v.episodes.reduce((m, e) => Math.min(m, new Date(e.start).getTime()), Infinity);
-      list = list.filter((i) => {
-        const e = v.episodes[i];
-        return new Date(e.start).getTime() - start < w[1] && new Date(e.end).getTime() - start >= w[0];
-      });
-    }
-    return list;
-  };
+    untracked(() => {
+      const { finding: _, slice: __, ...kept } = source.query();
+      source.ask({ ...kept, ...(f === null ? {} : { finding: f }), ...(w ? { slice: w } : {}) });
+    });
+  });
 
   const chooseOperation = (i: number) => {
     // the inspector opening moves the table over, smoothly
@@ -147,9 +149,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     op.set(i);
     rec.set(null);
     opHighlight.set([i]);
-    const v = view();
-    if (!v) return;
-    const ls = linesOf(lines(), v.episodes[i]);
+    const e = hasOutput() ? source.episode(i) : null;
+    if (!e) return;
+    const ls = linesOf(lines(), e);
     outHighlight.set(ls);
     if (ls.length) outRef?.scrollToRow(ls[0]);
   };
@@ -158,28 +160,27 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const line = lines()[i];
     outHighlight.set([i]);
     if (!v || !line) return;
-    const ops = operationsAt(v.episodes, line);
+    const ops = source.at(line.time);
     opHighlight.set(ops);
     if (ops.length) {
       op.set(ops[0]);
       rec.set(null);
       // the row as the table shows it: sorted by a column, it is not the operation's index
-      const at = (opsOrder?.() ?? rows() ?? v.episodes.map((_, i) => i)).indexOf(ops[0]);
+      const at = source.rowOf(ops[0]);
       if (at >= 0) opsRef?.select({ row: at });
     }
   };
   /** The chosen operation's row, in view: where the table shows it, sorted or narrowed. */
   const showOperation = () => {
     const i = op();
-    const v = view();
-    if (i === null || !v) return;
-    const at = (opsOrder?.() ?? rows() ?? v.episodes.map((_, k) => k)).indexOf(i);
+    if (i === null || !view()) return;
+    const at = source.rowOf(i);
     if (at >= 0) opsRef?.scrollToRow(at);
   };
   /** A request pressed on a chart: its inspector, and the operation it belongs to chosen with
    * it — marked in the operations, its row in view when they show. */
   const chooseRequest = (id: number) => {
-    const i = view()?.episodes.findIndex((e) => e.records.includes(id)) ?? -1;
+    const i = source.ownerOf(id) ?? -1;
     batch(() => {
       if (i >= 0) {
         op.set(i);
@@ -218,7 +219,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
 
   /** The operation's commands: native menus where there are any. */
   const operationActions = (i: number): { label: string; icon: "copy" | "file" | "scroll-text"; run: () => void }[] => {
-    const e = view()?.episodes[i];
+    const e = view() ? source.episode(i) : null;
     if (!e) return [];
     const targets = () => {
       try {
@@ -234,7 +235,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     ];
   };
   const operationMenu = (i: number) => {
-    if (!view()?.episodes[i] || !isAvailable) return;
+    if (!view() || !isAvailable) return;
     chooseOperation(i);
     void Menu.popup(operationActions(i).map((a) => ({ label: a.label, icon: iconSvg(a.icon), onSelect: a.run })));
   };
@@ -271,9 +272,14 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         // the table is there only on its own pane
         disabled: pane() === "time" || pane() === "runs",
         // in the order shown; figures as numbers in one unit (not "840 ms" beside "2.35 s")
+        // (as many as a paste holds well: the rest are said to be left out)
         onSelect: () => {
           const v = view();
-          if (v) copy(operationsText(v, opsOrder?.() ?? rows() ?? v.episodes.map((_, i) => i)));
+          if (v)
+            void source
+              .first(COPY_ROWS)
+              .then(({ rows, total }) => copy(operationsText(v, rows), total > rows.length ? t("sessions.copiedFirst", { n: rows.length, of: total }) : undefined))
+              .catch(report);
         },
       },
       ...(me ? ([{ type: "separator" }, { label: t("sessions.rename"), icon: iconSvg("pencil"), onSelect: () => rename(me, props.inWindow ? props.path : null) }, { label: t("sessions.removeMenu"), icon: iconSvg("trash"), disabled: me.live, onSelect: () => void removeSession(me) }] as MenuItem[]) : []),
@@ -294,12 +300,11 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   );
 
   let opsAnchor: ViewRef | undefined;
-  let opsOrder: (() => number[]) | undefined;
   // (each part is given the view as an accessor and reads it where it draws: a live session's
   // pane is not rebuilt each second, so a stretch zoomed to or a finding chosen stays)
   const operations = (v: () => SessionView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-    <OperationsTable view={v()} rows={rows()} order={(o) => (opsOrder = o)} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} />
+    <OperationsTable view={v()} source={source} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} />
     </View>
   );
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
@@ -328,7 +333,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       onOpenCode={(place) => api.sessions.openCode(props.path, place).catch(report)}
       // a short window keeps two findings in view (the rest scroll): the operations need their rows;
       // a finding chosen there gets the room to read what to change
-      maxHeight={box().h < BREAK.short ? (filter() === null ? 68 : Math.max(160, Math.round(box().h * 0.4))) : Math.max(104, Math.round(box().h * 0.3))}
+      // (a finding chosen there opens its advice in what the pane's body has left once the operations
+      // have their titles and two rows: the advice scrolls within the findings, the table keeps rows)
+      maxHeight={box().h < BREAK.short ? (filter() === null ? 68 : Math.max(96, bodyHeight() - FINDINGS_HEAD - OPERATIONS_LEAST)) : Math.max(104, Math.round(box().h * (filter() === null ? 0.3 : 0.45)))}
     />
   );
   /** When: the session's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
@@ -398,9 +405,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const f = filter();
     const w = window();
     if (!v || (f === null && !w)) return null;
-    const n = rows()?.length ?? 0;
-    if (w) return t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n, of: v.episodes.length });
-    return t("sessions.filtered", { n, of: v.episodes.length });
+    const n = source.total();
+    if (w) return t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n: count(n), of: count(v.episodesTotal) });
+    return t("sessions.filtered", { n: count(n), of: count(v.episodesTotal) });
   };
 
   const chip = () => (
@@ -448,11 +455,15 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           {/* what narrows the operations, said where they are */}
           <If when={pane() === "operations" || pane() === "aligned"}>{chip()}</If>
         </View>
-        <View class="min-h-0 flex-1 px-4 pb-4 pt-3">{body(v)}</View>
+        <View class="min-h-0 flex-1 px-4 pb-4 pt-3" onLayout={({ bounds }) => bodyHeight.set(Math.round(bounds.size.height))}>
+          {body(v)}
+        </View>
       </View>
     </If>
   );
 
+  // the room under the tabs, as it is laid out: what the findings may take of it
+  const bodyHeight = signal(0);
   // room for the inspector beside the operations, or it comes in from the edge
   const roomy = () => box().w >= BREAK.inspector;
   const inspecting = () => !!(episode() || record());

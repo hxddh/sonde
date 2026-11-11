@@ -26,6 +26,15 @@ impl Source {
             Source::Har => "HAR",
         }
     }
+
+    /// One of them, as a sentence says it: "from an S3 server access log".
+    pub fn a(self) -> &'static str {
+        match self {
+            Source::AccessLog => "an S3 server access log",
+            Source::CloudTrail => "a CloudTrail file",
+            Source::Har => "a HAR",
+        }
+    }
 }
 
 /// What a text is, by its first characters: a session needs no import.
@@ -65,6 +74,9 @@ pub struct Imported {
     /// Lines that are no request of a program's (a lifecycle expiry, a batch
     /// delete's objects): the store's own work.
     pub not_requests: usize,
+    /// A HAR's entries for other hosts (a page, its scripts, another
+    /// service): no request to S3, and left out.
+    pub other_hosts: usize,
 }
 
 /// A file's text: gunzipped when it is gzip (as S3 delivers CloudTrail).
@@ -118,6 +130,9 @@ pub struct Parts {
     records: Vec<Record>,
     malformed: usize,
     not_requests: usize,
+    other_hosts: usize,
+    /// The hosts the requests went to, each with how many.
+    hosts: std::collections::BTreeMap<String, usize>,
     /// request id → the object a copy read, from the store's own line of
     /// it: the line may be in another file of the folder than the copy's.
     sources: std::collections::HashMap<String, String>,
@@ -130,17 +145,21 @@ impl Parts {
         let source = detect(text).ok_or("not an S3 server access log, CloudTrail file or HAR")?;
         match self.source {
             Some(first) if first != source => {
-                return Err(format!("a {} among {} files", source.name(), first.name()));
+                return Err(format!("{} among {} files", source.a(), first.name()));
             }
             _ => {}
         }
         let (mut malformed, mut not_requests) = (0, 0);
         let records = match source {
-            Source::AccessLog => {
-                access_log(text, &mut malformed, &mut not_requests, &mut self.sources)
-            }
-            Source::CloudTrail => cloudtrail(text)?,
-            Source::Har => har(text)?,
+            Source::AccessLog => access_log(
+                text,
+                &mut malformed,
+                &mut not_requests,
+                &mut self.sources,
+                &mut self.hosts,
+            ),
+            Source::CloudTrail => cloudtrail(text, &mut self.hosts)?,
+            Source::Har => har(text, &mut self.other_hosts, &mut self.hosts)?,
         };
         self.source = Some(source);
         self.records.extend(records);
@@ -165,18 +184,29 @@ impl Parts {
         if records.is_empty() {
             return Err(format!("no S3 requests in this {}", source.name()));
         }
+        // (stable: requests of one moment stay in the log's order)
         records.sort_by_key(|r| r.time);
+        let whole_seconds = spread_seconds(&mut records);
+        // where the requests went, when the source says: the store's host
+        // (the file's name otherwise, which is all there is)
+        let endpoint = self
+            .hosts
+            .iter()
+            .max_by_key(|(_, n)| **n)
+            .map(|(h, _)| h.clone())
+            .unwrap_or_else(|| name.to_string());
         for (i, r) in records.iter_mut().enumerate() {
             r.id = i as u64 + 1;
-            r.endpoint = name.to_string();
+            r.endpoint = endpoint.clone();
         }
         let mut header = SessionHeader::new(
-            name,
+            &endpoint,
             "",
             "",
             Some(format!("imported from {}", source.name())),
         );
         header.created = records[0].time;
+        header.whole_seconds = whole_seconds;
         Ok(Imported {
             source,
             session: Session {
@@ -186,8 +216,47 @@ impl Parts {
             },
             malformed: self.malformed,
             not_requests: self.not_requests,
+            other_hosts: self.other_hosts,
         })
     }
+}
+
+/// A log whose times are whole seconds says a second's requests all began
+/// at once: they are spread evenly over their second, in the log's order
+/// (records sorted by time, the order kept within one). Returns whether the
+/// times were to the second (two requests or more, none with a fraction).
+fn spread_seconds(records: &mut [Record]) -> bool {
+    let whole = records.len() >= 2 && records.iter().all(|r| r.time.timestamp_subsec_nanos() == 0);
+    if !whole {
+        return false;
+    }
+    let mut i = 0;
+    while i < records.len() {
+        let second = records[i].time;
+        let n = records[i..].iter().take_while(|r| r.time == second).count();
+        for (k, r) in records[i..i + n].iter_mut().enumerate() {
+            r.time = second + chrono::Duration::microseconds((k as i64 * 1_000_000) / n as i64);
+        }
+        i += n;
+    }
+    true
+}
+
+/// A store's host as an endpoint is named: without the bucket a
+/// virtual-hosted request puts before it.
+fn store_host(host: &str, bucket: Option<&str>) -> Option<String> {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() || host == "-" {
+        return None;
+    }
+    let host = match bucket {
+        Some(b) if !b.is_empty() => host
+            .strip_prefix(&format!("{}.", b.to_ascii_lowercase()))
+            .unwrap_or(&host)
+            .to_string(),
+        _ => host,
+    };
+    Some(host)
 }
 
 /// A folder imported as one session, and the files that were no part of it.
@@ -374,6 +443,7 @@ fn access_log(
     malformed: &mut usize,
     not_requests: &mut usize,
     sources: &mut std::collections::HashMap<String, String>,
+    hosts: &mut std::collections::BTreeMap<String, usize>,
 ) -> Vec<Record> {
     let mut out: Vec<Record> = Vec::new();
     for line in text.lines() {
@@ -427,6 +497,10 @@ fn access_log(
             num(&f[13]).unwrap_or(0) as f64,
         );
         r.request_id = (f[5] != "-").then(|| f[5].clone());
+        // the host the request named (the log's Host Header field)
+        if let Some(h) = f.get(22).and_then(|h| store_host(h, r.bucket.as_deref())) {
+            *hosts.entry(h).or_default() += 1;
+        }
         // who sent it, how long S3 took to its first byte, and with what
         r.requester = f.get(4).filter(|v| *v != "-").cloned();
         r.first_byte_ms = f.get(14).and_then(|v| v.parse::<f64>().ok());
@@ -476,7 +550,10 @@ const TRAIL_QUERY: &[&str] = &[
 ];
 
 /// CloudTrail S3 data events (`{"Records": [...]}`, or one event per line).
-fn cloudtrail(text: &str) -> Result<Vec<Record>, String> {
+fn cloudtrail(
+    text: &str,
+    hosts: &mut std::collections::BTreeMap<String, usize>,
+) -> Result<Vec<Record>, String> {
     let events: Vec<Value> = match serde_json::from_str::<Value>(text) {
         Ok(v) => match v.get("Records") {
             Some(Value::Array(a)) => a.clone(),
@@ -528,6 +605,13 @@ fn cloudtrail(text: &str) -> Result<Vec<Record>, String> {
             })
             .collect();
         let mut r = record(time, method, bucket, key, query, status_of(code), 0.0);
+        // S3 in the event's region
+        if let Some(region) = e["awsRegion"].as_str().filter(|r| !r.is_empty()) {
+            *hosts
+                .entry(format!("s3.{region}.amazonaws.com"))
+                .or_default() += 1;
+            r.region = Some(region.to_string());
+        }
         // CloudTrail names the operation itself
         r.operation = name.to_string();
         r.request_id = e["requestID"].as_str().map(String::from);
@@ -552,7 +636,11 @@ fn cloudtrail(text: &str) -> Result<Vec<Record>, String> {
 }
 
 /// A HAR file's requests to S3 (a browser's, or sonde's own `--log-out`).
-fn har(text: &str) -> Result<Vec<Record>, String> {
+fn har(
+    text: &str,
+    other_hosts: &mut usize,
+    hosts: &mut std::collections::BTreeMap<String, usize>,
+) -> Result<Vec<Record>, String> {
     let v: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let entries = v["log"]["entries"]
         .as_array()
@@ -625,7 +713,12 @@ fn har(text: &str) -> Result<Vec<Record>, String> {
             || host.starts_with("s3.")
             || host.starts_with("s3-");
         if !(signed || answered_by_s3 || s3_host || e["_sonde"].is_object()) {
+            // another host's: counted, so that the import says what it left out
+            *other_hosts += 1;
             continue;
+        }
+        if let Some(h) = store_host(host, bucket.as_deref().filter(|_| host.contains(".s3"))) {
+            *hosts.entry(h).or_default() += 1;
         }
         let status = e["response"]["status"].as_u64().unwrap_or(0) as u16;
         let mut r = record(
@@ -673,6 +766,8 @@ fn har(text: &str) -> Result<Vec<Record>, String> {
         let size = |v: &Value| v.as_i64().filter(|n| *n >= 0).map(|n| n as u64);
         r.request_bytes = size(&req["bodySize"]);
         r.response_bytes = size(&e["response"]["bodySize"]);
+        // the wait for the answer's first byte, as HAR times it
+        r.first_byte_ms = e["timings"]["wait"].as_f64().filter(|w| *w >= 0.0);
         if let Some(t) = e["response"]["content"]["text"].as_str()
             && status >= 300
         {
@@ -715,6 +810,89 @@ mod tests {
     const LOG: &str = r#"79a5 lake [06/Feb/2026:00:00:38 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPLE REST.GET.OBJECT t/part-00.parquet "GET /lake/t/part-00.parquet HTTP/1.1" 200 - 4096 4096 12 10 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
 79a5 lake [06/Feb/2026:00:00:39 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL2 REST.HEAD.OBJECT t/missing "HEAD /lake/t/missing HTTP/1.1" 404 NoSuchKey 0 - 3 - "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
 79a5 lake [06/Feb/2026:00:00:40 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL3 REST.GET.BUCKET - "GET /lake?list-type=2&prefix=t%2F HTTP/1.1" 200 - 812 - 25 24 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#;
+
+    #[test]
+    fn a_seconds_requests_are_spread_over_it_and_the_session_says_so() {
+        // five requests logged in one second, then two in the next
+        let line = |sec: u32, key: &str| {
+            format!(
+                "79a5 lake [06/Feb/2026:00:00:{sec:02} +0000] 192.0.2.3 arn:aws:iam::1:user/etl ID{key} REST.GET.OBJECT {key} \"GET /lake/{key} HTTP/1.1\" 503 SlowDown 0 - 40 30 \"-\" \"aws-sdk-java/2.21\" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"
+            )
+        };
+        let log: Vec<String> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|k| line(38, k))
+            .chain(["f", "g"].iter().map(|k| line(39, k)))
+            .collect();
+        let s = import(&log.join("\n"), "small").unwrap().1;
+        assert!(s.header.whole_seconds);
+        let ms: Vec<i64> = s
+            .records
+            .iter()
+            .map(|r| (r.time - s.records[0].time).num_milliseconds())
+            .collect();
+        // in the log's order, evenly: not five at once
+        assert_eq!(ms, [0, 200, 400, 600, 800, 1000, 1500]);
+        assert_eq!(
+            s.records
+                .iter()
+                .map(|r| r.key.as_deref().unwrap())
+                .collect::<String>(),
+            "abcdefg"
+        );
+        // named by the store, not by the file
+        assert_eq!(s.header.endpoint, "s3.amazonaws.com");
+        assert_eq!(s.records[0].endpoint, "s3.amazonaws.com");
+        // what depends on where in its second each began is not said:
+        // requests "one after another", and how many were in flight when
+        // the store throttled
+        let eps = crate::episode::episodes(&s.records);
+        let obs = crate::episode::observations_of(&s.header, &s.records, &eps);
+        let keys: Vec<&str> = obs.iter().map(|o| o.phrases[0].key).collect();
+        assert!(keys.contains(&"obs.throttled.rate"), "{keys:?}");
+        assert!(
+            !keys.contains(&"obs.serial") && !keys.contains(&"obs.throttled"),
+            "{keys:?}"
+        );
+        let said = serde_json::to_string(&s.header).unwrap();
+        assert!(said.contains("\"wholeSeconds\":true"), "{said}");
+        // a recording says nothing of the kind, and reads as before
+        let recorded = SessionHeader::new("e", "", "", None);
+        assert!(
+            !serde_json::to_string(&recorded)
+                .unwrap()
+                .contains("wholeSeconds")
+        );
+        assert_eq!(Source::AccessLog.a(), "an S3 server access log");
+    }
+
+    #[test]
+    fn a_har_says_what_it_left_out_and_times_the_first_byte() {
+        let entry = |url: &str, headers: &str| {
+            format!(
+                r#"{{"startedDateTime":"2026-11-09T10:00:00.250Z","time":25,"timings":{{"send":1,"wait":18.5,"receive":5.5}},"request":{{"method":"GET","url":"{url}","headers":[{headers}]}},"response":{{"status":200,"headers":[],"bodySize":10}}}}"#
+            )
+        };
+        let har = format!(
+            r#"{{"log":{{"version":"1.2","entries":[{},{},{}]}}}}"#,
+            entry("https://cdn.example.com/app.js", ""),
+            entry("https://example.com/", ""),
+            entry(
+                "https://lake.s3.eu-west-1.amazonaws.com/t/k",
+                r#"{"name":"x-amz-date","value":"20261109T100000Z"}"#
+            ),
+        );
+        let i = import_counted(&har, "page").unwrap();
+        assert_eq!(i.session.records.len(), 1);
+        assert_eq!(
+            i.other_hosts, 2,
+            "the page and its script: counted, not dropped unsaid"
+        );
+        assert_eq!(i.session.records[0].first_byte_ms, Some(18.5));
+        assert_eq!(i.session.header.endpoint, "s3.eu-west-1.amazonaws.com");
+        // times with fractions are the request's own
+        assert!(!i.session.header.whole_seconds);
+    }
 
     #[test]
     fn an_access_log_reads_as_requests() {

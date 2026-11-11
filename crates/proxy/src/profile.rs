@@ -382,17 +382,33 @@ fn is_zero(n: &usize) -> bool {
 /// A key's prefix for S3's rate limits: its bucket and folder, three levels
 /// at most ("b/logs/2026/"). What a session is *shown* by is [`prefix_groups`].
 pub fn prefix_of(r: &Record) -> String {
+    let (b, short) = prefix_parts(r);
+    prefix_named(b, short)
+}
+
+/// [`prefix_of`] as the record's own text: its bucket, and its key's
+/// folder cut to three levels. For counting a million requests by prefix
+/// without writing a million names.
+pub fn prefix_parts(r: &Record) -> (&str, &str) {
     let b = r.bucket.as_deref().unwrap_or("");
     let k = r.key.as_deref().unwrap_or("");
     let dir = match k.rfind('/') {
         Some(i) => &k[..=i],
         None => "",
     };
-    let short: String = dir.split_inclusive('/').take(3).collect();
-    match (b.is_empty(), short.is_empty()) {
+    let short = match dir.match_indices('/').nth(2) {
+        Some((i, _)) => &dir[..=i],
+        None => dir,
+    };
+    (b, short)
+}
+
+/// The name [`prefix_of`] gives the parts of [`prefix_parts`].
+pub fn prefix_named(bucket: &str, short: &str) -> String {
+    match (bucket.is_empty(), short.is_empty()) {
         (true, true) => "/".into(),
-        (true, false) => short,
-        _ => format!("{b}/{short}"),
+        (true, false) => short.to_string(),
+        _ => format!("{bucket}/{short}"),
     }
 }
 
@@ -892,9 +908,10 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let price = |r: &Record| price(r, prices);
 
     // groups
-    let mut by: BTreeMap<(String, bool), Vec<&Record>> = BTreeMap::new();
+    // (named by the records' own text: a kind is not copied for each request)
+    let mut by: BTreeMap<(&str, bool), Vec<&Record>> = BTreeMap::new();
     for r in records {
-        by.entry((r.operation.clone(), is_miss(r)))
+        by.entry((r.operation.as_str(), is_miss(r)))
             .or_default()
             .push(r);
     }
@@ -903,7 +920,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
         .into_iter()
         .map(|(key, rs)| {
             let waited_us = waited.get(&key).copied().unwrap_or(0.0);
-            let (operation, missed) = key;
+            let (operation, missed) = (key.0.to_string(), key.1);
             let mut lat: Vec<f64> = rs.iter().map(|r| r.latency_ms.max(0.0)).collect();
             lat.sort_by(f64::total_cmp);
             let busy = union_us(rs.iter().map(|r| (start_us(r), end_us(r))).collect());
@@ -1378,7 +1395,7 @@ fn identity(o: &Observation) -> String {
         "obs.slow" => Vec::new(),
         _ => ["key", "prefix", "format"]
             .iter()
-            .filter_map(|k| p.args.get(*k).cloned())
+            .filter_map(|k| p.args.get(k).cloned())
             .collect(),
     };
     // a format's shared habit is the note it shares

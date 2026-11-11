@@ -471,7 +471,8 @@ export function Sizes(props: { signals: Signals }) {
         <Bar value="up" class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i].up)} labelClass={TOP_LABEL} />
         <Bar value="down" class="fill-chart-4" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i].down)} labelClass={TOP_LABEL} />
         <PlotAxis tickValues={ticks()} format={(i) => rows()[i]?.name ?? ""} labelClass={TIME_TICK} />
-        <ValueAxis peak={Math.max(1, ...rows().map((r) => Math.max(r.up, r.down)))} say={(v) => t("sizes.peak", { n: count(v) })} />
+        {/* at the plot's far edge: the tallest bars stand at its start (empty bodies), under their own figures */}
+        <ValueAxis end peak={Math.max(1, ...rows().map((r) => Math.max(r.up, r.down)))} say={(v) => t("sizes.peak", { n: count(v) })} />
       </Plot>
     </If>
   );

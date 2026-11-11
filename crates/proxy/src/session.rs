@@ -45,6 +45,12 @@ pub struct SessionHeader {
     pub scenario: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trial_of: Option<String>,
+    /// Its requests' times are to the second (an imported log's): where in
+    /// its second each began is not known. They are spread over it in the
+    /// log's order, and what depends on it (how many were in flight at
+    /// once, which waited for which) is not said of such a session.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub whole_seconds: bool,
 }
 
 /// The commit a run's code was at.
@@ -124,6 +130,7 @@ impl SessionHeader {
             git: None,
             scenario: None,
             trial_of: None,
+            whole_seconds: false,
         }
     }
 
@@ -861,5 +868,160 @@ mod tests {
         assert_eq!(s.records[2].id, 2);
         assert_eq!(s.logs.len(), 1);
         assert_eq!(s.logs[0].text, "hello\r\n");
+    }
+
+    /// A session of `n` requests with headers, written as a recording is.
+    fn recorded(path: &Path, n: u64) {
+        let w = SessionWriter::create(
+            path,
+            &SessionHeader::new("r2", "https://x.r2.dev", "auto", Some("app".into())),
+        )
+        .unwrap();
+        for i in 0..n {
+            w.write(&Record {
+                id: i + 1,
+                operation: "GetObject".into(),
+                method: "GET".into(),
+                url: format!("https://x.r2.dev/b/k{i}"),
+                key: Some(format!("k{i}")),
+                host_id: Some("host".into()),
+                status: Some(200),
+                request_headers: vec![
+                    reqlog::Header::new("Authorization", "AWS4-HMAC-SHA256 Credential=…"),
+                    reqlog::Header::new("user-agent", "aws-sdk-java/2.25"),
+                    reqlog::Header::new("Range", "bytes=0-9"),
+                ],
+                response_headers: vec![
+                    reqlog::Header::new("x-amz-request-id", format!("{i:016X}")),
+                    reqlog::Header::new("ETag", "\"abc\""),
+                ],
+                ..Default::default()
+            });
+            if i % 500 == 0 {
+                w.write_log(&format!("at {i}\n"));
+            }
+        }
+        w.flush().unwrap();
+    }
+
+    #[test]
+    fn a_large_session_read_in_blocks_on_several_threads_is_in_the_files_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.sonde");
+        // past a block and past the size read on one thread
+        recorded(&path, 6000);
+        assert!(std::fs::metadata(&path).unwrap().len() > 2 * CHUNK as u64);
+        for compressed in [false, true] {
+            if compressed {
+                compress(&path).unwrap();
+            }
+            let s = Session::open(&path).unwrap();
+            assert_eq!(s.records.len(), 6000);
+            assert!(
+                s.records
+                    .iter()
+                    .enumerate()
+                    .all(|(i, r)| r.id == i as u64 + 1)
+            );
+            assert_eq!(s.records[5999].key.as_deref(), Some("k5999"));
+            assert_eq!(s.logs.len(), 12);
+            assert_eq!(s.logs[11].text, "at 5500\n");
+        }
+    }
+
+    #[test]
+    fn a_torn_last_line_is_skipped_and_a_bad_line_elsewhere_is_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("torn.sonde");
+        recorded(&path, 3000);
+        let whole = std::fs::read(&path).unwrap();
+        // the recorder killed mid-write: the last line has no end
+        std::fs::write(&path, &whole[..whole.len() - 40]).unwrap();
+        assert_eq!(Session::open(&path).unwrap().records.len(), 2999);
+        // a line that is no record in the middle: not a session, and which line
+        let mut bad = whole.clone();
+        let at = bad
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| **b == b'\n')
+            .nth(1500)
+            .unwrap()
+            .0;
+        bad.splice(at + 1..at + 1, b"{\"id\": \"x\"}\n".iter().copied());
+        std::fs::write(&path, &bad).unwrap();
+        let e = Session::open(&path).unwrap_err();
+        assert!(e.starts_with("line 1502: "), "{e}");
+    }
+
+    #[test]
+    fn a_line_no_record_could_be_is_refused_with_a_message_not_read_into_memory() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("absurd.sonde");
+        // a small file that says it holds one line of 40 MiB
+        let mut gz = flate2::write::GzEncoder::new(
+            File::create(&path).unwrap(),
+            flate2::Compression::fast(),
+        );
+        let header = SessionHeader::new("e", "https://e", "r", None);
+        serde_json::to_writer(&mut gz, &header).unwrap();
+        gz.write_all(b"\n{\"id\":1,\"url\":\"").unwrap();
+        let filler = vec![b'a'; 1 << 20];
+        for _ in 0..40 {
+            gz.write_all(&filler).unwrap();
+        }
+        gz.finish().unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() < 1 << 20);
+        let e = Session::open(&path).unwrap_err();
+        assert!(e.contains("a line longer than 32 MiB"), "{e}");
+        // the header alone still reads, and so does counting what is there
+        assert_eq!(read_header(&path).unwrap().endpoint, "e");
+        assert!(crate::summary::counted(&path).is_some_and(|c| c.requests == 0));
+    }
+
+    #[test]
+    fn a_lean_reading_keeps_what_findings_read_and_not_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lean.sonde");
+        recorded(&path, 3);
+        let full = Session::open(&path).unwrap();
+        let lean = Session::open_lean(&path).unwrap();
+        let names = |r: &Record| -> Vec<String> {
+            r.request_headers
+                .iter()
+                .chain(&r.response_headers)
+                .map(|h| h.name.to_string())
+                .collect()
+        };
+        assert_eq!(names(&full.records[0]).len(), 5);
+        assert_eq!(names(&lean.records[0]), ["user-agent", "Range", "ETag"]);
+        assert!(lean.records[0].url.is_empty() && lean.records[0].host_id.is_none());
+        // and nothing an operation or a finding is made of
+        let mut same = full.records[0].clone();
+        super::lean(&mut same);
+        assert_eq!(same, lean.records[0]);
+        assert_eq!(
+            crate::episode::episodes(&full.records),
+            crate::episode::episodes(&lean.records)
+        );
+    }
+
+    #[test]
+    fn a_session_of_the_sessions_folder_is_counted_as_it_is_compressed() {
+        let data = tempfile::tempdir().unwrap();
+        let dir = data.path().join("sessions");
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("run.sonde");
+        recorded(&path, 40);
+        compress(&path).unwrap();
+        let kept = crate::summary::kept(&path).expect("counted while compressing");
+        assert_eq!((kept.requests, kept.errors), (40, 0));
+        assert_eq!(kept.shape.iter().sum::<u32>(), 40);
+        assert_eq!(kept.program.as_deref(), Some("app"));
+        // one written elsewhere (`-o`) gets no file beside it
+        let other = data.path().join("out.sonde");
+        recorded(&other, 2);
+        compress(&other).unwrap();
+        assert!(!crate::summary::counted_file(&other).exists());
     }
 }

@@ -375,8 +375,12 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(short[3].detail).toBe("↑ 0 B ↓ 3.0 MiB");
   expect(short[4].detail).toBe("of 9 requests");
   expect(short.every((x) => x.series.length === 0)).toBe(true);
-  // Rust's own flag wins where the signals carry it
+  // Rust's own flag (under a second) says totals too; with requests enough, their line stays
   expect(brief({ ...s, short: true })).toBe(true);
+  const quick = signalTiles({ ...s, short: true });
+  expect(quick[0].value).toBe("40 requests");
+  expect(quick[1].value).toBe("3%");
+  expect(quick[0].series.length).toBe(2);
   // the run by operation: Rust's table, or what an older share's profile holds of it
   const groups = [
     { operation: "GetObject", missed: false, requests: 30, errors: 3, p50Ms: 2, p95Ms: 6 },

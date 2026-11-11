@@ -228,8 +228,8 @@ for (const v of variants) {
     await app.press("id:replay-open");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");
-    await app.keyboard.press("Escape");
-    await app.waitFor("id:replay-dialog", { state: "gone" });
+    await app.press("id:replay-cancel");
+    await app.waitFor("id:replay-plan", { state: "gone" });
 
     await go("store");
     // the buckets are listed from the store: there when the listing is in

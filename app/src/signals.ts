@@ -27,13 +27,15 @@ export interface SignalTile {
  * neighbours: said beside it wherever one is shown. */
 export const FEW = 20;
 
-/** A run too short to have a pace: under a second, or under `FEW` requests.
- * Its header says totals ("9 requests", "3.0 MiB"), never rates, and draws
- * no line over a time that is a moment. Rust's own flag where the signals
- * carry it. */
+/** A run too short to have a pace: under a second (Rust's own flag where
+ * the signals carry it), or of fewer than `FEW` requests. Its header says
+ * totals ("9 requests", "3.0 MiB"), never rates. */
 export function brief(s: Signals): boolean {
-  return s.short ?? (s.timed && (s.wallMs < 1000 || s.rate.requests < FEW));
+  return !!s.short || (s.timed && (s.wallMs < 1000 || s.rate.requests < FEW));
 }
+/** A run of a handful of requests: no shape over its time to draw (a line of
+ * stray ticks), and counts where a run has shares ("2 of 9"). */
+export const handful = (s: Signals): boolean => s.rate.requests < FEW;
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
@@ -115,9 +117,10 @@ export function signalTiles(s: Signals): SignalTile[] {
   const retries = s.errors.retriesTotal > 0 ? [t("signal.retries", { n: count(s.errors.retriesTotal) })] : [];
   const wrong = [...failures(s), ...retries];
   const both = s.bytes.upBytes + s.bytes.downBytes;
-  // a run of a moment: totals, and no line over it
+  // a run of a moment says totals; a handful of requests has no line over its time
   const few = brief(s);
-  const over = (series: number[]) => (s.timed && !few ? series : []);
+  const some = handful(s);
+  const over = (series: number[]) => (s.timed && !some ? series : []);
   // a percentile of a handful of requests is one of them: said
   const tails = s.latency.p95Ms == null || s.latency.p99Ms == null ? "" : t(s.rate.requests < FEW ? "signal.tailsFew" : "signal.tails", { p95: duration(s.latency.p95Ms), p99: duration(s.latency.p99Ms), n: count(s.rate.requests) });
   return [
@@ -134,10 +137,10 @@ export function signalTiles(s: Signals): SignalTile[] {
       id: "errors",
       label: t("signal.errors"),
       // of a handful, how many; of a run, the share
-      value: few ? t("signal.failedOf", { n: count(s.errors.count), of: count(s.rate.requests) }) : s.errors.value == null ? "—" : percent(s.errors.value),
+      value: some ? t("signal.failedOf", { n: count(s.errors.count), of: count(s.rate.requests) }) : s.errors.value == null ? "—" : percent(s.errors.value),
       detail: wrong.length ? wrong.join(" · ") : t("signal.noErrors"),
       tone: s.errors.count > 0 ? "bad" : "plain",
-      series: few ? [] : s.errors.series,
+      series: some ? [] : s.errors.series,
       kind: "bars",
     },
     {
@@ -163,7 +166,7 @@ export function signalTiles(s: Signals): SignalTile[] {
       id: "inFlight",
       label: t("signal.inFlight"),
       value: s.inFlight.value == null ? none : count(s.inFlight.peak),
-      detail: s.inFlight.value == null ? "" : few ? t("signal.ofRequests", { n: s.rate.requests }) : t("signal.peakAt", { t: duration(s.inFlight.peakAtMs) }),
+      detail: s.inFlight.value == null ? "" : some ? t("signal.ofRequests", { n: s.rate.requests }) : t("signal.peakAt", { t: duration(s.inFlight.peakAtMs) }),
       tone: s.inFlight.value == null ? "quiet" : "plain",
       series: over(s.inFlight.series),
       kind: "steps",

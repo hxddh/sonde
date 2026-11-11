@@ -4,7 +4,8 @@
 import { type JSX, List, resource, Scroll, signal, Text, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
 import { count, date, day, duration, factor, money } from "../format";
-import { type Key, t } from "../i18n";
+import { t } from "../i18n";
+import { say } from "../phrases";
 import { scenarioLabel } from "../trials";
 import { api } from "../native";
 import { copy, report, sessionsChanged, sessionsTick } from "../store";
@@ -46,19 +47,16 @@ export function trialText(x: Trial): string {
   return parts.join(" · ");
 }
 
-/** What to change after a verdict, by the phrase Rust gives (crates/proxy/src/phrase.rs): the app's words for each. */
-const ADVICE: Record<string, Key> = { "trial.advice.retries": "trial.advice.retries", "trial.advice.retry": "trial.advice.retry", "trial.advice.cut": "trial.advice.cut", "trial.advice.race": "trial.advice.race" };
-
 /** Where a verdict turns, and what to change: the request (its operation and
  * key), the line of the program that sent it when the run named its callers,
  * and the fix in a sentence. Under a trial that broke or degraded. */
 export function TrialWhere(props: { trial: Trial }) {
   const w = () => props.trial.where;
+  // what to change, said from Rust's phrase in the reader's language (a sentence of its own here: its first letter raised)
   const advice = () => {
     const a = props.trial.advice;
-    // a sentence sonde has no words for here yet is left unsaid, never shown as its key
-    const key = a ? ADVICE[a.key] : undefined;
-    return key ? t(key, a!.args ?? {}) : null;
+    const said = a ? say([{ key: a.key, args: a.args ?? {} }], "") : "";
+    return said ? said.charAt(0).toUpperCase() + said.slice(1) : null;
   };
   return (
     <If when={w() || advice()}>

@@ -25,7 +25,7 @@ are not an error in the store's place, on the same program:
 
 ```text
   survived  cut-body       11 faults, all retried · 11 bodies cut: 11 resumed from the cut · after 101 ms to 104 ms (in step) · 1.2× the requests
-  degraded  lost-race      1 fault, 0 retried · 1 lost write read back and not written again: right if the program knew its own write there (sonde let it through), a lost commit against a real writer · at PutObject demo/lance-lost-race/_versions/18446744073709551614.manifest · on a 412, …
+  survived  lost-race      1 fault, 0 retried · 1 lost write read back and not written again: the store has it (sonde let it through), so no commit is missing
 ```
 
 ## What runs
@@ -48,7 +48,7 @@ case): those keys differ between the runs, and each request is then read as one 
 - **A trial is read against a clean run that worked.** A clean run that exits non-zero, or is interrupted, runs no
   trial, and says so.
 - **Input.** When sonde's input is not a terminal, the clean run's input is kept and every run is fed the same
-  bytes; at a terminal, the trial runs read from `/dev/null`.
+  bytes (in memory up to 8 MiB, in an unnamed temporary file past it); at a terminal, the trial runs read from `/dev/null`.
 - **Ctrl-C or SIGTERM** during a trial ends the whole trial: the running command is killed, with every process it
   started (each run is a process group of its own), no verdict is written for the interrupted scenario or for any
   after it, its half-written session is removed, and sonde exits 130 or 143. Verdicts of the scenarios that
@@ -143,15 +143,15 @@ without `DeleteObjects` answers 501 in the clean run and in the trial, and the p
 | **fenced** | a SlateDB writer answered 412 that stopped (a non-zero exit) and wrote nothing after: what the format asks of a writer that lost. Its exit is not held against it |
 | **N more objects left than the clean run leaves** | after a lost race: objects written without a condition and not removed, beyond the clean run's. They are the lost commit's files unless the commit that followed names them, which sonde does not read (degraded) |
 | **sent again with the same If-Match** | the write was run again with the ETag that had just lost: nothing was read in between, and a real writer's new ETag would refuse it again (degraded) |
-| **read back and not written again** | after a 412 to a write sonde had let through, the program read the key and stopped. It may have recognised its own write there and been right; against a real writer the commit would be lost. Not known, so degraded |
+| **read back and not written again** | after a 412 to a write sonde had let through (`If-None-Match: *`), the program read that key, did not write the commit again, made every other commit the clean run made, wrote the key no other way and exited as its clean run did. The store then holds exactly the clean run's commits and nothing more, so this is **survived**: nothing is missing and nothing is to be changed. It is what a writer that knows its own commit does (Lance reads the manifest back and carries on). What the requests do not show is whether the program knew the write for its own; a program that reads back another writer's commit and carries on the same would read the same here |
 
 And the standing:
 
 - **survived**: every failed request that is owed a retry was sent again, every cut body read to its end, every
-  lost race run again (or the writer fenced), nothing more was left than a clean run leaves, and the program exited
+  lost race run again (or its write, which the store has, read back; or the writer fenced), nothing more was left than a clean run leaves, and the program exited
   as its clean run did.
-- **degraded**: it finished, but gave up on a read, left an upload unfinished, or left a lost race in one of the
-  three states above that the requests cannot settle.
+- **degraded**: it finished, but gave up on a read, left an upload unfinished, or after a lost race left more
+  objects than the clean run or sent the same `If-Match` again.
 - **broke**: it exited differently from its clean run; or a write failed, was never sent again, and it exited 0;
   or half a body was taken as the whole; or a lost race was never run again and it exited as its clean run did; or
   the contested key was written over without a condition (the other writer's commit would be gone).
@@ -164,13 +164,13 @@ And the standing:
 of code when the run named callers (`sonde run --callers`), and what to change:
 
 ```text
-  broke     slowdown       2 faults, 0 retried · 1 write failed and was never sent again, and the program exited 0 · at PutObject scratch/etl-slowdown/state (etl.py:12 in save) · boto3 1.42 did not send it again: turn its retries on (s3 = boto3.client("s3", config=Config(retries={"mode": "adaptive", "max_attempts": 10}, max_pool_connections=16)))
+  broke     slowdown       2 faults, 0 retried · 1 write failed and was never sent again, and the program exited 0 · at PutObject scratch/etl-slowdown/state (etl.py:12 save) · boto3 1.43 did not send it again: turn its retries on (boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5})))
 ```
 
 The request is the first write never sent again; else the first body taken cut; else the first race not run again;
 else the first read given up; else, when only the exit differs, the last request that failed. The setting is the
-SDK's own, for boto3, the AWS SDKs for Java, Go and JavaScript (the lines `sonde show` advises for a throttled
-store); for another client the rule itself is said. `sonde check` prints the same line in every format, and the
+SDK's own, for boto3, the AWS SDKs for Java, Go and JavaScript (the setting that turns retries on, and
+nothing else); for another client the rule itself is said. `sonde check` prints the same line in every format, and the
 verdicts' file carries `where` (`operation`, `key`, `caller`) and `advice` (a phrase: `key` and `args`).
 
 "Survived" claims only what can be seen from the requests: sonde does not read the program's data back.
@@ -229,8 +229,8 @@ faults), a name used twice, a fault with a word too many (`503 Slow Down`: a sta
   object: a program that fails only on a cut in its last bytes, or on a second cut, is not found out.
 - **A lost race.** There is no other writer. With `If-None-Match: *` the store holds the program's own write and
   the program is told it lost: a program that then commits the next number has made its commit twice (as it would
-  not against a real writer), and one that reads the key back and knows its own write is right to stop, which the
-  requests alone do not show. sonde does not read a commit's content, so whether a retry rebased on what it lost
+  not against a real writer), and one that reads the key back and carries on reads as survived whether or not it
+  knew the write for its own. sonde does not read a commit's content, so whether a retry rebased on what it lost
   to, and whether the files a lost commit wrote are named by the next, is not known: only that more objects were
   left. A commit protocol sonde has no family for (numbered keys under another folder name) is read key by key:
   the next number is then a new commit, failed once itself.

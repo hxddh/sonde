@@ -244,6 +244,8 @@ struct State {
     etags: HashMap<String, String>,
     /// (bucket, original prefix) → the replay's next continuation token
     tokens: HashMap<(String, String), String>,
+    /// listings the replay's store answered to their end: no page follows
+    ended: std::collections::HashSet<(String, String)>,
 }
 
 fn query<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
@@ -302,9 +304,17 @@ impl State {
                     );
                     match self.tokens.get(&key) {
                         Some(t) => req = req.query(k, t.clone()),
+                        // the store said this listing was over: it holds
+                        // fewer keys under the prefix than the original did
+                        None if self.ended.contains(&key) => {
+                            return Err(
+                                "asks for a further page of a listing that had ended on this store"
+                                    .into(),
+                            );
+                        }
                         None => {
                             return Err(
-                                "continues a listing whose first page was not replayed".into()
+                                "continues a listing whose page before it was not replayed".into(),
                             );
                         }
                     }
@@ -431,10 +441,12 @@ impl State {
                 let key = (bucket, query(r, "prefix").unwrap_or("").to_string());
                 match tags(&resp.text(), "NextContinuationToken").first() {
                     Some(t) => {
+                        self.ended.remove(&key);
                         self.tokens.insert(key, t.to_string());
                     }
                     None => {
                         self.tokens.remove(&key);
+                        self.ended.insert(key);
                     }
                 }
             }
@@ -1063,6 +1075,51 @@ mod tests {
         assert!(changes_bucket("PutBucketLifecycleConfiguration"));
         assert!(changes_bucket("DeleteBucket"));
         assert!(!changes_bucket("PutObject"));
+    }
+
+    #[test]
+    fn a_page_that_cannot_be_asked_for_says_which_of_the_two_reasons() {
+        let page = |token: Option<&str>| {
+            let mut r = Record {
+                method: "GET".into(),
+                operation: "ListObjectsV2".into(),
+                bucket: Some("b".into()),
+                query: vec![("prefix".into(), "p/".into())],
+                status: Some(200),
+                ..Default::default()
+            };
+            if let Some(t) = token {
+                r.query.push(("continuation-token".into(), t.into()));
+            }
+            r
+        };
+        let opts = ReplayOptions::default();
+        let mut state = State::default();
+        // its first page was never replayed
+        assert_eq!(
+            state.build(&page(Some("t1")), &opts).unwrap_err(),
+            "continues a listing whose page before it was not replayed"
+        );
+        // the first page was, and the store ended the listing there
+        let first = page(None);
+        let req = state.build(&first, &opts).unwrap();
+        let answer = S3Response {
+            status: 200,
+            headers: Vec::new(),
+            body: Bytes::from(
+                "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>",
+            ),
+            record_id: 1,
+            request_id: None,
+            host_id: None,
+            latency: Default::default(),
+            retries: 0,
+        };
+        state.learn(&first, &req, &answer);
+        assert_eq!(
+            state.build(&page(Some("t1")), &opts).unwrap_err(),
+            "asks for a further page of a listing that had ended on this store"
+        );
     }
 
     #[test]

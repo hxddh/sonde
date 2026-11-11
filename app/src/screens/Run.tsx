@@ -10,6 +10,7 @@ import { isAvailable, Menu } from "nsh/desktop";
 import { change, count, duration, percent, rate } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
+import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, runAgain, running, start, startedAt, stop } from "../run";
 import { away, endpoint, endpoints, endpointsMode, go, openSession, paneOnOpen, report, sessionsChanged, showInSidebar } from "../store";
@@ -327,11 +328,13 @@ function LiveOperations() {
   const path = () => running()?.path ?? lastRun()?.path ?? null;
   // read again as the program's requests arrive, and once more as it ends
   const view = analysis(path, () => (tick(), lastRun())).view;
+  // its operations, in pages: the first of them as they arrive
+  const operations = pagedOperations(() => path() ?? "", view);
 
   return (
     <View class="min-h-0 flex-1 gap-2" testID="run-operations">
       <StatusBand view={view()} now={now} />
-      <If when={view() && view()!.episodes.length > 0} else={<If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}>
+      <If when={view() && view()!.episodesTotal > 0} else={<If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}>
             {/* the SDK hints only for a program that ran and still sent nothing */}
             <If
               when={!lastRun()!.killed && lastRun()!.exit !== 127}
@@ -352,7 +355,7 @@ function LiveOperations() {
             </If>
             <Observations view={view()!} compact max={3} />
           </If>
-          <OperationsTable view={view()!} onSelect={() => lastRun() && openLastRun(go)} compact />
+          <OperationsTable view={view()!} source={operations} onSelect={() => lastRun() && openLastRun(go)} compact />
         </View>
       </If>
     </View>

@@ -1030,13 +1030,10 @@
  "scenario.about.s3-limits": "S3 对单个前缀的速率：每秒 5,500 次读取和 3,500 次写入",
  "trial.limit": "程序可以",
  "trial.stop": "停止",
- "trial.advice.retries": "%{sdk} 没有重发：请开启它的重试（%{setting}）",
- "trial.advice.retry": "请重发失败的请求：500、502、503、504、408 或 429 都应当重试",
- "trial.advice.cut": "请用 Content-Length 核对读到的字节数，再读取剩余部分（Range）或整个重读",
- "trial.advice.race": "遇到 412 时，重新读取日志并带条件写入下一次提交；不要无条件写入该键",
  "trial.retried.one": "%{n} 次故障，重试了 %{m} 次",
  "trial.allRetried.one": "%{n} 次故障，已重试",
  "trial.gaveUp.one": "放弃了 %{n} 个请求",
  "trial.droppedWrites.one": "%{n} 次写入没有再发送",
- "trial.left.one": "留下 %{n} 个未完成的分片上传"
+ "trial.left.one": "留下 %{n} 个未完成的分片上传",
+ "sessions.copiedFirst": "已复制 %{of} 个操作中的前 %{n} 个"
 }

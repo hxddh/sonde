@@ -11,10 +11,10 @@ use clap::Args;
 use reqlog::{Record, RequestLog};
 use sonde_core::Sonde;
 use sonde_core::guard::human_bytes;
-use sonde_proxy::episode::{Episode, Outcome, episodes, observations, shared_notes};
+use sonde_proxy::episode::{Episode, Outcome, episodes, observations};
 use sonde_proxy::profile::{Profile, RequestPrices, profile};
 use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
-use sonde_proxy::summary::summarize;
+use sonde_proxy::view::Analysis;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
 
 use crate::Cli;
@@ -552,30 +552,17 @@ fn print_summary(
     prices: &RequestPrices,
     stdout: bool,
 ) {
-    print_summary_of(
-        records,
-        &episodes(records),
-        endpoint,
-        path,
-        color,
-        prices,
-        stdout,
-    );
+    // (a run just recorded: its times are its own)
+    let header = SessionHeader::new(endpoint, "", "", None);
+    let analysis = Analysis::of_records(&header, records, prices);
+    print_summary_of(&analysis, &header, path, color, stdout);
 }
 
 /// What a session amounts to, each fact once: the head line has the
 /// requests, the operations and the time; the signals the rate, the errors,
 /// the latency, the bytes and (for `sonde show`) the cost; then where the
 /// waiting went, and the findings.
-fn print_summary_of(
-    records: &[Record],
-    eps: &[Episode],
-    endpoint: &str,
-    path: &Path,
-    color: bool,
-    prices: &RequestPrices,
-    stdout: bool,
-) {
+fn print_summary_of(a: &Analysis, header: &SessionHeader, path: &Path, color: bool, stdout: bool) {
     // `sonde show` answers on stdout; run and proxy keep stdout for the program's own output
     let say = |line: String| {
         if stdout {
@@ -584,11 +571,12 @@ fn print_summary_of(
             eprintln!("{line}")
         }
     };
-    let s = &summarize(records);
+    let s = &a.summary;
+    let endpoint = &header.endpoint;
     let mut head = format!(
         "{} ({}) to {endpoint} in {}",
         output::count(s.requests as usize, "request"),
-        output::count(eps.len(), "operation"),
+        output::count(a.episodes.len(), "operation"),
         output::duration(s.seconds * 1000.0)
     );
     if s.errors > 0 {
@@ -660,16 +648,20 @@ fn print_summary_of(
         say(format!("  {} × {what}", output::grouped(*n)));
     }
     // the four signals, each with its line over the run
-    let signals =
-        sonde_proxy::signals::text(&sonde_proxy::signals::signals(records, prices), color);
+    let mut signals = a.signals.clone();
+    if header.whole_seconds {
+        // where in its second a request began is not known: how many were
+        // in flight at once is not said
+        signals.in_flight.peak = 0;
+        say("  its times are to the second (an imported log): a second's requests are spread over it in the log's order, and how many were in flight at once is not known".into());
+    }
+    let signals = sonde_proxy::signals::text(&signals, color);
     // a run's own summary keeps to the four lines; `sonde show` has the tables too
     for line in signals.lines().take(if stdout { usize::MAX } else { 4 }) {
         say(line.to_string());
     }
-    let prof = profile(records, prices);
-    print_profile(&prof, color, !stdout, &say);
-    let obs = observations(records, eps);
-    for o in &obs {
+    print_profile(&a.profile, color, !stdout, &say);
+    for o in &a.observations {
         let mark = if o.level == "warn" {
             paint("!", "33", color)
         } else {
@@ -690,7 +682,7 @@ fn print_summary_of(
         }
     }
     // acting on all of them, at once
-    if let Some(w) = sonde_proxy::fixes::what_if(records, &prof, &obs) {
+    if let Some(w) = &a.what_if {
         say(paint(&w.line(), "32", color));
     }
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
@@ -771,8 +763,97 @@ struct RunCtx {
     name: Option<String>,
     /// What the clean run read on its input, when that is not a terminal
     /// and a trial follows: every run is fed the same.
-    input: Option<Arc<std::sync::Mutex<Vec<u8>>>>,
+    input: Option<Arc<std::sync::Mutex<KeptInput>>>,
     stop: Stop,
+}
+
+/// The most of a clean run's input kept in memory for the runs after it:
+/// past it, it is kept in a file.
+const INPUT_IN_MEMORY: usize = 8 << 20;
+
+/// What the clean run read on its input, kept so that every run of a trial
+/// is fed the same: in memory while it is small, then in a file of its own
+/// (unnamed, gone when sonde ends), so that a job fed gigabytes by a pipe
+/// does not hold them all.
+struct KeptInput {
+    limit: usize,
+    head: Vec<u8>,
+    file: Option<std::fs::File>,
+    /// The file could not be written: the runs after are fed nothing, and
+    /// are told so once.
+    lost: bool,
+}
+
+impl Default for KeptInput {
+    fn default() -> Self {
+        KeptInput {
+            limit: INPUT_IN_MEMORY,
+            head: Vec::new(),
+            file: None,
+            lost: false,
+        }
+    }
+}
+
+/// A kept input, to be read once more.
+enum Again {
+    Bytes(Vec<u8>),
+    File(std::fs::File),
+    Lost,
+}
+
+impl KeptInput {
+    fn push(&mut self, chunk: &[u8]) {
+        use std::io::Write;
+        if self.lost {
+            return;
+        }
+        if self.file.is_none() && self.head.len() + chunk.len() > self.limit {
+            match tempfile::tempfile().and_then(|mut f| f.write_all(&self.head).map(|_| f)) {
+                Ok(f) => {
+                    self.file = Some(f);
+                    self.head = Vec::new();
+                }
+                Err(e) => return self.lose(e),
+            }
+        }
+        match &mut self.file {
+            Some(f) => {
+                if let Err(e) = f.write_all(chunk) {
+                    self.lose(e);
+                }
+            }
+            None => self.head.extend_from_slice(chunk),
+        }
+    }
+
+    fn lose(&mut self, why: std::io::Error) {
+        eprintln!(
+            "sonde: the program's input could not be kept for the trial's runs ({why}): they read none"
+        );
+        self.lost = true;
+        self.file = None;
+        self.head = Vec::new();
+    }
+
+    /// The input from its start: its bytes, or its file opened anew.
+    fn again(&mut self) -> Again {
+        use std::io::{Seek, SeekFrom};
+        if self.lost {
+            return Again::Lost;
+        }
+        match &mut self.file {
+            // (runs come one after the other: the place in the file is one run's)
+            Some(f) => match f.try_clone().and_then(|mut c| {
+                c.seek(SeekFrom::Start(0))?;
+                Ok(c)
+            }) {
+                Ok(c) => Again::File(c),
+                Err(_) => Again::Lost,
+            },
+            None => Again::Bytes(self.head.clone()),
+        }
+    }
 }
 
 /// One run of the command.
@@ -979,24 +1060,10 @@ fn load_project(explicit: Option<&PathBuf>) -> anyhow::Result<Project> {
         };
         wrong(format!("{}{hint}", e.to_string().trim_end()))
     })?;
-    if file
-        .program
-        .name
-        .as_deref()
-        .is_some_and(|n| n.trim().is_empty())
-    {
-        return Err(wrong(
-            "[program] name = \"\": a program's name is what its runs are found by; give it one or leave the line out".into(),
-        ));
-    }
-    let mut scenarios: Vec<sonde_proxy::fault::Scenario> = Vec::new();
-    for p in &file.scenario {
-        let scenario = p.scenario().map_err(wrong)?;
-        if scenarios.iter().any(|s| s.name == scenario.name) {
-            return Err(wrong(format!("scenario {}: named twice", scenario.name)));
-        }
-        scenarios.push(scenario);
-    }
+    sonde_proxy::fault::project_program_name(file.program.name.as_deref()).map_err(wrong)?;
+    let scenarios =
+        sonde_proxy::fault::project_scenarios(file.scenario.iter().map(ProjectScenario::scenario))
+            .map_err(wrong)?;
     Ok(Project {
         path: Some(path),
         file,
@@ -1123,7 +1190,7 @@ async fn run_once(
             let kept = kept.clone();
             Some(tokio::spawn(async move {
                 while let Some(chunk) = rx.recv().await {
-                    kept.lock().expect("input").extend_from_slice(&chunk);
+                    kept.lock().expect("input").push(&chunk);
                     if to.write_all(&chunk).await.is_err() {
                         break;
                     }
@@ -1133,9 +1200,19 @@ async fn run_once(
             }))
         }
         (Some(kept), Some(mut to)) => {
-            let bytes = kept.lock().expect("input").clone();
+            let again = kept.lock().expect("input").again();
             Some(tokio::spawn(async move {
-                let _ = to.write_all(&bytes).await;
+                match again {
+                    Again::Bytes(bytes) => {
+                        let _ = to.write_all(&bytes).await;
+                    }
+                    // from the file it was kept in, a piece at a time
+                    Again::File(file) => {
+                        let mut from = tokio::fs::File::from_std(file);
+                        let _ = tokio::io::copy(&mut from, &mut to).await;
+                    }
+                    Again::Lost => {}
+                }
                 drop(to);
             }))
         }
@@ -1385,18 +1462,18 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     }
     let all = &session.records;
     let prices = request_prices_for(s, &session.header.endpoint);
-    // the operations, once: every part below reads these
-    let eps = episodes(all);
+    // what it amounts to, once: every part below reads this
+    let analysis = Analysis::of(&session, &prices);
+    let eps = &analysis.episodes;
     match a.format {
         // the summary alone: what the table's summary shows, and no more
         Format::Json if a.summary => {
-            let prof = profile(all, &prices);
-            let obs = observations(all, &eps);
+            let prof = &analysis.profile;
             println!(
                 "{}",
                 output::json(&serde_json::json!({
                     "session": session.header,
-                    "summary": summarize(all),
+                    "summary": analysis.summary,
                     "operations": eps.len(),
                     "waiting": {
                         "busyMs": prof.busy_ms,
@@ -1408,16 +1485,14 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                         "byKind": prof.groups,
                     },
                     "cost": prof.cost,
-                    "whatIf": sonde_proxy::fixes::what_if(all, &prof, &obs),
-                    "observations": obs,
+                    "whatIf": analysis.what_if,
+                    "observations": analysis.observations,
                 }))
             );
         }
         // written as it is made: an operation, then a request, at a time
         Format::Json => {
             use std::io::Write;
-            let obs = observations(all, &eps);
-            let what_if = sonde_proxy::fixes::what_if(all, &profile(all, &prices), &obs);
             let out = std::io::BufWriter::with_capacity(1 << 16, std::io::stdout().lock());
             let mut w = sonde_proxy::share::JsonOut::new(out, true);
             w.begin_object()?;
@@ -1425,7 +1500,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 "episodes",
                 eps.iter().filter(|e| !a.errors || e.outcome != Outcome::Ok),
             )?;
-            w.field("observations", &obs)?;
+            w.field("observations", &analysis.observations)?;
             w.key("records")?;
             w.begin_array()?;
             sonde_proxy::share::each_record(&file, &mut all.iter().map(|r| r.id), &mut |r| {
@@ -1436,8 +1511,8 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             })?;
             w.end_array()?;
             w.field("session", &session.header)?;
-            w.field("summary", &summarize(all))?;
-            w.field("whatIf", &what_if)?;
+            w.field("summary", &analysis.summary)?;
+            w.field("whatIf", &analysis.what_if)?;
             w.end_object()?;
             let mut out = w.finish()?;
             out.write_all(b"\n")?;
@@ -1470,25 +1545,20 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     .max()
                     .unwrap_or(0)
                     .min(60);
-                let hide: Vec<String> = shared_notes(&eps)
-                    .into_iter()
-                    .map(|(_, n, _, _)| n)
-                    .collect();
+                let hide = &analysis.shared_notes;
                 let formats = eps.iter().any(|e| e.format.is_some());
                 if a.errors && shown.is_empty() {
                     println!("no errors: none of its operations failed");
                 }
                 print_lines(shown.len(), a.all, "operation", &|i| {
-                    episode_line(shown[i], width, &hide, formats, color)
+                    episode_line(shown[i], width, hide, formats, color)
                 });
             }
             print_summary_of(
-                all,
-                &eps,
-                &session.header.endpoint,
+                &analysis,
+                &session.header,
                 &file,
                 std::io::stdout().is_terminal(),
-                &prices,
                 true,
             );
         }
@@ -1592,10 +1662,14 @@ fn print_comparison(c: &sonde_proxy::replay::Comparison, color: bool) {
         println!("{line}");
     }
     for (why, n) in &c.unmatched {
-        println!(
-            "{}",
-            paint(&format!("  {n} not replayed: {why}"), "2", color)
-        );
+        // without a reason (a replay of another time, compared by `sonde
+        // diff`) the reason is not the words again
+        let line = if why == "not replayed" {
+            format!("  {n} not replayed")
+        } else {
+            format!("  {n} not replayed: {why}")
+        };
+        println!("{}", paint(&line, "2", color));
     }
 }
 
@@ -2090,8 +2164,8 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         profile(&sb.records, &request_prices_for(s, &sb.header.endpoint)),
     );
     let (oa, ob) = (
-        observations(&sa.records, &episodes(&sa.records)),
-        observations(&sb.records, &episodes(&sb.records)),
+        sonde_proxy::episode::observations_of(&sa.header, &sa.records, &episodes(&sa.records)),
+        sonde_proxy::episode::observations_of(&sb.header, &sb.records, &episodes(&sb.records)),
     );
     let c = sonde_proxy::profile::compare_runs((&sa.records, &pa, &oa), (&sb.records, &pb, &ob))
         .of_programs(
@@ -2215,69 +2289,15 @@ struct ProjectScenario {
 }
 
 impl ProjectScenario {
+    /// Checked and built where the app's are ([`sonde_proxy::fault::project_scenario`]).
     fn scenario(&self) -> Result<sonde_proxy::fault::Scenario, String> {
-        if self.name.is_empty()
-            || !self
-                .name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
-            return Err(format!(
-                "scenario {:?}: a name is letters, digits, - and _",
-                self.name
-            ));
-        }
-        // `clean` is the run without faults: its name is each run's place
-        // (`{trial}`, SONDE_TRIAL), and a scenario by it would write there
-        if self.name == "clean" {
-            return Err(
-                "scenario clean: that is the name of the run without faults; give this one another name"
-                    .into(),
-            );
-        }
-        // a scenario of the project's is run in a built-in one's place
-        // wherever it is named: one name, one meaning
-        if sonde_proxy::fault::scenario(&self.name).is_some() {
-            return Err(format!(
-                "scenario {}: that is one of sonde's own scenarios; give this one another name",
-                self.name
-            ));
-        }
-        for op in &self.on {
-            if !sonde_proxy::fault::known_operation(op) {
-                return Err(format!(
-                    "scenario {}: on = {op:?} is no S3 operation sonde names (PutObject, GetObject, DeleteObjects, CompleteMultipartUpload, …; \"Put*\" matches by its start): it would meet no request",
-                    self.name
-                ));
-            }
-        }
-        let effect = sonde_proxy::fault::parse_effect(&self.fault)
-            .map_err(|e| format!("scenario {}: {e}", self.name))?;
-        let every = matches!(effect, sonde_proxy::fault::Effect::Delay { .. });
-        Ok(sonde_proxy::fault::Scenario {
-            name: self.name.clone(),
-            about: format!(
-                "{}{}{}",
-                self.fault,
-                if self.on.is_empty() {
-                    String::new()
-                } else {
-                    format!(" on {}", self.on.join(", "))
-                },
-                if self.prefix.is_empty() {
-                    String::new()
-                } else {
-                    format!(" under {}", self.prefix)
-                }
-            ),
-            rules: vec![sonde_proxy::fault::Rule {
-                on: self.on.clone(),
-                prefix: self.prefix.clone(),
-                effect,
-                times: self.times.unwrap_or(if every { 0 } else { 1 }),
-                conditional: false,
-            }],
-        })
+        sonde_proxy::fault::project_scenario(
+            &self.name,
+            &self.fault,
+            &self.on,
+            &self.prefix,
+            self.times,
+        )
     }
 }
 
@@ -2469,7 +2489,9 @@ fn name_for(command: &str) -> Option<String> {
     let mut name = stem(&program);
     if INTERPRETERS.contains(&base) || INTERPRETERS.contains(&program.as_str()) {
         // what it runs: the first word after it that is a file, not an option
-        let after = command.split_whitespace().skip_while(|w| !w.ends_with(&program));
+        let after = command
+            .split_whitespace()
+            .skip_while(|w| !w.ends_with(&program));
         if let Some(script) = after
             .skip(1)
             .find(|w| !w.starts_with('-') && w.contains('.') && !w.contains('='))
@@ -2709,11 +2731,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // read once, for what it amounts to: its figures, its findings, its header
     let read = |p: &PathBuf| -> anyhow::Result<_> {
         let session = Session::open_lean(p).map_err(|e| anyhow::anyhow!(e))?;
-        let pr = profile(
-            &session.records,
-            &request_prices_for(s, &session.header.endpoint),
-        );
-        let ob = observations(&session.records, &episodes(&session.records));
+        let Analysis {
+            profile: pr,
+            observations: ob,
+            ..
+        } = Analysis::of(&session, &request_prices_for(s, &session.header.endpoint));
         let point = run_point(
             &p.to_string_lossy(),
             &session.header.created.to_rfc3339(),
@@ -2864,7 +2886,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let passed = check_passed(&c, &trials);
     let closing = match &no_baseline {
         // said in every format: the rows held to a baseline are not there
-        Some(_) if !c.verdicts.is_empty() => format!("{} (no baseline yet)", check_closing(&c, &trials)),
+        Some(_) if !c.verdicts.is_empty() => {
+            format!("{} (no baseline yet)", check_closing(&c, &trials))
+        }
         _ => check_closing(&c, &trials),
     };
     // setting a baseline alone is a whole command
@@ -2902,20 +2926,21 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     };
     let since_text = since.as_ref().map(since_line);
     if matches!(a.format, Format::Json) {
-        println!(
-            "{}",
-            output::json(&serde_json::json!({
-                "run": run.0,
-                "program": program,
-                "programNamed": header.name.is_some(),
-                "check": c,
-                "trials": trials,
-                "passed": passed,
-                "verdict": closing,
-                "since": since,
-                "noBaseline": no_baseline,
-            }))
-        );
+        let mut doc = serde_json::json!({
+            "run": run.0,
+            "program": program,
+            "programNamed": header.name.is_some(),
+            "check": c,
+            "trials": trials,
+            "passed": passed,
+            "verdict": closing,
+            "since": since,
+        });
+        // `baseline = "auto"` found none: the rows held to one are not there
+        if let Some(why) = &no_baseline {
+            doc["noBaseline"] = serde_json::json!(why);
+        }
+        println!("{}", output::json(&doc));
         return Ok(if passed { 0 } else { 1 });
     }
     let color = std::io::stdout().is_terminal();
@@ -3961,6 +3986,35 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
 mod tests {
     use super::*;
     use sonde_proxy::program::md_text;
+
+    #[test]
+    fn an_input_past_its_limit_is_kept_in_a_file_and_read_again_whole() {
+        use std::io::Read;
+        let mut kept = KeptInput {
+            limit: 10,
+            ..Default::default()
+        };
+        kept.push(b"12345");
+        kept.push(b"678");
+        assert!(kept.file.is_none(), "small: in memory");
+        assert!(matches!(kept.again(), Again::Bytes(b) if b == b"12345678"));
+        kept.push(b"9abcdef");
+        kept.push(b"gh");
+        assert!(
+            kept.file.is_some() && kept.head.is_empty(),
+            "past it: a file"
+        );
+        // every run reads all of it, from its start
+        for _ in 0..2 {
+            let Again::File(mut f) = kept.again() else {
+                panic!("kept in its file");
+            };
+            let mut all = String::new();
+            f.read_to_string(&mut all).unwrap();
+            assert_eq!(all, "123456789abcdefgh");
+        }
+        assert_eq!(KeptInput::default().limit, 8 << 20);
+    }
 
     #[test]
     fn a_watched_file_is_held_to_the_budget_by_its_figures() {
