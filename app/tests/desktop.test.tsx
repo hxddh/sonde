@@ -172,3 +172,95 @@ test("a trial reads as figures: the faults and retries, the wait, the load, what
   expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
   expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried · 2 writes never sent again · exited 1 (clean run: 0)");
 });
+
+test("prefixes with a doubled or a leading slash keep their own names", async () => {
+  const { prefixNames } = await import("../src/ui/plots");
+  // what they share is cut off as written: an empty segment shifts nothing
+  const doubled = prefixNames([{ prefix: "a//b/x/" }, { prefix: "a//b/y/" }], 20);
+  expect(doubled.common).toBe("a//b/");
+  expect(doubled.name("a//b/x/")).toBe("x/");
+  expect(doubled.name("a//b/y/")).toBe("y/");
+  const leading = prefixNames([{ prefix: "/a/b/" }, { prefix: "/a/c/" }], 20);
+  expect(leading.common).toBe("/a/");
+  expect(leading.name("/a/b/")).toBe("b/");
+  expect(leading.name("/a/c/")).toBe("c/");
+  // slashes alone are nothing shared
+  expect(prefixNames([{ prefix: "/a/" }, { prefix: "/b/" }], 20).common).toBe("");
+  // the rest of them is said in words, never as the raw "other"
+  expect(leading.name("other")).toBe("Other prefixes");
+});
+
+test("an axis of two places has two ticks, not the first one twice", async () => {
+  const { ticks3 } = await import("../src/ui/plots");
+  expect(ticks3(2)).toEqual([0, 1]);
+  expect(ticks3(1)).toEqual([0]);
+  expect(ticks3(3)).toEqual([0, 1, 2]);
+  expect(ticks3(96)).toEqual([0, 47, 95]);
+});
+
+test("a table that narrows drops its columns by rank, whole, and clips none", async () => {
+  const { operationColumns, OP_NAME } = await import("../src/ui/sessionview");
+  const all = { format: true, bar: true, notes: true };
+  const sized = { bar: 150, notes: 320 };
+  // not measured yet, and wide: every column, in rank order
+  expect(operationColumns(0, all, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "format", "notes"]);
+  expect(operationColumns(1400, all, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "format", "notes"]);
+  // narrower: the notes go first, then the format, the bar, the time, the requests
+  expect(operationColumns(900, all, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "format"]);
+  expect(operationColumns(700, all, sized).shown).toEqual(["status", "title", "duration", "requests", "time"]);
+  expect(operationColumns(480, all, sized).shown).toEqual(["status", "title", "duration", "requests"]);
+  // the outcome, the operation and how long it took always show
+  expect(operationColumns(300, all, sized).shown).toEqual(["status", "title", "duration"]);
+  // whatever shows, the operation keeps its room and the columns add up to the table: none is clipped
+  for (const w of [460, 520, 640, 780, 900, 1100, 1400]) {
+    const l = operationColumns(w, all, sized);
+    const used = l.shown.filter((c) => c !== "title").reduce((n, c) => n + l.widths[c], 0);
+    expect(l.title >= OP_NAME).toBe(true);
+    expect(used + l.title + 2 <= w).toBe(true);
+  }
+  // a column that is not wanted is not a reason to drop the ones after it
+  expect(operationColumns(1400, { format: false, bar: true, notes: true }, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "notes"]);
+});
+
+test("tiles go in rows of equal count: four are two and two, never three and one", async () => {
+  const { tilesPerRow, figuresFit } = await import("../src/ui/kit");
+  expect(tilesPerRow(700, 4, 144)).toBe(4);
+  // room for three: two and two
+  expect(tilesPerRow(500, 4, 144)).toBe(2);
+  expect(tilesPerRow(320, 4, 144)).toBe(2);
+  expect(tilesPerRow(200, 4, 144)).toBe(1);
+  expect(tilesPerRow(500, 5, 128)).toBe(3);
+  // not measured yet: all abreast
+  expect(tilesPerRow(0, 4, 144)).toBe(4);
+  // a line of figures holds what fits and never wraps: the last ranked go
+  expect(figuresFit(0, 7)).toBe(7);
+  expect(figuresFit(1000, 7)).toBe(7);
+  expect(figuresFit(520, 7)).toBe(4);
+  expect(figuresFit(100, 7)).toBe(2);
+});
+
+test("runs of one command are told apart by the argument that differs", async () => {
+  const { tellApart } = await import("../src/ui/sessionview");
+  const long = "-s --aws-sigv4 aws:amz:us-east-1:s3 -o /dev/null http://127.0.0.1:9000/demo/";
+  expect(tellApart([`${long}README.md`, `${long}missing.txt`])).toEqual(["… README.md".replace("… ", "… http://127.0.0.1:9000/demo/"), "… http://127.0.0.1:9000/demo/missing.txt"]);
+  // the same to the letter, or different from the start: left whole
+  expect(tellApart(["load.py", "load.py"])).toEqual(["load.py", "load.py"]);
+  expect(tellApart(["a.py --x", "b.py --y"])).toEqual(["a.py --x", "b.py --y"]);
+});
+
+test("one function writes a duration, and a scenario has words", async () => {
+  const format = await import("../src/format");
+  expect(format.duration(0.42)).toBe("0.4 ms");
+  expect(format.duration(840)).toBe("840 ms");
+  expect(format.duration(2350)).toBe("2.35 s");
+  expect(format.duration(185000)).toBe("3 min 05 s");
+  // the older names are gone
+  expect("ms" in format).toBe(false);
+  expect(format.factor(1.5)).toBe("1.5");
+  expect(format.rate(4.25)).toBe("4.3");
+  expect(format.rate(120.4)).toBe("120");
+  const { scenarioLabel } = await import("../src/ui/history");
+  expect(scenarioLabel("slowdown")).toBe("The store asks to slow down");
+  // one sonde has no words for keeps its own name
+  expect(scenarioLabel("made-up")).toBe("made-up");
+});
