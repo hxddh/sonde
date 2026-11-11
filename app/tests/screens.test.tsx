@@ -98,13 +98,16 @@ test("endpoints: adding never replaces one; a name in another script gets an id 
   await place(app, "endpoints");
   for (const [name, port] of [["Prod", 9001], ["Prod", 9002], ["生产", 9003], ["测试", 9004]] as const) {
     await app.press("id:add-endpoint");
+    await app.waitFor("id:ep-name");
     await app.type("id:ep-name", name);
     await app.type("id:ep-url", `http://127.0.0.1:${port}`);
     await app.press("id:ep-save");
+    // the form goes once the endpoint is saved: the next is added after it has
+    await app.waitUntil(() => !app.shows("id:ep-save"), { timeout: 10000 });
     await app.waitFor("id:add-endpoint");
   }
   // each its own: the second Prod beside the first, the Chinese names apart
-  for (const id of ["prod", "prod-2", "endpoint", "endpoint-2"]) expect(app.shows(`id:endpoint-${id}`)).toBe(true);
+  for (const id of ["prod", "prod-2", "endpoint", "endpoint-2"]) await app.waitFor(`id:endpoint-${id}`);
   expect(app.shows("text:/^http:\\/\\/127\\.0\\.0\\.1:9001 /")).toBe(true);
   expect(app.shows("text:/^http:\\/\\/127\\.0\\.0\\.1:9002 /")).toBe(true);
 });
