@@ -24,6 +24,9 @@ A verdict to trust, sessions of any size, charts that can be read. The review th
 - `show --all`; `check -f json` has `noBaseline`; `summary.operations[]` has `errorShare`, `p95Ms`, `p99Ms`, `few`.
 - A `.sonde` file opens from the system (a double click, Open With, a drop on the icon). Quitting the app ends
   the program being recorded and a running trial, and writes the session.
+- **How hard a trial presses**: `--fault slowdown:3` or `error:3` fails a request's first three attempts in a row
+  (1 to 5); the app's dialog has the same dial, and a verdict row reads `slowdown:3`.
+- A live operations table follows its end. A refused field says why under itself, and says so to a screen reader.
 
 ### Changed
 
@@ -45,7 +48,9 @@ A verdict to trust, sessions of any size, charts that can be read. The review th
 - 408 owes a retry, in trials, episodes and signals alike; 501 owes none.
 - A trial's session is found by its name; a program's name titles `share` pages and is OTLP's `service.name`;
   `export --to` posts in parts.
-- Native Shell 0.5.0.
+- A trial says each fact once, in the reader's language. Capacity's sentences have their singulars and whole
+  shares (`98%`). A request's time is written one way everywhere ("Nov 7, 2026, 00:22:25.074").
+- Native Shell 0.5.0; the macOS icon is inset as the system's are.
 
 ### Fixed
 
@@ -65,7 +70,8 @@ A verdict to trust, sessions of any size, charts that can be read. The review th
   itself were priced.
 - The app: a finding's advice opened under another finding; three time axes in one pane; tiles and tables cut
   figures and dates; Run's actions wrapped ragged; Compare said each fact twice; Chinese headings had no weight,
-  and one word stood for Run, Runs and the button.
+  and one word stood for Run, Runs and the button. In dark, tables that draw their own cells were black on
+  dark. On Linux a window's first field was drawn focused and selected.
 
 ### Removed
 

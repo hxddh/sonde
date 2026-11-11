@@ -315,6 +315,20 @@ test("runs of one command are told apart by the argument that differs", async ()
   expect(tellApart(["a.py --x", "b.py --y"])).toEqual(["a.py --x", "b.py --y"]);
 });
 
+test("a live table follows its end until the reader goes up, and again once they are back", async () => {
+  const { followsEnd } = await import("../src/ui/sessionview");
+  // the first rows arrive: it opens at its end
+  expect(followsEnd(12, 0, 0)).toBe(true);
+  // at the end (its view ended at the 12th row), more arrive: it goes on
+  expect(followsEnd(40, 12, 12)).toBe(true);
+  // the reader went up (the view ends at row 9 of 40): left there
+  expect(followsEnd(55, 40, 9)).toBe(false);
+  // back at the end: it follows again
+  expect(followsEnd(70, 55, 55)).toBe(true);
+  // nothing new: nothing to do
+  expect(followsEnd(70, 70, 70)).toBe(false);
+});
+
 test("a refused save names the field it is about, so the field says why", async () => {
   const { refusedField } = await import("../src/screens/Endpoints");
   expect(refusedField('an endpoint with the id "prod" exists: choose another id')).toBe("id");

@@ -869,7 +869,7 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
  * see, nothing to read out, nothing to type into. */
 export function FocusRest() {
   return (
-    <If when={platform.os === "linux"}>
+    <If when={platform.os === "linux" && !terminal()}>
       <Input testID="focus-rest" value="" readonly accessibilityElementsHidden class="absolute left-0 top-0 h-px w-px opacity-0" />
     </If>
   );

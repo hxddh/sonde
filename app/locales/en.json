@@ -1034,5 +1034,6 @@
  "scenario.times.slowdown": "503 SlowDown on each request's first %{n} attempts",
  "scenario.times.error": "500 InternalError on each request's first %{n} attempts",
  "latencyTime.hintNoTail": "The median as a line; above it, the band to p95. No slice has enough requests to tell p99 from p95",
- "confirm.mismatch": "That is not %{value}"
+ "confirm.mismatch": "That is not %{value}",
+ "confirm.colDetail": "What it is"
 }

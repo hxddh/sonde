@@ -452,6 +452,13 @@ const tableClasses = {
   resizeHandle: "bg-transparent group-hover:bg-border",
 };
 
+/** Whether a table following its end goes to its newest row: rows were added
+ * (`total` of them now, `known` before) and its view ended at the last row
+ * there was (`endSeen`: the end of the rows in view at its last report, or 0
+ * when it has reported none). A reader who went up to look at a row is left
+ * there; back at the end, the table follows again. */
+export const followsEnd = (total: number, known: number, endSeen: number): boolean => total > known && endSeen >= known;
+
 /** A session's operations: outcome, time, family, title, requests, duration,
  * place in the session's time and notes. `rows` (default all) are the
  * episodes shown, by index; events name episodes by index too. */
@@ -522,8 +529,7 @@ export function OperationsTable(props: {
     const n = props.source.total();
     const follows = !!props.follow && sort() === null;
     untracked(() => {
-      // (at the end, or not yet scrolled at all: a reader who went up to look at a row is left there)
-      if (follows && n > known && endSeen >= known) setTimeout(() => table?.scrollToRow(n - 1), 0);
+      if (follows && followsEnd(n, known, endSeen)) setTimeout(() => table?.scrollToRow(n - 1), 0);
       known = n;
     });
   });

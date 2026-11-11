@@ -25,6 +25,10 @@ words and the next action; counts and chips support it, they do not replace it.
 | Terminal (`sonde tui`) | A home list and a navigation stack; tables and sentences instead of charts; text labels for actions |
 | Web (`sonde share`) | The app's session page, read-only: its header, its tabs, the pane — the shape strip and the findings over the operations |
 
+Where a terminal only spaces or colours a view differently, the class says so (`gap-4 terminal:gap-2`, Native
+Shell's `terminal:` variant); `terminal()` in code is for what a terminal draws differently (a sentence for a
+chart, a base control left unstyled) and for a set of classes it takes none of.
+
 ## Type
 
 A desktop scale around a 13 pt body (`nsh.json` `tailwind.fontSize`, `TYPE` in
@@ -72,10 +76,11 @@ piece wraps one nsh export with the theme's tokens:
 | `ActionRow`, `More` | `Button`, the system's menu | commands in one row that never wraps: in rank order as many as the row has room for (each measures itself), the rest behind `⋯`; `More` alone is the `⋯` |
 | `Pressable`, `Crumb`, `Scrubber`, `confirmAlert` | `Button`, `Link`, `Slider`, `AlertDialog` | a press area around what is not a label; a part of a path as a link; a value dragged along a range; the system's short question before something goes |
 | `Title`, `Heading`, `Strong` | `Text` | the two heading levels (`page` for an introduction's one title; `quiet` over a list), and words set heavier that are not a heading |
-| `Field`, `SearchField`, `NumberField`, `Choice`, `Check`, `SwitchRow` | `Input`, `NumberInput`, `Select`, `Checkbox`, `Switch` | forms; a switch's label is its own |
+| `Field`, `SearchField`, `NumberField`, `Choice`, `Check`, `SwitchRow` | `Input`, `NumberInput`, `Select`, `Checkbox`, `Switch` | forms; a switch's label is its own. A `Field` that is refused says so in one way: `error` (its edge in `fail`, the reason under it, and to a screen reader the field is `invalid` with the reason as its description); `invalid` alone where the reason stands elsewhere |
 | `Segmented`, `Options` | `Tabs`, `RadioGroup` | what a place shows (a tab with nothing to show here is `disabled`, dimmed in its place: it does not go); a value of a few (a set of radios: one is checked) |
 | `Disclosure` | `Accordion` | a section that opens under its heading |
-| `SidePanel` + `PanelHeader`, `Modal` + `Actions` | `Sheet`, `Dialog` | supplementary work; short decisions, their foot always Cancel then the commit, at the end |
+| `SidePanel` + `PanelHeader`, `Modal` + `Actions` | `Sheet`, `Dialog` | supplementary work; short decisions, their foot always Cancel then the commit, at the end. A `Modal` that asks or warns gives its sentence as `describe`: a screen reader hears it after the dialog's name |
+| `FocusRest` | `Input` | where the keyboard rests in a window on Linux when no field has it (FINDINGS 22): each window's first element, nothing to see or hear |
 | `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). A `Stat` may carry a `mark` (a `Sparkline`: a signal's line over its session). No third figure. `Tiles` lays tiles in rows of equal count and tells each how much of itself to show (`TileLook`: `full`, `tight`, `line`) |
 | `Icon`, `IconTile`, `ICON` | `Image` (the icon's SVG, tinted by a token) | an icon; the one tile an icon stands in; an icon's three sizes |
 | `Notice` | — | the one banner: a note, a caution or what went wrong, with what can be done at its end |
@@ -89,7 +94,7 @@ Rules: a page passes no classes of its own to an `nsh/base` control; a class str
 belongs in the kit; `FOCUS` is on everything that takes the keyboard, and shows for focus the keyboard moved (`focus-visible:`), never
 after a click (`FOCUS_WITHIN` around a control whose focus is a text input inside it); `selected:bg-selection` is the one selection,
 `active:bg-muted` the press. One formatter per kind of value (`format.ts`): `duration` (0.4 ms … 2 h 05 min, the unit chosen after rounding),
-`percent` and `change`, `cost`, `clock`, `count`, `bytes`, `transfer` (bytes each way: `↑ 78.1 KiB ↓ 75.1 KiB`), `date`, `factor`, `rate`. `duration` is the one writer of a length of time, in three forms: as measured, as an `age` (now, 5 min, 3 h, 86 d: whole, never "86.0 d") and as a `counter` (0:07). `copy()` is the one way to copy, `useEndpoint()`
+`percent` and `change`, `cost`, `clock`, `count`, `bytes`, `transfer` (bytes each way: `↑ 78.1 KiB ↓ 75.1 KiB`), `date` (a day with its time, one writing: "Nov 7, 2026, 00:22", and to the millisecond "Nov 7, 2026, 00:22:25.074"), `factor`, `rate`. `duration` is the one writer of a length of time, in three forms: as measured, as an `age` (now, 5 min, 3 h, 86 d: whole, never "86.0 d") and as a `counter` (0:07). `copy()` is the one way to copy, `useEndpoint()`
 the one way to change endpoint.
 
 ### One of each, and the lint that keeps it so

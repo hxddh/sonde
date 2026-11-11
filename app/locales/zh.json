@@ -1034,5 +1034,6 @@
  "scenario.times.slowdown": "每个请求的前 %{n} 次尝试返回 503 SlowDown",
  "scenario.times.error": "每个请求的前 %{n} 次尝试返回 500 InternalError",
  "latencyTime.hintNoTail": "中位数是一条线；其上是到 p95 的色带。每个时间片的请求都太少，分不出 p99 和 p95",
- "confirm.mismatch": "这不是 %{value}"
+ "confirm.mismatch": "这不是 %{value}",
+ "confirm.colDetail": "说明"
 }

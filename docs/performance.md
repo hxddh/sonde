@@ -140,7 +140,20 @@ a million requests read and analysed in 15 s and 2 GiB of peak memory (8 s and
 1.75 GiB here), an outage and small uploads of 300 thousand each in 10 s (2 s),
 the app's first view of 100 thousand in 2 s (0.9 s).
 
-TIME-PANE-PLACEHOLDER
+## Opening the Time pane
+
+The Time pane builds its charts when it is opened. Measured headless with `nsh test --trace` on the example
+session (172 requests), from the press on Time until the pane is still, three runs each:
+
+| Native Shell | The press's own commit | The largest commit after it | All commits | Mount items |
+|---|---|---|---|---|
+| `744d950` (15.0) | 212 ms (121 ms binding rows in JS) | 1.17 to 1.20 s (1.15 s of it JS) | 1.37 to 1.40 s | 13,940 |
+| `v0.5.0` (16.0) | 207 ms (107 ms) | 1.17 to 1.25 s (1.15 to 1.21 s JS) | 1.35 to 1.46 s | 13,846 |
+
+0.5.0 makes views out of sight over several frames. It did not move this: the one long call is JavaScript
+building every chart's rows in one turn, before any view is made, and it is as long as it was. The pane is shown
+after about 0.2 s either way; the second it takes to be whole is sonde's own to shorten (charts built as they come
+into view), not Native Shell's.
 
 ## Long jobs
 

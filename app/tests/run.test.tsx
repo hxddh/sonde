@@ -424,7 +424,9 @@ test("quitting ends the program being recorded and leaves its session a finished
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-terminal", { timeout: 10000 });
-  await app.waitFor("text:/GetObject demo\\/README\\.md/", { timeout: 10000 });
+  // (its request is answered before it prints; a moment for the record to be written)
+  await app.waitFor("text:fetched", { timeout: 10000 });
+  await app.wait(500);
   expect(app.shows("id:run-ended")).toBe(false);
   // what `Application.on("quit")` runs: the system waits 200 ms for it
   const { api } = await import("../src/native");
