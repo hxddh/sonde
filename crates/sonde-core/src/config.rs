@@ -361,6 +361,20 @@ pub(crate) fn lock(path: &Path) -> Option<std::fs::File> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn how_credentials_are_obtained_is_a_phrase_that_says_its_english() {
+        use super::CredentialSource as C;
+        for (c, said) in [
+            (C::Default, "default chain"),
+            (C::Profile { name: "dev".into() }, "profile dev"),
+            (C::Imds, "instance role (IMDSv2)"),
+            (C::Anonymous, "anonymous"),
+        ] {
+            assert_eq!(c.describe(), said);
+            assert_eq!(crate::phrase::say(&c.describe_text()), said);
+        }
+    }
+
     use super::*;
 
     const SAMPLE: &str = r#"

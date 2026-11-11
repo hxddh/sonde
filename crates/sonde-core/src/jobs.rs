@@ -444,6 +444,37 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
+    async fn a_title_and_a_message_are_phrases_beside_their_english() {
+        use crate::phrase::{en, ph};
+        let jobs = JobManager::new();
+        let id = jobs.spawn(
+            "du",
+            ph!("job.du", bucket = "b", prefix = "p/"),
+            1,
+            None,
+            |ctx| async move {
+                ctx.progress(Progress::say(3, None, 0, ph!("progress.objects", n = 3)));
+                Ok(Value::Null)
+            },
+        );
+        jobs.wait(&id).await.unwrap();
+        let info = jobs.get(&id).unwrap();
+        assert_eq!(info.title, "Capacity scan b/p/");
+        assert_eq!(en(&info.title_text), info.title);
+        assert_eq!(info.progress.message, "3 objects");
+        assert_eq!(en(&info.progress.message_text), info.progress.message);
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["titleText"][0]["key"], "job.du");
+        assert_eq!(v["progress"]["messageText"][0]["args"]["n"], "3");
+        // words given as they are stay words, and old JSON still reads
+        let plain = jobs.spawn("t", "plain", 1, None, |_| async { Ok(Value::Null) });
+        assert_eq!(jobs.get(&plain).unwrap().title, "plain");
+        let old: Progress =
+            serde_json::from_str(r#"{"done":1,"total":null,"bytes":0,"message":"x"}"#).unwrap();
+        assert!(old.message_text.is_empty());
+    }
+
+    #[tokio::test]
     async fn runs_and_reports() {
         let jobs = JobManager::new();
         let id = jobs.spawn("t", "test", 2, None, |ctx| async move {

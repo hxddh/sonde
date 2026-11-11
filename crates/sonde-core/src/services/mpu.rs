@@ -500,6 +500,21 @@ mod tests {
         assert_eq!(v.status, LifecycleStatus::Covered);
         assert!(v.message.contains("after 3 days"));
         assert_eq!(
+            v.message,
+            "Covered: rule logs aborts incomplete uploads under \"logs/\" after 3 days."
+        );
+        // every verdict's message is phrases that say its English
+        for v in [
+            v,
+            judge_lifecycle(None, "", 7),
+            judge_lifecycle(Some(&lc), "", 7),
+        ] {
+            assert!(!v.message.is_empty());
+            assert_eq!(phrase::en(&v.message_text), v.message);
+            let json = serde_json::to_value(&v).unwrap();
+            assert!(json["messageText"][0]["key"].as_str().unwrap().starts_with("lifecycle."));
+        }
+        assert_eq!(
             judge_lifecycle(Some(&lc), "", 7).status,
             LifecycleStatus::Partial
         );

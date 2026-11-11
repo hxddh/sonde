@@ -257,6 +257,7 @@ impl Guard {
     }
 }
 
+#[cfg(test)]
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
@@ -298,6 +299,46 @@ mod tests {
         (0..n)
             .map(|i| PlanItem::new(format!("k{i}"), Some(format!("u{i}")), Some(1024), vec![]))
             .collect()
+    }
+
+    #[test]
+    fn a_plan_says_its_summary_and_hint_as_phrases_for_every_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let g = Guard::new(dir.path().join("audit.jsonl"));
+        for action in [
+            Action::AbortUploads,
+            Action::DeleteVersions,
+            Action::RestoreObject,
+            Action::DeleteObjects,
+            Action::RunProbes,
+        ] {
+            let p = g.plan(action.clone(), "e", "bucket", items(3), None, None);
+            // the sentence is the action's label and its count, as before
+            assert_eq!(
+                p.summary,
+                format!(
+                    "{} 3 item(s) in bucket (3.0 KiB)",
+                    capitalize(action.label())
+                )
+            );
+            assert_eq!(phrase::en(&p.summary_text), p.summary);
+            assert_eq!(phrase::en(&p.confirm_hint_text), p.confirm_hint);
+        }
+        let p = g.plan(Action::PutLifecycle, "e", "bucket", items(1), None, None);
+        assert_eq!(p.summary, "Write a new lifecycle configuration to bucket");
+        assert_eq!(p.confirm_hint, "the bucket name");
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["summaryText"][0]["key"], "plan.putLifecycle");
+        assert_eq!(v["confirmHintText"][0]["key"], "plan.confirm.bucket");
+        // a plan written before 15 still reads
+        let mut old = v.clone();
+        old.as_object_mut().unwrap().remove("summaryText");
+        old.as_object_mut().unwrap().remove("confirmHintText");
+        let back: Plan = serde_json::from_value(old).unwrap();
+        assert!(back.summary_text.is_empty());
+        let item = PlanItem::new("k", None, None, ph!("plan.item.version", v = "v1"));
+        assert_eq!(item.detail, "version v1");
+        assert_eq!(serde_json::to_value(&item).unwrap()["detailText"][0]["key"], "plan.item.version");
     }
 
     #[test]
