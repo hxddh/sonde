@@ -135,6 +135,16 @@ export function pct(part: number, whole: number): string {
   return whole === 0 ? "0%" : percent(part / whole);
 }
 
+/** How many times over, to one decimal: "1.5" (the caller writes its "×"). */
+export function factor(x: number): string {
+  return Number.isFinite(x) ? x.toFixed(1) : "—";
+}
+
+/** So many a second, as a live counter reads: a decimal under ten, whole from there. */
+export function rate(perSecond: number): string {
+  return Number.isFinite(perSecond) ? (perSecond < 10 ? perSecond.toFixed(1) : count(Math.round(perSecond))) : "—";
+}
+
 /** A change from `a` to `b` as a signed share of `a`: "+12%", "−3%", "0%"
  * only for no change at all ("+<1%" for one too small to round). */
 export function change(a: number, b: number): string {
