@@ -4,6 +4,7 @@
 // $SONDE_SHOTS (default ./shots), one PNG per state, for review and for the
 // visual record CI keeps of each build.
 
+import { platform } from "nsh";
 import { type App, open, test } from "nsh/test";
 import { runAction } from "./helpers";
 
@@ -86,7 +87,8 @@ for (const v of variants) {
     }
     // which shell Run uses: cmd.exe on Windows (no probe run: it would sit in every list)
     const env = (globalThis as any).process?.env ?? {};
-    const cmd = (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
+    // (asked of the app's own runtime, as Welcome's sample command asks: a test has no process to ask)
+    const cmd = platform.os === "windows" || (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
     // (the demo left its own first command in the field: typed after it, the two ran as one)
     await app.clear("id:run-command");
     await app.type("id:run-command", command(cmd));
