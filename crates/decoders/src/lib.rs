@@ -10,12 +10,14 @@ pub mod fb;
 pub mod iceberg;
 pub mod lakefs;
 pub mod model;
+pub mod phrase;
 pub mod slatedb;
 pub mod source;
 pub mod sstable;
 pub mod woodpecker;
 
 pub use model::{Detection, Event, Fact, Format, Issue, Layout, Severity, Snapshot, Table};
+pub use phrase::Phrase;
 pub use source::{DirSource, MemSource, ObjectMeta, Source, SourceError};
 
 /// Layouts found under `prefix`, decodable formats first.

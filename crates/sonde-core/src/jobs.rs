@@ -12,6 +12,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use decoders::Phrase;
 use parking_lot::Mutex;
 use s3raw::{S3Error, Throttle};
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,46 @@ pub struct Progress {
     pub total: Option<u64>,
     pub bytes: u64,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_text: Vec<Phrase>,
+}
+
+impl Progress {
+    /// Progress with its message as phrases (and their English).
+    pub fn say(done: u64, total: Option<u64>, bytes: u64, text: impl Into<Vec<Phrase>>) -> Self {
+        let message_text = text.into();
+        Progress {
+            done,
+            total,
+            bytes,
+            message: crate::phrase::en(&message_text),
+            message_text,
+        }
+    }
+}
+
+/// A job's title: phrases, or words given as they are.
+pub struct Title(pub Vec<Phrase>);
+
+impl From<Phrase> for Title {
+    fn from(p: Phrase) -> Self {
+        Title(vec![p])
+    }
+}
+impl From<Vec<Phrase>> for Title {
+    fn from(p: Vec<Phrase>) -> Self {
+        Title(p)
+    }
+}
+impl From<&str> for Title {
+    fn from(text: &str) -> Self {
+        Title(vec![crate::phrase::raw(text)])
+    }
+}
+impl From<&String> for Title {
+    fn from(text: &String) -> Self {
+        Title(vec![crate::phrase::raw(text.as_str())])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,6 +109,8 @@ pub struct JobInfo {
     pub id: String,
     pub kind: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub title_text: Vec<Phrase>,
     pub state: JobState,
     pub progress: Progress,
     pub started: DateTime<Utc>,
@@ -163,7 +206,7 @@ impl JobManager {
     pub fn spawn<F, Fut>(
         &self,
         kind: &str,
-        title: &str,
+        title: impl Into<Title>,
         concurrency: usize,
         rate: Option<f64>,
         work: F,
@@ -182,7 +225,7 @@ impl JobManager {
     pub fn spawn_cooperative<F, Fut>(
         &self,
         kind: &str,
-        title: &str,
+        title: impl Into<Title>,
         concurrency: usize,
         rate: Option<f64>,
         work: F,
@@ -197,7 +240,7 @@ impl JobManager {
     fn start<F, Fut>(
         &self,
         kind: &str,
-        title: &str,
+        title: impl Into<Title>,
         concurrency: usize,
         rate: Option<f64>,
         cooperative: bool,
@@ -207,6 +250,7 @@ impl JobManager {
         F: FnOnce(JobCtx) -> Fut + Send + 'static,
         Fut: Future<Output = Result<Value, S3Error>> + Send + 'static,
     {
+        let title_text = title.into().0;
         let id = format!(
             "{kind}-{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
@@ -217,7 +261,8 @@ impl JobManager {
         let info = JobInfo {
             id: id.clone(),
             kind: kind.into(),
-            title: title.into(),
+            title: crate::phrase::en(&title_text),
+            title_text,
             state: JobState::Running,
             progress: Progress::default(),
             started: Utc::now(),
@@ -397,6 +442,37 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_title_and_a_message_are_phrases_beside_their_english() {
+        use crate::phrase::{en, ph};
+        let jobs = JobManager::new();
+        let id = jobs.spawn(
+            "du",
+            ph!("job.du", bucket = "b", prefix = "p/"),
+            1,
+            None,
+            |ctx| async move {
+                ctx.progress(Progress::say(3, None, 0, ph!("progress.objects", n = 3)));
+                Ok(Value::Null)
+            },
+        );
+        jobs.wait(&id).await.unwrap();
+        let info = jobs.info(&id).unwrap();
+        assert_eq!(info.title, "Capacity scan b/p/");
+        assert_eq!(en(&info.title_text), info.title);
+        assert_eq!(info.progress.message, "3 objects");
+        assert_eq!(en(&info.progress.message_text), info.progress.message);
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["titleText"][0]["key"], "job.du");
+        assert_eq!(v["progress"]["messageText"][0]["args"]["n"], "3");
+        // words given as they are stay words, and old JSON still reads
+        let plain = jobs.spawn("t", "plain", 1, None, |_| async { Ok(Value::Null) });
+        assert_eq!(jobs.info(&plain).unwrap().title, "plain");
+        let old: Progress =
+            serde_json::from_str(r#"{"done":1,"total":null,"bytes":0,"message":"x"}"#).unwrap();
+        assert!(old.message_text.is_empty());
+    }
 
     #[tokio::test]
     async fn runs_and_reports() {

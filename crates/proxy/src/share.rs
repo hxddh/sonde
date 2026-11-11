@@ -56,6 +56,7 @@ pub fn session_json(s: &Session, prices: &crate::profile::RequestPrices) -> Valu
         "observations": observations(&s.records, &eps),
         "sharedNotes": shared_notes(&eps).into_iter().map(|(_, n, _, _)| n).collect::<Vec<_>>(),
         "profile": crate::profile::profile(&s.records, prices),
+        "signals": crate::signals::signals(&s.records, prices),
         "records": records,
         "lines": crate::logs::lines(&s.logs),
     })
@@ -165,6 +166,7 @@ mod tests {
                 url: String::new(),
                 region: String::new(),
                 command: Some("AWS_SECRET_ACCESS_KEY=hunter2 python etl.py".into()),
+                name: None,
                 cwd: None,
                 git: None,
                 scenario: None,

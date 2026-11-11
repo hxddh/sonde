@@ -13,7 +13,7 @@ import { checkRequested } from "./updates";
 import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { CONTROL, glass, Kbd, keyLabel, POPUP, SCRIM, terminal } from "./kit";
+import { CONTROL, EMPHASIS, Empty, glass, Kbd, keyLabel, POPUP, ROWS, SCRIM, terminal } from "./kit";
 import { scrubCommand } from "./sessionview";
 
 export const paletteOpen = signal(false);
@@ -222,11 +222,12 @@ export function Palette() {
         }}
         onCancel={close}
         onQueryChange={({ query }) => typed.set(query)}
-        searchPrefix={terminal() ? undefined : <Icon name="search" size={16} />}
+        searchPrefix={terminal() ? undefined : <Icon name="search" />}
         searchBarClass={terminal() ? undefined : "h-12 flex-row items-center gap-2 border-b border-border px-4"}
         searchClass={terminal() ? "text-foreground" : "flex-1 text-heading text-foreground placeholder:text-muted-foreground"}
         listClass={terminal() ? "max-h-[360px]" : "max-h-[400px] p-1"}
-        itemClass={terminal() ? "px-1 text-foreground focus:bg-accent checked:font-semibold" : `group ${CONTROL.field} rounded-(--radius-sm) px-2 focus:bg-selection`}
+        // emphasis: a terminal marks the row the keys are on by its weight
+        itemClass={terminal() ? `px-1 text-foreground focus:bg-accent checked:${EMPHASIS}` : ROWS.palette}
         groupClass={terminal() ? "px-1 text-muted-foreground" : "px-2 pb-1 pt-2 text-caption font-medium text-muted-foreground"}
         separatorClass="my-1 h-px bg-border"
         renderItem={
@@ -236,7 +237,7 @@ export function Palette() {
                 const a = byId().get(entry.id);
                 return (
                   <View class={`${CONTROL.field} flex-row items-center gap-2`}>
-                    <Icon name={a?.icon ?? "chevron-right"} size={15} tint={a?.checked ? "primary" : "muted-foreground"} />
+                    <Icon name={a?.icon ?? "chevron-right"} tint={a?.checked ? "primary" : "muted-foreground"} />
                     <Text class={`min-w-0 shrink text-body line-clamp-1 ${a?.id.startsWith("cmd:") ? "font-mono text-small" : ""} ${a?.checked ? "font-medium text-primary" : "text-popover-foreground"}`}>{entry.label}</Text>
                     <If when={a?.hint}>
                       <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{a!.hint!}</Text>
@@ -245,7 +246,7 @@ export function Palette() {
                       <View class="flex-1" />
                     </If>
                     <If when={a?.checked}>
-                      <Icon name="check" size={14} tint="primary" />
+                      <Icon name="check" tint="primary" />
                     </If>
                     <If when={a?.shortcut}>
                       <Kbd keys={a!.shortcut!} />
@@ -254,7 +255,7 @@ export function Palette() {
                 );
               }
         }
-        empty={<Text class="px-4 py-6 text-center text-body text-muted-foreground">{t("palette.nothing")}</Text>}
+        empty={<Empty compact text={t("palette.nothing")} />}
         footer={
           terminal() ? undefined : (
             <View class={`${CONTROL.field} flex-row items-center gap-4 border-t border-border px-4`}>

@@ -101,9 +101,10 @@ test("sessions in a terminal: sessions › operations › requests › request",
   await place(app, "sessions");
   await app.press("id:open-example");
   await app.waitFor("id:session-summary", { timeout: 10000 });
-  expect(app.shows("text:/172 requests · 34 operations/")).toBe(true);
+  await app.waitFor("text:/172 requests · 34 operations/");
   // the session in a sentence, and its findings narrowing the operations, as on the desktop
-  expect(app.shows("id:session-story")).toBe(true);
+  await app.waitFor("id:session-story");
+  await app.waitFor("id:observation-0");
   await app.press("id:observation-0");
   await app.waitFor("text:/ of 34 operations/");
   await app.press("id:observation-0");
@@ -124,6 +125,8 @@ test("run in a terminal: the program above, its operations below", async () => {
   const app = await demo();
   await place(app, "run");
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   expect(app.shows("text:exited with 0")).toBe(true);

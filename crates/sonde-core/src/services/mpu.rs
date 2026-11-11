@@ -14,6 +14,7 @@ use serde_json::json;
 use crate::Sonde;
 use crate::guard::{Action, Plan, PlanItem};
 use crate::jobs::Progress;
+use crate::phrase::{self, Phrase, ph};
 use crate::services::parse_time;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,9 +65,32 @@ pub struct LifecycleVerdict {
     pub status: LifecycleStatus,
     pub rules: Vec<AbortRule>,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_text: Vec<Phrase>,
     /// The rule sonde suggests adding.
     pub suggested_rule: String,
     pub error: Option<S3Error>,
+}
+
+impl LifecycleVerdict {
+    /// A verdict with its message as phrases (and their English).
+    pub fn say(
+        status: LifecycleStatus,
+        rules: Vec<AbortRule>,
+        message: impl Into<Vec<Phrase>>,
+        suggested_rule: String,
+        error: Option<S3Error>,
+    ) -> Self {
+        let message_text = message.into();
+        LifecycleVerdict {
+            status,
+            rules,
+            message: phrase::en(&message_text),
+            message_text,
+            suggested_rule,
+            error,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,15 +120,13 @@ pub fn judge_lifecycle(
 ) -> LifecycleVerdict {
     let suggested_rule = xml::abort_rule_xml("sonde-abort-incomplete-mpu", prefix, suggest_days);
     let Some(lc) = lc else {
-        return LifecycleVerdict {
-            status: LifecycleStatus::Missing,
-            rules: vec![],
-            message: format!(
-                "The bucket has no lifecycle configuration: incomplete uploads are kept (and billed) forever. Add a rule aborting them after {suggest_days} days."
-            ),
+        return LifecycleVerdict::say(
+            LifecycleStatus::Missing,
+            vec![],
+            ph!("lifecycle.none", days = suggest_days),
             suggested_rule,
-            error: None,
-        };
+            None,
+        );
     };
     let rules: Vec<AbortRule> = lc
         .rule
@@ -134,38 +156,29 @@ pub fn judge_lifecycle(
     let (status, message) = if let Some(best) = covering.iter().min_by_key(|r| r.days) {
         (
             LifecycleStatus::Covered,
-            format!(
-                "Covered: rule {} aborts incomplete uploads under {:?} after {} days.",
-                best.id.clone().unwrap_or_default(),
-                best.prefix.clone().unwrap_or_default(),
-                best.days
+            ph!(
+                "lifecycle.covered",
+                rule = best.id.clone().unwrap_or_default(),
+                prefix = format!("{:?}", best.prefix.clone().unwrap_or_default()),
+                days = best.days
             ),
         )
     } else if rules.is_empty() {
         (
             LifecycleStatus::Missing,
-            format!(
-                "The lifecycle has {} rule(s) but none with AbortIncompleteMultipartUpload: incomplete uploads are kept forever.",
-                lc.rule.len()
-            ),
+            ph!("lifecycle.noAbort", n = lc.rule.len()),
         )
     } else {
         (
             LifecycleStatus::Partial,
-            format!(
-                "{} AbortIncompleteMultipartUpload rule(s) exist but none (enabled) covers {:?}.",
-                rules.len(),
-                prefix
+            ph!(
+                "lifecycle.partial",
+                n = rules.len(),
+                prefix = format!("{prefix:?}")
             ),
         )
     };
-    LifecycleVerdict {
-        status,
-        rules,
-        message,
-        suggested_rule,
-        error: None,
-    }
+    LifecycleVerdict::say(status, rules, message, suggested_rule, None)
 }
 
 /// Scans a bucket's incomplete uploads as a job (`MpuReport` as result).
@@ -179,7 +192,7 @@ pub fn scan(s: &Arc<Sonde>, endpoint: &str, bucket: &str, prefix: &str) -> Strin
     let settings = s.settings();
     s.jobs().spawn(
         "mpu",
-        &format!("Multipart scan {b}/{p}"),
+        ph!("job.mpu", bucket = b, prefix = p),
         settings.concurrency,
         settings.rate_limit,
         move |ctx| async move {
@@ -207,12 +220,12 @@ pub async fn scan_inner(
             .list_multipart_uploads(b, Some(p), km.as_deref(), um.as_deref())
             .await?;
         uploads.extend(page.upload);
-        ctx.progress(Progress {
-            done: uploads.len() as u64,
-            total: None,
-            bytes: 0,
-            message: format!("{} uploads listed", uploads.len()),
-        });
+        ctx.progress(Progress::say(
+            uploads.len() as u64,
+            None,
+            0,
+            ph!("progress.uploads", n = uploads.len()),
+        ));
         if !page.is_truncated
             || (page.next_key_marker.is_none() && page.next_upload_id_marker.is_none())
         {
@@ -263,12 +276,12 @@ pub async fn scan_inner(
                 let gib = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                 let price = prices.per_gib_month(u.storage_class.as_deref());
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                ctx.progress(Progress {
-                    done: n,
-                    total: Some(total),
-                    bytes: 0,
-                    message: format!("ListParts {n}/{total}"),
-                });
+                ctx.progress(Progress::say(
+                    n,
+                    Some(total),
+                    0,
+                    ph!("progress.listParts", n = n, total = total),
+                ));
                 UploadRow {
                     stale: age_days.is_some_and(|a| a > settings.stale_upload_days as f64),
                     cost_so_far: gib * price * age_days.unwrap_or(0.0) / 30.0,
@@ -299,29 +312,21 @@ pub async fn scan_inner(
         Ok(None) => judge_lifecycle(None, p, settings.stale_upload_days),
         Ok(Some(text)) => match xml::lifecycle(&text) {
             Ok(lc) => judge_lifecycle(Some(&lc), p, settings.stale_upload_days),
-            Err(e) => LifecycleVerdict {
-                status: LifecycleStatus::Unknown,
-                rules: vec![],
-                message: format!("The lifecycle document could not be read: {e}"),
-                suggested_rule: xml::abort_rule_xml(
-                    "sonde-abort-incomplete-mpu",
-                    p,
-                    settings.stale_upload_days,
-                ),
-                error: Some(e),
-            },
-        },
-        Err(e) => LifecycleVerdict {
-            status: LifecycleStatus::Unknown,
-            rules: vec![],
-            message: format!("GetBucketLifecycleConfiguration failed: {e}"),
-            suggested_rule: xml::abort_rule_xml(
-                "sonde-abort-incomplete-mpu",
-                p,
-                settings.stale_upload_days,
+            Err(e) => LifecycleVerdict::say(
+                LifecycleStatus::Unknown,
+                vec![],
+                ph!("lifecycle.unreadable", error = e),
+                xml::abort_rule_xml("sonde-abort-incomplete-mpu", p, settings.stale_upload_days),
+                Some(e),
             ),
-            error: Some(e),
         },
+        Err(e) => LifecycleVerdict::say(
+            LifecycleStatus::Unknown,
+            vec![],
+            ph!("lifecycle.failed", error = e),
+            xml::abort_rule_xml("sonde-abort-incomplete-mpu", p, settings.stale_upload_days),
+            Some(e),
+        ),
     };
     let stale: Vec<&UploadRow> = rows.iter().filter(|r| r.stale).collect();
     Ok(MpuReport {
@@ -346,15 +351,17 @@ pub async fn scan_inner(
 pub fn plan_abort(s: &Sonde, endpoint: &str, bucket: &str, uploads: &[UploadRow]) -> Plan {
     let items = uploads
         .iter()
-        .map(|u| PlanItem {
-            key: u.key.clone(),
-            id: Some(u.upload_id.clone()),
-            bytes: Some(u.bytes),
-            detail: format!(
-                "{} parts, started {}",
-                u.parts,
-                u.initiated.clone().unwrap_or_default()
-            ),
+        .map(|u| {
+            PlanItem::new(
+                u.key.clone(),
+                Some(u.upload_id.clone()),
+                Some(u.bytes),
+                ph!(
+                    "plan.item.upload",
+                    parts = u.parts,
+                    started = u.initiated.clone().unwrap_or_default()
+                ),
+            )
         })
         .collect();
     s.guard()
@@ -376,12 +383,12 @@ pub async fn plan_lifecycle_rule(
         Action::PutLifecycle,
         endpoint,
         bucket,
-        vec![PlanItem {
-            key: prefix.into(),
-            id: None,
-            bytes: None,
-            detail: format!("abort incomplete uploads after {days} days"),
-        }],
+        vec![PlanItem::new(
+            prefix,
+            None,
+            None,
+            ph!("plan.item.abortRule", days = days),
+        )],
         Some(doc),
         current,
     ))
@@ -492,6 +499,26 @@ mod tests {
         let v = judge_lifecycle(Some(&lc), "logs/2024/", 7);
         assert_eq!(v.status, LifecycleStatus::Covered);
         assert!(v.message.contains("after 3 days"));
+        assert_eq!(
+            v.message,
+            "Covered: rule logs aborts incomplete uploads under \"logs/\" after 3 days."
+        );
+        // every verdict's message is phrases that say its English
+        for v in [
+            v,
+            judge_lifecycle(None, "", 7),
+            judge_lifecycle(Some(&lc), "", 7),
+        ] {
+            assert!(!v.message.is_empty());
+            assert_eq!(phrase::en(&v.message_text), v.message);
+            let json = serde_json::to_value(&v).unwrap();
+            assert!(
+                json["messageText"][0]["key"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("lifecycle.")
+            );
+        }
         assert_eq!(
             judge_lifecycle(Some(&lc), "", 7).status,
             LifecycleStatus::Partial

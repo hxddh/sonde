@@ -35,3 +35,6 @@ export const verdictTone = (v: Verdict): Tone => (v === "pass" ? "pass" : v === 
 export const verdictLabel = (v: Verdict) => t(`verdict.${v}` as Key);
 
 export const SYMBOL: Record<Verdict, string> = { pass: "✓", fail: "✗", differs: "≠", unsupported: "∅", error: "!", skipped: "–" };
+
+/** A vendor's name: the product's own (an S3 name, the same in every language), or "Other" in the reader's. */
+export const vendorName = (v: { id?: string; vendor?: string; label?: string; vendorLabel?: string }) => ((v.vendor ?? v.id) === "other" ? t("endpoints.vendorOther") : (v.vendorLabel ?? v.label ?? ""));

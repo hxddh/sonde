@@ -41,7 +41,7 @@ jobs:
         run: scripts/changelog-section.sh "$VERSION" > notes.md
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/nsh
-        with: { rev: ec8430f4910bb27670a39fc2e0355f26aa1d261a }
+        with: { rev: 744d950af0db9967fd927ec9f245be23e3732905 }
       # the app's code alone, signed: installed apps that trust the root run
       # it without a new app (skipped without the release key and its certificate)
       - name: Signed package of the app's code

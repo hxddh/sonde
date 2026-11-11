@@ -10,6 +10,7 @@
 
 pub mod cx;
 pub mod model;
+pub mod phrase;
 pub mod report;
 pub mod runner;
 pub mod store;

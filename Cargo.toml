@@ -21,7 +21,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "14.0.0"
+version = "15.0.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/hxddh/sonde"
@@ -84,11 +84,11 @@ async-trait = "0.1"
 tempfile = "3"
 
 # Native Shell, pinned to one commit of longbridge/nsh (see docs/decisions.md D-002).
-nsh-core = { git = "https://github.com/longbridge/nsh", rev = "ec8430f4910bb27670a39fc2e0355f26aa1d261a" }
-nsh-base = { git = "https://github.com/longbridge/nsh", rev = "ec8430f4910bb27670a39fc2e0355f26aa1d261a" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "ec8430f4910bb27670a39fc2e0355f26aa1d261a" }
-nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "ec8430f4910bb27670a39fc2e0355f26aa1d261a" }
-nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "ec8430f4910bb27670a39fc2e0355f26aa1d261a" }
+nsh-core = { git = "https://github.com/longbridge/nsh", rev = "744d950af0db9967fd927ec9f245be23e3732905" }
+nsh-base = { git = "https://github.com/longbridge/nsh", rev = "744d950af0db9967fd927ec9f245be23e3732905" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "744d950af0db9967fd927ec9f245be23e3732905" }
+nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "744d950af0db9967fd927ec9f245be23e3732905" }
+nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "744d950af0db9967fd927ec9f245be23e3732905" }
 
 [profile.release]
 lto = "thin"

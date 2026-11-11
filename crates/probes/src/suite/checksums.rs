@@ -8,6 +8,7 @@ use super::meta;
 use crate::Probe;
 use crate::cx::{ProbeCx, data, etag_of};
 use crate::model::{Category, Judgement, ProbeMeta, Steps, Verdict};
+use crate::phrase::{ph, raw};
 
 pub fn probes() -> Vec<Box<dyn Probe>> {
     let mut v: Vec<Box<dyn Probe>> = Vec::new();
@@ -78,21 +79,17 @@ impl Probe for Single {
         }
         if !good.ok() {
             return if good.status == Some(400) || good.not_implemented() {
-                Judgement::new(
+                Judgement::say(
                     Verdict::Unsupported,
-                    format!("{} checksums are refused", self.0.name()),
+                    ph!("judge.checksum.unsupported", p1 = self.0.name()),
                     s,
                 )
             } else {
-                Judgement::new(Verdict::Error, "the PUT failed", s)
+                Judgement::say(Verdict::Error, ph!("judge.checksum.error"), s)
             };
         }
         if bad.ok() {
-            return Judgement::new(
-                Verdict::Fail,
-                "a wrong checksum was accepted: the value is not verified",
-                s,
-            );
+            return Judgement::say(Verdict::Fail, ph!("judge.checksum.fail"), s);
         }
         match head.header(&h) {
             Some(v) if v == expected => {
@@ -100,28 +97,25 @@ impl Probe for Single {
                     || bad.code.as_deref() == Some("XAmzContentChecksumMismatch")
                     || bad.code.as_deref() == Some("InvalidDigest")
                 {
-                    Judgement::new(Verdict::Pass, "verified, stored and returned", s)
+                    Judgement::say(Verdict::Pass, ph!("judge.checksum.pass"), s)
                 } else {
-                    Judgement::new(
+                    Judgement::say(
                         Verdict::Differs,
-                        format!(
-                            "a wrong value is refused with {:?} {:?} (AWS: 400 BadDigest)",
-                            bad.status, bad.code
+                        ph!(
+                            "judge.checksum.differs",
+                            p1 = format!("{:?}", bad.status),
+                            p2 = format!("{:?}", bad.code)
                         ),
                         s,
                     )
                 }
             }
-            Some(v) => Judgement::new(
+            Some(v) => Judgement::say(
                 Verdict::Fail,
-                format!("HEAD returned {v}, the PUT sent {expected}"),
+                ph!("judge.checksum.fail.2", v = v, expected = expected),
                 s,
             ),
-            None => Judgement::new(
-                Verdict::Differs,
-                "verified on upload but not returned by HEAD",
-                s,
-            ),
+            None => Judgement::say(Verdict::Differs, ph!("judge.checksum.differs.2"), s),
         }
     }
 }
@@ -240,13 +234,17 @@ impl Probe for Multipart {
                 return j;
             }
             return if failing.status == Some(400) || failing.not_implemented() {
-                Judgement::new(
+                Judgement::say(
                     Verdict::Unsupported,
-                    format!("refused: {}", failing.describe()),
+                    ph!("judge.checksum.unsupported.2", p1 = failing.describe()),
                     s,
                 )
             } else {
-                Judgement::new(Verdict::Error, format!("failed: {}", failing.describe()), s)
+                Judgement::say(
+                    Verdict::Error,
+                    ph!("judge.checksum.error.2", p1 = failing.describe()),
+                    s,
+                )
             };
         }
         let want_type = if self.full_object {
@@ -256,40 +254,34 @@ impl Probe for Multipart {
         };
         match head.header(&h) {
             Some(v) if v == expected => match head.header("x-amz-checksum-type") {
-                Some(t) if t == want_type => Judgement::new(
+                Some(t) if t == want_type => Judgement::say(
                     Verdict::Pass,
-                    format!("{want_type} checksum as AWS computes it"),
+                    ph!("judge.checksum.pass.2", wanttype = want_type),
                     s,
                 ),
                 Some(t) => {
-                    Judgement::new(Verdict::Differs, format!("value right, but type {t}"), s)
+                    Judgement::say(Verdict::Differs, ph!("judge.checksum.differs.3", t = t), s)
                 }
-                None => Judgement::new(
-                    Verdict::Differs,
-                    "value right, x-amz-checksum-type missing",
-                    s,
-                ),
+                None => Judgement::say(Verdict::Differs, ph!("judge.checksum.differs.4"), s),
             },
             Some(v) => {
                 let composite_shape = v.contains('-');
-                Judgement::new(
+                Judgement::say(
                     Verdict::Differs,
-                    format!(
-                        "HEAD returned {v} ({}), expected {expected}",
-                        if composite_shape {
+                    ph!(
+                        "judge.checksum.differs.5",
+                        v = v,
+                        p1 = if composite_shape {
                             "composite"
                         } else {
                             "full-object"
-                        }
+                        },
+                        expected = expected
                     ),
                     s,
                 )
             }
-            None => Judgement::new(
-                Verdict::Differs,
-                "the object carries no checksum after Complete",
-                s,
-            ),
+            None => Judgement::say(Verdict::Differs, ph!("judge.checksum.differs.6"), s),
         }
     }
 }
@@ -333,39 +325,35 @@ impl Probe for Trailing {
         }
         if !put.ok() {
             return if put.not_implemented() || put.status == Some(400) || put.status == Some(403) {
-                Judgement::new(
+                Judgement::say(
                     Verdict::Unsupported,
-                    format!("aws-chunked trailers refused: {}", put.describe()),
+                    ph!("judge.checksum.trailing.unsupported", p1 = put.describe()),
                     s,
                 )
             } else {
-                Judgement::new(Verdict::Error, put.describe(), s)
+                Judgement::say(Verdict::Error, raw(put.describe()), s)
             };
         }
         if head.header("content-length") != Some("3000") {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Fail,
-                format!(
-                    "stored length {:?}: the chunk framing was kept",
-                    head.header("content-length")
+                ph!(
+                    "judge.checksum.trailing.fail",
+                    p1 = format!("{:?}", head.header("content-length"))
                 ),
                 s,
             );
         }
         match head.header("x-amz-checksum-crc32") {
             Some(v) if v == expected => {
-                Judgement::new(Verdict::Pass, "trailer verified and stored", s)
+                Judgement::say(Verdict::Pass, ph!("judge.checksum.trailing.pass"), s)
             }
-            Some(v) => Judgement::new(
+            Some(v) => Judgement::say(
                 Verdict::Fail,
-                format!("stored CRC32 {v}, trailer said {expected}"),
+                ph!("judge.checksum.trailing.fail.2", v = v, expected = expected),
                 s,
             ),
-            None => Judgement::new(
-                Verdict::Differs,
-                "accepted, but the trailer's checksum is not stored",
-                s,
-            ),
+            None => Judgement::say(Verdict::Differs, ph!("judge.checksum.trailing.differs"), s),
         }
     }
 }

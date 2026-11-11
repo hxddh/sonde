@@ -27,7 +27,15 @@ pub struct ProbeArgs {
     /// Skip probes that wait in real time.
     #[arg(long)]
     no_slow: bool,
-    #[arg(long, short = 'f', value_enum, default_value_t, global = true)]
+    /// The format written: table or json; a run also markdown and csv.
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true,
+        global = true
+    )]
     format: Format,
     /// Write the report here instead of stdout.
     #[arg(long, short = 'o')]

@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::model::*;
+use crate::ph;
 use crate::source::{ObjectMeta, Source, SourceError};
 
 pub const KNOWN_FORMAT_VERSIONS: &[u64] = &[1, 2, 3];
@@ -175,17 +176,19 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         None => None,
     };
     let Some(meta_key) = current_metadata(&meta_objs, hint) else {
-        l.headline = "no metadata.json".into();
+        l.say_headline(ph!("iceberg.headline.none"));
         l.decoded = false;
         return Ok(l);
     };
     let meta: Value = match serde_json::from_slice(&src.get(&meta_key, None).await?) {
         Ok(v) => v,
         Err(e) => {
-            l.issues
-                .push(issue(Severity::Error, format!("{meta_key}: not JSON: {e}")));
+            l.issues.push(issue(
+                Severity::Error,
+                ph!("iceberg.notjson", key = meta_key, error = e),
+            ));
             l.decoded = false;
-            l.headline = "unreadable metadata.json".into();
+            l.say_headline(ph!("iceberg.headline.unreadable"));
             return Ok(l);
         }
     };
@@ -194,10 +197,10 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
     if !KNOWN_FORMAT_VERSIONS.contains(&fv) {
         l.issues.push(issue(
             Severity::Error,
-            format!("unknown Iceberg format-version {fv} (sonde decodes 1, 2 and 3); not decoded"),
+            ph!("iceberg.version.unknown", v = fv),
         ));
         l.decoded = false;
-        l.headline = format!("Iceberg format-version {fv}: unknown, not decoded");
+        l.say_headline(ph!("iceberg.headline.unknown", v = fv));
         return Ok(l);
     }
     let location = meta["location"].as_str().unwrap_or_default().to_string();
@@ -236,13 +239,8 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             manifests: 0,
         };
         let Some(list) = &info.manifest_list else {
-            l.issues.push(issue(
-                Severity::Info,
-                format!(
-                    "snapshot {} uses inline manifests (format v1 `manifests`)",
-                    info.id
-                ),
-            ));
+            l.issues
+                .push(issue(Severity::Info, ph!("iceberg.inline", id = info.id)));
             snaps.push(info);
             continue;
         };
@@ -252,9 +250,11 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             Err(e) => {
                 l.issues.push(issue(
                     Severity::Error,
-                    format!(
-                        "snapshot {}: manifest list {list_key} unreadable: {e}",
-                        info.id
+                    ph!(
+                        "iceberg.list.unreadable",
+                        id = info.id,
+                        key = list_key,
+                        error = e
                     ),
                 ));
                 snaps.push(info);
@@ -265,7 +265,7 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             Ok(e) => e,
             Err(e) => {
                 l.issues
-                    .push(issue(Severity::Error, format!("{list_key}: {e}")));
+                    .push(issue(Severity::Error, raw(format!("{list_key}: {e}"))));
                 snaps.push(info);
                 continue;
             }
@@ -299,13 +299,14 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                                 ));
                             }
                         }
-                        Err(e) => l
-                            .issues
-                            .push(issue(Severity::Error, format!("manifest {key}: {e}"))),
+                        Err(e) => l.issues.push(issue(
+                            Severity::Error,
+                            ph!("iceberg.manifest.bad", key = key, error = e),
+                        )),
                     },
                     Err(e) => l.issues.push(issue(
                         Severity::Error,
-                        format!("manifest {key} is missing: {e}"),
+                        ph!("iceberg.manifest.missing", key = key, error = e),
                     )),
                 }
                 manifest_cache.insert(path.clone(), files);
@@ -372,16 +373,30 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         .collect();
 
     if !orphans.is_empty() {
-        l.issues.push(issue(Severity::Warning, format!("{} data files ({}) are referenced by no snapshot: orphans (failed writes, or files of expired snapshots not deleted); remove_orphan_files reclaims them", orphans.len(), human_bytes(orphans.iter().map(|o| o.size).sum()))));
-    }
-    for m in &missing {
         l.issues.push(issue(
-            Severity::Error,
-            format!("{m} is referenced but missing"),
+            Severity::Warning,
+            ph!(
+                "iceberg.orphans",
+                n = orphans.len(),
+                size = human_bytes(orphans.iter().map(|o| o.size).sum())
+            ),
         ));
     }
+    for m in &missing {
+        l.issues
+            .push(issue(Severity::Error, ph!("referenced.missing", key = m)));
+    }
     if !expirable.is_empty() {
-        l.issues.push(issue(Severity::Warning, format!("{} snapshots are older than {} days and not referenced: expire_snapshots would drop them and free {} in {} files", expirable.len(), max_age_ms / 86_400_000, human_bytes(reclaimable.values().sum::<i64>().max(0) as u64), reclaimable.len())));
+        l.issues.push(issue(
+            Severity::Warning,
+            ph!(
+                "iceberg.expirable",
+                n = expirable.len(),
+                days = max_age_ms / 86_400_000,
+                size = human_bytes(reclaimable.values().sum::<i64>().max(0) as u64),
+                files = reclaimable.len()
+            ),
+        ));
     }
     let cur = snaps.iter().find(|s| Some(s.id) == current);
     let live_bytes: i64 = cur
@@ -402,12 +417,10 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         fact("Location", &location),
         fact("Format version", fv),
         fact("Last updated", time_str(ms(&meta["last-updated-ms"]))),
-        fact(
-            "Current snapshot",
-            current
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "none".into()),
-        ),
+        match current {
+            Some(c) => fact("Current snapshot", c),
+            None => fact_said("Current snapshot", ph!("none")),
+        },
         fact("Snapshots", snaps.len()),
         fact(
             "Refs",
@@ -444,13 +457,13 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
                 human_bytes(orphans.iter().map(|o| o.size).sum())
             ),
         ),
-        fact(
+        fact_said(
             "Expirable snapshots",
-            format!(
-                "{} (max age {} d, keep {})",
-                expirable.len(),
-                max_age_ms / 86_400_000,
-                min_keep
+            ph!(
+                "iceberg.expirable.fact",
+                n = expirable.len(),
+                days = max_age_ms / 86_400_000,
+                keep = min_keep
             ),
         ),
         fact(
@@ -494,14 +507,14 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
             human_bytes(s.files.iter().map(|f| f.bytes).sum::<i64>().max(0) as u64),
             state,
         ]);
-        l.timeline.push(Event {
-            time: s.time,
-            kind: "snapshot".into(),
-            label: format!("snapshot {} ({})", s.id, s.operation),
-            detail: format!("{} live files", s.files.len()),
-            key: s.manifest_list.as_ref().map(|m| map.key(m)),
-            bytes: None,
-        });
+        let mut e = Event::new(
+            s.time,
+            "snapshot",
+            ph!("iceberg.snapshot", id = s.id, op = s.operation),
+            ph!("iceberg.snapshot.detail", n = s.files.len()),
+        );
+        e.key = s.manifest_list.as_ref().map(|m| map.key(m));
+        l.timeline.push(e);
     }
     let mut ot = Table::new("Orphan data files", &["key", "size", "written"]);
     for o in &orphans {
@@ -556,17 +569,21 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
         });
     }
     l.timeline.sort_by_key(|e| e.time);
-    l.headline = format!(
-        "Iceberg v{fv}: {} snapshots, current {}, {} live files ({}), {} orphans, {} expirable",
-        snaps.len(),
-        current
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "none".into()),
-        cur.map(|s| s.files.len()).unwrap_or(0),
-        human_bytes(live_bytes.max(0) as u64),
-        orphans.len(),
-        expirable.len()
-    );
+    let said_current = match current {
+        Some(c) => ph!("iceberg.headline.current", id = c),
+        None => ph!("iceberg.headline.nocurrent"),
+    };
+    l.say_headline(vec![
+        ph!("iceberg.headline", v = fv, n = snaps.len()),
+        said_current,
+        ph!(
+            "iceberg.headline.rest",
+            files = cur.map(|s| s.files.len()).unwrap_or(0),
+            size = human_bytes(live_bytes.max(0) as u64),
+            orphans = orphans.len(),
+            expirable = expirable.len()
+        ),
+    ]);
     Ok(l)
 }
 

@@ -4,14 +4,17 @@
 // inspector from an operation to its requests to one request in full —
 // over the session's precomputed `session.json`.
 
-import { computed, Scroll, signal, Text, View } from "nsh";
+import { batch, computed, Scroll, signal, View } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
+import { duration } from "../app/src/format";
 import { t } from "../app/src/i18n";
 import type { Episode, LogLine, RecordSummary, RequestRecord, SessionView } from "../app/src/types";
-import { PanelHeader, Segmented, SPLIT_HANDLE } from "../app/src/ui/kit";
+import { BREAK, Button, Muted, PanelHeader, Segmented, SPLIT_HANDLE, Strong } from "../app/src/ui/kit";
+import { SessionShape } from "../app/src/ui/plots";
 import { RecordView } from "../app/src/ui/record";
-import { linesOf, Observations, OperationsTable, OperationView, OutputTable, operationsAt, SessionHeader } from "../app/src/ui/sessionview";
+import { findingMarks, linesOf, Observations, OperationsTable, OperationView, OutputTable, operationsAt, SessionHeader } from "../app/src/ui/sessionview";
 import { TimePane } from "../app/src/ui/profile";
+import type { SignalId } from "../app/src/signals";
 
 /** What `sonde share` writes. */
 export interface SharedSession extends SessionView {
@@ -32,6 +35,9 @@ export function SessionViewer(props: { data: SharedSession }) {
   const outHighlight = signal<number[]>([]);
   const filter = signal<number | null>(null);
   const pane = signal<Pane>(d.lines.length ? "aligned" : "operations");
+  // a signal pressed in the header: the Time pane, on its chart
+  const reveal = signal<{ id: SignalId; n: number } | null>(null);
+  const showSignal = (id: SignalId) => batch(() => (reveal.set({ id, n: (reveal()?.n ?? 0) + 1 }), pane.set("time")));
   let opsRef: DataTableRef | undefined;
   let outRef: DataTableRef | undefined;
   // the operations in the order their table shows them (sorted by a column)
@@ -44,7 +50,31 @@ export function SessionViewer(props: { data: SharedSession }) {
   // a request chosen on the Time pane has no operation open: the inspector shows it all the same
   const record = computed(() => (rec() === null ? null : (byId.get(rec()!) ?? null)));
   const inspecting = () => !!episode() || !!record();
-  const shown = () => (filter() === null ? undefined : d.observations[filter()!]?.episodes);
+  // this page's own size: what it shows of a finding and whether the shape has room follow it
+  const box = signal({ w: 1280, h: 800 });
+  /** A slice of the session's shape, picked on the strip: the operations running then. */
+  const slice = signal<number | null>(null);
+  const window = (): [number, number] | null => {
+    const i = slice();
+    if (i === null || !d.profile) return null;
+    const a = d.profile.rate[i]?.tMs ?? 0;
+    return [a, a + d.profile.binMs];
+  };
+  const start = d.episodes.reduce((m, e) => Math.min(m, new Date(e.start).getTime()), Infinity);
+  /** The operations shown: all, those the chosen finding is about, and those running in the chosen slice. */
+  const shown = () => {
+    const f = filter();
+    const w = window();
+    if (f === null && !w) return undefined;
+    const list = f === null ? d.episodes.map((_, i) => i) : (d.observations[f]?.episodes ?? []);
+    return w ? list.filter((i) => new Date(d.episodes[i].start).getTime() - start < w[1] && new Date(d.episodes[i].end).getTime() - start >= w[0]) : list;
+  };
+  const filterNote = () => {
+    const w = window();
+    if (filter() === null && !w) return null;
+    const n = shown()?.length ?? 0;
+    return w ? t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n, of: d.episodes.length }) : t("sessions.filtered", { n, of: d.episodes.length });
+  };
   const rows = (e: Episode): RecordSummary[] => e.records.map((id) => byId.get(id)).filter((r): r is RequestRecord => !!r);
   const chooseOperation = (i: number) => {
     op.set(i);
@@ -74,33 +104,57 @@ export function SessionViewer(props: { data: SharedSession }) {
 
   const operations = () => <OperationsTable view={d} rows={shown()} order={(o) => (opsOrder = o)} onSelect={chooseOperation} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned" || inspecting()} />;
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
+  // the app's session page, read-only: its header, then what is shown of it (the tabs), then
+  // the pane chosen — the shape of the session and what stands out over its operations
+  const findings = () => <Observations view={d} dense narrow={box().w < BREAK.inspector || inspecting()} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(104, Math.round(box().h * 0.3))} />;
+  const strip = () => (
+    <If when={d.profile && box().h >= BREAK.short}>
+      <SessionShape strip profile={d.profile} slice={slice()} onSlice={(i) => slice.set(i)} annotate marks={findingMarks(d)} class="mt-3 h-11 w-full shrink-0" />
+    </If>
+  );
   const body = () => {
-    if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} />;
-    if (pane() === "operations" || !d.lines.length) return operations();
+    if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} reveal={reveal()} />;
+    if (pane() === "operations" || !d.lines.length)
+      return (
+        <View class="min-h-0 flex-1 gap-3">
+          {strip()}
+          {findings()}
+          {operations()}
+        </View>
+      );
     return (
-      <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeOutput")}>
-        <ResizablePanel minSize={240}>
-          <View class="flex-1 pr-2">{output()}</View>
-        </ResizablePanel>
-        <ResizablePanel minSize={320}>
-          <View class="flex-1 pl-2">{operations()}</View>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+      <View class="min-h-0 flex-1 gap-3">
+        {findings()}
+        <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeOutput")}>
+          <ResizablePanel minSize={240}>
+            <View class="flex-1 pr-2">{output()}</View>
+          </ResizablePanel>
+          <ResizablePanel minSize={320}>
+            <View class="flex-1 pl-2">{operations()}</View>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </View>
     );
   };
 
   const main = () => (
     <View class="min-h-0 flex-1">
-      <View class="gap-3 border-b border-border px-5 pb-3 pt-4">
-        <View class="flex-row items-baseline gap-2">
-          <Text class="text-heading font-bold text-foreground">sonde</Text>
-          <Text class="text-small text-muted-foreground">{t("viewer.shared")}</Text>
-        </View>
-        <SessionHeader view={d} />
-        <Observations view={d} filter={filter()} onFilter={(f) => filter.set(f)} />
+      <View class="shrink-0 px-4 pt-4">
+        <SessionHeader
+          view={d}
+          onSignal={d.profile ? showSignal : undefined}
+          actions={
+            // where the app has a session's commands: whose page this is
+            <View class="shrink-0 flex-row items-baseline gap-2">
+              <Strong>sonde</Strong>
+              <Muted class="text-small">{t("viewer.shared")}</Muted>
+            </View>
+          }
+        />
       </View>
-      <View class="flex-row items-center px-5 py-2">
+      <View class="shrink-0 flex-row items-center gap-3 border-b border-border px-4 pb-3 pt-3">
         <Segmented
+          testID="session-pane-mode"
           value={pane()}
           items={[
             { value: "operations", title: t("sessions.operations"), icon: "list-filter" },
@@ -109,13 +163,18 @@ export function SessionViewer(props: { data: SharedSession }) {
           ]}
           onChange={(p) => pane.set(p as Pane)}
         />
+        <View class="flex-1" />
+        {/* what narrows the operations, said where they are */}
+        <If when={pane() !== "time" ? filterNote() : null}>
+          {(n) => <Button small variant="outline" icon="x" label={n()} tip={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), slice.set(null)))} testID="clear-filter" />}
+        </If>
       </View>
-      <View class="min-h-0 flex-1 px-5 pb-4">{body()}</View>
+      <View class="min-h-0 flex-1 px-4 pb-4 pt-3">{body()}</View>
     </View>
   );
 
   return (
-    <View class="flex-1 bg-background" testID="viewer">
+    <View class="flex-1 bg-background" testID="viewer" onLayout={(e) => box.set({ w: Math.round(e.bounds.size.width), h: Math.round(e.bounds.size.height) })}>
       <ResizablePanelGroup axis="horizontal" class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeInspector")}>
         <ResizablePanel minSize={460}>{main()}</ResizablePanel>
         <If when={inspecting()}>

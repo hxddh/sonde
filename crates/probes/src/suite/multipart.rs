@@ -5,6 +5,7 @@ use super::meta;
 use crate::Probe;
 use crate::cx::{ProbeCx, data, etag_of};
 use crate::model::{Category, Judgement, ProbeMeta, Steps, Verdict};
+use crate::phrase::ph;
 
 pub fn probes() -> Vec<Box<dyn Probe>> {
     vec![
@@ -63,19 +64,16 @@ impl Probe for MinPartSize {
         }
         let c = s.at("complete-small");
         if c.ok() {
-            Judgement::new(
-                Verdict::Differs,
-                "a 1 MiB non-final part was accepted (no 5 MiB minimum)",
-                s,
-            )
+            Judgement::say(Verdict::Differs, ph!("judge.mpu.min-part-size.differs"), s)
         } else if c.code.as_deref() == Some("EntityTooSmall") {
-            Judgement::new(Verdict::Pass, "400 EntityTooSmall", s)
+            Judgement::say(Verdict::Pass, ph!("judge.mpu.min-part-size.pass"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "refused with {:?} {:?} instead of EntityTooSmall",
-                    c.status, c.code
+                ph!(
+                    "judge.mpu.min-part-size.differs.2",
+                    p1 = format!("{:?}", c.status),
+                    p2 = format!("{:?}", c.code)
                 ),
                 s,
             )
@@ -151,37 +149,22 @@ impl Probe for OutOfOrder {
             return j;
         }
         if !asc.ok() && !desc.ok() {
-            return Judgement::new(
-                Verdict::Fail,
-                "parts uploaded out of order could not be completed",
-                s,
-            );
+            return Judgement::say(Verdict::Fail, ph!("judge.mpu.out-of-order.fail"), s);
         }
         if asc.ok() && tail.body != "WORLD" {
-            return Judgement::new(
-                Verdict::Fail,
-                "the completed body is not in part-number order",
-                s,
-            );
+            return Judgement::say(Verdict::Fail, ph!("judge.mpu.out-of-order.fail.2"), s);
         }
         if desc.ok() {
-            Judgement::new(
-                Verdict::Differs,
-                "a descending part list was accepted (AWS: InvalidPartOrder)",
-                s,
-            )
+            Judgement::say(Verdict::Differs, ph!("judge.mpu.out-of-order.differs"), s)
         } else if desc.code.as_deref() == Some("InvalidPartOrder") {
-            Judgement::new(
-                Verdict::Pass,
-                "out-of-order uploads complete; a descending list is InvalidPartOrder",
-                s,
-            )
+            Judgement::say(Verdict::Pass, ph!("judge.mpu.out-of-order.pass"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "a descending list is refused with {:?} {:?}",
-                    desc.status, desc.code
+                ph!(
+                    "judge.mpu.out-of-order.differs.2",
+                    p1 = format!("{:?}", desc.status),
+                    p2 = format!("{:?}", desc.code)
                 ),
                 s,
             )
@@ -231,7 +214,7 @@ impl Probe for DuplicateComplete {
             return j;
         }
         if !first.ok() {
-            return Judgement::new(Verdict::Error, "the first Complete failed", s);
+            return Judgement::say(Verdict::Error, ph!("judge.mpu.duplicate-complete.error"), s);
         }
         let etag = |st: &crate::model::Step| {
             st.body
@@ -241,19 +224,23 @@ impl Probe for DuplicateComplete {
                 .map(String::from)
         };
         if second.ok() && etag(&first) == etag(&second) {
-            Judgement::new(Verdict::Pass, "the retry succeeded with the same ETag", s)
+            Judgement::say(Verdict::Pass, ph!("judge.mpu.duplicate-complete.pass"), s)
         } else if second.ok() {
-            Judgement::new(Verdict::Fail, "the retry succeeded with another ETag", s)
+            Judgement::say(Verdict::Fail, ph!("judge.mpu.duplicate-complete.fail"), s)
         } else if second.code.as_deref() == Some("NoSuchUpload") {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                "the retry fails with NoSuchUpload: clients retrying a lost response see an error for a write that succeeded",
+                ph!("judge.mpu.duplicate-complete.differs"),
                 s,
             )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!("the retry answered {:?} {:?}", second.status, second.code),
+                ph!(
+                    "judge.mpu.duplicate-complete.differs.2",
+                    p1 = format!("{:?}", second.status),
+                    p2 = format!("{:?}", second.code)
+                ),
                 s,
             )
         }
@@ -315,25 +302,24 @@ impl Probe for ConcurrentUploads {
         let ids = s.at("ids").body;
         let mut it = ids.split(' ');
         if it.next() == it.next() {
-            return Judgement::new(Verdict::Fail, "both uploads got the same upload id", s);
+            return Judgement::say(Verdict::Fail, ph!("judge.mpu.concurrent-same-key.fail"), s);
         }
         let (ca, cb, read) = (s.at("complete-a"), s.at("complete-b"), s.at("read"));
         if ca.ok() && cb.ok() && read.body == "BBBB" {
-            Judgement::new(
-                Verdict::Pass,
-                "independent uploads; the last Complete wins",
-                s,
-            )
+            Judgement::say(Verdict::Pass, ph!("judge.mpu.concurrent-same-key.pass"), s)
         } else if ca.ok() && cb.ok() {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Fail,
-                format!("both completed but the key reads {:?}", read.body),
+                ph!(
+                    "judge.mpu.concurrent-same-key.fail.2",
+                    p1 = format!("{:?}", read.body)
+                ),
                 s,
             )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                "the second upload could not complete after the first",
+                ph!("judge.mpu.concurrent-same-key.differs"),
                 s,
             )
         }
@@ -398,24 +384,29 @@ impl Probe for UploadPartCopy {
             return j;
         }
         if copy.not_implemented() {
-            return Judgement::new(Verdict::Unsupported, "UploadPartCopy is not implemented", s);
+            return Judgement::say(
+                Verdict::Unsupported,
+                ph!("judge.mpu.upload-part-copy.unsupported"),
+                s,
+            );
         }
         if !copy.ok() {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Fail,
-                format!("UploadPartCopy failed: {}", copy.describe()),
+                ph!("judge.mpu.upload-part-copy.fail", p1 = copy.describe()),
                 s,
             );
         }
         let want = (5 * MIB + 3).to_string();
         if complete.ok() && head.header("content-length") == Some(want.as_str()) {
-            Judgement::new(Verdict::Pass, "copied range and uploaded part combined", s)
+            Judgement::say(Verdict::Pass, ph!("judge.mpu.upload-part-copy.pass"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Fail,
-                format!(
-                    "completed object length {:?}, expected {want}",
-                    head.header("content-length")
+                ph!(
+                    "judge.mpu.upload-part-copy.fail.2",
+                    p1 = format!("{:?}", head.header("content-length")),
+                    want = want
                 ),
                 s,
             )

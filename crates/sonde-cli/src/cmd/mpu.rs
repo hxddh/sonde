@@ -21,7 +21,14 @@ struct Target {
     bucket: String,
     #[arg(long, short = 'p', default_value = "")]
     prefix: String,
-    #[arg(long, short = 'f', value_enum, default_value_t)]
+    /// The format written: table, json or csv (scan).
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
     format: Format,
 }
 
@@ -126,8 +133,8 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &MpuArgs) -> anyhow::Result<i32>
                         )
                     );
                     println!(
-                        "\n{} uploads, {} stale (> {} days): {} ({} stale), {:.2} {}/month",
-                        r.total_uploads,
+                        "\n{}, {} stale (> {} days): {} ({} stale), {:.2} {}/month",
+                        output::count(r.total_uploads as usize, "upload"),
                         r.stale_uploads,
                         r.threshold_days,
                         human(r.total_bytes),
@@ -177,8 +184,9 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &MpuArgs) -> anyhow::Result<i32>
             println!("{}", plan.summary);
             let Some(c) = confirm else {
                 println!(
-                    "dry run: to abort, run again with --confirm {} (and read-only mode off)",
-                    plan.confirm
+                    "dry run: to abort, run again with --confirm {} (and `read-only = false` under [settings] in {})",
+                    plan.confirm,
+                    s.paths().config_file().display()
                 );
                 return Ok(4);
             };
@@ -205,8 +213,9 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &MpuArgs) -> anyhow::Result<i32>
             );
             let Some(c) = confirm else {
                 println!(
-                    "\ndry run: to apply, run again with --confirm {} (and read-only mode off)",
-                    plan.confirm
+                    "\ndry run: to apply, run again with --confirm {} (and `read-only = false` under [settings] in {})",
+                    plan.confirm,
+                    s.paths().config_file().display()
                 );
                 return Ok(4);
             };

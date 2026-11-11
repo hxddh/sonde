@@ -7,7 +7,7 @@ import { language, t } from "../i18n";
 import { api, asError } from "../native";
 import { notify, refreshEndpoints, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Button, Card, Choice, Disclosure, Field, FORM, KeyValue, Labeled, Notice, NumberField, Options, Page, ROW, rowHeight, Section, terminal, SwitchRow } from "../ui/kit";
+import { Button, Card, Choice, Disclosure, Field, FORM, KeyValue, Labeled, Notice, NumberField, Options, Page, Row, Section, terminal, SwitchRow } from "../ui/kit";
 import { Updates } from "../ui/updates";
 
 /** A form's fields, two to a row (one where there is no room), every label above its control. */
@@ -42,7 +42,7 @@ export function ConfigNotice() {
   };
   const reveal = () => {
     try {
-      void api.sessions.reveal(String(api.paths().config)).catch(report);
+      void api.sessions.reveal(`${api.paths().config}`).catch(report);
     } catch (e) {
       report(e);
     }
@@ -210,10 +210,10 @@ export function SettingsScreen() {
                 <Card pad="none">
                   <Each of={Object.entries(d().prices["by-class"])}>
                     {(e, i) => (
-                      <View style={{ minHeight: rowHeight(ROW.twoLine) }} class={`flex-row items-center gap-3 px-3 ${i() > 0 ? "border-t border-border" : ""}`}>
+                      <Row first={i() === 0}>
                         <Text class="min-w-0 flex-1 font-mono text-small text-foreground line-clamp-1">{e()[0]}</Text>
                         <NumberField bare class="w-56" label={e()[0]} suffix={t("settings.perGibMonth", { cur: d().prices.currency })} value={e()[1]} min={0} step={0.001} onChange={(v) => change({ ...d(), prices: { ...d().prices, "by-class": { ...d().prices["by-class"], [e()[0]]: v ?? e()[1] } } })} />
-                      </View>
+                      </Row>
                     )}
                   </Each>
                 </Card>
@@ -232,7 +232,7 @@ export function SettingsScreen() {
 
             {/* the one place sonde says it sends nothing anywhere */}
             <Section plain title={t("settings.paths")} description={t("settings.telemetry")}>
-              <KeyValue boxed rows={Object.entries(paths).map(([k, v]) => [t(`settings.path.${k}` as "settings.path.data"), String(v)])} />
+              <KeyValue boxed rows={Object.entries(paths).map(([k, v]) => [t(`settings.path.${k}` as "settings.path.data"), `${v}`])} />
             </Section>
           </View>
         )}

@@ -6,16 +6,29 @@ import { DataTable, type DataTableRef, Link, ResizablePanel, ResizablePanelGroup
 import { isAvailable, Menu } from "nsh/desktop";
 import { bytes, count, date } from "../format";
 import { t } from "../i18n";
+import { core } from "../phrases";
 import { api, Listing, watch } from "../native";
 import { bucket, copy, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Await, Back, Badge, Bar, Button, Card, Choice, Disclosure, Empty, FOCUS, IconButton, InWindowMenu, KeyValue, ListRow, PanelHeader, Path, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE } from "../ui/kit";
+import { Await, Back, Badge, Bar, Button, Card, Choice, Disclosure, Empty, fitColumns, FOCUS, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
 import { invalidate, Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const WINDOW = 400;
+
+/** The objects' columns by rank: the name (which takes the room the others
+ * leave, `NAME` at least) and the size always; then Modified, Class and
+ * Parts while they fit — Parts goes first, then Class, then Modified, each
+ * whole, none clipped. */
+const NAME = 240;
+const OBJECT_COLUMNS = [
+  { key: "modified", width: 150 },
+  { key: "class", width: 124 },
+  { key: "parts", width: 56 },
+] as const;
+const SIZE = 96;
 
 function Breadcrumbs() {
   const parts = () => {
@@ -27,19 +40,19 @@ function Breadcrumbs() {
   return (
     <View class="min-w-0 flex-row flex-wrap items-center gap-1">
       {/* links of the path (the last one the place shown): screen readers hear them so */}
-      <Link testID="crumb-root" href={`s3://${bucket()}/`} openWith="app" onOpen={() => prefix.set("")} current={parts().length === 0} accessibilityLabel={bucket() ?? ""} class={`flex-row items-center gap-1 rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted ${FOCUS}`}>
+      <Link testID="crumb-root" href={`s3://${bucket()}/`} openWith="app" onOpen={() => prefix.set("")} current={parts().length === 0} accessibilityLabel={bucket() ?? ""} class={`flex-row items-center gap-1 rounded-(--radius-sm) px-1 py-1 hover:bg-muted ${FOCUS}`}>
         <If when={!terminal()}>
-          <Icon name="database" size={14} tint="foreground" />
+          <Icon name="database" tint="foreground" />
         </If>
-        <Text class="text-body font-semibold text-foreground">{bucket()}</Text>
+        <Strong>{bucket()}</Strong>
       </Link>
       <Each of={parts()}>
         {(p, i) => (
           <View class="flex-row items-center gap-1">
             <If when={!terminal()} else={<Text class="text-muted-foreground">/</Text>}>
-              <Icon name="chevron-right" size={12} />
+              <Icon name="chevron-right" size={ICON.small} />
             </If>
-            <Link href={`s3://${bucket()}/${p().prefix}`} openWith="app" onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} accessibilityLabel={p().name} class={`rounded-(--radius-sm) px-1 py-0.5 hover:bg-muted ${FOCUS}`}>
+            <Link href={`s3://${bucket()}/${p().prefix}`} openWith="app" onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} accessibilityLabel={p().name} class={`rounded-(--radius-sm) px-1 py-1 hover:bg-muted ${FOCUS}`}>
               <Text class={i() === parts().length - 1 ? "text-body font-medium text-foreground" : "text-body text-muted-foreground"}>{p().name}</Text>
             </Link>
           </View>
@@ -114,7 +127,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
         <If when={props.onBack}>
           <View class="flex-row items-center gap-2">
             <Back onPress={() => props.onBack?.()} testID="detail-back" />
-            <Text class="min-w-0 flex-1 text-heading font-semibold text-foreground line-clamp-2">{props.entry.name}</Text>
+            <Title lines={2} class="min-w-0 flex-1">{props.entry.name}</Title>
           </View>
         </If>
         <Text class="font-mono text-caption text-muted-foreground line-clamp-2">{uri()}</Text>
@@ -128,7 +141,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                 <Button small variant="outline" icon="download" label={t("browse.download")} onPress={download} disabled={progress() !== null} testID="download" />
                 <Button small variant="outline" icon="copy" label={t("store.copyUri")} onPress={() => copy(uri())} testID="copy-uri" />
                 <Button small variant="outline" icon="file-clock" label={t("browse.versionsOpen")} onPress={() => batch(() => (versionKey.set(d().key), go("versions")))} />
-                <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(d().recordId)} />
+                <Button small variant="outline" icon="radio" label={t("common.showRequest")} onPress={() => showRequest(d().recordId)} />
               </View>
               <If when={progress()}>{(p) => <Bar value={null} label={p()} />}</If>
               <KeyValue
@@ -141,35 +154,23 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                   [t("browse.storageClass"), d().storageClass],
                 ]}
               />
+              {/* every part of the inspector the same way: names and values in the one boxed list */}
               <Disclosure title={t("browse.etag")} open>
-                <View class="gap-1">
-                  <Text class="font-mono text-caption text-foreground">{d().etag?.value ?? "—"}</Text>
-                  <Text class="text-small text-muted-foreground">{etagText(d())}</Text>
-                  <If when={d().partSizeGuesses.length > 0}>
-                    <Text class="text-small text-muted-foreground">
-                      {t("browse.partSizes")}: {d().partSizeGuesses.map((s) => bytes(s)).join(", ")}
-                    </Text>
-                  </If>
-                </View>
+                <KeyValue
+                  boxed
+                  rows={[
+                    [t("browse.etag"), d().etag?.value ?? "—"],
+                    [t("browse.uploadKind"), etagText(d())],
+                    ...(d().partSizeGuesses.length > 0 ? ([[t("browse.partSizes"), d().partSizeGuesses.map((s) => bytes(s)).join(", ")]] as [string, string][]) : []),
+                  ]}
+                />
               </Disclosure>
               <Disclosure title={t("browse.checksums")} count={d().checksums.length} open>
-                <If when={d().checksums.length > 0} else={<Text class="text-small text-muted-foreground">{t("browse.noChecksum")}</Text>}>
-                  <View class="gap-2">
-                    <Each of={d().checksums}>
-                      {(c) => (
-                        <Card pad="tile">
-                          <View class="flex-row items-center gap-2">
-                            <Badge label={c().algorithm} tone="info" />
-                            <Text class="min-w-0 flex-1 text-caption text-muted-foreground">
-                              {c().kind === "composite" ? t("browse.composite", { n: c().parts ?? "?" }) : t("browse.fullObject")}
-                              {c().kindFromHeader ? "" : ` · ${t("browse.inferred")}`}
-                            </Text>
-                          </View>
-                          <Text class="font-mono text-caption text-foreground">{c().value}</Text>
-                        </Card>
-                      )}
-                    </Each>
-                  </View>
+                <If when={d().checksums.length > 0} else={<Empty compact text={t("browse.noChecksum")} />}>
+                  <KeyValue
+                    boxed
+                    rows={d().checksums.map((c): [string, string] => [c.algorithm, `${c.value} · ${c.kind === "composite" ? t("browse.composite", { n: c.parts ?? "?" }) : t("browse.fullObject")}${c.kindFromHeader ? "" : ` · ${t("browse.inferred")}`}`])}
+                  />
                 </If>
               </Disclosure>
               <Disclosure title={t("browse.encryption")} open>
@@ -185,7 +186,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                 />
               </Disclosure>
               <Disclosure title={t("browse.metadata")} count={d().metadata.length} open={d().metadata.length > 0}>
-                <If when={d().metadata.length > 0} else={<Text class="text-small text-muted-foreground">{t("common.none")}</Text>}>
+                <If when={d().metadata.length > 0} else={<Empty compact text={t("common.none")} />}>
                   <KeyValue boxed rows={d().metadata} />
                 </If>
               </Disclosure>
@@ -250,6 +251,9 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   // a press on Refresh lists the same place again
   const reload = signal(0);
   let table: DataTableRef | undefined;
+  // the table's own width decides which columns it shows
+  const width = signal(0);
+  const ranked = () => fitColumns(terminal() ? 0 : width(), SIZE + 2, NAME, [...OBJECT_COLUMNS]);
   let searchJob: string | null = null;
   const stopSearch = () => {
     if (searchJob) api.cancelJob(searchJob);
@@ -374,7 +378,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       searchJob = job;
       const r = await watch<{ matches: Entry[]; scanned: number }>(job, (ev) => {
         if (!here() || searchJob !== job) return;
-        if (ev.type === "Progress") searchState.set(ev.progress.message);
+        if (ev.type === "Progress") searchState.set(core(ev.progress.messageText, ev.progress.message));
         if (ev.type === "Partial") searchHits.update((h) => [...(h ?? []), ...(ev.data as Entry[])]);
       });
       // what another place's search found is not shown here
@@ -438,7 +442,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           </Text>
           <SearchField small class="w-72 min-w-0 shrink" testID="listing-filter" value={filter()} placeholder={t("browse.filterHint")} label={t("browse.filterOrSearch")} onChange={applyFilter} onSubmit={search}>
             <If when={filter()}>
-              <IconButton icon="corner-down-left" label={t("browse.searchAll")} onPress={search} testID="search" class="size-5 shrink-0" />
+              <IconButton inField icon="corner-down-left" label={t("browse.searchAll")} onPress={search} testID="search" />
             </If>
           </SearchField>
           <SwitchRow label={t("browse.flatListing")} checked={flat()} onChange={(v) => flat.set(v)} testID="flat" />
@@ -447,6 +451,14 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             <Button small variant="outline" label={t("browse.loadAll")} onPress={loadAll} disabled={loadingAll()} testID="load-all" />
           </If>
           <IconButton icon="refresh-cw" label={t("common.refresh")} onPress={refresh} testID="listing-refresh" />
+          {/* the bucket's own commands, as its row in the sidebar has them on a right press: reached by the keyboard here */}
+          <More
+            testID="bucket-more"
+            actions={() => [
+              { label: t("store.copyName"), icon: "copy", run: () => copy(bucket() ?? "") },
+              { label: t("store.copyUri"), icon: "link", run: () => copy(`s3://${bucket() ?? ""}/${prefix()}`) },
+            ]}
+          />
         </View>
       </View>
       <If when={searchHits()}>
@@ -464,20 +476,21 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                   {(h) => (
                     <ListRow label={h().key} selected={props.selected === h().key} onPress={() => props.onSelect(h())}>
                       <View class="shrink-0">
-                        <Icon name={h().isPrefix ? "folder" : "file"} size={14} tint="muted-foreground" />
+                        <Icon name={h().isPrefix ? "folder" : "file"} tint="muted-foreground" />
                       </View>
                       <Path path={h().key} max={96} class="min-w-0 flex-1 text-foreground" />
                     </ListRow>
                   )}
                 </Each>
                 <If when={hits().length > HITS}>
-                  <Text class="px-2 py-1 text-caption text-muted-foreground">{t("browse.moreMatches", { n: count(hits().length - HITS) })}</Text>
+                  <Empty compact text={t("browse.moreMatches", { n: count(hits().length - HITS) })} />
                 </If>
               </Scroll>
             </If>
           </Card>
         )}
       </If>
+      <View class="min-h-0 flex-1" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
       <Card pad="none" class="min-h-0 flex-1">
         <InWindowMenu class="min-h-0 flex-1" enabled={!systemMenus} actions={() => actions(menuRow())}>
           <DataTable
@@ -486,11 +499,11 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             accessibilityLabel={t("nav.objects")}
             class="min-h-0 flex-1"
             columns={[
-              { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : 380, minWidth: 120 },
-              { key: "size", title: t("browse.size"), width: 96, align: "end" },
-              { key: "modified", title: t("browse.modified"), width: 150 },
-              { key: "class", title: t("browse.class"), width: 124 },
-              { key: "parts", title: t("mpu.parts"), width: 56, align: "end" },
+              { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : 380, minWidth: 120 },
+              { key: "size", title: t("browse.size"), width: SIZE, align: "end" as const },
+              ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: 150 }] : []),
+              ...(ranked().includes("class") ? [{ key: "class", title: t("browse.class"), width: 124 }] : []),
+              ...(ranked().includes("parts") ? [{ key: "parts", title: t("mpu.parts"), width: 56, align: "end" as const }] : []),
             ]}
             data={tableData()}
             dataStart={start()}
@@ -511,7 +524,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                       const folder = rows()[c.row - start()]?.isPrefix ?? false;
                       return (
                         <View class="flex-1 flex-row items-center gap-2">
-                          <Icon name={folder ? "folder" : "file"} size={14} tint={folder ? "foreground" : "muted-foreground"} />
+                          <Icon name={folder ? "folder" : "file"} tint={folder ? "foreground" : "muted-foreground"} />
                           <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${folder ? "font-medium text-foreground" : "text-foreground"}`}>{c.text}</Text>
                         </View>
                       );
@@ -548,6 +561,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
           />
         </InWindowMenu>
       </Card>
+      </View>
     </View>
   );
 }
@@ -574,7 +588,7 @@ export function Browse() {
           when={terminal()}
           else={
             <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("browse.resizeDetail")}>
-              <ResizablePanel minSize={420} class="min-w-0 gap-3 px-5 py-4">
+              <ResizablePanel minSize={420} class="min-w-0 gap-3 px-4 py-4">
                 <Overview />
                 <Objects onSelect={(e) => selected.set(e)} selected={selected()?.key ?? null} />
               </ResizablePanel>

@@ -3,9 +3,9 @@
 // sidebar and the place beside it; a terminal gets a home list and a
 // navigation stack, the F10 menu bar and `:` for the palette.
 
-import { batch, effect, keymap, mount, platform, setColorScheme, signal, Text, untracked, UrlScheme, View } from "nsh";
+import { appInfo, batch, effect, keymap, mount, platform, setColorScheme, signal, Text, untracked, UrlScheme, View } from "nsh";
 import { createNavStack, NavPage, NavStack, ResizablePanel, ResizablePanelGroup } from "nsh/base";
-import { currentWindow, Menu } from "nsh/desktop";
+import { Application, currentWindow, Menu } from "nsh/desktop";
 import { Welcome } from "./src/screens/Welcome";
 import { t } from "./src/i18n";
 import { areaLabel } from "./src/labels";
@@ -13,7 +13,7 @@ import { followNotifications, running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLink, wouldOpen, openSession, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, wouldOpen, openSession, openSessionFile, readOnly, report, section, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
@@ -24,6 +24,9 @@ import { appMenus, Sidebar, sidebarOpen, toggleSidebar, Toolbar, windowMaterial 
 import { Toaster } from "./src/ui/toast";
 import { applyContrast } from "./src/theme";
 import { scrubCommand } from "./src/ui/sessionview";
+
+/** The app's name, as it was built (nsh.json's `name`). */
+const APP = appInfo().name ?? "";
 
 /** The view of an area: a plain function, called in a binding, so the view follows `area()`.
  * Until there is an endpoint, Run and Store open on the welcome. */
@@ -107,7 +110,7 @@ function DesktopShell() {
     <View
       testID="shell"
       class={`flex-1 ${windowMaterial() ? "" : "bg-background"}`}
-      onLayout={(e) => batch(() => (shellWidth.set(e.bounds.size.width), shellHeight.set(e.bounds.size.height)))}
+      onLayout={(e) => shellWidth.set(e.bounds.size.width)}
       // a .sonde file dropped anywhere on the window opens it; while one is over it, it says so
       onFileDrop={(e) => {
         dragging.set(null);
@@ -179,7 +182,7 @@ function Home() {
   });
   keymap.bind(digits, { when: "notEditing" });
   return (
-    <NavPage title="sonde" header={<TermHeader title="sonde" />}>
+    <NavPage title={APP} header={<TermHeader title={APP} />}>
       <View class="flex-1 gap-1 p-1">
         <Text class="text-muted-foreground">{`${t("app.tagline")} — ${t("app.tuiKeys")}`}</Text>
         <Each of={AREAS}>
@@ -251,7 +254,7 @@ function installMenus() {
   effect(() => {
     Menu.setApplicationMenu([
       platform.os === "macos" && {
-        label: "sonde",
+        label: APP,
         submenu: [{ role: "about" }, { type: "separator" }, { label: t("nav.settings"), shortcut: "mod+,", onSelect: () => open("settings") }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "showAll" }, { type: "separator" }, { role: "quit" }],
       },
       ...appMenus(open),
@@ -284,6 +287,13 @@ function App() {
       UrlScheme.on("open", ({ url }) => openLink(url));
     } catch {
       // no links here
+    }
+    // sonde runs once (nsh.json's `singleInstance`): a second launch brings this window
+    // forward and hands over what it was asked to open
+    try {
+      Application.on("secondInstance", ({ args, cwd }) => openLaunch(args, cwd));
+    } catch {
+      // a host that is not the app's own (a test runner)
     }
     followNotifications((path) => {
       openSession.set(path);

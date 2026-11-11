@@ -1,9 +1,9 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
 import { effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, MenuItem, Input, NumberInput, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
 import { t } from "../i18n";
-import { middle, separators } from "../format";
+import { count, middle, separators } from "../format";
 import { isAvailable, Menu } from "nsh/desktop";
 import { Icon, type IconName, iconSvg, type Tint } from "./icon";
 
@@ -28,6 +28,15 @@ export function keyLabel(shortcut: string): string {
  * (nsh.json's `tailwind.fontSize`), for the props that take a number
  * (DataTable's `fontSize`). A desktop app's scale around a 13 pt body. */
 export const TYPE = { caption: 11, small: 12, body: 13, heading: 15, title: 20 } as const;
+/** An icon's three sizes, in points, and no others: `small` beside caption
+ * text and at a row's end, `default` (what `Icon` draws without a size) in
+ * buttons, rows and notices, `large` in an icon tile. */
+export const ICON = { small: 12, default: 16, large: 20 } as const;
+/** Weight that is not a heading's: a status word, a counter, a mark in a
+ * chart. A heading is `Title` or `Heading`; text set heavier in a page is
+ * `Strong`, and this class only where a prop takes classes, not children
+ * (lint-kit asks each use for an `emphasis:` comment saying why). */
+export const EMPHASIS = "font-semibold";
 
 /** A table row's height for the user's text size: rows grow with their
  * text instead of clipping it; a terminal's rows are one cell. */
@@ -51,8 +60,13 @@ export const fill = (translucent: string, opaque: string) => (material ? translu
 export const POPUP = `rounded-(--radius-card) border border-border ${fill("bg-popover/90", "bg-popover")} p-1 shadow-lg`;
 /** The scrim under a modal layer, from the theme (`scrim`, light and dark). */
 export const SCRIM = "bg-scrim";
-/** Where the keyboard is: one ring on every control that takes focus. */
-export const FOCUS = "focus:ring-2 focus:ring-ring/50";
+/** Where the keyboard is: one ring on every control that takes focus, shown
+ * for focus the keyboard moved (Native Shell's `focus-visible:`), never after
+ * a click. A text field shows it whenever it has focus, as a browser's does. */
+export const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring/50";
+/** The same ring around a control whose focus is a text input inside it (a
+ * field's box, the endpoint switcher): it shows while that input has focus. */
+export const FOCUS_WITHIN = "focus-within:ring-2 focus-within:ring-ring/50";
 /** The one surface of a group: a hairline card. Cards never nest. */
 export const CARD = "rounded-(--radius-card) border border-border bg-card";
 /** Two control heights, and nothing between: h-8 for a field, a choice or a
@@ -61,10 +75,13 @@ export const CARD = "rounded-(--radius-card) border border-border bg-card";
 export const CONTROL = {
   field: "h-8",
   small: "h-7",
+  // off-scale: a segment (h-6) sits 2 pt inside its track (h-7)
   track: "h-7 shrink-0 flex-row items-center rounded-(--radius) bg-muted p-0.5",
-  segment: "h-6 flex-row items-center gap-1.5 rounded-(--radius-sm) px-2.5",
+  segment: "h-6 flex-row items-center gap-1 rounded-(--radius-sm) px-2",
   /** A small outline button drawn by a component of its own (a picker's trigger). */
-  trigger: "h-7 flex-row items-center gap-1.5 rounded-(--radius) border border-input bg-background px-2.5 hover:bg-muted",
+  trigger: "h-7 flex-row items-center gap-1 rounded-(--radius) border border-input bg-background px-2 hover:bg-muted",
+  /** A field's box: with `CONTROL.field` or `.small`, around an input and what stands before or after it. */
+  box: `flex-row items-center gap-2 overflow-hidden rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring ${FOCUS_WITHIN}`,
 } as const;
 /** Every DataTable's look: a hairline header, cells with one inset that
  * lines up with their titles, a hover and a selection, no stripes. */
@@ -80,12 +97,23 @@ export const TABLE = {
 export const FORM = "w-full max-w-[720px]";
 /** The one width of a centered column to read (the welcome, an empty Run's intro). */
 export const READING = "w-full max-w-[560px]";
-/** The window's two breakpoints, and no others: under `sidebar` the sidebar
- * folds away; from `inspector` an inspector sits beside what it details
- * (under it, it comes in from the edge). */
-export const BREAK = { sidebar: 860, inspector: 1160, board: 1040 } as const;
+/** Every size at which a layout changes, and no others (lint-kit fails a
+ * number compared with a width or a height anywhere else). Two widths: from
+ * `toolbar` the window's toolbar shows its wide controls (the endpoint's
+ * name in full, the search field rather than its button); from `inspector`
+ * a pane holds an inspector beside what it details (under it, the inspector
+ * comes in from the edge, and rows drop what ranks last). Two heights of a
+ * session's pane: under `short` the shape strip goes and the findings keep
+ * to a line or two; from `tall` each finding has its lines in full. */
+export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as const;
 /** A row under the pointer, pressed, and chosen: one look in every list, tree and menu. */
-export const ROW_STATE = "hover:bg-row-hover active:bg-muted selected:bg-selection";
+const ROW_STATE = "hover:bg-row-hover active:bg-muted selected:bg-selection";
+/** The row's look for the controls that take classes, not children: a tree's
+ * items (the sidebar's buckets) and the palette's. Rows of a list are `ListRow`. */
+export const ROWS = {
+  tree: `group h-7 rounded-(--radius-sm) ${ROW_STATE} focus:bg-row-hover disabled:opacity-60`,
+  palette: `group ${CONTROL.field} rounded-(--radius-sm) px-2 focus:bg-selection`,
+} as const;
 /** The title bar's height: sheets start below it, so it stays a title bar. */
 export const TITLE_BAR = 44;
 
@@ -120,10 +148,8 @@ export function SidePanel(props: { open: boolean; onClose: () => void; size?: ke
 export function PanelHeader(props: { title: string; icon?: IconName; subtitle?: string; children?: JSX.Element; onClose?: () => void; closeTestID?: string }) {
   return (
     <View class="h-12 shrink-0 flex-row items-center gap-2 border-b border-border ps-4 pe-3">
-      <If when={props.icon}>{(i) => <Icon name={i()} size={16} tint="muted-foreground" />}</If>
-      <Text role="header" class="text-heading font-semibold text-foreground">
-        {props.title}
-      </Text>
+      <If when={props.icon}>{(i) => <Icon name={i()} tint="muted-foreground" />}</If>
+      <Title>{props.title}</Title>
       <Path path={props.subtitle ?? ""} max={56} class="min-w-0 flex-1 text-muted-foreground" />
       {props.children}
       <If when={props.onClose}>
@@ -137,9 +163,9 @@ export function PanelHeader(props: { title: string; icon?: IconName; subtitle?: 
 export function SideHeader(props: { title: string; children?: JSX.Element }) {
   return (
     <View class="h-9 shrink-0 flex-row items-center gap-1 pl-4 pr-2">
-      <Text role="header" class="min-w-0 flex-1 text-caption font-semibold text-muted-foreground line-clamp-1">
+      <Heading quiet class="min-w-0 flex-1 line-clamp-1">
         {props.title}
-      </Text>
+      </Heading>
       {props.children}
     </View>
   );
@@ -206,10 +232,10 @@ export function Button(props: {
       disabled={props.disabled}
       accessibilityLabel={props.label}
       tooltip={props.tip || props.shortcut ? <Tip text={props.tip ?? props.label} shortcut={props.shortcut} /> : undefined}
-      class={`flex-row items-center justify-center gap-1.5 rounded-(--radius) ${props.small ? "h-7 px-2.5" : "h-8 px-3"} ${buttonClass[v()]} ${FOCUS} ${props.class ?? ""}`}
+      class={`flex-row items-center justify-center gap-1 rounded-(--radius) ${props.small ? "h-7 px-2" : "h-8 px-3"} ${buttonClass[v()]} ${FOCUS} ${props.class ?? ""}`}
     >
       <If when={props.icon}>
-        <Icon name={props.icon!} size={props.small ? 14 : 15} tint={iconTint[v()]} />
+        <Icon name={props.icon!} tint={iconTint[v()]} />
       </If>
       <Text class={`${props.small ? "text-small" : "text-body"} ${buttonText[v()]}`}>{props.label}</Text>
     </BaseButton>
@@ -218,7 +244,7 @@ export function Button(props: {
 
 /** A button that shows only its icon, named for screen readers (a terminal
  * shows the name in its place), explained by its tooltip. */
-export function IconButton(props: { icon: IconName; label: string; onPress?: () => void; shortcut?: string; disabled?: boolean; selected?: boolean; tint?: Tint; testID?: string; class?: string; /** a small count at its corner (jobs running) */ badge?: string }) {
+export function IconButton(props: { icon: IconName; label: string; onPress?: () => void; shortcut?: string; /** why it does nothing now, in its tooltip */ tip?: string; disabled?: boolean; selected?: boolean; tint?: Tint; testID?: string; class?: string; /** a small count at its corner (jobs running) */ badge?: string; /** at a field's end, inside it: as high as the field, no height of its own */ inField?: boolean }) {
   return (
     <BaseButton
       testID={props.testID}
@@ -226,36 +252,55 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
       disabled={props.disabled}
       selected={props.selected}
       accessibilityLabel={props.label}
-      tooltip={<Tip text={props.label} shortcut={props.shortcut} />}
-      class={`size-7 items-center justify-center rounded-(--radius) hover:bg-muted active:bg-muted selected:bg-selection disabled:opacity-40 ${FOCUS} ${props.class ?? ""}`}
+      tooltip={<Tip text={props.tip ?? props.label} shortcut={props.tip ? undefined : props.shortcut} />}
+      class={`${props.inField ? "-mr-2 w-7 shrink-0 self-stretch" : "size-7 rounded-(--radius)"} items-center justify-center hover:bg-muted active:bg-muted selected:bg-selection disabled:opacity-40 ${FOCUS} ${props.class ?? ""}`}
     >
-      <Icon name={props.icon} size={16} tint={props.tint ?? (props.selected ? "foreground" : "muted-foreground")} />
+      <Icon name={props.icon} tint={props.tint ?? (props.selected ? "foreground" : "muted-foreground")} />
       <If when={props.badge}>
         <View class="absolute -right-1.5 -top-1 h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1">
-          <Text class="tabular-nums text-caption font-semibold leading-4 text-primary-foreground">{props.badge}</Text>
+          <Text class={`tabular-nums text-caption ${EMPHASIS} leading-4 text-primary-foreground`}>{props.badge}</Text>
         </View>
       </If>
     </BaseButton>
   );
 }
 
-/** A panel's or a page's title: the first of the two heading levels. */
-export function Title(props: { children: JSX.Element; class?: string }) {
+/** A panel's or a page's title: the first of the two heading levels. `page`
+ * is the one title of a page that is only an introduction (the welcome, an
+ * empty Run); `mono` for a title that is a command, a key or a bucket. A
+ * terminal has one weight and no sizes. */
+export function Title(props: { children: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string }) {
   return (
-    <Text role="header" class={`text-heading font-semibold text-foreground ${props.class ?? ""}`}>
+    <Text
+      testID={props.testID}
+      role="header"
+      class={`${terminal() ? "" : props.page ? "text-title" : props.small ? "text-body" : "text-heading"} font-semibold text-foreground ${props.mono ? "font-mono" : ""} ${props.center ? "text-center" : ""} ${props.lines === 1 ? "line-clamp-1" : props.lines === 2 ? "line-clamp-2" : ""} ${props.class ?? ""}`}
+    >
       {props.children}
     </Text>
   );
 }
 
-/** A section's title: the second and last heading level (as `Section`'s). */
-export function Heading(props: { children: JSX.Element; count?: number }) {
+/** A section's title: the second and last heading level (as `Section`'s),
+ * with how many it holds ("Title · n"). `quiet` is the same level said
+ * small over a list (a day of sessions, the sidebar's lists). */
+export function Heading(props: { children: JSX.Element; count?: number; quiet?: boolean; mono?: boolean; class?: string; testID?: string }) {
   return (
-    <Text role="header" class="text-body font-semibold text-foreground">
+    <Text testID={props.testID} role="header" class={`${props.quiet ? "text-caption text-muted-foreground" : "text-body text-foreground"} font-semibold ${props.mono ? "font-mono" : ""} ${props.class ?? ""}`}>
       {props.children}
       <If when={props.count !== undefined}>
-        <Text class="font-normal text-muted-foreground">{` · ${props.count}`}</Text>
+        <Text class="font-normal text-muted-foreground">{` · ${count(props.count ?? 0)}`}</Text>
       </If>
+    </Text>
+  );
+}
+
+/** Words set heavier than the text around them, which are not a heading: how
+ * a run ended, a counter, a status. In `tone`'s color where it says an outcome. */
+export function Strong(props: { children: JSX.Element; class?: string; testID?: string }) {
+  return (
+    <Text testID={props.testID} class={`text-body font-semibold ${props.class ?? "text-foreground"}`}>
+      {props.children}
     </Text>
   );
 }
@@ -272,7 +317,7 @@ export function Mono(props: { children: JSX.Element; class?: string }) {
   );
 }
 
-const CARD_PAD = { panel: "gap-3 p-4", tile: "gap-1 px-3 py-2.5", none: "overflow-hidden" } as const;
+const CARD_PAD = { panel: "gap-3 p-4", tile: "gap-1 px-3 py-2", none: "overflow-hidden" } as const;
 
 /** The one card: `panel` for a group (the default), `tile` for a figure in a
  * row of them, `none` for a list that draws its own rows. With `onPress` the
@@ -288,46 +333,110 @@ export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD
   );
 }
 
-/** A row of a list a press opens: hover, pressed, selected and focus, one
- * look in every list (sessions, programs, requests, hits). */
-export function ListRow(props: { children: JSX.Element; onPress: () => void; selected?: boolean; label?: string; testID?: string; class?: string; trailing?: JSX.Element }) {
+/** The one row a press opens: hover, pressed, selected and focus, one look
+ * in every list (sessions, programs, requests, findings, hits; `plain` for a terminal's line). `lines={2}`
+ * stacks two lines of text; `divided` is a row of a card that draws its
+ * rows edge to edge under hairlines (`first` has none); `top` keeps what
+ * stands beside wrapped text at its first line. What ends the row
+ * (`trailing`: a count, a time, a chevron) keeps its width and its middle. */
+export function ListRow(props: { children: JSX.Element; onPress?: () => void; selected?: boolean; disabled?: boolean; label?: string; testID?: string; class?: string; trailing?: JSX.Element; lines?: 1 | 2; divided?: boolean; first?: boolean; top?: boolean; /** a terminal's line: the states, no room around it */ plain?: boolean }) {
+  const shape = () => (props.plain ? "" : props.divided ? `px-3 py-2 ${props.first ? "" : "border-t border-border"}` : "min-h-7 rounded-(--radius-sm) px-2 py-1");
+  const flow = () => (props.lines === 2 ? "flex-col items-stretch justify-center gap-1" : `flex-row gap-2 ${props.top ? "items-start" : "items-center"}`);
   return (
     <BaseButton
       testID={props.testID}
       accessibilityLabel={props.label}
       selected={props.selected}
+      disabled={props.disabled}
       onPress={props.onPress}
-      class={`flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 ${ROW_STATE} ${FOCUS} ${props.class ?? ""}`}
+      class={`group ${flow()} ${shape()} ${ROW_STATE} disabled:hover:bg-transparent ${FOCUS} ${props.class ?? ""}`}
     >
       {props.children}
-      {/* what ends the row (a count, a time) keeps its width and the row's middle */}
       <If when={props.trailing}>
-        <View class="ms-auto shrink-0 flex-row items-center gap-1.5">{props.trailing}</View>
+        <View class={`ms-auto shrink-0 flex-row items-center gap-2 ${props.top ? "min-h-5" : ""}`}>{props.trailing}</View>
       </If>
     </BaseButton>
   );
 }
 
+/** The one row that is only read: a line of a card's list under a hairline
+ * (`first` has none), its parts on one middle (`top`: at their first line),
+ * in one padding (12 by 8) wherever a card lists rows. */
+export function Row(props: { children: JSX.Element; first?: boolean; top?: boolean; wrap?: boolean; /** lines one under another (a job: what it is, then how far it got) */ stack?: boolean; class?: string; testID?: string }) {
+  const flow = () => (props.stack ? "gap-1" : `flex-row ${props.wrap ? "flex-wrap gap-x-3 gap-y-1" : "gap-3"} ${props.top ? "items-start" : "items-center"}`);
+  return (
+    <View testID={props.testID} class={`${flow()} px-3 py-2 ${props.first ? "" : "border-t border-border"} ${props.class ?? ""}`}>
+      {props.children}
+    </View>
+  );
+}
+
+/** The one tile an icon stands in: round and quiet, the icon at its large size. */
+export function IconTile(props: { icon: IconName; tint?: Tint }) {
+  return (
+    <View class="size-11 shrink-0 items-center justify-center rounded-full bg-muted">
+      <Icon name={props.icon} size={ICON.large} tint={props.tint} />
+    </View>
+  );
+}
+/** How much of itself a tile shows, by the room `Tiles` has for it: `full`
+ * (what it counts, the figure and its mark, a line about it), `tight` (a tile
+ * narrower than it reads in: what it counts and the figure) or `line` (a
+ * short pane: what it counts and the figure on one line). What is left out
+ * stays in the tile's label, for a screen reader. */
+export type TileLook = "full" | "tight" | "line";
 /** A figure in a row of them, the one tile: what it counts, the figure, a
  * line about it; with `onPress`, the tile is a button and says where it goes.
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string }) {
-  const tint = () => (props.tone === "warn" ? "text-warn" : props.tone === "ok" ? "text-status-ok" : "text-foreground");
-  return (
-    <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress ? `${props.label}: ${props.value}` : undefined} onPress={props.onPress}>
-      <View class="flex-row items-center gap-1.5">
-        <If when={props.icon}>{(i) => <Icon name={i()} size={13} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />}</If>
-        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
-        <If when={props.onPress}>
-          <Icon name="chevron-right" size={12} />
-        </If>
-      </View>
-      <If when={!props.pending} else={<View class="my-1 h-4 w-24 rounded-(--radius-sm) bg-muted" />}>
-        <Text class={`text-heading font-semibold tabular-nums line-clamp-1 ${tint()}`}>{props.value}</Text>
+export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
+  const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+  const look = () => props.look ?? "full";
+  const said = () => [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ");
+  const name = () => (
+    <>
+      {/* the icon only where the name has room beside it; a name's qualifier ("· median") likewise */}
+      <If when={props.icon && look() === "full"}>
+        <Icon name={props.icon!} size={ICON.small} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
       </If>
-      <If when={!props.pending} else={<View class="h-3 w-32 rounded-(--radius-sm) bg-muted/70" />}>
-        <Text class="text-caption text-muted-foreground line-clamp-2">{props.detail ?? ""}</Text>
+      <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
+    </>
+  );
+  const chevron = () => (
+    <If when={props.onPress}>
+      <Icon name="chevron-right" size={ICON.small} />
+    </If>
+  );
+  const figure = () => <Text class={`text-heading font-semibold tabular-nums line-clamp-1 ${look() === "line" ? "shrink-0" : "min-w-0 flex-1"} ${tint()}`}>{props.value}</Text>;
+  return (
+    <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress || look() !== "full" ? said() : undefined} onPress={props.onPress}>
+      <If
+        when={look() !== "line"}
+        else={
+          <View class="flex-row items-center gap-2">
+            {name()}
+            <If when={!props.pending} else={<View class="h-4 w-12 rounded-(--radius-sm) bg-muted" />}>
+              {figure()}
+            </If>
+            {chevron()}
+          </View>
+        }
+      >
+        <View class="flex-row items-center gap-1">
+          {name()}
+          {chevron()}
+        </View>
+        <If when={!props.pending} else={<View class="my-1 h-4 w-24 max-w-full rounded-(--radius-sm) bg-muted" />}>
+          <View class="flex-row items-center gap-2">
+            {figure()}
+            <If when={look() === "full"}>{props.mark}</If>
+          </View>
+        </If>
+        <If when={look() === "full"}>
+          <If when={!props.pending} else={<View class="h-3 w-32 max-w-full rounded-(--radius-sm) bg-muted/70" />}>
+            <Text class={`text-caption text-muted-foreground ${props.mark ? "line-clamp-1" : "line-clamp-2"}`}>{props.detail ?? ""}</Text>
+          </If>
+        </If>
       </If>
     </Card>
   );
@@ -337,8 +446,9 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
  * start and the end that tells it apart stay; screen readers hear it whole. */
 export function Path(props: { path: string; max?: number; class?: string; testID?: string }) {
   return (
-    <Text testID={props.testID} accessibilityLabel={props.path} class={`font-mono text-caption line-clamp-1 ${props.class ?? "text-foreground"}`}>
-      {middle(props.path, props.max ?? 48)}
+    // a window cuts it where it runs out of room (Native Shell's middle ellipsis); a terminal by a count of characters
+    <Text testID={props.testID} accessibilityLabel={props.path} class={`font-mono text-caption line-clamp-1 ${props.class ?? "text-foreground"}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
+      {terminal() ? middle(props.path, props.max ?? 48) : props.path}
     </Text>
   );
 }
@@ -355,10 +465,10 @@ export function Notice(props: { text: string; title?: string; tone?: "info" | "w
     <View testID={props.testID} role={tone() === "error" ? "alert" : undefined} class={`flex-row items-start gap-2 rounded-(--radius) border px-3 py-2 ${look()} ${props.class ?? ""}`}>
       <If when={!terminal()}>
         <View class="h-5 shrink-0 justify-center">
-          <Icon name={icon()} size={14} tint={tint()} />
+          <Icon name={icon()} tint={tint()} />
         </View>
       </If>
-      <View selectable class="min-w-0 flex-1 gap-0.5">
+      <View selectable class="min-w-0 flex-1 gap-1">
         <If when={props.title}>
           <Text class="text-body font-medium text-foreground">{props.title}</Text>
         </If>
@@ -415,20 +525,23 @@ export function Actions(props: { children: JSX.Element; note?: JSX.Element; clas
 
 /** Back to where this was opened from: one control, a chevron and the place's name. */
 export function Back(props: { label?: string; onPress: () => void; testID?: string }) {
-  return <Button small variant="ghost" icon="chevron-left" label={props.label ?? t("common.back")} onPress={props.onPress} testID={props.testID} class="-ml-1.5 self-start" />;
+  return <Button small variant="ghost" icon="chevron-left" label={props.label ?? t("common.back")} onPress={props.onPress} testID={props.testID} class="-ml-2 self-start" />;
 }
 
 /** The head of a place or a panel's page: what it is, a line about it, and
- * its commands at the end, on one middle. */
-export function PageHeader(props: { title: string; subtitle?: string; mono?: boolean; children?: JSX.Element; testID?: string }) {
+ * its commands at the end, on one middle. A page that is a window's whole
+ * content gives no `title`: the window's title bar says it, once. */
+export function PageHeader(props: { title?: string; subtitle?: string; mono?: boolean; children?: JSX.Element; testID?: string }) {
   return (
     <View testID={props.testID} class="min-h-8 flex-row items-center gap-3">
-      <View class="min-w-0 flex-1 gap-0.5">
-        <Text role="header" class={`text-heading font-semibold text-foreground line-clamp-1 ${props.mono ? "font-mono" : ""}`}>
-          {props.title}
-        </Text>
+      <View class="min-w-0 flex-1 gap-1">
+        <If when={props.title}>
+          <Title mono={props.mono} lines={1}>
+            {props.title}
+          </Title>
+        </If>
         <If when={props.subtitle}>
-          <Text class="text-small text-muted-foreground line-clamp-1">{props.subtitle}</Text>
+          <Text class="text-small text-muted-foreground line-clamp-2">{props.subtitle}</Text>
         </If>
       </View>
       <If when={props.children}>
@@ -440,19 +553,102 @@ export function PageHeader(props: { title: string; subtitle?: string; mono?: boo
 
 /** A figure in a line of them, without a card: the number, and under it
  * what it counts. `delta` says how it changed (better in the ok tone, worse
- * in the error's). The one inline figure; in a row of tiles, `Stat`. */
-export function Figure(props: { value: string; label: string; tone?: "plain" | "ok" | "warn" | "bad" | "quiet"; delta?: string; deltaTone?: "ok" | "bad" | "quiet"; small?: boolean; testID?: string }) {
+ * in the error's). With `preview`, a press (or Return) opens what the figure
+ * is made of and Escape closes it (Native Shell's Popover): the keyboard,
+ * touch and screen readers reach it as the pointer does. The one inline
+ * figure; in a row of tiles, `Stat`. */
+export function Figure(props: { value: string; label: string; tone?: "plain" | "ok" | "warn" | "bad" | "quiet"; delta?: string; deltaTone?: "ok" | "bad" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
   const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
   const dt = () => ({ ok: "text-status-ok", bad: "text-status-server", quiet: "text-muted-foreground" })[props.deltaTone ?? "quiet"];
-  return (
-    <View testID={props.testID} class="gap-0.5">
-      <View class="flex-row items-baseline gap-1.5">
+  const body = (
+    <View class="gap-1">
+      <View class="flex-row items-baseline gap-2">
         <Text class={`tabular-nums font-semibold ${props.small ? "text-body" : "text-heading"} ${tint()}`}>{props.value}</Text>
         <If when={props.delta}>
           <Text class={`tabular-nums text-caption font-medium ${dt()}`}>{props.delta}</Text>
         </If>
       </View>
       <Text class="text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
+    </View>
+  );
+  if (!props.preview || terminal()) return <View testID={props.testID}>{body}</View>;
+  return (
+    <Popover
+      placement="bottom"
+      align="start"
+      offset={6}
+      trigger={
+        // the press area reaches past the figure without moving it off the line's edge
+        <BaseButton testID={props.testID} accessibilityLabel={`${props.value} ${props.label}`} class={`-mx-2 -my-1 rounded-(--radius-sm) px-2 py-1 hover:bg-muted active:bg-muted ${FOCUS}`}>
+          {body}
+        </BaseButton>
+      }
+      popupClass={`w-[300px] gap-2 ${POPUP} p-3`}
+      popupStartingClass="opacity-0 -translate-y-1"
+      popupEndingClass="opacity-0"
+    >
+      {props.preview}
+    </Popover>
+  );
+}
+
+/** Figures in a line that never wraps mid-row: as many as the line's width
+ * holds, in the order given (which is their rank), the rest left out — a
+ * line of figures broken in two reads as two. The line measures itself;
+ * each figure has `FIGURE_WIDTH` of it. */
+export const FIGURE_WIDTH = 124;
+/** How many figures a line `width` wide holds (all of them before it is measured; two at least). */
+export const figuresFit = (width: number, n: number) => (width > 0 ? Math.min(n, Math.max(2, Math.floor(width / FIGURE_WIDTH))) : n);
+export function Figures(props: { items: { /** whether it has anything to say now (a session's errors: only when there are some) */ show?: () => boolean; figure: JSX.Element }[]; testID?: string; label?: string }) {
+  const width = signal(0);
+  const on = (i: number) => props.items[i].show?.() ?? true;
+  // its place among those shown: the rank the line's room is given by
+  const rank = (i: number) => props.items.slice(0, i).filter((_, k) => on(k)).length;
+  const fit = () => figuresFit(width(), props.items.filter((_, k) => on(k)).length);
+  return (
+    <View testID={props.testID} accessibilityLabel={props.label} class="flex-row items-start" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+      {props.items.map((f, i) => (
+        <View style={{ width: FIGURE_WIDTH }} class={on(i) && rank(i) < fit() ? "shrink-0 pr-4" : "hidden"}>
+          {f.figure}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** How many tiles go in a row `width` wide, of `n` that each need `min`: all
+ * abreast where they fit, else rows of equal count (four are 2×2, six 3×3,
+ * five 3 and 2), never a row of all but one and never one column: where two
+ * do not fit abreast they are two all the same, and `tight`. */
+export function tilesPerRow(width: number, n: number, min: number, gap = 12): number {
+  if (width <= 0) return n;
+  const fit = Math.max(1, Math.floor((width + gap) / (min + gap)));
+  if (fit >= n) return n;
+  const half = Math.ceil(n / 2);
+  return fit >= half ? half : Math.min(n, 2);
+}
+/** How many tiles a single row `width` wide holds, of `n` that each need `min`: two at least. */
+export const tilesFit = (width: number, n: number, min: number, gap = 12) => (width > 0 ? Math.min(n, Math.max(2, Math.floor((width + gap) / (min + gap)))) : n);
+/** Tiles in rows by that rule: the row measures itself and gives each tile its width.
+ * `ranked` keeps them to one row: as many as fit, in the order given (their
+ * rank), the last ranked left out — as `Figures` does a line of figures.
+ * A tile given as a function is told its `TileLook`: `line` in a pane under
+ * `BREAK.short` (`short`: the rows under the tiles need the room), `tight`
+ * where it is narrower than `min`, `full` otherwise. */
+export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => JSX.Element))[]; min?: number; testID?: string; ranked?: boolean; label?: string; /** the pane's height is under `BREAK.short` */ short?: boolean }) {
+  const GAP = 12;
+  const width = signal(0);
+  const min = () => props.min ?? 144;
+  const per = () => (props.ranked ? tilesFit(width(), props.items.length, min(), GAP) : tilesPerRow(width(), props.items.length, min(), GAP));
+  const each = () => (width() > 0 ? Math.floor((width() - GAP * (per() - 1)) / per()) : undefined);
+  const look = (): TileLook => (props.short ? "line" : (each() ?? min()) < min() ? "tight" : "full");
+  return (
+    <View testID={props.testID} accessibilityLabel={props.label} class={`flex-row gap-3 ${props.ranked ? "" : "flex-wrap"}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+      {props.items.map((tile, i) => (
+        <View style={each() ? { width: each() } : undefined} class={props.ranked && i >= per() ? "hidden" : each() ? "" : "min-w-36 flex-1"}>
+          {typeof tile === "function" ? tile(look) : tile}
+        </View>
+      ))}
     </View>
   );
 }
@@ -467,7 +663,7 @@ export function Modal(props: { open: boolean; onClose: () => void; size?: keyof 
       onOpenChange={(e) => !e.open && props.onClose()}
       backdropClass={SCRIM}
       testID={props.testID}
-      class={`m-auto ${MODAL[props.size ?? "default"]} max-w-[94%] gap-4 ${CARD} bg-popover p-5 shadow-xl`}
+      class={`m-auto ${MODAL[props.size ?? "default"]} max-w-[94%] gap-4 ${CARD} bg-popover p-4 shadow-xl`}
     >
       {props.children}
     </Dialog>
@@ -476,20 +672,29 @@ export function Modal(props: { open: boolean; onClose: () => void; size?: keyof 
 
 /** A section that opens and closes under its title (Native Shell's
  * Accordion of one item: a heading, a button that says whether it is
- * expanded, the panel revealed). */
-export function Disclosure(props: { title: string; count?: number; open?: boolean; children: JSX.Element; testID?: string; level?: number; trailing?: JSX.Element }) {
-  const value = signal<string[]>(props.open ? ["x"] : []);
+ * expanded, the panel revealed). `trailing` stands beside the title (what
+ * the section comes to, a command); `expanded` and `onToggle` let what holds
+ * it keep whether it is open. The one open/close section. */
+export function Disclosure(props: { title: string; count?: number; open?: boolean; expanded?: boolean; onToggle?: (open: boolean) => void; children: JSX.Element; testID?: string; itemTestID?: string; level?: number; trailing?: JSX.Element }) {
+  const own = signal<string[]>(props.open ? ["x"] : []);
+  const value = () => (props.expanded === undefined ? own() : props.expanded ? ["x"] : []);
   return (
-    <Accordion value={value()} onChange={(e) => value.set(e.value)}>
-      <AccordionItem value="x" class="gap-2">
-        <AccordionHeader level={props.level ?? 3} class="flex-row items-center gap-2">
-          <AccordionTrigger testID={props.testID} class={`group flex-1 flex-row items-center gap-1.5 rounded-(--radius-sm) py-0.5 ${FOCUS}`}>
+    <Accordion
+      value={value()}
+      onChange={(e) => {
+        own.set(e.value);
+        props.onToggle?.(e.value.includes("x"));
+      }}
+    >
+      <AccordionItem value="x" testID={props.itemTestID} class="gap-2">
+        <AccordionHeader level={props.level ?? 3} class="flex-row items-center gap-3">
+          <AccordionTrigger testID={props.testID} class={`group ${props.trailing ? "shrink-0" : "flex-1"} flex-row items-center gap-1 rounded-(--radius-sm) py-1 pr-1 ${FOCUS}`}>
             <View class="group-aria-expanded:rotate-90 motion-safe:transition-transform motion-safe:duration-150">
-              <Icon name="chevron-right" size={13} tint="muted-foreground" />
+              <Icon name="chevron-right" size={ICON.small} tint="muted-foreground" />
             </View>
             <Text class="text-body font-semibold text-foreground">{props.title}</Text>
             <If when={props.count !== undefined}>
-              <Text class="text-body text-muted-foreground">{`· ${props.count}`}</Text>
+              <Text class="text-body text-muted-foreground">{`· ${count(props.count ?? 0)}`}</Text>
             </If>
           </AccordionTrigger>
           {props.trailing}
@@ -518,7 +723,7 @@ const toneClass: Record<Tone, string> = {
 export function Badge(props: { label: string; tone?: Tone; testID?: string }) {
   const [bg, fg] = toneClass[props.tone ?? "neutral"].split(" ");
   return (
-    <View testID={props.testID} accessibilityLabel={props.label} class={`self-start rounded-full px-2 py-0.5 ${bg}`}>
+    <View testID={props.testID} accessibilityLabel={props.label} class={`h-5 justify-center self-start rounded-full px-2 ${bg}`}>
       <Text class={`text-small font-medium ${fg}`}>{props.label}</Text>
     </View>
   );
@@ -529,15 +734,24 @@ export function Badge(props: { label: string; tone?: Tone; testID?: string }) {
 export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxed?: boolean }) {
   if (props.boxed)
     return (
-      <View selectable class="overflow-hidden rounded-(--radius) border border-border bg-card">
-        <Each of={props.rows}>
-          {(row, i) => (
-            <View class={`flex-row gap-3 px-2.5 py-1 ${i() > 0 ? "border-t border-border" : ""}`}>
-              <Text class="w-[136px] shrink-0 font-mono text-caption text-muted-foreground line-clamp-1">{row()[0]}</Text>
-              <Text class={`min-w-0 flex-1 text-caption text-foreground ${props.mono === false ? "" : "font-mono"}`}>{row()[1]}</Text>
-            </View>
-          )}
-        </Each>
+      // a table to a screen reader: names in the first column, values in the second
+      <View selectable>
+      <Table class="overflow-hidden rounded-(--radius) border border-border bg-card">
+        <TableBody>
+          <Each of={props.rows}>
+            {(row, i) => (
+              <TableRow class={`flex-row gap-3 px-2 py-1 ${i() > 0 ? "border-t border-border" : ""}`}>
+                <TableCell class="w-[136px] shrink-0">
+                  <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{row()[0]}</Text>
+                </TableCell>
+                <TableCell class="min-w-0 flex-1">
+                  <Text class={`text-caption text-foreground ${props.mono === false ? "" : "font-mono"}`}>{row()[1]}</Text>
+                </TableCell>
+              </TableRow>
+            )}
+          </Each>
+        </TableBody>
+      </Table>
       </View>
     );
   return (
@@ -559,25 +773,41 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxe
 }
 
 /** A line of text to type. `bare` leaves its label to screen readers (and
- * its placeholder): a field in a toolbar row, on the row's one middle. */
-export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean }) {
+ * its placeholder): a field in a toolbar row, on the row's one middle.
+ * `leading` stands before the text inside the field (a prompt, an icon) and
+ * `trailing` after it (an `IconButton inField`); `small` is the second
+ * control height. A field that matters more is wider and in mono, never higher. */
+export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean }) {
+  const boxed = () => !!props.leading || !!props.trailing;
+  const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} disabled:opacity-50`;
+  const input = (cls: string) => (
+    <Input
+      testID={props.testID}
+      accessibilityLabel={props.label}
+      value={props.value}
+      placeholder={props.placeholder}
+      autoCapitalize="none"
+      autoCorrect={false}
+      readonly={props.readonly}
+      disabled={props.disabled}
+      onChange={({ value }) => props.onChange(value)}
+      onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
+      submitBehavior={props.onSubmit ? "submit" : undefined}
+      class={cls}
+    />
+  );
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
       <If when={!props.bare}>
         <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
       </If>
-      <Input
-        testID={props.testID}
-        accessibilityLabel={props.label}
-        value={props.value}
-        placeholder={props.placeholder}
-        autoCapitalize="none"
-        autoCorrect={false}
-        onChange={({ value }) => props.onChange(value)}
-        onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
-        submitBehavior={props.onSubmit ? "submit" : undefined}
-        class={`h-8 rounded-(--radius) border border-input bg-background px-2.5 text-body text-foreground focus:border-ring ${FOCUS} ${props.mono ? "font-mono" : ""}`}
-      />
+      <If when={boxed()} else={input(`${props.small ? CONTROL.small : CONTROL.field} rounded-(--radius) border border-input bg-background px-2 focus-visible:border-ring ${FOCUS} ${text()}`)}>
+        <View class={`${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box}`}>
+          {props.leading}
+          {input(`min-w-0 flex-1 ${text()}`)}
+          {props.trailing}
+        </View>
+      </If>
     </View>
   );
 }
@@ -598,10 +828,10 @@ export function Labeled(props: { label: string; children: JSX.Element; class?: s
  * holds any, and what the place puts after it (a "search everywhere"). */
 export function SearchField(props: { value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder: string; label?: string; small?: boolean; testID?: string; class?: string; children?: JSX.Element }) {
   return (
-    <View class={terminal() ? `flex-row items-center gap-1 ${props.class ?? ""}` : `${props.small ? CONTROL.small : CONTROL.field} flex-row items-center gap-2 rounded-(--radius) border border-input bg-background px-2.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50 ${props.class ?? ""}`}>
+    <View class={terminal() ? `flex-row items-center gap-1 ${props.class ?? ""}` : `${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box} ${props.class ?? ""}`}>
       <If when={!terminal()}>
         <View class="shrink-0">
-          <Icon name="search" size={14} tint="muted-foreground" />
+          <Icon name="search" tint="muted-foreground" />
         </View>
       </If>
       <Input
@@ -617,7 +847,7 @@ export function SearchField(props: { value: string; onChange: (v: string) => voi
         class="min-w-0 flex-1 text-body text-foreground placeholder:text-muted-foreground"
       />
       <If when={props.value && !terminal()}>
-        <IconButton icon="x" label={t("common.clear")} onPress={() => props.onChange("")} class="size-5 shrink-0" />
+        <IconButton inField icon="x" label={t("common.clear")} onPress={() => props.onChange("")} />
       </If>
       {props.children}
     </View>
@@ -641,12 +871,12 @@ export function NumberField(props: { label: string; value: number | null; onChan
       controlsRight
       // a field like every other: a border, a ring when focused, steppers at its end
       class={terminal() ? undefined : "h-8 flex-row items-center overflow-hidden rounded-(--radius) border border-input bg-background focus-within:border-ring"}
-      inputClass={terminal() ? undefined : "min-w-0 flex-1 px-2.5 text-body tabular-nums text-foreground placeholder:text-muted-foreground"}
+      inputClass={terminal() ? undefined : "min-w-0 flex-1 px-2 text-body tabular-nums text-foreground placeholder:text-muted-foreground"}
       controlsClass={terminal() ? undefined : "h-full border-l border-input"}
-      incrementButtonClass={terminal() ? undefined : "flex-1 items-center justify-center px-1.5 hover:bg-muted active:bg-accent"}
-      decrementButtonClass={terminal() ? undefined : "flex-1 items-center justify-center px-1.5 hover:bg-muted active:bg-accent"}
-      incrementButton={terminal() ? undefined : <View style={{ transform: [{ rotate: "180deg" }] }}><Icon name="chevron-down" size={11} /></View>}
-      decrementButton={terminal() ? undefined : <Icon name="chevron-down" size={11} />}
+      incrementButtonClass={terminal() ? undefined : "flex-1 items-center justify-center px-2 hover:bg-muted active:bg-accent"}
+      decrementButtonClass={terminal() ? undefined : "flex-1 items-center justify-center px-2 hover:bg-muted active:bg-accent"}
+      incrementButton={terminal() ? undefined : <View style={{ transform: [{ rotate: "180deg" }] }}><Icon name="chevron-down" size={12} /></View>}
+      decrementButton={terminal() ? undefined : <Icon name="chevron-down" size={12} />}
       suffix={props.suffix ? <Text class="pr-2 text-small text-muted-foreground">{props.suffix}</Text> : undefined}
     />
   );
@@ -671,6 +901,7 @@ export function SwitchRow(props: { label: string; checked: boolean; onChange: (v
       onChange={({ checked }) => props.onChange(checked)}
       class={`flex-row items-center gap-3 rounded-(--radius-sm) disabled:opacity-50 ${FOCUS}`}
       // the thumb centered in its track, top to bottom
+      // off-scale: the thumb (16) sits 2 pt inside its track (20)
       trackClass="h-5 w-9 shrink-0 justify-center rounded-full bg-input px-0.5 checked:bg-primary motion-safe:transition-colors"
       thumbClass="h-4 w-4 rounded-full bg-switch-thumb shadow-sm checked:translate-x-4 motion-safe:transition-transform"
     >
@@ -714,16 +945,18 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         placeholder={props.placeholder}
         accessibilityLabel={props.label ?? props.placeholder}
         onChange={({ value }) => value !== null && props.onChange(value)}
+        // below its trigger (Linux, Windows): a gap, as every other popup has
+        offset={4}
         popupClass={POPUP}
         popupStyle={glass}
-        itemClass="rounded-sm px-2 py-1.5 text-body text-popover-foreground focus:bg-accent selected:font-semibold"
+        itemClass="rounded-sm px-2 py-1 text-body text-popover-foreground focus:bg-accent selected:font-semibold"
         trigger={
-          <View class="h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2.5 hover:border-ring/60">
+          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${FOCUS}`}>
             <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">
               {title()}
             </Text>
             <View class="shrink-0">
-              <Icon name="chevrons-up-down" size={13} />
+              <Icon name="chevrons-up-down" size={12} />
             </View>
           </View>
         }
@@ -746,7 +979,7 @@ export function Segmented(props: { value: string; items: { value: string; title:
             class={`group ${CONTROL.segment} ${FOCUS}`}
           >
             <If when={item().icon}>
-              <Icon name={item().icon!} size={13} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
+              <Icon name={item().icon!} size={12} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
             <Text class="text-small text-muted-foreground group-selected:font-medium group-selected:text-foreground">{item().title}</Text>
           </Tab>
@@ -756,35 +989,36 @@ export function Segmented(props: { value: string; items: { value: string; title:
   );
 }
 
-/** One value of a few, as a row of toggles (Native Shell's ToggleGroup:
- * arrow keys move between them, screen readers hear toggle buttons). For a
- * value; `Segmented` (tabs) switches what a place shows. */
+/** One value of a few, as a row of radios (Native Shell's RadioGroup: one
+ * is checked, arrow keys move between them, screen readers hear a set of
+ * radio buttons and which is chosen). For a value; `Segmented` (tabs)
+ * switches what a place shows. */
 export function Options(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
-    <ToggleGroup testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`}>
+    <RadioGroup testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`}>
       <Each of={props.items} key={(i) => i.value}>
         {(item) => (
-          <BaseToggle
+          <Radio
             testID={props.testID ? `${props.testID}-${item().value}` : undefined}
             accessibilityLabel={item().title}
-            pressed={props.value === item().value}
+            checked={props.value === item().value}
             onChange={() => props.onChange(item().value)}
-            class={`group ${CONTROL.segment} aria-pressed:bg-background aria-pressed:shadow-sm ${FOCUS}`}
+            class={`group ${CONTROL.segment} checked:bg-background checked:shadow-sm ${FOCUS}`}
           >
             <If when={item().icon}>
-              <Icon name={item().icon!} size={13} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
+              <Icon name={item().icon!} size={12} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
-            <Text class="text-small text-muted-foreground group-aria-pressed:font-medium group-aria-pressed:text-foreground">{item().title}</Text>
-          </BaseToggle>
+            <Text class="text-small text-muted-foreground group-checked:font-medium group-checked:text-foreground">{item().title}</Text>
+          </Radio>
         )}
       </Each>
-    </ToggleGroup>
+    </RadioGroup>
   );
 }
 
 /** A status mark: a small dot in a status color, with its meaning for screen readers. */
-export function Dot(props: { tone: "ok" | "miss" | "client" | "server" | "refused" | "live"; label?: string }) {
-  const bg = { ok: "bg-status-ok", miss: "bg-status-miss", client: "bg-status-client", server: "bg-status-server", refused: "bg-status-refused", live: "bg-primary" }[props.tone];
+export function Dot(props: { tone: "ok" | "miss" | "client" | "server" | "refused" | "injected" | "live"; label?: string }) {
+  const bg = { ok: "bg-status-ok", miss: "bg-status-miss", client: "bg-status-client", server: "bg-status-server", refused: "bg-status-refused", injected: "bg-status-injected", live: "bg-primary" }[props.tone];
   return <View accessibilityLabel={props.label} class={`size-2 rounded-full ${bg}`} />;
 }
 
@@ -794,10 +1028,8 @@ export function Section(props: { title?: string; description?: string; children:
     <View testID={props.testID} class="gap-3">
       <If when={props.title}>
         <View class="flex-row items-end gap-3">
-          <View class="flex-1 gap-0.5">
-            <Text role="header" class="text-body font-semibold text-foreground">
-              {props.title}
-            </Text>
+          <View class="flex-1 gap-1">
+            <Heading>{props.title}</Heading>
             <If when={props.description}>
               <Text class="text-small text-muted-foreground">{props.description}</Text>
             </If>
@@ -820,7 +1052,7 @@ export function Bar(props: { value: number | null; label?: string }) {
         // Native Shell's Progress counts 0–100
         value={props.value === null ? undefined : Math.min(100, Math.max(0, props.value * 100))}
         indeterminate={props.value === null}
-        accessibilityLabel={props.label ?? "progress"}
+        accessibilityLabel={props.label ?? t("common.progress")}
         class="h-1.5 rounded-full"
         trackClass="h-1.5 rounded-full bg-muted"
         indicatorClass="h-1.5 rounded-full bg-primary"
@@ -832,17 +1064,24 @@ export function Bar(props: { value: number | null; label?: string }) {
   );
 }
 
-/** An empty place: what is missing, and the next step. */
-export function Empty(props: { text: string; title?: string; icon?: IconName; children?: JSX.Element; testID?: string }) {
+/** An empty place: what is missing, and the next step. The one way to say
+ * "nothing here": whole (an icon in its tile, a title, the words, what to do)
+ * where it fills a place; `compact` (the words only, quiet, centered in the
+ * room `class` gives it) inside a chart, a list or a card. */
+export function Empty(props: { text: string; title?: string; icon?: IconName; children?: JSX.Element; testID?: string; compact?: boolean; class?: string }) {
+  if (props.compact)
+    return (
+      <View testID={props.testID} class={`items-center justify-center p-3 ${props.class ?? ""}`}>
+        <Text class="text-center text-small text-muted-foreground">{props.text}</Text>
+      </View>
+    );
   return (
-    <View testID={props.testID} class="flex-1 items-center justify-center gap-3 p-8">
-      <If when={props.icon}>
-        <View class="mb-1 size-11 items-center justify-center rounded-full bg-muted">
-          <Icon name={props.icon!} size={20} />
-        </View>
+    <View testID={props.testID} class={`flex-1 items-center justify-center gap-3 p-6 ${props.class ?? ""}`}>
+      <If when={props.icon && !terminal()}>
+        <IconTile icon={props.icon!} />
       </If>
       <If when={props.title}>
-        <Text class="text-center text-heading font-semibold text-foreground">{props.title}</Text>
+        <Title center>{props.title}</Title>
       </If>
       <Text class="max-w-[380px] text-center text-body text-muted-foreground">{props.text}</Text>
       <If when={props.children}>
@@ -867,7 +1106,7 @@ export function Loading(props: { text?: string; class?: string; testID?: string 
 export function SessionSkeleton(props: { rows?: number }) {
   const bar = (w: string, h = "h-3") => <View class={`${h} ${w} rounded-(--radius-sm) bg-muted`} />;
   return (
-    <View testID="session-reading" accessibilityLabel={t("sessions.reading")} class="flex-1 gap-3 px-5 pt-4">
+    <View testID="session-reading" accessibilityLabel={t("sessions.reading")} class="flex-1 gap-3 px-4 pt-4">
       <View class="gap-2">
         {bar("w-56", "h-4")}
         {bar("w-80")}
@@ -892,10 +1131,28 @@ export function SessionSkeleton(props: { rows?: number }) {
 /** A scrolling page body with even padding. */
 export function Page(props: { children: JSX.Element; testID?: string }) {
   return (
-    <Scroll testID={props.testID} class="flex-1" contentClass="gap-4 p-5">
+    <Scroll testID={props.testID} class="flex-1" contentClass="gap-4 p-4">
       {props.children}
     </Scroll>
   );
+}
+
+/** A table's columns by rank, the one rule of every table that narrows:
+ * of `ranked` (first the one that matters most) as many as fit beside what
+ * always shows (`used` points of it) while the column that takes the rest
+ * keeps `room`. The first that does not fit goes, and every one ranked after
+ * it with it: a column is dropped whole, none is ever clipped, and (the
+ * ranked ones standing last, in rank order) only columns at the table's end
+ * go — DataTable keeps a column's state by its place. A width of 0 (not
+ * measured yet) keeps them all. */
+export function fitColumns<K extends string>(width: number, used: number, room: number, ranked: { key: K; width: number }[]): K[] {
+  const shown: K[] = [];
+  for (const c of ranked) {
+    if (width > 0 && width - used - c.width < room) break;
+    shown.push(c.key);
+    used += c.width;
+  }
+  return shown;
 }
 
 /** What a sortable cell sorts by: its number where it reads as one
@@ -981,34 +1238,6 @@ export function Recoverable(props: { children: JSX.Element }) {
   );
 }
 
-/** What a chart's colors stand for: a swatch (its `bg-*` class) and a name
- * each, in a row that wraps. One legend for every chart. */
-export function Legend(props: { items: { label: string; swatch: string }[]; class?: string; square?: boolean }) {
-  return (
-    <View class={`flex-row flex-wrap gap-x-4 gap-y-1 ${props.class ?? ""}`}>
-      <Each of={props.items} key={(it) => it.label}>
-        {(it) => (
-          <View class="flex-row items-center gap-1.5">
-            <View class={`size-2 ${props.square ? "rounded-sm" : "rounded-full"} ${it().swatch}`} />
-            <Text class="text-caption text-muted-foreground">{it().label}</Text>
-          </View>
-        )}
-      </Each>
-    </View>
-  );
-}
-
-/** A chart's tooltip: the popup surface, a title and a line or two of
- * figures, beside the pointer (a Plot's `tooltipContent`). One for every chart. */
-export function ChartTip(props: { title: string; lines: string[] }) {
-  return (
-    <View class={`max-w-[280px] gap-0.5 ${POPUP} px-2 py-1.5`}>
-      <Text class="text-small font-medium text-popover-foreground line-clamp-2">{props.title}</Text>
-      <Each of={props.lines}>{(l) => <Text class="tabular-nums text-caption text-muted-foreground">{l()}</Text>}</Each>
-    </View>
-  );
-}
-
 /** The first row of a bucket tool's sheet, built one way: what it looks at
  * (`scope`), its command and Cancel while it runs (`children`), and at the
  * row's end what else it offers (`end`: a `More`). One middle, small controls. */
@@ -1057,7 +1286,7 @@ export function InWindowMenu(props: { enabled: boolean; actions: () => { label: 
         <Each of={props.actions()}>
           {(a) => (
             <MenuItem onSelect={a().run} class="flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1 focus:bg-accent">
-              <If when={a().icon}>{(_) => <Icon name={a().icon!} size={14} tint="muted-foreground" />}</If>
+              <If when={a().icon}>{(_) => <Icon name={a().icon!} />}</If>
               <Text class="text-body text-foreground">{a().label}</Text>
             </MenuItem>
           )}

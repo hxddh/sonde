@@ -37,8 +37,12 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 - **Findings** say what deserves a look (hot keys, HEAD before GET, throttling, unfinished uploads, orphaned files,
   slow requests…), what fixing them would save, a fix in Python, Java, Go or JavaScript, and, with `--callers`,
   the line of your code that sent the requests (Python, Node.js and Java).
-- **Where the time and money went**, on one board under one timeline: waiting by kind of request, every request
-  on a log scale, what ran at once lane by lane, prefixes against S3's per-prefix limit, the request cost.
+- **Four signals** head every run, in the app and in `sonde show`: rate, errors, latency and bytes, each with
+  its line over the session (and how many requests were in flight).
+- **Where the time and money went**, on one board under one timeline: bytes a second each way, p50, p95 and p99
+  over time, the first byte against the rest, errors and retries by class, sizes and MiB/s, waiting by kind of
+  request, every request on a log scale, what ran at once lane by lane, prefixes against S3's per-prefix limit,
+  the cost by operation.
 - **Production traffic**: `sonde import` reads S3 access logs, CloudTrail and HAR files the same way.
 
 **When the store fails**
@@ -47,11 +51,12 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
   first attempt, a write whose answer is lost, a failed CompleteMultipartUpload — and says whether the program
   **survived**: whether it retried, how long it waited and whether the waits are jittered, how much it multiplied
   the load, what it left behind. `[[scenario]]` in `sonde.toml` adds a project's own;
-  `sonde check` fails when the program broke. See [docs/trials.md](docs/trials.md).
+  `sonde check` fails when the program broke. In the app, **Try under faults…** does the same and a trial opens
+  as a session with the injected requests marked. See [docs/trials.md](docs/trials.md).
 
 **Programs and CI**
 
-- Runs of one command are tracked against a **baseline**. `sonde check` fails a CI job when a run is over its
+- Runs of one program (its `name` in `sonde.toml`, else its command) are tracked against a **baseline**. `sonde check` fails a CI job when a run is over its
   budget (requests, waiting, cost, errors, p95) or past its baseline; findings you keep on purpose can be
   `expect`ed.
 - The app says since which run and commit a program got worse, and shows the code that changed in between.
@@ -153,8 +158,9 @@ sonde --url http://127.0.0.1:9000 --path-style probe -b scratch --only checksum.
 
 ## Development
 
-Rust 1.95 or newer builds sonde; the `nsh` CLI that bundles the app and runs its UI tests needs 1.97 (it is
-installed from Native Shell at the pinned commit, `docs/decisions.md` D-002).
+Rust 1.95 or newer builds sonde; what links Native Shell needs 1.97, its own minimum since the pinned commit: the
+app's crate (`sonde-nsh`), `sonde tui` (the `tui` feature) and the `nsh` CLI that bundles the app and runs its UI
+tests (installed from Native Shell at the pinned commit, `docs/decisions.md` D-002). CI builds with stable.
 
 ```sh
 cargo test --workspace                       # unit tests (SigV4 vectors, redaction, parsers, judges, decoders)

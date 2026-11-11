@@ -22,6 +22,18 @@ pub fn program_key(command: Option<&str>) -> Option<String> {
     }
 }
 
+/// The program a session is a run of: the name it was given, else its
+/// command ([`program_key`]). A named program keeps its runs and its
+/// baseline when an argument or the interpreter's path changes.
+pub fn key_of(header: &crate::session::SessionHeader) -> Option<String> {
+    // (a replay or an import of a named run is still none)
+    program_key(header.command.as_deref())?;
+    match header.name.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => Some(name.to_string()),
+        _ => program_key(header.command.as_deref()),
+    }
+}
+
 /// A shell word that sets a variable for the command: `NAME=value`.
 fn is_assignment(word: &str) -> bool {
     match word.split_once('=') {
@@ -452,6 +464,10 @@ pub struct Verdict {
     pub limit: f64,
     /// Where the limit comes from: `budget` or `baseline`.
     pub against: &'static str,
+    /// The baseline's own figure, for a row held to the baseline: the
+    /// limit is that with the tolerance (and a little slack) on top.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<f64>,
     pub ok: bool,
 }
 
@@ -465,16 +481,20 @@ impl Verdict {
         }
     }
 
-    /// By how much a failed row is over its limit: `+23%`, or the count
-    /// itself where the limit is none at all. None for a row that passed.
+    /// By how much a failed row is over what it is held to: `+23%`, or the
+    /// count itself where that is none at all. A budget's row is over its
+    /// limit; a baseline's row is over the baseline (a run 90% over its
+    /// baseline is `+90%`, not the 73% it is past baseline-and-tolerance).
+    /// None for a row that passed.
     pub fn over(&self) -> Option<String> {
         if self.ok {
             return None;
         }
-        if self.limit <= 0.0 {
-            return Some(format!("+{:.0}", self.value));
+        let of = self.base.unwrap_or(self.limit);
+        if of <= 0.0 {
+            return Some(format!("+{:.0}", self.value - of.max(0.0)));
         }
-        let pct = (self.value - self.limit) / self.limit * 100.0;
+        let pct = (self.value - of) / of * 100.0;
         Some(if pct < 1.0 {
             "+<1%".to_string()
         } else {
@@ -630,6 +650,7 @@ pub fn check(
             value,
             limit,
             against,
+            base: None,
             ok: value <= limit + 1e-12,
         })
     };
@@ -653,10 +674,25 @@ pub fn check(
         let base = b.0;
         if let Some(t) = budget.tolerance {
             let l = baseline_limits(base, t);
-            limit("requests", r.requests as f64, l.requests, "baseline");
-            limit("waiting", r.busy_ms, l.waiting_ms, "baseline");
-            limit("cost", r.cost, l.cost, "baseline");
-            limit("errors", r.errors as f64, l.errors, "baseline");
+            let mut held = |what, value: f64, limit: f64, base: f64| {
+                v.push(Verdict {
+                    what,
+                    value,
+                    limit,
+                    against: "baseline",
+                    base: Some(base),
+                    ok: value <= limit + 1e-12,
+                })
+            };
+            held(
+                "requests",
+                r.requests as f64,
+                l.requests,
+                base.requests as f64,
+            );
+            held("waiting", r.busy_ms, l.waiting_ms, base.busy_ms);
+            held("cost", r.cost, l.cost, base.cost);
+            held("errors", r.errors as f64, l.errors, base.errors as f64);
         }
         if budget.no_new_warnings {
             // a warning the baseline did not have as a warning: new, or grown from a note
@@ -675,7 +711,14 @@ pub fn check(
                 })
                 .map(|o| o.text.clone())
                 .collect();
-            limit("warnings", new_warnings.len() as f64, 0.0, "baseline");
+            v.push(Verdict {
+                what: "warnings",
+                value: new_warnings.len() as f64,
+                limit: 0.0,
+                against: "baseline",
+                base: None,
+                ok: new_warnings.is_empty(),
+            });
         }
     }
     Check {
@@ -749,19 +792,76 @@ pub fn check_markdown(
     since: Option<&str>,
     findings: &[Observation],
 ) -> String {
+    check_markdown_with(c, currency, since, findings, &[])
+}
+
+/// What a check found, in a few words: the budget's verdict and the
+/// trials', each said as what it is. A run within its budget that broke
+/// under a trial failed, and is not "over budget".
+pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
+    use crate::trial::Standing;
+    let broke = trials.iter().any(|t| t.standing == Standing::Broke);
+    let tried = trials.iter().any(|t| t.standing != Standing::Untested);
+    let within = c.verdicts.iter().all(|v| v.ok);
+    match (c.verdicts.is_empty(), within, broke) {
+        (true, _, true) => "broke under a trial".into(),
+        (true, _, false) if tried => "did not break under its trials".into(),
+        (true, _, false) if !trials.is_empty() => "nothing was tried".into(),
+        (true, _, false) => "nothing checked".into(),
+        (false, true, false) => "within budget".into(),
+        (false, true, true) => "within budget, and broke under a trial".into(),
+        (false, false, false) => "over budget".into(),
+        (false, false, true) => "over budget, and broke under a trial".into(),
+    }
+}
+
+/// Whether a check, with the run's trials, passed: every row of the budget
+/// and the baseline, and no trial that broke.
+pub fn check_passed(c: &Check, trials: &[crate::trial::Trial]) -> bool {
+    c.verdicts.iter().all(|v| v.ok)
+        && !trials
+            .iter()
+            .any(|t| t.standing == crate::trial::Standing::Broke)
+}
+
+/// A trial's mark in a check: `pass` survived, `warn` degraded (it got
+/// through, and not cleanly), `FAIL` broke, `skip` untested.
+pub fn trial_mark(s: crate::trial::Standing) -> &'static str {
+    use crate::trial::Standing;
+    match s {
+        Standing::Survived => "pass",
+        Standing::Degraded => "warn",
+        Standing::Broke => "FAIL",
+        Standing::Untested => "skip",
+    }
+}
+
+/// [`check_markdown`], with the run's trials: their rows, and a heading
+/// that says which of the two failed.
+pub fn check_markdown_with(
+    c: &Check,
+    currency: &str,
+    since: Option<&str>,
+    findings: &[Observation],
+    trials: &[crate::trial::Trial],
+) -> String {
     let shown = |what: &str, v: f64| match what {
         "waiting" | "p95" => ms_text(v),
         "cost" => money_text(v, currency),
         _ => format!("{v:.0}"),
     };
     let mut md = format!(
-        "### sonde: {}\n\n| | | run | limit | from |\n|---|---|---:|---:|---|\n",
-        if c.passed {
-            "within budget ✅"
+        "### sonde: {} {}\n",
+        check_closing(c, trials),
+        if check_passed(c, trials) {
+            "✅"
         } else {
-            "over budget ❌"
+            "❌"
         }
     );
+    if !c.verdicts.is_empty() {
+        md.push_str("\n| | | run | limit | from |\n|---|---|---:|---:|---|\n");
+    }
     for v in &c.verdicts {
         md.push_str(&format!(
             "| {} | {} | {} | ≤ {} | {} |\n",
@@ -774,6 +874,20 @@ pub fn check_markdown(
             shown(v.what, v.limit),
             v.against
         ));
+    }
+    if !trials.is_empty() {
+        md.push_str("\n| | under | |\n|---|---|---|\n");
+        for t in trials {
+            md.push_str(&format!(
+                "| {} | {} | {} |\n",
+                match trial_mark(t.standing) {
+                    "FAIL" => "**FAIL**",
+                    mark => mark,
+                },
+                md_text(&t.scenario),
+                md_text(&t.line())
+            ));
+        }
     }
     if let Some(t) = &since {
         md.push_str(&format!("\n**Since** {}\n", md_text(t)));
@@ -1110,7 +1224,8 @@ mod tests {
         let cost = row("cost", "baseline");
         assert!(!cost.ok, "90% more is past 10%: {cost:?}");
         assert!((cost.limit - 0.00011).abs() < 1e-9, "{cost:?}");
-        assert_eq!(cost.over().as_deref(), Some("+73%"));
+        // over the baseline the row names, not over baseline-and-tolerance
+        assert_eq!(cost.over().as_deref(), Some("+90%"));
         assert_eq!(row("requests", "budget").over().as_deref(), Some("+23%"));
         // no limit to be a percent of: the count
         assert_eq!(row("errors", "baseline").over().as_deref(), Some("+2"));
@@ -1120,6 +1235,78 @@ mod tests {
             md.contains("| **FAIL** +23% | requests | 123 | ≤ 100 | budget |"),
             "{md}"
         );
+    }
+
+    #[test]
+    fn a_check_says_whether_the_budget_or_a_trial_failed_it() {
+        use crate::trial::{Standing, judge};
+        let rs: Vec<Record> = (0..3).map(|i| rec(i + 1, &format!("k{i}"))).collect();
+        let (pt, pr, ob) = point(&rs);
+        let scenario = crate::fault::scenario("slowdown").unwrap();
+        let mut broke = judge(&scenario, &rs, 0, &rs, 1);
+        assert_eq!(broke.standing, Standing::Broke);
+        let mut fine = broke.clone();
+        fine.standing = Standing::Degraded;
+        let within = check(
+            (&pt, &rs, &pr, &ob),
+            None,
+            &Budget {
+                max_requests: Some(10),
+                ..Default::default()
+            },
+        );
+        let none = check((&pt, &rs, &pr, &ob), None, &Budget::default());
+        assert_eq!(check_closing(&within, &[]), "within budget");
+        assert_eq!(
+            check_closing(&within, &[broke.clone()]),
+            "within budget, and broke under a trial"
+        );
+        assert!(!check_passed(&within, &[broke.clone()]));
+        // trials alone are a check: no budget is needed to fail one
+        assert_eq!(
+            check_closing(&none, &[broke.clone()]),
+            "broke under a trial"
+        );
+        assert!(!check_passed(&none, &[broke.clone()]));
+        assert_eq!(
+            check_closing(&none, &[fine.clone()]),
+            "did not break under its trials"
+        );
+        assert!(check_passed(&none, &[fine.clone()]));
+        broke.reasons = vec!["exited 1 | really".into()];
+        let md = check_markdown_with(&within, "USD", None, &[], &[broke, fine]);
+        assert!(
+            md.starts_with("### sonde: within budget, and broke under a trial ❌"),
+            "{md}"
+        );
+        assert!(!md.contains("over budget"), "{md}");
+        assert!(
+            md.contains("| **FAIL** | slowdown | exited 1 \\| really |"),
+            "{md}"
+        );
+        assert!(
+            md.contains("| warn | slowdown |"),
+            "degraded is not a pass: {md}"
+        );
+    }
+
+    #[test]
+    fn a_named_program_is_its_name_whatever_its_command() {
+        let mut h =
+            crate::session::SessionHeader::new("e", "", "", Some("python etl.py /tmp/a".into()));
+        assert_eq!(key_of(&h).as_deref(), Some("python etl.py /tmp/a"));
+        h.name = Some("nightly-etl".into());
+        assert_eq!(key_of(&h).as_deref(), Some("nightly-etl"));
+        h.command = Some("/opt/py3.13/bin/python etl.py /tmp/b".into());
+        assert_eq!(key_of(&h).as_deref(), Some("nightly-etl"));
+        // a replay of it is not a run of it
+        h.command = Some("replay of python etl.py".into());
+        assert_eq!(key_of(&h), None);
+        assert!(!h.is_recording());
+        h.command = None;
+        assert!(h.is_recording(), "a proxy's session");
+        h.scenario = Some("slowdown".into());
+        assert!(!h.is_recording(), "a trial");
     }
 
     #[test]

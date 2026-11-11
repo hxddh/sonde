@@ -3,11 +3,12 @@
 //!
 //! A rule matches by operation and key, never by count of arrival ("the third
 //! UploadPart" is a race in a concurrent program). What is counted is the
-//! attempts at one request (its method, place and part): a rule with
+//! attempts at one request ([`identity`]: its method, place and part, and
+//! for a request without a key its paging and its body): a rule with
 //! `times = 1` fails each request's first attempt and lets its retry through,
 //! so a program that retries passes and one that does not is seen not to.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -133,6 +134,100 @@ pub fn scenarios() -> Vec<Scenario> {
     ]
 }
 
+/// The query parameters that tell one request without a key from another:
+/// which listing, and which page of it.
+const PAGING: &[&str] = &[
+    "continuation-token",
+    "delimiter",
+    "key-marker",
+    "marker",
+    "prefix",
+    "start-after",
+    "upload-id-marker",
+    "uploads",
+    "version-id-marker",
+    "versions",
+];
+
+/// The header a record carries its control body's hash in: the body kept on
+/// a record is cut and redacted, the hash is of what was sent.
+pub const BODY_HASH_HEADER: &str = "x-sonde-body-sha256";
+
+/// The hash a request's body is told apart by.
+pub fn body_hash(body: &[u8]) -> String {
+    s3raw::sigv4::sha256_hex(body)
+}
+
+/// One request, whichever attempt at it: its method, operation, place and
+/// part. An upload's id is the store's and changes when the whole upload is
+/// started again, so it is no part of the name. A request without a key
+/// (a listing, DeleteObjects, a bucket's setting) is told from the next by
+/// its paging and by its body's hash: two batches of deletes are two
+/// requests. The faults count attempts by it and the trial reads retries by
+/// it: one function, so the two cannot disagree.
+pub fn identity(
+    method: &str,
+    op: &str,
+    bucket: Option<&str>,
+    key: Option<&str>,
+    query: &[(String, String)],
+    body_hash: Option<&str>,
+) -> String {
+    let part = query
+        .iter()
+        .find(|(k, _)| k == "partNumber")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    let mut id = format!(
+        "{method} {op} {}/{} {part}",
+        bucket.unwrap_or(""),
+        key.unwrap_or("")
+    );
+    if key.is_none() {
+        let mut paging: Vec<&(String, String)> = query
+            .iter()
+            .filter(|(k, _)| PAGING.contains(&k.as_str()))
+            .collect();
+        paging.sort();
+        for (k, v) in paging {
+            id.push_str(&format!("&{k}={v}"));
+        }
+        if let Some(h) = body_hash {
+            id.push_str(&format!(" #{h}"));
+        }
+    }
+    id
+}
+
+/// [`identity`] of a recorded request.
+pub fn identity_of(r: &reqlog::Record) -> String {
+    let kept = r
+        .request_headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case(BODY_HASH_HEADER))
+        .map(|h| h.value.clone())
+        // a record from elsewhere (an import) has only the body itself
+        .or_else(|| r.request_body.as_deref().map(|b| body_hash(b.as_bytes())));
+    identity(
+        &r.method,
+        &r.operation,
+        r.bucket.as_deref(),
+        r.key.as_deref(),
+        &r.query,
+        kept.as_deref(),
+    )
+}
+
+/// The operation names a rule's `on` may say: the ones [`crate::op::classify`]
+/// gives a request.
+pub fn known_operation(name: &str) -> bool {
+    let all = crate::op::operation_names();
+    match name.strip_suffix('*') {
+        Some(start) => all.iter().any(|n| n.starts_with(start)),
+        None => all.iter().any(|n| n == name),
+    }
+}
+
 /// A scenario by its name.
 pub fn scenario(name: &str) -> Option<Scenario> {
     scenarios().into_iter().find(|s| s.name == name)
@@ -204,8 +299,8 @@ pub struct Faults {
     rules: Vec<Rule>,
     /// Attempts met, by rule and request.
     met: Mutex<HashMap<(usize, String), u32>>,
-    /// Requests in the current second, by rule, prefix and kind.
-    rate: Mutex<HashMap<(usize, String, bool), (Instant, u32)>>,
+    /// When the requests of the last second came, by rule, prefix and kind.
+    rate: Mutex<HashMap<(usize, String, bool), VecDeque<Instant>>>,
 }
 
 fn matches_op(on: &[String], op: &str) -> bool {
@@ -216,13 +311,20 @@ fn matches_op(on: &[String], op: &str) -> bool {
         })
 }
 
-/// A key's prefix as S3 partitions by it for its rate: the bucket and the
-/// key's folder.
-fn rate_prefix(bucket: Option<&str>, key: Option<&str>) -> String {
-    let folder = key
-        .and_then(|k| k.rfind('/').map(|i| &k[..=i]))
-        .unwrap_or("");
-    format!("{}/{folder}", bucket.unwrap_or(""))
+/// A key's prefix for the rate: the bucket and the key's folder, three
+/// levels at most, as the rate finding has it
+/// ([`crate::profile::prefix_of`]). S3 partitions by load and tells no one
+/// where; the folder is the reading both keep to.
+pub fn rate_prefix(bucket: Option<&str>, key: Option<&str>) -> String {
+    let b = bucket.unwrap_or("");
+    let k = key.unwrap_or("");
+    let dir = k.rfind('/').map_or("", |i| &k[..=i]);
+    let short: String = dir.split_inclusive('/').take(3).collect();
+    match (b.is_empty(), short.is_empty()) {
+        (true, true) => "/".into(),
+        (true, false) => short,
+        _ => format!("{b}/{short}"),
+    }
 }
 
 impl Faults {
@@ -236,7 +338,8 @@ impl Faults {
     }
 
     /// What happens to this request: the first rule that matches and still
-    /// has attempts to meet.
+    /// has attempts to meet. `body_hash` is its control body's
+    /// ([`body_hash`]), when it has one.
     pub fn decide(
         &self,
         method: &str,
@@ -244,6 +347,21 @@ impl Faults {
         bucket: Option<&str>,
         key: Option<&str>,
         query: &[(String, String)],
+        body_hash: Option<&str>,
+    ) -> Option<Verdict> {
+        self.decide_at(method, op, bucket, key, query, body_hash, Instant::now())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn decide_at(
+        &self,
+        method: &str,
+        op: &str,
+        bucket: Option<&str>,
+        key: Option<&str>,
+        query: &[(String, String)],
+        body_hash: Option<&str>,
+        now: Instant,
     ) -> Option<Verdict> {
         for (i, r) in self.rules.iter().enumerate() {
             if !matches_op(&r.on, op) {
@@ -256,46 +374,26 @@ impl Faults {
                 let read = method == "GET" || method == "HEAD";
                 let limit = if read { reads } else { writes };
                 let mut rate = self.rate.lock();
-                let slot = rate
-                    .entry((i, rate_prefix(bucket, key), read))
-                    .or_insert((Instant::now(), 0));
-                if slot.0.elapsed() >= Duration::from_secs(1) {
-                    *slot = (Instant::now(), 0);
+                let recent = rate.entry((i, rate_prefix(bucket, key), read)).or_default();
+                // the second that ends now, not the clock's: a burst across
+                // a second's edge is one burst
+                while recent
+                    .front()
+                    .is_some_and(|t| now.duration_since(*t) >= Duration::from_secs(1))
+                {
+                    recent.pop_front();
                 }
-                slot.1 += 1;
-                if slot.1 > limit {
+                if recent.len() >= limit as usize {
                     return Some(Verdict::Answer {
                         status: 503,
                         code: "SlowDown".into(),
                     });
                 }
+                recent.push_back(now);
                 continue;
             }
             if r.times > 0 {
-                // one request: its method, its place, its part. An upload's
-                // id is the store's and differs between attempts at the
-                // upload, so it is not part of the name.
-                let part = query
-                    .iter()
-                    .find(|(k, _)| k == "partNumber")
-                    .map(|(_, v)| v.as_str())
-                    .unwrap_or("");
-                let listing: String = if key.is_none() {
-                    query
-                        .iter()
-                        .filter(|(k, _)| {
-                            k == "prefix" || k == "continuation-token" || k == "marker"
-                        })
-                        .map(|(k, v)| format!("&{k}={v}"))
-                        .collect()
-                } else {
-                    String::new()
-                };
-                let id = format!(
-                    "{method} {op} {}/{} {part}{listing}",
-                    bucket.unwrap_or(""),
-                    key.unwrap_or("")
-                );
+                let id = identity(method, op, bucket, key, query, body_hash);
                 let mut met = self.met.lock();
                 let n = met.entry((i, id)).or_insert(0);
                 if *n >= r.times {
@@ -322,7 +420,7 @@ mod tests {
     use super::*;
 
     fn decide(f: &Faults, method: &str, op: &str, key: &str) -> Option<Verdict> {
-        f.decide(method, op, Some("b"), Some(key), &[])
+        f.decide(method, op, Some("b"), Some(key), &[], None)
     }
 
     #[test]
@@ -353,6 +451,7 @@ mod tests {
                     ("partNumber".into(), n.into()),
                     ("uploadId".into(), "u".into()),
                 ],
+                None,
             )
         };
         assert!(part("1").is_some() && part("2").is_some());
@@ -411,6 +510,129 @@ mod tests {
             "writes have their own"
         );
         assert!(decide(&f, "PUT", "PutObject", "p/b").is_some());
+    }
+
+    #[test]
+    fn two_batches_of_deletes_and_two_pages_of_a_listing_are_requests_of_their_own() {
+        let f = Faults::new(&scenario("slowdown").unwrap());
+        let batch = |body: &str| {
+            f.decide(
+                "POST",
+                "DeleteObjects",
+                Some("b"),
+                None,
+                &[("delete".into(), String::new())],
+                Some(&body_hash(body.as_bytes())),
+            )
+        };
+        assert!(batch("<Delete>a</Delete>").is_some());
+        assert!(
+            batch("<Delete>b</Delete>").is_some(),
+            "the second batch is not the first one's retry"
+        );
+        assert!(batch("<Delete>a</Delete>").is_none(), "its retry is");
+        let page = |q: &[(&str, &str)]| {
+            let q: Vec<(String, String)> = q
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            f.decide("GET", "ListObjectsV2", Some("b"), None, &q, None)
+        };
+        assert!(page(&[("list-type", "2"), ("prefix", "p/")]).is_some());
+        for marker in ["start-after", "key-marker", "marker", "continuation-token"] {
+            assert!(
+                page(&[("list-type", "2"), ("prefix", "p/"), (marker, "k9")]).is_some(),
+                "a page by {marker} is another request"
+            );
+        }
+        assert!(page(&[("list-type", "2"), ("prefix", "p/"), ("delimiter", "/")]).is_some());
+        // the order of the query is not the request
+        assert!(page(&[("prefix", "p/"), ("list-type", "2")]).is_none());
+    }
+
+    #[test]
+    fn a_record_is_named_as_the_fault_named_its_request() {
+        let mut r = reqlog::Record {
+            method: "POST".into(),
+            operation: "DeleteObjects".into(),
+            bucket: Some("b".into()),
+            query: vec![("delete".into(), String::new())],
+            request_body: Some("cut and redac…".into()),
+            ..Default::default()
+        };
+        let sent = body_hash(b"<Delete>the whole of it</Delete>");
+        r.request_headers
+            .push(reqlog::Header::new(BODY_HASH_HEADER, &sent));
+        assert_eq!(
+            identity_of(&r),
+            identity(
+                "POST",
+                "DeleteObjects",
+                Some("b"),
+                None,
+                &r.query,
+                Some(&sent)
+            )
+        );
+        // a key's request is its key: the body (a part's ETags) is not its name
+        r.key = Some("k".into());
+        assert!(!identity_of(&r).contains(&sent));
+    }
+
+    #[test]
+    fn the_rate_is_of_the_second_that_ends_now_and_of_the_findings_prefix() {
+        let f = Faults::new(&Scenario {
+            name: "t".into(),
+            about: String::new(),
+            rules: vec![rule(
+                &[],
+                Effect::Rate {
+                    reads: 2,
+                    writes: 2,
+                },
+                0,
+            )],
+        });
+        let t0 = Instant::now();
+        let at = |ms: u64, key: &str| {
+            f.decide_at(
+                "GET",
+                "GetObject",
+                Some("b"),
+                Some(key),
+                &[],
+                None,
+                t0 + Duration::from_millis(ms),
+            )
+        };
+        // two at the end of one clock second, two at the start of the next:
+        // four within 200 ms is past two a second
+        assert_eq!(at(900, "p/a"), None);
+        assert_eq!(at(950, "p/b"), None);
+        assert!(at(1050, "p/c").is_some(), "a fixed window would let it by");
+        assert!(at(1899, "p/d").is_some());
+        assert_eq!(at(1901, "p/e"), None, "the first has left the second");
+        // the prefix is the finding's: three levels of folder at most
+        let r = reqlog::Record {
+            bucket: Some("b".into()),
+            key: Some("a/b/c/d/e.parquet".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            rate_prefix(r.bucket.as_deref(), r.key.as_deref()),
+            crate::profile::prefix_of(&r)
+        );
+        assert_eq!(rate_prefix(Some("b"), Some("a/b/c/d/e")), "b/a/b/c/");
+        assert_eq!(rate_prefix(Some("b"), Some("top")), "b/");
+    }
+
+    #[test]
+    fn an_operation_name_is_one_a_request_can_have() {
+        assert!(known_operation("PutObject") && known_operation("Put*"));
+        assert!(known_operation("GetBucketLifecycleConfiguration"));
+        assert!(known_operation("DeleteObjects") && known_operation("ListObjectsV2"));
+        assert!(!known_operation("PutObjekt") && !known_operation("Putt*"));
+        assert!(!known_operation(""));
     }
 
     #[test]

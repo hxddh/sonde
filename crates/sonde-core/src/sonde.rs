@@ -30,6 +30,8 @@ pub struct EndpointView {
     pub ca_file: Option<String>,
     /// How credentials are obtained (`profile dev`, `instance role`), not what they are.
     pub credentials: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credentials_text: Vec<crate::Phrase>,
     pub buckets: Vec<String>,
 }
 
@@ -46,6 +48,7 @@ impl From<&EndpointConfig> for EndpointView {
             has_ca: e.ca_file.is_some(),
             ca_file: e.ca_file.as_ref().map(|p| p.to_string_lossy().into_owned()),
             credentials: e.credentials.describe(),
+            credentials_text: vec![e.credentials.describe_text()],
             buckets: e.buckets.clone(),
         }
     }

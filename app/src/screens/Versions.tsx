@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { bucket, endpoint, report, versionKey } from "../store";
 import type { Plan, Timeline } from "../types";
-import { Await, Badge, Button, Card, Dot, Empty, Field, Heading, IconButton, KeyValue, Notice, Path, terminal, ToolBar } from "../ui/kit";
+import { Await, Badge, Button, Card, Dot, Empty, Field, Heading, IconButton, KeyValue, Notice, Path, Row, terminal, ToolBar } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { versioningLabel } from "../ui/overview";
@@ -95,14 +95,14 @@ export function Versions() {
                     {/* a key may hold thousands: only the rows in view are drawn */}
                     <List testID="versions" each={tl().versions} keyExtractor={(v) => v.versionId} estimatedItemSize={52} viewport="parent">
                       {(v, i) => (
-                        <View class={`flex-row items-center gap-3 px-3 py-2 ${i() > 0 ? "border-t border-border" : ""}`}>
+                        <Row first={i() === 0}>
                           {/* one column of marks: the latest, a delete marker, or none */}
                           <View class="size-2 shrink-0">
                             <If when={v().isDeleteMarker || v().isLatest}>
                               <Dot tone={v().isDeleteMarker ? "miss" : "live"} />
                             </If>
                           </View>
-                          <View class="min-w-0 flex-1 gap-0.5">
+                          <View class="min-w-0 flex-1 gap-1">
                             <View class="flex-row items-center gap-2">
                               <Text class="text-body text-foreground">{date(v().lastModified)}</Text>
                               <If when={v().isLatest}>
@@ -117,7 +117,7 @@ export function Versions() {
                           {/* sizes in one column, at its end */}
                           <Text class="w-20 shrink-0 text-right text-small tabular-nums text-muted-foreground">{v().isDeleteMarker ? "" : bytes(v().size)}</Text>
                           <IconButton icon="trash" label={t("versions.deleteVersionOpen")} onPress={() => del(v().versionId, v().size)} />
-                        </View>
+                        </Row>
                       )}
                     </List>
                   </Card>

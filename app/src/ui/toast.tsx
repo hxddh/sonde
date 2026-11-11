@@ -8,12 +8,12 @@
 // if that window has a Toaster; else to the main window. Each Toaster draws
 // only its own window's (`currentWindow()`, read as it renders).
 
-import { cleanup, computed, Overlay, signal, Text, untracked, View } from "nsh";
+import { batch, cleanup, computed, Overlay, signal, Text, untracked, View } from "nsh";
 import { Toast, type ToastEntry, ToastManager, ToastStack } from "nsh/base";
 import { currentWindow, focusedWindow, isAvailable } from "nsh/desktop";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
-import { Button, glass, IconButton, POPUP, terminal } from "./kit";
+import { Button, EMPHASIS, glass, IconButton, POPUP, Strong, terminal } from "./kit";
 
 export type ToastKind = "success" | "error" | "warning" | "info";
 
@@ -64,13 +64,18 @@ function sync() {
 
 function tick() {
   const advanced = manager.advance(expanded());
-  for (const gone of advanced.removed) {
-    const { [gone.id]: _, ...rest } = contents();
-    contents.set(rest);
-    const { [gone.id]: __, ...others } = windowOf();
-    windowOf.set(others);
-  }
-  if (advanced.changed) sync();
+  // at once: a toast that is gone leaves the list with its window. One by one, a toast of
+  // another window was the main window's for a moment (no window: the main one), and two
+  // going together drew rows there that were never shown (Native Shell: "a kept row is gone")
+  batch(() => {
+    if (advanced.changed) sync();
+    for (const gone of advanced.removed) {
+      const { [gone.id]: _, ...rest } = contents();
+      contents.set(rest);
+      const { [gone.id]: __, ...others } = windowOf();
+      windowOf.set(others);
+    }
+  });
   if (manager.isEmpty() && ticking !== undefined) {
     clearInterval(ticking);
     ticking = undefined;
@@ -100,10 +105,10 @@ export function dismissToast(id: string) {
 }
 
 const KINDS: Record<ToastKind, { icon: IconName; tint: Tint; mark: string; text: string }> = {
-  success: { icon: "circle-check", tint: "status-ok", mark: "✓", text: "font-semibold text-status-ok" },
-  error: { icon: "circle-x", tint: "destructive", mark: "✗", text: "font-semibold text-destructive" },
-  warning: { icon: "triangle-alert", tint: "warn", mark: "!", text: "font-semibold text-warn" },
-  info: { icon: "info", tint: "info", mark: "i", text: "font-semibold text-info" },
+  success: { icon: "circle-check", tint: "status-ok", mark: "✓", text: "text-status-ok" },
+  error: { icon: "circle-x", tint: "destructive", mark: "✗", text: "text-destructive" },
+  warning: { icon: "triangle-alert", tint: "warn", mark: "!", text: "text-warn" },
+  info: { icon: "info", tint: "info", mark: "i", text: "text-info" },
 };
 
 function Item(props: { entry: ToastEntry }) {
@@ -123,12 +128,13 @@ function Item(props: { entry: ToastEntry }) {
         class="flex-1 flex-row items-center gap-1 px-1"
       >
         <If when={kind()}>{(k) => <Text class={KINDS[k()].text}>{KINDS[k()].mark}</Text>}</If>
-        <Text class="font-semibold text-foreground line-clamp-1">{content().title}</Text>
+        <Strong class="text-foreground line-clamp-1">{content().title}</Strong>
         <If when={content().description}>
           <Text class="flex-1 text-muted-foreground line-clamp-1">{content().description}</Text>
         </If>
         <If when={content().action}>
-          <Text role="button" class="font-semibold text-primary" onPress={act}>
+          {/* emphasis: the one thing a terminal's toast lets be pressed */}
+          <Text role="button" class={`${EMPHASIS} text-primary`} onPress={act}>
             {content().action}
           </Text>
         </If>
@@ -150,11 +156,11 @@ function Item(props: { entry: ToastEntry }) {
       <If when={kind()}>
         {(k) => (
           <View class="pt-px">
-            <Icon name={KINDS[k()].icon} size={16} tint={KINDS[k()].tint} />
+            <Icon name={KINDS[k()].icon} tint={KINDS[k()].tint} />
           </View>
         )}
       </If>
-      <View class="min-w-0 flex-1 gap-0.5">
+      <View class="min-w-0 flex-1 gap-1">
         <Text class="text-body font-medium text-popover-foreground">{content().title}</Text>
         <If when={content().description}>
           <Text class="text-small text-muted-foreground line-clamp-3">{content().description}</Text>

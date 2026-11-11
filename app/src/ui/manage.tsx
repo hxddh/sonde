@@ -106,6 +106,6 @@ export async function shareSession(path: string) {
     // quoted: a path with spaces is one argument
     const command = `sonde share --serve "${path.replace(/(["\\$`])/g, "\\$1")}"`;
     copy(command, t("share.command"));
-    if (!String(e instanceof Error ? e.message : e).includes("no web viewer")) report(e);
+    if (!`${e instanceof Error ? e.message : e}`.includes("no web viewer")) report(e);
   }
 }

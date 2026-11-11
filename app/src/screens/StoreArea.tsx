@@ -13,7 +13,7 @@ import { api, asError, Listing } from "../native";
 import { bucket, chooseBucket, copy, endpoint, go, prefix, report, showInSidebar, STORE_TABS, type StoreTab, storeSheet, storeTab } from "../store";
 import type { Entry } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Button, IconButton, Loading, Notice, PanelHeader, ROW_STATE, Segmented, SideHeader, SidePanel, terminal } from "../ui/kit";
+import { Button, IconButton, Loading, Notice, PanelHeader, ROWS, Segmented, SideHeader, SidePanel, terminal } from "../ui/kit";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
 import { Layouts } from "./Layouts";
@@ -184,7 +184,7 @@ function useBuckets() {
         class="min-h-0 flex-1"
         listClass="px-2 pb-2"
         // the tree marks its focused row itself; a ring would be cut by the rows around it
-        itemClass={`group h-7 rounded-(--radius-sm) ${ROW_STATE} focus:bg-row-hover disabled:opacity-60`}
+        itemClass={ROWS.tree}
         renderItem={(entry) => {
           const isBucket = entry.id.startsWith("b:");
           const name = entry.label;
@@ -192,7 +192,7 @@ function useBuckets() {
             <View
               testID={isBucket ? `bucket-${name}` : undefined}
               onContextMenu={isBucket ? () => menu(name) : undefined}
-              class="h-7 flex-row items-center gap-1.5 pr-2"
+              class="h-7 flex-row items-center gap-2 pr-2"
               style={{ paddingLeft: 4 + entry.depth * 14 }}
             >
               <View class="w-3.5 items-center">
@@ -200,7 +200,7 @@ function useBuckets() {
                   <Icon name={expanded().includes(entry.id) ? "chevron-down" : "chevron-right"} size={12} />
                 </If>
               </View>
-              <Icon name={isBucket ? "database" : expanded().includes(entry.id) ? "folder-open" : "folder"} size={14} tint={isBucket ? "foreground" : "muted-foreground"} />
+              <Icon name={isBucket ? "database" : expanded().includes(entry.id) ? "folder-open" : "folder"} tint={isBucket ? "foreground" : "muted-foreground"} />
               <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${waiting(entry.id) ? "text-muted-foreground" : "text-foreground"}`}>{name}</Text>
             </View>
           );
@@ -208,8 +208,10 @@ function useBuckets() {
       />
     </View>
   );
-  // nothing to show beside the list until a bucket is chosen, and a failed listing is said only there
-  const needed = () => !!endpoint() && (!!buckets.error() || !bucket());
+  // the list is held open only for what is said only there: a listing that failed, an endpoint
+  // with no bucket. Not while the buckets are on their way (an endpoint switch leaves no bucket
+  // chosen for a moment: the sidebar would flash open and shut)
+  const needed = () => !!endpoint() && (!!buckets.error() || (buckets.state() !== "pending" && !bucket() && (buckets() ?? []).length === 0));
   return { list, needed };
 }
 
@@ -222,9 +224,10 @@ function DetailSheet() {
         {(s) => (
           <View class="flex-1" testID="store-sheet">
             <PanelHeader icon={TAB_ICON[s()]} title={sectionLabel(s())} subtitle={`${bucket() ?? ""}/${prefix()}`} onClose={close} closeTestID="sheet-close" />
-            {/* rebuilt per detail: each owns its jobs */}
-            <Each of={[s()]} key={(x) => x}>
-              {(x) => <View class="min-h-0 flex-1">{screen(x())}</View>}
+            {/* rebuilt per detail and per place (endpoint, bucket, prefix): each owns its jobs, and
+                another bucket's report is never left under this one's name */}
+            <Each of={[{ tab: s(), at: `${s()}\n${endpoint()}\n${bucket()}\n${prefix()}` }]} key={(x) => x.at}>
+              {(x) => <View class="min-h-0 flex-1">{screen(x().tab)}</View>}
             </Each>
           </View>
         )}

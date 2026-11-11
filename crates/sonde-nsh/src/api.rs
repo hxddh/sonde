@@ -64,11 +64,6 @@ struct EndpointInput {
 
 #[module]
 impl Sonde {
-    /// sonde's version.
-    pub fn version() -> String {
-        env!("CARGO_PKG_VERSION").to_string()
-    }
-
     // --- endpoints -------------------------------------------------------
 
     /// The configured endpoints: ids, names, URLs, how credentials are

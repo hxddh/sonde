@@ -5,6 +5,7 @@ use super::meta;
 use crate::Probe;
 use crate::cx::{ProbeCx, data};
 use crate::model::{Category, Judgement, ProbeMeta, Steps, Verdict};
+use crate::phrase::ph;
 
 pub fn probes() -> Vec<Box<dyn Probe>> {
     vec![
@@ -114,50 +115,45 @@ impl Probe for SpecialKeys {
             && let Some(first) = puts.first()
             && s.any_not_implemented().is_none()
         {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Error,
-                format!(
-                    "could not run: no key could be written ({})",
-                    s.at(first).describe()
-                ),
+                ph!("judge.keys.special.error", p1 = s.at(first).describe()),
                 s,
             );
         }
-        let not_tested = format!(
-            "{} not tested: sonde cannot send a key with a . or .. segment (its HTTP library collapses them), which says nothing about the store",
-            unsent.join(" and ")
-        );
+        let not_tested = ph!("obs.keys.notTested", keys = unsent.join(" and "));
         if bad.is_empty() && unsent.is_empty() {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Pass,
-                format!("all {} keys round-trip", SPECIAL.len()),
+                ph!("judge.keys.special.pass", p1 = SPECIAL.len()),
                 s,
             )
         } else if bad.is_empty() {
             // sonde's own limit, not a difference of the store's
-            Judgement::new(
+            Judgement::say(
                 Verdict::Error,
-                format!("the {sent} keys sent round-trip; {not_tested}"),
+                vec![ph!("judge.keys.special.error.2", sent = sent), not_tested],
                 s,
             )
         } else {
-            let mut j = Judgement::new(
+            let mut j = Judgement::say(
                 if bad.len() == sent {
                     Verdict::Fail
                 } else {
                     Verdict::Differs
                 },
-                format!(
-                    "{} of {sent} keys do not round-trip: {}",
-                    bad.len(),
-                    bad.join("; ")
+                ph!(
+                    "judge.keys.special.said",
+                    p1 = bad.len(),
+                    sent = sent,
+                    p2 = bad.join("; ")
                 ),
                 s,
             );
             if !unsent.is_empty() {
-                j.observations.push(not_tested);
+                j.observe(not_tested);
             }
-            j.observations.push(format!("listed: {listed:?}"));
+            j.observe(ph!("obs.keys.listed", listed = format!("{listed:?}")));
             j
         }
     }
@@ -265,7 +261,7 @@ impl Probe for TokenStability {
             return j;
         }
         if !s.at("page-0").ok() {
-            return Judgement::new(Verdict::Error, "could not run: the listing failed", s);
+            return Judgement::say(Verdict::Error, ph!("judge.list.token-stability.error"), s);
         }
         // the keys written between pages are what the later pages are read for
         if let Some(j) = super::setup_failed(s, &["insert-before", "insert-after"]) {
@@ -276,36 +272,34 @@ impl Probe for TokenStability {
         sorted.sort();
         sorted.dedup();
         if sorted.len() != keys.len() {
-            return Judgement::new(Verdict::Fail, "pages repeated keys", s);
+            return Judgement::say(Verdict::Fail, ph!("judge.list.token-stability.fail"), s);
         }
         if sorted != keys {
-            return Judgement::new(Verdict::Fail, "pages out of order", s);
+            return Judgement::say(Verdict::Fail, ph!("judge.list.token-stability.fail.2"), s);
         }
         let has_after = keys.iter().any(|k| k == "k99");
         let has_before = keys.iter().any(|k| k == "k01");
         let reuse_ok = s.at("reuse").ok() && s.at("reused-first").body == "k20";
         match (has_after, has_before, reuse_ok) {
-            (true, false, true) => Judgement::new(
-                Verdict::Pass,
-                "positional tokens: later pages continue after the position and the token can be reused",
+            (true, false, true) => {
+                Judgement::say(Verdict::Pass, ph!("judge.list.token-stability.pass"), s)
+            }
+            (false, _, _) => Judgement::say(
+                Verdict::Differs,
+                ph!("judge.list.token-stability.differs"),
                 s,
             ),
-            (false, _, _) => Judgement::new(
+            (_, true, _) => Judgement::say(
                 Verdict::Differs,
-                "a key written after the position was not returned: the listing is a snapshot",
+                ph!("judge.list.token-stability.differs.2"),
                 s,
             ),
-            (_, true, _) => Judgement::new(
+            (_, _, false) => Judgement::say(
                 Verdict::Differs,
-                "a key before the position appeared in a later page",
-                s,
-            ),
-            (_, _, false) => Judgement::new(
-                Verdict::Differs,
-                format!(
-                    "reusing the first token answered {:?} starting at {:?}",
-                    s.at("reuse").status,
-                    s.at("reused-first").body
+                ph!(
+                    "judge.list.token-stability.differs.3",
+                    p1 = format!("{:?}", s.at("reuse").status),
+                    p2 = format!("{:?}", s.at("reused-first").body)
                 ),
                 s,
             ),
@@ -376,17 +370,21 @@ impl Probe for StartAfter {
             && got("between") == "c,d"
             && got("before-prefix") == "a,b,c,d";
         if ok {
-            Judgement::new(Verdict::Pass, "keys strictly after StartAfter", s)
+            Judgement::say(Verdict::Pass, ph!("judge.list.start-after.pass"), s)
         } else if !s.at("existing").ok() {
-            Judgement::new(Verdict::Unsupported, "StartAfter refused", s)
+            Judgement::say(
+                Verdict::Unsupported,
+                ph!("judge.list.start-after.unsupported"),
+                s,
+            )
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Fail,
-                format!(
-                    "existing → {:?}, between → {:?}, before prefix → {:?}",
-                    got("existing"),
-                    got("between"),
-                    got("before-prefix")
+                ph!(
+                    "judge.list.start-after.fail",
+                    p1 = format!("{:?}", got("existing")),
+                    p2 = format!("{:?}", got("between")),
+                    p3 = format!("{:?}", got("before-prefix"))
                 ),
                 s,
             )
@@ -445,32 +443,34 @@ impl Probe for DeleteBatchLimit {
         let (ok, over) = (s.at("batch-1000"), s.at("batch-1001"));
         let deleted: usize = s.at("batch-1000-deleted").body.parse().unwrap_or(0);
         if ok.not_implemented() {
-            return Judgement::new(Verdict::Unsupported, "DeleteObjects is not implemented", s);
+            return Judgement::say(
+                Verdict::Unsupported,
+                ph!("judge.delete.batch-limit.unsupported"),
+                s,
+            );
         }
         if let Some(j) = super::write_refused(s, &["batch-1000"]) {
             return j;
         }
         if !ok.ok() {
-            return Judgement::new(
+            return Judgement::say(
                 Verdict::Fail,
-                format!("1000 keys refused: {}", ok.describe()),
+                ph!("judge.delete.batch-limit.fail", p1 = ok.describe()),
                 s,
             );
         }
         if over.ok() {
-            Judgement::new(
-                Verdict::Differs,
-                "1001 keys accepted (no 1000-key limit)",
-                s,
-            )
+            Judgement::say(Verdict::Differs, ph!("judge.delete.batch-limit.differs"), s)
         } else if over.code.as_deref() == Some("MalformedXML") && deleted == 1000 {
-            Judgement::new(Verdict::Pass, "1000 accepted, 1001 MalformedXML", s)
+            Judgement::say(Verdict::Pass, ph!("judge.delete.batch-limit.pass"), s)
         } else {
-            Judgement::new(
+            Judgement::say(
                 Verdict::Differs,
-                format!(
-                    "1001 keys refused with {:?} {:?}; {deleted} of 1000 reported deleted",
-                    over.status, over.code
+                ph!(
+                    "judge.delete.batch-limit.differs.2",
+                    p1 = format!("{:?}", over.status),
+                    p2 = format!("{:?}", over.code),
+                    deleted = deleted
                 ),
                 s,
             )

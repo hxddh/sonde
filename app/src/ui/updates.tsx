@@ -3,10 +3,11 @@
 // GitHub Releases); elsewhere — a system install, the terminal binary — it
 // links to the release.
 
-import { effect, openUrl, signal, untracked } from "nsh";
+import { appInfo, effect, openUrl, signal, untracked } from "nsh";
 import { type AppUpdate, checkForPackage, checkForUpdate, downloadPackage, downloadUpdate, installAndRestart, type PackageUpdate, restartToPackage, shellInfo } from "nsh/updater";
 import { t } from "../i18n";
 import { report } from "../store";
+import { count } from "../format";
 import { Button, Notice, Section } from "./kit";
 
 type State =
@@ -24,7 +25,9 @@ let answered = 0;
 
 export function Updates() {
   const state = signal<State>({ kind: "idle" });
-  // what this is: the version installed and the Native Shell runtime it runs on
+  // what this is: the app as it was built (its name and version are nsh.json's, read with
+  // Native Shell's `appInfo`, carried nowhere else) and the Native Shell runtime it runs on
+  const app = appInfo();
   const shell = (() => {
     try {
       return shellInfo();
@@ -84,13 +87,13 @@ export function Updates() {
     if (s().kind === "checking") return t("updates.checking");
     if (found() === null) return t("updates.hint");
     const said = [t("updates.found", { version: found()! })];
-    if (s().kind === "downloading") said.push(t("updates.downloading", { pct: String(Math.round((s() as { share: number }).share * 100)) }));
+    if (s().kind === "downloading") said.push(t("updates.downloading", { pct: count(Math.round((s() as { share: number }).share * 100)) }));
     const notes = s().kind === "found" ? (s() as { update: AppUpdate }).update.notes : null;
     if (notes) said.push(notes);
     return said.join("\n");
   };
   return (
-    <Section plain title={t("updates.title")} description={shell ? t("updates.running", { version: shell.version ?? t("updates.dev"), nsh: shell.nshVersion }) : undefined} testID="updates">
+    <Section plain title={t("updates.title")} description={shell ? t("updates.running", { name: app.name ?? "", version: app.development ? `${app.version ?? ""} ${t("updates.dev")}` : (app.version ?? ""), nsh: shell.nshVersion }) : undefined} testID="updates">
       <Notice tone="info" icon={s().kind === "current" ? "circle-check" : found() !== null ? "download" : undefined} text={text()}>
         <If when={s().kind === "package" ? (s() as { update: PackageUpdate }).update : null}>
           {(p) => <Button small variant="primary" icon="refresh-cw" label={t("updates.restart")} onPress={() => void applyPackage(p())} disabled={(s() as { share: number | null }).share !== null} testID="updates-package" />}

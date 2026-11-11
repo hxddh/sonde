@@ -9,6 +9,8 @@ use crate::model::{ProbeMeta, Run, Verdict};
 pub struct Cell {
     pub verdict: Verdict,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub summary_text: Vec<crate::phrase::Phrase>,
     pub run: String,
 }
 
@@ -59,6 +61,7 @@ pub fn matrix(runs: &[Run]) -> Matrix {
                     r.result(&m.id).map(|x| Cell {
                         verdict: x.verdict,
                         summary: x.summary.clone(),
+                        summary_text: x.summary_text.clone(),
                         run: r.id.clone(),
                     })
                 })

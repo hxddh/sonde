@@ -72,10 +72,28 @@ pub fn text_of(bytes: &[u8]) -> Result<String, String> {
     if !bytes.starts_with(&[0x1f, 0x8b]) {
         return Ok(String::from_utf8_lossy(bytes).into_owned());
     }
-    let mut out = Vec::new();
-    std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(bytes), &mut out)
-        .map_err(|e| format!("gzip: {e}"))?;
+    let out = gunzip(bytes, GUNZIP_LIMIT).map_err(|e| format!("gzip: {e}"))?;
     Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// The most a gzip file may hold once read into memory: a few bytes of gzip
+/// can say they are any size.
+pub const GUNZIP_LIMIT: u64 = 2 << 30;
+
+/// Gzip bytes, read whole; an error past `limit` bytes of content.
+pub fn gunzip(bytes: &[u8], limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::MultiGzDecoder::new(bytes)
+        .take(limit + 1)
+        .read_to_end(&mut out)?;
+    if out.len() as u64 > limit {
+        return Err(std::io::Error::other(format!(
+            "it holds more than {} MiB",
+            limit >> 20
+        )));
+    }
+    Ok(out)
 }
 
 /// Reads `text` as the source it is into a session (records numbered in time
@@ -100,6 +118,9 @@ pub struct Parts {
     records: Vec<Record>,
     malformed: usize,
     not_requests: usize,
+    /// request id → the object a copy read, from the store's own line of
+    /// it: the line may be in another file of the folder than the copy's.
+    sources: std::collections::HashMap<String, String>,
 }
 
 impl Parts {
@@ -115,7 +136,9 @@ impl Parts {
         }
         let (mut malformed, mut not_requests) = (0, 0);
         let records = match source {
-            Source::AccessLog => access_log(text, &mut malformed, &mut not_requests),
+            Source::AccessLog => {
+                access_log(text, &mut malformed, &mut not_requests, &mut self.sources)
+            }
             Source::CloudTrail => cloudtrail(text)?,
             Source::Har => har(text)?,
         };
@@ -132,6 +155,13 @@ impl Parts {
             .source
             .ok_or("not an S3 server access log, CloudTrail file or HAR")?;
         let mut records = self.records;
+        let mut sources = self.sources;
+        for r in &mut records {
+            if let Some(source) = r.request_id.as_ref().and_then(|id| sources.remove(id)) {
+                r.request_headers
+                    .push(reqlog::Header::new("x-amz-copy-source", source));
+            }
+        }
         if records.is_empty() {
             return Err(format!("no S3 requests in this {}", source.name()));
         }
@@ -182,7 +212,13 @@ pub fn import_dir(dir: &std::path::Path, name: &str) -> Result<ImportedDir, Stri
                 continue;
             }
             let path = entry.path();
-            if path.is_dir() {
+            // what the folder holds, not what it points at: a link to the
+            // folder itself would be walked for ever, and one out of it
+            // would import what was never put here
+            let kind = entry.file_type()?;
+            if kind.is_symlink() {
+                continue;
+            } else if kind.is_dir() {
                 walk(&path, out)?;
             } else {
                 out.push(path);
@@ -333,10 +369,13 @@ fn fields(line: &str) -> Vec<String> {
 /// A line that cannot be read (a file cut off mid-line) is counted in
 /// `malformed` and one that is no request (`S3.EXPIRE.OBJECT`,
 /// `BATCH.DELETE.OBJECT`) in `not_requests`: neither fails the file.
-fn access_log(text: &str, malformed: &mut usize, not_requests: &mut usize) -> Vec<Record> {
+fn access_log(
+    text: &str,
+    malformed: &mut usize,
+    not_requests: &mut usize,
+    sources: &mut std::collections::HashMap<String, String>,
+) -> Vec<Record> {
     let mut out: Vec<Record> = Vec::new();
-    // request id → the object a copy read, from the store's own line of it
-    let mut sources: std::collections::HashMap<String, String> = Default::default();
     for line in text.lines() {
         if line.trim().is_empty() {
             continue;
@@ -414,12 +453,6 @@ fn access_log(text: &str, malformed: &mut usize, not_requests: &mut usize) -> Ve
             .into();
         }
         out.push(r);
-    }
-    for r in &mut out {
-        if let Some(source) = r.request_id.as_ref().and_then(|id| sources.remove(id)) {
-            r.request_headers
-                .push(reqlog::Header::new("x-amz-copy-source", source));
-        }
     }
     out
 }
@@ -668,6 +701,17 @@ pub fn save(session: &Session, path: &std::path::Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_gzip_file_larger_than_the_limit_is_refused_not_read() {
+        use std::io::Write;
+        let mut z = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        z.write_all(&vec![0u8; 1 << 20]).unwrap();
+        let bytes = z.finish().unwrap();
+        assert_eq!(gunzip(&bytes, 1 << 20).unwrap().len(), 1 << 20);
+        let e = gunzip(&bytes, (1 << 20) - 1).unwrap_err();
+        assert!(e.to_string().contains("more than"), "{e}");
+    }
+
     const LOG: &str = r#"79a5 lake [06/Feb/2026:00:00:38 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPLE REST.GET.OBJECT t/part-00.parquet "GET /lake/t/part-00.parquet HTTP/1.1" 200 - 4096 4096 12 10 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
 79a5 lake [06/Feb/2026:00:00:39 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL2 REST.HEAD.OBJECT t/missing "HEAD /lake/t/missing HTTP/1.1" 404 NoSuchKey 0 - 3 - "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
 79a5 lake [06/Feb/2026:00:00:40 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL3 REST.GET.BUCKET - "GET /lake?list-type=2&prefix=t%2F HTTP/1.1" 200 - 812 - 25 24 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#;
@@ -883,6 +927,47 @@ mod tests {
                 .unwrap_err()
                 .contains("among its 1 file")
         );
+    }
+
+    #[test]
+    fn a_copys_source_line_in_another_file_of_the_folder_is_still_its_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let copy = r#"79a5 lake [06/Feb/2026:00:00:41 +0000] 192.0.2.3 arn:aws:iam::1:user/etl C0FFEE REST.COPY.OBJECT t/copy "PUT /lake/t/copy HTTP/1.1" 200 - 234 4096 30 - "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#;
+        let read = r#"79a5 archive [06/Feb/2026:00:00:41 +0000] 192.0.2.3 arn:aws:iam::1:user/etl C0FFEE REST.COPY.OBJECT_GET t/src - 200 - - 4096 - - - - - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#;
+        // the store's read is delivered in the source bucket's file, first by name
+        std::fs::write(dir.path().join("a-archive.log"), read).unwrap();
+        std::fs::write(dir.path().join("b-lake.log"), copy).unwrap();
+        let d = import_dir(dir.path(), "logs").unwrap();
+        let r = &d.imported.session.records;
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            r[0].request_headers
+                .iter()
+                .find(|h| h.name == "x-amz-copy-source")
+                .map(|h| h.value.as_str()),
+            Some("/archive/t/src")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_import_does_not_follow_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let line = r#"79a5 lake [06/Feb/2026:00:00:41 +0000] 192.0.2.3 arn:aws:iam::1:user/etl C0FFEE REST.GET.OBJECT t/k "GET /lake/t/k HTTP/1.1" 200 - 234 4096 30 - "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#;
+        std::fs::write(dir.path().join("a.log"), line).unwrap();
+        std::fs::write(outside.path().join("elsewhere.log"), line).unwrap();
+        // a link to the folder itself, and one out of it
+        std::os::unix::fs::symlink(dir.path(), dir.path().join("self")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("out")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("elsewhere.log"),
+            dir.path().join("z.log"),
+        )
+        .unwrap();
+        let d = import_dir(dir.path(), "logs").unwrap();
+        assert_eq!(d.files, 1);
+        assert_eq!(d.imported.session.records.len(), 1);
     }
 
     #[test]

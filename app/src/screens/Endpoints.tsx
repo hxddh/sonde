@@ -2,13 +2,14 @@
 
 import { batch, effect, signal, Text, untracked, View } from "nsh";
 import { AlertDialog } from "nsh/base";
-import { count, ms as fmtMs } from "../format";
+import { count, duration } from "../format";
 import { t } from "../i18n";
+import { vendorName } from "../labels";
 import { api } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Icon } from "../ui/icon";
-import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, Labeled, Mono, Muted, Notice, Page, PageHeader, terminal, SwitchRow } from "../ui/kit";
+import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow } from "../ui/kit";
 import { openCompatWindow } from "./CompatWindow";
 import { CELL, ConfigNotice, GRID } from "./Settings";
 
@@ -98,7 +99,7 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
           class={CELL}
           label={t("endpoints.field.vendor")}
           value={d().vendor}
-          items={vendors.map((v) => ({ value: v.id, title: v.id === "other" ? t("endpoints.vendorOther") : v.label }))}
+          items={vendors.map((v) => ({ value: v.id, title: vendorName(v) }))}
           onChange={(v) => {
             const info = vendors.find((x) => x.id === v);
             batch(() => {
@@ -150,7 +151,7 @@ function TestResult(props: { report: ConnectivityReport }) {
     return [...(r().error ? [r().error!.message] : []), ...out.map(([k, v]) => `${k}: ${v}`)].join("\n");
   };
   return (
-    <Notice testID="test-result" tone={r().ok ? "info" : "error"} icon={r().ok ? "circle-check" : undefined} title={r().ok ? t("endpoints.reachable", { ms: fmtMs(r().latencyMs) }) : t("endpoints.unreachable")} text={facts()}>
+    <Notice testID="test-result" tone={r().ok ? "info" : "error"} icon={r().ok ? "circle-check" : undefined} title={r().ok ? t("endpoints.reachable", { ms: duration(r().latencyMs) }) : t("endpoints.unreachable")} text={facts()}>
       <If when={r().error && r().error!.recordId !== null && r().error!.recordId !== undefined}>
         <Button small label={t("common.showRequest")} onPress={() => showRequest(r().error!.recordId)} />
       </If>
@@ -245,17 +246,15 @@ export function Endpoints() {
   const row = (e: EndpointView) => {
     const r = () => tests()[e.id];
     return (
-      <View testID={`endpoint-${e.id}`} class="gap-2 px-4 py-3">
+      <View testID={`endpoint-${e.id}`} class="gap-2">
         <View class="flex-row items-center gap-3">
           <If when={!terminal()}>
-            <View class="size-8 shrink-0 items-center justify-center rounded-(--radius) bg-muted">
-              <Icon name="server" size={16} tint="foreground" />
-            </View>
+            <IconTile icon="server" tint="foreground" />
           </If>
-          <View class="min-w-0 flex-1 gap-0.5">
+          <View class="min-w-0 flex-1 gap-1">
             <View class="flex-row items-center gap-2">
-              <Text class="min-w-0 shrink text-body font-semibold text-foreground line-clamp-1">{e.name}</Text>
-              <Badge label={e.vendorLabel} />
+              <Heading class="min-w-0 shrink line-clamp-1">{e.name}</Heading>
+              <Badge label={vendorName(e)} />
               <If when={endpoint() === e.id}>
                 <Badge label={t("endpoints.current")} tone="primary" />
               </If>
@@ -287,7 +286,7 @@ export function Endpoints() {
         <If when={endpoints().length > 0} else={<Empty icon="server" text={t("endpoints.noneYet")} />}>
           <Card pad="none">
             <Each of={endpoints()} key={(e) => e.id}>
-              {(e, i) => <View class={i() > 0 ? "border-t border-border" : ""}>{row(e())}</View>}
+              {(e, i) => <Row stack first={i() === 0}>{row(e())}</Row>}
             </Each>
           </Card>
         </If>

@@ -4,13 +4,13 @@
 // always there: each says what it knows (or that it is finding out), and
 // opens its detail in a sheet. The objects under them never move.
 
-import { batch, cleanup, effect, signal, untracked, View } from "nsh";
+import { batch, cleanup, effect, signal, untracked } from "nsh";
 import { bytes, count, day, money } from "../format";
 import { type Key, t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, go, prefix } from "../store";
 import type { Detection, DuReport, MpuReport, VersioningStatus } from "../types";
-import { Stat } from "./kit";
+import { Stat, type TileLook, Tiles } from "./kit";
 
 export const LAYOUT_LABEL: Record<string, string> = {
   slatedb: "SlateDB",
@@ -39,7 +39,7 @@ interface Known {
 /** How long a fact is taken as it was: a place opened again after this asks again. */
 const FRESH_MS = 5 * 60_000;
 
-const reason = (e: unknown) => (e instanceof Error ? e.message : typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e));
+const reason = (e: unknown) => (e instanceof Error ? e.message : typeof e === "object" && e && "message" in e ? `${(e as { message: unknown }).message}` : `${e}`);
 
 /** What is known of each endpoint/bucket/prefix, shared by the tiles and their sheets. */
 export const known = signal<Record<string, Known>>({});
@@ -161,11 +161,13 @@ export function Overview() {
     return ep && b ? versioning()[bucketKey(ep, b)] : undefined;
   };
   const month = (cost: number, currency: string) => `${money(cost, currency)}/${t("overview.month")}`;
-  const TILE = "min-w-36 flex-1";
   return (
-    <View testID="overview" class="flex-row flex-wrap gap-3">
-      <Stat
-        class={TILE}
+    // four abreast, or two and two as the place narrows: never three and one
+    <Tiles
+      testID="overview"
+      items={[
+      (look: () => TileLook) => <Stat
+        look={look()}
         testID="overview-capacity"
         icon="chart-pie"
         label={t("overview.size")}
@@ -173,9 +175,9 @@ export function Overview() {
         value={size() ? bytes(size()!.totalBytes) : t("overview.measureAction")}
         detail={size() ? `${month(size()!.costPerMonth, size()!.currency)} · ${day(size()!.scannedAt)}` : t("overview.measureHint")}
         onPress={() => go("capacity")}
-      />
-      <Stat
-        class={TILE}
+      />,
+      (look: () => TileLook) => <Stat
+        look={look()}
         testID="overview-multipart"
         icon="layers"
         label={t("overview.uploads")}
@@ -193,9 +195,9 @@ export function Overview() {
             : "")
         }
         onPress={() => go("multipart")}
-      />
-      <Stat
-        class={TILE}
+      />,
+      (look: () => TileLook) => <Stat
+        look={look()}
         testID="overview-versions"
         icon="file-clock"
         label={t("overview.versioning")}
@@ -204,9 +206,9 @@ export function Overview() {
         value={v()?.failed !== undefined ? t("overview.failed") : v()?.status ? versioningLabel(v()!.status!.status) : ""}
         detail={v()?.failed ?? (v()?.status?.objectLock ? `${t("versions.lock")}: ${v()!.status!.objectLock}` : t("overview.versionsHint"))}
         onPress={() => go("versions")}
-      />
-      <Stat
-        class={TILE}
+      />,
+      (look: () => TileLook) => <Stat
+        look={look()}
         testID="overview-layouts"
         icon="boxes"
         label={t("overview.layouts")}
@@ -215,7 +217,8 @@ export function Overview() {
         value={fail("layouts") ? t("overview.failed") : layouts()?.length ? [...new Set(layouts()!.map((d) => LAYOUT_LABEL[d.format] ?? d.format))].join(", ") : t("common.none")}
         detail={fail("layouts") ?? (layouts()?.length ? layouts()!.map((d) => d.root || "/").join(" · ") : t("layouts.noneFound"))}
         onPress={() => go("layouts")}
-      />
-    </View>
+      />,
+      ]}
+    />
   );
 }

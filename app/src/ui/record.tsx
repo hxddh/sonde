@@ -4,21 +4,12 @@
 
 import { type JSX, signal, Text, View } from "nsh";
 import { Editor, type EditorDiagnostic } from "nsh/base";
-import { bytes, count, day, ms } from "../format";
+import { bytes, count, day, duration } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
-import { Back, Disclosure, KeyValue, Notice, terminal } from "./kit";
+import { Back, Disclosure, KeyValue, Notice, terminal, Title, TYPE } from "./kit";
 import { clock, StatusMark } from "./sessionview";
-
-/** The kit's Disclosure, open unless told otherwise. Kept for the object's
- * detail (screens/Browse.tsx); everything here uses Disclosure itself. */
-export function Fold(props: { title: string; count?: number; open?: boolean; children: JSX.Element; testID?: string }) {
-  return (
-    <Disclosure title={props.title} count={props.count} open={props.open ?? true} testID={props.testID}>
-      <View class="pb-1">{props.children}</View>
-    </Disclosure>
-  );
-}
+import { scenarioLabel } from "../trials";
 
 /** An XML document as code, read-only: the S3 error's code marked where it stands. */
 export function Document(props: { text: string; testID?: string; mark?: boolean }) {
@@ -45,7 +36,7 @@ export function Document(props: { text: string; testID?: string; mark?: boolean 
         softWrap
         minRows={2}
         maxRows={18}
-        fontSize={12}
+        fontSize={TYPE.small}
         diagnostics={diagnostics()}
         accessibilityLabel={props.mark ? diagnostics()[0]?.message : undefined}
         class="rounded-(--radius) border border-border bg-card"
@@ -106,8 +97,8 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
     [
       [t("column.time"), `${day(r().time)} ${clock(r().time)}`],
       [t("common.endpoint"), r().endpoint],
-      [t("requests.latency"), ms(r().latencyMs)],
-      ...(r().firstByteMs != null ? [[t("requests.firstByte"), ms(r().firstByteMs!)] as [string, string]] : []),
+      [t("requests.latency"), duration(r().latencyMs)],
+      ...(r().firstByteMs != null ? [[t("requests.firstByte"), duration(r().firstByteMs!)] as [string, string]] : []),
       ...(r().requester ? [[t("requests.requester"), r().requester!] as [string, string]] : []),
       [t("requests.size"), `↑${bytes(r().requestBytes ?? 0)} ↓${bytes(r().responseBytes ?? 0)}`],
       [t("requests.retries"), count(r().retries)],
@@ -123,14 +114,16 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
           <Back onPress={() => props.onBack?.()} testID="record-back" />
         </If>
         <View class="flex-row items-center gap-2">
-          <StatusMark status={r().status} text={r().status === null ? t("requests.transport") : undefined} />
-          <Text class="text-heading font-semibold text-foreground">{r().operation}</Text>
+          <StatusMark status={r().status} text={r().status === null ? t("requests.transport") : undefined} injected={r().injected} />
+          <Title>{r().operation}</Title>
         </View>
         <Text class="font-mono text-caption leading-4 text-muted-foreground">{`${r().method} ${r().url}`}</Text>
       </View>
       <If when={props.actions}>
         <View class="flex-row flex-wrap gap-2">{props.actions}</View>
       </If>
+      {/* sonde answered it in the store's place: the store is not to blame for what it says */}
+      <If when={r().injected}>{(name) => <Notice testID="record-injected" icon="flask-conical" text={t("requests.injected", { scenario: scenarioLabel(name()) })} />}</If>
       <If when={r().transportError}>
         {(e) => (
           <Notice tone="error" icon="circle-x" text={e()} />

@@ -2,9 +2,10 @@
 // errors, and navigation between sections. Rust owns the data; these
 // signals mirror it and are refreshed after each change.
 
-import { batch, Clipboard, type JSX, lifecycle, Picker, signal } from "nsh";
+import { batch, Clipboard, computed, type JSX, lifecycle, Picker, signal } from "nsh";
 import { api, asError } from "./native";
 import { language, t } from "./i18n";
+import { core, endpointName } from "./phrases";
 import { toast, type ToastKind } from "./ui/toast";
 import type { EndpointView, Settings, SondeError } from "./types";
 
@@ -36,7 +37,9 @@ export function areaOf(s: Section): Area {
   return "settings";
 }
 
-export const endpoints = signal<EndpointView[]>([]);
+const stored = signal<EndpointView[]>([]);
+/** The endpoints, each under the name the reader sees (the built-in demo's is in the app's language). */
+export const endpoints = computed(() => stored().map((e) => ({ ...e, name: endpointName(e), credentials: core(e.credentialsText, e.credentials) })));
 export const settings = signal<Settings | null>(null);
 export const endpoint = signal<string | null>(null);
 export const bucket = signal<string | null>(null);
@@ -79,8 +82,6 @@ export const endpointsMode = signal<"list" | "add" | "import">("list");
 /** The main window's width, as its shell measures it (windowSize() follows
  * whichever window has the focus). */
 export const shellWidth = signal(1280);
-/** And its height. */
-export const shellHeight = signal(820);
 /** What the sidebar lists under the places: the current place's own list
  * (its sessions, its buckets, the commands run before), given by the place
  * while it is on screen. One left column for the whole window. */
@@ -111,7 +112,7 @@ export function useEndpoint(id: string | null) {
 export function refreshEndpoints() {
   const list = api.endpoints();
   batch(() => {
-    endpoints.set(list);
+    stored.set(list);
     if (endpoint() && !list.some((e) => e.id === endpoint())) useEndpoint(null);
     if (!endpoint() && list.length > 0) useEndpoint(list[0].id);
   });
@@ -282,6 +283,26 @@ export function openLink(url: string) {
       go("store");
     });
   }
+}
+
+/** A second launch handed to the running app (nsh.json's `singleInstance`):
+ * the files among its arguments open here, as a drop does. Its `sonde://`
+ * links come through `UrlScheme` like every other link, and options are not
+ * read. Anyone can start the app with any arguments: only what a drop would
+ * open is opened. */
+export function openLaunch(args: string[], cwd: string) {
+  const files = launchFiles(args, cwd);
+  if (files.length) openPaths(files);
+}
+
+/** The files a launch names: its arguments that are no option and no link, a
+ * relative one read from the directory the launch was started in. */
+export function launchFiles(args: string[], cwd: string): string[] {
+  const absolute = (p: string) => /^([\\/]|[A-Za-z]:[\\/])/.test(p);
+  const sep = cwd.includes("\\") && !cwd.includes("/") ? "\\" : "/";
+  return args
+    .filter((a) => a && !a.startsWith("-"))
+    .flatMap((a) => (/^file:/i.test(a) ? [pathOf(a)] : /^[a-z][a-z0-9+.-]*:\/\//i.test(a) ? [] : [absolute(a) || !cwd ? a : `${cwd.replace(/[\\/]+$/, "")}${sep}${a}`]));
 }
 
 /** Opens session files dropped on the window; anything else is said to be no session. */

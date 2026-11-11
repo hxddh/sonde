@@ -21,7 +21,14 @@ pub struct DuArgs {
     /// Print the last cached scan instead of scanning.
     #[arg(long)]
     cached: bool,
-    #[arg(long, short = 'f', value_enum, default_value_t)]
+    /// The format written: table, json or csv.
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
     format: Format,
 }
 
@@ -140,7 +147,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
             );
             println!("\nWhy so big:");
             for f in &r.findings {
-                println!("  • {f}");
+                println!("  • {}", super::said(s, f));
             }
         }
     }

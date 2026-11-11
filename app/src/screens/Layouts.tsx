@@ -6,6 +6,7 @@ import { cleanup, List, Scroll, signal, Text, View } from "nsh";
 import { Slider } from "nsh/base";
 import { bytes, count, date } from "../format";
 import { type Key, t } from "../i18n";
+import { core } from "../phrases";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report } from "../store";
 import { here, LAYOUT_LABEL, remember } from "../ui/overview";
@@ -35,7 +36,7 @@ function Replay(props: { job: string; layout: Layout }) {
     return props.layout.snapshots
       .slice(-12)
       .filter((s) => stamp(s) > 0 && !seen.has(stamp(s)) && !!seen.add(stamp(s)))
-      .map((s) => ({ value: String(stamp(s)), title: s.label }));
+      .map((s) => ({ value: `${stamp(s)}`, title: s.label }));
   };
   return (
     <If when={times().length > 0}>
@@ -55,14 +56,14 @@ function Replay(props: { job: string; layout: Layout }) {
           thumbClass="h-4 w-4 rounded-full border border-border bg-background shadow"
         />
         {/* one control for the snapshots, not a button each */}
-        <Choice class="w-72" placeholder={t("layouts.snapshot")} value={jumps().some((j) => j.value === String(at())) ? String(at()) : null} items={jumps()} onChange={(v) => at.set(Number(v))} testID="replay-snapshot" />
+        <Choice class="w-72" placeholder={t("layouts.snapshot")} value={jumps().some((j) => j.value === `${at()}`) ? `${at()}` : null} items={jumps()} onChange={(v) => at.set(Number(v))} testID="replay-snapshot" />
         <If when={state()}>
           {(s) => (
             <View class="gap-2">
               <Text class="text-body font-medium text-foreground">
                 {t("layouts.stateAt", { time: date(new Date(at()).toISOString()) })} — {s().label}
               </Text>
-              <KeyValue rows={s().facts.map((f) => [f.label, f.value])} />
+              <KeyValue rows={s().facts.map((f) => [core(f.labelText, f.label), core(f.valueText, f.value)])} />
               <Each of={s().tables}>
                 {(tb) => (
                   <View class="gap-1">
@@ -96,7 +97,7 @@ export function Layouts() {
     progress.set(t("common.loading"));
     try {
       job = await start();
-      return await watch<R>(job, (e) => e.type === "Progress" && progress.set(e.progress.message));
+      return await watch<R>(job, (e) => e.type === "Progress" && progress.set(core(e.progress.messageText, e.progress.message)));
     } finally {
       job = null;
       progress.set(null);
@@ -182,11 +183,11 @@ export function Layouts() {
                 <If when={l().layout.formatVersion}>{(v) => <Badge label={v()} />}</If>
                 <Badge label={`${t("du.objects", { n: count(l().layout.objects) })} · ${bytes(l().layout.bytes)}`} />
               </View>
-              <Text class="text-body text-foreground">{l().layout.headline}</Text>
+              <Text class="text-body text-foreground">{core(l().layout.headlineText, l().layout.headline)}</Text>
               <If when={!l().layout.decoded}>
                 <Badge tone="info" label={t("layouts.notDecoded")} />
               </If>
-              <KeyValue rows={l().layout.facts.map((f) => [f.label, f.value])} />
+              <KeyValue rows={l().layout.facts.map((f) => [core(f.labelText, f.label), core(f.valueText, f.value)])} />
             </Card>
             <If when={l().layout.issues.length > 0}>
               <Card testID="layout-issues">
@@ -195,7 +196,7 @@ export function Layouts() {
                   {(i) => (
                     <View class="flex-row gap-2">
                       <Badge label={severityLabel(i().severity)} tone={tone(i().severity)} />
-                      <Text class="flex-1 text-body text-foreground">{i().message}</Text>
+                      <Text class="flex-1 text-body text-foreground">{core(i().messageText, i().message)}</Text>
                     </View>
                   )}
                 </Each>
@@ -217,7 +218,7 @@ export function Layouts() {
                   <View class="flex-row items-center gap-3" style={{ height: rowHeight(ROW.dense) }}>
                     <Text class="w-36 text-small text-muted-foreground">{date(e().time)}</Text>
                     <Badge label={kindLabel(e().kind)} tone={e().kind === "fence" || e().kind === "gap" ? "warn" : "neutral"} />
-                    <Text class="flex-1 text-small text-foreground line-clamp-1">{`${e().label}${e().detail ? ` — ${e().detail}` : ""}`}</Text>
+                    <Text class="flex-1 text-small text-foreground line-clamp-1">{`${core(e().labelText, e().label)}${e().detail ? ` — ${core(e().detailText, e().detail)}` : ""}`}</Text>
                   </View>
                 )}
               </List>

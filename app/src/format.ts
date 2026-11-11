@@ -123,9 +123,6 @@ export function duration(v: number): string {
   return `${sign}${Math.floor(m / 60)} h ${p2(m % 60)} min`;
 }
 
-/** A request's or an operation's time: `duration`, under its older name. */
-export const ms = duration;
-
 /** A share as people read it: whole percents, "<1%" for a sliver, "0%" for none. */
 export function percent(fraction: number): string {
   if (!Number.isFinite(fraction) || fraction === 0) return "0%";
@@ -136,6 +133,16 @@ export function percent(fraction: number): string {
 
 export function pct(part: number, whole: number): string {
   return whole === 0 ? "0%" : percent(part / whole);
+}
+
+/** How many times over, to one decimal: "1.5" (the caller writes its "×"). */
+export function factor(x: number): string {
+  return Number.isFinite(x) ? x.toFixed(1) : "—";
+}
+
+/** So many a second, as a live counter reads: a decimal under ten, whole from there. */
+export function rate(perSecond: number): string {
+  return Number.isFinite(perSecond) ? (perSecond < 10 ? perSecond.toFixed(1) : count(Math.round(perSecond))) : "—";
 }
 
 /** A change from `a` to `b` as a signed share of `a`: "+12%", "−3%", "0%"

@@ -23,6 +23,7 @@ pub mod replay;
 pub mod report;
 pub mod session;
 pub mod share;
+pub mod signals;
 pub mod summary;
 pub mod trial;
 
@@ -894,6 +895,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         return Ok(xml_error(400, "InvalidURI", msg));
     }
 
+    // a `.` or `..` segment never reaches the store as the key it names: the
+    // HTTP library folds it, and `a/../b` would be signed and sent as `b`
+    if key.as_deref().is_some_and(s3raw::has_dot_segment) {
+        let msg = "sonde refused the request: its key has a . or .. segment, which would reach the store as another key";
+        record.status = Some(400);
+        record.error_body = Some(msg.into());
+        record
+            .response_headers
+            .push(Header::new("x-sonde-proxy", "refused"));
+        shared.log.push(record);
+        return Ok(xml_error(400, "InvalidURI", msg));
+    }
+
     if let Some(mode) = shared.cfg.policy.refuses(&method, &operation, &query) {
         let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
         record.status = Some(403);
@@ -903,6 +917,77 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .push(Header::new("x-sonde-proxy", "refused"));
         shared.log.push(record);
         return Ok(xml_error(403, "AccessDenied", &msg));
+    }
+
+    let content_sha = header_value(&parts.headers, "x-amz-content-sha256");
+    let length: Option<u64> = header_value(&parts.headers, "content-length").parse().ok();
+    let chunked_te = header_value(&parts.headers, "transfer-encoding")
+        .to_ascii_lowercase()
+        .contains("chunked");
+    let has_body = length.is_some_and(|l| l > 0) || chunked_te;
+    // a body read whole waits its turn in the buffering budget, held until
+    // the request is answered
+    let _budget = if chunked::is_signed_streaming(&content_sha) || (has_body && length.is_none()) {
+        let declared = header_value(&parts.headers, "x-amz-decoded-content-length")
+            .parse()
+            .ok()
+            .or(length);
+        shared
+            .buffered
+            .clone()
+            .acquire_many_owned(buffer_share(&shared.cfg, declared))
+            .await
+            .ok()
+    } else {
+        None
+    };
+
+    // a control document (DeleteObjects, a lifecycle rule) is read now: it
+    // is small, it is kept on the record, and it tells one request without a
+    // key from the next (two batches of deletes are two requests to fail)
+    let streaming_sig = chunked::is_signed_streaming(&content_sha);
+    let mut body = Some(body);
+    let mut early: Option<Bytes> = None;
+    let mut body_hash: Option<String> = None;
+    if has_body
+        && reqlog::is_control_operation(&operation)
+        && (streaming_sig || length.is_none_or(|n| n <= 1 << 20))
+    {
+        let limit = if streaming_sig || length.is_none() {
+            shared.cfg.max_buffer
+        } else {
+            1 << 20
+        };
+        let taken = body.take().expect("not read yet");
+        match Limited::new(taken, limit).collect().await {
+            Ok(c) => {
+                let raw = c.to_bytes();
+                // the document itself, not its transfer framing
+                // (kept now: a request sonde answers itself has it too)
+                let hash = match streaming_sig.then(|| chunked::decode(&raw)) {
+                    Some(Ok(d)) => {
+                        record.request_body =
+                            Some(String::from_utf8_lossy(&d.payload).into_owned());
+                        fault::body_hash(&d.payload)
+                    }
+                    _ => {
+                        record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
+                        fault::body_hash(&raw)
+                    }
+                };
+                record
+                    .request_headers
+                    .push(Header::new(fault::BODY_HASH_HEADER, &hash));
+                body_hash = Some(hash);
+                early = Some(raw);
+            }
+            Err(e) => {
+                let msg = format!("sonde could not read the request body: {e}");
+                record.transport_error = Some(msg.clone());
+                shared.log.push(record);
+                return Ok(xml_error(400, "IncompleteBody", &msg));
+            }
+        }
     }
 
     // a trial's faults: answered here, delayed, or sent on with the answer
@@ -915,14 +1000,16 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             bucket.as_deref(),
             key.as_deref(),
             &query,
+            body_hash.as_deref(),
         )
         .map(|v| (f.name.clone(), v))
     });
     match fault {
         Some((name, fault::Verdict::Answer { status, code })) => {
             // the body is taken first, as a store that answers an error does
-            let mut body = body;
-            while let Some(Ok(_)) = body.frame().await {}
+            if let Some(mut body) = body.take() {
+                while let Some(Ok(_)) = body.frame().await {}
+            }
             let msg = format!("sonde answered in the store's place (scenario {name})");
             record.injected = Some(name.clone());
             record.status = Some(status);
@@ -951,37 +1038,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .filter(|(k, _)| !DROP_REQUEST.contains(&k.to_ascii_lowercase().as_str()))
         .cloned()
         .collect();
-    let content_sha = header_value(&parts.headers, "x-amz-content-sha256");
-    let length: Option<u64> = header_value(&parts.headers, "content-length").parse().ok();
-    let chunked_te = header_value(&parts.headers, "transfer-encoding")
-        .to_ascii_lowercase()
-        .contains("chunked");
-    let has_body = length.is_some_and(|l| l > 0) || chunked_te;
-    // a body read whole waits its turn in the buffering budget, held until
-    // the request is answered
-    let _budget = if chunked::is_signed_streaming(&content_sha) || (has_body && length.is_none()) {
-        let declared = header_value(&parts.headers, "x-amz-decoded-content-length")
-            .parse()
-            .ok()
-            .or(length);
-        shared
-            .buffered
-            .clone()
-            .acquire_many_owned(buffer_share(&shared.cfg, declared))
-            .await
-            .ok()
-    } else {
-        None
-    };
-
     // no time for the whole exchange (a large body takes what it takes), only
     // for one that has stopped moving
     let idle = cfg.timeout;
     let moved = Moved::default();
     let (payload_hash, upstream_body, sent_len): (String, reqwest::Body, Option<u64>) =
         if chunked::is_signed_streaming(&content_sha) {
-            let raw = match Limited::new(body, shared.cfg.max_buffer).collect().await {
-                Ok(c) => c.to_bytes(),
+            let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer).await {
+                Ok(raw) => raw,
                 Err(e) => {
                     let msg = format!("sonde could not read the request body: {e}");
                     record.transport_error = Some(msg.clone());
@@ -1040,9 +1104,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 // a control document (DeleteObjects, a lifecycle rule): small,
                 // kept on the record so the request can be replayed
                 Some(n) if n <= 1 << 20 && reqlog::is_control_operation(&operation) => {
-                    match Limited::new(body, 1 << 20).collect().await {
-                        Ok(c) => {
-                            let raw = c.to_bytes();
+                    match whole(early.take(), body.take(), 1 << 20).await {
+                        Ok(raw) => {
                             record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
                             (hash, moved.body(raw), Some(n))
                         }
@@ -1056,13 +1119,17 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 }
                 Some(n) => {
                     let moved = moved.clone();
-                    let stream = body.into_data_stream().inspect_ok(move |_| moved.touch());
+                    let stream = body
+                        .take()
+                        .expect("a body not read early is still here")
+                        .into_data_stream()
+                        .inspect_ok(move |_| moved.touch());
                     (hash, reqwest::Body::wrap_stream(stream), Some(n))
                 }
                 None => {
                     // chunked transfer without a length: S3 wants one
-                    let raw = match Limited::new(body, shared.cfg.max_buffer).collect().await {
-                        Ok(c) => c.to_bytes(),
+                    let raw = match whole(early.take(), body.take(), shared.cfg.max_buffer).await {
+                        Ok(raw) => raw,
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
                             record.transport_error = Some(msg.clone());
@@ -1151,7 +1218,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
     if lose_answer {
         // the store acted; the program is told it failed
-        let _ = tokio::time::timeout(idle, resp.bytes()).await;
+        // (its body read and let go piece by piece: a lost GET of a large
+        // object is not held in memory to be thrown away)
+        drain(resp, idle).await;
         let name = record.injected.clone().unwrap_or_default();
         let msg = format!(
             "sonde lost the store's answer ({}) on purpose (scenario {name})",
@@ -1220,6 +1289,43 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     Ok(builder
         .body(BodyExt::boxed(StreamBody::new(stream)))
         .expect("valid response"))
+}
+
+/// A request body whole: the one read early, or the one still to read
+/// (`limit` bytes at most).
+async fn whole(
+    early: Option<Bytes>,
+    body: Option<Incoming>,
+    limit: usize,
+) -> Result<Bytes, String> {
+    match (early, body) {
+        (Some(raw), _) => Ok(raw),
+        (None, Some(body)) => Limited::new(body, limit)
+            .collect()
+            .await
+            .map(|c| c.to_bytes())
+            .map_err(|e| e.to_string()),
+        (None, None) => Ok(Bytes::new()),
+    }
+}
+
+/// The most of an answer read to be thrown away: past it the connection is
+/// dropped instead (the store has acted by then).
+const DRAIN_MAX: u64 = 8 << 20;
+
+/// Reads an answer and keeps none of it: each piece is dropped as it
+/// comes, and a body past [`DRAIN_MAX`], or one that stops for `idle`, is
+/// left unread.
+async fn drain(resp: reqwest::Response, idle: std::time::Duration) -> u64 {
+    let mut read = 0u64;
+    let mut body = resp.bytes_stream();
+    while read < DRAIN_MAX {
+        match tokio::time::timeout(idle, body.next()).await {
+            Ok(Some(Ok(piece))) => read += piece.len() as u64,
+            _ => break,
+        }
+    }
+    read
 }
 
 /// When a request's body last moved towards the store.

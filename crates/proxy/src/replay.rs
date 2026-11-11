@@ -741,6 +741,52 @@ pub struct ReplayRun {
     pub comparison: Comparison,
     /// Objects deleted afterwards (under the prefix).
     pub removed: usize,
+    /// Versions and delete markers deleted with them, where the bucket
+    /// keeps versions.
+    #[serde(default)]
+    pub removed_versions: usize,
+    /// What is still under the prefix after the cleanup (objects, versions
+    /// and delete markers): not 0 when the store would not delete them.
+    #[serde(default)]
+    pub remaining: usize,
+}
+
+/// Every version and delete marker under `prefix`: none where the store
+/// keeps no versions or does not list them.
+async fn versions_under(base: &S3Client, bucket: &str, prefix: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let (mut key, mut version) = (None::<String>, None::<String>);
+    // (a page at a time; a store that answers the same page for ever is left)
+    for _ in 0..10_000 {
+        let Ok(page) = base
+            .list_object_versions(
+                bucket,
+                Some(prefix),
+                key.as_deref(),
+                version.as_deref(),
+                None,
+            )
+            .await
+        else {
+            break;
+        };
+        out.extend(
+            page.version
+                .iter()
+                .map(|v| (v.key.clone(), v.version_id.clone()))
+                .chain(
+                    page.delete_marker
+                        .iter()
+                        .map(|m| (m.key.clone(), m.version_id.clone())),
+                )
+                .filter_map(|(k, v)| Some((k, v?))),
+        );
+        if !page.is_truncated || page.next_key_marker.is_none() {
+            break;
+        }
+        (key, version) = (page.next_key_marker, page.next_version_id_marker);
+    }
+    out
 }
 
 /// Replays `original` with `base`'s endpoint into a new session file at
@@ -796,7 +842,7 @@ pub async fn replay_to_file(
     let client = base.with_log(log).with_retry(s3raw::RetryPolicy::none());
     let done = replay(&client, &original.records, opts, progress).await;
     writer.flush().map_err(|e| e.to_string())?;
-    let mut removed = 0usize;
+    let (mut removed, mut removed_versions, mut remaining) = (0usize, 0usize, 0usize);
     if !opts.prefix.is_empty() && !keep {
         for b in buckets_of(&original.records, opts) {
             if let Ok(objects) = base.list_all(&b, &opts.prefix, usize::MAX).await {
@@ -808,6 +854,25 @@ pub async fn replay_to_file(
                     }
                 }
             }
+            // a bucket that keeps versions kept every one of them, and a
+            // delete marker for each delete above: they go by their ids
+            // (a bucket without versions lists none once its objects are gone)
+            let versions = versions_under(base, &b, &opts.prefix).await;
+            for chunk in versions.chunks(1000) {
+                let keys: Vec<(String, Option<String>)> = chunk
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Some(v.clone())))
+                    .collect();
+                if base.delete_objects(&b, &keys, true).await.is_ok() {
+                    removed_versions += keys.len();
+                }
+            }
+            // and what is there now is what was left
+            remaining += base
+                .list_all(&b, &opts.prefix, usize::MAX)
+                .await
+                .map_or(0, |o| o.len());
+            remaining += versions_under(base, &b, &opts.prefix).await.len();
             if let Ok(up) = base
                 .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
                 .await
@@ -825,6 +890,8 @@ pub async fn replay_to_file(
         plan,
         comparison,
         removed,
+        removed_versions,
+        remaining,
     })
 }
 

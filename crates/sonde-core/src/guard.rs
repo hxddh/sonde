@@ -19,6 +19,8 @@ use s3raw::S3Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::phrase::{self, Phrase, ph};
+
 /// Plans expire after this many seconds.
 pub const PLAN_TTL_SECS: i64 = 600;
 
@@ -56,6 +58,27 @@ pub struct PlanItem {
     pub id: Option<String>,
     pub bytes: Option<u64>,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub detail_text: Vec<Phrase>,
+}
+
+impl PlanItem {
+    /// An item with what would happen to it as phrases (and their English).
+    pub fn new(
+        key: impl Into<String>,
+        id: Option<String>,
+        bytes: Option<u64>,
+        detail: impl Into<Vec<Phrase>>,
+    ) -> PlanItem {
+        let detail_text = detail.into();
+        PlanItem {
+            key: key.into(),
+            id,
+            bytes,
+            detail: phrase::en(&detail_text),
+            detail_text,
+        }
+    }
 }
 
 /// A dry run, waiting for confirmation.
@@ -71,10 +94,14 @@ pub struct Plan {
     pub document: Option<String>,
     pub previous_document: Option<String>,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub summary_text: Vec<Phrase>,
     /// What the user must type to confirm.
     pub confirm: String,
     /// "the number of items" or "the bucket name", for the prompt.
     pub confirm_hint: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub confirm_hint_text: Vec<Phrase>,
     pub created: DateTime<Utc>,
 }
 
@@ -125,21 +152,29 @@ impl Guard {
     ) -> Plan {
         let by_name =
             matches!(action, Action::PutLifecycle | Action::RestoreObject) || items.len() <= 1;
-        let (confirm, confirm_hint) = if by_name {
-            (bucket.to_string(), "the bucket name".to_string())
+        let (confirm, confirm_hint_text) = if by_name {
+            (bucket.to_string(), vec![ph!("plan.confirm.bucket")])
         } else {
-            (items.len().to_string(), "the number of items".to_string())
+            (items.len().to_string(), vec![ph!("plan.confirm.count")])
         };
         let bytes: u64 = items.iter().filter_map(|i| i.bytes).sum();
-        let summary = match action {
-            Action::PutLifecycle => format!("Write a new lifecycle configuration to {bucket}"),
-            _ => format!(
-                "{} {} item(s) in {bucket} ({})",
-                capitalize(action.label()),
-                items.len(),
-                human_bytes(bytes)
-            ),
+        // a sentence an action, so another language orders its own words
+        let key = match action {
+            Action::PutLifecycle => "plan.putLifecycle",
+            Action::AbortUploads => "plan.abortUploads",
+            Action::DeleteVersions => "plan.deleteVersions",
+            Action::RestoreObject => "plan.restoreObject",
+            Action::DeleteObjects => "plan.deleteObjects",
+            Action::RunProbes => "plan.runProbes",
         };
+        let summary_text = vec![ph!(
+            key,
+            n = items.len(),
+            bucket = bucket,
+            size = human_bytes(bytes)
+        )];
+        let summary = phrase::en(&summary_text);
+        let confirm_hint = phrase::en(&confirm_hint_text);
         let plan = Plan {
             id: uuid::Uuid::new_v4().simple().to_string(),
             action,
@@ -149,8 +184,10 @@ impl Guard {
             document,
             previous_document,
             summary,
+            summary_text,
             confirm,
             confirm_hint,
+            confirm_hint_text,
             created: Utc::now(),
         };
         self.plans.lock().insert(plan.id.clone(), plan.clone());
@@ -220,6 +257,7 @@ impl Guard {
     }
 }
 
+#[cfg(test)]
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
@@ -259,13 +297,51 @@ mod tests {
 
     fn items(n: usize) -> Vec<PlanItem> {
         (0..n)
-            .map(|i| PlanItem {
-                key: format!("k{i}"),
-                id: Some(format!("u{i}")),
-                bytes: Some(1024),
-                detail: String::new(),
-            })
+            .map(|i| PlanItem::new(format!("k{i}"), Some(format!("u{i}")), Some(1024), vec![]))
             .collect()
+    }
+
+    #[test]
+    fn a_plan_says_its_summary_and_hint_as_phrases_for_every_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let g = Guard::new(dir.path().join("audit.jsonl"));
+        for action in [
+            Action::AbortUploads,
+            Action::DeleteVersions,
+            Action::RestoreObject,
+            Action::DeleteObjects,
+            Action::RunProbes,
+        ] {
+            let p = g.plan(action.clone(), "e", "bucket", items(3), None, None);
+            // the sentence is the action's label and its count, as before
+            assert_eq!(
+                p.summary,
+                format!(
+                    "{} 3 item(s) in bucket (3.0 KiB)",
+                    capitalize(action.label())
+                )
+            );
+            assert_eq!(phrase::en(&p.summary_text), p.summary);
+            assert_eq!(phrase::en(&p.confirm_hint_text), p.confirm_hint);
+        }
+        let p = g.plan(Action::PutLifecycle, "e", "bucket", items(1), None, None);
+        assert_eq!(p.summary, "Write a new lifecycle configuration to bucket");
+        assert_eq!(p.confirm_hint, "the bucket name");
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["summaryText"][0]["key"], "plan.putLifecycle");
+        assert_eq!(v["confirmHintText"][0]["key"], "plan.confirm.bucket");
+        // a plan written before 15 still reads
+        let mut old = v.clone();
+        old.as_object_mut().unwrap().remove("summaryText");
+        old.as_object_mut().unwrap().remove("confirmHintText");
+        let back: Plan = serde_json::from_value(old).unwrap();
+        assert!(back.summary_text.is_empty());
+        let item = PlanItem::new("k", None, None, ph!("plan.item.version", v = "v1"));
+        assert_eq!(item.detail, "version v1");
+        assert_eq!(
+            serde_json::to_value(&item).unwrap()["detailText"][0]["key"],
+            "plan.item.version"
+        );
     }
 
     #[test]

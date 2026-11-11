@@ -60,6 +60,8 @@ test("updates: asking is the user's move; a development run is up to date", asyn
   const app = await open("../App.tsx", desktop);
   await place(app, "settings");
   await app.waitFor("id:updates");
+  // what runs: the app's own name and version (nsh.json's, read with appInfo), and that this is no release
+  await app.waitFor("text:/^sonde \\d+\\.\\d+\\.\\d+ \\(development run\\) · Native Shell /");
   await app.press("id:updates-check");
   await app.waitFor("text:sonde is up to date.", { timeout: 5000 });
 });
@@ -71,13 +73,23 @@ test("a session file opens from Sessions: a picked .sonde, and a refusal for any
   app.onPick((p) => (p.filters[0]?.extensions.includes("sonde") ? [{ name: "elsewhere.sonde", data: encode(SESSION) }] : null));
   await app.keyboard.press("mod+o");
   await app.waitFor("id:session-pane", { timeout: 10000 });
-  expect(app.shows("text:$ python gen_delta.py s3://lake/delta")).toBe(true);
+  // the session is read off the interface's thread: its header comes when the reading ends
+  await app.waitFor("text:$ python gen_delta.py s3://lake/delta", { timeout: 10000 });
   app.onPick(() => [{ name: "notes.sonde", data: encode("hello") }]);
   await app.press("id:open-file");
   await app.waitFor("text:/notes.sonde: not a sonde session/", { timeout: 5000 });
 });
 
 const SESSION = "{\"format\":\"sonde-session\",\"version\":1,\"created\":\"2026-11-07T01:09:10.816413840Z\",\"endpoint\":\"rustfs\",\"url\":\"http://127.0.0.1:9100/\",\"region\":\"us-east-1\",\"command\":\"python gen_delta.py s3://lake/delta\"}\n{\"id\":1,\"time\":\"2026-11-07T01:09:10.924307634Z\",\"endpoint\":\"adhoc\",\"operation\":\"GetObject\",\"method\":\"GET\",\"url\":\"http://127.0.0.1:9100/lake/delta/_delta_log/_last_checkpoint\",\"bucket\":\"lake\",\"key\":\"delta/_delta_log/_last_checkpoint\",\"query\":[],\"status\":404,\"latencyMs\":2.124287,\"retries\":0,\"requestId\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\",\"hostId\":null,\"requestHeaders\":[{\"name\":\"host\",\"value\":\"127.0.0.1:42459\"},{\"name\":\"x-amz-date\",\"value\":\"20261107T010910Z\"},{\"name\":\"x-amz-content-sha256\",\"value\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"name\":\"authorization\",\"value\":\"AWS4-HMAC-SHA256 Credential=\u00abredacted\u00bb/20261107/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=\u00abredacted\u00bb\"},{\"name\":\"accept\",\"value\":\"*/*\"},{\"name\":\"user-agent\",\"value\":\"object_store/0.13.2\"}],\"responseHeaders\":[{\"name\":\"content-type\",\"value\":\"application/xml\"},{\"name\":\"x-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"x-amz-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"content-length\",\"value\":\"127\"},{\"name\":\"date\",\"value\":\"Sat, 07 Nov 2026 01:09:10 GMT\"}],\"requestBytes\":0,\"responseBytes\":127,\"errorBody\":\"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>\",\"transportError\":null,\"region\":\"us-east-1\",\"job\":null}\n";
+
+test("a second launch hands over its files: relative ones from where it was started, links and options left out", async () => {
+  const { launchFiles } = await import("../src/store");
+  // (its sonde:// links reach the app through UrlScheme, as every link does)
+  expect(launchFiles(["--verbose", "run.sonde", "/tmp/b.sonde", "sonde://session/x.sonde"], "/home/me/etl")).toEqual(["/home/me/etl/run.sonde", "/tmp/b.sonde"]);
+  expect(launchFiles(["run.sonde", "D:\\logs\\b.sonde"], "C:\\Users\\me\\")).toEqual(["C:\\Users\\me\\run.sonde", "D:\\logs\\b.sonde"]);
+  expect(launchFiles(["file:///home/me/a%20b.sonde"], "/")).toEqual(["/home/me/a b.sonde"]);
+  expect(launchFiles([], "/home/me")).toEqual([]);
+});
 
 test("a dropped file's URL becomes its path on every platform", async () => {
   const { pathOf } = await import("../src/store");
@@ -171,4 +183,187 @@ test("a trial reads as figures: the faults and retries, the wait, the load, what
   const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
   expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
   expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried · 2 writes never sent again · exited 1 (clean run: 0)");
+  // too few waits to tell jitter from step: neither is said
+  const { jitter: _, ...unsaid } = base;
+  expect(trialText({ ...unsaid, standing: "survived", faults: 2, retried: 2, backoffMs: [100, 150, 200], requests: 64 })).toBe("2 faults, all retried · after 100 ms to 200 ms");
+  // faults no retry was owed for, writes the store made unheard, requests held back and what that did to the run's time
+  expect(trialText({ ...unsaid, standing: "degraded", faults: 3, retried: 1, notRetryable: 2, lostWrites: 1, delayed: 40, wallMs: 4200, cleanWallMs: 900, requests: 64 })).toBe(
+    "3 faults, 1 retried · 2 no retry was owed for · 40 requests held back · took 4.20 s (clean run: 900 ms) · 1 write made and never heard of",
+  );
+});
+
+test("a trial is followed scenario by scenario: waiting, running, done with its standing", async () => {
+  const { trialSteps, foldTrial, trialDone, worstStanding, scenarioLabel } = await import("../src/trials");
+  let steps = trialSteps([{ name: "slowdown", about: "503 SlowDown" }, { name: "lost-answer", about: "" }]);
+  expect(steps.map((s) => s.state)).toEqual(["waiting", "waiting"]);
+  steps = foldTrial(steps, { scenario: "slowdown", state: "running" });
+  // the program's output and its recording change nothing in the list
+  steps = foldTrial(steps, { data: "hello\n", scenario: "slowdown" });
+  expect(steps.map((s) => s.state)).toEqual(["running", "waiting"]);
+  const trial = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, requests: 2, cleanRequests: 2, leftUploads: 0, wroteTwice: 0, reasons: ["1 write never sent again"] } as import("../src/types").Trial;
+  steps = foldTrial(steps, { scenario: "slowdown", state: "done", trial });
+  // a late "running" does not take a verdict back; a scenario not chosen is left out
+  steps = foldTrial(steps, { scenario: "slowdown", state: "running" });
+  steps = foldTrial(steps, { scenario: "error", state: "running" });
+  expect(steps.map((s) => s.state)).toEqual(["done", "waiting"]);
+  expect(steps[0].trial?.standing).toBe("broke");
+  expect(steps.length).toBe(2);
+  expect(trialDone(steps)).toBe(1);
+  expect(worstStanding([{ standing: "survived" }, { standing: "broke" }])).toBe("broke");
+  expect(worstStanding([{ standing: "survived" }, { standing: "degraded" }])).toBe("degraded");
+  expect(worstStanding([{ standing: "survived" }, { standing: "untested" }])).toBe(null);
+  expect(worstStanding(undefined)).toBe(null);
+  // a project's own scenario keeps its name
+  expect(scenarioLabel("lost-answer")).toBe("A write's answer is lost");
+  expect(scenarioLabel("my-own")).toBe("my-own");
+});
+
+test("prefixes with a doubled or a leading slash keep their own names", async () => {
+  const { prefixNames } = await import("../src/ui/plots");
+  // what they share is cut off as written: an empty segment shifts nothing
+  const doubled = prefixNames([{ prefix: "a//b/x/" }, { prefix: "a//b/y/" }], 20);
+  expect(doubled.common).toBe("a//b/");
+  expect(doubled.name("a//b/x/")).toBe("x/");
+  expect(doubled.name("a//b/y/")).toBe("y/");
+  const leading = prefixNames([{ prefix: "/a/b/" }, { prefix: "/a/c/" }], 20);
+  expect(leading.common).toBe("/a/");
+  expect(leading.name("/a/b/")).toBe("b/");
+  expect(leading.name("/a/c/")).toBe("c/");
+  // slashes alone are nothing shared
+  expect(prefixNames([{ prefix: "/a/" }, { prefix: "/b/" }], 20).common).toBe("");
+  // the rest of them is said in words, never as the raw "other"
+  expect(leading.name("other")).toBe("Other prefixes");
+});
+
+test("an axis of two places has two ticks, not the first one twice", async () => {
+  const { ticks3 } = await import("../src/ui/plots");
+  expect(ticks3(2)).toEqual([0, 1]);
+  expect(ticks3(1)).toEqual([0]);
+  expect(ticks3(3)).toEqual([0, 1, 2]);
+  expect(ticks3(96)).toEqual([0, 47, 95]);
+});
+
+test("a table that narrows drops its columns by rank, whole, and clips none", async () => {
+  const { operationColumns, OP_NAME } = await import("../src/ui/sessionview");
+  const all = { format: true, bar: true, notes: true };
+  const sized = { bar: 150, notes: 320 };
+  // not measured yet, and wide: every column, in rank order
+  expect(operationColumns(0, all, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "format", "notes"]);
+  expect(operationColumns(1400, all, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "format", "notes"]);
+  // narrower: the notes go first, then the format, the bar, the time, the requests
+  expect(operationColumns(900, all, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "format"]);
+  expect(operationColumns(700, all, sized).shown).toEqual(["status", "title", "duration", "requests", "time"]);
+  expect(operationColumns(480, all, sized).shown).toEqual(["status", "title", "duration", "requests"]);
+  // the outcome, the operation and how long it took always show
+  expect(operationColumns(300, all, sized).shown).toEqual(["status", "title", "duration"]);
+  // whatever shows, the operation keeps its room and the columns add up to the table: none is clipped
+  for (const w of [460, 520, 640, 780, 900, 1100, 1400]) {
+    const l = operationColumns(w, all, sized);
+    const used = l.shown.filter((c) => c !== "title").reduce((n, c) => n + l.widths[c], 0);
+    expect(l.title >= OP_NAME).toBe(true);
+    expect(used + l.title + 2 <= w).toBe(true);
+  }
+  // a column that is not wanted is not a reason to drop the ones after it
+  expect(operationColumns(1400, { format: false, bar: true, notes: true }, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "notes"]);
+});
+
+test("tiles go in rows of equal count: four are two and two, never three and one, never one column", async () => {
+  const { tilesPerRow, figuresFit } = await import("../src/ui/kit");
+  expect(tilesPerRow(700, 4, 144)).toBe(4);
+  // room for three: two and two
+  expect(tilesPerRow(500, 4, 144)).toBe(2);
+  expect(tilesPerRow(320, 4, 144)).toBe(2);
+  // no room for two as they read: two all the same (each tight), not a column of four
+  expect(tilesPerRow(200, 4, 144)).toBe(2);
+  expect(tilesPerRow(200, 1, 144)).toBe(1);
+  expect(tilesPerRow(500, 5, 128)).toBe(3);
+  // not measured yet: all abreast
+  expect(tilesPerRow(0, 4, 144)).toBe(4);
+  // a line of figures holds what fits and never wraps: the last ranked go
+  expect(figuresFit(0, 7)).toBe(7);
+  expect(figuresFit(1000, 7)).toBe(7);
+  expect(figuresFit(520, 7)).toBe(4);
+  expect(figuresFit(100, 7)).toBe(2);
+});
+
+test("runs of one command are told apart by the argument that differs", async () => {
+  const { tellApart } = await import("../src/ui/sessionview");
+  const long = "-s --aws-sigv4 aws:amz:us-east-1:s3 -o /dev/null http://127.0.0.1:9000/demo/";
+  expect(tellApart([`${long}README.md`, `${long}missing.txt`])).toEqual(["… http://127.0.0.1:9000/demo/README.md", "… http://127.0.0.1:9000/demo/missing.txt"]);
+  // the same to the letter, or different from the start: left whole
+  expect(tellApart(["load.py", "load.py"])).toEqual(["load.py", "load.py"]);
+  expect(tellApart(["a.py --x", "b.py --y"])).toEqual(["a.py --x", "b.py --y"]);
+});
+
+test("one function writes a duration, and a scenario has words", async () => {
+  const format = await import("../src/format");
+  expect(format.duration(0.42)).toBe("0.4 ms");
+  expect(format.duration(840)).toBe("840 ms");
+  expect(format.duration(2350)).toBe("2.35 s");
+  expect(format.duration(185000)).toBe("3 min 05 s");
+  // the older names are gone
+  expect("ms" in format).toBe(false);
+  expect(format.factor(1.5)).toBe("1.5");
+  expect(format.rate(4.25)).toBe("4.3");
+  expect(format.rate(120.4)).toBe("120");
+  const { scenarioLabel } = await import("../src/ui/history");
+  expect(scenarioLabel("slowdown")).toBe("The store asks to slow down");
+  // one sonde has no words for keeps its own name
+  expect(scenarioLabel("made-up")).toBe("made-up");
+});
+
+test("a run reads as four signals and in flight; what a log without times cannot say is said, never 0", async () => {
+  const { signalsFromProfile, signalTiles, signalChanges, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
+  const bin = (tMs: number, ok: number, server = 0, retried = 0) => ({ tMs, ok, miss: 0, client: 0, server, p50Ms: 2, p95Ms: 6, p99Ms: 9, retried, bytesUp: 1024 * ok, bytesDown: 0 });
+  const profile = {
+    wallMs: 2000,
+    binMs: 1000,
+    peakInFlight: 4,
+    peakAtMs: 1200,
+    rate: [bin(0, 30), bin(1000, 9, 1, 2)],
+    inFlight: [{ tMs: 100, n: 2 }, { tMs: 1200, n: 4 }],
+    p50Ms: 2,
+    p95Ms: 6,
+    p99Ms: 9,
+    cost: { amount: 0, currency: "USD" },
+  } as never;
+  const summary = { requests: 40, errors: 1, misses: 0, refused: 0, seconds: 2, bytesUp: 39936, bytesDown: 0 };
+  const s = signalsFromProfile(profile, summary);
+  expect(s.rate.value).toBe(20);
+  expect(s.inFlight.series).toEqual([2, 4]);
+  const tiles = signalTiles(s);
+  expect(tiles.map((x) => x.id)).toEqual(["rate", "errors", "latency", "bytes", "inFlight"]);
+  expect(tiles[0].value).toBe("20/s");
+  expect(tiles[0].detail).toBe("40 requests in 2.00 s");
+  expect(tiles[1].value).toBe("3%");
+  expect(tiles[1].detail).toBe("1 server · 2 retries");
+  expect(tiles[1].tone).toBe("bad");
+  expect(tiles[2].value).toBe("2.0 ms");
+  expect(tiles[2].detail).toBe("p95 6.0 ms · p99 9.0 ms");
+  expect(tiles[3].value).toBe("19.5 KiB/s");
+  expect(tiles[3].detail).toBe("↑ 19.5 KiB/s ↓ 0 B/s");
+  expect(tiles[4].value).toBe("4");
+  // a CloudTrail file has no times: no rate, no latency, no pace of bytes, and nothing drawn over time
+  const untimed = signalTiles(signalsFromProfile({ ...(profile as object), timed: false } as never, summary));
+  expect(untimed[0].value).toBe("Not timed");
+  expect(untimed[0].detail).toBe("40 requests");
+  expect(untimed[2].value).toBe("Not timed");
+  expect(untimed[3].value).toBe("39.0 KiB");
+  expect(untimed[3].detail).toBe("↑ 39.0 KiB ↓ 0 B");
+  expect(untimed[4].value).toBe("Not timed");
+  expect(untimed.every((x) => x.id === "errors" || x.series.length === 0)).toBe(true);
+  // before and after in one tile: both figures, and by how much
+  const slower = signalsFromProfile({ ...(profile as object), p50Ms: 3 } as never, summary);
+  const changed = signalChanges(s, slower);
+  expect(changed.length).toBe(4);
+  expect(changed[2].value).toBe("2.0 ms → 3.0 ms");
+  expect(changed[2].detail.startsWith("+50% · ")).toBe(true);
+  expect(changed[2].tone).toBe("bad");
+  expect(changed[0].detail).toBe("40 requests in 2.00 s");
+  // sizes by their bounds; a prefix by the nearer of its two limits
+  expect(sizeLabel(0)).toBe("empty");
+  expect(sizeLabel(1024)).toBe("≤ 1.0 KiB");
+  expect(sizeRange(1024)).toBe("512 B – 1.0 KiB");
+  expect(sizeRange(0)).toBe("empty");
+  expect(nearestLimit({ readShare: 0.1, writeShare: 0.4 })).toEqual({ share: 0.4, kind: "writes" });
 });

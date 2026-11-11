@@ -10,7 +10,15 @@ use crate::output::{self, Format};
 pub struct EndpointArgs {
     #[command(subcommand)]
     action: EndpointAction,
-    #[arg(long, short = 'f', value_enum, default_value_t, global = true)]
+    /// The format written: table or json (list and test).
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true,
+        global = true
+    )]
     format: Format,
 }
 

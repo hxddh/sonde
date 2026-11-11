@@ -1,7 +1,8 @@
 # Native Shell issues found by sonde
 
-Drafts for `longbridge/nsh`, from sonde 9.0 at Native Shell `1662115`. sonde works around both
-(FINDINGS 18, 19) and does not change Native Shell's source.
+Drafts for `longbridge/nsh`, begun in sonde 9.0 at Native Shell `1662115` and read again at `744d950` (15.0),
+where the three Plot requests (press and selection, a log scale, a row without a value) still stand, each with what
+it would remove. sonde works around the first two (FINDINGS 18, 19) and does not change Native Shell's source.
 
 ## A theme font token keeps only the first family of its list
 
@@ -61,17 +62,35 @@ screen and the app laid out for the size it got.
 
 ## Plot has no press, selection or brush
 
+Asked again at `744d950` (15.0): Plot there differs from the old pin by a doc comment.
+
 **What happens.** A Plot reports `onHoverChange` only. Picking a slice needs the plot wrapped in a Button (two focus
 stops; Enter on the plot does nothing), and a range (zoom) needs two presses on that button.
 
 **Expected.** `onPress` with the row under the pointer, a `selectedIndex`, and a brush that reports a range.
 
+**What sonde does today.** Five charts (the lanes, the session's shape, the waterfall, the trend of runs, the
+scatter) stand in a `Button` that reads the row last hovered and acts on it; the selection is drawn by the app
+(every other slice in the `dim` tone); a zoom is two presses kept in two signals of the Time pane.
+
+A UI test cannot press a row either: `app.hover` goes to the plot's middle, where a scatter may have no dot.
+
+**It would remove** about 70 lines: 49 of button around those five plots (`app/src/ui/plots.tsx`, counted) and
+about 20 of the two-press zoom (`app/src/ui/profile.tsx` `pick`, `zoomFrom`).
+
 ## A Plot's value function cannot say "no value"
+
+Asked again at `744d950` (15.0).
 
 **What happens.** Marks are typed `(d, i) => number`; the docs say a row without a value draws no line, but
 returning one takes `undefined as unknown as number`.
 
 **Expected.** `number | null | undefined`.
+
+**What sonde does today.** The cast, seven times in `app/src/ui/plots.tsx`: the rule under the moment another chart
+rests on (five charts), the dashed rules of the findings, the gaps of the latency band, the dots of the retries.
+
+**It would remove** no line and seven casts: each `(undefined as unknown as number)` becomes `null`.
 
 ## The Terminal component has no find, links or marks
 
@@ -107,13 +126,6 @@ page's folder shown).
 **Expected.** A JS module for them, behind a capability.
 
 
-## An Input cannot be disabled
-
-**What happens.** `Input` has no `disabled` (or `editable`) prop; `NumberInput`, `Select` and `Combobox` do. A field
-that may not change once set (an endpoint's id while editing) is shown as text instead.
-
-**Expected.** `disabled` on `Input`, with `disabled:` styles and screen readers saying it is dimmed.
-
 ## Plot has no log scale, and no horizontal rule
 
 **What happens.** Scales are `point`, `linear` and `band`; latencies spread over decades are drawn as their logs and
@@ -121,6 +133,18 @@ the ticks format `10 ** v`. `Rule` is drawn per row (vertical); a horizontal ref
 with one value.
 
 **Expected.** `{ type: "log" }` for x and y, and `Rule` (or `Grid`) taking a label for a reference line.
+
+Asked again at `744d950` (15.0).
+
+**What sonde does today.** The scatter (time or size against latency) and the comparison of two distributions take
+the logarithm of every value before the plot sees it (`log10`), work out the decades for the grid and the ticks
+(`decades`), and turn each tick back with `10 ** v`.
+
+**It would remove** about 17 lines of `app/src/ui/plots.tsx` (`log10`, `decades`, the conversions of rows, domains
+and ticks), and with them the tooltip's need to keep the value beside its logarithm.
+
+The three Plot requests together come to about 90 lines and seven casts, measured; the review of 14.0 had guessed
+about 300.
 
 ## A Sankey's labels cannot sit beside its nodes
 

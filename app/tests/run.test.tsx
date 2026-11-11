@@ -16,6 +16,8 @@ async function demo() {
 test("run a command: its requests become operations, the session lines them up with its output", async () => {
   const app = await demo();
   await app.type("id:run-command", "echo fetching; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; echo done");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-terminal", { timeout: 10000 });
   await app.waitFor("id:run-ended", { timeout: 20000 });
@@ -38,6 +40,8 @@ test("run a command: its requests become operations, the session lines them up w
 test("a program that sends sonde nothing: how each SDK is pointed at it", async () => {
   const app = await demo();
   await app.type("id:run-command", "echo nothing to store");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   await app.waitFor("id:run-no-requests", { timeout: 5000 });
@@ -89,6 +93,8 @@ test("an example session reads as operations, each opening on its requests", asy
   expect(app.shows("text:if-none-match")).toBe(true);
   // what stands out narrows the operations to those it is about
   await app.press("id:inspector-close");
+  // the request's sections fold away as the inspector goes
+  await app.waitUntil(() => !app.shows("id:inspector"), { timeout: 2000 });
   // a line each, so the operations keep the room; the one chosen says why it matters, in place
   await app.press("id:observation-2");
   expect(app.texts().some((t) => t.startsWith("Every operation of this kind made the same requests"))).toBe(true);
@@ -111,10 +117,14 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   await app.waitFor("label:Writes enabled");
   await place(app, "run");
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/t.txt -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/t.txt");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   await app.press("id:run-open-session");
   await app.waitFor("id:session-pane");
+  // read off the interface's thread: there once its header is
+  await app.waitFor("id:session-summary", { timeout: 10000 });
   // where each operation fell in time is the operations' own When column
   expect(app.shows("id:session-pane-mode-timeline")).toBe(false);
   await app.press("id:replay-open");
@@ -138,9 +148,11 @@ test("sessions are looked after: renamed, searched, deleted, dropped on the wind
   await place(app, "sessions");
   // five sessions or more by now (the tests before): enough for a search field
   await app.waitFor("id:session-search");
+  // the session shown is read first: a menu opened while its pane arrives is closed by it
+  await app.waitFor("id:session-summary", { timeout: 10000 });
   // a title of the user's, from the row's context menu
   await app.rightClick("id:session-0");
-  expect(app.menu()!.map((m) => m.label)).toEqual(["Open in a window", "Share as a web page…", "Copy file path", "Rename…", "Delete…"]);
+  expect(app.menu()!.map((m) => m.label)).toEqual(["Open in a window", "Share as a web page", "Copy file path", "Rename…", "Delete…"]);
   await app.chooseMenuItem("Rename…");
   await app.waitFor("id:rename-dialog");
   await app.clear("id:rename-input");
@@ -151,7 +163,8 @@ test("sessions are looked after: renamed, searched, deleted, dropped on the wind
   await app.type("id:session-search", "nightly");
   await app.waitFor("id:session-0");
   expect(app.count("label:/^Nightly compaction$/")).toBe(1);
-  expect(app.shows("id:session-1")).toBe(false);
+  // the list narrows a frame or two after the last key
+  await app.waitUntil(() => !app.shows("id:session-1"), { timeout: 2000 });
   await app.clear("id:session-search");
   await app.waitFor("id:session-1");
   // its path, for dropping it back on the window
@@ -178,12 +191,23 @@ test("a session's time: where it went, and two runs before and after", async () 
   await place(app, "sessions");
   await app.press("id:open-example");
   await app.waitFor("id:session-summary", { timeout: 10000 });
-  // the shape of the session beside its figures
-  expect(app.shows("id:session-shape")).toBe(true);
+  // the shape of the session beside its figures (the example's: the session shown before it goes first)
+  await app.waitFor("id:session-shape", { timeout: 10000 });
   expect(app.shows("label:/^Waiting on S3 .* of .*; up to 8 requests in flight/")).toBe(true);
-  await app.press("id:session-pane-mode-time");
+  // the header's four signals and in flight: a figure each, and a press opens the signal's chart on the Time pane
+  for (const id of ["rate", "errors", "latency", "bytes", "inFlight"]) expect(app.shows(`id:signal-${id}`)).toBe(true);
+  expect(app.shows("label:/^Rate: 368\/s, 172 requests in 467 ms, shows its chart$/")).toBe(true);
+  expect(app.shows("label:/^Errors: 0%, No request failed/")).toBe(true);
+  await app.press("id:signal-latency");
   await app.waitFor("id:time-pane");
-  expect(app.shows("text:Where the time went")).toBe(true);
+  await app.waitFor("id:latency-over-time");
+  // the board in its groups, each chart in the one frame
+  expect(app.shows("text:Latency")).toBe(true);
+  expect(app.shows("id:board-traffic")).toBe(true);
+  expect(app.shows("id:time-shape")).toBe(true);
+  await app.waitFor("text:Where the time went");
+  // (the pane scrolls its chart into view a moment after it is laid out)
+  await app.wait(200);
   // its part of the waiting: requests at once count once, the kinds add up to it
   expect(app.shows("label:/^Most of the waiting: PutObject, \\d+%/")).toBe(true);
   expect(app.shows("id:profile-cost")).toBe(true);
@@ -208,6 +232,10 @@ test("a session's time: where it went, and two runs before and after", async () 
   await app.waitFor("id:run-change", { timeout: 10000 });
   expect(app.shows("id:run-change-requests")).toBe(true);
   expect(app.shows("text:/^172 → /")).toBe(true);
+  // the four signals side by side, before and after, in the header's own tiles
+  await app.waitFor("id:compare-signals", { timeout: 10000 });
+  expect(app.shows("id:compare-signal-latency")).toBe(true);
+  expect(app.shows("text:/^368\/s → /")).toBe(true);
   expect(app.shows("id:other-program")).toBe(true);
   expect(app.shows("text:/^Gone · /")).toBe(false);
 });
@@ -225,6 +253,8 @@ test("a program over its runs: history, a baseline, and the flows of its request
   }
   await app.press("id:run-open-session");
   await app.waitFor("id:session-pane");
+  // read off the interface's thread: there once its header is
+  await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.press("id:session-pane-mode-runs");
   await app.waitFor("id:history-pane", { timeout: 10000 });
   // the runs of a stretch of days
@@ -232,7 +262,8 @@ test("a program over its runs: history, a baseline, and the flows of its request
   expect(app.shows("text:/, over [2-9] runs$/")).toBe(true);
   expect(app.shows("id:trend-requests")).toBe(true);
   await app.press("id:history-baseline");
-  await app.waitFor("label:Baseline ✓ — clear");
+  // a state has its verb as its label
+  await app.waitFor("label:Clear baseline");
   // where its requests went
   await app.press("id:session-pane-mode-time");
   await app.waitFor("id:time-pane");
@@ -248,7 +279,7 @@ test("a shared session opens in the browser, on a local address", async () => {
   await app.press("id:open-example");
   await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.press("id:session-more");
-  await app.chooseMenuItem("Share as a web page…");
+  await app.chooseMenuItem("Share as a web page");
   const noViewer = "text:Copied the command that makes the web page";
   await app.waitUntil(() => app.openedUrls().length > 0 || app.shows(noViewer), { timeout: 10000 });
   if (app.shows(noViewer)) {
@@ -299,6 +330,8 @@ test("programs: each with its runs at a glance; one opens on its runs", async ()
 test("run again: the program after a change, compared with the run before", async () => {
   const app = await demo();
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   await app.press("id:run-open-session");
@@ -309,3 +342,72 @@ test("run again: the program after a change, compared with the run before", asyn
   await app.waitFor("id:run-change", { timeout: 10000 });
   expect(app.shows("id:other-program")).toBe(false);
 });
+
+test("a run tried under faults: said before it runs, followed as it goes, its trial opened and marked as one", async () => {
+  const app = await demo();
+  await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/trial.txt -o /dev/null");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
+  await app.press("id:run-start");
+  await app.waitFor("id:run-ended", { timeout: 20000 });
+  // read-only: the plan is said, and nothing runs
+  if (app.shows("label:Writes enabled")) {
+    await place(app, "settings");
+    await app.press("id:read-only");
+    await app.waitFor("label:Read-only");
+    await place(app, "run");
+  }
+  await app.press("id:run-try");
+  await app.waitFor("id:trial-plan", { timeout: 10000 });
+  // what the run did chooses the scenarios: the two every program meets, and (it writes) the lost answer
+  expect(app.shows("id:trial-scenario-slowdown")).toBe(true);
+  expect(app.shows("id:trial-scenario-error")).toBe(true);
+  expect(app.shows("id:trial-scenario-lost-answer")).toBe(true);
+  expect(app.shows("id:trial-scenario-fail-complete")).toBe(false);
+  // the command names no {trial}: the runs write where the clean run wrote
+  expect(app.shows("id:trial-shares")).toBe(true);
+  expect(app.shows("id:trial-read-only")).toBe(true);
+  expect(app.shows("label:Run 3 trials")).toBe(true);
+  await app.press("id:trial-start").catch(() => {});
+  expect(app.shows("id:trial-progress")).toBe(false);
+  await app.press("id:trial-close");
+  // writes allowed: one scenario taken off, the others run
+  await place(app, "settings");
+  await app.press("id:read-only");
+  await app.waitFor("label:Writes enabled");
+  await place(app, "run");
+  await app.press("id:run-try");
+  await app.waitFor("id:trial-plan", { timeout: 10000 });
+  expect(app.shows("id:trial-read-only")).toBe(false);
+  await app.press("id:trial-scenario-error");
+  await app.waitFor("label:Run 2 trials");
+  await app.press("id:trial-start");
+  await app.waitFor("id:trial-progress", { timeout: 10000 });
+  expect(app.shows("id:trial-step-error")).toBe(false);
+  await app.waitFor("text:/^How the program stood/", { timeout: 60000 });
+  expect(app.shows("id:trial-step-slowdown")).toBe(true);
+  expect(app.shows("id:trial-step-lost-answer")).toBe(true);
+  expect(app.shows("text:Waiting")).toBe(false);
+  // closed, the run opens on its Runs pane, where the verdicts stay
+  await app.press("id:trial-close");
+  await app.waitFor("id:history-trials", { timeout: 10000 });
+  // a trial's row opens its own session (it is in no list), marked as a trial
+  await app.press("id:trial-slowdown");
+  await app.waitFor("id:trial-note", { timeout: 10000 });
+  expect(app.shows("text:/^A trial of curl under “The store asks to slow down”/")).toBe(true);
+  // no run of its own: not run again, no Runs of its own
+  expect(app.shows("id:run-again")).toBe(false);
+  expect(app.shows("id:session-pane-mode-runs")).toBe(false);
+  // its injected request is marked where requests are listed, and in full
+  await app.press("id:session-pane-mode-operations");
+  await app.press("text:/^PutObject demo\\/trial.txt/");
+  await app.waitFor("id:operation-detail");
+  expect(app.shows("id:op-request-injected")).toBe(true);
+  await app.press("id:op-request-0");
+  await app.waitFor("id:record-injected");
+  await app.press("id:inspector-close");
+  // and the way back to the run it is a trial of
+  await app.press("id:trial-open-clean");
+  await app.waitFor("id:session-pane-mode-runs", { timeout: 10000 });
+  expect(app.shows("id:trial-note")).toBe(false);
+}, 120000);

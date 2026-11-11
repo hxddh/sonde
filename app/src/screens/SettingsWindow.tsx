@@ -19,7 +19,7 @@ export function SettingsBody() {
   return (
     <View class="flex-1 bg-background" testID="screen-settings-area">
       {/* the window's two pages, switched as every place switches what it shows */}
-      <View class={terminal() ? "flex-row" : "h-12 shrink-0 flex-row items-center border-b border-border px-5"}>
+      <View class={terminal() ? "flex-row" : "h-12 shrink-0 flex-row items-center border-b border-border px-4"}>
         <Segmented testID="tab" value={settingsTab()} items={SETTINGS_TABS.map((s) => ({ value: s, title: sectionLabel(s), icon: TAB_ICON[s] }))} onChange={(s) => settingsTab.set(s as SettingsTab)} />
       </View>
       <View class="flex-1">{settingsTab() === "settings" ? <SettingsScreen /> : <Endpoints />}</View>

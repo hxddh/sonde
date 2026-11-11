@@ -10,7 +10,7 @@ import { api } from "../native";
 import { command } from "../run";
 import { endpointsMode, go, notify, openSession, openSessionFile, refreshEndpoints, report, sessionsChanged, startDemo } from "../store";
 import type { EndpointView } from "../types";
-import { Actions, Button, Card, Check, Heading, READING, terminal } from "../ui/kit";
+import { Actions, Button, Card, Check, Heading, READING, terminal, Title } from "../ui/kit";
 
 /** A first command for the demo: two reads, one of a key that is not there,
  * signed with the keys sonde gives the program (cmd.exe on Windows). */
@@ -65,10 +65,10 @@ export function Welcome() {
   };
 
   return (
-    <View testID="welcome" class="flex-1 items-center justify-center p-8">
+    <View testID="welcome" class="flex-1 items-center justify-center p-6">
       <View class={terminal() ? "w-full gap-2" : `${READING} gap-6`}>
         <View class="gap-2">
-          <Text class="text-title font-semibold text-foreground">{t("welcome.title")}</Text>
+          <Title page>{t("welcome.title")}</Title>
           <Text class="text-body leading-5 text-muted-foreground">{t("welcome.text")}</Text>
         </View>
         <Card testID="welcome-way-demo">

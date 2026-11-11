@@ -17,7 +17,9 @@ function command(cmd: boolean) {
   const keys = cmd ? "%AWS_ACCESS_KEY_ID%:%AWS_SECRET_ACCESS_KEY%" : "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY";
   const curl = `curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u ${keys}`;
   const get = (k: string) => `${curl} -o ${sink} ${url}/demo/${k} && echo fetched ${k}`;
-  return [...["README.md", "config/app.yaml", "images/logo.png"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, "echo done"].join(" && ");
+  // small objects, one of 3 MiB (its first byte against the rest of it), a key that is not
+  // there (a miss) and a bucket that is not (a failure: the errors chart has something to draw)
+  return [...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
 }
 
 interface Variant {
@@ -76,17 +78,37 @@ for (const v of variants) {
     const env = (globalThis as any).process?.env ?? {};
     const cmd = (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
     await app.type("id:run-command", command(cmd));
+    // (the button follows the field a frame later)
+    await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });
     await shot("02b-ran");
+    // the run's own session: what failed over its time, and the first byte against the rest
+    await go("sessions");
+    await app.waitFor("id:session-summary", { timeout: 10000 });
+    await app.press("id:signal-errors");
+    await app.waitFor("id:time-pane");
+    await app.wait(900);
+    await shot("02c-errors");
+    await app.press("id:signal-latency");
+    await app.wait(700);
+    if (app.shows("id:chart-firstByte")) {
+      await app.scroll("id:time-pane", 320);
+      await shot("02d-first-byte");
+    }
 
     await go("sessions");
     await app.press("id:open-example");
-    await app.waitFor("id:session-pane", { timeout: 10000 });
+    // read off the interface's thread: there once its header is (a variant after the first
+    // opens on the example already, and reads it again as the list changes: let that settle)
+    await app.wait(900);
+    await app.waitFor("id:session-summary", { timeout: 10000 });
     await shot("03-session");
     await app.press(v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128");
     await app.waitFor("id:inspector");
     await shot("03b-operation");
+    // a narrow window's inspector comes in from the edge, its requests under the fold
+    if (width < 1000) await app.scroll("id:inspector-scroll", 400);
     await app.press("id:op-request-0");
     await app.waitFor("id:record-detail");
     await shot("03c-request");
@@ -116,13 +138,26 @@ for (const v of variants) {
     await shot("03j-spent");
     await app.scroll("id:time-pane", 400);
     await shot("03k-prefixes");
-    await app.scroll("id:time-pane", 600);
+    // to the board's end: where requests went
+    await app.scroll("id:time-pane", 4000);
     // the flows on demand, pressed last: the shots above show the pane as it opens
     if (app.shows("id:flows-show")) await app.press("id:flows-show").catch(() => {});
     await shot("03l-flows");
+    // a signal pressed in the header brings its chart into view: latency's bands, then bytes each way
+    await app.press("id:signal-latency");
+    await app.wait(700);
+    await shot("03m-latency");
+    if (app.shows("id:signal-bytes")) {
+      await app.press("id:signal-bytes");
+      await app.wait(700);
+      await shot("03n-bytes");
+    }
+    await app.press("id:signal-errors");
+    await app.wait(700);
+    await shot("03o-errors");
     // the same program run twice: before and after
     await app.press("id:compare-open");
-    const run = app.menu()?.map((m) => m.label).find((l) => l.startsWith("curl"));
+    const run = app.menu()?.map((m) => m.label).find((l) => l.includes("curl"));
     if (run) {
       await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });

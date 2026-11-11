@@ -6,6 +6,7 @@ import { cleanup, type JSX, Scroll, signal, Text, View } from "nsh";
 import { DataTable, type DataTableSort } from "nsh/base";
 import { bytes, count, date, day, days, money } from "../format";
 import { type Key, t } from "../i18n";
+import { core } from "../phrases";
 import { Icon } from "../ui/icon";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
@@ -59,7 +60,7 @@ export function Multipart() {
     failure.set(null);
     try {
       job = await api.mpuScan(ep, b, pfx());
-      const r = await watch<MpuReport>(job, (e) => e.type === "Progress" && progress.set(e.progress.message));
+      const r = await watch<MpuReport>(job, (e) => e.type === "Progress" && progress.set(core(e.progress.messageText, e.progress.message)));
       report_.set(r);
       remember(r.endpoint, r.bucket, r.prefix, { mpu: r });
     } catch (e) {
@@ -138,7 +139,7 @@ export function Multipart() {
                     <Button label={t("mpu.generateRule")} onPress={planRule} testID="plan-rule" />
                   </If>
                 </View>
-                <Text class="text-body text-foreground">{r().lifecycle.message}</Text>
+                <Text class="text-body text-foreground">{core(r().lifecycle.messageText, r().lifecycle.message)}</Text>
                 <If when={r().lifecycle.status !== "covered"}>
                   <Disclosure title={t("mpu.suggestedRule")}>
                     <Document text={r().lifecycle.suggestedRule} testID="lifecycle-rule" />
@@ -148,7 +149,7 @@ export function Multipart() {
               <If when={r().uploads.length > 0} else={<Empty text={t("mpu.noneFound")} />}>
                 <View class="flex-row items-center gap-2">
                   {/* what the table under it lists, and where */}
-                  <Text class="shrink-0 text-body font-semibold text-foreground">{t("mpu.uploads", { n: count(r().totalUploads) })}</Text>
+                  <Heading class="shrink-0">{t("mpu.uploads", { n: count(r().totalUploads) })}</Heading>
                   <Path path={`${r().bucket}/${r().prefix}`} class="min-w-0 flex-1 text-muted-foreground" />
                   <Button variant="destructive" small label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} testID="plan-abort" />
                 </View>
@@ -180,7 +181,7 @@ export function Multipart() {
                         : (c) =>
                             c.key === "flag" ? (
                               c.text ? (
-                                <Icon name="triangle-alert" size={13} tint="warn" />
+                                <Icon name="triangle-alert" size={12} tint="warn" />
                               ) : (
                                 <View />
                               )

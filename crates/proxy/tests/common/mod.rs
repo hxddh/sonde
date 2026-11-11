@@ -1,7 +1,9 @@
 //! A small in-memory S3 for tests: buckets, objects with conditional writes,
 //! multipart uploads, paged ListObjectsV2, DeleteObjects. With
 //! `honor_conditions: false` it ignores If-None-Match and If-Match, as some
-//! stores do.
+//! stores do. `versioned` keeps every version of a key and a delete marker
+//! for each delete, as a bucket with versioning on does; `log` is every
+//! request it was sent (method, path and query, body).
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, HashMap};
@@ -24,6 +26,23 @@ pub struct State {
     pub buckets: BTreeMap<String, BTreeMap<String, Object>>,
     uploads: HashMap<String, (String, String, BTreeMap<u32, Object>)>,
     next: u64,
+    /// Keep versions and delete markers.
+    pub versioned: bool,
+    /// (bucket, key, version id, whether it is a delete marker)
+    pub versions: Vec<(String, String, String, bool)>,
+    /// Every request: `METHOD /path?query`, and its body as text.
+    pub log: Vec<(String, String)>,
+}
+
+impl State {
+    fn version(&mut self, bucket: &str, key: &str, marker: bool) {
+        if self.versioned {
+            self.next += 1;
+            let id = format!("v{}", self.next);
+            self.versions
+                .push((bucket.to_string(), key.to_string(), id, marker));
+        }
+    }
 }
 
 pub struct MiniS3 {
@@ -91,6 +110,10 @@ async fn serve(
             .map(String::from)
     };
     let mut s = st.lock();
+    s.log.push((
+        format!("{} {}", parts.method, parts.uri),
+        String::from_utf8_lossy(&body[..body.len().min(4096)]).into_owned(),
+    ));
     let Some(bucket) = bucket else {
         return Ok(reply(200, &[], "<ListAllMyBucketsResult/>"));
     };
@@ -117,7 +140,7 @@ async fn serve(
             }
         }
         ("PUT", Some(k)) => {
-            let objects = s.buckets.entry(bucket).or_default();
+            let objects = s.buckets.entry(bucket.clone()).or_default();
             let existing = objects.get(&k).map(|o| o.1.clone());
             if honor {
                 if header("if-none-match").as_deref() == Some("*") && existing.is_some() {
@@ -130,7 +153,8 @@ async fn serve(
                 }
             }
             let e = etag(&body);
-            objects.insert(k, (body, e.clone()));
+            objects.insert(k.clone(), (body, e.clone()));
+            s.version(&bucket, &k, false);
             reply(200, &[("etag", e)], "")
         }
         ("POST", Some(k)) if has("uploads") => {
@@ -167,7 +191,11 @@ async fn serve(
                 &s3raw::sigv4::sha256_hex(&data)[..32],
                 numbers.len()
             );
-            s.buckets.entry(b).or_default().insert(k, (data, e.clone()));
+            s.buckets
+                .entry(b.clone())
+                .or_default()
+                .insert(k.clone(), (data, e.clone()));
+            s.version(&b, &k, false);
             reply(
                 200,
                 &[],
@@ -178,10 +206,20 @@ async fn serve(
         }
         ("POST", None) if has("delete") => {
             let xml = String::from_utf8_lossy(&body).to_string();
-            let objects = s.buckets.entry(bucket).or_default();
             let mut out = String::from("<DeleteResult>");
-            for k in tags(&xml, "Key") {
-                objects.remove(k);
+            for object in tags(&xml, "Object") {
+                let Some(k) = tags(object, "Key").first().copied() else {
+                    continue;
+                };
+                match tags(object, "VersionId").first() {
+                    Some(v) => s
+                        .versions
+                        .retain(|(b, key, id, _)| !(*b == bucket && key == k && id == v)),
+                    None => {
+                        s.buckets.entry(bucket.clone()).or_default().remove(k);
+                        s.version(&bucket, k, true);
+                    }
+                }
                 out.push_str(&format!("<Deleted><Key>{k}</Key></Deleted>"));
             }
             out.push_str("</DeleteResult>");
@@ -199,6 +237,20 @@ async fn serve(
                 }
             }
             out.push_str("</ListMultipartUploadsResult>");
+            reply(200, &[], out)
+        }
+        ("GET", None) if has("versions") => {
+            let prefix = get("prefix").unwrap_or_default();
+            let mut out = String::from("<ListVersionsResult><IsTruncated>false</IsTruncated>");
+            for (b, k, id, marker) in &s.versions {
+                if *b == bucket && k.starts_with(&prefix) {
+                    let tag = if *marker { "DeleteMarker" } else { "Version" };
+                    out.push_str(&format!(
+                        "<{tag}><Key>{k}</Key><VersionId>{id}</VersionId></{tag}>"
+                    ));
+                }
+            }
+            out.push_str("</ListVersionsResult>");
             reply(200, &[], out)
         }
         ("GET", None) => {
@@ -248,8 +300,16 @@ async fn serve(
             reply(204, &[], "")
         }
         ("DELETE", Some(k)) => {
-            if let Some(o) = s.buckets.get_mut(&bucket) {
-                o.remove(&k);
+            match get("versionId") {
+                Some(v) => s
+                    .versions
+                    .retain(|(b, key, id, _)| !(*b == bucket && *key == k && *id == v)),
+                None => {
+                    if let Some(o) = s.buckets.get_mut(&bucket) {
+                        o.remove(&k);
+                    }
+                    s.version(&bucket, &k, true);
+                }
             }
             reply(204, &[], "")
         }
@@ -276,6 +336,17 @@ impl MiniS3 {
             }
         });
         MiniS3 { url, state }
+    }
+
+    /// The requests it was sent whose line starts with `start`.
+    pub fn sent(&self, start: &str) -> Vec<(String, String)> {
+        self.state
+            .lock()
+            .log
+            .iter()
+            .filter(|(line, _)| line.starts_with(start))
+            .cloned()
+            .collect()
     }
 
     pub fn keys(&self, bucket: &str) -> Vec<String> {
