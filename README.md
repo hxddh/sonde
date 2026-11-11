@@ -38,19 +38,24 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
   slow requests…), what fixing them would save, a fix in Python, Java, Go or JavaScript, and, with `--callers`,
   the line of your code that sent the requests (Python, Node.js and Java).
 - **Four signals** head every run, in the app and in `sonde show`: rate, errors, latency and bytes, each with
-  its line over the session (and how many requests were in flight).
+  its line over the session (and how many requests were in flight); under them **a table per operation**:
+  requests, the share that failed, p50, p95 and p99.
 - **Where the time and money went**, on one board under one timeline: bytes a second each way, p50, p95 and p99
   over time, the first byte against the rest, errors and retries by class, sizes and MiB/s, waiting by kind of
-  request, every request on a log scale, what ran at once lane by lane, prefixes against S3's per-prefix limit,
-  the cost by operation.
+  request, every request on a log scale, latency as a heat map, what ran at once lane by lane, prefixes against
+  S3's per-prefix limit, the cost by operation. Every chart over time shares one axis and says its scale.
+- **Sessions of any size**: a million requests are read in seconds (`show` in 7 s and under 2 GiB), and the app
+  opens a session at its first screen and reads the rest as you scroll.
 - **Production traffic**: `sonde import` reads S3 access logs, CloudTrail and HAR files the same way.
 
 **When the store fails**
 
 - `sonde run --trial` runs the command again while sonde answers in the store's place — a 503 on each request's
-  first attempt, a write whose answer is lost, a failed CompleteMultipartUpload — and says whether the program
-  **survived**: whether it retried, how long it waited and whether the waits are jittered, how much it multiplied
-  the load, what it left behind. `[[scenario]]` in `sonde.toml` adds a project's own;
+  first attempt, a write whose answer is lost, a failed CompleteMultipartUpload, a download cut half way, a
+  conditional write that loses its race — and says whether the program **survived**: whether it retried, how
+  long it waited and whether the waits are jittered, how much it multiplied the load, what it left behind. When
+  it **broke**, the verdict names the request, the line of code and the SDK setting to change.
+  `--fault slowdown:3` presses harder; `[[scenario]]` in `sonde.toml` adds a project's own;
   `sonde check` fails when the program broke. In the app, **Try under faults…** does the same and a trial opens
   as a session with the injected requests marked. See [docs/trials.md](docs/trials.md).
 
@@ -85,7 +90,7 @@ English and 中文.
 ## The app
 
 **Run** is the home: type a command, and its terminal and its requests appear side by side. **Sessions** keeps every
-run and every file you open or drop on the window. **Buckets** browses your stores. The sidebar lists what the place
+run and every file you open, drop on the window, or double-click in the system (`.sonde`). **Buckets** browses your stores. The sidebar lists what the place
 has (the commands run before, the sessions, the buckets); a detail opens beside it and nothing else moves. ⌘K opens everything; Settings
 are a window of their own (⌘,). The terminal UI (`sonde tui`) has the same places: `:` for the palette, Esc to go
 back. Design standards: [app/DESIGN.md](app/DESIGN.md).

@@ -34,7 +34,7 @@ jobs:
       - run: cargo clippy -p sonde-cli --features tui --all-targets -- -D warnings
       - run: cd app && nsh check
       - name: Tables fit where they are shown; every word in every language
-        run: python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py
+        run: python3 scripts/lint-layout.py && python3 scripts/lint-kit.py && python3 scripts/check-locales.py && python3 scripts/lint-charts.py
       - name: nsh build reports no warnings
         run: |
           cd app && nsh build App.tsx 2>&1 | tee build.log

@@ -881,11 +881,24 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     // anything runs
     let project = load_project(None)?;
     let mut asked: Vec<sonde_proxy::fault::Scenario> = Vec::new();
+    let mut specs: Vec<&str> = Vec::new();
     for name in &a.faults {
         let scenario = named_scenario(name, &project.scenarios)?;
         // named twice, run once: the second run would write over the first
-        if !asked.iter().any(|s| s.name == scenario.name) {
-            asked.push(scenario);
+        match asked.iter().position(|s| s.name == scenario.name) {
+            None => {
+                asked.push(scenario);
+                specs.push(name);
+            }
+            // one scenario at two strengths has one file to go to: refused,
+            // not silently run at the first
+            Some(at) if specs[at] != name.as_str() => {
+                return Err(super::usage(format!(
+                    "--fault {} and --fault {name} are one scenario and would write one session: name it once",
+                    specs[at]
+                )));
+            }
+            Some(_) => {}
         }
     }
     let trying = a.trial || !asked.is_empty();
