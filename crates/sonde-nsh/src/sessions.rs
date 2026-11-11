@@ -850,6 +850,12 @@ impl Newest {
     }
 }
 
+/// Whether a terminal's output asks where the cursor is (a Device Status
+/// Report, `ESC [ 6 n`), which its reader is to answer.
+fn asks_cursor(text: &str) -> bool {
+    text.contains("\x1b[6n")
+}
+
 /// The command a run's shell is given: as the session keeps it, every
 /// separator, pipe and quote where it was written, with `{trial}` alone
 /// replaced (`clean`, or the scenario's name under one).
@@ -979,6 +985,16 @@ async fn run_recorded(
             bytes = out_rx.recv() => match bytes {
                 Some(bytes) => {
                     let text = decoder.push(&bytes);
+                    // Windows' pseudo-console asks where the cursor is as it
+                    // starts and holds the program until it is told. A run's
+                    // terminal answers; a trial's output goes to no terminal,
+                    // so it is answered here, or the program never starts.
+                    if trial.is_some()
+                        && asks_cursor(&text)
+                        && let Some(r) = RUNNING.lock().as_mut()
+                    {
+                        r.write(b"\x1b[1;1R");
+                    }
                     if !text.is_empty() {
                         writer.write_log(&text);
                         match &trial {

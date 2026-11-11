@@ -66,6 +66,8 @@ A verdict to trust, sessions of any size, charts that can be read. The review th
 - The gzip limit covered `import` only; one absurd line aborted `show`. Dot segments were refused in the key and
   not in the bucket's place. A replay could not remove what it wrote on a store without `DeleteObjects`, and
   counted what remained twice.
+- On Windows a trial started from the app never began: the pseudo-console waits to be told where the cursor
+  is, and a trial's output has no terminal to answer. sonde answers it.
 - A retry in the signals was any later request of the same key, however much later. Requests sonde answered
   itself were priced.
 - The app: a finding's advice opened under another finding; three time axes in one pane; tiles and tables cut
