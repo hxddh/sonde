@@ -23,7 +23,7 @@
 //! by itself in both runs (`error/x` under the scenario `error`) is matched
 //! as it was written.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use reqlog::Record;
 use serde::{Deserialize, Serialize};
@@ -824,7 +824,17 @@ pub fn judge(
                 };
                 // the same ETag sent again: nothing was read in between
                 // that could have told the program what it lost to
-                if header(r).is_some() && header(r) == header(next) {
+                // (a write on If-Match is answered in the store's place, so
+                // a program that did read again holds the same ETag still)
+                let read_between = in_time.iter().any(|w| {
+                    (w.time, w.id) > (r.time, r.id)
+                        && (w.time, w.id) < (next.time, next.id)
+                        && !is_write(w)
+                        && done(w)
+                        && w.bucket == r.bucket
+                        && w.key == r.key
+                });
+                if header(r).is_some() && header(r) == header(next) && !read_between {
                     blind += 1;
                 }
                 if !group.windows(2).any(|w| w[1].time < end_of(w[0])) {
@@ -833,24 +843,49 @@ pub fn judge(
             }
         }
     }
-    // what the lost commits wrote and nothing removed: objects written
-    // without a condition, beyond the clean run's
+    // what the lost commits wrote and nothing removed: the objects that
+    // stand after the writes made without a condition, beyond the clean
+    // run's. Objects, not requests: a key uploaded twice is one object, and
+    // a key removed twice was removed once.
     let left = |records: &[Record]| -> i64 {
-        records
+        let mut in_time: Vec<&Record> = records
             .iter()
             .filter(|r| done(r) && condition_of(r).is_none())
-            .map(|r| match r.operation.as_str() {
-                "PutObject" | "CopyObject" | "CompleteMultipartUpload" => 1,
-                "DeleteObject" => -1,
-                "DeleteObjects" => {
-                    -(r.request_body
-                        .as_deref()
-                        .map_or(1, |b| b.matches("<Key>").count().max(1))
-                        as i64)
+            .collect();
+        in_time.sort_by_key(|r| (r.time, r.id));
+        let mut stands: BTreeSet<(Option<&str>, String)> = BTreeSet::new();
+        // deletes of what the run never wrote (it stood before the run)
+        let mut gone: BTreeSet<(Option<&str>, String)> = BTreeSet::new();
+        for r in in_time {
+            let bucket = r.bucket.as_deref();
+            let mut remove = |key: String| {
+                if !stands.remove(&(bucket, key.clone())) {
+                    gone.insert((bucket, key));
                 }
-                _ => 0,
-            })
-            .sum()
+            };
+            match r.operation.as_str() {
+                "PutObject" | "CopyObject" | "CompleteMultipartUpload" => {
+                    stands.insert((bucket, r.key.clone().unwrap_or_default()));
+                }
+                "DeleteObject" => remove(r.key.clone().unwrap_or_default()),
+                "DeleteObjects" => {
+                    let body = r.request_body.as_deref().unwrap_or("");
+                    let mut keys: BTreeSet<&str> = body
+                        .split("<Key>")
+                        .skip(1)
+                        .filter_map(|k| k.split("</Key>").next())
+                        .collect();
+                    if keys.is_empty() {
+                        keys.insert("");
+                    }
+                    for key in keys {
+                        remove(key.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        stands.len() as i64 - gone.len() as i64
     };
     let orphans = if races > 0 {
         (left(run) - left(clean)).max(0) as usize
@@ -2276,6 +2311,12 @@ mod tests {
             "{:?}",
             t.reasons
         );
+        // it wrote its data again under the same name: one object, as the
+        // clean run leaves, however many times it was uploaded
+        let mut same = run.clone();
+        same.insert(3, put(9, 30, "t/part-1.parquet", 200));
+        let t = judge(&lost_race_scenario(), &clean, 0, &same, 0);
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
         // it never commits again and exits 0: the commit is lost in silence
         let t = judge(&lost_race_scenario(), &clean, 0, &run[..2], 0);
         assert_eq!(t.standing, Standing::Broke);
@@ -2404,6 +2445,21 @@ mod tests {
             race(swap(2, 10, "\"v1\"", 412), None),
             get(3, 20, "pointer", 200),
             swap(4, 40, "\"v2\"", 200),
+        ];
+        let t = judge(&lost_race_scenario(), &clean, 0, &run, 0);
+        assert_eq!(
+            (t.retried, t.standing),
+            (1, Standing::Survived),
+            "{}",
+            t.line()
+        );
+        // the same ETag, read anew: the write was answered in the store's
+        // place, so the object is as it was and the ETag is the right one
+        let run = vec![
+            get(1, 0, "pointer", 200),
+            race(swap(2, 10, "\"v1\"", 412), None),
+            get(3, 20, "pointer", 200),
+            swap(4, 40, "\"v1\"", 200),
         ];
         let t = judge(&lost_race_scenario(), &clean, 0, &run, 0);
         assert_eq!(
