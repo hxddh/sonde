@@ -4,6 +4,80 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [15.0.0] - 2026-11-11
+
+One reading of a run: four signals, one chart system, one way to draw each thing — and a verdict that is right.
+No new place and no new command. The review this came from is [docs/review-14.0.md](docs/review-14.0.md); every
+row of it is in this version.
+
+### Added
+
+- **Four signals.** A run's header is **rate, errors, latency, bytes** (and in flight): each a figure with its
+  line over the session, and a press opens its chart. `sonde show` and a run's summary print the same lines.
+- **What could not be seen**: bytes a second each way over time; p50, p95 and p99 over time; the first byte
+  against the rest of the exchange; errors and retries by class over time, injected ones marked; request and
+  response sizes, and MiB/s against size; cost by operation; a status-code table; the prefix nearest S3's limit.
+  The Time pane groups them as Traffic, Latency, Errors and Where. A shared page and Compare have the signals too.
+- **Trials in the app.** A trial's session opens, says it is one and whose, and marks the requests sonde
+  answered itself (rows, the inspector, the lanes and the scatter). "Try under faults…" on Run and on the Runs
+  pane lists the scenarios it will run before it runs them. The sessions list says when a run broke under faults.
+- **A program has a name**: `[program] name` in `sonde.toml`, or `--name`. Its baseline and trend survive a
+  changed argument or interpreter path.
+- `sonde check -f json` has `trials`, `verdict` and `program`; a trial's row says `notRetryable`, `lostWrites`,
+  `delayed`, and its wall time against the clean run's. `sonde sessions` shows requests, seconds, errors and trials.
+- A second launch, a `sonde://` link or an opened file goes to the running app.
+
+### Changed
+
+- **One chart system.** Every chart, Capacity's, Compare's and the shared page's included, has one frame, one
+  left edge, one row pitch, one legend, one tooltip and one empty state; `scripts/lint-charts.py` counts them.
+- **One of each.** Two renderings of a figure, the kit's heading and row only, spacing on the scale, two control
+  heights, three icon sizes, one empty state, one function for a duration; each kept by a lint. A pane that
+  narrows drops its lowest-ranked figures and columns, and never clips one.
+- **Chinese is whole.** Sentences written in Rust (capacity findings, the lifecycle verdict, layout facts, probe
+  titles and summaries, plans, job progress, the credentials line) are phrases with a Chinese template each.
+- The shared page has the app's layout.
+- Native Shell moved to its newest commit. The focus ring shows for the keyboard only; a pressed chart scrolls
+  its operation into view; the icon, the middle ellipsis, the options and the boxed pairs are Native Shell's own.
+- `sonde export` writes OTLP unless told otherwise; "newest" is the newest recording, never a replay or an import;
+  `compare`, `replay` and `diff` take a session's name.
+- Unknown top-level keys in `sonde.toml` are an error (`[[scenarios]]` was ignored in silence), and a scenario's
+  `on` must name operations that exist.
+
+### Fixed
+
+- **A program that never retries could be "survived".** A retry is now counted against the clean run: a request
+  the clean run sent *n* times and the trial answered successfully fewer than *n* times was not retried.
+- **Requests without a key shared one identity**: of two `DeleteObjects` batches only the first met the fault.
+  They are told apart by their body and their paging.
+- A lost answer on CompleteMultipartUpload was read as an upload left unfinished and "written twice". Jitter was
+  judged across attempts ("jittered" of a fixed 1 s, 2 s, 4 s). A lost write that is not retried was counted among
+  the reads; a 404 scenario was judged as if a retry were owed; `slow` had no figure.
+- **Ctrl-C did not stop a trial** and the interrupted scenario was saved as "broke". It ends the trial and writes
+  nothing. A trial's program now has the clean run's stdin.
+- `sonde check` ignored a broken trial without a budget and said "over budget" of one; a run without `--trial`
+  kept the old verdicts; trials of an earlier trial stayed for ever.
+- Deleting a run deleted whatever path its `.trials.json` named. Trials are found by name, beside the run.
+- `{trial}` was rewritten in runs that are not trials. The injected-fault finding is first, not last.
+- **The proxy forwarded keys with `.` or `..` segments to another key** (14.0 refused them in sonde's own
+  requests only). It answers 400.
+- **A replay left what it wrote** on a versioned bucket. It removes the versions, says how many, and exits 70 if
+  any remain.
+- **"Acting on N findings"** was arithmetic that could not be. It subtracts the requests the findings name, and
+  says nothing where that cannot be measured.
+- The app: a trial's row did nothing, or opened another session; a bucket's sheet kept the old endpoint's figures
+  when the endpoint changed beneath it; a live session's pane lost its sort, scroll and zoom each second; the
+  sidebar toggle did nothing while a place held the sidebar open.
+- Prefix folding counted a lone deep folder several times; a Delta table under a path with `/data/` lost its
+  files; a folder import followed a symlink to itself; `--log-out` on `run` wrote an empty file (it is refused);
+  `check --init` wrote a time limit an identical run would fail; `-f` help listed formats the command refuses.
+- A gzip file that holds more than 2 GiB is refused rather than read into memory.
+
+### Removed
+
+- The header's six loose figures (the four signals replace them), the pressure strip, 60 locale keys nothing used,
+  four of five duration functions, three of five figure renderings, the second tooltip, the icon's canvas.
+
 ## [14.0.0] - 2026-11-10
 
 Run your program against an S3 that misbehaves, and sonde says whether it survived. Thirteen versions observed;

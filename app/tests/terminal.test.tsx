@@ -101,9 +101,10 @@ test("sessions in a terminal: sessions › operations › requests › request",
   await place(app, "sessions");
   await app.press("id:open-example");
   await app.waitFor("id:session-summary", { timeout: 10000 });
-  expect(app.shows("text:/172 requests · 34 operations/")).toBe(true);
+  await app.waitFor("text:/172 requests · 34 operations/");
   // the session in a sentence, and its findings narrowing the operations, as on the desktop
-  expect(app.shows("id:session-story")).toBe(true);
+  await app.waitFor("id:session-story");
+  await app.waitFor("id:observation-0");
   await app.press("id:observation-0");
   await app.waitFor("text:/ of 34 operations/");
   await app.press("id:observation-0");

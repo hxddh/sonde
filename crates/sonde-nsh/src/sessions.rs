@@ -171,8 +171,7 @@ fn map_to_change(path: &Path) -> Result<std::collections::BTreeMap<String, Strin
 /// torn last character is a torn line).
 fn file_text(bytes: &[u8]) -> std::io::Result<String> {
     if bytes.starts_with(&[0x1f, 0x8b]) {
-        let mut out = Vec::new();
-        std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(bytes), &mut out)?;
+        let out = sonde_proxy::import::gunzip(bytes, sonde_proxy::import::GUNZIP_LIMIT)?;
         return Ok(String::from_utf8_lossy(&out).into_owned());
     }
     Ok(String::from_utf8_lossy(bytes).into_owned())

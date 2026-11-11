@@ -72,10 +72,28 @@ pub fn text_of(bytes: &[u8]) -> Result<String, String> {
     if !bytes.starts_with(&[0x1f, 0x8b]) {
         return Ok(String::from_utf8_lossy(bytes).into_owned());
     }
-    let mut out = Vec::new();
-    std::io::Read::read_to_end(&mut flate2::read::MultiGzDecoder::new(bytes), &mut out)
-        .map_err(|e| format!("gzip: {e}"))?;
+    let out = gunzip(bytes, GUNZIP_LIMIT).map_err(|e| format!("gzip: {e}"))?;
     Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// The most a gzip file may hold once read into memory: a few bytes of gzip
+/// can say they are any size.
+pub const GUNZIP_LIMIT: u64 = 2 << 30;
+
+/// Gzip bytes, read whole; an error past `limit` bytes of content.
+pub fn gunzip(bytes: &[u8], limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::MultiGzDecoder::new(bytes)
+        .take(limit + 1)
+        .read_to_end(&mut out)?;
+    if out.len() as u64 > limit {
+        return Err(std::io::Error::other(format!(
+            "it holds more than {} MiB",
+            limit >> 20
+        )));
+    }
+    Ok(out)
 }
 
 /// Reads `text` as the source it is into a session (records numbered in time
@@ -682,6 +700,17 @@ pub fn save(session: &Session, path: &std::path::Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_gzip_file_larger_than_the_limit_is_refused_not_read() {
+        use std::io::Write;
+        let mut z = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        z.write_all(&vec![0u8; 1 << 20]).unwrap();
+        let bytes = z.finish().unwrap();
+        assert_eq!(gunzip(&bytes, 1 << 20).unwrap().len(), 1 << 20);
+        let e = gunzip(&bytes, (1 << 20) - 1).unwrap_err();
+        assert!(e.to_string().contains("more than"), "{e}");
+    }
 
     const LOG: &str = r#"79a5 lake [06/Feb/2026:00:00:38 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPLE REST.GET.OBJECT t/part-00.parquet "GET /lake/t/part-00.parquet HTTP/1.1" 200 - 4096 4096 12 10 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
 79a5 lake [06/Feb/2026:00:00:39 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL2 REST.HEAD.OBJECT t/missing "HEAD /lake/t/missing HTTP/1.1" 404 NoSuchKey 0 - 3 - "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -
