@@ -196,7 +196,8 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
                     <Options testID="trial-limit" value={limit()} items={LIMITS()} onChange={(v) => limit.set(v as Policy)} />
                   </Labeled>
                 </View>
-                <If when={p().sharesPlace}>
+                {/* nothing runs while sonde is read-only: that is said alone (both notices are taller than the least window) */}
+                <If when={p().sharesPlace && !p().readOnly}>
                   <Notice testID="trial-shares" tone="warn" text={t("trial.sharesPlace")} />
                 </If>
                 <If when={p().readOnly}>

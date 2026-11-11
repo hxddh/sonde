@@ -367,8 +367,8 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   expect(app.shows("id:trial-scenario-error")).toBe(true);
   expect(app.shows("id:trial-scenario-lost-answer")).toBe(true);
   expect(app.shows("id:trial-scenario-fail-complete")).toBe(false);
-  // the command names no {trial}: the runs write where the clean run wrote
-  expect(app.shows("id:trial-shares")).toBe(true);
+  // read-only is said alone: nothing runs, so where the runs would write waits its turn
+  expect(app.shows("id:trial-shares")).toBe(false);
   expect(app.shows("id:trial-read-only")).toBe(true);
   expect(app.shows("label:Run 3 trials")).toBe(true);
   await app.press("id:trial-start").catch(() => {});
@@ -382,6 +382,8 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   await runAction(app, "run-try");
   await app.waitFor("id:trial-plan", { timeout: 10000 });
   expect(app.shows("id:trial-read-only")).toBe(false);
+  // the command names no {trial}: the runs write where the clean run wrote
+  expect(app.shows("id:trial-shares")).toBe(true);
   await app.press("id:trial-scenario-error");
   await app.waitFor("label:Run 2 trials");
   await app.press("id:trial-start");

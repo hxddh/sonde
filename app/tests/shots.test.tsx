@@ -88,7 +88,10 @@ for (const v of variants) {
     const env = (globalThis as any).process?.env ?? {};
     // (asked of the app: the demo's own sample command, left in the field, is written for the shell Run uses;
     // a test has no process to ask, and its own `platform` is not the window's)
-    const cmd = String((await app.value("id:run-command")) ?? "").includes("%AWS_ENDPOINT_URL%") || (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
+    const sample = String((await app.value("id:run-command")) ?? "");
+    const cmd = sample.includes("%AWS_ENDPOINT_URL%") || (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
+    // the sample said which shell: no second guess is owed
+    const sure = sample.includes("AWS_ENDPOINT_URL");
     // (the demo left its own first command in the field: typed after it, the two ran as one)
     await app.clear("id:run-command");
     await app.type("id:run-command", command(cmd));
@@ -96,8 +99,8 @@ for (const v of variants) {
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });
-    // (the other shell's form, should the first have reached no store: the tour needs a run with requests)
-    if (app.shows("id:run-no-requests")) {
+    // (the other shell's form, should the sample not have said and the first have reached no store)
+    if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
       await app.clear("id:run-command");
       await app.type("id:run-command", command(!cmd));
       await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
