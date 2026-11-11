@@ -148,7 +148,7 @@ export function Multipart() {
               <If when={r().uploads.length > 0} else={<Empty text={t("mpu.noneFound")} />}>
                 <View class="flex-row items-center gap-2">
                   {/* what the table under it lists, and where */}
-                  <Text class="shrink-0 text-body font-semibold text-foreground">{t("mpu.uploads", { n: count(r().totalUploads) })}</Text>
+                  <Heading class="shrink-0">{t("mpu.uploads", { n: count(r().totalUploads) })}</Heading>
                   <Path path={`${r().bucket}/${r().prefix}`} class="min-w-0 flex-1 text-muted-foreground" />
                   <Button variant="destructive" small label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} testID="plan-abort" />
                 </View>

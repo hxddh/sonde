@@ -21,7 +21,8 @@ pub struct DuArgs {
     /// Print the last cached scan instead of scanning.
     #[arg(long)]
     cached: bool,
-    #[arg(long, short = 'f', value_enum, default_value_t)]
+    /// The format written: table, json or csv.
+    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
     format: Format,
 }
 

@@ -3,7 +3,7 @@
 // do": a sheet from the window's edge, opened from the toolbar; a place of
 // its own in a terminal.
 
-import { batch, cleanup, computed, effect, Scroll, signal, Text, View, type ViewRef } from "nsh";
+import { batch, cleanup, computed, effect, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
 import { AlertDialog, DataTable } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { ago, clock, count, date, middle, duration } from "../format";
@@ -13,7 +13,7 @@ import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, openSession, report, sessionsChanged } from "../store";
 import type { AuditEntry, JobInfo, RecordSummary, RequestFilter } from "../types";
 import { iconSvg } from "./icon";
-import { Badge, Bar, Button, Card, Empty, IconButton, Options, PanelHeader, terminal, ROW, rowHeight, SearchField, Segmented, type Tone, TYPE, TABLE } from "./kit";
+import { Badge, Bar, Button, Card, Empty, IconButton, Options, PanelHeader, terminal, Row, ROW, rowHeight, SearchField, Segmented, type Tone, TYPE, TABLE } from "./kit";
 import { StatusMark } from "./sessionview";
 
 export const activityOpen = signal(false);
@@ -165,7 +165,7 @@ function Requests() {
           // to the millisecond, as operations show theirs
           { key: "time", title: t("column.time"), width: 110 },
         ]}
-        data={rows().map((r) => ({ status: r.status === null ? "—" : String(r.status), operation: r.operation, target: middle(r.target, 30), latency: duration(r.latencyMs), time: clock(r.time, "ms") }))}
+        data={rows().map((r) => ({ status: r.status === null ? "—" : `${r.status}`, operation: r.operation, target: middle(r.target, 30), latency: duration(r.latencyMs), time: clock(r.time, "ms") }))}
         fontSize={TYPE.body}
         rowHeight={rowHeight(ROW.table)}
         classes={terminal() ? undefined : TABLE}
@@ -200,7 +200,6 @@ function Requests() {
 const JOB_TONE: Record<JobInfo["state"], Tone> = { running: "primary", finished: "pass", failed: "fail", cancelled: "neutral" };
 
 /** A row of Activity's lists: hairlines between them, in one card. */
-const LIST_ROW = "gap-1 px-3 py-2";
 
 function Jobs() {
   const jobs = signal<JobInfo[]>(api.jobs());
@@ -218,7 +217,7 @@ function Jobs() {
         <Card pad="none">
           <Each of={jobs()} key={(j) => j.id}>
             {(j, i) => (
-              <View class={`${LIST_ROW} ${i() > 0 ? "border-t border-border" : ""}`}>
+              <Row stack first={i() === 0}>
                 <View class="min-h-7 flex-row items-center gap-2">
                   <View class="shrink-0">
                     <Badge tone={JOB_TONE[j().state] ?? "neutral"} label={t(`jobs.state.${j().state}` as never)} />
@@ -233,7 +232,7 @@ function Jobs() {
                   <Bar value={j().progress.total ? j().progress.done / Math.max(1, j().progress.total!) : null} label={j().progress.message} />
                 </If>
                 <If when={j().error}>{(e) => <Text class="text-small text-destructive">{e().message}</Text>}</If>
-              </View>
+              </Row>
             )}
           </Each>
         </Card>
@@ -250,16 +249,21 @@ function actionLabel(action: string): string {
 }
 
 function Changes() {
-  const entries = api.auditLog(200);
+  // read again each time the tab is shown: what was changed since the panel was last open is there
+  const log = signal(api.auditLog(200));
+  effect(() => {
+    if (activityOpen() && activityTab() === "audit") untracked(() => log.set(api.auditLog(200)));
+  });
+  const entries = () => log();
   // started (its outcome not yet written), failed in part, or done
   const outcome = (e: AuditEntry): { tone: Tone; label: string } => (e.stage === "started" ? { tone: "neutral", label: t("audit.started") } : e.failed > 0 ? { tone: "fail", label: t("audit.failed") } : { tone: "pass", label: t("audit.done") });
   return (
-    <If when={entries.length > 0} else={<Empty icon="scroll-text" text={t("audit.none")} />}>
+    <If when={entries().length > 0} else={<Empty icon="scroll-text" text={t("audit.none")} />}>
       <Scroll class="flex-1" contentClass="pb-4">
         <Card pad="none">
-          <Each of={entries}>
+          <Each of={entries()}>
             {(e, i) => (
-              <View class={`${LIST_ROW} ${i() > 0 ? "border-t border-border" : ""}`}>
+              <Row stack first={i() === 0}>
                 <View class="min-h-7 flex-row items-center gap-2">
                   <View class="shrink-0">
                     <Badge tone={outcome(e()).tone} label={outcome(e()).label} />
@@ -278,7 +282,7 @@ function Changes() {
                 <If when={e().errors.length > 0}>
                   <Text class="text-small text-destructive">{e().errors.join("; ")}</Text>
                 </If>
-              </View>
+              </Row>
             )}
           </Each>
         </Card>

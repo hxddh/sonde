@@ -13,7 +13,8 @@ use crate::output::{self, Format};
 pub struct SessionsArgs {
     #[command(subcommand)]
     action: Option<Action>,
-    #[arg(long, short = 'f', value_enum, default_value_t, global = true)]
+    /// The format written: table, json, markdown or csv (the list).
+    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true, global = true)]
     format: Format,
 }
 
@@ -38,6 +39,14 @@ struct Row {
     program: Option<String>,
     endpoint: String,
     bytes: u64,
+    /// What it holds: its requests, how long they spanned, how many failed.
+    requests: u64,
+    seconds: f64,
+    errors: u64,
+    /// How its trials stood, the worst of them: `broke`, `degraded`,
+    /// `survived`, `untested`. None when it was never tried.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trials: Option<&'static str>,
 }
 
 /// The sessions in the data directory, newest first.
@@ -53,13 +62,22 @@ fn rows(s: &Sonde) -> Vec<Row> {
                 return None;
             }
             let h = read_header(&p)?;
+            // (a file that does not read is still listed, by its header)
+            let sum = sonde_proxy::session::Session::open(&p)
+                .ok()
+                .map(|s| sonde_proxy::summary::summarize(&s.records));
             Some(Row {
                 name: p.file_name()?.to_string_lossy().into_owned(),
                 path: p.to_string_lossy().into_owned(),
                 created: h.created.to_rfc3339(),
-                program: sonde_proxy::program::program_key(h.command.as_deref()),
+                program: sonde_proxy::program::key_of(&h),
                 endpoint: h.endpoint,
                 bytes: e.metadata().map(|m| m.len()).unwrap_or(0),
+                requests: sum.as_ref().map_or(0, |s| s.requests),
+                seconds: sum.as_ref().map_or(0.0, |s| s.seconds),
+                errors: sum.as_ref().map_or(0, |s| s.errors),
+                trials: sonde_proxy::trial::worst(&sonde_proxy::trial::load(&p))
+                    .map(|s| s.label()),
             })
         })
         .collect();
@@ -79,6 +97,26 @@ pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
         }
     }
     f.clone()
+}
+
+/// A session named on the command line, opened: every command that takes a
+/// session takes it by path or by name, and one that is not there is said
+/// with where it was looked for.
+pub fn open(
+    s: &Sonde,
+    f: &PathBuf,
+) -> anyhow::Result<(PathBuf, sonde_proxy::session::Session)> {
+    let file = resolve(s, f);
+    if !file.exists() {
+        return Err(super::usage(format!(
+            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            f.display(),
+            s.paths().sessions().display()
+        )));
+    }
+    let session = sonde_proxy::session::Session::open(&file)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    Ok((file, session))
 }
 
 pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
@@ -123,13 +161,20 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                         local(&r.created),
                         r.program.clone().unwrap_or_default(),
                         r.endpoint.clone(),
+                        r.requests.to_string(),
+                        sonde_proxy::program::ms_text(r.seconds * 1000.0),
+                        r.errors.to_string(),
+                        r.trials.unwrap_or("").to_string(),
                         output::bytes(r.bytes),
                     ]
                 })
                 .collect();
             output::print(
                 a.format,
-                &["session", "recorded", "program", "endpoint", "size"],
+                &[
+                    "session", "recorded", "program", "endpoint", "requests", "took", "errors",
+                    "trials", "size",
+                ],
                 &rows,
             );
             Ok(0)
@@ -162,7 +207,11 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 );
             }
             if !*yes && !gone.is_empty() {
-                eprintln!("{} sessions: add --yes to delete them", gone.len());
+                eprintln!(
+                    "{}: add --yes to delete {}",
+                    output::count(gone.len(), "session"),
+                    if gone.len() == 1 { "it" } else { "them" }
+                );
             }
             Ok(0)
         }
@@ -205,7 +254,9 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
         })
     } else {
         // as S3 delivers CloudTrail, and as logs are often kept: gzip
-        sonde_proxy::import::text_of(&std::fs::read(&a.file)?)
+        let bytes = std::fs::read(&a.file)
+            .map_err(|e| super::usage(format!("{}: {e}", a.file.display())))?;
+        sonde_proxy::import::text_of(&bytes)
             .and_then(|text| sonde_proxy::import::import_counted(&text, &name))
     };
     let imported = match imported {
@@ -227,15 +278,15 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     sonde_proxy::import::save(session, &path)?;
     match &folder {
         Some((files, _)) => eprintln!(
-            "{} requests from {files} file{} of {} → {}",
-            session.records.len(),
+            "{} from {files} file{} of {} → {}",
+            output::count(session.records.len(), "request"),
             if *files == 1 { "" } else { "s" },
             source.name(),
             path.display()
         ),
         None => eprintln!(
-            "{} requests from a {} → {}",
-            session.records.len(),
+            "{} from a {} → {}",
+            output::count(session.records.len(), "request"),
             source.name(),
             path.display()
         ),
@@ -275,8 +326,9 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
 pub struct ExportArgs {
     /// The session (default: the newest).
     file: Option<PathBuf>,
-    /// OpenTelemetry traces (OTLP/JSON): each operation a span, its requests under it.
-    #[arg(long, required = true)]
+    /// OpenTelemetry traces (OTLP/JSON): each operation a span, its requests
+    /// under it. The only form there is, and so the default.
+    #[arg(long)]
     otlp: bool,
     /// Write it here (default: stdout).
     #[arg(long, short = 'o')]
@@ -291,7 +343,8 @@ pub async fn export(s: &Arc<Sonde>, a: &ExportArgs) -> anyhow::Result<i32> {
         Some(f) => resolve(s, f),
         None => super::record::newest_session(s)?,
     };
-    let session = sonde_proxy::session::Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    let (_, session) = open(s, &file)?;
+    let _ = a.otlp;
     let doc = sonde_proxy::otlp::traces(&session);
     match (&a.to, &a.out) {
         (Some(url), _) => {
@@ -305,7 +358,10 @@ pub async fn export(s: &Arc<Sonde>, a: &ExportArgs) -> anyhow::Result<i32> {
                 eprintln!("sonde: {url} answered {}", resp.status());
                 return Ok(70);
             }
-            eprintln!("{} requests sent to {url} as traces", session.records.len());
+            eprintln!(
+                "{} sent to {url} as traces",
+                output::count(session.records.len(), "request")
+            );
         }
         (None, Some(p)) => std::fs::write(p, serde_json::to_vec_pretty(&doc)?)?,
         (None, None) => println!("{}", output::json(&doc)),

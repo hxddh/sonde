@@ -56,6 +56,7 @@ pub fn session_json(s: &Session, prices: &crate::profile::RequestPrices) -> Valu
         "observations": observations(&s.records, &eps),
         "sharedNotes": shared_notes(&eps).into_iter().map(|(_, n, _, _)| n).collect::<Vec<_>>(),
         "profile": crate::profile::profile(&s.records, prices),
+        "signals": crate::signals::signals(&s.records, prices),
         "records": records,
         "lines": crate::logs::lines(&s.logs),
     })

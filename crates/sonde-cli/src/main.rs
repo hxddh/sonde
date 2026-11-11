@@ -146,7 +146,7 @@ fn grouped(cmd: clap::Command) -> clap::Command {
             help.push_str(&format!("  {name:<width$}  {about}\n"));
         }
     }
-    help.push_str("\n{options}");
+    help.push_str("\nOptions:\n{options}");
     scoped(cmd.help_template(help))
 }
 
@@ -173,17 +173,15 @@ const OF_THE_STORE: &[&str] = &[
 /// The command tree with each command's help showing the global options
 /// it can use.
 fn scoped(mut cmd: clap::Command) -> clap::Command {
-    // (global options reach the subcommands when the tree is built)
-    cmd.build();
+    // a command that has an option of its own under a global one's id keeps
+    // its own: the same option, hidden
+    let hidden: Vec<clap::Arg> = cmd
+        .get_arguments()
+        .filter(|a| OF_THE_STORE.contains(&a.get_id().as_str()))
+        .map(|a| a.clone().hide(true))
+        .collect();
     for name in READS_FILES {
-        cmd = cmd.mut_subcommand(name, |mut sub| {
-            for id in OF_THE_STORE {
-                if sub.get_arguments().any(|a| a.get_id() == id) {
-                    sub = sub.mut_arg(id, |a| a.hide(true));
-                }
-            }
-            sub
-        });
+        cmd = cmd.mut_subcommand(name, |sub| sub.args(hidden.clone()));
     }
     cmd
 }

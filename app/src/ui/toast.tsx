@@ -13,7 +13,7 @@ import { Toast, type ToastEntry, ToastManager, ToastStack } from "nsh/base";
 import { currentWindow, focusedWindow, isAvailable } from "nsh/desktop";
 import { t } from "../i18n";
 import { Icon, type IconName, type Tint } from "./icon";
-import { Button, glass, IconButton, POPUP, terminal } from "./kit";
+import { Button, EMPHASIS, glass, IconButton, POPUP, Strong, terminal } from "./kit";
 
 export type ToastKind = "success" | "error" | "warning" | "info";
 
@@ -100,10 +100,10 @@ export function dismissToast(id: string) {
 }
 
 const KINDS: Record<ToastKind, { icon: IconName; tint: Tint; mark: string; text: string }> = {
-  success: { icon: "circle-check", tint: "status-ok", mark: "✓", text: "font-semibold text-status-ok" },
-  error: { icon: "circle-x", tint: "destructive", mark: "✗", text: "font-semibold text-destructive" },
-  warning: { icon: "triangle-alert", tint: "warn", mark: "!", text: "font-semibold text-warn" },
-  info: { icon: "info", tint: "info", mark: "i", text: "font-semibold text-info" },
+  success: { icon: "circle-check", tint: "status-ok", mark: "✓", text: "text-status-ok" },
+  error: { icon: "circle-x", tint: "destructive", mark: "✗", text: "text-destructive" },
+  warning: { icon: "triangle-alert", tint: "warn", mark: "!", text: "text-warn" },
+  info: { icon: "info", tint: "info", mark: "i", text: "text-info" },
 };
 
 function Item(props: { entry: ToastEntry }) {
@@ -123,12 +123,13 @@ function Item(props: { entry: ToastEntry }) {
         class="flex-1 flex-row items-center gap-1 px-1"
       >
         <If when={kind()}>{(k) => <Text class={KINDS[k()].text}>{KINDS[k()].mark}</Text>}</If>
-        <Text class="font-semibold text-foreground line-clamp-1">{content().title}</Text>
+        <Strong class="text-foreground line-clamp-1">{content().title}</Strong>
         <If when={content().description}>
           <Text class="flex-1 text-muted-foreground line-clamp-1">{content().description}</Text>
         </If>
         <If when={content().action}>
-          <Text role="button" class="font-semibold text-primary" onPress={act}>
+          {/* emphasis: the one thing a terminal's toast lets be pressed */}
+          <Text role="button" class={`${EMPHASIS} text-primary`} onPress={act}>
             {content().action}
           </Text>
         </If>

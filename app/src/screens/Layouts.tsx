@@ -35,7 +35,7 @@ function Replay(props: { job: string; layout: Layout }) {
     return props.layout.snapshots
       .slice(-12)
       .filter((s) => stamp(s) > 0 && !seen.has(stamp(s)) && !!seen.add(stamp(s)))
-      .map((s) => ({ value: String(stamp(s)), title: s.label }));
+      .map((s) => ({ value: `${stamp(s)}`, title: s.label }));
   };
   return (
     <If when={times().length > 0}>
@@ -55,7 +55,7 @@ function Replay(props: { job: string; layout: Layout }) {
           thumbClass="h-4 w-4 rounded-full border border-border bg-background shadow"
         />
         {/* one control for the snapshots, not a button each */}
-        <Choice class="w-72" placeholder={t("layouts.snapshot")} value={jumps().some((j) => j.value === String(at())) ? String(at()) : null} items={jumps()} onChange={(v) => at.set(Number(v))} testID="replay-snapshot" />
+        <Choice class="w-72" placeholder={t("layouts.snapshot")} value={jumps().some((j) => j.value === `${at()}`) ? `${at()}` : null} items={jumps()} onChange={(v) => at.set(Number(v))} testID="replay-snapshot" />
         <If when={state()}>
           {(s) => (
             <View class="gap-2">

@@ -39,7 +39,7 @@ interface Known {
 /** How long a fact is taken as it was: a place opened again after this asks again. */
 const FRESH_MS = 5 * 60_000;
 
-const reason = (e: unknown) => (e instanceof Error ? e.message : typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e));
+const reason = (e: unknown) => (e instanceof Error ? e.message : typeof e === "object" && e && "message" in e ? `${(e as { message: unknown }).message}` : `${e}`);
 
 /** What is known of each endpoint/bucket/prefix, shared by the tiles and their sheets. */
 export const known = signal<Record<string, Known>>({});

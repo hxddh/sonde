@@ -33,6 +33,9 @@ export const CHARTS = ["Lanes", "SessionShape", "LatencyBand", "Chains", "StoreL
  * few points high in its row, and the shape of a session as the strip under
  * its header (`SessionShape strip`). */
 export const MARKS = ["Sparkline", "SessionShape strip"] as const;
+/** Charts that draw their own frame around their plot (their figure stands
+ * where a frame's control does): used as they are, never inside another `Chart`. */
+export const FRAMED = ["RunTrend"] as const;
 
 /** The room left of a chart across, for the names of its rows: one width
  * for every chart, so their bars start at one edge. Wide enough for
@@ -265,7 +268,7 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
   const hidden = () => all().filter((x) => x.lane >= LANES).length;
   const width = () => (domain()[1] - domain()[0]) / LANE_BINS;
   // a cell per slice of time and lane, holding the requests that span it: drawn once, in the worst outcome of what it holds
-  const rows = computed(() => laneCells(all(), domain(), LANE_BINS, LANES).map((c) => ({ ...c, x: String(c.bin), y: String(c.lane), id: all()[c.sample].id })));
+  const rows = computed(() => laneCells(all(), domain(), LANE_BINS, LANES).map((c) => ({ ...c, x: `${c.bin}`, y: `${c.lane}`, id: all()[c.sample].id })));
   const hovered = signal<number | null>(null);
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
@@ -278,7 +281,7 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
   // the lanes are of the requests sampled: said when that is not all of them
   const total = () => requestsOf(props.profile);
   const label = () => t("lanes.text", { n: props.profile.peakInFlight, at: duration(props.profile.peakAtMs) });
-  const bins = Array.from({ length: LANE_BINS }, (_, i) => String(i));
+  const bins = Array.from({ length: LANE_BINS }, (_, i) => `${i}`);
   return (
     <If when={!terminal() && all().length > 1} else={<Text class="text-small text-muted-foreground">{label()}</Text>}>
       <View class="gap-2">
@@ -295,7 +298,7 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
             testID="lanes"
             data={rows()}
             xScale={{ type: "band", domain: bins, paddingInner: 0 }}
-            yScale={{ type: "band", domain: Array.from({ length: lanes() }, (_, i) => String(i)), paddingInner: 0.3 }}
+            yScale={{ type: "band", domain: Array.from({ length: lanes() }, (_, i) => `${i}`), paddingInner: 0.3 }}
             colorScale={tones()}
             accessibilityLabel={label()}
             accessibilityValue={tipValue(tip())}
@@ -1065,7 +1068,7 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
   // a stretch chosen on the timeline: its slices only, as every chart over time
   const from = () => props.range?.[0] ?? 0;
   const to = () => props.range?.[1] ?? p().rate.length - 1;
-  const bins = () => p().rate.map((_, i) => String(i)).slice(from(), to() + 1);
+  const bins = () => p().rate.map((_, i) => `${i}`).slice(from(), to() + 1);
   // a row's name keeps its end (what tells two prefixes apart); the tooltip has it whole
   const named = () => prefixNames(p().prefixes, GUTTER_CHARS);
   const names = () => p().prefixes.map((x) => (x.prefix === "other" ? t("flows.otherPrefixes") : named().name(x.prefix)));
@@ -1073,7 +1076,7 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
     const x = p().prefixes[i];
     return !x ? "" : x.prefix === "other" ? t("flows.otherPrefixes") : prefixTitle(x);
   };
-  const rows = () => p().heat.filter((c) => c.bin >= from() && c.bin <= to()).map((c) => ({ x: String(c.bin), y: names()[c.prefix] ?? "", n: c.n, bin: c.bin, prefix: c.prefix }));
+  const rows = () => p().heat.filter((c) => c.bin >= from() && c.bin <= to()).map((c) => ({ x: `${c.bin}`, y: names()[c.prefix] ?? "", n: c.n, bin: c.bin, prefix: c.prefix }));
   const hovered = signal<number | null>(null);
   // of the whole session, so a stretch keeps the colors it had
   const max = () => p().heat.reduce((m, r) => Math.max(m, r.n), 1);
@@ -1579,7 +1582,7 @@ export function KindsOverTime(props: { profile: Profile; domainMs?: [number, num
   return (
     <If when={!terminal() && kinds().length > 0}>
       <View testID="kinds-over-time" class="gap-1">
-        <Each of={kinds()} key={(k) => String(k.group)}>
+        <Each of={kinds()} key={(k) => `${k.group}`}>
           {(k, i) => (
             <View class="flex-row items-center">
               <Text class={ROW_LABEL}>{axisName(k().name)}</Text>

@@ -14,7 +14,7 @@ import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, op
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./sessionview";
-import { Button, CONTROL, FOCUS, glass, IconButton, Kbd, material, Notice, POPUP, Tip } from "./kit";
+import { BREAK, Button, CONTROL, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, Strong, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { sessionName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -28,10 +28,14 @@ void Storage.getItem(SIDEBAR_KEY).then((v) => v === "false" && wanted.set(false)
  * and the current place's list, so it never folds away by itself — and it
  * comes back while the place has nothing to show without its list (a bucket
  * or a session to choose, a listing that failed). */
-export const sidebarOpen = () => wanted() || !!sideList()?.needed?.();
+export const sidebarOpen = () => wanted() || sidebarHeld();
+/** The place holds the sidebar open: it has nothing to show without its list.
+ * The toggle does nothing then, and says why. */
+export const sidebarHeld = () => !!sideList()?.needed?.();
 export function toggleSidebar() {
+  if (sidebarHeld()) return;
   wanted.set(!wanted());
-  void Storage.setItem(SIDEBAR_KEY, String(wanted())).catch(() => {});
+  void Storage.setItem(SIDEBAR_KEY, `${wanted()}`).catch(() => {});
 }
 
 export const AREA_ICON: Record<Area, IconName> = { run: "square-terminal", sessions: "list-clock", store: "database", activity: "activity", settings: "settings" };
@@ -71,7 +75,7 @@ export function appMenus(open: (a: Area) => void): { label: string; submenu: Men
       ],
     },
     { label: t("menu.edit"), submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
-    { label: t("menu.view"), submenu: [...places, { type: "separator" }, { label: t("nav.activity"), shortcut: "mod+shift+a", onSelect: () => open("activity") }, { label: t("menu.sidebar"), shortcut: "mod+b", checked: sidebarOpen(), onSelect: toggleSidebar }, { role: "toggleFullScreen" }] },
+    { label: t("menu.view"), submenu: [...places, { type: "separator" }, { label: t("nav.activity"), shortcut: "mod+shift+a", onSelect: () => open("activity") }, { label: t("menu.sidebar"), shortcut: "mod+b", checked: sidebarOpen(), disabled: sidebarHeld(), onSelect: toggleSidebar }, { role: "toggleFullScreen" }] },
     { label: t("menu.window"), submenu: [{ role: "minimize" }, { role: "zoom" }] },
   ];
 }
@@ -85,11 +89,11 @@ function Breadcrumb() {
   };
   return (
     <View class="min-w-0 flex-row items-center gap-2">
-      <Text class="text-body font-semibold text-foreground">{areaLabel(area())}</Text>
+      <Strong>{areaLabel(area())}</Strong>
       <If when={detail()}>
         {(d) => (
           <>
-            <Icon name="chevron-right" size={12} />
+            <Icon name="chevron-right" size={ICON.small} />
             <Text class="min-w-0 shrink text-body text-muted-foreground line-clamp-1">{d()}</Text>
           </>
         )}
@@ -114,13 +118,13 @@ export function EndpointSwitcher(props: { class?: string }) {
         if (v) useEndpoint(v);
       }}
       offset={4}
-      class={`${CONTROL.trigger} ${FOCUS} ${props.class ?? (shellWidth() >= 1040 ? "w-52" : "w-40")}`}
+      class={`${CONTROL.trigger} ${FOCUS} ${props.class ?? (shellWidth() >= BREAK.toolbar ? "w-52" : "w-40")}`}
       inputClass="min-w-0 flex-1 text-body text-foreground placeholder:text-foreground"
       popupClass={`min-w-[260px] ${POPUP}`}
       popupStyle={glass}
       itemClass="group rounded-(--radius-sm) px-2 py-1 focus:bg-accent"
       prefix={<Icon name="server" />}
-      triggerButton={<Icon name="chevrons-up-down" size={12} />}
+      triggerButton={<Icon name="chevrons-up-down" size={ICON.small} />}
       empty={<Text class="px-2 py-2 text-small text-muted-foreground">{t("endpoints.noneYet")}</Text>}
       renderItem={(item) => {
         const e = endpoints().find((x) => x.id === item.value);
@@ -136,7 +140,7 @@ export function EndpointSwitcher(props: { class?: string }) {
       }}
       footer={
         <BaseButton testID="manage-endpoints" accessibilityLabel={t("endpoints.manage")} onPress={() => go("endpoints")} class="mt-1 flex-row items-center gap-2 rounded-(--radius-sm) border-t border-border px-2 py-1 hover:bg-muted">
-          <Icon name="settings" size={12} />
+          <Icon name="settings" size={ICON.small} />
           <Text class="text-small text-muted-foreground">{t("endpoints.manage")}</Text>
         </BaseButton>
       }
@@ -168,7 +172,7 @@ function RunningPill() {
  * in a narrow window, so the breadcrumb keeps its room. */
 function SearchButton() {
   return (
-    <If when={shellWidth() >= 1040} else={<IconButton testID="palette" icon="search" label={t("palette.open")} shortcut="mod+k" onPress={() => paletteOpen.set(true)} />}>
+    <If when={shellWidth() >= BREAK.toolbar} else={<IconButton testID="palette" icon="search" label={t("palette.open")} shortcut="mod+k" onPress={() => paletteOpen.set(true)} />}>
     <BaseButton
       testID="palette"
       accessibilityLabel={t("palette.open")}
@@ -193,7 +197,7 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       class="flex-row items-center gap-2 border-b border-border bg-toolbar"
       style={{ height: height(), flexShrink: 0, paddingLeft: (isAvailable ? titleBar().left : 0) + 10, paddingRight: (isAvailable ? titleBar().right : 0) + 10 }}
     >
-      <IconButton icon="panel-left" label={t("menu.sidebar")} shortcut="mod+b" onPress={toggleSidebar} selected={sidebarOpen()} testID="toggle-sidebar" />
+      <IconButton icon="panel-left" label={t("menu.sidebar")} shortcut="mod+b" tip={sidebarHeld() ? t("sidebar.held") : undefined} disabled={sidebarHeld()} onPress={toggleSidebar} selected={sidebarOpen()} testID="toggle-sidebar" />
       <View class="ml-1 min-w-0 flex-1">
         <Breadcrumb />
       </View>
@@ -207,7 +211,7 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
         when={readOnly()}
         else={
           <BaseButton testID="toolbar-lock" accessibilityLabel={t("common.readOnlyOff")} tooltip={<Tip text={t("settings.readOnlyHint")} />} onPress={() => go("settings")} class={`h-7 flex-row items-center gap-2 rounded-(--radius) border border-warn/50 bg-warn/10 px-2 hover:bg-warn/15 ${FOCUS}`}>
-            <Icon name="lock-open" size={12} tint="warn" />
+            <Icon name="lock-open" size={ICON.small} tint="warn" />
             <Text class="text-small text-warn">{t("common.readOnlyOff")}</Text>
           </BaseButton>
         }
@@ -274,7 +278,7 @@ export function Sidebar(props: { open: (a: Area) => void }) {
                 <ErrorBoundary
                   fallback={(error, reset) => (
                     <View class="p-3">
-                      <Notice tone="error" text={error instanceof Error ? error.message : String(error)} testID="sidebar-error">
+                      <Notice tone="error" text={error instanceof Error ? error.message : `${error}`} testID="sidebar-error">
                         <Button small variant="outline" label={t("error.retry")} onPress={reset} />
                       </Notice>
                     </View>

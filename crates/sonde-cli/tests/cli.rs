@@ -97,7 +97,7 @@ fn the_demo_records_a_session_that_every_command_reads() {
 
     let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
     let mut lines = csv.lines();
-    assert_eq!(lines.next(), Some("session,recorded,program,endpoint,size"));
+    assert_eq!(lines.next(), Some("session,recorded,program,endpoint,requests,took,errors,trials,size"));
     let name = lines.next().unwrap().split(',').next().unwrap().to_string();
     assert!(lines.next().is_none());
 
@@ -446,7 +446,7 @@ fn a_gzipped_log_is_imported_and_its_odd_lines_are_counted() {
     let err = String::from_utf8_lossy(&o.stderr).into_owned();
     assert_eq!(o.status.code(), Some(0), "{err}");
     assert!(
-        err.contains("1 requests from a S3 server access log"),
+        err.contains("1 request from a S3 server access log"),
         "{err}"
     );
     assert!(err.contains("1 line could not be read"), "{err}");

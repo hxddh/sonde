@@ -7,18 +7,8 @@ import { Editor, type EditorDiagnostic } from "nsh/base";
 import { bytes, count, day, duration } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
-import { Back, Disclosure, KeyValue, Notice, terminal } from "./kit";
+import { Back, Disclosure, KeyValue, Notice, terminal, Title, TYPE } from "./kit";
 import { clock, StatusMark } from "./sessionview";
-
-/** The kit's Disclosure, open unless told otherwise. Kept for the object's
- * detail (screens/Browse.tsx); everything here uses Disclosure itself. */
-export function Fold(props: { title: string; count?: number; open?: boolean; children: JSX.Element; testID?: string }) {
-  return (
-    <Disclosure title={props.title} count={props.count} open={props.open ?? true} testID={props.testID}>
-      <View class="pb-1">{props.children}</View>
-    </Disclosure>
-  );
-}
 
 /** An XML document as code, read-only: the S3 error's code marked where it stands. */
 export function Document(props: { text: string; testID?: string; mark?: boolean }) {
@@ -45,7 +35,7 @@ export function Document(props: { text: string; testID?: string; mark?: boolean 
         softWrap
         minRows={2}
         maxRows={18}
-        fontSize={12}
+        fontSize={TYPE.small}
         diagnostics={diagnostics()}
         accessibilityLabel={props.mark ? diagnostics()[0]?.message : undefined}
         class="rounded-(--radius) border border-border bg-card"
@@ -124,7 +114,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
         </If>
         <View class="flex-row items-center gap-2">
           <StatusMark status={r().status} text={r().status === null ? t("requests.transport") : undefined} />
-          <Text class="text-heading font-semibold text-foreground">{r().operation}</Text>
+          <Title>{r().operation}</Title>
         </View>
         <Text class="font-mono text-caption leading-4 text-muted-foreground">{`${r().method} ${r().url}`}</Text>
       </View>

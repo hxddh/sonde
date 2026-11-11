@@ -2,24 +2,17 @@
 // observations, operations, an operation's requests, the program's output,
 // and the panel that records without a program.
 
-import { Clipboard, signal, Text, View } from "nsh";
+import { signal, Text, View } from "nsh";
 import { t } from "../i18n";
 import { api } from "../native";
-import { endpoint, endpoints, notify, report } from "../store";
+import { copy, endpoint, endpoints, report } from "../store";
 import type { Episode, RecordingView } from "../types";
-import { Icon } from "./icon";
-import { Button, Dot, Options, terminal, CARD } from "./kit";
+import { Button, Card, Dot, Heading, IconTile, Options, terminal } from "./kit";
 import { OperationView } from "./sessionview";
 
 export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList, statusTone } from "./sessionview";
 
 export type Policy = "allow" | "no-delete" | "read-only";
-
-
-export function copy(text: string | null) {
-  if (!text) return;
-  Clipboard.writeText(text).then(() => notify(t("common.copied")), report);
-}
 
 
 /** Start a recording with no program, or show the one that runs: the
@@ -45,15 +38,13 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
     <If
       when={props.recording}
       else={
-        <View class={`gap-3 ${CARD} p-4`} testID={open() ? "record-form" : undefined}>
+        <Card testID={open() ? "record-form" : undefined}>
           <View class="flex-row items-center gap-3">
             <If when={!terminal()}>
-              <View class="size-9 items-center justify-center rounded-(--radius) bg-muted">
-                <Icon name="radio" tint="foreground" />
-              </View>
+              <IconTile icon="radio" tint="foreground" />
             </If>
             <View class="min-w-0 flex-1 gap-1">
-              <Text class="text-body font-semibold text-foreground">{t("timeline.recordTitle")}</Text>
+              <Heading>{t("timeline.recordTitle")}</Heading>
               <Text class="text-small text-muted-foreground">{t("timeline.recordHint")}</Text>
             </View>
             <If when={!open()}>
@@ -81,14 +72,14 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
               </View>
             </View>
           </If>
-        </View>
+        </Card>
       }
     >
       {(r) => (
-        <View class={terminal() ? "gap-1" : "gap-3 rounded-(--radius-card) border border-primary/40 bg-card px-4 py-3"} testID="recording">
+        <Card class="border-primary/40" testID="recording">
           <View class="flex-row items-center gap-2">
             <Dot tone="live" />
-            <Text class="flex-1 text-body font-semibold text-foreground line-clamp-1">{t("timeline.recording", { url: r().url })}</Text>
+            <Heading class="flex-1 line-clamp-1">{t("timeline.recording", { url: r().url })}</Heading>
             <Button small variant="destructive" icon="square" label={t("timeline.stop")} onPress={() => { api.sessions.stop(); props.onChange(); }} testID="record-stop" />
           </View>
           <Text class="text-small text-muted-foreground">{t("timeline.pointApp")}</Text>
@@ -98,7 +89,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
           <View class="flex-row">
             <Button small variant="outline" icon="copy" label={t("timeline.copyExports")} onPress={() => copy(r().exports)} testID="copy-exports" />
           </View>
-        </View>
+        </Card>
       )}
     </If>
   );

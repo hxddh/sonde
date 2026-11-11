@@ -355,10 +355,12 @@ export function ListRow(props: { children: JSX.Element; onPress?: () => void; se
 }
 
 /** The one row that is only read: a line of a card's list under a hairline
- * (`first` has none), its parts on one middle (`top`: at their first line). */
-export function Row(props: { children: JSX.Element; first?: boolean; top?: boolean; wrap?: boolean; class?: string; testID?: string }) {
+ * (`first` has none), its parts on one middle (`top`: at their first line),
+ * in one padding (12 by 8) wherever a card lists rows. */
+export function Row(props: { children: JSX.Element; first?: boolean; top?: boolean; wrap?: boolean; /** lines one under another (a job: what it is, then how far it got) */ stack?: boolean; class?: string; testID?: string }) {
+  const flow = () => (props.stack ? "gap-1" : `flex-row ${props.wrap ? "flex-wrap gap-x-3 gap-y-1" : "gap-3"} ${props.top ? "items-start" : "items-center"}`);
   return (
-    <View testID={props.testID} class={`flex-row ${props.wrap ? "flex-wrap gap-x-3 gap-y-1" : "gap-2"} ${props.top ? "items-start" : "items-center"} px-3 py-2 ${props.first ? "" : "border-t border-border"} ${props.class ?? ""}`}>
+    <View testID={props.testID} class={`${flow()} px-3 py-2 ${props.first ? "" : "border-t border-border"} ${props.class ?? ""}`}>
       {props.children}
     </View>
   );
@@ -1062,6 +1064,24 @@ export function Page(props: { children: JSX.Element; testID?: string }) {
       {props.children}
     </Scroll>
   );
+}
+
+/** A table's columns by rank, the one rule of every table that narrows:
+ * of `ranked` (first the one that matters most) as many as fit beside what
+ * always shows (`used` points of it) while the column that takes the rest
+ * keeps `room`. The first that does not fit goes, and every one ranked after
+ * it with it: a column is dropped whole, none is ever clipped, and (the
+ * ranked ones standing last, in rank order) only columns at the table's end
+ * go — DataTable keeps a column's state by its place. A width of 0 (not
+ * measured yet) keeps them all. */
+export function fitColumns<K extends string>(width: number, used: number, room: number, ranked: { key: K; width: number }[]): K[] {
+  const shown: K[] = [];
+  for (const c of ranked) {
+    if (width > 0 && width - used - c.width < room) break;
+    shown.push(c.key);
+    used += c.width;
+  }
+  return shown;
 }
 
 /** What a sortable cell sorts by: its number where it reads as one

@@ -35,7 +35,7 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
       {/* each request as the inspector draws one: its status mark, its headers boxed, its error body as a document */}
       <Each of={props.result.exchanges} key={(r) => r.id}>
         {(r, i) => (
-          <View selectable class={`gap-2 ${i() > 0 ? "border-t border-border pt-4" : ""}`}>
+          <View selectable class={`gap-2 ${i() > 0 ? "pt-2" : ""}`}>
             <View class="flex-row items-center gap-2">
               <StatusMark status={r().status} />
               <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{r().operation}</Text>
@@ -244,7 +244,8 @@ export function Probes() {
               </Text>
               <Each of={Object.entries(running())}>{(r) => <Bar value={null} label={`${nameOf(r()[0])}: ${r()[1]}`} />}</Each>
             </Card>
-            <Heading>{t("probes.title")}</Heading>
+            {/* the page is named once, at its head: this is what the runs found */}
+            <Heading>{t("probes.results")}</Heading>
             <Card pad="none">
               <If when={matrix().columns.length > 0} else={<Empty icon="flask-conical" text={t("probes.noRuns")} />}>
                 {/* as tall as its rows, and never taller than the window leaves it */}
@@ -262,7 +263,7 @@ export function Probes() {
               </View>
               <If when={diff()}>
                 {(d) => (
-                  <If when={d().length > 0} else={<Muted>{t("probes.noChange")}</Muted>}>
+                  <If when={d().length > 0} else={<Empty compact text={t("probes.noChange")} />}>
                     <SimpleTable
                       columns={[t("probes.probe"), t("probes.earlier"), t("probes.later"), t("probes.now")]}
                       rows={d().map((c) => [c.probe, c.before ? verdictLabel(c.before) : "—", c.after ? verdictLabel(c.after) : "—", `${c.afterSummary ?? ""}${c.stepsChanged ? ` (${t("probes.responsesChanged")})` : ""}`])}

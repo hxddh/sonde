@@ -32,7 +32,8 @@ enum LayoutAction {
         /// Replay: the logical state at this time (RFC 3339).
         #[arg(long)]
         at: Option<String>,
-        #[arg(long, short = 'f', value_enum, default_value_t)]
+        /// The format written: table or json.
+        #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
         format: Format,
     },
 }

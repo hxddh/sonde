@@ -210,3 +210,25 @@ impl Record {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_summary_says_which_scenario_answered_in_the_stores_place() {
+        let mut r = Record {
+            id: 7,
+            operation: "PutObject".into(),
+            ..Default::default()
+        };
+        let plain = serde_json::to_value(r.summary()).unwrap();
+        assert!(plain.get("injected").is_none(), "{plain}");
+        r.injected = Some("slowdown".into());
+        let marked = serde_json::to_value(r.summary()).unwrap();
+        assert_eq!(marked["injected"], "slowdown");
+        // a row written before 15 reads as the store's own answer
+        let old: RecordSummary = serde_json::from_value(plain).unwrap();
+        assert_eq!(old.injected, None);
+    }
+}

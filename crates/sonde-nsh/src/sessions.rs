@@ -207,12 +207,22 @@ fn no_trash(e: &str) -> bool {
     e.contains("not supported") || e.contains("no trash") || e.contains("or trash")
 }
 
-/// Starts a recording: a local endpoint forwarding to `endpoint`.
+/// A trial's run: the scenario its proxy answers with, the clean run's file
+/// name, and the file it is recorded to.
+struct Under {
+    scenario: sonde_proxy::fault::Scenario,
+    of: String,
+    path: PathBuf,
+}
+
+/// Starts a recording: a local endpoint forwarding to `endpoint`; `under`
+/// a scenario, one that fails requests as it says.
 async fn begin(
     endpoint: String,
     policy: String,
     command: Option<String>,
     cwd: Option<std::path::PathBuf>,
+    under: Option<Under>,
 ) -> Result<JsonValue, String> {
     // a recording starting counts as running: two starts at once would both
     // pass the check below before either set RECORDING
@@ -236,15 +246,25 @@ async fn begin(
         .as_deref()
         .and_then(sonde_proxy::program::program_name)
         .unwrap_or_else(|| "recording".into());
-    let path = sonde_proxy::session::fresh_path(
-        &dir,
-        &format!("{}-{name}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
-    );
+    let path = match &under {
+        Some(u) => u.path.clone(),
+        None => sonde_proxy::session::fresh_path(
+            &dir,
+            &format!("{}-{name}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+        ),
+    };
     let cfg = client.config();
     let mut header = SessionHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
     if let Some(dir) = &cwd {
         header = header.ran_in(dir);
     }
+    if let Some(u) = &under {
+        header.scenario = Some(u.scenario.name.clone());
+        header.trial_of = Some(u.of.clone());
+    }
+    let faults = under
+        .as_ref()
+        .map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario)));
     let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
@@ -256,6 +276,7 @@ async fn begin(
                 log,
                 ProxyConfig {
                     policy,
+                    faults,
                     ..Default::default()
                 },
             )
@@ -397,6 +418,10 @@ fn view_of(path: &str) -> Result<Arc<JsonValue>, String> {
         "header": s.header,
         "summary": summarize(&s.records),
         "profile": prof,
+        "signals": sonde_proxy::signals::signals(
+            &s.records,
+            &crate::state::request_prices_for(&s.header.endpoint),
+        ),
         "whatIf": what_if,
         "episodes": eps,
         "observations": obs,
@@ -445,20 +470,431 @@ fn save_titles(t: &std::collections::BTreeMap<String, String>) -> Result<(), Str
 /// A session of the sessions directory, by path: what may be renamed or
 /// removed (not a file elsewhere on the disk).
 fn own_session(path: &str) -> Result<(PathBuf, String), String> {
-    let p = Path::new(path);
     let dir = sonde().paths().sessions();
+    own_session_in(&dir, path).map(|name| (dir.join(&name), name))
+}
+
+/// [`own_session`] for the sessions directory `dir`: the file's name.
+fn own_session_in(dir: &Path, path: &str) -> Result<String, String> {
+    let p = Path::new(path);
     let name = p
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let here = p.parent().and_then(|d| d.canonicalize().ok());
+    // a trial's session opens like any other, and is no run of its own:
+    // it has no title, no baseline, and is removed with its run
+    if here.is_some() && here == dir.join("trials").canonicalize().ok() {
+        return Err(err_msg(
+            "a trial's session goes with its run: rename, remove or set as baseline the run it is a trial of",
+        ));
+    }
     let inside = here.is_some() && here == dir.canonicalize().ok();
     if !inside || !name.ends_with(".sonde") || !p.is_file() {
         return Err(format!("{path} is not one of sonde's sessions"));
     }
     // as the list names it (a dropped file's path may be spelled otherwise:
     // forward slashes on Windows, a symlinked folder)
-    Ok((dir.join(&name), name))
+    Ok(name)
+}
+
+/// Where a run's exit code is kept, beside its session (`<run>.exit`): a
+/// trial judges the program's exit under faults against it.
+fn exit_file(session: &Path) -> PathBuf {
+    let verdicts = sonde_proxy::trial::file_for(session);
+    let name = verdicts
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    verdicts.with_file_name(format!("{}.exit", name.trim_end_matches(".trials.json")))
+}
+
+fn write_exit(session: &Path, code: Option<i32>) {
+    if let Some(c) = code {
+        let _ = std::fs::write(exit_file(session), c.to_string());
+    }
+}
+
+/// The exit code the run ended with; `None` when it was not kept (a run of
+/// the CLI's, or of before 15).
+fn read_exit(session: &Path) -> Option<i32> {
+    std::fs::read_to_string(exit_file(session))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// A run's trials as a list row marks them: the scenario, how the program
+/// stood, and the trial's own session where it is still there.
+fn trial_marks(session: &Path) -> Vec<JsonValue> {
+    sonde_proxy::trial::load(session)
+        .iter()
+        .map(|t| {
+            json!({
+                "scenario": t.scenario,
+                "standing": t.standing,
+                "session": sonde_proxy::trial::session_path(session, t)
+                    .filter(|p| p.is_file())
+                    .map(|p| p.to_string_lossy().into_owned()),
+            })
+        })
+        .collect()
+}
+
+/// A session's view with what is known of its trials, read fresh (the
+/// verdicts are written after the session's file, and beside it): a trial
+/// says `trial: { scenario, of, clean }`, a clean run with verdicts
+/// `trials: [...]`.
+fn with_trials(view: &JsonValue, path: &str) -> JsonValue {
+    let mut v = view.clone();
+    let p = Path::new(path);
+    let scenario = v["header"]["scenario"].as_str().map(String::from);
+    let Some(o) = v.as_object_mut() else {
+        return v;
+    };
+    match scenario {
+        Some(scenario) => {
+            let of = o["header"]["trialOf"]
+                .as_str()
+                .or_else(|| o["header"]["trial_of"].as_str())
+                .map(String::from);
+            // the clean run is beside the folder the trial is in
+            let clean = of
+                .as_deref()
+                .filter(|n| !n.contains(['/', '\\']))
+                .and_then(|n| Some(p.parent()?.parent()?.join(n)))
+                .filter(|c| c.is_file())
+                .map(|c| c.to_string_lossy().into_owned());
+            o.insert(
+                "trial".into(),
+                json!({ "scenario": scenario, "of": of, "clean": clean }),
+            );
+        }
+        None => {
+            let trials = sonde_proxy::trial::load(p);
+            if !trials.is_empty() {
+                o.insert("trials".into(), to_json(trials));
+            }
+        }
+    }
+    v
+}
+
+/// The scenarios a project names: the `[[scenario]]` tables of the
+/// `sonde.toml` found from `dir` upwards (to the repository's root), as
+/// `sonde run --trial` reads them. None when there is no such file.
+fn project_scenarios(dir: &Path) -> Result<Vec<sonde_proxy::fault::Scenario>, String> {
+    let mut at = dir.to_path_buf();
+    let file = loop {
+        let f = at.join("sonde.toml");
+        if f.is_file() {
+            break f;
+        }
+        if at.join(".git").exists() || !at.pop() {
+            return Ok(Vec::new());
+        }
+    };
+    let said = |e: String| format!("{}: {e}", file.display());
+    let text = std::fs::read_to_string(&file).map_err(|e| said(e.to_string()))?;
+    let doc: toml::Table = toml::from_str(&text).map_err(|e| said(e.to_string()))?;
+    let Some(list) = doc.get("scenario") else {
+        return Ok(Vec::new());
+    };
+    let list = list
+        .as_array()
+        .ok_or_else(|| said("scenario is written [[scenario]]".into()))?;
+    list.iter().map(|t| scenario_of(t).map_err(said)).collect()
+}
+
+/// One `[[scenario]]`: `name`, `fault` ("503 SlowDown", "500", "lost-answer",
+/// "delay 200ms"), `on` the operations, `prefix` the keys, `times` the
+/// attempts at each request that meet it (1 unless said; 0 is every one).
+fn scenario_of(t: &toml::Value) -> Result<sonde_proxy::fault::Scenario, String> {
+    let t = t.as_table().ok_or("a scenario is a table")?;
+    if let Some(k) = t
+        .keys()
+        .find(|k| !["name", "fault", "on", "prefix", "times"].contains(&k.as_str()))
+    {
+        return Err(format!("scenario: unknown key {k}"));
+    }
+    let name = t.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!(
+            "scenario {name:?}: a name is letters, digits, - and _"
+        ));
+    }
+    let fault = t
+        .get("fault")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("scenario {name}: no fault"))?;
+    let on: Vec<String> = match t.get("on") {
+        None => vec![],
+        Some(v) => v
+            .as_array()
+            .and_then(|a| a.iter().map(|x| x.as_str().map(String::from)).collect())
+            .ok_or_else(|| format!("scenario {name}: on is a list of operations"))?,
+    };
+    let prefix = t
+        .get("prefix")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let times = match t.get("times") {
+        None => None,
+        Some(v) => Some(
+            v.as_integer()
+                .and_then(|n| u32::try_from(n).ok())
+                .ok_or_else(|| format!("scenario {name}: times is a count"))?,
+        ),
+    };
+    let effect =
+        sonde_proxy::fault::parse_effect(fault).map_err(|e| format!("scenario {name}: {e}"))?;
+    let every = matches!(effect, sonde_proxy::fault::Effect::Delay { .. });
+    let mut about = fault.to_string();
+    if !on.is_empty() {
+        about.push_str(&format!(" on {}", on.join(", ")));
+    }
+    if !prefix.is_empty() {
+        about.push_str(&format!(" under {prefix}"));
+    }
+    Ok(sonde_proxy::fault::Scenario {
+        name: name.to_string(),
+        about,
+        rules: vec![sonde_proxy::fault::Rule {
+            on,
+            prefix,
+            effect,
+            times: times.unwrap_or(if every { 0 } else { 1 }),
+        }],
+    })
+}
+
+/// What a trial of a session would run: the project's scenarios when its
+/// `sonde.toml` names some, else the ones chosen from what the clean run
+/// did; and whether every run would write to the same place.
+#[derive(Debug)]
+struct TrialPlan {
+    command: String,
+    cwd: Option<String>,
+    scenarios: Vec<sonde_proxy::fault::Scenario>,
+    /// The scenarios are the project's own.
+    project: bool,
+    /// The command names no place of its own for each run (`{trial}` or
+    /// `SONDE_TRIAL`): a trial writes where the clean run wrote.
+    shares_place: bool,
+}
+
+fn trial_plan_of(s: &Session) -> Result<TrialPlan, String> {
+    if s.header.scenario.is_some() {
+        return Err(err_msg(
+            "this session is a trial itself: try the run it is a trial of",
+        ));
+    }
+    let command = s
+        .header
+        .command
+        .clone()
+        .filter(|c| sonde_proxy::program::program_key(Some(c)).is_some())
+        .ok_or_else(|| err_msg("only a run of a command can be tried under faults"))?;
+    if s.records.is_empty() {
+        return Err(err_msg("no trial: the run sent no requests to fail"));
+    }
+    let cwd = s.header.cwd.clone();
+    let project = match &cwd {
+        Some(d) => project_scenarios(Path::new(d)).map_err(err_msg)?,
+        None => Vec::new(),
+    };
+    let own = !project.is_empty();
+    Ok(TrialPlan {
+        shares_place: !command.contains("{trial}") && !command.contains("SONDE_TRIAL"),
+        command,
+        cwd,
+        scenarios: if own {
+            project
+        } else {
+            sonde_proxy::trial::choose(&s.records)
+        },
+        project: own,
+    })
+}
+
+/// The scenarios asked for by name, from the plan's and the built-in ones;
+/// all of the plan's when none is named.
+fn scenarios_named(
+    plan: &TrialPlan,
+    names: &[String],
+) -> Result<Vec<sonde_proxy::fault::Scenario>, String> {
+    if names.is_empty() {
+        return Ok(plan.scenarios.clone());
+    }
+    names
+        .iter()
+        .map(|n| {
+            plan.scenarios
+                .iter()
+                .find(|s| &s.name == n)
+                .cloned()
+                .or_else(|| sonde_proxy::fault::scenario(n))
+                .ok_or_else(|| err_msg(format!("{n}: no such scenario")))
+        })
+        .collect()
+}
+
+/// A trial's progress as the app hears it: `{ scenario, state }`, with the
+/// verdict when the scenario is done.
+fn trial_event(scenario: &str, trial: Option<&sonde_proxy::trial::Trial>) -> JsonValue {
+    match trial {
+        None => json!({ "scenario": scenario, "state": "running" }),
+        Some(t) => json!({ "scenario": scenario, "state": "done", "trial": t }),
+    }
+}
+
+/// Each program's command, as the newest of its runs wrote it.
+#[derive(Default)]
+struct Newest(std::collections::BTreeMap<String, (String, Option<String>)>);
+
+impl Newest {
+    fn insert(&mut self, key: String, run: (String, Option<String>)) {
+        match self.0.get(&key) {
+            Some(kept) if kept.0 >= run.0 => {}
+            _ => {
+                self.0.insert(key, run);
+            }
+        }
+    }
+    fn get(&self, key: &str) -> Option<String> {
+        self.0.get(key).and_then(|r| r.1.clone())
+    }
+}
+
+/// A trial is running, and was asked to stop ([`Sessions::kill`]).
+static TRYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static TRIAL_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// One run of `command` in a pseudo-terminal, recorded: the exit code and
+/// the session's file. `{trial}` in the command (and `SONDE_TRIAL`) is
+/// `clean`, or the scenario's name under one, so each run can have a place
+/// of its own; the session keeps the command as it was written.
+#[allow(clippy::too_many_arguments)]
+async fn run_recorded(
+    command: &str,
+    cwd: Option<&str>,
+    endpoint: String,
+    policy: String,
+    cols: f64,
+    rows: f64,
+    output: &Callback<JsonValue>,
+    under: Option<Under>,
+) -> Result<(Option<i32>, String), String> {
+    if RUNNING.lock().is_some() {
+        return Err(err_msg("a program is running: stop it first"));
+    }
+    let trial = under.as_ref().map(|u| u.scenario.name.clone());
+    let dir = crate::run::folder(cwd);
+    let view = begin(endpoint, policy, Some(command.to_string()), dir, under).await?;
+    let (env_set, env_unset, writer, path) = {
+        let g = RECORDING.lock();
+        let r = g.as_ref().expect("begin started a recording");
+        let (mut set, unset) = r.proxy.env();
+        // the code that sent each request, when asked (a Python, Node.js
+        // or Java program's)
+        if sonde().settings().name_callers
+            && let Ok(v) = sonde_proxy::callers::caller_env(&sonde().paths().python_hook())
+        {
+            set.extend(v);
+        }
+        set.push((
+            "SONDE_TRIAL".into(),
+            trial.clone().unwrap_or_else(|| "clean".into()),
+        ));
+        (
+            set,
+            unset,
+            r.writer.clone(),
+            r.path.to_string_lossy().into_owned(),
+        )
+    };
+    let started = crate::run::spawn(
+        &command.replace("{trial}", trial.as_deref().unwrap_or("clean")),
+        cwd,
+        &env_set,
+        &env_unset,
+        cols as u16,
+        rows as u16,
+    );
+    let (mut out_rx, exit_rx, handle) = match started {
+        Ok(x) => x,
+        Err(e) => {
+            let r = RECORDING.lock().take();
+            if let Some(r) = r {
+                let _ = background(r.finish()).await;
+            }
+            return Err(err_msg(format!("cannot start {command}: {e}")));
+        }
+    };
+    *RUNNING.lock() = Some(handle);
+    match &trial {
+        None => output.post(json!({ "started": view })),
+        Some(t) => output.post(json!({ "started": view, "scenario": t })),
+    };
+    let mut decoder = crate::run::Utf8Stream::default();
+    let mut exit_rx = exit_rx;
+    let mut code = None;
+    let mut exited = false;
+    // after the program exits on Windows: what is left to read, briefly
+    let mut drain: Option<tokio::time::Instant> = None;
+    loop {
+        let deadline = drain.unwrap_or_else(|| {
+            tokio::time::Instant::now() + std::time::Duration::from_secs(86_400)
+        });
+        tokio::select! {
+            bytes = out_rx.recv() => match bytes {
+                Some(bytes) => {
+                    let text = decoder.push(&bytes);
+                    if !text.is_empty() {
+                        writer.write_log(&text);
+                        match &trial {
+                            None => output.post(json!({ "data": text })),
+                            Some(t) => output.post(json!({ "data": text, "scenario": t })),
+                        };
+                    }
+                }
+                None => break,
+            },
+            c = &mut exit_rx, if !exited => {
+                exited = true;
+                code = c.unwrap_or(None);
+                // ConPTY keeps the program's output open until the
+                // pseudo-console closes, so a Windows run would never end:
+                // close it, then read what is left. Elsewhere the output
+                // closes when every process holding the terminal is gone.
+                if cfg!(windows) {
+                    RUNNING.lock().take();
+                    drain = Some(tokio::time::Instant::now() + std::time::Duration::from_secs(2));
+                }
+            }
+            _ = tokio::time::sleep_until(deadline), if drain.is_some() => break,
+        }
+    }
+    if !exited {
+        code = exit_rx.await.unwrap_or(None);
+    }
+    RUNNING.lock().take();
+    // its own recording only: the user may have stopped it and begun another
+    let own = {
+        let mut g = RECORDING.lock();
+        g.take_if(|r| r.path == Path::new(&path))
+    };
+    // resolves once the file is whole: what reads it next reads all of it
+    if let Some(r) = own {
+        let _ = background(r.finish()).await;
+    }
+    Ok((code, path))
 }
 
 /// A run's figures, kept per version of its file (a history reads many runs).
@@ -793,20 +1229,24 @@ impl Sessions {
                 }
                 let Some(h) = header_of(&p) else { continue };
                 let created = h.created.to_rfc3339();
-                out.push((
-                    created.clone(),
-                    json!({
-                        "path": p.to_string_lossy(),
-                        "name": p.file_name().map(|n| n.to_string_lossy().into_owned()),
-                        "title": p.file_name().and_then(|n| titles.get(&*n.to_string_lossy())),
-                        "created": created,
-                        "endpoint": h.endpoint,
-                        "command": h.command,
-                        "requests": count_records(&p),
-                        "shape": shape_of(&p),
-                        "live": live.as_deref() == Some(p.as_path()),
-                    }),
-                ));
+                let mut row = json!({
+                    "path": p.to_string_lossy(),
+                    "name": p.file_name().map(|n| n.to_string_lossy().into_owned()),
+                    "title": p.file_name().and_then(|n| titles.get(&*n.to_string_lossy())),
+                    "created": created,
+                    "endpoint": h.endpoint,
+                    "command": h.command,
+                    "requests": count_records(&p),
+                    "shape": shape_of(&p),
+                    "live": live.as_deref() == Some(p.as_path()),
+                });
+                // a run that was tried says how it stood (the small
+                // verdicts file, not the trials' sessions)
+                let marks = trial_marks(&p);
+                if !marks.is_empty() {
+                    row["trials"] = JsonValue::Array(marks);
+                }
+                out.push((created, row));
             }
         }
         out.sort_by(|a, b| b.0.cmp(&a.0));
@@ -816,13 +1256,13 @@ impl Sessions {
     /// A session: its header, summary, operations and observations, and the
     /// notes said once instead of on each operation.
     pub fn open(path: String) -> Result<JsonValue, String> {
-        Ok((*view_of(&path)?).clone())
+        Ok(with_trials(&*view_of(&path)?, &path))
     }
 
     /// [`Sessions::open`] off the interface's thread: what a window waits on
     /// while a large session is read, or a live one grows.
     pub async fn analyse(path: String) -> Result<JsonValue, String> {
-        tokio::task::spawn_blocking(move || view_of(&path).map(|v| (*v).clone()))
+        tokio::task::spawn_blocking(move || view_of(&path).map(|v| with_trials(&v, &path)))
             .await
             .map_err(err_msg)?
     }
@@ -868,7 +1308,7 @@ impl Sessions {
     /// what `policy` (`allow`, `no-delete`, `read-only`) forbids. What to
     /// point an application at, and the session file.
     pub async fn start(endpoint: String, policy: String) -> Result<JsonValue, String> {
-        begin(endpoint, policy, None, None).await
+        begin(endpoint, policy, None, None, None).await
     }
 
     /// Runs `command` in a pseudo-terminal with its S3 requests recorded:
@@ -884,98 +1324,19 @@ impl Sessions {
         rows: f64,
         #[args(event)] output: Callback<JsonValue>,
     ) -> Result<JsonValue, String> {
-        if RUNNING.lock().is_some() {
-            return Err(err_msg("a program is running: stop it first"));
-        }
-        let dir = crate::run::folder(cwd.as_deref());
-        let view = begin(endpoint, policy, Some(command.clone()), dir).await?;
-        let (env_set, env_unset, writer, path) = {
-            let g = RECORDING.lock();
-            let r = g.as_ref().expect("begin started a recording");
-            let (mut set, unset) = r.proxy.env();
-            // the code that sent each request, when asked (a Python, Node.js
-            // or Java program's)
-            if sonde().settings().name_callers
-                && let Ok(v) = sonde_proxy::callers::caller_env(&sonde().paths().python_hook())
-            {
-                set.extend(v);
-            }
-            (
-                set,
-                unset,
-                r.writer.clone(),
-                r.path.to_string_lossy().into_owned(),
-            )
-        };
-        let started = crate::run::spawn(
+        let (code, path) = run_recorded(
             &command,
             cwd.as_deref(),
-            &env_set,
-            &env_unset,
-            cols as u16,
-            rows as u16,
-        );
-        let (mut out_rx, exit_rx, handle) = match started {
-            Ok(x) => x,
-            Err(e) => {
-                let r = RECORDING.lock().take();
-                if let Some(r) = r {
-                    let _ = background(r.finish()).await;
-                }
-                return Err(err_msg(format!("cannot start {command}: {e}")));
-            }
-        };
-        *RUNNING.lock() = Some(handle);
-        output.post(json!({ "started": view }));
-        let mut decoder = crate::run::Utf8Stream::default();
-        let mut exit_rx = exit_rx;
-        let mut code = None;
-        let mut exited = false;
-        // after the program exits on Windows: what is left to read, briefly
-        let mut drain: Option<tokio::time::Instant> = None;
-        loop {
-            let deadline = drain.unwrap_or_else(|| {
-                tokio::time::Instant::now() + std::time::Duration::from_secs(86_400)
-            });
-            tokio::select! {
-                bytes = out_rx.recv() => match bytes {
-                    Some(bytes) => {
-                        let text = decoder.push(&bytes);
-                        if !text.is_empty() {
-                            writer.write_log(&text);
-                            output.post(json!({ "data": text }));
-                        }
-                    }
-                    None => break,
-                },
-                c = &mut exit_rx, if !exited => {
-                    exited = true;
-                    code = c.unwrap_or(None);
-                    // ConPTY keeps the program's output open until the
-                    // pseudo-console closes, so a Windows run would never end:
-                    // close it, then read what is left. Elsewhere the output
-                    // closes when every process holding the terminal is gone.
-                    if cfg!(windows) {
-                        RUNNING.lock().take();
-                        drain = Some(tokio::time::Instant::now() + std::time::Duration::from_secs(2));
-                    }
-                }
-                _ = tokio::time::sleep_until(deadline), if drain.is_some() => break,
-            }
-        }
-        if !exited {
-            code = exit_rx.await.unwrap_or(None);
-        }
-        RUNNING.lock().take();
-        // its own recording only: the user may have stopped it and begun another
-        let own = {
-            let mut g = RECORDING.lock();
-            g.take_if(|r| r.path == Path::new(&path))
-        };
-        // resolves once the file is whole: what reads it next reads all of it
-        if let Some(r) = own {
-            let _ = background(r.finish()).await;
-        }
+            endpoint,
+            policy,
+            cols,
+            rows,
+            &output,
+            None,
+        )
+        .await?;
+        // kept beside the session: a later trial judges against it
+        write_exit(Path::new(&path), code);
         Ok(json!({ "exit": code, "path": path }))
     }
 
@@ -995,9 +1356,137 @@ impl Sessions {
             .is_some_and(|r| r.resize(cols as u16, rows as u16))
     }
 
-    /// Ends the running program.
+    /// Ends the running program; a trial ends with it (no further scenario
+    /// runs, and nothing of the trial is kept).
     pub fn kill() -> bool {
+        if TRYING.load(std::sync::atomic::Ordering::SeqCst) {
+            TRIAL_STOPPED.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         RUNNING.lock().as_mut().is_some_and(|r| r.kill())
+    }
+
+    /// What trying a session's program under faults would run, said before
+    /// it runs: `{ command, cwd, scenarios: [{ name, about }], project,
+    /// sharesPlace, cleanExit, readOnly }`. `project`: the scenarios are the
+    /// `sonde.toml`'s own; `sharesPlace`: the command has no `{trial}` (or
+    /// `SONDE_TRIAL`), so every run writes where the clean run wrote;
+    /// `cleanExit` null when the run's exit code was not kept (0 is assumed).
+    pub fn trial_plan(path: String) -> Result<JsonValue, String> {
+        let s = open_session(&path)?;
+        let plan = trial_plan_of(&s)?;
+        Ok(json!({
+            "command": plan.command,
+            "cwd": plan.cwd,
+            "scenarios": plan
+                .scenarios
+                .iter()
+                .map(|s| json!({ "name": s.name, "about": s.about }))
+                .collect::<Vec<_>>(),
+            "project": plan.project,
+            "sharesPlace": plan.shares_place,
+            "cleanExit": read_exit(Path::new(&path)),
+            "readOnly": sonde().settings().read_only,
+        }))
+    }
+
+    /// Tries a session's program under faults: its recorded command runs
+    /// again in its recorded folder, once per scenario (`scenarios` by
+    /// name; none: the plan's), each run recorded to
+    /// `trials/<run>.<scenario>.sonde` and judged against the clean run.
+    /// Events: `{ scenario, state: "running" }`, the program's output as
+    /// `{ data, scenario }`, then `{ scenario, state: "done", trial }`.
+    /// Resolves with `{ path, trials, cancelled }`; [`Sessions::kill`]
+    /// cancels, and a cancelled trial keeps nothing. The run's earlier
+    /// verdicts are replaced. Refused while sonde is read-only, as a replay
+    /// is: the program writes again.
+    pub async fn trial(
+        path: String,
+        scenarios: Vec<String>,
+        policy: String,
+        cols: f64,
+        rows: f64,
+        #[args(event)] output: Callback<JsonValue>,
+    ) -> Result<JsonValue, String> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if sonde().settings().read_only {
+            return Err(crate::state::err(sonde_core::S3Error::new(
+                s3raw::ErrorKind::Refused,
+                "read-only mode is on: turn it off in Settings to try a program under faults (it runs, and writes, again)",
+            )));
+        }
+        // a run of the sessions directory: its trials are kept beside it
+        let (file, of) = own_session(&path)?;
+        let clean = open_session(&path)?;
+        let plan = trial_plan_of(&clean)?;
+        let chosen = scenarios_named(&plan, &scenarios)?;
+        policy_of(&policy)?;
+        if RUNNING.lock().is_some() || RECORDING.lock().is_some() {
+            return Err(err_msg("a program is running: stop it first"));
+        }
+        if TRYING.swap(true, SeqCst) {
+            return Err(err_msg("a trial is running: stop it first"));
+        }
+        struct Trying;
+        impl Drop for Trying {
+            fn drop(&mut self) {
+                TRYING.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _trying = Trying;
+        TRIAL_STOPPED.store(false, SeqCst);
+        let clean_exit = read_exit(&file).unwrap_or(0);
+        // a new trial replaces the last one's verdicts and sessions
+        sonde_proxy::trial::remove(&file);
+        let dir = sonde_proxy::trial::folder_for(&file);
+        std::fs::create_dir_all(&dir).map_err(err_msg)?;
+        let mut trials = Vec::new();
+        for scenario in chosen {
+            output.post(trial_event(&scenario.name, None));
+            let under = Under {
+                path: sonde_proxy::session::fresh_path(
+                    &dir,
+                    &sonde_proxy::trial::session_stem(&file, &scenario.name),
+                ),
+                of: of.clone(),
+                scenario: scenario.clone(),
+            };
+            let ran = run_recorded(
+                &plan.command,
+                plan.cwd.as_deref(),
+                clean.header.endpoint.clone(),
+                policy.clone(),
+                cols,
+                rows,
+                &output,
+                Some(under),
+            )
+            .await;
+            let stopped = TRIAL_STOPPED.load(SeqCst);
+            let (exit, run_path) = match ran {
+                Ok(x) if !stopped => x,
+                other => {
+                    // cut short: a verdict on half a trial would be read as one
+                    sonde_proxy::trial::remove(&file);
+                    return match other {
+                        Err(e) if !stopped => Err(e),
+                        _ => Ok(json!({ "path": path, "trials": [], "cancelled": true })),
+                    };
+                }
+            };
+            let run = open_session(&run_path)?;
+            let mut t = sonde_proxy::trial::judge(
+                &scenario,
+                &clean.records,
+                clean_exit,
+                &run.records,
+                exit.unwrap_or(1),
+            );
+            t.session = Some(run_path);
+            output.post(trial_event(&scenario.name, Some(&t)));
+            trials.push(t);
+        }
+        sonde_proxy::trial::save(&file, &trials).map_err(err_msg)?;
+        Ok(json!({ "path": path, "trials": trials, "cancelled": false }))
     }
 
     /// What replaying a session on `endpoint` would send: the plan, the
@@ -1110,6 +1599,8 @@ impl Sessions {
             let dir = sonde().paths().sessions();
             let mut by: std::collections::BTreeMap<String, Vec<(String, PathBuf)>> =
                 Default::default();
+            // each program's command as its newest run wrote it
+            let mut commands = Newest::default();
             for p in std::fs::read_dir(&dir)
                 .into_iter()
                 .flatten()
@@ -1120,6 +1611,7 @@ impl Sessions {
                 if let Some(h) = header_of(&p)
                     && let Some(k) = sonde_proxy::program::program_key(h.command.as_deref())
                 {
+                    commands.insert(k.clone(), (h.created.to_rfc3339(), h.command.clone()));
                     by.entry(k).or_default().push((h.created.to_rfc3339(), p));
                 }
             }
@@ -1156,6 +1648,7 @@ impl Sessions {
                     (
                         newest.clone(),
                         json!({
+                            "command": commands.get(&key),
                             "program": key,
                             "runs": n,
                             "latest": runs.last().map(|r| r.1.to_string_lossy().into_owned()),
@@ -1184,9 +1677,9 @@ impl Sessions {
     /// recording without a command.
     pub async fn history(path: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
-            let Some(key) = header_of(Path::new(&path))
-                .and_then(|h| sonde_proxy::program::program_key(h.command.as_deref()))
-            else {
+            let header = header_of(Path::new(&path));
+            let command = header.as_ref().and_then(|h| h.command.clone());
+            let Some(key) = sonde_proxy::program::program_key(command.as_deref()) else {
                 return Ok(JsonValue::Null);
             };
             let dir = sonde().paths().sessions();
@@ -1273,6 +1766,8 @@ impl Sessions {
             });
             Ok(json!({
                 "program": key,
+                // the key the runs are grouped by, and this run's command whole
+                "command": command,
                 "runs": runs,
                 "commits": commits,
                 "since": since,
@@ -1515,8 +2010,9 @@ impl Sessions {
             }
             std::fs::remove_file(&p).map_err(err_msg)?;
         }
-        // its trials go with it
+        // its trials go with it, and the exit code kept for them
         sonde_proxy::trial::remove(&p);
+        let _ = std::fs::remove_file(exit_file(&p));
         forget(&p);
         // the session is gone either way; a titles file that does not read stays
         if let Ok(mut t) = map_to_change(&sonde().paths().sessions().join("titles.json"))
@@ -2024,5 +2520,289 @@ mod tests {
             &open_session(&p).unwrap(),
             &open_session(&p).unwrap()
         ));
+    }
+    /// A run of `command` in `dir` (a sessions directory) with these
+    /// records, and the trial of it under `scenario` in `dir/trials`.
+    fn run_and_trial(
+        dir: &Path,
+        command: &str,
+        cwd: Option<&Path>,
+    ) -> (String, String, sonde_proxy::trial::Trial) {
+        use reqlog::Sink;
+        std::fs::create_dir_all(dir.join("trials")).unwrap();
+        let rec = |id: u64, method: &str, op: &str, injected: Option<&str>| reqlog::Record {
+            id,
+            time: chrono::Utc::now(),
+            method: method.into(),
+            operation: op.into(),
+            bucket: Some("b".into()),
+            key: Some(format!("k{id}")),
+            status: Some(if injected.is_some() { 503 } else { 200 }),
+            injected: injected.map(String::from),
+            ..Default::default()
+        };
+        let clean = dir.join("20260101-000000-job.sonde");
+        let mut header = SessionHeader::new("ep", "http://s3", "", Some(command.into()));
+        if let Some(d) = cwd {
+            header = header.ran_in(d);
+        }
+        let w = SessionWriter::create(&clean, &header).unwrap();
+        w.write(&rec(1, "PUT", "PutObject", None));
+        w.write(&rec(2, "GET", "GetObject", None));
+        w.write_log("clean output\n");
+        w.flush().unwrap();
+        let trial = dir
+            .join("trials")
+            .join("20260101-000000-job.slowdown.sonde");
+        header.scenario = Some("slowdown".into());
+        header.trial_of = Some("20260101-000000-job.sonde".into());
+        let w = SessionWriter::create(&trial, &header).unwrap();
+        w.write(&rec(1, "PUT", "PutObject", Some("slowdown")));
+        w.write(&rec(2, "PUT", "PutObject", None));
+        w.write_log("trial output\n");
+        w.flush().unwrap();
+        let scenario = sonde_proxy::fault::scenario("slowdown").unwrap();
+        let (c, t) = (
+            Session::open(&clean).unwrap(),
+            Session::open(&trial).unwrap(),
+        );
+        let mut verdict = sonde_proxy::trial::judge(&scenario, &c.records, 0, &t.records, 0);
+        verdict.session = Some(trial.to_string_lossy().into_owned());
+        (
+            clean.to_string_lossy().into_owned(),
+            trial.to_string_lossy().into_owned(),
+            verdict,
+        )
+    }
+
+    #[test]
+    fn a_trials_session_opens_like_any_other_and_says_what_it_is_a_trial_of() {
+        let dir = tempfile::tempdir().unwrap();
+        let (clean, trial, _) = run_and_trial(dir.path(), "python job.py", None);
+        // open, analyse, records, record, copy and log_lines read the same session
+        let view = with_trials(&view_of(&trial).unwrap(), &trial);
+        assert_eq!(view["summary"]["requests"], 2);
+        assert_eq!(view["trial"]["scenario"], "slowdown");
+        assert_eq!(view["trial"]["of"], "20260101-000000-job.sonde");
+        assert_eq!(view["trial"]["clean"], clean.as_str());
+        assert!(view.get("trials").is_none());
+        let rows = Sessions::records(trial.clone(), vec![1.0, 2.0]).unwrap();
+        assert_eq!(rows[0]["injected"], "slowdown", "{rows}");
+        assert!(rows[1].get("injected").is_none(), "{rows}");
+        let full = Sessions::record(trial.clone(), 1.0).unwrap();
+        assert_eq!(full["injected"], "slowdown");
+        assert!(
+            Sessions::copy(trial.clone(), 1.0, "curl".into())
+                .unwrap()
+                .is_some()
+        );
+        let lines = Sessions::log_lines(trial.clone()).unwrap();
+        assert!(lines.to_string().contains("trial output"), "{lines}");
+        // a clean run without verdicts says nothing of trials
+        let view = with_trials(&view_of(&clean).unwrap(), &clean);
+        assert!(view.get("trial").is_none() && view.get("trials").is_none());
+    }
+
+    #[test]
+    fn a_clean_run_with_verdicts_carries_them_and_its_list_row_marks_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let (clean, trial, verdict) = run_and_trial(dir.path(), "python job.py", None);
+        assert!(trial_marks(Path::new(&clean)).is_empty());
+        // read before the verdicts were written: the analysis is kept, the
+        // verdicts are read fresh
+        let before = view_of(&clean).unwrap();
+        sonde_proxy::trial::save(Path::new(&clean), std::slice::from_ref(&verdict)).unwrap();
+        assert!(Arc::ptr_eq(&before, &view_of(&clean).unwrap()));
+        let view = with_trials(&before, &clean);
+        assert_eq!(view["trials"][0]["scenario"], "slowdown");
+        assert_eq!(view["trials"][0]["standing"], to_json(verdict.standing));
+        assert_eq!(view["trials"][0]["session"], trial.as_str());
+        let marks = trial_marks(Path::new(&clean));
+        assert_eq!(
+            marks,
+            vec![json!({
+                "scenario": "slowdown",
+                "standing": verdict.standing,
+                "session": trial,
+            })]
+        );
+        // a trial's session that is gone is not offered for opening
+        std::fs::remove_file(&trial).unwrap();
+        assert_eq!(
+            trial_marks(Path::new(&clean))[0]["session"],
+            JsonValue::Null
+        );
+    }
+
+    #[test]
+    fn a_trials_file_is_not_renamed_removed_or_made_a_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let (clean, trial, _) = run_and_trial(dir.path(), "python job.py", None);
+        assert_eq!(
+            own_session_in(dir.path(), &clean).unwrap(),
+            "20260101-000000-job.sonde"
+        );
+        let e = own_session_in(dir.path(), &trial).unwrap_err();
+        assert!(e.contains("a trial's session goes with its run"), "{e}");
+        // and a file elsewhere is still only "not one of sonde's"
+        let other = tempfile::tempdir().unwrap();
+        let (elsewhere, _, _) = run_and_trial(other.path(), "python job.py", None);
+        let e = own_session_in(dir.path(), &elsewhere).unwrap_err();
+        assert!(e.contains("is not one of sonde's sessions"), "{e}");
+    }
+
+    #[test]
+    fn a_trial_plan_is_the_scenarios_chosen_from_what_the_run_did() {
+        let dir = tempfile::tempdir().unwrap();
+        let (clean, trial, _) = run_and_trial(dir.path(), "python job.py --out s3://b/x", None);
+        let s = Session::open(Path::new(&clean)).unwrap();
+        let plan = trial_plan_of(&s).unwrap();
+        let chosen: Vec<String> = sonde_proxy::trial::choose(&s.records)
+            .into_iter()
+            .map(|x| x.name)
+            .collect();
+        let names: Vec<String> = plan.scenarios.iter().map(|x| x.name.clone()).collect();
+        assert_eq!(names, chosen);
+        assert!(names.contains(&"lost-answer".to_string()), "{names:?}");
+        assert!(!plan.project);
+        assert_eq!(plan.command, "python job.py --out s3://b/x");
+        assert!(
+            plan.shares_place,
+            "no {{trial}}: every run writes one place"
+        );
+        // by name: of the plan's or built in; an unknown one is refused
+        let one = scenarios_named(&plan, &["error".into()]).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(scenarios_named(&plan, &[]).unwrap().len(), names.len());
+        assert!(scenarios_named(&plan, &["nope".into()]).is_err());
+        // a trial is not tried again
+        let t = Session::open(Path::new(&trial)).unwrap();
+        assert!(trial_plan_of(&t).unwrap_err().contains("a trial itself"));
+    }
+
+    #[test]
+    fn a_command_with_a_place_of_its_own_per_run_does_not_share_it() {
+        for command in [
+            "python job.py --out s3://b/{trial}/",
+            "sh -c 'python job.py --out s3://b/$SONDE_TRIAL/'",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (clean, _, _) = run_and_trial(dir.path(), command, None);
+            let plan = trial_plan_of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
+            assert!(!plan.shares_place, "{command}");
+            // the session keeps the command as written, to run it again
+            assert_eq!(plan.command, command);
+        }
+    }
+
+    #[test]
+    fn a_projects_own_scenarios_are_the_plan_when_its_sonde_toml_names_some() {
+        let project = tempfile::tempdir().unwrap();
+        let sub = project.path().join("etl");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(project.path().join(".git")).unwrap();
+        std::fs::write(
+            project.path().join("sonde.toml"),
+            "[check]\nmax-requests = 10\n\n[[scenario]]\nname = \"flaky-puts\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\nprefix = \"out/\"\ntimes = 2\n\n[[scenario]]\nname = \"slow\"\nfault = \"delay 200ms\"\n",
+        )
+        .unwrap();
+        // found from the folder the command ran in, upwards
+        let found = project_scenarios(&sub).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].name, "flaky-puts");
+        assert_eq!(found[0].about, "503 SlowDown on PutObject under out/");
+        assert_eq!(found[0].rules[0].times, 2);
+        assert_eq!(found[1].rules[0].times, 0, "a delay meets every attempt");
+        let dir = tempfile::tempdir().unwrap();
+        let (clean, _, _) = run_and_trial(dir.path(), "python job.py", Some(&sub));
+        let plan = trial_plan_of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
+        assert!(plan.project);
+        let names: Vec<_> = plan.scenarios.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["flaky-puts", "slow"]);
+        // a built-in one can still be asked for by name
+        assert_eq!(
+            scenarios_named(&plan, &["flaky-puts".into(), "error".into()])
+                .unwrap()
+                .len(),
+            2
+        );
+        // a scenario that does not read is said, not skipped
+        std::fs::write(
+            project.path().join("sonde.toml"),
+            "[[scenario]]\nname = \"bad name\"\nfault = \"500\"\n",
+        )
+        .unwrap();
+        let e = project_scenarios(&sub).unwrap_err();
+        assert!(e.contains("a name is letters, digits"), "{e}");
+        std::fs::write(
+            project.path().join("sonde.toml"),
+            "[[scenario]]\nname = \"x\"\nfault = \"500\"\nwhen = 1\n",
+        )
+        .unwrap();
+        assert!(
+            project_scenarios(&sub)
+                .unwrap_err()
+                .contains("unknown key when")
+        );
+        // and no file above the repository's root is read
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join("repo/.git")).unwrap();
+        std::fs::write(outside.path().join("sonde.toml"), "[[scenario]]\n").unwrap();
+        assert!(
+            project_scenarios(&outside.path().join("repo"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_runs_exit_code_is_kept_beside_it_for_a_later_trial() {
+        let dir = tempfile::tempdir().unwrap();
+        let (clean, _, _) = run_and_trial(dir.path(), "python job.py", None);
+        let p = Path::new(&clean);
+        assert_eq!(read_exit(p), None, "not kept: a run of the CLI's");
+        write_exit(p, None);
+        assert_eq!(read_exit(p), None, "a killed program has no code to keep");
+        write_exit(p, Some(3));
+        assert_eq!(read_exit(p), Some(3));
+        assert_eq!(
+            exit_file(p),
+            dir.path().join("20260101-000000-job.exit"),
+            "beside the session, and not a .sonde file a list would read"
+        );
+    }
+
+    #[test]
+    fn a_trials_progress_names_its_scenario_and_ends_with_the_verdict() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, _, verdict) = run_and_trial(dir.path(), "python job.py", None);
+        assert_eq!(
+            trial_event("slowdown", None),
+            json!({ "scenario": "slowdown", "state": "running" })
+        );
+        let done = trial_event("slowdown", Some(&verdict));
+        assert_eq!(done["state"], "done");
+        assert_eq!(done["trial"]["scenario"], "slowdown");
+        assert_eq!(done["trial"]["standing"], to_json(verdict.standing));
+        assert!(done["trial"]["session"].is_string());
+    }
+
+    #[test]
+    fn a_programs_command_is_its_newest_runs() {
+        let mut n = Newest::default();
+        n.insert(
+            "k".into(),
+            ("2026-01-02".into(), Some("job --day 2".into())),
+        );
+        n.insert(
+            "k".into(),
+            ("2026-01-01".into(), Some("job --day 1".into())),
+        );
+        n.insert(
+            "k".into(),
+            ("2026-01-03".into(), Some("job --day 3".into())),
+        );
+        assert_eq!(n.get("k").as_deref(), Some("job --day 3"));
+        assert_eq!(n.get("other"), None);
     }
 }

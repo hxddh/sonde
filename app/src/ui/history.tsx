@@ -158,7 +158,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
                         layout="unified"
                         inline="word"
                         contextLines={3}
-                        annotations={f().notes.map((n, k) => ({ id: String(k), side: "new" as const, line: Math.max(0, n.line - 1) }))}
+                        annotations={f().notes.map((n, k) => ({ id: `${k}`, side: "new" as const, line: Math.max(0, n.line - 1) }))}
                         renderAnnotation={(a) => <Notice tone="warn" icon="radio" class="mx-2 my-1" text={f().notes[Number(a.id)]?.text ?? ""} />}
                         class="rounded-(--radius) border border-border"
                         style={{ height: TALL }}
@@ -203,7 +203,7 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
   // a moment's day on the reader's calendar, as the picker's days are: YYYY-MM-DD
   const localDay = (at: string | number) => {
     const d = new Date(at);
-    return Number.isNaN(d.getTime()) ? String(at).slice(0, 10) : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return Number.isNaN(d.getTime()) ? `${at}`.slice(0, 10) : `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, "0")}-${`${d.getDate()}`.padStart(2, "0")}`;
   };
   // the runs of a stretch of days: a range, or every run
   const range = signal<[string | null, string | null] | null>(null);
@@ -306,7 +306,11 @@ export interface ProgramSummary {
 /** The programs run here, newest first: what each did over its runs, at a
  * glance, and the ones past their baseline marked. A press opens its newest
  * run on its runs. */
-export function ProgramList(props: { onOpen: (path: string) => void }) {
+export function ProgramList(props: { onOpen: (path: string) => void; /** the place's search: the programs whose command holds it */ query?: string }) {
+  const matching = (list: ProgramSummary[]) => {
+    const q = (props.query ?? "").trim().toLowerCase();
+    return q ? list.filter((x) => x.program.toLowerCase().includes(q)) : list;
+  };
   // a failure is said as one, not as "no program has run here yet"
   const programs = resource(
     () => sessionsTick(),
@@ -316,8 +320,8 @@ export function ProgramList(props: { onOpen: (path: string) => void }) {
     <Await loading={programs.loading() && !programs()} error={programs.error()} retry={() => programs.refetch()}>
     <If when={programs()}>
       {(list) => (
-        <If when={list().length > 0} else={<Empty compact text={t("programs.none")} />}>
-          <List testID="program-list" class="flex-1" each={list()} keyExtractor={(p) => p.program} estimatedItemSize={terminal() ? 2 : 52} scrollbar={false}>
+        <If when={matching(list()).length > 0} else={<Empty compact text={list().length > 0 ? t("sessions.noMatch") : t("programs.none")} />}>
+          <List testID="program-list" class="flex-1" each={matching(list())} keyExtractor={(p) => p.program} estimatedItemSize={terminal() ? 2 : 52} scrollbar={false}>
             {(p) => (
               <ListRow
                 testID="program-row"

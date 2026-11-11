@@ -7,6 +7,7 @@ import { effect, openUrl, signal, untracked } from "nsh";
 import { type AppUpdate, checkForPackage, checkForUpdate, downloadPackage, downloadUpdate, installAndRestart, type PackageUpdate, restartToPackage, shellInfo } from "nsh/updater";
 import { t } from "../i18n";
 import { report } from "../store";
+import { count } from "../format";
 import { Button, Notice, Section } from "./kit";
 
 type State =
@@ -84,7 +85,7 @@ export function Updates() {
     if (s().kind === "checking") return t("updates.checking");
     if (found() === null) return t("updates.hint");
     const said = [t("updates.found", { version: found()! })];
-    if (s().kind === "downloading") said.push(t("updates.downloading", { pct: String(Math.round((s() as { share: number }).share * 100)) }));
+    if (s().kind === "downloading") said.push(t("updates.downloading", { pct: count(Math.round((s() as { share: number }).share * 100)) }));
     const notes = s().kind === "found" ? (s() as { update: AppUpdate }).update.notes : null;
     if (notes) said.push(notes);
     return said.join("\n");

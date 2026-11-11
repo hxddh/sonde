@@ -1,7 +1,7 @@
 //! Recording: `sonde run -- <command>`, `sonde proxy`, `sonde show <session>`.
 
 use sonde_proxy::callers::code_place;
-use sonde_proxy::program::{check_markdown, money_text, ms_text};
+use sonde_proxy::program::{money_text, ms_text};
 use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -51,13 +51,22 @@ pub struct RunArgs {
     /// Then run the command again under faults chosen from what it did (a
     /// 503 on each request's first attempt, a lost answer on each write, a
     /// failed completion if it uploads in parts), and say whether it survived
-    /// each. The command runs several times: give it a place of its own.
+    /// each. The command runs several times, so give each run a place of
+    /// its own: `{trial}` in the command is replaced by `clean`, then by
+    /// each scenario's name, and the variable SONDE_TRIAL is set to the same
+    /// (`-- python etl.py s3://scratch/etl-{trial}/`).
     #[arg(long)]
     trial: bool,
     /// A fault scenario to try by name (repeatable): slowdown, error,
     /// lost-answer, fail-complete, slow, s3-limits, or one of sonde.toml's.
+    /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
     faults: Vec<String>,
+    /// The program's name: its runs and its baseline go by it, whatever the
+    /// command's arguments are this time (default: `name` under `[program]`
+    /// in sonde.toml, else the command itself).
+    #[arg(long)]
+    name: Option<String>,
     /// The command, after `--`.
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<String>,
@@ -95,8 +104,9 @@ pub struct CheckArgs {
     /// At most this many requests.
     #[arg(long)]
     max_requests: Option<usize>,
-    /// At most this much time waiting on the store, in ms.
-    #[arg(long)]
+    /// At most this much time waiting on the store: ms, or as sonde.toml
+    /// writes it (`2s`, `250ms`).
+    #[arg(long, value_parser = duration_arg, value_name = "TIME")]
     max_waiting: Option<f64>,
     /// At most this request cost (in the settings' currency).
     #[arg(long)]
@@ -104,8 +114,8 @@ pub struct CheckArgs {
     /// At most this many failed requests.
     #[arg(long)]
     max_errors: Option<usize>,
-    /// 95% of the requests within this many ms.
-    #[arg(long)]
+    /// 95% of the requests within this long: ms, or `250ms`, `2s`.
+    #[arg(long, value_parser = duration_arg, value_name = "TIME")]
     max_p95: Option<f64>,
     /// Against the baseline: requests, waiting and cost may grow this many
     /// percent (10 unless sonde.toml says).
@@ -118,7 +128,8 @@ pub struct CheckArgs {
     /// figures with --tolerance (10%) of room, and its program's baseline.
     #[arg(long)]
     init: bool,
-    #[arg(long, short = 'f', value_enum, default_value_t)]
+    /// The format written: table, json, markdown (a pull request's comment) or github (annotations).
+    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
     format: Format,
 }
 
@@ -128,7 +139,8 @@ pub struct CompareArgs {
     before: PathBuf,
     /// The run after it.
     after: PathBuf,
-    #[arg(long, short = 'f', value_enum, default_value_t)]
+    /// The format written: table or json.
+    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
     format: Format,
 }
 
@@ -148,7 +160,8 @@ pub struct ShowArgs {
     /// Open it in the sonde app instead (a sonde:// link).
     #[arg(long)]
     app: bool,
-    #[arg(long, short = 'f', value_enum, default_value_t)]
+    /// The format written: table or json.
+    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
     format: Format,
 }
 
@@ -167,6 +180,14 @@ struct Under {
     path: PathBuf,
 }
 
+/// What a recording is of, beside its command: the name the program goes
+/// by, and the trial it is, if it is one.
+#[derive(Default)]
+struct Of<'a> {
+    name: Option<String>,
+    under: Option<&'a Under>,
+}
+
 async fn start(
     s: &Arc<Sonde>,
     r: &Recording,
@@ -174,7 +195,7 @@ async fn start(
     command: Option<String>,
     allow_remote: bool,
 ) -> anyhow::Result<Started> {
-    start_under(s, r, listen, command, allow_remote, None).await
+    start_under(s, r, listen, command, allow_remote, &Of::default()).await
 }
 
 async fn start_under(
@@ -183,8 +204,9 @@ async fn start_under(
     listen: SocketAddr,
     command: Option<String>,
     allow_remote: bool,
-    under: Option<&Under>,
+    of: &Of<'_>,
 ) -> anyhow::Result<Started> {
+    let under = of.under;
     let ep = super::endpoint(s, r.endpoint.as_deref())?;
     let client = s.client(&ep)?;
     let cfg = client.config();
@@ -209,6 +231,11 @@ async fn start_under(
     let mut header = SessionHeader::new(&ep, cfg.endpoint.as_str(), &cfg.region, command);
     if ran && let Ok(dir) = std::env::current_dir() {
         header = header.ran_in(&dir);
+    }
+    header.name = of.name.clone().filter(|n| !n.trim().is_empty());
+    // a session recorded again starts with no verdict of its last recording
+    if under.is_none() {
+        sonde_proxy::trial::remove(&path);
     }
     if let Some(u) = under {
         header.scenario = Some(u.scenario.name.clone());
@@ -500,15 +527,15 @@ fn print_summary(
     let s = &summarize(records);
     let eps = episodes(records);
     let mut head = format!(
-        "{} requests ({} operations) to {endpoint} in {:.1} s",
-        s.requests,
-        eps.len(),
+        "{} ({}) to {endpoint} in {:.1} s",
+        output::count(s.requests as usize, "request"),
+        output::count(eps.len(), "operation"),
         s.seconds
     );
     if s.errors > 0 {
         head.push_str(&format!(
             " · {}",
-            paint(&format!("{} errors", s.errors), "33", color)
+            paint(&output::count(s.errors as usize, "error"), "33", color)
         ));
     }
     if s.misses > 0 {
@@ -565,7 +592,11 @@ fn print_summary(
         // where in the program, when it says
         for c in &o.callers {
             say(paint(
-                &format!("    at {} ({} requests)", c.place, c.requests),
+                &format!(
+                    "    at {} ({})",
+                    c.place,
+                    output::count(c.requests, "request")
+                ),
                 "2",
                 color,
             ));
@@ -573,53 +604,149 @@ fn print_summary(
     }
     // acting on all of them, at once
     if let Some(w) = sonde_proxy::fixes::what_if(records, &prof, &obs) {
-        say(paint(
-            &format!(
-                "acting on {} finding{}: {} → {} requests · waiting {} → {} · cost {} → {}",
-                w.findings,
-                if w.findings == 1 { "" } else { "s" },
-                w.requests.0,
-                w.requests.1,
-                ms_text(w.waiting_ms.0),
-                ms_text(w.waiting_ms.1),
-                money_text(w.cost.0, &w.currency),
-                money_text(w.cost.1, &w.currency),
-            ),
-            "32",
-            color,
-        ));
+        say(paint(&w.line(), "32", color));
     }
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
 }
 
+/// The signal that asked sonde to stop, once one has: 2 (Ctrl-C) or 15
+/// (SIGTERM). Listened for from the start of a run to its end, so that none
+/// is lost between one run of a trial and the next.
+#[derive(Clone)]
+struct Stop(tokio::sync::watch::Receiver<i32>);
+
+impl Stop {
+    fn listen() -> Stop {
+        let (tx, rx) = tokio::sync::watch::channel(0);
+        tokio::spawn(async move {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{SignalKind, signal};
+                let (Ok(mut int), Ok(mut term)) = (
+                    signal(SignalKind::interrupt()),
+                    signal(SignalKind::terminate()),
+                ) else {
+                    return;
+                };
+                loop {
+                    let n = tokio::select! {
+                        _ = int.recv() => 2,
+                        _ = term.recv() => 15,
+                    };
+                    if tx.send(n).is_err() {
+                        return;
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            while tokio::signal::ctrl_c().await.is_ok() {
+                if tx.send(2).is_err() {
+                    return;
+                }
+            }
+        });
+        Stop(rx)
+    }
+
+    /// The signal received, if one was.
+    fn signal(&self) -> Option<i32> {
+        let n = *self.0.borrow();
+        (n != 0).then_some(n)
+    }
+
+    /// Waits for the next signal.
+    async fn asked(&mut self) -> i32 {
+        if self.0.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+        *self.0.borrow()
+    }
+}
+
+/// What every run of one `sonde run` shares.
+struct RunCtx {
+    /// A trial follows the clean run: `{trial}` and SONDE_TRIAL say which
+    /// run each is.
+    trying: bool,
+    /// The program's name, when it has one.
+    name: Option<String>,
+    /// What the clean run read on its input, when that is not a terminal
+    /// and a trial follows: every run is fed the same.
+    input: Option<Arc<std::sync::Mutex<Vec<u8>>>>,
+    stop: Stop,
+}
+
+/// One run of the command.
+struct Ran {
+    file: PathBuf,
+    /// The command's exit code.
+    code: i32,
+    /// How long the command ran.
+    wall_ms: f64,
+    /// The signal sonde was sent while it ran.
+    signal: Option<i32>,
+}
+
+/// Whether the command gives each run of a trial a place of its own, as far
+/// as its words say: `{trial}` in an argument, or SONDE_TRIAL named in one.
+fn names_its_place(command: &[String]) -> bool {
+    command
+        .iter()
+        .any(|w| w.contains("{trial}") || w.contains("SONDE_TRIAL"))
+}
+
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
-    // the scenarios asked for by name are checked before anything runs
-    let project = project_scenarios()?;
+    // sonde.toml and the scenarios asked for by name are checked before
+    // anything runs
+    let project = load_project(None)?;
     let mut asked = Vec::new();
     for name in &a.faults {
-        asked.push(named_scenario(name, &project)?);
+        asked.push(named_scenario(name, &project.scenarios)?);
     }
-    let (file, code) = run_once(s, a, None).await?;
-    if !a.trial && asked.is_empty() {
+    let trying = a.trial || !asked.is_empty();
+    let ctx = RunCtx {
+        trying,
+        name: a.name.clone().or(project.file.program.name.clone()),
+        input: (trying && !std::io::stdin().is_terminal()).then(Default::default),
+        stop: Stop::listen(),
+    };
+    if trying && !names_its_place(&a.command) {
+        eprintln!(
+            "warning: the command has no {{trial}} and does not name SONDE_TRIAL: every run of the trial writes to the same place"
+        );
+    }
+    let clean = run_once(s, a, None, &ctx).await?;
+    let (file, code) = (clean.file.clone(), clean.code);
+    if !trying {
+        return Ok(if clean.signal == Some(15) { 143 } else { code });
+    }
+    // a trial is read against a run that worked, to its end
+    if let Some(signal) = clean.signal {
+        eprintln!("\nNo trial: the clean run was interrupted.");
+        return Ok(if code == 0 { 128 + signal } else { code });
+    }
+    if code != 0 {
+        eprintln!(
+            "\nNo trial: the clean run exited {code}. A trial is read against a run that worked: nothing was tried."
+        );
         return Ok(code);
     }
-    let clean = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
-    if clean.records.is_empty() {
+    let clean_session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    if clean_session.records.is_empty() {
         eprintln!("\nNo trial: the program sent no requests to fail.");
         return Ok(code);
     }
     let scenarios = if !asked.is_empty() {
         asked
-    } else if !project.is_empty() {
-        project
+    } else if !project.scenarios.is_empty() {
+        project.scenarios
     } else {
-        sonde_proxy::trial::choose(&clean.records)
+        sonde_proxy::trial::choose(&clean_session.records)
     };
     let of = file
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let stem = of.trim_end_matches(".sonde").to_string();
     // trials are kept in a folder of their own: they are not runs of the
     // program (no trend, baseline or "newest" counts them)
     let dir = sonde_proxy::trial::folder_for(&file);
@@ -631,41 +758,79 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         if scenarios.len() == 1 { "" } else { "s" }
     );
     let mut trials = Vec::new();
+    let mut interrupted = None;
     for scenario in scenarios {
         let under = Under {
-            path: sonde_proxy::session::fresh_path(&dir, &format!("{stem}.{}", scenario.name)),
+            // (the run's last trials were removed when it was recorded: the
+            // name is free, and is the one the verdict keeps)
+            path: dir.join(format!(
+                "{}.sonde",
+                sonde_proxy::trial::session_stem(&file, &scenario.name)
+            )),
             of: of.clone(),
             scenario,
         };
-        let (path, exit) = run_once(s, a, Some(&under)).await?;
-        let run = Session::open(&path).map_err(|e| anyhow::anyhow!(e))?;
-        let mut t =
-            sonde_proxy::trial::judge(&under.scenario, &clean.records, code, &run.records, exit);
-        t.session = Some(path.to_string_lossy().into_owned());
+        let ran = run_once(s, a, Some(&under), &ctx).await?;
+        if let Some(signal) = ran.signal {
+            // half a run says nothing of the program: no verdict, no session
+            let _ = std::fs::remove_file(&ran.file);
+            interrupted = Some((signal, under.scenario.name.clone()));
+            break;
+        }
+        let run = Session::open(&ran.file).map_err(|e| anyhow::anyhow!(e))?;
+        let mut t = sonde_proxy::trial::judge(
+            &under.scenario,
+            &clean_session.records,
+            code,
+            &run.records,
+            ran.code,
+        );
+        // the command's own time: what a delay costs is not all in requests
+        (t.wall_ms, t.clean_wall_ms) = (ran.wall_ms, clean.wall_ms);
+        t.session = ran
+            .file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned());
         eprintln!("{}", trial_line(&t, color));
         trials.push(t);
     }
-    sonde_proxy::trial::save(&file, &trials)?;
+    if trials.is_empty() {
+        let _ = std::fs::remove_dir(&dir);
+    } else {
+        sonde_proxy::trial::save(&file, &trials)?;
+    }
+    if let Some((signal, scenario)) = interrupted {
+        eprintln!(
+            "\nInterrupted under {scenario}: no verdict for it, and none for the scenarios after it."
+        );
+        return Ok(128 + signal);
+    }
+    use sonde_proxy::trial::Standing;
     let broke = trials
         .iter()
-        .filter(|t| t.standing == sonde_proxy::trial::Standing::Broke)
+        .filter(|t| t.standing == Standing::Broke)
+        .count();
+    let tried = trials
+        .iter()
+        .filter(|t| t.standing != Standing::Untested)
         .count();
     eprintln!(
-        "\n{} Each trial is a session: sonde show {}",
-        if broke == 0 {
+        "\n{}",
+        if tried == 0 {
+            "Nothing was tried: no scenario met a request of the program's.".to_string()
+        } else if broke == 0 {
             "The program did not break.".to_string()
         } else {
-            format!("The program broke under {broke} of {}.", trials.len())
-        },
-        dir.join(format!("{stem}.<scenario>.sonde")).display()
+            format!("The program broke under {broke} of {tried}.")
+        }
     );
-    Ok(if code != 0 {
-        code
-    } else if broke > 0 {
-        1
-    } else {
-        0
-    })
+    eprintln!("Each trial is a session:");
+    for t in &trials {
+        if let Some(path) = sonde_proxy::trial::session_path(&file, t) {
+            eprintln!("  sonde show {}", path.display());
+        }
+    }
+    Ok(if broke > 0 { 1 } else { 0 })
 }
 
 /// A trial's line: its standing, the scenario, what happened.
@@ -685,22 +850,48 @@ pub fn trial_line(t: &sonde_proxy::trial::Trial, color: bool) -> String {
     )
 }
 
-/// The scenarios a project's `sonde.toml` names.
-fn project_scenarios() -> anyhow::Result<Vec<sonde_proxy::fault::Scenario>> {
-    let Some(file) = find_project_file() else {
-        return Ok(Vec::new());
+/// A project's `sonde.toml`, read and checked: its budget, its program's
+/// name, its scenarios.
+#[derive(Default)]
+struct Project {
+    path: Option<PathBuf>,
+    file: ProjectFile,
+    scenarios: Vec<sonde_proxy::fault::Scenario>,
+}
+
+/// `sonde.toml` at `explicit`, or here or in a folder above. A file that
+/// does not read, or says what sonde does not know, is a mistake in the
+/// configuration (64): nothing of it is passed over in silence.
+fn load_project(explicit: Option<&PathBuf>) -> anyhow::Result<Project> {
+    let Some(path) = explicit.cloned().or_else(find_project_file) else {
+        return Ok(Project::default());
     };
-    let text = std::fs::read_to_string(&file)?;
-    let project: ProjectFile =
-        toml::from_str(&text).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
-    project
-        .scenario
-        .iter()
-        .map(|p| {
-            p.scenario()
-                .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))
-        })
-        .collect()
+    let wrong = |e: String| super::usage(format!("{}: {e}", path.display()));
+    let text = std::fs::read_to_string(&path).map_err(|e| wrong(e.to_string()))?;
+    let file: ProjectFile = toml::from_str(&text).map_err(|e| {
+        let hint = if text.contains("[[scenarios]]") {
+            "\na scenario is a [[scenario]] table, one for each"
+        } else {
+            ""
+        };
+        wrong(format!("{}{hint}", e.to_string().trim_end()))
+    })?;
+    let mut scenarios: Vec<sonde_proxy::fault::Scenario> = Vec::new();
+    for p in &file.scenario {
+        let scenario = p.scenario().map_err(&wrong)?;
+        if scenarios.iter().any(|s| s.name == scenario.name) {
+            return Err(wrong(format!(
+                "scenario {}: named twice",
+                scenario.name
+            )));
+        }
+        scenarios.push(scenario);
+    }
+    Ok(Project {
+        path: Some(path),
+        file,
+        scenarios,
+    })
 }
 
 fn named_scenario(
@@ -716,10 +907,10 @@ fn named_scenario(
             .chain(project)
             .map(|s| format!("  {:<14} {}", s.name, s.about))
             .collect();
-        anyhow::anyhow!(
+        super::usage(format!(
             "--fault {name}: no such scenario. The scenarios:\n{}",
             known.join("\n")
-        )
+        ))
     })
 }
 
@@ -729,7 +920,9 @@ async fn run_once(
     s: &Arc<Sonde>,
     a: &RunArgs,
     under: Option<&Under>,
-) -> anyhow::Result<(PathBuf, i32)> {
+    ctx: &RunCtx,
+) -> anyhow::Result<Ran> {
+    use tokio::io::AsyncWriteExt;
     let command = sonde_proxy::program::shell_join(&a.command);
     let mut started = start_under(
         s,
@@ -737,7 +930,10 @@ async fn run_once(
         SocketAddr::from(([127, 0, 0, 1], 0)),
         Some(command),
         false,
-        under,
+        &Of {
+            name: ctx.name.clone(),
+            under,
+        },
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
@@ -745,11 +941,22 @@ async fn run_once(
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
     // each run a place of its own, if the command asks for one: `{trial}`
-    // in an argument (and SONDE_TRIAL) is "clean", then the scenario's name
+    // in the command (and SONDE_TRIAL) is "clean", then the scenario's name.
+    // A run that no trial follows is left as it was written.
     let trial = under.map_or("clean", |u| u.scenario.name.as_str());
-    let mut child = tokio::process::Command::new(&a.command[0]);
-    child.args(a.command[1..].iter().map(|x| x.replace("{trial}", trial)));
-    child.env("SONDE_TRIAL", trial);
+    let placed = |word: &String| {
+        if ctx.trying {
+            word.replace("{trial}", trial)
+        } else {
+            word.clone()
+        }
+    };
+    let program = placed(&a.command[0]);
+    let mut child = tokio::process::Command::new(&program);
+    child.args(a.command[1..].iter().map(placed));
+    if ctx.trying {
+        child.env("SONDE_TRIAL", trial);
+    }
     for k in &unset {
         child.env_remove(k);
     }
@@ -761,17 +968,79 @@ async fn run_once(
         child.stdout(std::process::Stdio::null());
         child.stderr(std::process::Stdio::null());
     }
+    match (&ctx.input, under.is_some()) {
+        // fed by a pipe: every run reads what the first read
+        (Some(_), _) => {
+            child.stdin(std::process::Stdio::piped());
+        }
+        // a terminal answers one run, not four
+        (None, true) => {
+            child.stdin(std::process::Stdio::null());
+        }
+        (None, false) => {}
+    }
     let printer = (a.live && under.is_none()).then(|| follow(&started.log, true));
+    let began = std::time::Instant::now();
     let mut child = child
         .spawn()
-        .map_err(|e| anyhow::anyhow!("cannot start {}: {e}", a.command[0]))?;
-    // Ctrl-C reaches the child (same process group); wait for it to finish
+        .map_err(|e| anyhow::anyhow!("cannot start {program}: {e}"))?;
+    let feeder = match (&ctx.input, child.stdin.take()) {
+        (Some(kept), Some(mut to)) if under.is_none() => {
+            // sonde's input, to the program and kept: read on a thread of
+            // its own, which a program that reads none of it leaves waiting
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = vec![0u8; 64 << 10];
+                let mut stdin = std::io::stdin().lock();
+                while let Ok(n) = stdin.read(&mut buf) {
+                    if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            });
+            let kept = kept.clone();
+            Some(tokio::spawn(async move {
+                while let Some(chunk) = rx.recv().await {
+                    kept.lock().expect("input").extend_from_slice(&chunk);
+                    if to.write_all(&chunk).await.is_err() {
+                        break;
+                    }
+                }
+                // its end is the program's end of input
+                drop(to);
+            }))
+        }
+        (Some(kept), Some(mut to)) => {
+            let bytes = kept.lock().expect("input").clone();
+            Some(tokio::spawn(async move {
+                let _ = to.write_all(&bytes).await;
+                drop(to);
+            }))
+        }
+        _ => None,
+    };
+    let mut stop = ctx.stop.clone();
+    let mut signal = stop.signal();
     let status = loop {
         tokio::select! {
             st = child.wait() => break st?,
-            _ = tokio::signal::ctrl_c() => continue,
+            n = stop.asked() => {
+                signal = Some(n);
+                // Ctrl-C reaches the clean run's program itself (the same
+                // process group): it is waited for, and what it sent is
+                // kept. A trial's run is ended, and so is any run sonde is
+                // told to terminate.
+                if under.is_some() || n == 15 {
+                    let _ = child.start_kill();
+                }
+            }
         }
     };
+    let wall_ms = began.elapsed().as_secs_f64() * 1000.0;
+    if let Some(f) = feeder {
+        f.abort();
+    }
     if let Some(p) = printer {
         p.abort();
     }
@@ -797,7 +1066,12 @@ async fn run_once(
     let file = started.path.clone();
     drop(started);
     let _ = sonde_proxy::session::compress(&file);
-    Ok((file, exit_code(status)))
+    Ok(Ran {
+        file,
+        code: exit_code(status),
+        wall_ms,
+        signal,
+    })
 }
 
 /// How long a stopping proxy waits for the requests in flight.
@@ -899,28 +1173,29 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
     Ok(0)
 }
 
-/// The newest session file in the data directory.
+/// The newest session recorded from a program's own requests (`run`,
+/// `proxy`, `watch`): what a bare `sonde show` or `sonde check` is about. A
+/// replay, an import and a trial are sessions too, and are named to be read.
 pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
     let dir = s.paths().sessions();
-    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut newest: Option<(chrono::DateTime<chrono::Utc>, PathBuf)> = None;
     for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
             continue;
         }
-        let t = e
-            .metadata()
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::UNIX_EPOCH);
-        if newest.as_ref().is_none_or(|(n, _)| t > *n) {
-            newest = Some((t, p));
+        let Some(h) = sonde_proxy::session::read_header(&p).filter(|h| h.is_recording()) else {
+            continue;
+        };
+        if newest.as_ref().is_none_or(|(n, _)| h.created > *n) {
+            newest = Some((h.created, p));
         }
     }
     newest.map(|(_, p)| p).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no sessions in {} yet: record one with `sonde run -- <command>`",
+        super::usage(format!(
+            "no recorded sessions in {} yet: record one with `sonde run -- <command>`",
             dir.display()
-        )
+        ))
     })
 }
 
@@ -933,13 +1208,38 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         Some(f) => super::sessions::resolve(s, f),
         None => newest_session(s)?,
     };
-    let session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+    let (file, session) = super::sessions::open(s, &file)?;
     if a.app {
         return open_in_app(&file);
     }
     let all = &session.records;
     let eps = episodes(all);
     match a.format {
+        // the summary alone: what the table's summary shows, and no more
+        Format::Json if a.summary => {
+            let prof = profile(all, &request_prices_for(s, &session.header.endpoint));
+            let obs = observations(all, &eps);
+            println!(
+                "{}",
+                output::json(&serde_json::json!({
+                    "session": session.header,
+                    "summary": summarize(all),
+                    "operations": eps.len(),
+                    "waiting": {
+                        "busyMs": prof.busy_ms,
+                        "wallMs": prof.wall_ms,
+                        "peakInFlight": prof.peak_in_flight,
+                        "p50Ms": prof.p50_ms,
+                        "p95Ms": prof.p95_ms,
+                        "p99Ms": prof.p99_ms,
+                        "byKind": prof.groups,
+                    },
+                    "cost": prof.cost,
+                    "whatIf": sonde_proxy::fixes::what_if(all, &prof, &obs),
+                    "observations": obs,
+                }))
+            );
+        }
         Format::Json => {
             println!(
                 "{}",
@@ -959,10 +1259,14 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 println!("{}", paint(&format!("$ {c}"), "1", color));
             }
             if !a.summary && a.requests {
-                for r in all
+                let shown: Vec<&Record> = all
                     .iter()
                     .filter(|r| !a.errors || sonde_proxy::summary::is_failure(r))
-                {
+                    .collect();
+                if a.errors && shown.is_empty() {
+                    println!("no errors: none of its requests failed");
+                }
+                for r in shown {
                     println!("{}", timeline_line(r, color));
                 }
             } else if !a.summary {
@@ -981,6 +1285,9 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     .map(|(_, n, _, _)| n)
                     .collect();
                 let formats = eps.iter().any(|e| e.format.is_some());
+                if a.errors && shown.is_empty() {
+                    println!("no errors: none of its operations failed");
+                }
                 for e in shown {
                     println!("{}", episode_line(e, width, &hide, formats, color));
                 }
@@ -1031,7 +1338,8 @@ pub struct ReplayArgs {
     /// The replay's session file (default: in the data directory's sessions/).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
-    #[arg(long, short = 'f', value_enum, default_value_t)]
+    /// The format written: table or json; with several -e, markdown and csv too.
+    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
     format: Format,
 }
 
@@ -1041,7 +1349,8 @@ pub struct DiffArgs {
     original: PathBuf,
     /// Its replay (`sonde replay -o`).
     replay: PathBuf,
-    #[arg(long, short = 'f', value_enum, default_value_t)]
+    /// The format written: table or json.
+    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
     format: Format,
 }
 
@@ -1100,7 +1409,7 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
         eprintln!("sonde: {why}");
         return Ok(64);
     }
-    let original = Session::open(&a.file).map_err(|e| anyhow::anyhow!(e))?;
+    let (asked, original) = super::sessions::open(s, &a.file)?;
     let ep = super::endpoint(s, a.endpoint.first().map(String::as_str))?;
     let base = s.client(&ep)?;
     let prefix = if a.in_place {
@@ -1134,15 +1443,15 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
         format!("under {prefix} in {}", buckets.join(", "))
     };
     eprintln!(
-        "Replay {} requests from {} on {ep} ({}), {place}.",
-        plan.requests,
-        a.file.display(),
+        "Replay {} from {} on {ep} ({}), {place}.",
+        output::count(plan.requests, "request"),
+        asked.display(),
         base.config().endpoint
     );
     eprintln!(
-        "  {} writes and {} deletes{}.",
-        plan.writes,
-        plan.deletes,
+        "  {} and {}{}.",
+        output::count(plan.writes, "write"),
+        output::count(plan.deletes, "delete"),
         if prefix.is_empty() {
             ""
         } else {
@@ -1192,8 +1501,28 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
         eprint!("\r\x1b[2K");
     }
     if !prefix.is_empty() && !a.keep {
-        eprintln!("Removed {} objects under {prefix}.", run.removed);
+        eprintln!(
+            "Removed {}{} under {prefix}.",
+            output::count(run.removed, "object"),
+            match run.removed_versions {
+                0 => String::new(),
+                n => format!(
+                    " and {} (the bucket keeps them)",
+                    output::count(n, "version or delete marker")
+                        .replace("version or delete markers", "versions and delete markers")
+                ),
+            }
+        );
+        if run.remaining > 0 {
+            eprintln!(
+                "sonde: {} still under {prefix}: the store would not delete {}. `sonde du -b BUCKET -p {prefix}` shows what is there.",
+                output::count(run.remaining, "object or version")
+                    .replace("object or versions", "objects or versions"),
+                if run.remaining == 1 { "it" } else { "them" }
+            );
+        }
     }
+    let left_behind = run.remaining > 0;
     let c = run.comparison;
     match a.format {
         Format::Json => println!(
@@ -1202,6 +1531,9 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
                 "plan": plan,
                 "session": path,
                 "comparison": c,
+                "removed": run.removed,
+                "removedVersions": run.removed_versions,
+                "remaining": run.remaining,
             }))
         ),
         _ => {
@@ -1220,7 +1552,14 @@ pub async fn replay(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Resul
             );
         }
     }
-    Ok(if c.differ() > 0 { 2 } else { 0 })
+    // what it wrote and could not remove is a failure, whatever the answers
+    Ok(if left_behind {
+        70
+    } else if c.differ() > 0 {
+        2
+    } else {
+        0
+    })
 }
 
 /// One session replayed on several stores at once: each answers under its
@@ -1236,7 +1575,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
-    let original = Session::open(&a.file).map_err(|e| anyhow::anyhow!(e))?;
+    let (asked, original) = super::sessions::open(s, &a.file)?;
     if a.in_place {
         anyhow::bail!("--in-place replays on one endpoint at a time");
     }
@@ -1255,12 +1594,12 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         targets.push((id.clone(), s.client(&id)?));
     }
     eprintln!(
-        "Replay {} requests from {} on {} at once, under {prefix} on each ({} writes, {} deletes; deleted afterwards unless --keep).",
-        plan.requests,
-        a.file.display(),
+        "Replay {} from {} on {} at once, under {prefix} on each ({}, {}; deleted afterwards unless --keep).",
+        output::count(plan.requests, "request"),
+        asked.display(),
         a.endpoint.join(", "),
-        plan.writes,
-        plan.deletes
+        output::count(plan.writes, "write"),
+        output::count(plan.deletes, "delete")
     );
     if !a.yes {
         if !std::io::stdin().is_terminal() {
@@ -1307,6 +1646,13 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             }
         };
         differ_total += run.comparison.differ();
+        if run.remaining > 0 {
+            eprintln!(
+                "sonde: {id}: {} still under {prefix}: the store would not delete what the replay wrote",
+                run.remaining
+            );
+            failed += 1;
+        }
         let replayed = Session::open(&path).map_err(|e| anyhow::anyhow!(e))?;
         columns.push(id.clone());
         stores.push((
@@ -1432,8 +1778,8 @@ pub async fn diff(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
-    let original = Session::open(&a.original).map_err(|e| anyhow::anyhow!(e))?;
-    let replay = Session::open(&a.replay).map_err(|e| anyhow::anyhow!(e))?;
+    let (_, original) = super::sessions::open(s, &a.original)?;
+    let (_, replay) = super::sessions::open(s, &a.replay)?;
     // two ordinary runs pair no request: "0 compared: 0 the same" would read as agreement
     // (a replay that sent nothing is still one: its header says what it is)
     let named_replay = replay
@@ -1506,8 +1852,10 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
-    let open = |p: &PathBuf| Session::open(p).map_err(|e| anyhow::anyhow!(e));
-    let (sa, sb) = (open(&a.before)?, open(&a.after)?);
+    let (sa, sb) = (
+        super::sessions::open(s, &a.before)?.1,
+        super::sessions::open(s, &a.after)?.1,
+    );
     let (pa, pb) = (
         profile(&sa.records, &request_prices_for(s, &sa.header.endpoint)),
         profile(&sb.records, &request_prices_for(s, &sb.header.endpoint)),
@@ -1517,7 +1865,10 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         observations(&sb.records, &episodes(&sb.records)),
     );
     let c = sonde_proxy::profile::compare_runs((&sa.records, &pa, &oa), (&sb.records, &pb, &ob))
-        .of_programs(sa.header.command.as_deref(), sb.header.command.as_deref());
+        .of_programs(
+            sonde_proxy::program::key_of(&sa.header).as_deref(),
+            sonde_proxy::program::key_of(&sb.header).as_deref(),
+        );
     if matches!(a.format, Format::Json) {
         println!("{}", output::json(&c));
         return Ok(0);
@@ -1646,6 +1997,22 @@ impl ProjectScenario {
                 self.name
             ));
         }
+        // a scenario of the project's is run in a built-in one's place
+        // wherever it is named: one name, one meaning
+        if sonde_proxy::fault::scenario(&self.name).is_some() {
+            return Err(format!(
+                "scenario {}: that is one of sonde's own scenarios; give this one another name",
+                self.name
+            ));
+        }
+        for op in &self.on {
+            if !sonde_proxy::fault::known_operation(op) {
+                return Err(format!(
+                    "scenario {}: on = {op:?} is no S3 operation sonde names (PutObject, GetObject, DeleteObjects, CompleteMultipartUpload, …; \"Put*\" matches by its start): it would meet no request",
+                    self.name
+                ));
+            }
+        }
         let effect = sonde_proxy::fault::parse_effect(&self.fault)
             .map_err(|e| format!("scenario {}: {e}", self.name))?;
         let every = matches!(effect, sonde_proxy::fault::Effect::Delay { .. });
@@ -1675,10 +2042,20 @@ impl ProjectScenario {
     }
 }
 
+/// What a project says of its program: the name its runs go by.
 #[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct ProjectProgram {
+    name: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct ProjectFile {
     #[serde(default)]
     check: ProjectCheck,
+    #[serde(default)]
+    program: ProjectProgram,
     #[serde(default)]
     scenario: Vec<ProjectScenario>,
 }
@@ -1697,6 +2074,28 @@ fn find_project_file() -> Option<PathBuf> {
     }
 }
 
+/// A duration on the command line, as `sonde.toml` writes one.
+fn duration_arg(text: &str) -> Result<f64, String> {
+    duration_text(text).ok_or_else(|| format!("{text:?} is not a time (2s, 250ms, or ms as a number)"))
+}
+
+/// "250ms", "2s", "1.5 s", or ms as a number.
+fn duration_text(text: &str) -> Option<f64> {
+    let t = text.trim();
+    let (n, scale) = if let Some(n) = t.strip_suffix("ms") {
+        (n, 1.0)
+    } else if let Some(n) = t.strip_suffix('s') {
+        (n, 1000.0)
+    } else {
+        (t, 1.0)
+    };
+    n.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .map(|v| v * scale)
+}
+
 /// `max-waiting` as `sonde.toml` writes it.
 fn waiting_ms(v: &toml::Value) -> anyhow::Result<f64> {
     duration_ms("max-waiting", v)
@@ -1707,21 +2106,9 @@ fn duration_ms(name: &str, v: &toml::Value) -> anyhow::Result<f64> {
     match v {
         toml::Value::Integer(n) => Ok(*n as f64),
         toml::Value::Float(f) => Ok(*f),
-        toml::Value::String(s) => {
-            let t = s.trim();
-            let (n, scale) = if let Some(n) = t.strip_suffix("ms") {
-                (n, 1.0)
-            } else if let Some(n) = t.strip_suffix('s') {
-                (n, 1000.0)
-            } else {
-                (t, 1.0)
-            };
-            Ok(n.trim()
-                .parse::<f64>()
-                .map_err(|_| anyhow::anyhow!("{name}: {s:?} is not a duration"))?
-                * scale)
-        }
-        other => anyhow::bail!("{name}: {other} is not a duration"),
+        toml::Value::String(s) => duration_text(s)
+            .ok_or_else(|| super::usage(format!("{name}: {s:?} is not a duration"))),
+        other => Err(super::usage(format!("{name}: {other} is not a duration"))),
     }
 }
 
@@ -1754,10 +2141,23 @@ fn init_project(a: &CheckArgs, run: &sonde_proxy::program::RunPoint) -> anyhow::
     };
     let text = [
         "# sonde check: what a run of this program may use against S3.".to_string(),
-        format!("# Made from a run of {} requests; edit freely.", run.requests),
+        format!(
+            "# Made from a run of {}; edit freely.",
+            output::count(run.requests, "request")
+        ),
         "[check]".into(),
         format!("max-requests = {}", (run.requests as f64 * grow).ceil() as u64),
-        format!("max-waiting = \"{waiting}ms\""),
+        // time moves from one identical run to the next: a limit made from
+        // one run fails the next one in two. Left for a person to set
+        format!(
+            "# max-waiting = \"{waiting}ms\"   # measured {}: time varies run to run, set it with room",
+            ms_text(run.busy_ms)
+        ),
+        format!(
+            "# max-p95 = \"{:.0}ms\"   # measured {}",
+            (run.p95_ms * 2.0).ceil().max(1.0),
+            ms_text(run.p95_ms)
+        ),
         format!("max-cost = {cost}"),
         format!("max-errors = {}", run.errors),
         "# against a baseline run: how much more it may use, in percent".into(),
@@ -1805,7 +2205,7 @@ fn program_runs(
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
         .filter_map(|p| {
             let h = sonde_proxy::session::read_header(&p)?;
-            (sonde_proxy::program::program_key(h.command.as_deref()).as_deref() == Some(key)
+            (sonde_proxy::program::key_of(&h).as_deref() == Some(key)
                 && upto_created.is_none_or(|u| h.created <= u))
             .then_some((h.created, p))
         })
@@ -1971,21 +2371,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     use sonde_proxy::program::{Budget, check, run_point};
     // the project's budget, which the flags override
     // --init writes the file: there is none to read yet
-    let project_path = if a.init {
-        None
+    let loaded = if a.init {
+        Project::default()
     } else {
-        a.config.clone().or_else(find_project_file)
+        load_project(a.config.as_ref())?
     };
-    let project: ProjectCheck = match &project_path {
-        Some(p) => {
-            let text =
-                std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?;
-            toml::from_str::<ProjectFile>(&text)
-                .map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?
-                .check
-        }
-        None => ProjectCheck::default(),
-    };
+    let project_path = loaded.path.clone();
+    let project = loaded.file.check;
     // a path in sonde.toml is the project's: relative to the file, not to
     // the folder `sonde check` runs in
     let project_baseline = project.baseline.clone().map(|b| {
@@ -2030,6 +2422,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         );
         Ok((point, session.records, pr, ob))
     };
+    if !file.exists() {
+        return Err(super::usage(format!(
+            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            file.display(),
+            s.paths().sessions().display()
+        )));
+    }
     let run = read(&file)?;
     if a.init {
         return init_project(a, &run.0);
@@ -2037,7 +2436,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let header = sonde_proxy::session::Session::open(&file)
         .map_err(|e| anyhow::anyhow!(e))?
         .header;
-    let program = sonde_proxy::program::program_key(header.command.as_deref());
+    let program = sonde_proxy::program::key_of(&header);
     let dir = s.paths().sessions();
     if a.set_baseline {
         let Some(key) = &program else {
@@ -2111,7 +2510,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     if let Some(b) = &base_path {
         let bh = Session::open(b).map_err(|e| anyhow::anyhow!(e))?.header;
-        let bp = sonde_proxy::program::program_key(bh.command.as_deref());
+        let bp = sonde_proxy::program::key_of(&bh);
         if bp != program {
             eprintln!(
                 "note: the baseline ran `{}`, this run `{}`",
@@ -2145,24 +2544,32 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         base.as_ref().map(|b| (&b.0, &b.1[..], &b.2, &b.3[..])),
         &budget,
     );
-    // what the run's last trial found: a program that broke fails the check
+    // what the run's last trial found: a program that broke fails the
+    // check, with a budget or without one
+    use sonde_proxy::program::{check_closing, check_passed, trial_mark};
     let trials = sonde_proxy::trial::load(&file);
-    let broke = trials
-        .iter()
-        .any(|t| t.standing == sonde_proxy::trial::Standing::Broke);
     let mut c = c;
-    c.passed &= !broke;
+    c.passed = check_passed(&c, &trials);
+    let closing = check_closing(&c, &trials);
     // setting a baseline alone is a whole command
-    if c.verdicts.is_empty() && a.set_baseline {
+    if c.verdicts.is_empty() && trials.is_empty() && a.set_baseline {
         return Ok(0);
     }
     // nothing to hold the run to is a mistake in the command, in every format
-    if c.verdicts.is_empty() {
+    if c.verdicts.is_empty() && trials.is_empty() {
         eprintln!(
-            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors, --max-p95, or sonde.toml's [check]) or a --baseline"
+            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors, --max-p95, or sonde.toml's [check]) or a --baseline, or try the program (`sonde run --trial`)"
         );
         return Ok(64);
     }
+    // which program this is, and what it goes by: a baseline is a program's
+    let named = match (&program, header.name.as_deref().map(str::trim)) {
+        (Some(p), Some(n)) if !n.is_empty() => format!("program {p} (its name)"),
+        (Some(p), _) => format!(
+            "program `{p}` (its command; a name of its own: `name` under [program] in sonde.toml, or `sonde run --name`)"
+        ),
+        (None, _) => "no program (the session ran no command)".to_string(),
+    };
     // past the baseline: since which run, and the commits around it
     let since = match (&base, &program) {
         (Some(b), Some(key)) if !c.passed => {
@@ -2175,7 +2582,16 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     if matches!(a.format, Format::Json) {
         println!(
             "{}",
-            output::json(&serde_json::json!({ "run": run.0, "check": c, "since": since }))
+            output::json(&serde_json::json!({
+                "run": run.0,
+                "program": program,
+                "programNamed": header.name.is_some(),
+                "check": c,
+                "trials": trials,
+                "passed": c.passed,
+                "verdict": closing,
+                "since": since,
+            }))
         );
         return Ok(if c.passed { 0 } else { 1 });
     }
@@ -2215,6 +2631,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 gh_escape(&format!("breaks under {}: {}", t.scenario, t.line()))
             );
         }
+        for t in trials
+            .iter()
+            .filter(|t| t.standing == sonde_proxy::trial::Standing::Degraded)
+        {
+            println!(
+                "::warning title=sonde check::{}",
+                gh_escape(&format!("gets through {}: {}", t.scenario, t.line()))
+            );
+        }
         for w in &c.new_warnings {
             println!(
                 "::warning title=sonde: new since the baseline::{}",
@@ -2237,34 +2662,22 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 None => println!("::{level} title=sonde::{}", gh_escape(&f.text)),
             }
         }
-        println!(
-            "sonde: {} · {judged}",
-            if c.passed {
-                "within budget"
-            } else {
-                "over budget"
-            }
-        );
+        println!("sonde: {closing} · {judged}");
         return Ok(if c.passed { 0 } else { 1 });
     }
     // a pull request's comment: the verdicts, what is new, and the run's findings
     if matches!(a.format, Format::Markdown) {
         print!(
             "{}",
-            check_markdown(&c, &run.0.currency, since_text.as_deref(), &run.3)
+            sonde_proxy::program::check_markdown_with(
+                &c,
+                &run.0.currency,
+                since_text.as_deref(),
+                &run.3,
+                &trials
+            )
         );
         println!("\n*{}*", sonde_proxy::program::md_text(&judged));
-        if !trials.is_empty() {
-            println!("\n| | scenario | |\n|---|---|---|");
-            for t in &trials {
-                println!(
-                    "| {} | {} | {} |",
-                    t.standing.label(),
-                    t.scenario,
-                    t.line().replace('|', "\\|")
-                );
-            }
-        }
         return Ok(if c.passed { 0 } else { 1 });
     }
     let rows: Vec<Vec<String>> = c
@@ -2287,27 +2700,35 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         .collect();
     // which run this is about comes first: "the newest" is not a name
     println!("{judged}");
+    println!("{named}");
     if let Some(b) = &base_path {
         println!("against {}", session_line(b, None));
     }
-    println!(
-        "{}",
-        output::table(&["", "", "run", "limit", "from", "over"], &rows)
-    );
+    if !rows.is_empty() {
+        println!(
+            "{}",
+            output::table(&["", "", "run", "limit", "from", "over"], &rows)
+        );
+    }
     for t in &trials {
         use sonde_proxy::trial::Standing;
         println!(
             "{}  {} {}{}",
-            match t.standing {
-                Standing::Broke => paint("FAIL", "31", color),
-                Standing::Untested => paint("skip", "2", color),
-                _ => paint("pass", "32", color),
-            },
+            paint(
+                trial_mark(t.standing),
+                match t.standing {
+                    Standing::Broke => "31",
+                    Standing::Degraded => "33",
+                    Standing::Untested => "2",
+                    Standing::Survived => "32",
+                },
+                color
+            ),
             match t.standing {
                 Standing::Survived => "survives",
                 Standing::Degraded => "gets through",
                 Standing::Broke => "breaks under",
-                Standing::Untested => "not met:",
+                Standing::Untested => "untested:",
             },
             t.scenario,
             if t.line().is_empty() {
@@ -2328,17 +2749,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     println!(
         "{}",
-        paint(
-            if c.passed {
-                "within budget"
-            } else if broke && c.verdicts.iter().all(|v| v.ok) && c.new_warnings.is_empty() {
-                "within budget, and broke under a trial"
-            } else {
-                "over budget"
-            },
-            if c.passed { "32" } else { "31" },
-            color
-        )
+        paint(&closing, if c.passed { "32" } else { "31" }, color)
     );
     Ok(if c.passed { 0 } else { 1 })
 }

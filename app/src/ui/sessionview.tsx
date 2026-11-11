@@ -13,7 +13,7 @@ import { episodeNotes, episodeTitle, observationSaving, observationText, observa
 import { Chart, cost, groupName, sessionStory, Sparkline, timed, Waterfall } from "./plots";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, Figure, Figures, Heading, ICON, InWindowMenu, ListRow, Options, Row, ROW, rowHeight, Strong, TABLE, terminal, Title, TYPE } from "./kit";
+import { Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, Figure, Figures, fitColumns, Heading, ICON, InWindowMenu, ListRow, Options, Row, ROW, rowHeight, Strong, TABLE, terminal, Title, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -609,16 +609,11 @@ const OP_RANKED = ["requests", "time", "bar", "format", "notes"] as const;
 export function operationColumns(width: number, wanted: { format: boolean; bar: boolean; notes: boolean }, sized: { bar: number; notes: number }): { shown: OpColumn[]; title: number; widths: Record<string, number> } {
   const widths: Record<string, number> = { ...OP_WIDTH, bar: sized.bar, notes: sized.notes };
   const want = (c: (typeof OP_RANKED)[number]) => (c === "format" ? wanted.format : c === "bar" ? wanted.bar : c === "notes" ? wanted.notes : true);
-  const shown: OpColumn[] = ["status", "title", "duration"];
-  let used = widths.status + widths.duration;
-  for (const c of OP_RANKED) {
-    if (!want(c)) continue;
-    // the first that does not fit goes, and all ranked after it with it
-    if (width > 0 && width - used - widths[c] - 2 < OP_NAME) break;
-    shown.push(c);
-    used += widths[c];
-  }
-  return { shown, title: width > 0 ? Math.max(160, width - used - 2) : 340, widths };
+  const always = widths.status + widths.duration;
+  // (2: the table's border)
+  const ranked = fitColumns(width, always + 2, OP_NAME, OP_RANKED.filter(want).map((key) => ({ key, width: widths[key] })));
+  const used = always + ranked.reduce((n, c) => n + widths[c], 0);
+  return { shown: ["status", "title", "duration", ...ranked], title: width > 0 ? Math.max(160, width - used - 2) : 340, widths };
 }
 
 export function OperationsTable(props: {
@@ -888,7 +883,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         <List
           testID="op-requests"
           each={props.rows}
-          keyExtractor={(r) => String(r.id)}
+          keyExtractor={(r) => `${r.id}`}
           estimatedItemSize={rowHeight(ROW.twoLine) ?? 32}
           class={CARD}
           style={{ height: Math.min(props.rows.length, 10) * (rowHeight(ROW.twoLine) ?? 32) + 2 }}
