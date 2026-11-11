@@ -285,6 +285,26 @@ export function openLink(url: string) {
   }
 }
 
+/** A second launch handed to the running app (nsh.json's `singleInstance`):
+ * the files among its arguments open here, as a drop does. Its `sonde://`
+ * links come through `UrlScheme` like every other link, and options are not
+ * read. Anyone can start the app with any arguments: only what a drop would
+ * open is opened. */
+export function openLaunch(args: string[], cwd: string) {
+  const files = launchFiles(args, cwd);
+  if (files.length) openPaths(files);
+}
+
+/** The files a launch names: its arguments that are no option and no link, a
+ * relative one read from the directory the launch was started in. */
+export function launchFiles(args: string[], cwd: string): string[] {
+  const absolute = (p: string) => /^([\\/]|[A-Za-z]:[\\/])/.test(p);
+  const sep = cwd.includes("\\") && !cwd.includes("/") ? "\\" : "/";
+  return args
+    .filter((a) => a && !a.startsWith("-"))
+    .flatMap((a) => (/^file:/i.test(a) ? [pathOf(a)] : /^[a-z][a-z0-9+.-]*:\/\//i.test(a) ? [] : [absolute(a) || !cwd ? a : `${cwd.replace(/[\\/]+$/, "")}${sep}${a}`]));
+}
+
 /** Opens session files dropped on the window; anything else is said to be no session. */
 export function openDropped(uris: string[]) {
   openPaths(

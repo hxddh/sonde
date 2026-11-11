@@ -7,14 +7,14 @@ import { Button as BaseButton, Combobox, Toolbar as ToolbarGroup } from "nsh/bas
 import { isAvailable, Menu, type MenuItem, titleBar } from "nsh/desktop";
 import { date } from "../format";
 import { t } from "../i18n";
-import { areaLabel, sectionLabel } from "../labels";
+import { areaLabel, sectionLabel, vendorName } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
 import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, openSession, openSessionFile, readOnly, section, settings, sessionsTick, sideList, storeTab, useEndpoint } from "../store";
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./sessionview";
-import { BREAK, Button, CONTROL, FOCUS, glass, ICON, IconButton, Kbd, material, Notice, POPUP, Strong, Tip } from "./kit";
+import { BREAK, Button, CONTROL, FOCUS, FOCUS_WITHIN, glass, ICON, IconButton, Kbd, material, Notice, POPUP, Strong, Tip } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { sessionName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -118,7 +118,7 @@ export function EndpointSwitcher(props: { class?: string }) {
         if (v) useEndpoint(v);
       }}
       offset={4}
-      class={`${CONTROL.trigger} ${FOCUS} ${props.class ?? (shellWidth() >= BREAK.toolbar ? "w-52" : "w-40")}`}
+      class={`${CONTROL.trigger} ${FOCUS_WITHIN} ${props.class ?? (shellWidth() >= BREAK.toolbar ? "w-52" : "w-40")}`}
       inputClass="min-w-0 flex-1 text-body text-foreground placeholder:text-foreground"
       popupClass={`min-w-[260px] ${POPUP}`}
       popupStyle={glass}
@@ -134,7 +134,7 @@ export function EndpointSwitcher(props: { class?: string }) {
               <Text class="text-body text-popover-foreground line-clamp-1">{item.title}</Text>
               <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{e?.url ?? ""}</Text>
             </View>
-            <Text class="text-caption text-muted-foreground">{e?.vendorLabel ?? ""}</Text>
+            <Text class="text-caption text-muted-foreground">{e ? vendorName(e) : ""}</Text>
           </View>
         );
       }}

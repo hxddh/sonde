@@ -4,6 +4,7 @@ import { batch, effect, signal, Text, untracked, View } from "nsh";
 import { AlertDialog } from "nsh/base";
 import { count, duration } from "../format";
 import { t } from "../i18n";
+import { vendorName } from "../labels";
 import { api } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
@@ -98,7 +99,7 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
           class={CELL}
           label={t("endpoints.field.vendor")}
           value={d().vendor}
-          items={vendors.map((v) => ({ value: v.id, title: v.id === "other" ? t("endpoints.vendorOther") : v.label }))}
+          items={vendors.map((v) => ({ value: v.id, title: vendorName(v) }))}
           onChange={(v) => {
             const info = vendors.find((x) => x.id === v);
             batch(() => {
@@ -253,7 +254,7 @@ export function Endpoints() {
           <View class="min-w-0 flex-1 gap-1">
             <View class="flex-row items-center gap-2">
               <Heading class="min-w-0 shrink line-clamp-1">{e.name}</Heading>
-              <Badge label={e.vendorLabel} />
+              <Badge label={vendorName(e)} />
               <If when={endpoint() === e.id}>
                 <Badge label={t("endpoints.current")} tone="primary" />
               </If>

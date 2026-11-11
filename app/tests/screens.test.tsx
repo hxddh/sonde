@@ -228,3 +228,74 @@ test("a number typed in Settings is saved a moment after the last key", async ()
   await app.waitFor("text:Settings saved >> nth=0");
   await app.press("text:Undo >> nth=0");
 });
+
+// --- what failed, said: the engine's answers stood in for (open's `modules`), so no store has to fail for it
+
+const NATIVE = "sonde/native";
+const bucketNamed = (name: string) => ({ name, created: null, region: null });
+
+test("a listing that fails says why in the one error state, with a way to try again", async () => {
+  // a bucket the store does not have: its listing is the store's own refusal
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Sonde.buckets": async () => [bucketNamed("gone")] } } });
+  await place(app, "endpoints");
+  await app.press("id:open-demo");
+  await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
+  await place(app, "browse");
+  await app.waitFor("id:bucket-gone", { timeout: 10000 });
+  await app.waitFor("id:listing-error", { timeout: 10000 });
+  expect(app.shows("text:Could not load this")).toBe(true);
+  expect(app.shows("text:/NoSuchBucket/")).toBe(true);
+  // never the words of an empty folder for a failure
+  expect(app.shows("id:listing-loading")).toBe(false);
+  // again: asked again, and (the bucket still gone) said again
+  await app.press("text:Try again");
+  await app.waitFor("id:listing-error", { timeout: 10000 });
+});
+
+test("a store that is gone: the buckets say why and come back with it; the endpoint's test says it is not reachable", async () => {
+  let up = false;
+  const app = await open("../App.tsx", {
+    ...desktop,
+    modules: {
+      [NATIVE]: {
+        "Sonde.buckets": async () => {
+          if (!up) throw new Error("connection refused: nothing listens at 127.0.0.1:9");
+          return [bucketNamed("demo")];
+        },
+        "Sonde.testEndpoint": async (id: string) => ({ endpoint: id, ok: false, latencyMs: 0, credentialsSource: null, bucketCount: null, owner: null, identity: null, identityNote: null, error: { kind: "network", message: "connection refused: nothing listens at 127.0.0.1:9", recordId: null }, server: null }),
+      },
+    },
+  });
+  await place(app, "endpoints");
+  await app.press("id:open-demo");
+  await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
+  // the endpoint, tested: not reachable, and why
+  await app.press("id:test-demo");
+  await app.waitFor("id:test-result");
+  expect(app.shows("text:Not reachable")).toBe(true);
+  expect(app.shows("text:/connection refused/")).toBe(true);
+  await app.window("settings").pressClose();
+  // its buckets: why there are none, held open in the sidebar, not an empty list
+  await place(app, "browse");
+  await app.waitFor("id:buckets-error", { timeout: 10000 });
+  expect(app.shows("text:/connection refused/")).toBe(true);
+  expect(app.shows("id:bucket-demo")).toBe(false);
+  // the store is back: asked again, the buckets are there
+  up = true;
+  await app.press("id:buckets-refresh");
+  await app.waitFor("id:bucket-demo", { timeout: 10000 });
+  await app.waitFor("id:buckets-error", { state: "gone" });
+});
+
+test("a session file that cannot be read says so, and why", async () => {
+  const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Sessions.analyse": async () => {
+    throw new Error("line 3 is cut short: not a whole record");
+  } } } });
+  await app.press("id:open-example");
+  await app.waitFor("id:session-pane", { timeout: 10000 });
+  await app.waitFor("id:session-error", { timeout: 10000 });
+  expect(app.shows("text:Could not load this")).toBe(true);
+  expect(app.shows("text:/line 3 is cut short/")).toBe(true);
+  // no figure of a session that was not read
+  expect(app.shows("id:session-summary")).toBe(false);
+});

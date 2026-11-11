@@ -208,7 +208,8 @@ export function Probes() {
         when={detail()}
         else={
           <Scroll testID="screen-probes" class="flex-1" contentClass="gap-4 p-4">
-            <PageHeader title={t("compat.title")} subtitle={t("compat.hint")}>
+            {/* its title is the window's (a terminal: the tab's): said once */}
+            <PageHeader subtitle={t("compat.hint")}>
               <More
                 testID="probe-more"
                 actions={() => [

@@ -88,6 +88,11 @@ const TOP_LABEL = "pb-1 tabular-nums text-caption text-muted-foreground";
 /** Two charts abreast where the board is wide, one under another where it is not. */
 export const HALF = "min-w-[420px] flex-1";
 
+/** A moment on a time axis, read from the session's start: `+230 ms`. The one
+ * form of every time tick (a tick that is a length of time — a latency, how
+ * long a chain took — is `duration` alone). */
+const sinceTick = (ms: number) => `+${duration(ms)}`;
+
 /** The first, middle and last of `n` places along an axis, each once: two
  * places have two ticks, not the first one twice. */
 export const ticks3 = (n: number): number[] => [...new Set([0, Math.floor((n - 1) / 2), n - 1].filter((i) => i >= 0))];
@@ -325,7 +330,7 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
           >
             <Cell x={(_, i) => (rows()[i]?.alt ? (undefined as unknown as string) : (rows()[i]?.x ?? ""))} y="y" color="tone" inactiveOpacity={INACTIVE} hoverCellClass={HOVER} />
             <Cell x={(_, i) => (rows()[i]?.alt ? rows()[i].x : (undefined as unknown as string))} y="y" color="tone" inactiveOpacity={INACTIVE} style={{ opacity: 0.6 }} hoverCellClass={HOVER} />
-            <PlotAxis tickValues={ticks3(LANE_BINS)} format={(i) => duration(domain()[0] + i * width())} labelClass={TIME_TICK} />
+            <PlotAxis tickValues={ticks3(LANE_BINS)} format={(i) => sinceTick(domain()[0] + i * width())} labelClass={TIME_TICK} />
           </Plot>
         </BaseButton>
         </If>
@@ -389,7 +394,7 @@ export function shapeSentence(p: Profile): string {
  * a step line of the requests in flight. A press picks the slice under the
  * pointer (again: lets it go), for the operations running then.
  */
-export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean; marks?: { tMs: number; n: number }[]; axis?: boolean; range?: [number, number] | null; focus?: Focus; /** the strip under a session's header: a mark, in no frame */ strip?: boolean }) {
+export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean; marks?: { tMs: number; n: number }[]; axis?: boolean; range?: [number, number] | null; focus?: Focus; /** the strip under a session's header: a mark, in no frame */ strip?: boolean; /** the most in flight, as the session's signals count it */ peak?: number }) {
   const hovered = signal<number | null>(null);
   // zoomed: the slices from `range[0]` to `range[1]`, wider each
   const from = () => props.range?.[0] ?? 0;
@@ -398,6 +403,9 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     return props.range ? all.slice(props.range[0], props.range[1] + 1) : all;
   };
   const top = () => Math.max(1, ...rows().map((r) => r.ok + r.miss + r.client + r.server));
+  // the most in flight: the session's own figure (`peak`, what the In flight tile says) while
+  // the whole session shows, the stretch's own when zoomed
+  const flightTop = () => (props.range ? Math.max(0, ...rows().map((r) => r.inFlight)) : (props.peak ?? props.profile.peakInFlight));
   // where the findings happened: their numbers over the slices they start in
   const marked = () => {
     const m = new Map<number, number[]>();
@@ -450,7 +458,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
         <Plot
           data={rows()}
           xScale={{ type: "band", paddingInner: 0.18 }}
-          y2Scale={{ type: "linear" }}
+          y2Scale={{ type: "linear", domain: [0, Math.max(1, flightTop())] }}
           alignTicks={false}
           colorScale={tones()}
           accessibilityLabel={shapeSentence(props.profile)}
@@ -474,8 +482,9 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           <Line y="inFlight" scale="y2" curve="stepAfter" class="stroke-foreground/30 stroke-[1.25]" hoverDotClass="hidden" />
           {/* full width: when (from the session's start) and how many at once */}
           <If when={props.axis}>
-            <PlotAxis tickValues={ticks3(rows().length)} format={(i) => `+${duration(rows()[i]?.tMs ?? 0)}`} labelClass={TIME_TICK} />
-            <PlotAxis placement="right" scale="y2" labelPlacement="inside" ticks={2} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass={VALUE_TICK_END} />
+            <PlotAxis tickValues={ticks3(rows().length)} format={(i) => sinceTick(rows()[i]?.tMs ?? 0)} labelClass={TIME_TICK} />
+            {/* one tick, at the most in flight in what is shown: the whole session's is the In flight tile's number */}
+            <PlotAxis placement="right" scale="y2" labelPlacement="inside" tickValues={[flightTop()]} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass={VALUE_TICK_END} />
           </If>
           {/* the moment another chart rests on */}
           <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
@@ -592,7 +601,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
         <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), props.focus?.() ?? null) ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
         <PlotAxis placement="left" labelPlacement="inside" ticks={3} format={(v) => duration(v)} labelClass={VALUE_TICK} />
         <If when={props.axis}>
-          <PlotAxis ticks={3} format={(v) => `+${duration(v)}`} labelClass={TIME_TICK} />
+          <PlotAxis ticks={3} format={sinceTick} labelClass={TIME_TICK} />
         </If>
       </Plot>
     </If>
@@ -1132,7 +1141,7 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
       >
         <Cell x="x" y="y" value={(_, i) => Math.sqrt(rows()[i]?.n ?? 0)} cornerRadii={2} inactiveOpacity={INACTIVE} stagger={0.2} hoverCellClass={HOVER} />
         <PlotAxis placement="left" labelClass={AXIS_LABEL} />
-        <PlotAxis tickValues={ticks3(last() + 1)} format={(i) => `+${duration((from() + i) * p().binMs)}`} labelClass={TIME_TICK} />
+        <PlotAxis tickValues={ticks3(last() + 1)} format={(i) => sinceTick((from() + i) * p().binMs)} labelClass={TIME_TICK} />
       </Plot>
       </If>
       <PrefixNote prefixes={p().prefixes} common={named().common} gutter />
@@ -1526,7 +1535,7 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
           <Grid y={[p95()]} class="stroke-muted-foreground/60" style={{ strokeDasharray: "3 3" }} />
           <Dot value="y" r={2.5} hitRadius={6} color="tone" inactiveOpacity={INACTIVE} hoverDotClass="size-2 rounded-full border border-card bg-foreground" />
           <PlotAxis placement="left" labelPlacement="inside" tickValues={decades(Math.ceil(yLo()), yHi())} format={(v) => duration(10 ** v)} labelClass={VALUE_TICK} />
-          <PlotAxis ticks={3} format={(v) => (v < 0 ? "" : props.by === "time" ? duration(v) : bytes(10 ** v))} labelClass={TIME_TICK} />
+          <PlotAxis ticks={3} format={(v) => (v < 0 ? "" : props.by === "time" ? sinceTick(v) : bytes(10 ** v))} labelClass={TIME_TICK} />
           <PlotLabel class="tabular-nums text-caption text-muted-foreground" texts={[{ text: `p95 ${duration(props.profile.p95Ms ?? 0)}`, x: xDomain()[1], y: p95(), align: "right", class: "-translate-y-full pb-1" }]} />
         </Plot>
         <If when={props.injected?.length}>
@@ -1568,7 +1577,7 @@ export function KindsOverTime(props: { profile: Profile; domainMs?: [number, num
                 <Line y="p95" curve="linear" class="stroke-chart-1 stroke-[1.25]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
                 <Line y="p50" curve="linear" class="stroke-chart-1/50 stroke-1" hoverDotClass="hidden" />
                 <If when={i() === kinds().length - 1}>
-                  <PlotAxis ticks={3} format={(v) => duration(v)} labelClass={TIME_TICK} />
+                  <PlotAxis ticks={3} format={sinceTick} labelClass={TIME_TICK} />
                 </If>
               </Plot>
             </View>
@@ -1673,10 +1682,11 @@ export function BytesOverTime(props: { signals: Signals; range?: [number, number
           class={`${TICK_ROOM} ${PLOT} w-full`}
         >
           <Grid y={[0]} class="stroke-border" />
-          <Bar value="up" class="fill-chart-1" cornerRadii={{ topLeft: 1.5, topRight: 1.5 }} inactiveOpacity={INACTIVE} />
-          <Bar value="down" class="fill-chart-4" cornerRadii={{ bottomLeft: 1.5, bottomRight: 1.5 }} inactiveOpacity={INACTIVE} />
+          {/* one stem per slice: received hangs under the axis (from its depth up to zero), sent stands on it */}
+          <Bar value={(d) => -d.down} base="down" stack="bytes" class="fill-chart-4" cornerRadii={{ bottomLeft: 1.5, bottomRight: 1.5 }} inactiveOpacity={INACTIVE} />
+          <Bar value="up" stack="bytes" class="fill-chart-1" cornerRadii={{ topLeft: 1.5, topRight: 1.5 }} inactiveOpacity={INACTIVE} />
           <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} base={bottom()} class="stroke-foreground/40 stroke-1" />
-          <PlotAxis tickValues={ticks3(rows().length)} format={(i) => `+${duration(rows()[i]?.tMs ?? 0)}`} labelClass={TIME_TICK} />
+          <PlotAxis tickValues={ticks3(rows().length)} format={(i) => sinceTick(rows()[i]?.tMs ?? 0)} labelClass={TIME_TICK} />
           <PlotAxis placement="left" labelPlacement="inside" tickValues={[top() / 1.2, bottom() / 1.2]} format={(v) => bytesRate(Math.abs(v))} labelClass={VALUE_TICK} />
         </Plot>
       </If>
@@ -1745,7 +1755,7 @@ export function ErrorsOverTime(props: { signals: Signals; range?: [number, numbe
           {/* a retry is a mark, not a failure of its own: a dot at how many in the slice */}
           <Dot value={(r) => (r.retries > 0 ? r.retries : (undefined as unknown as number))} r={3} class="fill-info" hoverDotClass="hidden" />
           <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
-          <PlotAxis tickValues={ticks3(rows().length)} format={(i) => `+${duration(rows()[i]?.tMs ?? 0)}`} labelClass={TIME_TICK} />
+          <PlotAxis tickValues={ticks3(rows().length)} format={(i) => sinceTick(rows()[i]?.tMs ?? 0)} labelClass={TIME_TICK} />
           <PlotAxis placement="left" labelPlacement="inside" ticks={2} format={(v) => (Number.isInteger(v) && v > 0 ? count(v) : "")} labelClass={VALUE_TICK} />
         </Plot>
       </If>

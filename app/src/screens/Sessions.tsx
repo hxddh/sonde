@@ -166,6 +166,27 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       if (at >= 0) opsRef?.select({ row: at });
     }
   };
+  /** The chosen operation's row, in view: where the table shows it, sorted or narrowed. */
+  const showOperation = () => {
+    const i = op();
+    const v = view();
+    if (i === null || !v) return;
+    const at = (opsOrder?.() ?? rows() ?? v.episodes.map((_, k) => k)).indexOf(i);
+    if (at >= 0) opsRef?.scrollToRow(at);
+  };
+  /** A request pressed on a chart: its inspector, and the operation it belongs to chosen with
+   * it — marked in the operations, its row in view when they show. */
+  const chooseRequest = (id: number) => {
+    const i = view()?.episodes.findIndex((e) => e.records.includes(id)) ?? -1;
+    batch(() => {
+      if (i >= 0) {
+        op.set(i);
+        opHighlight.set([i]);
+      }
+      rec.set(id);
+    });
+    showOperation();
+  };
   const closeInspector = () => {
     if (!reduceMotion()) LayoutAnimation.easeInEaseOut();
     // at once: the inspector goes whole, not its request first and then what held it
@@ -276,7 +297,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   // pane is not rebuilt each second, so a stretch zoomed to or a finding chosen stays)
   const operations = (v: () => SessionView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-    <OperationsTable view={v()} rows={rows()} order={(o) => (opsOrder = o)} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => (opsRef = r)} highlight={opHighlight()} compact={pane() === "aligned"} />
+    <OperationsTable view={v()} rows={rows()} order={(o) => (opsOrder = o)} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} />
     </View>
   );
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
@@ -313,7 +334,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     </If>
   );
   const body = (v: () => SessionView) => {
-    if (pane() === "time") return <TimePane view={v()} onRequest={(id) => rec.set(id)} reveal={reveal()} />;
+    if (pane() === "time") return <TimePane view={v()} onRequest={chooseRequest} reveal={reveal()} />;
     if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTry={() => tryingFaults.set(true)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
@@ -413,7 +434,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     >
       <View class="min-h-0 flex-1">
         <View class="shrink-0 px-4 pt-4">
-          <SessionHeader view={v()} actions={actions()} onSignal={showSignal}>
+          <SessionHeader view={v()} actions={actions()} onSignal={showSignal} short={box().h < BREAK.short}>
             {trialNote(v)}
           </SessionHeader>
         </View>
@@ -451,7 +472,14 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   return (
     <View class="flex-1" testID="session-pane" onLayout={(e) => box.set({ w: Math.round(e.bounds.size.width), h: Math.round(e.bounds.size.height) })}>
       {/* being read (in outline), unreadable (why), or there */}
-      <If when={view()} else={read.reading() ? <SessionSkeleton /> : <Await loading={false} error={read.error() ?? t("sessions.unreadable")} testID="session"><View /></Await>}>
+      <If
+        when={view()}
+        else={
+          <If when={read.reading()} else={<Await loading={false} error={read.error() ?? t("sessions.unreadable")} testID="session"><View /></Await>}>
+            <SessionSkeleton />
+          </If>
+        }
+      >
         {(v) => (
           <If when={compareWith()} else={
             <If

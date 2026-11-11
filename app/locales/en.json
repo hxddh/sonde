@@ -615,7 +615,7 @@
  "settings.contrast": "Higher contrast",
  "settings.contrastLabel": "Contrast",
  "settings.contrastHint": "Stronger borders and secondary text",
- "updates.running": "sonde %{version} · Native Shell %{nsh}",
+ "updates.running": "%{name} %{version} · Native Shell %{nsh}",
  "updates.dev": "(development run)",
  "mpu.key": "Key",
  "mpu.initiated": "Started",

@@ -8,7 +8,7 @@
 // if that window has a Toaster; else to the main window. Each Toaster draws
 // only its own window's (`currentWindow()`, read as it renders).
 
-import { cleanup, computed, Overlay, signal, Text, untracked, View } from "nsh";
+import { batch, cleanup, computed, Overlay, signal, Text, untracked, View } from "nsh";
 import { Toast, type ToastEntry, ToastManager, ToastStack } from "nsh/base";
 import { currentWindow, focusedWindow, isAvailable } from "nsh/desktop";
 import { t } from "../i18n";
@@ -64,13 +64,18 @@ function sync() {
 
 function tick() {
   const advanced = manager.advance(expanded());
-  for (const gone of advanced.removed) {
-    const { [gone.id]: _, ...rest } = contents();
-    contents.set(rest);
-    const { [gone.id]: __, ...others } = windowOf();
-    windowOf.set(others);
-  }
-  if (advanced.changed) sync();
+  // at once: a toast that is gone leaves the list with its window. One by one, a toast of
+  // another window was the main window's for a moment (no window: the main one), and two
+  // going together drew rows there that were never shown (Native Shell: "a kept row is gone")
+  batch(() => {
+    if (advanced.changed) sync();
+    for (const gone of advanced.removed) {
+      const { [gone.id]: _, ...rest } = contents();
+      contents.set(rest);
+      const { [gone.id]: __, ...others } = windowOf();
+      windowOf.set(others);
+    }
+  });
   if (manager.isEmpty() && ticking !== undefined) {
     clearInterval(ticking);
     ticking = undefined;

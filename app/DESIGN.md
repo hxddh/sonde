@@ -67,17 +67,18 @@ piece wraps one nsh export with the theme's tokens:
 | `Segmented`, `Options` | `Tabs`, `RadioGroup` | what a place shows; a value of a few (a set of radios: one is checked) |
 | `Disclosure` | `Accordion` | a section that opens under its heading |
 | `SidePanel` + `PanelHeader`, `Modal` + `Actions` | `Sheet`, `Dialog` | supplementary work; short decisions, their foot always Cancel then the commit, at the end |
-| `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). A `Stat` may carry a `mark` (a `Sparkline`: a signal's line over its session). No third figure. `Tiles` lays tiles in rows of equal count, `Figures` a line of figures that never wraps |
+| `Stat`, `Figure` | `Card` (`tile`), — | a figure in a row of tiles; a figure in a line without a card (with how it changed, and with `preview` what it is made of). A `Stat` may carry a `mark` (a `Sparkline`: a signal's line over its session). No third figure. `Tiles` lays tiles in rows of equal count and tells each how much of itself to show (`TileLook`: `full`, `tight`, `line`), `Figures` a line of figures that never wraps |
 | `Icon`, `IconTile`, `ICON` | `Image` (the icon's SVG, tinted by a token) | an icon; the one tile an icon stands in; an icon's three sizes |
 | `Notice` | — | the one banner: a note, a caution or what went wrong, with what can be done at its end |
 | `Await` | — | anything fetched, in its three states said truly: on its way, failed (why, Try again), there |
-| `PageHeader`, `SideHeader`, `Back` | — | the head of a page, of a list in the sidebar, and the one way back |
+| `PageHeader`, `SideHeader`, `Back` | — | the head of a page (without a title where the window's title bar says it), of a list in the sidebar, and the one way back |
 | `Path` | `Text` | a path or key cut in its middle (the text's own `ellipsis-middle`), heard whole |
 | `TABLE`, `ROW`, `SimpleTable` | `DataTable` | every table's classes and row heights; rows of text |
 | `Badge`, `Dot`, `KeyValue`, `Kbd`, `Empty`, `Loading` | — | display only; `Empty` is the one way to say nothing is here (`compact` inside a chart, a list or a card) |
 
 Rules: a page passes no classes of its own to an `nsh/base` control; a class string a second page would repeat
-belongs in the kit; `FOCUS` is on everything that takes the keyboard; `selected:bg-selection` is the one selection,
+belongs in the kit; `FOCUS` is on everything that takes the keyboard, and shows for focus the keyboard moved (`focus-visible:`), never
+after a click (`FOCUS_WITHIN` around a control whose focus is a text input inside it); `selected:bg-selection` is the one selection,
 `active:bg-muted` the press. One formatter per kind of value (`format.ts`): `duration` (0.4 ms … 2 h 05 min, the unit chosen after rounding),
 `percent` and `change`, `cost`, `clock`, `count`, `bytes`, `date`, `factor`, `rate`. `copy()` is the one way to copy, `useEndpoint()`
 the one way to change endpoint.
@@ -118,7 +119,8 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 - **Four thresholds** (`BREAK`), and no others: two widths — `toolbar` (1040), from which the window's toolbar shows
   the endpoint's name in full and the search field rather than its button, and `inspector` (900), from which a pane
   holds an inspector beside what it details (under it the inspector comes in from the edge); two heights of a
-  session's pane — under `short` (600) the shape strip goes and the findings keep to a line or two, from `tall` (880)
+  session's pane — under `short` (600) the shape strip goes, the signal tiles keep to one line each (what they count
+  and the figure) and the findings keep to a line or two, from `tall` (880)
   each finding has its lines in full. A pane measures itself (`onLayout`); nothing reads the focused window's size.
 - **A pane that narrows reflows by rule**, never by clipping:
   - *figures first*: a line of figures (`Figures`) or of ranked tiles (`Tiles ranked`) holds as many as fit, in
@@ -133,7 +135,8 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     column's state by its place;
   - a finding's words keep their width: what acting on it saves goes first, then the count's words;
   - a session's sentence wraps to two lines and is cut only at the second line's end;
-  - tiles (`Tiles`) go in rows of equal count: four are four abreast or two and two, never three and one;
+  - tiles (`Tiles`) go in rows of equal count: four are four abreast or two and two, never three and one and never
+    one column; a tile narrower than it reads in is `tight` (what it counts and the figure, no line under them);
   - a chart's sentence wraps and is never cut; a row's name that does not fit its gutter is cut in its middle
     (`axisName`), a path at its start (`tail`).
 - **Nothing appears and goes.** What a place may show has its room from the start: a bucket's four tiles, the
@@ -228,7 +231,8 @@ defined nowhere else, and `scripts/lint-charts.py` counts them.
   `muted-foreground` (dashed for a line), never an error's color; retries in `info`; before is
   `muted-foreground/30`, after its outcome (`status-ok` fewer, `status-server` more). What a selection leaves out
   turns `bar-track`, it does not disappear.
-- **Ticks**: time ticks `TIME_TICK` (three, each once: `ticks3`), value ticks inside on a chip (`VALUE_TICK`) with
+- **Ticks**: time ticks `TIME_TICK` (three, each once: `ticks3`), a moment always from the session's start
+  (`+230 ms`, `sinceTick`) and a length of time `duration` alone; value ticks inside on a chip (`VALUE_TICK`) with
   their unit; latencies on a log scale drawn as logs, the ticks saying times.
 - **Quiet frames**: hairline grids (`stroke-border`), no axis lines, small tabular labels in `text-caption`
   `muted-foreground`; bars' tips rounded, their bases square; labels at the bars' ends rather than a value axis.

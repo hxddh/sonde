@@ -17,7 +17,9 @@ function command(cmd: boolean) {
   const keys = cmd ? "%AWS_ACCESS_KEY_ID%:%AWS_SECRET_ACCESS_KEY%" : "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY";
   const curl = `curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u ${keys}`;
   const get = (k: string) => `${curl} -o ${sink} ${url}/demo/${k} && echo fetched ${k}`;
-  return [...["README.md", "config/app.yaml", "images/logo.png"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, "echo done"].join(" && ");
+  // small objects, one of 3 MiB (its first byte against the rest of it), a key that is not
+  // there (a miss) and a bucket that is not (a failure: the errors chart has something to draw)
+  return [...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
 }
 
 interface Variant {
@@ -79,6 +81,19 @@ for (const v of variants) {
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });
     await shot("02b-ran");
+    // the run's own session: what failed over its time, and the first byte against the rest
+    await go("sessions");
+    await app.waitFor("id:session-summary", { timeout: 10000 });
+    await app.press("id:signal-errors");
+    await app.waitFor("id:time-pane");
+    await app.wait(900);
+    await shot("02c-errors");
+    await app.press("id:signal-latency");
+    await app.wait(700);
+    if (app.shows("id:chart-firstByte")) {
+      await app.scroll("id:time-pane", 320);
+      await shot("02d-first-byte");
+    }
 
     await go("sessions");
     await app.press("id:open-example");

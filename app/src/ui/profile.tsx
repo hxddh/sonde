@@ -7,7 +7,7 @@
 // every chart drawn over time; a signal pressed in the session's header
 // brings its chart into view.
 
-import { batch, effect, type JSX, Scroll, type ScrollRef, signal, Text, untracked, View } from "nsh";
+import { batch, effect, type JSX, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
 import { t } from "../i18n";
 import { count, duration } from "../format";
 import { type SignalId, signalsOf } from "../signals";
@@ -58,7 +58,7 @@ function Statuses(props: { signals: Signals }) {
         {(x, i) => (
           <Row first={i() === 0} class="px-0">
             <View class="w-16 shrink-0">
-              <StatusMark status={x().status} text={x().status === null ? "—" : undefined} />
+              <StatusMark status={x().status} code={x().code} text={x().status === null ? "—" : undefined} />
             </View>
             <Text class="min-w-0 flex-1 font-mono text-small text-foreground line-clamp-1">{x().code ?? (x().status === null ? t("statuses.noAnswer") : "")}</Text>
             <If when={x().injected > 0}>
@@ -138,7 +138,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       ),
       // what the numbers over the slices are
       legend: () => (findingMarks(props.view).length > 0 ? [{ label: t("shape.findingMarks"), swatch: "bg-warn" }] : []),
-      body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} range={zoom()} slice={zoomFrom()} onSlice={pick} focus={focus} class="mb-6 mt-4 h-28 w-full" testID="time-shape" />,
+      body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} range={zoom()} slice={zoomFrom()} onSlice={pick} focus={focus} peak={sig().inFlight.peak} class="mb-6 mt-4 h-28 w-full" testID="time-shape" />,
     },
     {
       // what ran at once, what waited: each request on its lane
@@ -256,11 +256,14 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
     { id: "flows", group: "where", wide: true, testID: "flows-chart", when: () => graphic() && !!p().flows?.length, title: () => t("flows.title"), text: () => t("flows.hint"), body: () => <Flows profile={p()} /> },
   ];
   const of = (g: Group) => charts.filter((c) => c.group === g && c.when());
-  // where each group and each chart stands on the board: a signal pressed scrolls its chart into view
-  let scroller: ScrollRef | undefined;
-  const groupY: Partial<Record<Group, number>> = {};
-  const rowY: Partial<Record<Group, number>> = {};
-  const chartY: Record<string, number> = {};
+  // a signal pressed scrolls its chart into view (Native Shell's `reveal`, from the chart's own ref)
+  const frames: Record<string, ViewRef> = {};
+  // the chart asked for before the board was there: it shows itself as it comes
+  let wanted: string | null = null;
+  const show = (id: string) => {
+    wanted = frames[id] ? null : id;
+    frames[id]?.reveal({ vertical: "start" });
+  };
   let revealed = -1;
   effect(() => {
     const r = props.reveal;
@@ -269,12 +272,10 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
     const chart = charts.find((c) => c.id === SIGNAL_CHART[r.id]);
     // an error-free session has no errors chart: its answers, then
     const target = chart && untracked(chart.when) ? chart : charts.find((c) => c.group === (chart?.group ?? "traffic") && untracked(c.when));
-    if (!target) return;
-    // once the board is laid out
-    setTimeout(() => scroller?.scrollTo({ y: Math.max(0, (groupY[target.group] ?? 0) + ((chartY[target.id] ?? 0) > 0 ? (rowY[target.group] ?? 0) + chartY[target.id] - 8 : 0)), animated: true }), 80);
+    if (target) show(target.id);
   });
   return (
-    <Scroll ref={(r) => (scroller = r)} testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-6 pb-2"}>
+    <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-6 pb-2"}>
       {/* the figures are the session header's; here, a terminal's sentence */}
       <If when={terminal() && timed(p())}>
         <Text class="text-foreground">{shapeSentence(p())}</Text>
@@ -286,12 +287,17 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       {/* the board: four groups at most, every chart in the one frame, by one loop */}
       <Each of={GROUPS.filter((g) => of(g).length > 0)} key={(g) => g}>
         {(g) => (
-          <View testID={`board-${g()}`} class={terminal() ? "gap-2" : "gap-3"} onLayout={({ bounds }) => (groupY[g()] = bounds.origin.y)}>
+          <View testID={`board-${g()}`} class={terminal() ? "gap-2" : "gap-3"}>
             <Heading>{t(`board.${g()}`)}</Heading>
-            <View class={terminal() ? "gap-2" : "flex-row flex-wrap items-stretch gap-4"} onLayout={({ bounds }) => (rowY[g()] = bounds.origin.y)}>
+            <View class={terminal() ? "gap-2" : "flex-row flex-wrap items-stretch gap-4"}>
               <Each of={of(g())} key={(c) => c.id}>
                 {(c) => (
-                  <View class={terminal() ? "" : c().wide ? "w-full" : HALF} onLayout={({ bounds }) => (chartY[c().id] = bounds.origin.y)}>
+                  <View
+                    ref={(r) => {
+                      frames[c().id] = r;
+                      if (wanted === c().id) show(wanted);
+                    }}
+                    class={terminal() ? "" : c().wide ? "w-full" : HALF}>
                     <Chart class="grow" testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={c().text?.()} action={c().action?.()} legend={c().legend?.()}>
                       {c().body()}
                     </Chart>

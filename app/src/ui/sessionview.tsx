@@ -4,7 +4,7 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { type ContextMenuEvent, effect, type JSX, List, Scroll, type ScrollRef, signal, Text, token, untracked, View } from "nsh";
+import { type ContextMenuEvent, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
 import { bytes, change, clock, count, date, day, duration, hm, middle, percent } from "../format";
@@ -15,7 +15,7 @@ import { type SignalId, signalsOf, signalTiles } from "../signals";
 import { worstStanding } from "../trials";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, InWindowMenu, ListRow, Options, Path, Row, ROW, rowHeight, Stat, Strong, TABLE, terminal, Tiles, Title, TYPE } from "./kit";
+import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, InWindowMenu, ListRow, Options, Path, Row, ROW, rowHeight, Stat, Strong, TABLE, terminal, type TileLook, Tiles, Title, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -205,8 +205,9 @@ export const toneText = (t: Tone) => TONE_TEXT[t];
  * an answer). A request a fault scenario answered (`injected`: its name) is
  * in the injected tone whatever it looked like, and says so to a screen reader:
  * the store is not blamed for it. */
-export function StatusMark(props: { status: number | null; text?: string; injected?: string | null }) {
-  const tone = () => statusTone(props.status);
+export function StatusMark(props: { status: number | null; text?: string; injected?: string | null; /** S3's code for it, where known */ code?: string | null }) {
+  // a key that is not there is a lookup (a miss); a bucket that is not there is a mistake, as the errors count it
+  const tone = () => (props.status === 404 && props.code === "NoSuchBucket" ? "client" : statusTone(props.status));
   const code = () => props.text ?? (props.status === null ? "—" : `${props.status}`);
   return (
     <View class="flex-row items-center gap-2" accessibilityLabel={props.injected ? `${code()}, ${t("plots.injected")}` : undefined}>
@@ -250,7 +251,7 @@ export function gitText(g: SessionView["header"]["git"]): string {
 }
 
 /** The command and where it ran, then the session's figures. */
-export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element }) {
+export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
     const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: duration(s().seconds * 1000) })];
@@ -278,11 +279,12 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
     const x = signalsOf(props.view);
     return x ? signalTiles(x) : [];
   };
-  const tile = (i: number) => {
+  const tile = (i: number) => (look: () => TileLook) => {
     const x = () => tiles()[i];
     return (
       <If when={x()}>
         <Stat
+          look={look()}
           testID={`signal-${SIGNALS[i]}`}
           label={x().label}
           value={x().value}
@@ -315,7 +317,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
       {/* one reading of a run: rate, errors, latency, bytes, and how many at once; each opens its chart */}
       {/* (a page shared before sessions had a profile: its figures in a line) */}
       <If when={tiles().length > 0} else={<Text testID="session-summary" accessibilityLabel={line()} class="tabular-nums text-small text-muted-foreground">{line()}</Text>}>
-        <Tiles ranked min={SIGNAL_TILE} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
+        <Tiles ranked short={props.short} min={SIGNAL_TILE} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
       </If>
     </View>
   );
@@ -435,11 +437,14 @@ export function whatIfText(v: SessionView): string | null {
 export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   // a finding pressed brings its fixes into view, under the list
-  let scroller: ScrollRef | undefined;
+  // (Native Shell's `reveal`: the scroll views around a view bring it to show)
+  let fixes: ViewRef | undefined;
+  const showFixes = () => fixes?.reveal({ vertical: "nearest" });
   effect(() => {
     const f = props.filter;
     if (f == null || !props.view.observations[f]?.fixes?.length) return;
-    setTimeout(() => scroller?.scrollTo({ y: 1e6, animated: true }), 60);
+    // another finding's fixes in the same panel; a panel that has just come reveals itself
+    showFixes();
   });
   const list = () => props.view.observations.slice(0, props.max ?? props.view.observations.length);
   if (terminal()) {
@@ -521,12 +526,18 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   );
   const findings = () => (
     // a short window keeps room for the operations: the findings scroll
-    <Scroll ref={(r) => (scroller = r)} class={`overflow-hidden ${CARD}`} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
+    <Scroll class={`overflow-hidden ${CARD}`} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
       <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
       {/* the finding pressed: what to change, in the findings' own room */}
       <If when={!props.compact && props.filter != null && props.view.observations[props.filter!] && (props.view.observations[props.filter!].fixes?.length || (props.onExpect && props.view.observations[props.filter!].identity)) ? props.view.observations[props.filter!] : null}>
         {(o) => (
-          <View class="border-t border-border p-3">
+          <View
+            ref={(r) => {
+              fixes = r;
+              showFixes();
+            }}
+            class="border-t border-border p-3"
+          >
             <If
               when={o().fixes?.length}
               else={

@@ -10,7 +10,7 @@ import { type Key, t } from "../i18n";
 import { api, watch } from "../native";
 import { bucket, endpoint, go, prefix } from "../store";
 import type { Detection, DuReport, MpuReport, VersioningStatus } from "../types";
-import { Stat, Tiles } from "./kit";
+import { Stat, type TileLook, Tiles } from "./kit";
 
 export const LAYOUT_LABEL: Record<string, string> = {
   slatedb: "SlateDB",
@@ -166,7 +166,8 @@ export function Overview() {
     <Tiles
       testID="overview"
       items={[
-      <Stat
+      (look: () => TileLook) => <Stat
+        look={look()}
         testID="overview-capacity"
         icon="chart-pie"
         label={t("overview.size")}
@@ -175,7 +176,8 @@ export function Overview() {
         detail={size() ? `${month(size()!.costPerMonth, size()!.currency)} · ${day(size()!.scannedAt)}` : t("overview.measureHint")}
         onPress={() => go("capacity")}
       />,
-      <Stat
+      (look: () => TileLook) => <Stat
+        look={look()}
         testID="overview-multipart"
         icon="layers"
         label={t("overview.uploads")}
@@ -194,7 +196,8 @@ export function Overview() {
         }
         onPress={() => go("multipart")}
       />,
-      <Stat
+      (look: () => TileLook) => <Stat
+        look={look()}
         testID="overview-versions"
         icon="file-clock"
         label={t("overview.versioning")}
@@ -204,7 +207,8 @@ export function Overview() {
         detail={v()?.failed ?? (v()?.status?.objectLock ? `${t("versions.lock")}: ${v()!.status!.objectLock}` : t("overview.versionsHint"))}
         onPress={() => go("versions")}
       />,
-      <Stat
+      (look: () => TileLook) => <Stat
+        look={look()}
         testID="overview-layouts"
         icon="boxes"
         label={t("overview.layouts")}

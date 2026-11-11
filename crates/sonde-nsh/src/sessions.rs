@@ -1862,6 +1862,9 @@ impl Sessions {
             )
             .replace("\"endpoint\":\"adhoc\"", "\"endpoint\":\"rustfs\"");
         std::fs::write(&path, text).map_err(err_msg)?;
+        // a finished session, kept as every other is: compressed, so the
+        // list reads its shape (an open file being written has none)
+        sonde_proxy::session::compress(&path).map_err(err_msg)?;
         Ok(path.to_string_lossy().into_owned())
     }
 
@@ -2130,6 +2133,21 @@ impl Sessions {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn the_example_session_has_a_shape_for_the_list_once_it_is_kept_as_finished() {
+        const EXAMPLE: &[u8] = include_bytes!("../../proxy/tests/fixtures/slatedb.sonde");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("example-slatedb.sonde");
+        std::fs::write(&path, EXAMPLE).unwrap();
+        // a file still open (not compressed) is still growing: no shape yet
+        assert!(shape_of(&path).is_empty());
+        // as `example()` keeps it: every request in one of the slices
+        sonde_proxy::session::compress(&path).unwrap();
+        let shape = shape_of(&path);
+        assert_eq!(shape.len(), SHAPE_BINS);
+        assert_eq!(shape.iter().sum::<u32>(), 172);
+    }
 
     #[test]
     fn a_code_place_opens_only_a_file_of_the_run_and_never_one_that_runs() {

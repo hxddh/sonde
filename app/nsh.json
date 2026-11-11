@@ -6,6 +6,7 @@
   "icon": "assets/icon.png",
   "rust": "../crates/sonde-nsh",
   "schemes": ["sonde"],
+  "singleInstance": true,
   "locales": ["zh"],
   "theme": "theme.json",
   "tailwind": {

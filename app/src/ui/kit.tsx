@@ -60,8 +60,13 @@ export const fill = (translucent: string, opaque: string) => (material ? translu
 export const POPUP = `rounded-(--radius-card) border border-border ${fill("bg-popover/90", "bg-popover")} p-1 shadow-lg`;
 /** The scrim under a modal layer, from the theme (`scrim`, light and dark). */
 export const SCRIM = "bg-scrim";
-/** Where the keyboard is: one ring on every control that takes focus. */
-export const FOCUS = "focus:ring-2 focus:ring-ring/50";
+/** Where the keyboard is: one ring on every control that takes focus, shown
+ * for focus the keyboard moved (Native Shell's `focus-visible:`), never after
+ * a click. A text field shows it whenever it has focus, as a browser's does. */
+export const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring/50";
+/** The same ring around a control whose focus is a text input inside it (a
+ * field's box, the endpoint switcher): it shows while that input has focus. */
+export const FOCUS_WITHIN = "focus-within:ring-2 focus-within:ring-ring/50";
 /** The one surface of a group: a hairline card. Cards never nest. */
 export const CARD = "rounded-(--radius-card) border border-border bg-card";
 /** Two control heights, and nothing between: h-8 for a field, a choice or a
@@ -76,7 +81,7 @@ export const CONTROL = {
   /** A small outline button drawn by a component of its own (a picker's trigger). */
   trigger: "h-7 flex-row items-center gap-1 rounded-(--radius) border border-input bg-background px-2 hover:bg-muted",
   /** A field's box: with `CONTROL.field` or `.small`, around an input and what stands before or after it. */
-  box: "flex-row items-center gap-2 overflow-hidden rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50",
+  box: `flex-row items-center gap-2 overflow-hidden rounded-(--radius) border border-input bg-background px-2 focus-within:border-ring ${FOCUS_WITHIN}`,
 } as const;
 /** Every DataTable's look: a hairline header, cells with one inset that
  * lines up with their titles, a hover and a selection, no stripes. */
@@ -374,29 +379,64 @@ export function IconTile(props: { icon: IconName; tint?: Tint }) {
     </View>
   );
 }
+/** How much of itself a tile shows, by the room `Tiles` has for it: `full`
+ * (what it counts, the figure and its mark, a line about it), `tight` (a tile
+ * narrower than it reads in: what it counts and the figure) or `line` (a
+ * short pane: what it counts and the figure on one line). What is left out
+ * stays in the tile's label, for a screen reader. */
+export type TileLook = "full" | "tight" | "line";
 /** A figure in a row of them, the one tile: what it counts, the figure, a
  * line about it; with `onPress`, the tile is a button and says where it goes.
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string }) {
+export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
   const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
-  return (
-    <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress ? [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ") : undefined} onPress={props.onPress}>
-      <View class="flex-row items-center gap-1">
-        <If when={props.icon}>{(i) => <Icon name={i()} size={ICON.small} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />}</If>
-        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
-        <If when={props.onPress}>
-          <Icon name="chevron-right" size={ICON.small} />
-        </If>
-      </View>
-      <If when={!props.pending} else={<View class="my-1 h-4 w-24 rounded-(--radius-sm) bg-muted" />}>
-        <View class="flex-row items-center gap-2">
-          <Text class={`min-w-0 flex-1 text-heading font-semibold tabular-nums line-clamp-1 ${tint()}`}>{props.value}</Text>
-          {props.mark}
-        </View>
+  const look = () => props.look ?? "full";
+  const said = () => [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ");
+  const name = () => (
+    <>
+      {/* the icon only where the name has room beside it */}
+      <If when={props.icon && look() === "full"}>
+        <Icon name={props.icon!} size={ICON.small} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
       </If>
-      <If when={!props.pending} else={<View class="h-3 w-32 rounded-(--radius-sm) bg-muted/70" />}>
-        <Text class={`text-caption text-muted-foreground ${props.mark ? "line-clamp-1" : "line-clamp-2"}`}>{props.detail ?? ""}</Text>
+      <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
+    </>
+  );
+  const chevron = () => (
+    <If when={props.onPress}>
+      <Icon name="chevron-right" size={ICON.small} />
+    </If>
+  );
+  const figure = () => <Text class={`text-heading font-semibold tabular-nums line-clamp-1 ${look() === "line" ? "shrink-0" : "min-w-0 flex-1"} ${tint()}`}>{props.value}</Text>;
+  return (
+    <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress || look() !== "full" ? said() : undefined} onPress={props.onPress}>
+      <If
+        when={look() !== "line"}
+        else={
+          <View class="flex-row items-center gap-2">
+            {name()}
+            <If when={!props.pending} else={<View class="h-4 w-12 rounded-(--radius-sm) bg-muted" />}>
+              {figure()}
+            </If>
+            {chevron()}
+          </View>
+        }
+      >
+        <View class="flex-row items-center gap-1">
+          {name()}
+          {chevron()}
+        </View>
+        <If when={!props.pending} else={<View class="my-1 h-4 w-24 max-w-full rounded-(--radius-sm) bg-muted" />}>
+          <View class="flex-row items-center gap-2">
+            {figure()}
+            <If when={look() === "full"}>{props.mark}</If>
+          </View>
+        </If>
+        <If when={look() === "full"}>
+          <If when={!props.pending} else={<View class="h-3 w-32 max-w-full rounded-(--radius-sm) bg-muted/70" />}>
+            <Text class={`text-caption text-muted-foreground ${props.mark ? "line-clamp-1" : "line-clamp-2"}`}>{props.detail ?? ""}</Text>
+          </If>
+        </If>
       </If>
     </Card>
   );
@@ -489,14 +529,17 @@ export function Back(props: { label?: string; onPress: () => void; testID?: stri
 }
 
 /** The head of a place or a panel's page: what it is, a line about it, and
- * its commands at the end, on one middle. */
-export function PageHeader(props: { title: string; subtitle?: string; mono?: boolean; children?: JSX.Element; testID?: string }) {
+ * its commands at the end, on one middle. A page that is a window's whole
+ * content gives no `title`: the window's title bar says it, once. */
+export function PageHeader(props: { title?: string; subtitle?: string; mono?: boolean; children?: JSX.Element; testID?: string }) {
   return (
     <View testID={props.testID} class="min-h-8 flex-row items-center gap-3">
       <View class="min-w-0 flex-1 gap-1">
-        <Title mono={props.mono} lines={1}>
-          {props.title}
-        </Title>
+        <If when={props.title}>
+          <Title mono={props.mono} lines={1}>
+            {props.title}
+          </Title>
+        </If>
         <If when={props.subtitle}>
           <Text class="text-small text-muted-foreground line-clamp-2">{props.subtitle}</Text>
         </If>
@@ -575,29 +618,35 @@ export function Figures(props: { items: { /** whether it has anything to say now
 
 /** How many tiles go in a row `width` wide, of `n` that each need `min`: all
  * abreast where they fit, else rows of equal count (four are 2×2, six 3×3,
- * five 3 and 2), never a row of all but one. */
+ * five 3 and 2), never a row of all but one and never one column: where two
+ * do not fit abreast they are two all the same, and `tight`. */
 export function tilesPerRow(width: number, n: number, min: number, gap = 12): number {
   if (width <= 0) return n;
   const fit = Math.max(1, Math.floor((width + gap) / (min + gap)));
   if (fit >= n) return n;
   const half = Math.ceil(n / 2);
-  return fit >= half ? half : Math.min(fit, 2);
+  return fit >= half ? half : Math.min(n, 2);
 }
 /** How many tiles a single row `width` wide holds, of `n` that each need `min`: two at least. */
 export const tilesFit = (width: number, n: number, min: number, gap = 12) => (width > 0 ? Math.min(n, Math.max(2, Math.floor((width + gap) / (min + gap)))) : n);
 /** Tiles in rows by that rule: the row measures itself and gives each tile its width.
  * `ranked` keeps them to one row: as many as fit, in the order given (their
- * rank), the last ranked left out — as `Figures` does a line of figures. */
-export function Tiles(props: { items: JSX.Element[]; min?: number; testID?: string; ranked?: boolean; label?: string }) {
+ * rank), the last ranked left out — as `Figures` does a line of figures.
+ * A tile given as a function is told its `TileLook`: `line` in a pane under
+ * `BREAK.short` (`short`: the rows under the tiles need the room), `tight`
+ * where it is narrower than `min`, `full` otherwise. */
+export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => JSX.Element))[]; min?: number; testID?: string; ranked?: boolean; label?: string; /** the pane's height is under `BREAK.short` */ short?: boolean }) {
   const GAP = 12;
   const width = signal(0);
-  const per = () => (props.ranked ? tilesFit(width(), props.items.length, props.min ?? 144, GAP) : tilesPerRow(width(), props.items.length, props.min ?? 144, GAP));
+  const min = () => props.min ?? 144;
+  const per = () => (props.ranked ? tilesFit(width(), props.items.length, min(), GAP) : tilesPerRow(width(), props.items.length, min(), GAP));
   const each = () => (width() > 0 ? Math.floor((width() - GAP * (per() - 1)) / per()) : undefined);
+  const look = (): TileLook => (props.short ? "line" : (each() ?? min()) < min() ? "tight" : "full");
   return (
     <View testID={props.testID} accessibilityLabel={props.label} class={`flex-row gap-3 ${props.ranked ? "" : "flex-wrap"}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
       {props.items.map((tile, i) => (
         <View style={each() ? { width: each() } : undefined} class={props.ranked && i >= per() ? "hidden" : each() ? "" : "min-w-36 flex-1"}>
-          {tile}
+          {typeof tile === "function" ? tile(look) : tile}
         </View>
       ))}
     </View>
@@ -728,9 +777,9 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxe
  * `leading` stands before the text inside the field (a prompt, an icon) and
  * `trailing` after it (an `IconButton inField`); `small` is the second
  * control height. A field that matters more is wider and in mono, never higher. */
-export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: read-only, and dimmed so it reads as off */ disabled?: boolean }) {
+export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean }) {
   const boxed = () => !!props.leading || !!props.trailing;
-  const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} ${props.disabled ? "opacity-50" : ""}`;
+  const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} disabled:opacity-50`;
   const input = (cls: string) => (
     <Input
       testID={props.testID}
@@ -739,8 +788,8 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       placeholder={props.placeholder}
       autoCapitalize="none"
       autoCorrect={false}
-      readonly={props.readonly || props.disabled}
-      accessibilityState={props.disabled ? { disabled: true } : undefined}
+      readonly={props.readonly}
+      disabled={props.disabled}
       onChange={({ value }) => props.onChange(value)}
       onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
       submitBehavior={props.onSubmit ? "submit" : undefined}
@@ -752,7 +801,7 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       <If when={!props.bare}>
         <Text class="text-small font-medium text-muted-foreground">{props.label}</Text>
       </If>
-      <If when={boxed()} else={input(`${props.small ? CONTROL.small : CONTROL.field} rounded-(--radius) border border-input bg-background px-2 focus:border-ring ${FOCUS} ${text()}`)}>
+      <If when={boxed()} else={input(`${props.small ? CONTROL.small : CONTROL.field} rounded-(--radius) border border-input bg-background px-2 focus-visible:border-ring ${FOCUS} ${text()}`)}>
         <View class={`${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box}`}>
           {props.leading}
           {input(`min-w-0 flex-1 ${text()}`)}
@@ -896,11 +945,13 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         placeholder={props.placeholder}
         accessibilityLabel={props.label ?? props.placeholder}
         onChange={({ value }) => value !== null && props.onChange(value)}
+        // below its trigger (Linux, Windows): a gap, as every other popup has
+        offset={4}
         popupClass={POPUP}
         popupStyle={glass}
         itemClass="rounded-sm px-2 py-1 text-body text-popover-foreground focus:bg-accent selected:font-semibold"
         trigger={
-          <View class="h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60">
+          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${FOCUS}`}>
             <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">
               {title()}
             </Text>

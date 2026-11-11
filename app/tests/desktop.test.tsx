@@ -60,6 +60,8 @@ test("updates: asking is the user's move; a development run is up to date", asyn
   const app = await open("../App.tsx", desktop);
   await place(app, "settings");
   await app.waitFor("id:updates");
+  // what runs: the app's own name and version (nsh.json's, read with appInfo), and that this is no release
+  await app.waitFor("text:/^sonde \\d+\\.\\d+\\.\\d+ \\(development run\\) · Native Shell /");
   await app.press("id:updates-check");
   await app.waitFor("text:sonde is up to date.", { timeout: 5000 });
 });
@@ -79,6 +81,15 @@ test("a session file opens from Sessions: a picked .sonde, and a refusal for any
 });
 
 const SESSION = "{\"format\":\"sonde-session\",\"version\":1,\"created\":\"2026-11-07T01:09:10.816413840Z\",\"endpoint\":\"rustfs\",\"url\":\"http://127.0.0.1:9100/\",\"region\":\"us-east-1\",\"command\":\"python gen_delta.py s3://lake/delta\"}\n{\"id\":1,\"time\":\"2026-11-07T01:09:10.924307634Z\",\"endpoint\":\"adhoc\",\"operation\":\"GetObject\",\"method\":\"GET\",\"url\":\"http://127.0.0.1:9100/lake/delta/_delta_log/_last_checkpoint\",\"bucket\":\"lake\",\"key\":\"delta/_delta_log/_last_checkpoint\",\"query\":[],\"status\":404,\"latencyMs\":2.124287,\"retries\":0,\"requestId\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\",\"hostId\":null,\"requestHeaders\":[{\"name\":\"host\",\"value\":\"127.0.0.1:42459\"},{\"name\":\"x-amz-date\",\"value\":\"20261107T010910Z\"},{\"name\":\"x-amz-content-sha256\",\"value\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"name\":\"authorization\",\"value\":\"AWS4-HMAC-SHA256 Credential=\u00abredacted\u00bb/20261107/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=\u00abredacted\u00bb\"},{\"name\":\"accept\",\"value\":\"*/*\"},{\"name\":\"user-agent\",\"value\":\"object_store/0.13.2\"}],\"responseHeaders\":[{\"name\":\"content-type\",\"value\":\"application/xml\"},{\"name\":\"x-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"x-amz-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"content-length\",\"value\":\"127\"},{\"name\":\"date\",\"value\":\"Sat, 07 Nov 2026 01:09:10 GMT\"}],\"requestBytes\":0,\"responseBytes\":127,\"errorBody\":\"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>\",\"transportError\":null,\"region\":\"us-east-1\",\"job\":null}\n";
+
+test("a second launch hands over its files: relative ones from where it was started, links and options left out", async () => {
+  const { launchFiles } = await import("../src/store");
+  // (its sonde:// links reach the app through UrlScheme, as every link does)
+  expect(launchFiles(["--verbose", "run.sonde", "/tmp/b.sonde", "sonde://session/x.sonde"], "/home/me/etl")).toEqual(["/home/me/etl/run.sonde", "/tmp/b.sonde"]);
+  expect(launchFiles(["run.sonde", "D:\\logs\\b.sonde"], "C:\\Users\\me\\")).toEqual(["C:\\Users\\me\\run.sonde", "D:\\logs\\b.sonde"]);
+  expect(launchFiles(["file:///home/me/a%20b.sonde"], "/")).toEqual(["/home/me/a b.sonde"]);
+  expect(launchFiles([], "/home/me")).toEqual([]);
+});
 
 test("a dropped file's URL becomes its path on every platform", async () => {
   const { pathOf } = await import("../src/store");
@@ -256,13 +267,15 @@ test("a table that narrows drops its columns by rank, whole, and clips none", as
   expect(operationColumns(1400, { format: false, bar: true, notes: true }, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "notes"]);
 });
 
-test("tiles go in rows of equal count: four are two and two, never three and one", async () => {
+test("tiles go in rows of equal count: four are two and two, never three and one, never one column", async () => {
   const { tilesPerRow, figuresFit } = await import("../src/ui/kit");
   expect(tilesPerRow(700, 4, 144)).toBe(4);
   // room for three: two and two
   expect(tilesPerRow(500, 4, 144)).toBe(2);
   expect(tilesPerRow(320, 4, 144)).toBe(2);
-  expect(tilesPerRow(200, 4, 144)).toBe(1);
+  // no room for two as they read: two all the same (each tight), not a column of four
+  expect(tilesPerRow(200, 4, 144)).toBe(2);
+  expect(tilesPerRow(200, 1, 144)).toBe(1);
   expect(tilesPerRow(500, 5, 128)).toBe(3);
   // not measured yet: all abreast
   expect(tilesPerRow(0, 4, 144)).toBe(4);

@@ -18,7 +18,6 @@ export function asError(e: unknown): T.SondeError {
 }
 
 export const api = {
-  version: () => Sonde.version(),
   endpoints: () => Sonde.endpoints() as T.EndpointView[],
   vendors: () => Sonde.vendors() as T.VendorInfo[],
   saveEndpoint: (input: Record<string, unknown>) => Sonde.saveEndpoint(input) as T.EndpointView,

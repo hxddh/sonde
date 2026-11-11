@@ -72,6 +72,14 @@ row of it is in this version.
   files; a folder import followed a symlink to itself; `--log-out` on `run` wrote an empty file (it is refused);
   `check --init` wrote a time limit an identical run would fail; `-f` help listed formats the command refuses.
 - A gzip file that holds more than 2 GiB is refused rather than read into memory.
+- A session that cannot be read says so, and why (it stayed an outline for ever); a 404 for a bucket that is not
+  there has the tone of a failure among the status codes, as the errors count it.
+- The timeline's axis says the most in flight the session had (it said its nearest round tick: "up to 5" beside
+  the tile's 8); a time tick reads `+200 ms` on every chart; bytes sent and received share one stem per slice.
+- A toast of a window that closed was the main window's for a moment; two going together logged
+  "a kept row is gone". The example session has its line in the sessions list.
+- Under 600 points of height a session's signal tiles keep to a line each, so the operations keep their rows;
+  a bucket's four tiles are two and two beside an open object, never one column. Compatibility says its title once.
 
 ### Removed
 

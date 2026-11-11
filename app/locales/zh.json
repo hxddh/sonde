@@ -615,7 +615,7 @@
  "settings.contrast": "更高对比度",
  "settings.contrastLabel": "对比度",
  "settings.contrastHint": "更清晰的边框和次要文字",
- "updates.running": "sonde %{version} · Native Shell %{nsh}",
+ "updates.running": "%{name} %{version} · Native Shell %{nsh}",
  "updates.dev": "（开发运行）",
  "mpu.key": "键",
  "mpu.initiated": "开始于",

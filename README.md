@@ -158,8 +158,9 @@ sonde --url http://127.0.0.1:9000 --path-style probe -b scratch --only checksum.
 
 ## Development
 
-Rust 1.95 or newer builds sonde; the `nsh` CLI that bundles the app and runs its UI tests needs 1.97 (it is
-installed from Native Shell at the pinned commit, `docs/decisions.md` D-002).
+Rust 1.95 or newer builds sonde; what links Native Shell needs 1.97, its own minimum since the pinned commit: the
+app's crate (`sonde-nsh`), `sonde tui` (the `tui` feature) and the `nsh` CLI that bundles the app and runs its UI
+tests (installed from Native Shell at the pinned commit, `docs/decisions.md` D-002). CI builds with stable.
 
 ```sh
 cargo test --workspace                       # unit tests (SigV4 vectors, redaction, parsers, judges, decoders)
