@@ -100,13 +100,15 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
             near(sum(&sig.rate.series) * bin_s, recs.len() as f64),
             "{name}"
         );
-        assert!(
-            near(
-                sig.rate.value.unwrap() * sig.wall_ms / 1000.0,
-                recs.len() as f64
-            ),
-            "{name}"
-        );
+        // a run under a second has its total and no rate
+        assert_eq!(sig.short, sig.wall_ms < 1000.0, "{name}");
+        assert_eq!(sig.rate.value.is_none(), sig.short, "{name}");
+        if let Some(rate) = sig.rate.value {
+            assert!(
+                near(rate * sig.wall_ms / 1000.0, recs.len() as f64),
+                "{name}"
+            );
+        }
 
         // errors: the summary's failures, each in one class, each in one slice
         let c = &sig.errors.counts;
@@ -171,13 +173,16 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
                 "{name}"
             );
         }
-        assert!(
-            near(
-                sig.bytes.up_per_sec.unwrap() + sig.bytes.down_per_sec.unwrap(),
-                sig.bytes.value.unwrap()
-            ),
-            "{name}"
-        );
+        assert_eq!(sig.bytes.value.is_none(), sig.short, "{name}");
+        if let Some(both) = sig.bytes.value {
+            assert!(
+                near(
+                    sig.bytes.up_per_sec.unwrap() + sig.bytes.down_per_sec.unwrap(),
+                    both
+                ),
+                "{name}"
+            );
+        }
 
         // in flight: the profile's peak, reached in some slice
         assert_eq!(sig.in_flight.peak, prof.peak_in_flight, "{name}");

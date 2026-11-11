@@ -9,12 +9,12 @@
 
 import { batch, effect, type JSX, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
 import { t } from "../i18n";
-import { count, duration } from "../format";
-import { type SignalId, signalsOf } from "../signals";
+import { count, duration, percent } from "../format";
+import { FEW, type OpStats, operationStats, type SignalId, signalsOf } from "../signals";
 import type { SessionView, Signals } from "../types";
-import { Badge, Button, Heading, Notice, Options, Row, terminal } from "./kit";
+import { Button, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable } from "./kit";
 import { findingMarks, StatusMark } from "./sessionview";
-import { BytesOverTime, Chains, Chart, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent } from "./plots";
+import { BytesOverTime, Chains, Chart, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean } from "./plots";
 
 /** The board's groups, in order: never more than these four. */
 const GROUPS = ["traffic", "latency", "errors", "where"] as const;
@@ -40,41 +40,68 @@ interface ChartSpec {
 /** The chart a signal's tile opens. */
 const SIGNAL_CHART: Record<SignalId, string> = { rate: "timeline", errors: "errors", latency: "latency", bytes: "bytes", inFlight: "lanes" };
 
-/** Every answer the session got: its status, S3's code for it, how many, how
- * many of them a fault scenario's, and when the first and the last came. */
+/** What a status is called when S3 gave no code of its own for it: its HTTP name. */
+const REASON: Record<number, string> = { 200: "OK", 201: "Created", 204: "No Content", 206: "Partial Content", 301: "Moved Permanently", 304: "Not Modified", 307: "Temporary Redirect", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 409: "Conflict", 411: "Length Required", 412: "Precondition Failed", 416: "Range Not Satisfiable", 429: "Too Many Requests", 500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
+
+/** Every answer the session got, as a table: its status, what S3 (or HTTP)
+ * calls it, how many, how many of them a fault scenario's (in the injected
+ * tone), and when the first and the last came. Every row is there: past a
+ * few the table scrolls, none is left out. */
 function Statuses(props: { signals: Signals }) {
-  const rows = () => props.signals.statuses.slice(0, 12);
-  const span = (x: Signals["statuses"][number]) => (!props.signals.timed ? "" : x.count > 1 ? `+${duration(x.firstMs)} – +${duration(x.lastMs)}` : `+${duration(x.firstMs)}`);
-  if (terminal()) {
-    return (
-      <View testID="statuses">
-        <Each of={rows()}>{(x) => <Text class="text-foreground">{[x().status ?? t("statuses.noAnswer"), x().code ?? "", `× ${count(x().count)}`, x().injected ? t("statuses.injected", { n: count(x().injected) }) : "", span(x())].filter(Boolean).join("  ")}</Text>}</Each>
-      </View>
-    );
-  }
+  const all = () => props.signals.statuses;
+  const span = (x: Signals["statuses"][number]) => (!props.signals.timed ? "—" : x.count > 1 ? `+${duration(x.firstMs)} – +${duration(x.lastMs)}` : `+${duration(x.firstMs)}`);
+  const called = (x: Signals["statuses"][number]) => x.code ?? (x.status === null ? t("statuses.noAnswer") : (REASON[x.status] ?? t("statuses.unnamed")));
+  const injected = () => all().some((x) => x.injected > 0);
+  const columns = () => [t("statuses.status"), t("statuses.code"), t("column.requests"), ...(injected() ? [t("statuses.injectedColumn")] : []), t("statuses.when")];
+  const rows = () => all().map((x) => [x.status === null ? "—" : `${x.status}`, called(x), count(x.count), ...(injected() ? [count(x.injected)] : []), span(x)]);
   return (
     <View testID="statuses">
-      <Each of={rows()} key={(x) => `${x.status}:${x.code}`}>
-        {(x, i) => (
-          <Row first={i() === 0} class="px-0">
-            <View class="w-16 shrink-0">
-              <StatusMark status={x().status} code={x().code} text={x().status === null ? "—" : undefined} />
-            </View>
-            <Text class="min-w-0 flex-1 font-mono text-small text-foreground line-clamp-1">{x().code ?? (x().status === null ? t("statuses.noAnswer") : "")}</Text>
-            <If when={x().injected > 0}>
-              <Badge tone="info" label={t("statuses.injected", { n: count(x().injected) })} />
-            </If>
-            <Text class="w-28 shrink-0 text-right tabular-nums text-caption text-muted-foreground line-clamp-1">{span(x())}</Text>
-            <Text class="w-12 shrink-0 text-right tabular-nums text-small text-foreground">{count(x().count)}</Text>
-          </Row>
-        )}
-      </Each>
+      <SimpleTable
+        columns={columns()}
+        rows={rows()}
+        max={8}
+        end={[2, ...(injected() ? [3] : [])]}
+        fill={1}
+        cell={(c) =>
+          c.column === 0 ? (
+            <StatusMark status={c.text === "—" ? null : Number(c.text)} code={c.cells[1]} />
+          ) : injected() && c.column === 3 && c.text !== count(0) ? (
+            // emphasis: answers that were sonde's own, not the store's
+            <Text class={`tabular-nums text-small ${EMPHASIS} text-status-injected`}>{c.text}</Text>
+          ) : undefined
+        }
+      />
+    </View>
+  );
+}
+
+/** The run by operation, as a reader of dashboards expects it first: how
+ * many, what share failed, and the median, p95 and p99 of each — sortable by
+ * a press on a title. A percentile of fewer than `FEW` requests is marked
+ * (`~`): it is one of a handful, not a tail. */
+function ByOperation(props: { view: SessionView }) {
+  const ops = () => operationStats(props.view);
+  const few = () => ops().some((o) => o.few);
+  const pc = (o: OpStats, v: number | null) => (v == null ? "—" : `${o.few ? "~" : ""}${duration(v)}`);
+  return (
+    <View testID="by-operation" class="gap-2">
+      <SimpleTable
+        columns={[t("column.operation"), t("column.requests"), t("byOp.errors"), t("byOp.p50"), "p95", "p99"]}
+        rows={ops().map((o) => [o.operation, count(o.count), o.count ? percent(o.errorShare) : "—", pc(o, o.p50Ms), pc(o, o.p95Ms), pc(o, o.p99Ms)])}
+        max={8}
+        end={[1, 2, 3, 4, 5]}
+        fill={0}
+        cell={(c) => (c.column === 2 && c.text !== "0%" && c.text !== "—" ? <Text class="tabular-nums text-small text-status-server">{c.text}</Text> : undefined)}
+      />
+      <If when={few()}>
+        <ChartNote testID="by-operation-few">{t("byOp.few", { n: FEW })}</ChartNote>
+      </If>
     </View>
   );
 }
 
 /** The Time pane of a session. */
-export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null }) {
+export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null; /** a trial's session: the clean run it is judged against, when that run is still there */ clean?: SessionView | null }) {
   const p = () => props.view.profile;
   // the four signals, as Rust counted them (an older share: what its profile holds of them)
   const sig = () => signalsOf(props.view)!;
@@ -97,6 +124,9 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
     const z = zoom();
     return z ? [z[0] * p().binMs, (z[1] + 1) * p().binMs] : null;
   };
+  const latencyAs = signal<"bands" | "heat">("bands");
+  // when sonde answered in the store's place (a trial's session), on the timeline itself
+  const faults = () => faultMoments(p(), props.view.injected);
   const scatterBy = signal<"time" | "size" | "kinds">("time");
   const spentBy = signal<"kind" | "code">("kind");
   const sizesBy = signal<"count" | "speed">("count");
@@ -118,11 +148,24 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
   // the moment the pointer rests on in one chart, marked in the others: this pane's own
   const focus = focusOf();
   const unzoom = () => batch(() => (zoom.set(null), zoomFrom.set(null)));
+  // above what a session keeps of its requests, a chart of single requests is of a sample: said
+  const sampled = () => (p().samples.length < requestsOf(p()) ? ` · ${t("plots.sampled", { n: count(p().samples.length), of: count(requestsOf(p())) })}` : "");
   const graphic = () => !terminal();
   const overTime = () => timed(p()) && shaped();
   const failed = () => sig().errors.count + sig().errors.retriesTotal > 0;
   const charts: ChartSpec[] = [
     // --- traffic: when, how many at once, how much
+    {
+      // a trial's session: the run itself over the clean run it is judged against, the faults' moments marked
+      id: "trial",
+      group: "traffic",
+      wide: true,
+      when: () => graphic() && overTime() && !!props.clean && timed(props.clean.profile) && props.clean.profile.rate.length > 2,
+      title: () => t("trialOver.title"),
+      text: () => t("trialOver.hint"),
+      legend: () => [{ label: t("trialOver.trial"), swatch: "bg-chart-1" }, { label: t("trialOver.clean"), swatch: "bg-muted-foreground" }, ...(faults().length ? [{ label: t("trialOver.faults"), swatch: "bg-status-injected" }] : [])],
+      body: () => <TrialOverClean trial={p()} clean={props.clean!.profile} faults={faults()} />,
+    },
     {
       // the whole session, its findings marked; the stretch picked here is what every chart over time shows
       id: "timeline",
@@ -136,9 +179,9 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
           <Button small variant="outline" icon="x" label={t("timeline.unzoom")} onPress={unzoom} testID="zoom-reset" />
         </If>
       ),
-      // what the numbers over the slices are
-      legend: () => (findingMarks(props.view).length > 0 ? [{ label: t("shape.findingMarks"), swatch: "bg-warn" }] : []),
-      body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} range={zoom()} slice={zoomFrom()} onSlice={pick} focus={focus} peak={sig().inFlight.peak} class="mb-6 mt-4 h-28 w-full" testID="time-shape" />,
+      // every colour of the stack, the line, and what the numbers and rules over the slices are
+      legend: () => [...shapeLegend(p(), findingMarks(props.view).length > 0), ...(faults().length ? [{ label: t("trialOver.faults"), swatch: "bg-status-injected" }] : [])],
+      body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} faults={faults()} range={zoom()} slice={zoomFrom()} onSlice={pick} focus={focus} peak={sig().inFlight.peak} class={`${TICK_ROOM} mt-4 ${SHAPE} w-full`} testID="time-shape" />,
     },
     {
       // what ran at once, what waited: each request on its lane
@@ -185,9 +228,15 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       group: "latency",
       when: () => graphic() && overTime(),
       title: () => t("latencyTime.title"),
-      text: () => t("latencyTime.hint"),
-      legend: () => [{ label: t("latencyTime.p50"), swatch: "bg-chart-1" }, { label: t("latencyTime.p95"), swatch: "bg-chart-1/25" }, { label: t("latencyTime.p99"), swatch: "bg-muted-foreground/15" }],
-      body: () => <LatencyBand profile={p()} domainMs={zoomMs()} focus={focus} class={`mb-6 h-44 w-full`} testID="latency-over-time" axis />,
+      text: () => (latencyAs() === "heat" ? `${t("latencyHeat.hint")}${sampled()}` : t("latencyTime.hint")),
+      // the bands are of every request; the grid shows what a band averages away (two modes, a slow few)
+      action: () => <Options testID="latency-as" value={latencyAs()} items={[{ value: "bands", title: t("latencyTime.bands") }, { value: "heat", title: t("latencyTime.heat") }]} onChange={(v) => latencyAs.set(v as "bands" | "heat")} />,
+      legend: () => (latencyAs() === "heat" ? [{ label: t("latencyHeat.scale"), swatch: "bg-chart-1" }] : latencyLegend()),
+      body: () => (
+        <If when={latencyAs() === "heat"} else={<LatencyBand profile={p()} domainMs={zoomMs()} focus={focus} class={`${TICK_ROOM} ${PLOT} w-full`} testID="latency-over-time" axis />}>
+          <LatencyHeat profile={p()} range={zoom()} focus={focus} />
+        </If>
+      ),
     },
     {
       // every request, when it ran or how large it was (a press opens it), or the busiest kinds each over time
@@ -196,7 +245,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       when: () => graphic() && timed(p()) && p().samples.length > 1,
       title: () => t("scatter.title"),
       // above what a session keeps of its requests, the dots are of a sample: said
-      text: () => (scatterBy() === "kinds" ? t("kinds.title") : `${t("scatter.text", { n: shown(), p95: duration(p().p95Ms ?? 0) })}${p().samples.length < requestsOf(p()) ? ` · ${t("plots.sampled", { n: count(p().samples.length), of: count(requestsOf(p())) })}` : ""}`),
+      text: () => (scatterBy() === "kinds" ? t("kinds.title") : `${t("scatter.text", { n: shown(), p95: duration(p().p95Ms ?? 0) })}${sampled()}`),
       action: () => <Options testID="scatter-by" value={scatterBy()} items={[{ value: "time", title: t("scatter.byTime") }, { value: "size", title: t("scatter.bySize") }, ...((p().groupRate?.length ?? 0) > 0 ? [{ value: "kinds", title: t("scatter.byKind") }] : [])]} onChange={(v) => scatterBy.set(v as "time" | "size" | "kinds")} />,
       body: () => (
         <If when={scatterBy() === "kinds"} else={<RequestScatter profile={p()} by={scatterBy() === "size" ? "size" : "time"} domainMs={zoomMs()} onRequest={props.onRequest} injected={props.view.injected} />}>
@@ -238,6 +287,15 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       text: () => t("failures.hint"),
       legend: () => failureLegend(sig()),
       body: () => <ErrorsOverTime signals={sig()} range={zoom()} focus={focus} />,
+    },
+    {
+      // the rate beside the counts: the share of each slice's requests that failed
+      id: "errorRate",
+      group: "errors",
+      when: () => graphic() && sig().errors.count > 0 && shaped() && timed(p()),
+      title: () => t("errorRate.title"),
+      text: () => t("errorRate.hint"),
+      body: () => <ErrorRate signals={sig()} range={zoom()} focus={focus} />,
     },
     { id: "statuses", group: "errors", when: () => sig().statuses.length > 0, title: () => t("statuses.title"), text: () => t("statuses.hint"), body: () => <Statuses signals={sig()} /> },
     // --- where: which prefixes, at what cost, on which path
@@ -284,12 +342,26 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       <If when={!timed(p())}>
         <Notice testID="untimed" text={t("profile.untimed")} />
       </If>
+      {/* the run by operation, first: count, error share, median, p95, p99 — the table a reader of
+          dashboards looks for before any chart */}
+      <If when={operationStats(props.view).length > 0}>
+        <View
+          ref={(r) => {
+            frames.operations = r;
+          }}
+        >
+          <Chart testID="chart-operations" title={t("byOp.title")} text={t("byOp.hint")}>
+            <ByOperation view={props.view} />
+          </Chart>
+        </View>
+      </If>
       {/* the board: four groups at most, every chart in the one frame, by one loop */}
       <Each of={GROUPS.filter((g) => of(g).length > 0)} key={(g) => g}>
         {(g) => (
           <View testID={`board-${g()}`} class={terminal() ? "gap-2" : "gap-3"}>
             <Heading>{t(`board.${g()}`)}</Heading>
-            <View class={terminal() ? "gap-2" : "flex-row flex-wrap items-stretch gap-4"}>
+            {/* a card is as high as its content: a chart of two bars is not stretched to its neighbour */}
+            <View class={terminal() ? "gap-2" : "flex-row flex-wrap items-start gap-4"}>
               <Each of={of(g())} key={(c) => c.id}>
                 {(c) => (
                   <View
@@ -298,7 +370,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
                       if (wanted === c().id) show(wanted);
                     }}
                     class={terminal() ? "" : c().wide ? "w-full" : HALF}>
-                    <Chart class="grow" testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={c().text?.()} action={c().action?.()} legend={c().legend?.()}>
+                    <Chart testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={c().text?.()} action={c().action?.()} legend={c().legend?.()}>
                       {c().body()}
                     </Chart>
                   </View>

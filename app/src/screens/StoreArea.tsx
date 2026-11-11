@@ -13,7 +13,7 @@ import { api, asError, Listing } from "../native";
 import { bucket, chooseBucket, copy, endpoint, go, prefix, report, showInSidebar, STORE_TABS, type StoreTab, storeSheet, storeTab } from "../store";
 import type { Entry } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Button, IconButton, Loading, Notice, PanelHeader, ROWS, Segmented, SideHeader, SidePanel, terminal } from "../ui/kit";
+import { Button, IconButton, Loading, Notice, PanelHeader, ROWS, Segmented, SideHeader, SidePanel, terminal, WIDTH } from "../ui/kit";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
 import { Layouts } from "./Layouts";
@@ -161,7 +161,9 @@ function useBuckets() {
       <If when={buckets.error()}>
         <View class="gap-2 px-3">
           <Notice tone="error" text={asError(buckets.error()).message} testID="buckets-error" />
-          <Button small variant="outline" icon="refresh-cw" label={t("error.retry")} onPress={refresh} class="self-start" />
+          <View class="flex-row">
+            <Button small variant="outline" icon="refresh-cw" label={t("error.retry")} onPress={refresh} />
+          </View>
         </View>
       </If>
       <If when={!buckets.error() && buckets.state() === "pending"}>
@@ -195,7 +197,7 @@ function useBuckets() {
               class="h-7 flex-row items-center gap-2 pr-2"
               style={{ paddingLeft: 4 + entry.depth * 14 }}
             >
-              <View class="w-3.5 items-center">
+              <View class={`${WIDTH.chevron} items-center`}>
                 <If when={entry.folder}>
                   <Icon name={expanded().includes(entry.id) ? "chevron-down" : "chevron-right"} size={12} />
                 </If>

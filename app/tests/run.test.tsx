@@ -2,7 +2,7 @@
 // the session afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { desktop, place } from "./helpers";
+import { desktop, place, runAction } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
@@ -26,7 +26,7 @@ test("run a command: its requests become operations, the session lines them up w
   // once it ended: the run in a sentence where the live figures were
   await app.waitFor("id:run-story", { timeout: 5000 });
   expect(app.shows("id:live")).toBe(false);
-  await app.press("id:run-open-session");
+  await runAction(app, "run-open-session");
   await app.waitFor("id:screen-sessions");
   await app.waitFor("id:output", { timeout: 5000 });
   expect(app.shows("text:fetching")).toBe(true);
@@ -48,8 +48,9 @@ test("a program that sends sonde nothing: how each SDK is pointed at it", async 
   expect(app.shows("text:The program sent sonde no requests")).toBe(true);
   expect(app.shows("text:boto3 / botocore")).toBe(true);
   // not kept: once it is gone, nothing on Run opens another session in its place
-  await app.waitFor("id:run-open-session");
-  await app.waitUntil(() => !app.shows("id:run-open-session"), { timeout: 15000 });
+  // (the band's commands: as buttons, or behind their `⋯` where the band has no room)
+  await app.waitFor("id:run-actions");
+  await app.waitUntil(() => !app.shows("id:run-actions"), { timeout: 15000 });
 });
 
 test("record without a program: a local endpoint to point an application at", async () => {
@@ -121,7 +122,7 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
-  await app.press("id:run-open-session");
+  await runAction(app, "run-open-session");
   await app.waitFor("id:session-pane");
   // read off the interface's thread: there once its header is
   await app.waitFor("id:session-summary", { timeout: 10000 });
@@ -230,12 +231,13 @@ test("a session's time: where it went, and two runs before and after", async () 
   await app.chooseMenuItem(run);
   await app.waitFor("id:compare");
   await app.waitFor("id:run-change", { timeout: 10000 });
-  expect(app.shows("id:run-change-requests")).toBe(true);
+  // the two runs in five tiles, each fact once: no second strip of the same figures
+  await app.waitFor("id:compare-figures", { timeout: 10000 });
+  expect(app.shows("id:compare-requests")).toBe(true);
   expect(app.shows("text:/^172 → /")).toBe(true);
-  // the four signals side by side, before and after, in the header's own tiles
-  await app.waitFor("id:compare-signals", { timeout: 10000 });
-  expect(app.shows("id:compare-signal-latency")).toBe(true);
-  expect(app.shows("text:/^368\/s → /")).toBe(true);
+  expect(app.shows("id:compare-latency")).toBe(true);
+  expect(app.shows("id:compare-cost")).toBe(true);
+  expect(app.shows("id:compare-signals")).toBe(false);
   expect(app.shows("id:other-program")).toBe(true);
   expect(app.shows("text:/^Gone · /")).toBe(false);
 });
@@ -251,7 +253,7 @@ test("a program over its runs: history, a baseline, and the flows of its request
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });
   }
-  await app.press("id:run-open-session");
+  await runAction(app, "run-open-session");
   await app.waitFor("id:session-pane");
   // read off the interface's thread: there once its header is
   await app.waitFor("id:session-summary", { timeout: 10000 });
@@ -334,7 +336,7 @@ test("run again: the program after a change, compared with the run before", asyn
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
-  await app.press("id:run-open-session");
+  await runAction(app, "run-open-session");
   await app.waitFor("id:run-again", { timeout: 10000 });
   await app.press("id:run-again");
   // it ran, and opened compared with this one: the same program, so findings compare too
@@ -357,7 +359,7 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
     await app.waitFor("label:Read-only");
     await place(app, "run");
   }
-  await app.press("id:run-try");
+  await runAction(app, "run-try");
   await app.waitFor("id:trial-plan", { timeout: 10000 });
   // what the run did chooses the scenarios: the two every program meets, and (it writes) the lost answer
   expect(app.shows("id:trial-scenario-slowdown")).toBe(true);
@@ -376,7 +378,7 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   await app.press("id:read-only");
   await app.waitFor("label:Writes enabled");
   await place(app, "run");
-  await app.press("id:run-try");
+  await runAction(app, "run-try");
   await app.waitFor("id:trial-plan", { timeout: 10000 });
   expect(app.shows("id:trial-read-only")).toBe(false);
   await app.press("id:trial-scenario-error");
@@ -397,7 +399,8 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   expect(app.shows("text:/^A trial of curl under “The store asks to slow down”/")).toBe(true);
   // no run of its own: not run again, no Runs of its own
   expect(app.shows("id:run-again")).toBe(false);
-  expect(app.shows("id:session-pane-mode-runs")).toBe(false);
+  // (its tab stays in its place, dimmed: tabs do not come and go by session)
+  expect(app.enabled("id:session-pane-mode-runs")).toBe(false);
   // its injected request is marked where requests are listed, and in full
   await app.press("id:session-pane-mode-operations");
   await app.press("text:/^PutObject demo\\/trial.txt/");
@@ -408,6 +411,7 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   await app.press("id:inspector-close");
   // and the way back to the run it is a trial of
   await app.press("id:trial-open-clean");
-  await app.waitFor("id:session-pane-mode-runs", { timeout: 10000 });
+  await app.waitFor("id:trial-note", { state: "gone", timeout: 10000 });
+  await app.waitUntil(() => app.shows("id:session-pane-mode-runs") && app.enabled("id:session-pane-mode-runs"), { timeout: 10000 });
   expect(app.shows("id:trial-note")).toBe(false);
 }, 120000);

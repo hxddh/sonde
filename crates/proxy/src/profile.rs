@@ -16,7 +16,7 @@ use crate::summary::is_miss;
 
 /// Request prices, per thousand (S3's classes: writes and listings, reads).
 /// Deletes are free.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestPrices {
     pub per_1000_writes: f64,
@@ -571,7 +571,12 @@ pub(crate) fn end_us(r: &Record) -> i64 {
 
 /// The time with a request in flight, in ms.
 pub fn busy_ms(records: &[Record]) -> f64 {
-    union_us(records.iter().map(|r| (start_us(r), end_us(r))).collect()) as f64 / 1000.0
+    busy_ms_of(records.iter())
+}
+
+/// [`busy_ms`] of any records, wherever they are kept.
+pub fn busy_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
+    union_us(records.map(|r| (start_us(r), end_us(r))).collect()) as f64 / 1000.0
 }
 
 /// Each kind's part of the waiting, in microseconds: every stretch of time
@@ -694,14 +699,19 @@ pub fn percentile(sorted: &[f64], q: f64) -> f64 {
     sorted[((sorted.len() as f64 * q).ceil() as usize).clamp(1, sorted.len()) - 1]
 }
 
-/// Whether a request reached the store: one sonde refused, or that got no
-/// answer, is not on the store's bill.
+/// Whether a request reached the store: one sonde refused, one it answered
+/// in the store's place (a trial's fault), or one that got no answer, is not
+/// on the store's bill. A fault done to the store's own answer (a lost
+/// answer, a body cut short, a race the store had let the write win) is.
 pub fn reached_store(r: &Record) -> bool {
-    r.status.is_some()
-        && !r
-            .response_headers
+    let has = |name: &str| {
+        r.response_headers
             .iter()
-            .any(|h| h.name.eq_ignore_ascii_case("x-sonde-proxy"))
+            .any(|h| h.name.eq_ignore_ascii_case(name))
+    };
+    r.status.is_some()
+        && !has("x-sonde-proxy")
+        && !(has("x-sonde-fault") && !has("x-sonde-store-status"))
 }
 
 /// What one request costs: nothing when it never reached the store.
@@ -1946,5 +1956,41 @@ mod tests {
         let c = compare_runs((&before, &pa, &[]), (&after, &pb, &[]));
         let change = c.prefixes.iter().find(|x| x.prefix == name).unwrap();
         assert_eq!(change.requests, (1, 5));
+    }
+}
+
+#[cfg(test)]
+mod injected {
+    use super::*;
+    use reqlog::Header;
+
+    #[test]
+    fn a_request_sonde_answered_itself_is_not_priced() {
+        let prices = RequestPrices::default();
+        let put = Record {
+            method: "PUT".into(),
+            operation: "PutObject".into(),
+            bucket: Some("b".into()),
+            key: Some("k".into()),
+            status: Some(200),
+            ..Default::default()
+        };
+        assert!(price(&put, &prices) > 0.0);
+        // a trial's 503: the store never saw it
+        let mut fault = put.clone();
+        fault.status = Some(503);
+        fault.injected = Some("slowdown".into());
+        fault
+            .response_headers
+            .push(Header::new("x-sonde-fault", "slowdown"));
+        assert!(!reached_store(&fault));
+        assert_eq!(price(&fault, &prices), 0.0);
+        // an answer lost on purpose: the store made the write, and bills it
+        let mut lost = fault.clone();
+        lost.response_headers
+            .push(Header::new("x-sonde-store-status", "200"));
+        assert_eq!(price(&lost, &prices), price(&put, &prices));
+        let p = profile(&[put, fault, lost], &prices);
+        assert_eq!(p.cost.writes, 2);
     }
 }

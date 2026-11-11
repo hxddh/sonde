@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { copy, endpoint, endpoints, report } from "../store";
 import type { Episode, RecordingView } from "../types";
-import { Button, Card, Dot, Heading, IconTile, Options, terminal } from "./kit";
+import { Button, Card, Dot, Heading, IconTile, Options, terminal, Row } from "./kit";
 import { OperationView } from "./sessionview";
 
 export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, operationsAt, SessionHeader, SessionList, statusTone } from "./sessionview";
@@ -38,8 +38,8 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
     <If
       when={props.recording}
       else={
-        <Card testID={open() ? "record-form" : undefined}>
-          <View class="flex-row items-center gap-3">
+        <Card pad="none" testID={open() ? "record-form" : undefined}>
+          <Row first>
             <If when={!terminal()}>
               <IconTile icon="radio" tint="foreground" />
             </If>
@@ -50,13 +50,13 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
             <If when={!open()}>
               <Button variant="outline" label={t("timeline.record")} onPress={() => open.set(true)} testID="record" />
             </If>
-          </View>
+          </Row>
           <If when={open()}>
-            <View class="gap-2 border-t border-border pt-3">
+            <Row stack>
               <Text class="text-small text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
               <If when={!props.policy}>
+                <View class="flex-row">
                 <Options
-                  class="self-start"
                   value={policy()}
                   items={[
                     { value: "allow", title: t("timeline.allow") },
@@ -65,12 +65,13 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
                   ]}
                   onChange={(v) => own.set(v as Policy)}
                 />
+                </View>
               </If>
               <View class="flex-row gap-2">
                 <Button small variant="primary" icon="radio" label={t("timeline.start")} onPress={start} disabled={!endpoint()} testID="record-start" />
-                <Button small variant="ghost" label={t("common.cancel")} onPress={() => open.set(false)} />
+                <Button small variant="ghost" label={t("common.cancel")} onPress={() => open.set(false)} testID="record-cancel" />
               </View>
-            </View>
+            </Row>
           </If>
         </Card>
       }

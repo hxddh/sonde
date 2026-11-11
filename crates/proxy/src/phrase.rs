@@ -10,7 +10,68 @@ use serde::Serialize;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Phrase {
     pub key: &'static str,
-    pub args: BTreeMap<&'static str, String>,
+    pub args: Args,
+}
+
+/// A phrase's arguments by name, in the order of their names: a map as it is
+/// written and read, kept as the two or three pairs it is. Every operation
+/// of a session has a title, and a session may have a million.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Args(Vec<(&'static str, String)>);
+
+impl Args {
+    pub fn get(&self, name: &str) -> Option<&String> {
+        self.0.iter().find(|(k, _)| *k == name).map(|(_, v)| v)
+    }
+
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &String> {
+        self.0.iter().map(|(_, v)| v)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &String)> {
+        self.0.iter().map(|(k, v)| (*k, v))
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::ops::Index<&str> for Args {
+    type Output = String;
+    fn index(&self, name: &str) -> &String {
+        self.get(name).expect("an argument of that name")
+    }
+}
+
+impl FromIterator<(&'static str, String)> for Args {
+    /// A name given twice keeps its last value, as a map would.
+    fn from_iter<I: IntoIterator<Item = (&'static str, String)>>(pairs: I) -> Self {
+        let mut all: Vec<(&'static str, String)> = Vec::new();
+        for (k, v) in pairs {
+            match all.iter_mut().find(|(have, _)| *have == k) {
+                Some(slot) => slot.1 = v,
+                None => all.push((k, v)),
+            }
+        }
+        all.sort_by(|a, b| a.0.cmp(b.0));
+        all.shrink_to_fit();
+        Args(all)
+    }
+}
+
+impl Serialize for Args {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_map(self.0.iter().map(|(k, v)| (k, v)))
+    }
 }
 
 /// A phrase: `key`'s template with `args`.
@@ -121,6 +182,16 @@ fn template(key: &str) -> &'static str {
         }
         "obs.savesTime" => "about {time} sooner ({pct}% of the time waiting)",
         "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
+        "trial.advice.retries" => "{sdk} did not send it again: turn its retries on ({setting})",
+        "trial.advice.retry" => {
+            "send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry"
+        }
+        "trial.advice.cut" => {
+            "check the bytes read against Content-Length, and read the rest (Range) or the whole again"
+        }
+        "trial.advice.race" => {
+            "on a 412, read the log again and write the next commit with its condition; never write the key without one"
+        }
         _ => "",
     }
 }
@@ -150,6 +221,31 @@ impl Phrase {
         out.push_str(rest);
         out
     }
+}
+
+/// A phrase in English from a key and arguments kept as text (a verdict
+/// read back from its file). A key without a template says nothing.
+pub fn en_of(key: &str, args: &BTreeMap<String, String>) -> String {
+    // one pass, as [`Phrase::en`]: an argument's own braces are not read
+    let tpl = template(key);
+    let mut out = String::with_capacity(tpl.len());
+    let mut rest = tpl;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after.find('}') {
+            Some(close) if args.contains_key(&after[..close]) => {
+                out.push_str(&args[&after[..close]]);
+                rest = &after[close + 1..];
+            }
+            _ => {
+                out.push('{');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A text in English: its phrases one after the other.

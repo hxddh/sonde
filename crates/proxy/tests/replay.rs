@@ -458,3 +458,119 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
         "nothing under the prefix, all outside it"
     );
 }
+
+fn put_record(id: u64, key: &str) -> reqlog::Record {
+    reqlog::Record {
+        id,
+        operation: "PutObject".into(),
+        method: "PUT".into(),
+        bucket: Some("data".into()),
+        key: Some(key.into()),
+        status: Some(200),
+        request_bytes: Some(4),
+        ..Default::default()
+    }
+}
+
+async fn replayed(store: &MiniS3, records: Vec<reqlog::Record>) -> sonde_proxy::replay::ReplayRun {
+    let target = client(&store.url, RequestLog::default());
+    target
+        .send_raw(S3Request::new("CreateBucket", http::Method::PUT).bucket("data"))
+        .await
+        .unwrap();
+    let session = sonde_proxy::session::Session {
+        header: sonde_proxy::session::SessionHeader::new("t", "http://x", "us-east-1", None),
+        records,
+        logs: Vec::new(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let opts = ReplayOptions {
+        prefix: "rp1/".into(),
+        buckets: vec![],
+    };
+    sonde_proxy::replay::replay_to_file(
+        &target,
+        &session,
+        &opts,
+        &dir.path().join("r.sonde"),
+        false,
+        |_, _| {},
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_store_without_delete_objects_is_cleaned_up_key_by_key() {
+    for versioned in [false, true] {
+        let store = MiniS3::start(true).await;
+        {
+            let mut s = store.state.lock();
+            s.no_batch_delete = true;
+            s.versioned = versioned;
+        }
+        let run = replayed(
+            &store,
+            vec![
+                put_record(1, "a"),
+                put_record(2, "a"),
+                put_record(3, "dir/b"),
+            ],
+        )
+        .await;
+        assert_eq!(run.removed, 2, "versioned {versioned}");
+        assert_eq!(run.removed_versions, if versioned { 5 } else { 0 });
+        assert_eq!(run.remaining, 0, "versioned {versioned}");
+        assert!(store.keys("data").is_empty());
+        assert!(store.state.lock().versions.is_empty());
+        // the batch was tried once and no more
+        let batches = store
+            .sent("POST /data")
+            .iter()
+            .filter(|(line, _)| line.contains("delete"))
+            .count();
+        assert_eq!(batches, 1, "{:?}", store.sent("POST"));
+    }
+}
+
+#[tokio::test]
+async fn what_a_cleanup_removed_is_what_the_store_says_and_what_remains_is_counted_once() {
+    let store = MiniS3::start(true).await;
+    {
+        let mut s = store.state.lock();
+        s.versioned = true;
+        s.undeletable = vec!["rp1/a".into()];
+        s.no_abort = true;
+    }
+    let mut create = put_record(4, "big");
+    create.operation = "CreateMultipartUpload".into();
+    create.method = "POST".into();
+    create.query = vec![("uploads".into(), String::new())];
+    create.request_bytes = None;
+    let run = replayed(
+        &store,
+        vec![
+            put_record(1, "a"),
+            put_record(2, "a"),
+            put_record(3, "dir/b"),
+            create,
+        ],
+    )
+    .await;
+    // the batch asked for two keys; the store's answer says one was not deleted
+    assert_eq!(run.removed, 1);
+    // `dir/b`: its version and its marker. `a` keeps its two versions.
+    assert_eq!(run.removed_versions, 2);
+    // one object (its newest version) and one older version: two things,
+    // not the object counted again among the versions
+    assert_eq!(
+        (
+            run.remaining,
+            run.remaining_objects,
+            run.remaining_versions,
+            run.remaining_markers
+        ),
+        (2, 1, 1, 0)
+    );
+    assert_eq!(run.unaborted_uploads, 1);
+}

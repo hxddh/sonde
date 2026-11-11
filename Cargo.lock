@@ -4679,6 +4679,7 @@ dependencies = [
  "ratatui-crossterm",
  "reqlog",
  "reqwest",
+ "rustix",
  "s3raw",
  "serde",
  "serde_json",

@@ -3,7 +3,6 @@
 // state at a chosen time.
 
 import { cleanup, List, Scroll, signal, Text, View } from "nsh";
-import { Slider } from "nsh/base";
 import { bytes, count, date } from "../format";
 import { type Key, t } from "../i18n";
 import { core } from "../phrases";
@@ -11,7 +10,7 @@ import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report } from "../store";
 import { here, LAYOUT_LABEL, remember } from "../ui/overview";
 import type { Detection, Layout, Snapshot } from "../types";
-import { Await, Badge, Bar, Button, Card, Choice, Empty, Field, Heading, KeyValue, More, Muted, Path, ROW, rowHeight, SimpleTable, terminal, ToolBar } from "../ui/kit";
+import { Await, Badge, Bar, Button, Card, Choice, Empty, Field, Heading, KeyValue, More, Muted, Path, ROW, rowHeight, SimpleTable, terminal, ToolBar, Scrubber, WIDTH } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const LABEL = LAYOUT_LABEL;
@@ -42,25 +41,13 @@ function Replay(props: { job: string; layout: Layout }) {
     <If when={times().length > 0}>
       <Card testID="replay">
         <Heading>{t("layouts.replay")}</Heading>
-        <Slider
-          testID="replay-slider"
-          accessibilityLabel={t("layouts.replay")}
-          value={at()}
-          min={min()}
-          max={max() === min() ? min() + 1 : max()}
-          step={1000}
-          onChange={({ value }) => at.set(typeof value === "number" ? value : value[0])}
-          class="h-6 justify-center"
-          trackClass="h-1.5 rounded-full bg-muted"
-          indicatorClass="h-1.5 rounded-full bg-primary"
-          thumbClass="h-4 w-4 rounded-full border border-border bg-background shadow"
-        />
+        <Scrubber testID="replay-slider" label={t("layouts.replay")} value={at()} min={min()} max={max() === min() ? min() + 1 : max()} step={1000} onChange={(v) => at.set(v)} />
         {/* one control for the snapshots, not a button each */}
-        <Choice class="w-72" placeholder={t("layouts.snapshot")} value={jumps().some((j) => j.value === `${at()}`) ? `${at()}` : null} items={jumps()} onChange={(v) => at.set(Number(v))} testID="replay-snapshot" />
+        <Choice class={WIDTH.long} placeholder={t("layouts.snapshot")} value={jumps().some((j) => j.value === `${at()}`) ? `${at()}` : null} items={jumps()} onChange={(v) => at.set(Number(v))} testID="replay-snapshot" />
         <If when={state()}>
           {(s) => (
             <View class="gap-2">
-              <Text class="text-body font-medium text-foreground">
+              <Text class="text-body text-foreground">
                 {t("layouts.stateAt", { time: date(new Date(at()).toISOString()) })} — {s().label}
               </Text>
               <KeyValue rows={s().facts.map((f) => [core(f.labelText, f.label), core(f.valueText, f.value)])} />
@@ -142,7 +129,7 @@ export function Layouts() {
         <If when={terminal()}>
           <EndpointPicker />
           <BucketPicker />
-          <Field bare class="w-64" label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} onSubmit={detect} mono testID="layout-prefix" />
+          <Field bare class={WIDTH.long} label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} onSubmit={detect} mono testID="layout-prefix" />
         </If>
         <Button small variant={found() ? "outline" : "primary"} label={found() ? t("overview.rescan") : t("common.scan")} onPress={detect} disabled={!bucket() || busy()} testID="layout-detect" />
         <If when={busy()}>
@@ -185,7 +172,9 @@ export function Layouts() {
               </View>
               <Text class="text-body text-foreground">{core(l().layout.headlineText, l().layout.headline)}</Text>
               <If when={!l().layout.decoded}>
-                <Badge tone="info" label={t("layouts.notDecoded")} />
+                <View class="flex-row">
+                  <Badge tone="info" label={t("layouts.notDecoded")} />
+                </View>
               </If>
               <KeyValue rows={l().layout.facts.map((f) => [core(f.labelText, f.label), core(f.valueText, f.value)])} />
             </Card>
@@ -216,7 +205,7 @@ export function Layouts() {
               <List each={l().layout.timeline} estimatedItemSize={ROW.dense} viewport="parent">
                 {(e) => (
                   <View class="flex-row items-center gap-3" style={{ height: rowHeight(ROW.dense) }}>
-                    <Text class="w-36 text-small text-muted-foreground">{date(e().time)}</Text>
+                    <Text class={`${WIDTH.date} shrink-0 text-small text-muted-foreground`}>{date(e().time)}</Text>
                     <Badge label={kindLabel(e().kind)} tone={e().kind === "fence" || e().kind === "gap" ? "warn" : "neutral"} />
                     <Text class="flex-1 text-small text-foreground line-clamp-1">{`${core(e().labelText, e().label)}${e().detail ? ` — ${core(e().detailText, e().detail)}` : ""}`}</Text>
                   </View>

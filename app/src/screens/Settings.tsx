@@ -7,7 +7,7 @@ import { language, t } from "../i18n";
 import { api, asError } from "../native";
 import { notify, refreshEndpoints, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Button, Card, Choice, Disclosure, Field, FORM, KeyValue, Labeled, Notice, NumberField, Options, Page, Row, Section, terminal, SwitchRow } from "../ui/kit";
+import { Button, Card, Choice, Disclosure, Field, FORM, KeyValue, Labeled, Notice, NumberField, Options, Page, Row, Section, terminal, SwitchRow, WIDTH } from "../ui/kit";
 import { Updates } from "../ui/updates";
 
 /** A form's fields, two to a row (one where there is no room), every label above its control. */
@@ -212,7 +212,7 @@ export function SettingsScreen() {
                     {(e, i) => (
                       <Row first={i() === 0}>
                         <Text class="min-w-0 flex-1 font-mono text-small text-foreground line-clamp-1">{e()[0]}</Text>
-                        <NumberField bare class="w-56" label={e()[0]} suffix={t("settings.perGibMonth", { cur: d().prices.currency })} value={e()[1]} min={0} step={0.001} onChange={(v) => change({ ...d(), prices: { ...d().prices, "by-class": { ...d().prices["by-class"], [e()[0]]: v ?? e()[1] } } })} />
+                        <NumberField bare class={WIDTH.field} label={e()[0]} suffix={t("settings.perGibMonth", { cur: d().prices.currency })} value={e()[1]} min={0} step={0.001} onChange={(v) => change({ ...d(), prices: { ...d().prices, "by-class": { ...d().prices["by-class"], [e()[0]]: v ?? e()[1] } } })} />
                       </Row>
                     )}
                   </Each>

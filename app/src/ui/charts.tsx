@@ -8,7 +8,7 @@ import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, count, pct } from "../format";
 import { t } from "../i18n";
 import { SimpleTable, terminal, textual } from "./kit";
-import { AREA_VALUE, AXIS_LABEL, axisName, ChartNote, ChartTip, CROSS_BAND, GROUP_LABEL, GUTTER, HOVER, INACTIVE, Legend, MOTION, rowsHeight, TREEMAP } from "./plots";
+import { AREA_VALUE, AXIS_LABEL, axisName, ChartNote, ChartTip, CROSS_BAND, GROUP_LABEL, GUTTER, HOVER, INACTIVE, Legend, MOTION, rowsHeight, TREEMAP, BARS, TIP, STACK } from "./plots";
 
 const PALETTE = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;
 
@@ -36,7 +36,7 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
       <Plot
         testID={props.testID}
         data={props.items}
-        yScale={{ type: "band", paddingInner: 0.3, paddingOuter: 0.15 }}
+        yScale={{ type: "band", ...BARS.rows }}
         xScale={{ type: "linear", domain: [0, Math.max(1, ...props.items.map((i) => i.value)) * 1.25] }}
         accessibilityLabel={sentence()}
         accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
@@ -50,7 +50,7 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
         class={GUTTER}
         style={{ height: rowsHeight(props.items.length) }}
       >
-        <Bar value="value" class="fill-chart-1" cornerRadii={{ topRight: 3, bottomRight: 3 }} inactiveOpacity={INACTIVE} label={(_, i) => figures(props.items[i].value)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
+        <Bar value="value" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} label={(_, i) => figures(props.items[i].value)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
         <PlotAxis placement="left" format={(i) => axisName(props.items[i]?.label ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
     </If>
@@ -83,7 +83,7 @@ export function StackBar(props: { parts: { label: string; value: number }[]; tes
           tooltipContent={<ChartTip tip={hovered() !== null ? { title: fmt(sum()), lines: props.parts.map(part) } : null} />}
           onHoverChange={({ index }) => hovered.set(index)}
           // one bar, not rows
-          class="h-3 overflow-hidden rounded-full bg-muted"
+          class={`${STACK} overflow-hidden rounded-full bg-muted`}
         >
           <Each of={props.parts}>{(_, i) => <Bar value={`p${i()}`} stack="parts" class={`fill-${PALETTE[i() % PALETTE.length]}`} />}</Each>
         </Plot>
@@ -140,9 +140,9 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
           id="id"
           parent="parent"
           value="value"
-          paddingInner={2}
+          paddingInner={TIP.areaGap}
           paddingTop={nested() ? 18 : 0}
-          cornerRadii={4}
+          cornerRadii={TIP.area}
           leafClass={(_, i) => `fill-${color(rows()[i].group)}/70`}
           groupClass={(_, i) => `fill-${color(rows()[i].group)}/15`}
           groupLabel="label"
@@ -150,7 +150,7 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
           inactiveOpacity={INACTIVE}
           label="label"
           valueLabel={(_, v) => `${bytes(v)} · ${pct(v, total())}`}
-          labelClass="p-2 text-small font-medium text-foreground"
+          labelClass="p-2 text-small text-foreground"
           valueLabelClass={AREA_VALUE}
           hoverClass={HOVER}
         />

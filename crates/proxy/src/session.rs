@@ -2,7 +2,7 @@
 //! per line. Written as requests happen, so a crash keeps what came before.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -98,9 +98,15 @@ pub fn git_stamp(dir: &Path) -> Option<GitStamp> {
 
 /// A session's header alone, from its first line (compressed or not).
 pub fn read_header(path: &Path) -> Option<SessionHeader> {
-    let mut first = String::new();
-    reader(path).ok()?.read_line(&mut first).ok()?;
-    serde_json::from_str(&first).ok()
+    let mut lines = Lines::open(path).ok()?;
+    serde_json::from_slice(lines.line().ok()??).ok()
+}
+
+/// A session's first line as it is written (what tells one recording from
+/// another written in its place).
+pub fn header_line(path: &Path) -> Option<String> {
+    let mut lines = Lines::open(path).ok()?;
+    Some(String::from_utf8_lossy(lines.line().ok()??).into_owned())
 }
 
 impl SessionHeader {
@@ -215,18 +221,153 @@ impl Sink for SessionWriter {
     }
 }
 
-/// A session file's bytes as lines: plain, or gzip (a finished session is
-/// compressed: [`compress`]).
-pub fn reader(path: &Path) -> std::io::Result<Box<dyn BufRead>> {
-    let mut f = File::open(path)?;
-    let mut magic = [0u8; 2];
-    let n = f.read(&mut magic)?;
-    f.seek(SeekFrom::Start(0))?;
-    Ok(if n == 2 && magic == [0x1f, 0x8b] {
-        Box::new(BufReader::new(flate2::read::MultiGzDecoder::new(f)))
-    } else {
-        Box::new(BufReader::new(f))
-    })
+/// The longest line a session file may hold: a record with the largest
+/// bodies kept is a few MiB of JSON; past this it is not a session's line.
+pub const MAX_LINE: usize = 32 << 20;
+
+/// The most text a session file may hold once decompressed: a few bytes of
+/// gzip can say they are any size. Sessions are read as a stream, so this is
+/// far above any recorded run (about forty million requests).
+pub const MAX_TEXT: u64 = 64 << 30;
+
+/// How much is read at a time.
+const CHUNK: usize = 1 << 20;
+
+/// A session file's lines, plain or gzip (a finished session is compressed:
+/// [`compress`]), read as a stream: a line at a time or a block of whole
+/// lines at a time, never the file whole. A line past [`MAX_LINE`] and a file
+/// past [`MAX_TEXT`] are errors, not memory.
+pub struct Lines {
+    from: Box<dyn Read + Send>,
+    buf: Vec<u8>,
+    start: usize,
+    end: usize,
+    done: bool,
+    read: u64,
+}
+
+impl Lines {
+    pub fn open(path: &Path) -> std::io::Result<Lines> {
+        let mut f = File::open(path)?;
+        let mut magic = [0u8; 2];
+        let n = f.read(&mut magic)?;
+        f.seek(SeekFrom::Start(0))?;
+        let from: Box<dyn Read + Send> = if n == 2 && magic == [0x1f, 0x8b] {
+            Box::new(flate2::read::MultiGzDecoder::new(BufReader::with_capacity(
+                1 << 16,
+                f,
+            )))
+        } else {
+            Box::new(f)
+        };
+        Ok(Lines::of(from))
+    }
+
+    /// The lines of any reader (already decompressed).
+    pub fn of(from: Box<dyn Read + Send>) -> Lines {
+        Lines {
+            from,
+            buf: vec![0; CHUNK],
+            start: 0,
+            end: 0,
+            done: false,
+            read: 0,
+        }
+    }
+
+    /// Reads more into the buffer, making room first. False at the end.
+    fn fill(&mut self) -> std::io::Result<bool> {
+        if self.done {
+            return Ok(false);
+        }
+        if self.start > 0 {
+            self.buf.copy_within(self.start..self.end, 0);
+            self.end -= self.start;
+            self.start = 0;
+        }
+        if self.end == self.buf.len() {
+            // one line fills the buffer: it may grow, to a point
+            if self.buf.len() >= MAX_LINE {
+                return Err(std::io::Error::other(format!(
+                    "a line longer than {} MiB: not a session's",
+                    MAX_LINE >> 20
+                )));
+            }
+            self.buf.resize(self.buf.len() * 2, 0);
+        }
+        let n = loop {
+            match self.from.read(&mut self.buf[self.end..]) {
+                Ok(n) => break n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        };
+        self.end += n;
+        self.read += n as u64;
+        if self.read > MAX_TEXT {
+            return Err(std::io::Error::other(format!(
+                "it holds more than {} GiB",
+                MAX_TEXT >> 30
+            )));
+        }
+        self.done = n == 0;
+        Ok(n > 0)
+    }
+
+    /// The next line without its newline; `None` at the end. The last line
+    /// need not end with one.
+    pub fn line(&mut self) -> std::io::Result<Option<&[u8]>> {
+        let mut searched = self.start;
+        loop {
+            if let Some(i) = self.buf[searched..self.end]
+                .iter()
+                .position(|&b| b == b'\n')
+            {
+                let (a, b) = (self.start, searched + i);
+                self.start = b + 1;
+                return Ok(Some(&self.buf[a..b]));
+            }
+            let pending = self.end - self.start;
+            if !self.fill()? {
+                if pending == 0 {
+                    return Ok(None);
+                }
+                let (a, b) = (self.start, self.end);
+                self.start = self.end;
+                return Ok(Some(&self.buf[a..b]));
+            }
+            searched = self.start + pending;
+        }
+    }
+
+    /// The next block of whole lines (about a MiB of them), its last newline
+    /// left out; `None` at the end.
+    pub fn block(&mut self) -> std::io::Result<Option<&[u8]>> {
+        loop {
+            // as much as the buffer takes, then cut at the last newline
+            while self.end < self.buf.len() || self.start > 0 {
+                if !self.fill()? {
+                    break;
+                }
+            }
+            let have = &self.buf[self.start..self.end];
+            if have.is_empty() {
+                return Ok(None);
+            }
+            if let Some(i) = have.iter().rposition(|&b| b == b'\n') {
+                let (a, b) = (self.start, self.start + i);
+                self.start = b + 1;
+                return Ok(Some(&self.buf[a..b]));
+            }
+            if self.done {
+                let (a, b) = (self.start, self.end);
+                self.start = self.end;
+                return Ok(Some(&self.buf[a..b]));
+            }
+            // one line longer than the buffer: grow it (or refuse it)
+            self.fill()?;
+        }
+    }
 }
 
 /// Whether a session file is compressed.
@@ -239,21 +380,99 @@ pub fn is_compressed(path: &Path) -> bool {
 
 /// Compresses a finished session in place (gzip; a tenth of its size or
 /// less): it stays a `.sonde` file every reader opens. A live session is
-/// not compressed: it is still being appended to.
+/// not compressed: it is still being appended to. A session of the sessions
+/// folder is counted as it goes by, and its counts kept beside it
+/// ([`crate::summary::Counted`]): listing it never reads it again.
 pub fn compress(path: &Path) -> std::io::Result<()> {
     if is_compressed(path) {
         return Ok(());
     }
     let tmp = path.with_extension("sonde.gz.tmp");
+    // (a session written elsewhere, with -o, gets no file beside it)
+    let listed = path
+        .parent()
+        .and_then(|d| d.file_name())
+        .is_some_and(|n| n == "sessions");
+    let mut tally = listed.then(Tally::default);
     {
-        let mut src = BufReader::new(File::open(path)?);
+        let mut src = File::open(path)?;
         let out = File::create(&tmp)?;
         let mut gz =
             flate2::write::GzEncoder::new(BufWriter::new(out), flate2::Compression::new(6));
-        std::io::copy(&mut src, &mut gz)?;
+        let mut buf = vec![0u8; 1 << 16];
+        loop {
+            let n = match src.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            };
+            gz.write_all(&buf[..n])?;
+            if let Some(t) = &mut tally {
+                t.feed(&buf[..n]);
+            }
+        }
         gz.finish()?.flush()?;
     }
-    std::fs::rename(&tmp, path)
+    std::fs::rename(&tmp, path)?;
+    if let Some((header, counter)) = tally.and_then(Tally::finish) {
+        crate::summary::keep(path, &counter.finish(path, &header));
+    }
+    Ok(())
+}
+
+/// A session's bytes going by, cut into lines and counted.
+#[derive(Default)]
+struct Tally {
+    line: Vec<u8>,
+    header: Option<SessionHeader>,
+    counter: crate::summary::Counter,
+    /// Not a session (no header, or a line past any record's length): not counted.
+    not: bool,
+    lines: usize,
+}
+
+impl Tally {
+    fn feed(&mut self, mut bytes: &[u8]) {
+        while !self.not && !bytes.is_empty() {
+            match bytes.iter().position(|&b| b == b'\n') {
+                Some(i) => {
+                    if self.line.is_empty() {
+                        self.take(&bytes[..i]);
+                    } else {
+                        self.line.extend_from_slice(&bytes[..i]);
+                        let line = std::mem::take(&mut self.line);
+                        self.take(&line);
+                    }
+                    bytes = &bytes[i + 1..];
+                }
+                None => {
+                    self.line.extend_from_slice(bytes);
+                    self.not = self.line.len() > MAX_LINE;
+                    return;
+                }
+            }
+        }
+    }
+
+    fn take(&mut self, line: &[u8]) {
+        self.lines += 1;
+        if self.lines == 1 {
+            self.header = serde_json::from_slice(line).ok();
+            self.not = self.header.is_none();
+        } else {
+            self.counter.line(line);
+        }
+    }
+
+    fn finish(mut self) -> Option<(SessionHeader, crate::summary::Counter)> {
+        if !self.line.is_empty() && !self.not {
+            let line = std::mem::take(&mut self.line);
+            self.take(&line);
+        }
+        (!self.not).then_some(())?;
+        Some((self.header?, self.counter))
+    }
 }
 
 /// A session read back.
@@ -333,21 +552,28 @@ impl Session {
     /// Reads a session file. A torn last line (the recorder was killed) is
     /// skipped; any other bad line is an error.
     pub fn open(path: &Path) -> Result<Session, String> {
-        let reader = reader(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        // bytes, not text: a line torn mid-character is still a torn line
-        let mut lines = reader.split(b'\n').map(|l| {
-            l.map(|b| {
-                String::from_utf8_lossy(&b)
-                    .trim_end_matches('\r')
-                    .to_string()
-            })
-        });
+        Session::read(path, Keep::All)
+    }
+
+    /// [`Session::open`] for reading what the session amounts to (its
+    /// operations, findings, time, cost): what no analysis reads of a record
+    /// is not kept ([`Keep::Analysis`]), which is most of its size. Not for
+    /// showing a request whole, replaying it or writing it out.
+    pub fn open_lean(path: &Path) -> Result<Session, String> {
+        Session::read(path, Keep::Analysis)
+    }
+
+    /// Reads a session file as a stream: the file is never held as text, its
+    /// lines are parsed as they are decompressed, on the cores there are.
+    pub fn read(path: &Path, keep: Keep) -> Result<Session, String> {
+        let mut lines = Lines::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let first = lines
-            .next()
-            .ok_or("empty session file")?
-            .map_err(|e| e.to_string())?;
-        let header: SessionHeader =
-            serde_json::from_str(&first).map_err(|e| format!("not a sonde session: {e}"))?;
+            .line()
+            .map_err(|e| e.to_string())?
+            .ok_or("empty session file")?;
+        let first = String::from_utf8_lossy(first);
+        let header: SessionHeader = serde_json::from_str(first.trim_end_matches('\r'))
+            .map_err(|e| format!("not a sonde session: {e}"))?;
         if header.format != FORMAT {
             return Err(format!("not a sonde session (format {:?})", header.format));
         }
@@ -357,27 +583,23 @@ impl Session {
                 header.version
             ));
         }
-        let lines: Vec<String> = lines.collect::<Result<_, _>>().map_err(|e| e.to_string())?;
-        let mut records = Vec::with_capacity(lines.len());
-        let mut logs = Vec::new();
-        for (i, l) in lines.iter().enumerate() {
-            if l.trim().is_empty() {
-                continue;
+        let small = std::fs::metadata(path).is_ok_and(|m| m.len() < 256 * 1024);
+        let workers = if small {
+            1
+        } else {
+            std::thread::available_parallelism().map_or(1, |n| n.get().min(8))
+        };
+        let mut all = Gathered::default();
+        if workers == 1 {
+            while let Some(b) = lines.block().map_err(|e| e.to_string())? {
+                all.add(parse_block(b, keep))?;
             }
-            if l.starts_with("{\"log\":") {
-                match serde_json::from_str::<LogLine>(l) {
-                    Ok(x) => logs.push(x.log),
-                    Err(_) if i + 1 == lines.len() => break,
-                    Err(e) => return Err(format!("line {}: {e}", i + 2)),
-                }
-                continue;
-            }
-            match serde_json::from_str::<Record>(l) {
-                Ok(r) => records.push(r),
-                Err(_) if i + 1 == lines.len() => break,
-                Err(e) => return Err(format!("line {}: {e}", i + 2)),
-            }
+        } else {
+            read_blocks(lines, keep, workers, &mut all)?;
         }
+        let Gathered {
+            mut records, logs, ..
+        } = all;
         // ids name records everywhere (operations, findings, the inspector): a
         // file joined from two recordings repeats them, so number them afresh
         let mut seen = std::collections::HashSet::with_capacity(records.len());
@@ -392,6 +614,218 @@ impl Session {
             logs,
         })
     }
+}
+
+/// What of each record a reading keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Keep {
+    /// Everything the file has.
+    All,
+    /// What the analyses read: the URL (the bucket, key and query are kept
+    /// apart), the store's ids and the headers no finding looks at are
+    /// dropped. A session of a million requests is then a third of the size.
+    Analysis,
+}
+
+/// Headers no analysis reads, and most of a record's size: signing, the
+/// connection, ids the record has as fields of its own.
+const UNREAD_HEADERS: &[&str] = &[
+    "accept",
+    "accept-encoding",
+    "accept-ranges",
+    "amz-sdk-invocation-id",
+    "authorization",
+    "connection",
+    "content-md5",
+    "date",
+    "expect",
+    "host",
+    "keep-alive",
+    "server",
+    "transfer-encoding",
+    "x-amz-content-sha256",
+    "x-amz-date",
+    "x-amz-decoded-content-length",
+    "x-amz-id-2",
+    "x-amz-request-id",
+    "x-amz-sdk-checksum-algorithm",
+    "x-amz-security-token",
+    "x-amz-trailer",
+    "x-amz-user-agent",
+];
+
+/// A record as [`Keep::Analysis`] keeps it.
+pub fn lean(r: &mut Record) {
+    let unread = |h: &reqlog::Header| {
+        UNREAD_HEADERS
+            .iter()
+            .any(|n| h.name.eq_ignore_ascii_case(n))
+    };
+    r.request_headers.retain(|h| !unread(h));
+    r.response_headers.retain(|h| !unread(h));
+    r.request_headers.shrink_to_fit();
+    r.response_headers.shrink_to_fit();
+    r.query.shrink_to_fit();
+    r.url = String::new();
+    r.host_id = None;
+}
+
+/// A block of a session's lines, read.
+struct Block {
+    records: Vec<Record>,
+    logs: Vec<LogChunk>,
+    /// How many lines it had, and the first that could not be read (its
+    /// place in the block, and why): the lines after it are not read.
+    lines: usize,
+    bad: Option<(usize, String)>,
+}
+
+fn parse_block(bytes: &[u8], keep: Keep) -> Block {
+    let mut out = Block {
+        records: Vec::new(),
+        logs: Vec::new(),
+        lines: 0,
+        bad: None,
+    };
+    for (i, raw) in bytes.split(|&b| b == b'\n').enumerate() {
+        out.lines = i + 1;
+        if out.bad.is_some() {
+            continue;
+        }
+        // bytes, not text: a line torn mid-character is still a torn line
+        let text;
+        let l = match std::str::from_utf8(raw) {
+            Ok(l) => l,
+            Err(_) => {
+                text = String::from_utf8_lossy(raw);
+                &*text
+            }
+        };
+        let l = l.trim_end_matches('\r');
+        if l.trim().is_empty() {
+            continue;
+        }
+        if l.starts_with("{\"log\":") {
+            match serde_json::from_str::<LogLine>(l) {
+                Ok(x) => out.logs.push(x.log),
+                Err(e) => out.bad = Some((i, e.to_string())),
+            }
+            continue;
+        }
+        match serde_json::from_str::<Record>(l) {
+            Ok(mut r) => {
+                if keep == Keep::Analysis {
+                    lean(&mut r);
+                }
+                out.records.push(r)
+            }
+            Err(e) => out.bad = Some((i, e.to_string())),
+        }
+    }
+    out.records.shrink_to_fit();
+    out
+}
+
+/// A session's blocks put together, in the file's order.
+#[derive(Default)]
+struct Gathered {
+    records: Vec<Record>,
+    logs: Vec<LogChunk>,
+    /// Lines read so far, and a bad last line of the block before: a torn
+    /// last line of the file is the recorder killed mid-write, a bad line
+    /// anywhere else is not a session.
+    lines: usize,
+    torn: Option<String>,
+}
+
+impl Gathered {
+    fn add(&mut self, b: Block) -> Result<(), String> {
+        if let Some(e) = self.torn.take() {
+            return Err(e);
+        }
+        if let Some((at, e)) = b.bad {
+            // (the header is line 1)
+            let e = format!("line {}: {e}", self.lines + at + 2);
+            if at + 1 < b.lines {
+                return Err(e);
+            }
+            self.torn = Some(e);
+        }
+        self.lines += b.lines;
+        self.records.extend(b.records);
+        self.logs.extend(b.logs);
+        Ok(())
+    }
+}
+
+/// Reads a session's blocks on `workers` threads while another
+/// decompresses, and gathers them here in the file's order.
+fn read_blocks(
+    mut lines: Lines,
+    keep: Keep,
+    workers: usize,
+    all: &mut Gathered,
+) -> Result<(), String> {
+    use std::sync::mpsc;
+    let (work, jobs) = mpsc::sync_channel::<(usize, Vec<u8>)>(workers * 2);
+    // the workers hold the jobs' end between them: when they are gone the
+    // reader's next block has nowhere to go, and it stops
+    let jobs = std::sync::Arc::new(std::sync::Mutex::new(jobs));
+    let (done, results) = mpsc::sync_channel::<(usize, Block)>(workers * 2);
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            let done = done.clone();
+            let jobs = jobs.clone();
+            s.spawn(move || {
+                loop {
+                    let job = jobs.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                    let Ok((seq, bytes)) = job else { break };
+                    if done.send((seq, parse_block(&bytes, keep))).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(done);
+        drop(jobs);
+        let reader = s.spawn(move || {
+            let mut seq = 0;
+            loop {
+                match lines.block() {
+                    Ok(Some(b)) => {
+                        if work.send((seq, b.to_vec())).is_err() {
+                            return Ok(());
+                        }
+                        seq += 1;
+                    }
+                    Ok(None) => return Ok(()),
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
+        });
+        // blocks come back in any order: each waits for those before it
+        let mut waiting: std::collections::BTreeMap<usize, Block> = Default::default();
+        let mut next = 0;
+        let mut gathered = Ok(());
+        for (seq, block) in results {
+            waiting.insert(seq, block);
+            while let Some(b) = waiting.remove(&next) {
+                next += 1;
+                if gathered.is_ok() {
+                    gathered = all.add(b);
+                }
+            }
+            if gathered.is_err() {
+                // stop reading: dropping the results ends the workers, and
+                // they the reader
+                break;
+            }
+        }
+        let read = reader
+            .join()
+            .unwrap_or_else(|_| Err("reading failed".into()));
+        gathered.and(read)
+    })
 }
 
 #[cfg(test)]

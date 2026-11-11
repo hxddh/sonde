@@ -2,14 +2,20 @@
 // other, and what the bridge says of each as it goes (`Sessions.trial`'s
 // events), folded into the list the dialog shows.
 
-import { type Key, t } from "./i18n";
+import { t } from "./i18n";
 import type { Trial, TrialEvent } from "./types";
 
 /** A scenario as people say it ("The store asks to slow down"); one sonde has
  * no words for yet (a project's own) keeps its name. Its id stands beside it
  * in mono where it is listed: what `sonde run --trial` is given. */
-const SCENARIOS = ["slowdown", "error", "lost-answer", "fail-complete", "slow", "s3-limits"];
-export const scenarioLabel = (name: string): string => (SCENARIOS.includes(name) ? t(`scenario.${name}` as Key) : name);
+export const SCENARIOS = ["slowdown", "error", "lost-answer", "fail-complete", "cut-body", "lost-race", "slow", "s3-limits"] as const;
+const known = (name: string): name is (typeof SCENARIOS)[number] => (SCENARIOS as readonly string[]).includes(name);
+export const scenarioLabel = (name: string): string => (known(name) ? t(`scenario.${name}`) : name);
+/** What a scenario does and how hard it presses, in a line: sonde's own words
+ * for the ones it knows; a project's own scenario (`own`: sonde.toml may
+ * give a known name other rules) and one sonde has no words for keep the
+ * line the plan gives. */
+export const scenarioAbout = (name: string, about: string, own = false): string => (known(name) && !own ? t(`scenario.about.${name}`) : about);
 
 /** One scenario of a trial: yet to run, running, or done with how the program stood. */
 export interface TrialStep {

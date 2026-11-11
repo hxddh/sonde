@@ -3,17 +3,17 @@
 
 import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, DiffView } from "nsh/base";
-import { change, count, date, duration } from "../format";
+import { change, count, date, duration, percent, rate, transfer } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
-import type { LatencyChange, RunChange, SessionInfo } from "../types";
+import type { LatencyChange, RunChange, SessionInfo, Signals } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Figure, Heading, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, Title, TYPE } from "./kit";
+import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, Title, TYPE, EMPHASIS, SIZES, SURFACE } from "./kit";
 import { fileName, sessionName } from "./manage";
-import { signalChanges, signalsOf } from "../signals";
-import { Chart, cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency } from "./plots";
+import { brief, signalsOf } from "../signals";
+import { Chart, cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency, MARK, Sparkline } from "./plots";
 
 interface Comparison {
   compared: number;
@@ -23,14 +23,66 @@ interface Comparison {
   unmatched: Record<string, number>;
 }
 
-/** A figure before → after, and by how much: fewer is better, more is worse. */
-function Delta(props: { label: string; a: number; b: number; text: (v: number) => string; testID?: string }) {
-  const same = () => Math.abs(props.b - props.a) < 1e-9;
-  return <Figure testID={props.testID} value={`${props.text(props.a)} → ${props.text(props.b)}`} label={props.label} delta={same() ? undefined : change(props.a, props.b)} deltaTone={props.b < props.a ? "ok" : "bad"} />;
+/** Two runs in five tiles, each fact once: requests, errors, the median
+ * latency, the waiting, the cost — the figure before → after, by how much it
+ * changed, and both runs' lines over their time (before quiet, after in
+ * color). Two equal figures are said once, with no change beside them. Fewer
+ * is better and more is worse between two runs of one program; between two
+ * programs (`!sameProgram`) nothing is better or worse, and every tile is plain. */
+function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | null }) {
+  const c = () => props.change;
+  const s = () => props.signals ?? null;
+  const n = (v: number) => count(Math.round(v));
+  type Fact = { id: string; label: string; a: number | null; b: number | null; text: (v: number) => string; detail?: () => string; series?: (x: Signals) => number[]; kind?: "bars" | "line" };
+  const of = <T,>(f: (x: Signals) => T): [T, T] | null => (s() ? [f(s()![0]), f(s()![1])] : null);
+  const pair = (a: string, b: string) => (a === b ? a : `${a} → ${b}`);
+  const facts = (): Fact[] => {
+    const pace = of((x) => (brief(x) || x.rate.value == null ? null : t("signal.perSecond", { n: rate(x.rate.value) })));
+    const share = of((x) => percent(x.errors.value ?? 0));
+    const p50 = of((x) => x.latency.p50Ms);
+    const p95 = of((x) => (x.latency.p95Ms == null ? null : `p95 ${duration(x.latency.p95Ms)}`));
+    const moved = of((x) => transfer(x.bytes.upBytes, x.bytes.downBytes));
+    return [
+      { id: "requests", label: t("compare.requests"), a: c().requests[0], b: c().requests[1], text: n, detail: () => (pace && pace[0] && pace[1] ? pair(pace[0], pace[1]) : ""), series: (x) => x.rate.series },
+      { id: "errors", label: t("signal.errors"), a: c().errors[0], b: c().errors[1], text: n, detail: () => (share ? pair(share[0], share[1]) : ""), series: (x) => x.errors.series },
+      { id: "latency", label: t("signal.latency"), a: p50?.[0] ?? null, b: p50?.[1] ?? null, text: duration, detail: () => (p95 && p95[0] && p95[1] ? pair(p95[0], p95[1]) : ""), series: (x) => x.latency.series, kind: "line" },
+      { id: "waiting", label: t("compare.waiting"), a: c().busyMs[0], b: c().busyMs[1], text: duration, detail: () => t("compare.took", { t: pair(duration(c().wallMs[0]), duration(c().wallMs[1])) }) },
+      { id: "cost", label: t("compare.cost"), a: c().cost[0], b: c().cost[1], text: (v) => cost(v, c().currency), detail: () => (moved ? pair(moved[0], moved[1]) : "") },
+    ];
+  };
+  const tile = (f: () => Fact) => {
+    const known = () => f().a != null && f().b != null;
+    const same = () => known() && (Math.abs(f().b! - f().a!) < 1e-9 || f().text(f().a!) === f().text(f().b!));
+    const value = () => (!known() ? t("signal.notTimed") : same() ? f().text(f().a!) : `${f().text(f().a!)} → ${f().text(f().b!)}`);
+    // how much it changed, then what else there is to say of it; the same in both runs: said so, no "−0%"
+    const detail = () => [!known() ? "" : same() ? t("compare.sameBoth") : change(f().a!, f().b!), f().detail?.() ?? ""].filter(Boolean).join(" · ");
+    const tone = () => (!known() || same() || !c().sameProgram ? "plain" : f().b! < f().a! ? "ok" : "bad");
+    const lines = () => (f().series && s() && !brief(s()![0]) && !brief(s()![1]) ? [f().series!(s()![0]), f().series!(s()![1])] : null);
+    return (
+      <Stat
+        testID={`compare-${f().id}`}
+        label={f().label}
+        value={value()}
+        detail={detail()}
+        tone={tone()}
+        mark={
+          <If when={lines()}>
+            {(l) => (
+              <View class="shrink-0 flex-row items-center gap-1" accessibilityLabel="">
+                <Sparkline still id={`compare:a:${f().id}`} shape={l()[0]} kind={f().kind} tone="quiet" class={MARK.pair} />
+                <Sparkline still id={`compare:b:${f().id}`} shape={l()[1]} kind={f().kind} class={MARK.pair} />
+              </View>
+            )}
+          </If>
+        }
+      />
+    );
+  };
+  return <Tiles min={SIZES.compareTile} testID="compare-figures" items={facts().map((_, i) => tile(() => facts()[i]))} />;
 }
 
 /** Two runs of a program, before and after a change: the figures, by kind of request, and the findings gone and new. */
-export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
+export function RunChangeView(props: { change: RunChange; inline?: boolean; /** both runs' signals, when they are read: the tiles' lines and second figures */ signals?: [Signals, Signals] | null }) {
   const c = () => props.change;
   const n = (v: number) => count(Math.round(v));
   const findings = () => c().resolved.length + c().appeared.length;
@@ -41,15 +93,9 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
       <If when={!c().sameProgram}>
         <Notice testID="other-program" tone="warn" text={t("compare.otherProgram")} />
       </If>
-      <Card>
-        <View class="flex-row flex-wrap gap-x-6 gap-y-3">
-          <Delta testID="run-change-requests" label={t("figure.requests")} a={c().requests[0]} b={c().requests[1]} text={n} />
-          <Delta label={t("profile.waiting")} a={c().busyMs[0]} b={c().busyMs[1]} text={duration} />
-          <Delta label={t("figure.took")} a={c().wallMs[0]} b={c().wallMs[1]} text={duration} />
-          <Delta label={t("figure.errors")} a={c().errors[0]} b={c().errors[1]} text={n} />
-          <Delta label={t("profile.cost")} a={c().cost[0]} b={c().cost[1]} text={(v) => cost(v, c().currency)} />
-        </View>
-      </Card>
+      <If when={!terminal()} else={<Text testID="compare-figures" class="text-foreground">{[`${t("compare.requests")} ${n(c().requests[0])} → ${n(c().requests[1])}`, `${t("signal.errors")} ${n(c().errors[0])} → ${n(c().errors[1])}`, `${t("compare.waiting")} ${duration(c().busyMs[0])} → ${duration(c().busyMs[1])}`].join(" · ")}</Text>}>
+        <ChangeTiles change={c()} signals={props.signals} />
+      </If>
       <If
         when={!unchanged()}
         else={
@@ -59,12 +105,12 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
         }
       >
         <Chart title={t("compare.byKind")} text={t("compare.byKindHint")}>
-          <RunBars change={c()} />
+          <RunBars change={c()} neutral={!c().sameProgram} />
         </Chart>
         {/* where it changed: each prefix by the later run's requests, colored by how they moved */}
         <If when={(c().prefixes?.length ?? 0) > 1}>
           <Chart title={t("prefixChange.title")} text={t("prefixChange.hint")}>
-            <PrefixChangeMap prefixes={c().prefixes!} />
+            <PrefixChangeMap prefixes={c().prefixes!} neutral={!c().sameProgram} />
           </Chart>
         </If>
         {/* both runs' latency: where the curves part says for which requests it changed */}
@@ -84,7 +130,8 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean }) {
                       <Icon name={f().gone ? "circle-check" : "triangle-alert"} tint={f().gone ? "status-ok" : "warn"} />
                     </View>
                     <Text class="min-w-0 flex-1 text-body leading-5 text-foreground">
-                      <Text class={`font-medium ${f().gone ? "text-status-ok" : "text-warn"}`}>{`${f().gone ? t("profile.resolved") : t("profile.appeared")} · `}</Text>
+                      {/* emphasis: whether the finding is gone or new, before its words */}
+                      <Text class={`${EMPHASIS} ${f().gone ? "text-status-ok" : "text-warn"}`}>{`${f().gone ? t("profile.resolved") : t("profile.appeared")} · `}</Text>
                       {say(f().x.phrases, f().x.text)}
                     </Text>
                   </Row>
@@ -150,7 +197,7 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
       try {
         const [a, b] = await Promise.all([api.sessions.analyse(props.a), api.sessions.analyse(props.b)]);
         const [x, y] = [signalsOf(a), signalsOf(b)];
-        return x && y ? signalChanges(x, y) : null;
+        return x && y ? ([x, y] as [Signals, Signals]) : null;
       } catch {
         // the figures below still say what changed
         return null;
@@ -185,7 +232,7 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
                 <View class="shrink-0">
                   <Badge label={t("compare.times", { n: x().count })} tone="fail" />
                 </View>
-                <Text class="text-body font-medium text-foreground">{x().operation}</Text>
+                <Text class="text-body text-foreground">{x().operation}</Text>
                 <Text class="font-mono text-small text-foreground">{`${x().original} → ${x().replay}`}</Text>
                 <Muted class="min-w-0 flex-1 text-small line-clamp-1">{[x().example, x().conditions.join(", ")].filter(Boolean).join(" · ")}</Muted>
               </Row>
@@ -206,7 +253,7 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
       lineNumbers
       annotations={notes(d).map((n) => ({ id: n.id, side: "new" as const, line: n.line }))}
       renderAnnotation={(a) => <Notice tone="error" icon="circle-alert" class="mx-2 my-1" text={notes(d).find((x) => x.id === a.id)?.text ?? ""} />}
-      class="h-[440px] rounded-(--radius) border border-border"
+      class={`${SURFACE.diff} rounded-(--radius) border border-border`}
     />
   );
   return (
@@ -217,12 +264,9 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
       </View>
       <Scroll class="min-h-0 flex-1" contentClass="gap-6 pb-4">
         <If when={replayOf() && answers()}>{(d) => answersPart(d() as Answers)}</If>
-        {/* the four signals, before and after, in the header's own tiles */}
-        <If when={terminal() ? null : signals()}>
-          {(x) => <Tiles ranked min={200} testID="compare-signals" items={x().map((s) => <Stat testID={`compare-signal-${s.id}`} label={s.label} value={s.value} detail={s.detail} tone={s.tone} />)} />}
-        </If>
+        {/* the two runs in five tiles (each fact once), then what changed by kind, by prefix and in latency */}
         <Await loading={runs.loading()} error={runs.error()} retry={() => runs.refetch()}>
-          <If when={runs()}>{(r) => <RunChangeView change={r()} inline />}</If>
+          <If when={runs()}>{(r) => <RunChangeView change={r()} inline signals={signals()} />}</If>
         </Await>
         <If when={answers()}>
           {(d) => (
@@ -294,7 +338,8 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
                 const k = c.row > 0 && c.key.startsWith("s") ? kinds()[c.row - 1] : null;
                 const v = k ? p95(props.runs[Number(c.key.slice(1))], k) : undefined;
                 const r = k && v !== undefined && k.p95Ms[0] > 0 ? v / k.p95Ms[0] : 1;
-                const tone = r >= 1.5 ? "text-status-server font-medium" : r <= 0.67 ? "text-status-ok font-medium" : c.key === "what" ? "text-foreground" : "text-muted-foreground";
+                // emphasis: a figure much slower or much faster than the recording's stands out in its tone
+                const tone = r >= 1.5 ? `text-status-server ${EMPHASIS}` : r <= 0.67 ? `text-status-ok ${EMPHASIS}` : c.key === "what" ? "text-foreground" : "text-muted-foreground";
                 return <Text class={`flex-1 px-2 tabular-nums text-body ${c.key === "what" ? "" : "text-right"} ${tone}`}>{c.text}</Text>;
               }
         }

@@ -1069,6 +1069,7 @@ async fn a_lost_answer_on_a_large_read_is_not_held_to_be_thrown_away() {
             prefix: String::new(),
             effect: sonde_proxy::fault::Effect::LostAnswer,
             times: 1,
+            conditional: false,
         }],
     };
     let proxy = Proxy::start(
@@ -1102,4 +1103,210 @@ async fn a_lost_answer_on_a_large_read_is_not_held_to_be_thrown_away() {
     );
     let rec = &log.list(&reqlog::Filter::default(), 1)[0];
     assert_eq!(rec.injected.as_deref(), Some("lose-all"));
+}
+
+#[tokio::test]
+async fn a_dot_segment_in_the_buckets_place_is_refused_too() {
+    let (proxy, _app, log, up) = setup(Policy::Allow).await;
+    // the store would fold these: `/%2e%2e/data` is a listing of `data`
+    for path in [
+        "/%2e%2e/data",
+        "/../data",
+        "/./data/k",
+        "/%2E/data/k",
+        "/..",
+    ] {
+        let answer = raw(&proxy, "GET", path).await;
+        assert!(answer.starts_with("HTTP/1.1 400"), "{path}: {answer}");
+        assert!(answer.contains(". or .. segment"), "{answer}");
+    }
+    assert!(up.calls.lock().is_empty(), "{:?}", up.calls.lock());
+    for rec in log.list(&reqlog::Filter::default(), 10) {
+        assert_eq!(rec.status, Some(400));
+        assert!(
+            rec.response_headers
+                .iter()
+                .any(|h| h.name == "x-sonde-proxy" && h.value == "refused")
+        );
+    }
+    // a bucket named with a dot in it is a bucket
+    let answer = raw(&proxy, "GET", "/.data/k").await;
+    assert!(!answer.starts_with("HTTP/1.1 400"), "{answer}");
+}
+
+#[tokio::test]
+async fn a_body_hash_the_program_sends_is_not_the_requests_name() {
+    let (_proxy, app, log, up) = setup_faults("slowdown").await;
+    let batch = |key: &str| {
+        S3Request::new("DeleteObjects", http::Method::POST)
+            .bucket("data")
+            .query("delete", "")
+            // every batch claims the same body
+            .header(sonde_proxy::fault::BODY_HASH_HEADER, "same")
+            .body(Body::from(format!(
+                "<Delete><Object><Key>{key}</Key></Object></Delete>"
+            )))
+            .no_retry()
+    };
+    assert_eq!(app.send_raw(batch("a")).await.unwrap().status, 503);
+    assert_eq!(
+        app.send_raw(batch("b")).await.unwrap().status,
+        503,
+        "another batch, whatever it says of itself"
+    );
+    let recs = log.list(&reqlog::Filter::default(), 10);
+    let names: std::collections::HashSet<String> =
+        recs.iter().map(sonde_proxy::fault::identity_of).collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+    for r in &recs {
+        let kept: Vec<&str> = r
+            .request_headers
+            .iter()
+            .filter(|h| {
+                h.name
+                    .eq_ignore_ascii_case(sonde_proxy::fault::BODY_HASH_HEADER)
+            })
+            .map(|h| h.value.as_str())
+            .collect();
+        assert_eq!(kept.len(), 1, "sonde's own, and only it: {kept:?}");
+        assert_ne!(kept[0], "same");
+    }
+    assert!(up.calls.lock().is_empty());
+}
+
+#[tokio::test]
+async fn a_body_is_cut_half_way_once_and_the_record_says_where() {
+    let (proxy, app, log, _up) = setup_faults("cut-body").await;
+    // (writes are not this scenario's)
+    let big = S3Request::new("PutObject", http::Method::PUT)
+        .bucket("data")
+        .key("big")
+        .body(Body::from("x".repeat(1000)))
+        .no_retry();
+    assert_eq!(app.send_raw(big).await.unwrap().status, 200);
+    let small = S3Request::new("PutObject", http::Method::PUT)
+        .bucket("data")
+        .key("small")
+        .body(Body::from("tiny"))
+        .no_retry();
+    assert_eq!(app.send_raw(small).await.unwrap().status, 200);
+
+    // the status and the whole length go out; the body stops at its half
+    let answer = raw(&proxy, "GET", "/data/big").await;
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    let (head, body) = answer.split_once("\r\n\r\n").unwrap();
+    assert!(
+        head.to_ascii_lowercase().contains("content-length: 1000"),
+        "{head}"
+    );
+    assert!(head.contains("x-sonde-fault: cut-body"), "{head}");
+    assert_eq!(body.len(), 500);
+    let rec = log
+        .list(&reqlog::Filter::default(), 10)
+        .into_iter()
+        .find(|r| r.injected.is_some())
+        .expect("recorded as injected");
+    assert_eq!(rec.status, Some(200));
+    assert_eq!(rec.response_bytes, Some(500));
+    assert_eq!(rec.injected.as_deref(), Some("cut-body"));
+    let header = |n: &str| {
+        rec.response_headers
+            .iter()
+            .find(|h| h.name == n)
+            .map(|h| h.value.as_str())
+    };
+    assert_eq!(header("x-sonde-fault"), Some("cut-body"));
+    assert_eq!(header(sonde_proxy::CUT_HEADER), Some("500"));
+    assert_eq!(header("x-sonde-store-status"), Some("200"));
+    assert_eq!(
+        rec.transport_error.as_deref(),
+        Some("sonde cut the response body after 500 of 1000 bytes on purpose (scenario cut-body)")
+    );
+    assert!(sonde_proxy::trial::faulted(&rec));
+
+    // the next read of it is whole: the cut is met once
+    let get = |key: &str| {
+        S3Request::new("GetObject", http::Method::GET)
+            .bucket("data")
+            .key(key)
+            .no_retry()
+    };
+    let again = app.send_raw(get("big")).await.unwrap();
+    assert_eq!((again.status, again.body.len()), (200, 1000));
+    // a body too small to cut goes through, and was no fault
+    let r = app.send_raw(get("small")).await.unwrap();
+    assert_eq!((r.status, r.text().as_str()), (200, "tiny"));
+    // nor is an error: the 404 is the store's, and the key's first read is
+    // still to come
+    assert_eq!(app.send_raw(get("absent")).await.unwrap().status, 404);
+    let injected = log
+        .list(&reqlog::Filter::default(), 20)
+        .iter()
+        .filter(|r| r.injected.is_some())
+        .count();
+    assert_eq!(injected, 1);
+}
+
+#[tokio::test]
+async fn a_lost_race_is_a_412_to_a_write_the_store_made_or_never_saw() {
+    let (_proxy, app, log, up) = setup_faults("lost-race").await;
+    let log_key = |n: u32| format!("t/_delta_log/{n:020}.json");
+    let create = |key: &str| put(key).header("if-none-match", "*");
+    // no condition, no race
+    assert_eq!(
+        app.send_raw(put("t/part-1.parquet")).await.unwrap().status,
+        200
+    );
+    // If-None-Match: * — the program's own write goes to the store, and it
+    // is told it lost
+    let r = app.send_raw(create(&log_key(1))).await.unwrap();
+    assert_eq!(r.status, 412);
+    assert!(
+        r.text().contains("<Code>PreconditionFailed</Code>"),
+        "{}",
+        r.text()
+    );
+    assert_eq!(up.calls.lock().len(), 2, "the store took the write");
+    assert!(
+        up.objects
+            .lock()
+            .contains_key(&format!("/data/{}", log_key(1)))
+    );
+    // the next number is that commit's retry: not failed again
+    assert_eq!(app.send_raw(create(&log_key(2))).await.unwrap().status, 200);
+    // If-Match: answered without the store
+    let before = up.calls.lock().len();
+    let swap = || put("pointer").header("if-match", "\"e\"");
+    assert_eq!(app.send_raw(swap()).await.unwrap().status, 412);
+    assert_eq!(up.calls.lock().len(), before, "the store never saw it");
+    assert_eq!(app.send_raw(swap()).await.unwrap().status, 200);
+
+    let recs = log.list(&reqlog::Filter::default(), 20);
+    let lost: Vec<&reqlog::Record> = recs.iter().filter(|r| r.injected.is_some()).collect();
+    assert_eq!(lost.len(), 2);
+    for r in &lost {
+        assert_eq!(r.status, Some(412));
+        assert!(sonde_proxy::trial::faulted(r));
+    }
+    let forwarded = lost
+        .iter()
+        .find(|r| r.key.as_deref() == Some(log_key(1).as_str()))
+        .unwrap();
+    assert_eq!(sonde_proxy::trial::store_status(forwarded), Some(200));
+    let unsent = lost
+        .iter()
+        .find(|r| r.key.as_deref() == Some("pointer"))
+        .unwrap();
+    assert_eq!(sonde_proxy::trial::store_status(unsent), None);
+    // what sonde answered itself is not on the store's bill, and is not one
+    // of the store's races
+    assert!(sonde_proxy::profile::reached_store(forwarded));
+    assert!(!sonde_proxy::profile::reached_store(unsent));
+    let eps = sonde_proxy::episode::episodes(&recs);
+    let obs = sonde_proxy::episode::observations(&recs, &eps);
+    assert!(
+        !obs.iter()
+            .any(|o| o.phrases.first().is_some_and(|p| p.key == "obs.races")),
+        "{obs:?}"
+    );
 }

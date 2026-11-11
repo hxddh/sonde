@@ -38,80 +38,40 @@ fn nanos(t: chrono::DateTime<chrono::Utc>) -> String {
 
 /// The session as an OTLP/JSON `ExportTraceServiceRequest`.
 pub fn traces(s: &Session) -> Value {
+    let mut doc = Vec::new();
+    // (into memory: nothing to fail)
+    let _ = write_traces(s, &mut doc, false);
+    serde_json::from_slice(&doc).unwrap_or(Value::Null)
+}
+
+/// The trace every span of a session belongs to.
+fn trace_id(s: &Session) -> String {
     let created = s.header.created.to_rfc3339();
     let trace_hi = hash(&["sonde", &created, &s.header.endpoint]);
     let trace_lo = hash(&[&created, s.header.command.as_deref().unwrap_or("")]);
-    let trace_id = format!("{trace_hi:016x}{trace_lo:016x}");
-    let eps = episodes(&s.records);
-    let by_id: std::collections::HashMap<u64, &reqlog::Record> =
-        s.records.iter().map(|r| (r.id, r)).collect();
-    let mut spans = Vec::new();
-    for (i, e) in eps.iter().enumerate() {
-        let span_id = hex(hash(&["op", &i.to_string(), &trace_id]), 8);
-        let failed = !matches!(e.outcome, Outcome::Ok);
-        spans.push(json!({
-            "traceId": trace_id,
-            "spanId": span_id,
-            "name": e.title,
-            "kind": 1,
-            "startTimeUnixNano": nanos(e.start),
-            "endTimeUnixNano": nanos(e.end),
-            "attributes": [
-                attr("sonde.operation.requests", json!(e.records.len())),
-                attr("sonde.operation.kind", json!(format!("{:?}", e.kind))),
-            ],
-            "status": { "code": if failed { 2 } else { 1 } },
-        }));
-        for id in &e.records {
-            let Some(r) = by_id.get(id) else { continue };
-            // clamped: a corrupt latency must not overflow the date
-            let end = r.time + chrono::Duration::microseconds(r.latency_us());
-            let mut attrs = vec![
-                attr("rpc.system", json!("aws-api")),
-                attr("rpc.service", json!("S3")),
-                attr("rpc.method", json!(r.operation)),
-                attr("http.request.method", json!(r.method)),
-            ];
-            if let Some(st) = r.status {
-                attrs.push(attr("http.response.status_code", json!(st)));
-            }
-            if let Some(b) = &r.bucket {
-                attrs.push(attr("aws.s3.bucket", json!(b)));
-            }
-            if let Some(k) = &r.key {
-                attrs.push(attr("aws.s3.key", json!(k)));
-            }
-            if let Some(q) = &r.request_id {
-                attrs.push(attr("aws.request_id", json!(q)));
-            }
-            if let Some(n) = r.response_bytes {
-                attrs.push(attr("http.response.body.size", json!(n)));
-            }
-            if r.retries > 0 {
-                attrs.push(attr("sonde.retries", json!(r.retries)));
-            }
-            let error = r.is_error() && !crate::summary::is_miss(r);
-            spans.push(json!({
-                "traceId": trace_id,
-                "spanId": hex(hash(&["req", &r.id.to_string(), &trace_id]), 8),
-                "parentSpanId": span_id,
-                "name": format!("S3.{}", r.operation),
-                "kind": 3,
-                "startTimeUnixNano": nanos(r.time),
-                "endTimeUnixNano": nanos(end),
-                "attributes": attrs,
-                "status": { "code": if error { 2 } else { 1 } },
-            }));
-        }
-    }
+    format!("{trace_hi:016x}{trace_lo:016x}")
+}
+
+/// What the spans are of: the program (by the name it was given, else its
+/// command's), the endpoint, the command line.
+fn resource(s: &Session) -> Vec<Value> {
+    let named = s
+        .header
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(String::from);
     let mut resource = vec![
         attr(
             "service.name",
             json!(
-                s.header
-                    .command
-                    .as_deref()
-                    .and_then(crate::program::program_name)
+                named
+                    .or_else(|| s
+                        .header
+                        .command
+                        .as_deref()
+                        .and_then(crate::program::program_name))
                     .unwrap_or_else(|| "sonde-session".into())
             ),
         ),
@@ -124,15 +84,158 @@ pub fn traces(s: &Session) -> Value {
             json!(crate::program::scrub_command(c)),
         ));
     }
-    json!({
-        "resourceSpans": [{
-            "resource": { "attributes": resource },
-            "scopeSpans": [{
-                "scope": { "name": "sonde", "version": env!("CARGO_PKG_VERSION") },
-                "spans": spans,
-            }],
-        }],
-    })
+    resource
+}
+
+/// An operation's span, then one for each of its requests under it.
+fn spans_of(
+    i: usize,
+    e: &crate::episode::Episode,
+    trace_id: &str,
+    by_id: &std::collections::HashMap<u64, &reqlog::Record>,
+    each: &mut dyn FnMut(Value) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let span_id = hex(hash(&["op", &i.to_string(), trace_id]), 8);
+    let failed = !matches!(e.outcome, Outcome::Ok);
+    each(json!({
+        "traceId": trace_id,
+        "spanId": span_id,
+        "name": e.title,
+        "kind": 1,
+        "startTimeUnixNano": nanos(e.start),
+        "endTimeUnixNano": nanos(e.end),
+        "attributes": [
+            attr("sonde.operation.requests", json!(e.records.len())),
+            attr("sonde.operation.kind", json!(format!("{:?}", e.kind))),
+        ],
+        "status": { "code": if failed { 2 } else { 1 } },
+    }))?;
+    for id in &e.records {
+        let Some(r) = by_id.get(id) else { continue };
+        // clamped: a corrupt latency must not overflow the date
+        let end = r.time + chrono::Duration::microseconds(r.latency_us());
+        let mut attrs = vec![
+            attr("rpc.system", json!("aws-api")),
+            attr("rpc.service", json!("S3")),
+            attr("rpc.method", json!(r.operation)),
+            attr("http.request.method", json!(r.method)),
+        ];
+        if let Some(st) = r.status {
+            attrs.push(attr("http.response.status_code", json!(st)));
+        }
+        if let Some(b) = &r.bucket {
+            attrs.push(attr("aws.s3.bucket", json!(b)));
+        }
+        if let Some(k) = &r.key {
+            attrs.push(attr("aws.s3.key", json!(k)));
+        }
+        if let Some(q) = &r.request_id {
+            attrs.push(attr("aws.request_id", json!(q)));
+        }
+        if let Some(n) = r.response_bytes {
+            attrs.push(attr("http.response.body.size", json!(n)));
+        }
+        if r.retries > 0 {
+            attrs.push(attr("sonde.retries", json!(r.retries)));
+        }
+        let error = r.is_error() && !crate::summary::is_miss(r);
+        each(json!({
+            "traceId": trace_id,
+            "spanId": hex(hash(&["req", &r.id.to_string(), trace_id]), 8),
+            "parentSpanId": span_id,
+            "name": format!("S3.{}", r.operation),
+            "kind": 3,
+            "startTimeUnixNano": nanos(r.time),
+            "endTimeUnixNano": nanos(end),
+            "attributes": attrs,
+            "status": { "code": if error { 2 } else { 1 } },
+        }))?;
+    }
+    Ok(())
+}
+
+/// A request's document around its spans: opened, and closed.
+fn open_doc<W: std::io::Write>(
+    out: W,
+    pretty: bool,
+    resource: &[Value],
+) -> std::io::Result<crate::share::JsonOut<W>> {
+    let mut w = crate::share::JsonOut::new(out, pretty);
+    w.begin_object()?;
+    w.key("resourceSpans")?;
+    w.begin_array()?;
+    w.begin_object()?;
+    w.field("resource", &json!({ "attributes": resource }))?;
+    w.key("scopeSpans")?;
+    w.begin_array()?;
+    w.begin_object()?;
+    w.field(
+        "scope",
+        &json!({ "name": "sonde", "version": env!("CARGO_PKG_VERSION") }),
+    )?;
+    w.key("spans")?;
+    w.begin_array()?;
+    Ok(w)
+}
+
+fn close_doc<W: std::io::Write>(mut w: crate::share::JsonOut<W>) -> std::io::Result<W> {
+    w.end_array()?;
+    w.end_object()?;
+    w.end_array()?;
+    w.end_object()?;
+    w.end_array()?;
+    w.end_object()?;
+    w.finish()
+}
+
+/// [`traces`], written as it is made: a span at a time, never the document
+/// whole.
+pub fn write_traces(s: &Session, out: impl std::io::Write, pretty: bool) -> std::io::Result<()> {
+    let trace_id = trace_id(s);
+    let eps = episodes(&s.records);
+    let by_id: std::collections::HashMap<u64, &reqlog::Record> =
+        s.records.iter().map(|r| (r.id, r)).collect();
+    let mut w = open_doc(out, pretty, &resource(s))?;
+    for (i, e) in eps.iter().enumerate() {
+        spans_of(i, e, &trace_id, &by_id, &mut |span| w.json(&span))?;
+    }
+    close_doc(w)?;
+    Ok(())
+}
+
+/// The session as several `ExportTraceServiceRequest`s, each under `limit`
+/// bytes or so (an operation's spans stay in one), handed to `send` one at
+/// a time: a collector takes a request of a few MiB, not a session's worth.
+/// Returns how many were sent.
+pub fn batches(
+    s: &Session,
+    limit: usize,
+    send: &mut dyn FnMut(Vec<u8>) -> std::io::Result<()>,
+) -> std::io::Result<usize> {
+    let trace_id = trace_id(s);
+    let resource = resource(s);
+    let eps = episodes(&s.records);
+    let by_id: std::collections::HashMap<u64, &reqlog::Record> =
+        s.records.iter().map(|r| (r.id, r)).collect();
+    let mut sent = 0;
+    let mut w = open_doc(Vec::new(), false, &resource)?;
+    let mut any = false;
+    for (i, e) in eps.iter().enumerate() {
+        spans_of(i, e, &trace_id, &by_id, &mut |span| w.json(&span))?;
+        any = true;
+        if w.written() >= limit {
+            let full = std::mem::replace(&mut w, open_doc(Vec::new(), false, &resource)?);
+            send(close_doc(full)?)?;
+            sent += 1;
+            any = false;
+        }
+    }
+    // (a session without requests is still one request: its resource)
+    if any || sent == 0 {
+        send(close_doc(w)?)?;
+        sent += 1;
+    }
+    Ok(sent)
 }
 
 #[cfg(test)]

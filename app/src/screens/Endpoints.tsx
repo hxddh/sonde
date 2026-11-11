@@ -1,15 +1,13 @@
 // Endpoints: add, edit, import from AWS profiles, test connectivity, demo.
 
 import { batch, effect, signal, Text, untracked, View } from "nsh";
-import { AlertDialog } from "nsh/base";
 import { count, duration } from "../format";
 import { t } from "../i18n";
 import { vendorName } from "../labels";
 import { api } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
-import { Icon } from "../ui/icon";
-import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow } from "../ui/kit";
+import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert } from "../ui/kit";
 import { openCompatWindow } from "./CompatWindow";
 import { CELL, ConfigNotice, GRID } from "./Settings";
 
@@ -218,15 +216,7 @@ export function Endpoints() {
       return rest;
     });
   const remove = async (e: EndpointView) => {
-    const { action } = await AlertDialog.show({
-      title: t("endpoints.removeTitle", { name: e.name }),
-      description: t("endpoints.removeText"),
-      actions: [
-        { id: "cancel", label: t("common.cancel"), role: "cancel" },
-        { id: "remove", label: t("common.remove"), role: "destructive" },
-      ],
-    });
-    if (action !== "remove") return;
+    if (!(await confirmAlert({ title: t("endpoints.removeTitle", { name: e.name }), text: t("endpoints.removeText"), commit: t("common.remove") }))) return;
     try {
       api.removeEndpoint(e.id);
       forget(e.id);

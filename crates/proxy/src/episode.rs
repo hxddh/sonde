@@ -705,25 +705,46 @@ fn multipart<'a>(
     out: &mut Vec<Episode>,
 ) -> Vec<Vec<&'a Record>> {
     let mut units = Vec::new();
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
     // upload id → record indexes; creates wait for the first upload id seen on their key
     let mut groups: Vec<(Option<String>, String, Vec<usize>)> = Vec::new();
-    let mut by_id: HashMap<String, usize> = HashMap::new();
-    for (i, r) in sorted.iter().enumerate() {
-        let key = format!(
+    let mut by_id: HashMap<&str, usize> = HashMap::new();
+    // by key, the uploads no part has named yet: the one whose creates have
+    // all failed so far (a create tried again joins it; there is one at
+    // most), and those a create began, oldest first
+    #[derive(Default)]
+    struct Waiting {
+        failed: Option<usize>,
+        begun: VecDeque<usize>,
+    }
+    let mut waiting: HashMap<String, Waiting> = HashMap::new();
+    let key_of = |r: &Record| {
+        format!(
             "{}/{}",
             r.bucket.as_deref().unwrap_or(""),
             r.key.as_deref().unwrap_or("")
-        );
+        )
+    };
+    for (i, r) in sorted.iter().enumerate() {
         match r.operation.as_str() {
             // a Create that failed and was tried again is part of the upload that followed
             "CreateMultipartUpload" => {
-                let retried = groups.iter().rposition(|(gid, k, idx)| {
-                    gid.is_none() && *k == key && idx.iter().all(|&j| sorted[j].is_error())
-                });
-                match retried {
-                    Some(g) => groups[g].2.push(i),
-                    _ => groups.push((None, key, vec![i])),
+                let key = key_of(r);
+                let w = waiting.entry(key.clone()).or_default();
+                let g = match w.failed.take() {
+                    Some(g) => {
+                        groups[g].2.push(i);
+                        g
+                    }
+                    None => {
+                        groups.push((None, key, vec![i]));
+                        groups.len() - 1
+                    }
+                };
+                if r.is_error() {
+                    w.failed = Some(g);
+                } else {
+                    w.begun.push_back(g);
                 }
             }
             "UploadPart"
@@ -731,24 +752,23 @@ fn multipart<'a>(
             | "CompleteMultipartUpload"
             | "AbortMultipartUpload"
             | "ListParts" => {
-                let Some(id) = query(r, "uploadId").map(str::to_string) else {
+                let Some(id) = query(r, "uploadId") else {
                     continue;
                 };
-                let g = match by_id.get(&id) {
+                let g = match by_id.get(id) {
                     Some(&g) => g,
                     None => {
+                        let key = key_of(r);
                         // the upload a successful Create began
-                        let pending = groups.iter().position(|(gid, k, idx)| {
-                            gid.is_none() && *k == key && idx.iter().any(|&j| !sorted[j].is_error())
-                        });
+                        let pending = waiting.get_mut(&key).and_then(|w| w.begun.pop_front());
                         let g = match pending {
                             Some(g) => g,
                             None => {
-                                groups.push((None, key.clone(), Vec::new()));
+                                groups.push((None, key, Vec::new()));
                                 groups.len() - 1
                             }
                         };
-                        groups[g].0 = Some(id.clone());
+                        groups[g].0 = Some(id.to_string());
                         by_id.insert(id, g);
                         g
                     }
@@ -825,11 +845,19 @@ fn sondes_fault(r: &Record) -> bool {
     r.injected.is_some() && response_header(r, "x-sonde-fault").is_some()
 }
 
-/// Whether a client is expected to send the request again: no answer, a 5xx
-/// that says so, or the store asking for fewer.
+/// The statuses a retry is owed for: the ones the AWS SDKs send again. A 501
+/// or a 505 is the store's answer however often it is asked, like a 404. The
+/// trial's verdict and the retries read from a session both go by this.
+pub fn status_owes_retry(status: u16) -> bool {
+    matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
+}
+
+/// Whether a client is expected to send the request again: no answer (or
+/// one cut short), a status that says so ([`status_owes_retry`]), or the
+/// store asking for fewer.
 pub(crate) fn retryable(r: &Record) -> bool {
     r.transport_error.is_some()
-        || matches!(r.status, Some(500 | 502 | 503 | 504 | 429))
+        || r.status.is_some_and(status_owes_retry)
         || s3_code(r).is_some_and(|c| c == "SlowDown" || c == "RequestTimeout")
 }
 
@@ -843,29 +871,55 @@ fn retries<'a>(
     out: &mut Vec<Episode>,
 ) -> Vec<Vec<&'a Record>> {
     let mut units = Vec::new();
-    let same = |a: &Record, b: &Record| {
-        a.method == b.method && a.bucket == b.bucket && a.key == b.key && a.query == b.query
-    };
-    let mut i = 0;
-    while i < sorted.len() {
+    // a request's identity: what a retry of it repeats
+    type Identity<'r> = (
+        &'r str,
+        Option<&'r str>,
+        Option<&'r str>,
+        &'r [(String, String)],
+    );
+    fn identity<'r>(r: &'r Record) -> Identity<'r> {
+        (
+            r.method.as_str(),
+            r.bucket.as_deref(),
+            r.key.as_deref(),
+            r.query.as_slice(),
+        )
+    }
+    // the records of each identity a retryable failure has, in time order: a
+    // failure looks for its retry among them, not among every later request
+    // (an outage is thousands of failures, each of a key of its own)
+    let mut of: std::collections::HashMap<Identity, Vec<usize>> = Default::default();
+    for (i, r) in sorted.iter().enumerate() {
+        if !used[i] && retryable(r) {
+            of.entry(identity(r)).or_default();
+        }
+    }
+    if of.is_empty() {
+        return units;
+    }
+    for (i, r) in sorted.iter().enumerate() {
+        if let Some(same) = of.get_mut(&identity(r)) {
+            same.push(i);
+        }
+    }
+    for i in 0..sorted.len() {
         if used[i] || !retryable(sorted[i]) {
-            i += 1;
             continue;
         }
+        let same = &of[&identity(sorted[i])];
         let mut chain = vec![i];
-        let mut j = i + 1;
-        while j < sorted.len() {
+        for &j in &same[same.partition_point(|&j| j <= i)..] {
             let last = sorted[*chain.last().unwrap()];
             if (sorted[j].time - last.time).num_seconds() > 60 {
                 break;
             }
-            if !used[j] && same(sorted[j], last) {
+            if !used[j] {
                 chain.push(j);
                 if !retryable(sorted[j]) {
                     break;
                 }
             }
-            j += 1;
         }
         if chain.len() > 1 {
             for &c in &chain {
@@ -875,7 +929,6 @@ fn retries<'a>(
             let last = *rs.last().expect("a chain has records");
             if tables.format_of(last).is_some() && is_write(last) && !retryable(last) {
                 units.push(rs);
-                i += 1;
                 continue;
             }
             let first = failure(rs[0]).unwrap_or_default();
@@ -899,7 +952,6 @@ fn retries<'a>(
             e.note(p("retry.wait", &[("ms", format!("{wait:.0}"))]));
             out.push(e);
         }
-        i += 1;
     }
     units
 }
@@ -1322,6 +1374,8 @@ pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)>
 /// What stands out across a session's requests and episodes.
 pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
     use std::collections::{BTreeSet, HashMap};
+    // each record by its id: read once, for every finding that names requests
+    let by_id: HashMap<u64, &Record> = records.iter().map(|r| (r.id, r)).collect();
     // which episode each record belongs to
     let owner: HashMap<u64, usize> = episodes
         .iter()
@@ -1508,7 +1562,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     let mut uploads: Vec<(usize, u64, bool, Vec<u64>)> = uploads.into_values().collect();
     {
         use std::collections::VecDeque;
-        let at: HashMap<u64, &Record> = records.iter().map(|r| (r.id, r)).collect();
+        let at = &by_id;
         let mut creates: HashMap<(Option<&str>, Option<&str>), VecDeque<&Record>> = HashMap::new();
         let mut sorted: Vec<&Record> = records
             .iter()
@@ -1568,19 +1622,15 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 small
                     .iter()
                     .flat_map(|u| u.3.iter().copied())
-                    .filter(|id| {
-                        records
-                            .iter()
-                            .find(|r| r.id == *id)
-                            .is_some_and(|r| r.operation != "UploadPart")
-                    })
+                    .filter(|id| by_id.get(id).is_some_and(|r| r.operation != "UploadPart"))
                     .collect(),
             ),
         );
     }
     let races: Vec<u64> = records
         .iter()
-        .filter(|r| r.status == Some(412))
+        // a 412 sonde answered itself (a trial's lost race) is not the store's
+        .filter(|r| r.status == Some(412) && !sondes_fault(r))
         .map(|r| r.id)
         .collect();
     if !races.is_empty() {
@@ -1910,7 +1960,6 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .then((b.level == "warn").cmp(&(a.level == "warn")))
             .then(b.impact.cmp(&a.impact))
     });
-    let by_id: HashMap<u64, &Record> = records.iter().map(|r| (r.id, r)).collect();
     for o in &mut out {
         if let Some(first) = o.phrases.first() {
             o.fixes = crate::fixes::for_key(first.key);

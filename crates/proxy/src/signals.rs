@@ -233,6 +233,10 @@ pub struct Signals {
     /// Whether the requests' times are known (the profile's rule).
     pub timed: bool,
     pub wall_ms: f64,
+    /// The run took under a second ([`SHORT_MS`]): it has totals and no
+    /// rates (`rate.value`, `bytes.value` and the two ways are none). Nine
+    /// requests in a third of a second are not "27 a second".
+    pub short: bool,
     /// The slices every series is over: the profile's `binMs` and `rate`.
     pub bin_ms: f64,
     pub bins: usize,
@@ -249,6 +253,123 @@ pub struct Signals {
     pub cost: CostBy,
     /// The profile's prefixes, in its order.
     pub prefixes: Vec<PrefixRate>,
+}
+
+/// A run under this long has no rate: there was no second to have one in.
+pub const SHORT_MS: f64 = 1000.0;
+
+/// How long after a failure its retry may start: the bound the episodes
+/// group a request's attempts by.
+pub const RETRY_WINDOW_US: i64 = 60_000_000;
+
+/// Under this a steady wait is an SDK's fixed backoff, not a program's poll.
+const POLL_MIN_US: i64 = 200_000;
+
+/// A request's time as it is taken everywhere here: never negative, never
+/// past a day ([`reqlog::MAX_LATENCY_MS`]), as its span on the timeline is.
+fn took_ms(r: &Record) -> f64 {
+    if r.latency_ms.is_finite() {
+        r.latency_ms.clamp(0.0, reqlog::MAX_LATENCY_MS)
+    } else {
+        0.0
+    }
+}
+
+/// Which records are retries: the same request sent again after a failure
+/// that asks for it.
+///
+/// The rule. A request is named by [`crate::fault::identity_of`] and its
+/// `Range` (two ranges of one object are two requests). After a retryable
+/// failure ([`crate::episode::retryable`]: no answer, a 408, 429, 500, 502,
+/// 503 or 504, SlowDown), its retry is the next request of that name, in
+/// the order of their times and not of the file, that starts once the
+/// failure was answered and within [`RETRY_WINDOW_US`] of it. A request is
+/// the retry of one failure at most. And a request that fails three times
+/// or more in a row at a steady pace of [`POLL_MIN_US`] or more (waits
+/// within a tenth of their median) is a program polling a key that keeps
+/// failing, not an SDK backing off: none of those is a retry. (An SDK set
+/// to wait a fixed fifth of a second or more between three attempts reads
+/// as that poll; the SDKs' own backoff grows or is jittered.)
+fn retries_of(records: &[Record]) -> Vec<bool> {
+    let mut again = vec![false; records.len()];
+    // only the places a failure was at are named: naming every request of a
+    // large session would cost more than the rest of this pass
+    let places: std::collections::HashSet<(Option<&str>, Option<&str>)> = records
+        .iter()
+        .filter(|r| crate::episode::retryable(r))
+        .map(|r| (r.bucket.as_deref(), r.key.as_deref()))
+        .collect();
+    if places.is_empty() {
+        return again;
+    }
+    let mut groups: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, r) in records.iter().enumerate() {
+        if !places.contains(&(r.bucket.as_deref(), r.key.as_deref())) {
+            continue;
+        }
+        let range = r
+            .request_headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("range"))
+            .map_or("", |h| h.value.trim());
+        groups
+            .entry(format!("{} {range}", crate::fault::identity_of(r)))
+            .or_default()
+            .push(i);
+    }
+    for group in groups.values_mut() {
+        if !group
+            .iter()
+            .any(|&i| crate::episode::retryable(&records[i]))
+        {
+            continue;
+        }
+        group.sort_by_key(|&i| (start_us(&records[i]), records[i].id));
+        // (failure, its retry, the wait between them), in time order
+        let mut links: Vec<(usize, usize, i64)> = Vec::new();
+        let mut free = 0;
+        for at in 0..group.len() {
+            let r = &records[group[at]];
+            if !crate::episode::retryable(r) {
+                continue;
+            }
+            let told = end_us(r);
+            free = free.max(at + 1);
+            while free < group.len() && start_us(&records[group[free]]) < told {
+                free += 1;
+            }
+            if let Some(&next) = group.get(free) {
+                let wait = start_us(&records[next]) - told;
+                if wait <= RETRY_WINDOW_US {
+                    links.push((at, free, wait));
+                    free += 1;
+                }
+            }
+        }
+        // chains of failures each followed by the next: a steady one is a poll
+        let mut i = 0;
+        while i < links.len() {
+            let mut j = i + 1;
+            while j < links.len() && links[j].0 == links[j - 1].1 {
+                j += 1;
+            }
+            let chain = &links[i..j];
+            let mut waits: Vec<i64> = chain.iter().map(|l| l.2).collect();
+            waits.sort_unstable();
+            let mid = waits[waits.len() / 2];
+            let poll = chain.len() >= 3
+                && waits[0] >= POLL_MIN_US
+                && (waits[waits.len() - 1] - waits[0]) * 10 <= mid;
+            if !poll {
+                for l in chain {
+                    again[group[l.1]] = true;
+                }
+            }
+            i = j;
+        }
+    }
+    again
 }
 
 /// The smallest body whose transfer is timed against its size: under it the
@@ -406,15 +527,16 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     let mut statuses: BTreeMap<(Option<u16>, Option<&str>), StatusRow> = BTreeMap::new();
     let mut amount = 0f64;
     let mut spans: Vec<(i64, i64)> = Vec::new();
-    let mut owed: std::collections::HashMap<String, ()> = std::collections::HashMap::new();
+    let sent_again = retries_of(records);
 
-    for r in records {
+    for (at, r) in records.iter().enumerate() {
         let Some(tl) = &tl else { break };
         let i = tl.bin_of(r);
         let s = start_us(r);
+        let latency_ms = took_ms(r);
         n[i] += 1.0;
-        took[i].push(r.latency_ms);
-        all.push(r.latency_ms.max(0.0));
+        took[i].push(latency_ms);
+        all.push(latency_ms);
 
         let (u, d) = (r.request_bytes.unwrap_or(0), r.response_bytes.unwrap_or(0));
         up[i] += u as f64;
@@ -431,12 +553,8 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         // a retry is counted where it is known: inside a record (sonde's own
         // client says how many it took), or as a record of its own, which is
         // how a program's SDK retries through the proxy: the same request
-        // again after an answer that asks for it
-        let id = crate::fault::identity_of(r);
-        let again = u32::from(owed.remove(&id).is_some());
-        if crate::episode::retryable(r) {
-            owed.insert(id, ());
-        }
+        // again after an answer that asks for it ([`retries_of`] has the rule)
+        let again = u32::from(sent_again[at]);
         retries[i] += (r.retries + again) as f64;
         retries_total += (r.retries + again) as u64;
         if is_failure(r) {
@@ -469,8 +587,12 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         op.billed += usize::from(reached_store(r));
         op.cost += cost;
         if let Some(fb) = r.first_byte_ms.filter(|_| timed) {
-            let fb = fb.max(0.0);
-            let whole = r.latency_ms.max(fb);
+            let fb = if fb.is_finite() {
+                fb.clamp(0.0, reqlog::MAX_LATENCY_MS)
+            } else {
+                0.0
+            };
+            let whole = latency_ms.max(fb);
             op.first_byte.push(fb);
             op.rest.push(whole - fb);
             fb_sum += fb;
@@ -484,10 +606,10 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
             _ => None,
         };
         if let Some(b) = body.filter(|b| *b >= TRANSFER_MIN)
-            && r.latency_ms > 0.0
+            && latency_ms > 0.0
             && !r.is_error()
         {
-            let rate = b as f64 / MIB / (r.latency_ms / 1000.0);
+            let rate = b as f64 / MIB / (latency_ms / 1000.0);
             moved
                 .entry((r.operation.as_str(), size_bucket(b)))
                 .or_default()
@@ -574,8 +696,9 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
         level -= 1;
     }
 
-    // a run that took no time has no rate
-    let seconds = (wall_ms >= 1.0).then_some(wall_ms / 1000.0);
+    // a run too short to have a second in has totals, not rates
+    let short = wall_ms < SHORT_MS;
+    let seconds = (!short).then_some(wall_ms / 1000.0);
     let per_bin = |v: &[f64]| v.iter().map(|x| x / bin_s).collect::<Vec<f64>>();
     let failed = counts.client + counts.server + counts.transport + counts.injected;
 
@@ -637,6 +760,7 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     Signals {
         timed,
         wall_ms,
+        short,
         bin_ms,
         bins,
         rate: Rate {
@@ -773,7 +897,8 @@ fn ms_text(v: f64) -> String {
 }
 
 fn bytes_text(b: f64) -> String {
-    let units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    // the one ladder: as far as a count of bytes goes
+    let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
     let (mut v, mut i) = (b.max(0.0), 0);
     while v >= 1024.0 && i < units.len() - 1 {
         v /= 1024.0;
@@ -797,6 +922,11 @@ fn count_text(n: usize) -> String {
         out.push(c);
     }
     out
+}
+
+/// "1 request", "1,234 requests".
+fn requests_text(n: usize) -> String {
+    format!("{} request{}", count_text(n), if n == 1 { "" } else { "s" })
 }
 
 fn rate_text(v: f64) -> String {
@@ -862,15 +992,19 @@ pub fn text(s: &Signals, color: bool) -> String {
         "rate",
         match s.rate.value {
             Some(v) => format!("{} req/s", rate_text(v)),
-            None => "—".into(),
+            // too short for a rate: the total is the figure
+            None => requests_text(s.rate.requests),
         },
         None,
         &s.rate.series,
-        format!(
-            "{} requests in {}{at_once}",
-            count_text(s.rate.requests),
-            ms_text(s.wall_ms)
-        ),
+        match s.rate.value {
+            Some(_) => format!(
+                "{} in {}{at_once}",
+                requests_text(s.rate.requests),
+                ms_text(s.wall_ms)
+            ),
+            None => format!("in {}{at_once}", ms_text(s.wall_ms)),
+        },
     );
 
     let c = &s.errors.counts;
@@ -928,15 +1062,22 @@ pub fn text(s: &Signals, color: bool) -> String {
         "bytes",
         match (s.bytes.up_per_sec, s.bytes.down_per_sec) {
             (Some(u), Some(d)) => format!("↑ {}/s ↓ {}/s", bytes_text(u), bytes_text(d)),
-            _ => "—".into(),
+            _ => format!(
+                "↑ {} ↓ {}",
+                bytes_text(s.bytes.up_bytes as f64),
+                bytes_text(s.bytes.down_bytes as f64)
+            ),
         },
         None,
         &s.bytes.series,
-        format!(
-            "{} sent, {} received",
-            bytes_text(s.bytes.up_bytes as f64),
-            bytes_text(s.bytes.down_bytes as f64)
-        ),
+        match s.bytes.up_per_sec {
+            Some(_) => format!(
+                "{} sent, {} received",
+                bytes_text(s.bytes.up_bytes as f64),
+                bytes_text(s.bytes.down_bytes as f64)
+            ),
+            None => "sent and received, in all".into(),
+        },
     );
 
     let heading = |t: String| format!("{}\n", paint(&t, "1", color));
@@ -1016,4 +1157,165 @@ pub fn text(s: &Signals, color: bool) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::DateTime;
+    use reqlog::Header;
+
+    fn get(id: u64, at_ms: i64, key: &str, status: u16) -> Record {
+        Record {
+            id,
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + at_ms).unwrap(),
+            method: "GET".into(),
+            operation: "GetObject".into(),
+            bucket: Some("b".into()),
+            key: Some(key.into()),
+            status: Some(status),
+            latency_ms: 5.0,
+            ..Default::default()
+        }
+    }
+
+    fn retries(records: &[Record]) -> u64 {
+        signals(records, &RequestPrices::default())
+            .errors
+            .retries_total
+    }
+
+    #[test]
+    fn a_retry_follows_its_failure_within_the_window_and_in_time_order() {
+        // a 503, and the same read an hour later: not its retry
+        assert_eq!(
+            retries(&[get(1, 0, "k", 503), get(2, 3_600_000, "k", 200)]),
+            0
+        );
+        // within the window it is
+        assert_eq!(retries(&[get(1, 0, "k", 503), get(2, 59_000, "k", 200)]), 1);
+        // a 408 asks for a retry as a 503 does
+        assert_eq!(retries(&[get(1, 0, "k", 408), get(2, 100, "k", 200)]), 1);
+        // a 501 does not
+        assert_eq!(retries(&[get(1, 0, "k", 501), get(2, 100, "k", 200)]), 0);
+        // the file's order is not the order of time: the read listed first
+        // came after the failure
+        assert_eq!(retries(&[get(2, 200, "k", 200), get(1, 0, "k", 503)]), 1);
+        // and one that came before it is not its retry
+        assert_eq!(retries(&[get(2, 200, "k", 503), get(1, 0, "k", 200)]), 0);
+        // a request in flight when the failure was answered is another sender's
+        let mut slow = get(2, 2, "k", 200);
+        slow.latency_ms = 50.0;
+        assert_eq!(retries(&[get(1, 0, "k", 503), slow]), 0);
+    }
+
+    #[test]
+    fn another_range_of_the_object_is_another_request() {
+        let ranged = |id, at, range: &str, status| {
+            let mut r = get(id, at, "k", status);
+            r.request_headers.push(Header::new("range", range));
+            r
+        };
+        assert_eq!(
+            retries(&[
+                ranged(1, 0, "bytes=0-9", 503),
+                ranged(2, 10, "bytes=10-19", 206),
+                ranged(3, 20, "bytes=20-29", 206),
+            ]),
+            0
+        );
+        assert_eq!(
+            retries(&[
+                ranged(1, 0, "bytes=0-9", 503),
+                ranged(2, 10, "bytes=10-19", 206),
+                ranged(3, 20, "bytes=0-9", 206),
+            ]),
+            1
+        );
+    }
+
+    #[test]
+    fn a_poll_of_a_key_that_keeps_failing_is_not_a_run_of_retries() {
+        // five polls a second apart, each answered 503
+        let poll: Vec<Record> = (0..5)
+            .map(|i| get(i + 1, i as i64 * 1000, "job", 503))
+            .collect();
+        assert_eq!(retries(&poll), 0);
+        // an SDK backing off: the waits grow
+        let backoff = [
+            get(1, 0, "job", 503),
+            get(2, 300, "job", 503),
+            get(3, 900, "job", 503),
+            get(4, 2100, "job", 503),
+            get(5, 4500, "job", 200),
+        ];
+        assert_eq!(retries(&backoff), 4);
+        // two failures and the answer: too few to call a poll
+        assert_eq!(
+            retries(&[
+                get(1, 0, "job", 503),
+                get(2, 1000, "job", 503),
+                get(3, 2000, "job", 200)
+            ]),
+            2
+        );
+        // attempts in quick step are a fixed backoff, not a poll
+        let quick: Vec<Record> = (0..5)
+            .map(|i| get(i + 1, i as i64 * 20, "job", 503))
+            .collect();
+        assert_eq!(retries(&quick), 4);
+    }
+
+    #[test]
+    fn a_run_under_a_second_has_totals_and_no_rate() {
+        let mut one = get(1, 0, "k", 200);
+        one.latency_ms = 2.0;
+        one.response_bytes = Some(10);
+        let s = signals(std::slice::from_ref(&one), &RequestPrices::default());
+        assert!(s.short);
+        assert_eq!(
+            (s.rate.value, s.bytes.value, s.bytes.down_per_sec),
+            (None, None, None)
+        );
+        assert_eq!(s.rate.requests, 1);
+        let said = text(&s, false);
+        let rate = said.lines().next().unwrap();
+        assert!(rate.starts_with("rate     1 request "), "{rate}");
+        assert!(rate.ends_with("in 2 ms"), "{rate}");
+        assert!(
+            !said.contains("req/s") && !said.contains("1 requests"),
+            "{said}"
+        );
+        assert!(said.contains("↑ 0 B ↓ 10 B"), "{said}");
+        // a run of a second and more has its rate
+        let long = [get(1, 0, "k", 200), get(2, 1995, "k", 200)];
+        let s = signals(&long, &RequestPrices::default());
+        assert!(!s.short);
+        assert_eq!(s.rate.value, Some(1.0));
+        assert!(text(&s, false).contains("2 requests in 2.0 s"));
+    }
+
+    #[test]
+    fn a_latency_no_request_can_have_is_clamped_everywhere_alike() {
+        let mut neg = get(1, 0, "k", 200);
+        neg.latency_ms = -5.0;
+        let mut absurd = get(2, 10, "k", 200);
+        absurd.latency_ms = 1e12;
+        let ok = get(3, 20, "k", 200);
+        let s = signals(&[neg, absurd, ok], &RequestPrices::default());
+        // a day at most, in the figures as on the timeline
+        assert_eq!(s.latency.p99_ms, Some(reqlog::MAX_LATENCY_MS));
+        assert_eq!(s.latency.p50_ms, Some(5.0));
+        let slice_max = s.latency.p99.iter().copied().fold(0.0, f64::max);
+        assert_eq!(slice_max, reqlog::MAX_LATENCY_MS);
+        assert!(s.latency.series.iter().all(|v| *v >= 0.0));
+    }
+
+    #[test]
+    fn bytes_are_written_on_one_ladder() {
+        assert_eq!(bytes_text(0.0), "0 B");
+        assert_eq!(bytes_text(1536.0), "1.5 KiB");
+        assert_eq!(bytes_text(600_000.0 * 1024f64.powi(4)), "585.9 PiB");
+        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3.0 EiB");
+    }
 }

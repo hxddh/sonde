@@ -38,6 +38,15 @@ RULES = [
     ("figure", r"(?:text-(?:title|heading|display)\b[^\"`]*\btabular-nums\b|\btabular-nums\b[^\"`]*\btext-(?:title|heading|display)\b)", "a large number drawn by hand: use Figure or Stat"),
     ("heading", r'role="header"', "a heading by hand: use Title, Heading or Section"),
     ("heading", r"\bfont-(?:semibold|bold)\b", "heavy text by hand: a heading is Title or Heading; other words are Strong (or EMPHASIS with an `emphasis:` comment)"),
+    # 16.0: what 15.0's lint did not name
+    ("size", r"(?<![\w-])(?:w|h|min-w|max-w|min-h|max-h|size|inset|top|left|right|bottom|gap|p[xytblr]?|m[xytblr]?|text|leading|translate-[xy])-\[[^\]]+\]", "an arbitrary size: name it in the kit (WIDTH, SURFACE, SIZES)"),
+    ("width", r"(?<![\w:/-])w-(?!full\b|px\b|auto\b|screen\b)\d[\d.]*(?![\w/])", "a fixed width of its own: the kit's WIDTH"),
+    ("threshold", r"<Tiles\b[^>]*\bmin=\{\d+\}", "a tile's least width of its own: the kit's SIZES"),
+    ("threshold", r"style=\{\{[^}]*\b(?:maxHeight|minHeight|maxWidth|minWidth): \d{3,4}\b", "a size of its own: the kit's SIZES"),
+    ("control", r"<(?:Button|IconButton|Options|Segmented|Badge|Field|SearchField|NumberField|Choice|Check)\b[^>]*\bself-start\b", "a control that sets its own self-start: the row or column that holds it places it"),
+    ("icon", r"<Icon\b(?![^>]*>)", "an icon over several lines: one line, so its size and tint are read by the rules above"),
+    ("row", r'i\(\) === 0 \? "" : "border-t border-border', "a hairline row by hand: use Row or ListRow divided"),
+    ("duration", r"\bfunction (?:elapsed|ago|days)\b|\b(?:elapsed|ago|days)\((?!\))[^)]*\)\s*[,;})]", "a second writer of a length of time: duration(ms), duration(ms, \"age\") or duration(ms, \"counter\")"),
     ("row", r"\bROW_STATE\b", "a row's states by hand: use ListRow (or ROWS for a control that takes classes)"),
     ("row", r"i\(\) > 0 \? \"border-t border-border", "a hairline row by hand: use Row or ListRow divided"),
     ("threshold", r"(?:\.[wh]\b|[wW]idth\(\)|[hH]eight\(\))\s*[<>]=?\s*\d{3,4}\b", "a layout threshold of its own: use a BREAK key"),
@@ -49,22 +58,41 @@ RULES = [
     ("empty", r"text-(?:small|body) text-muted-foreground\">\{t\(\"[\w.]*(?:\.none|\.empty|noMatch|\.nothing|None|Empty)\"\)\}</Text>", "nothing-here by hand: use Empty (compact inside a list or a chart)"),
 ]
 # in the pages and the shared pieces only: what the reader sees of a number
+# the look of an nsh/base control is the kit's: a page imports what has structure and no look of
+# its own (a table, a split, a tree, a terminal, an editor, a diff), nothing else
+BASE_ALLOWED = {"DataTable", "DataTableRef", "DataTableSort", "DiffView", "TextView", "Terminal", "TerminalRef", "ResizablePanel", "ResizablePanelGroup", "NavStack", "NavPage", "createNavStack", "Tree", "TreeItem", "TreeRef", "Editor", "EditorDiagnostic"}
+# the shared pieces that draw a control of their own, each for the reason beside it
+BASE_OWN = {
+    # the title bar's own controls: the endpoint switcher (a combobox), the toolbar's group, the places
+    "ui/shell.tsx": {"Button", "Combobox", "Toolbar"},
+    # the palette is Native Shell's Command in its Dialog
+    "ui/palette.tsx": {"Command", "Dialog"},
+    # the toasts are Native Shell's stack
+    "ui/toast.tsx": {"Toast", "ToastEntry", "ToastManager", "ToastStack"},
+    # the range of days over a program's runs
+    "ui/history.tsx": {"DatePicker"},
+    # a plot takes no presses itself: it sits in a pressable view (the chart system's)
+    "ui/plots/traffic.tsx": {"Button"}, "ui/plots/latency.tsx": {"Button"}, "ui/plots/runs.tsx": {"Button"}, "ui/plots/operation.tsx": {"Button"},
+}
 UI_RULES = [
     ("number", r"(?<![\w.])String\(", "a number as text by hand: count(), percent(), duration() (an id: a template)"),
     ("number", r"\.toFixed\(", "a number rounded by hand: count(), percent(), factor(), rate()"),
 ]
 OWN = {"ui/kit.tsx"}
+# a third weight anywhere, the kit included: regular and bold, and no other
+WEIGHT = re.compile(r"\bfont-(?:medium|semibold|light|thin|extrabold|black)\b")
 # where a rule's own exception lives, each for the reason beside it
 EXEMPT = {
     # the palette is the search field's popup, and the title bar's stand-in for it opens that popup
     ("ui/palette.tsx", "search"), ("ui/shell.tsx", "search"),
     # the chart system's own constants: the one gutter is defined there
-    ("ui/plots.tsx", "gutter"),
+    ("ui/plots/system.tsx", "gutter"),
     # the format's own file is where milliseconds and decimals are written
     ("format.ts", "duration"), ("format.ts", "number"),
     # sentences of the engine, in Chinese: their `{ms} ms` are the engine's templates
     ("phrases.ts", "duration"), ("corephrases.ts", "duration"),
-    # the lanes' cells stand a slice wide, not on the spacing scale's 4-point grid
+    # the chart system names its own sizes (a chart's heights and gutters are its constants)
+    ("ui/plots/system.tsx", "size"), ("ui/plots/system.tsx", "width"),
 }
 # spacing the chart system names once (its gutter), on the lines that define it
 GUTTER_LINE = re.compile(r"^(?:export )?const GUTTER\w* = ")
@@ -82,14 +110,21 @@ files += [(p, f"viewer/{p.name}", f"viewer/{p.name}") for p in sorted(viewer.glo
 for path, where, rel in files:
     lines = path.read_text().splitlines()
     ui = rel.startswith(("ui/", "screens/", "viewer/"))
+    # what a page takes from nsh/base
+    for m in re.finditer(r'import \{([^}]*)\} from "nsh/base";', path.read_text()):
+        for name in re.findall(r"(?:type )?(\w+)(?: as \w+)?", m.group(1)):
+            if rel not in OWN and name not in BASE_ALLOWED and name not in BASE_OWN.get(rel, set()) and name != "type":
+                say(where, path.read_text()[: m.start()].count("\n") + 1, "base", f"{name} from nsh/base in a page: the kit has (or gets) the one that wraps it")
     for n, line in enumerate(lines, 1):
         near = " ".join(lines[max(0, n - 3) : n])
+        if WEIGHT.search(line) and "lint-kit fails" not in near and "`font-" not in line:
+            say(where, n, "weight", "a third weight: regular and bold (the kit's EMPHASIS) only")
         if rel in OWN:
             # the kit's own controls may stand off the scale where a comment says why
             if re.search(SPACE, line) and "off-scale:" not in near:
                 say(where, n, "spacing", "spacing off the scale in the kit without an `off-scale:` comment saying why")
             continue
-        if rel == "ui/plots.tsx" and GUTTER_LINE.match(line):
+        if rel == "ui/plots/system.tsx" and GUTTER_LINE.match(line):
             continue
         for name, pattern, why in RULES + (UI_RULES if ui else []):
             if (rel, name) not in EXEMPT and re.search(pattern, line):
@@ -102,9 +137,24 @@ for path, where, rel in files:
 kit = (app / "ui" / "kit.tsx").read_text()
 m = re.search(r"export const BREAK = \{([^}]*)\}", kit)
 everything = "\n".join(p.read_text() for p, _, rel in files if rel not in OWN)
-for key in re.findall(r"(\w+):", m.group(1) if m else ""):
+BREAK_KEYS = re.findall(r"(\w+):", m.group(1) if m else "")
+for key in BREAK_KEYS:
     if f"BREAK.{key}" not in everything:
         say("app/src/ui/kit.tsx", kit[: m.start()].count("\n") + 1, "threshold", f"BREAK.{key} is used nowhere: delete it")
+
+# the kit's sizes are used, each by its name
+for const in ("SIZES", "WIDTH", "SURFACE"):
+    start = kit.index(f"export const {const} = {{")
+    body = kit[start : kit.index("} as const;", start)]
+    keys = re.findall(r"^\s*(\w+): ", body, re.M) if "\n" in body else re.findall(r"(\w+): ", body)
+    for key in keys:
+        if f"{const}.{key}" not in everything:
+            say("app/src/ui/kit.tsx", kit[:start].count("\n") + 1, "size", f"{const}.{key} is used nowhere: delete it")
+
+# the words of an age (`time.minutes` …) are duration()'s alone
+for path, where, rel in files:
+    if rel != "format.ts" and re.search(r'"time\.(?:now|minutes|hours|days)"', path.read_text()):
+        say(where, 1, "duration", "an age written by hand: duration(ms, \"age\")")
 
 # one function writes milliseconds: nothing else exported from format.ts does
 fmt = (app / "format.ts").read_text()
@@ -113,4 +163,5 @@ for name, body in re.findall(r"export function (\w+)\([^)]*\): string \{(.*?)\n\
         say("app/src/format.ts", fmt[: fmt.index(f"export function {name}(")].count("\n") + 1, "duration", f"{name}() writes a duration: only duration() does")
 
 charts = subprocess.run([sys.executable, str(Path(__file__).with_name("lint-charts.py"))])
+print(f"kit: {len(files)} files against {len(RULES) + len(UI_RULES) + 2} rules; weights regular and bold; {len(BREAK_KEYS)} thresholds (BREAK); sizes by name (SIZES, WIDTH, SURFACE); nsh/base in pages: structure only: {'failed' if failed else 'ok'}")
 sys.exit(1 if failed or charts.returncode else 0)

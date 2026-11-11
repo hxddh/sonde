@@ -263,13 +263,9 @@ pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) 
         counted.push(o);
     }
     // never the whole session: a request each finding keeps is among the ids
-    // it does not name
-    let left: Vec<Record> = records
-        .iter()
-        .filter(|r| !gone.contains(&r.id))
-        .cloned()
-        .collect();
-    let mut waiting = crate::profile::busy_ms(&left);
+    // it does not name. Those left are added up where they are, not copied
+    let left = || records.iter().filter(|r| !gone.contains(&r.id));
+    let mut waiting = crate::profile::busy_ms_of(left());
     for o in saving.iter().filter(|o| o.saves_requests == 0) {
         // its figure was reckoned with every request there: with one of
         // them gone it is another figure, and is left out
@@ -285,12 +281,11 @@ pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) 
     if counted.is_empty() {
         return None;
     }
-    let cost: f64 = left
-        .iter()
+    let cost: f64 = left()
         .map(|r| crate::profile::price(r, &profile.prices))
         .sum();
     Some(WhatIf {
-        requests: (records.len(), left.len()),
+        requests: (records.len(), left().count()),
         waiting_ms: (profile.busy_ms, waiting.clamp(0.0, profile.busy_ms)),
         cost: (profile.cost.amount, cost.min(profile.cost.amount)),
         currency: profile.cost.currency.clone(),

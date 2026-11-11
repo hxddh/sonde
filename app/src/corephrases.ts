@@ -489,13 +489,6 @@ function fill(template: string, args: Record<string, string>): string {
   );
 }
 
-/** One phrase: its Chinese when `zh` and the key is known, else `en`. */
-export function sayCore(p: CorePhrase, en: string, zh: boolean): string {
-  if (!zh || !p) return en;
-  const template = corePhrasesZh[p.key];
-  return template === undefined ? en : fill(template, p.args ?? {});
-}
-
 /**
  * A text (phrases said one after the other) beside its English: Chinese
  * when `zh` and every phrase has a template, else the English, whole.

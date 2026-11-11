@@ -235,12 +235,18 @@ test("prefixes with a doubled or a leading slash keep their own names", async ()
   expect(leading.name("other")).toBe("Other prefixes");
 });
 
-test("an axis of two places has two ticks, not the first one twice", async () => {
-  const { ticks3 } = await import("../src/ui/plots");
-  expect(ticks3(2)).toEqual([0, 1]);
-  expect(ticks3(1)).toEqual([0]);
-  expect(ticks3(3)).toEqual([0, 1, 2]);
-  expect(ticks3(96)).toEqual([0, 47, 95]);
+test("every chart over one stretch of time names the same round moments", async () => {
+  const { timeTicks, sessionSpan } = await import("../src/ui/plots");
+  // 1, 2 or 5 of a power of ten apart, three or four of them
+  expect(timeTicks([0, 467])).toEqual([0, 200, 400]);
+  expect(timeTicks([0, 600])).toEqual([0, 200, 400, 600]);
+  expect(timeTicks([0, 60000])).toEqual([0, 20000, 40000, 60000]);
+  // a zoomed stretch: round moments of the session, not offsets of the stretch
+  expect(timeTicks([230, 460])).toEqual([300, 400]);
+  expect(timeTicks([5, 5])).toEqual([5]);
+  // slices and wall time give one span: a chart of slices and a chart of moments agree
+  expect(sessionSpan({ binMs: 7.8, wallMs: 467 }, 60)).toEqual([0, 468]);
+  expect(sessionSpan({ binMs: 10, wallMs: 467 }, 40)).toEqual([0, 467]);
 });
 
 test("a table that narrows drops its columns by rank, whole, and clips none", async () => {
@@ -267,23 +273,24 @@ test("a table that narrows drops its columns by rank, whole, and clips none", as
   expect(operationColumns(1400, { format: false, bar: true, notes: true }, sized).shown).toEqual(["status", "title", "duration", "requests", "time", "bar", "notes"]);
 });
 
-test("tiles go in rows of equal count: four are two and two, never three and one, never one column", async () => {
-  const { tilesPerRow, figuresFit } = await import("../src/ui/kit");
+test("tiles go in rows of equal count: four are two and two, never three and one; too narrow for two, a line each", async () => {
+  const { tilesPerRow, tilesFit } = await import("../src/ui/kit");
   expect(tilesPerRow(700, 4, 144)).toBe(4);
   // room for three: two and two
   expect(tilesPerRow(500, 4, 144)).toBe(2);
   expect(tilesPerRow(320, 4, 144)).toBe(2);
-  // no room for two as they read: two all the same (each tight), not a column of four
-  expect(tilesPerRow(200, 4, 144)).toBe(2);
+  // no room for two as they read: a line each, so no label and no figure is cut
+  expect(tilesPerRow(200, 4, 144)).toBe(1);
+  expect(tilesPerRow(300, 4, 144)).toBe(2);
   expect(tilesPerRow(200, 1, 144)).toBe(1);
   expect(tilesPerRow(500, 5, 128)).toBe(3);
   // not measured yet: all abreast
   expect(tilesPerRow(0, 4, 144)).toBe(4);
-  // a line of figures holds what fits and never wraps: the last ranked go
-  expect(figuresFit(0, 7)).toBe(7);
-  expect(figuresFit(1000, 7)).toBe(7);
-  expect(figuresFit(520, 7)).toBe(4);
-  expect(figuresFit(100, 7)).toBe(2);
+  // a ranked row holds what fits and never wraps: the last ranked go, two stay
+  expect(tilesFit(0, 5, 168)).toBe(5);
+  expect(tilesFit(1000, 5, 168)).toBe(5);
+  expect(tilesFit(520, 5, 168)).toBe(2);
+  expect(tilesFit(100, 5, 168)).toBe(2);
 });
 
 test("runs of one command are told apart by the argument that differs", async () => {
@@ -313,7 +320,7 @@ test("one function writes a duration, and a scenario has words", async () => {
 });
 
 test("a run reads as four signals and in flight; what a log without times cannot say is said, never 0", async () => {
-  const { signalsFromProfile, signalTiles, signalChanges, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
+  const { signalsFromProfile, signalTiles, brief, operationStats, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
   const bin = (tMs: number, ok: number, server = 0, retried = 0) => ({ tMs, ok, miss: 0, client: 0, server, p50Ms: 2, p95Ms: 6, p99Ms: 9, retried, bytesUp: 1024 * ok, bytesDown: 0 });
   const profile = {
     wallMs: 2000,
@@ -352,14 +359,36 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(untimed[3].detail).toBe("↑ 39.0 KiB ↓ 0 B");
   expect(untimed[4].value).toBe("Not timed");
   expect(untimed.every((x) => x.id === "errors" || x.series.length === 0)).toBe(true);
-  // before and after in one tile: both figures, and by how much
-  const slower = signalsFromProfile({ ...(profile as object), p50Ms: 3 } as never, summary);
-  const changed = signalChanges(s, slower);
-  expect(changed.length).toBe(4);
-  expect(changed[2].value).toBe("2.0 ms → 3.0 ms");
-  expect(changed[2].detail.startsWith("+50% · ")).toBe(true);
-  expect(changed[2].tone).toBe("bad");
-  expect(changed[0].detail).toBe("40 requests in 2.00 s");
+  // a run of a moment says totals, not rates, and draws no line: 9 requests in a third of a second
+  expect(brief(s)).toBe(false);
+  const few = { requests: 9, errors: 2, misses: 0, refused: 0, seconds: 0.334, bytesUp: 0, bytesDown: 3145728 };
+  const moment = signalsFromProfile({ ...(profile as object), wallMs: 334, binMs: 167, peakAtMs: 0, rate: [bin(0, 5, 2), bin(167, 2)] } as never, few);
+  expect(brief(moment)).toBe(true);
+  const short = signalTiles(moment);
+  expect(short[0].label).toBe("Requests");
+  expect(short[0].value).toBe("9 requests");
+  expect(short[0].detail).toBe("in 334 ms");
+  expect(short[1].value).toBe("2 of 9");
+  // a percentile of nine requests is one of them: said
+  expect(short[2].detail).toBe("p95 6.0 ms · of only 9");
+  expect(short[3].value).toBe("3.0 MiB");
+  expect(short[3].detail).toBe("↑ 0 B ↓ 3.0 MiB");
+  expect(short[4].detail).toBe("of 9 requests");
+  expect(short.every((x) => x.series.length === 0)).toBe(true);
+  // Rust's own flag wins where the signals carry it
+  expect(brief({ ...s, short: true })).toBe(true);
+  // the run by operation: Rust's table, or what an older share's profile holds of it
+  const groups = [
+    { operation: "GetObject", missed: false, requests: 30, errors: 3, p50Ms: 2, p95Ms: 6 },
+    { operation: "GetObject", missed: true, requests: 10, errors: 0, p50Ms: 1, p95Ms: 2 },
+    { operation: "PutObject", missed: false, requests: 5, errors: 0, p50Ms: 9, p95Ms: 12 },
+  ];
+  const ops = operationStats({ summary, profile: { ...(profile as object), groups } as never });
+  expect(ops.map((o) => [o.operation, o.count, o.few])).toEqual([["GetObject", 40, false], ["PutObject", 5, true]]);
+  expect(ops[0].errorShare).toBe(3 / 40);
+  expect(ops[0].p99Ms).toBe(null);
+  const own = operationStats({ summary: { ...summary, operations: [{ operation: "PutObject", count: 12, errors: 6, misses: 0, errorShare: 0.5, bytesUp: 0, bytesDown: 0, p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4, few: true }] }, profile: profile as never });
+  expect(own).toEqual([{ operation: "PutObject", count: 12, errorShare: 0.5, p50Ms: 1, p95Ms: 2, p99Ms: 3, few: true }]);
   // sizes by their bounds; a prefix by the nearer of its two limits
   expect(sizeLabel(0)).toBe("empty");
   expect(sizeLabel(1024)).toBe("≤ 1.0 KiB");

@@ -64,6 +64,11 @@ export function bytes(n: number | null | undefined): string {
   return i === 0 ? `${Math.round(n)} B` : `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
+/** Bytes sent and received, the one way everywhere: "↑ 78.1 KiB ↓ 75.1 KiB". */
+export function transfer(up: number | null | undefined, down: number | null | undefined, each: (n: number) => string = bytes): string {
+  return `↑ ${each(up ?? 0)} ↓ ${each(down ?? 0)}`;
+}
+
 export function count(n: number): string {
   try {
     return n.toLocaleString(locale());
@@ -83,33 +88,30 @@ export function date(s: string | null | undefined): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function ago(s: string | null | undefined): string {
-  if (!s) return "—";
-  const ms = Date.now() - new Date(s).getTime();
-  if (Number.isNaN(ms)) return s;
-  const m = Math.round(ms / 60000);
-  if (m < 1) return t("time.now");
-  if (m < 60) return t("time.minutes", { n: m });
-  const h = Math.round(m / 60);
-  if (h < 48) return t("time.hours", { n: h });
-  return t("time.days", { n: Math.round(h / 24) });
-}
-
-export function days(d: number | null | undefined): string {
-  if (d === null || d === undefined) return "—";
-  if (d * 24 < 1) return t("time.minutes", { n: Math.max(1, Math.round(d * 1440)) });
-  return d * 24 < 23.5 ? t("time.hours", { n: Math.round(d * 24) }) : t("time.days", { n: d.toFixed(1) });
-}
-
 export function money(v: number, currency: string): string {
   return `${v < 0.01 && v > 0 ? "<0.01" : v.toFixed(2)} ${currency}`;
 }
 
-/** How long something took, the one way everywhere: 0.4 ms, 84 ms, 2.35 s,
- * 41.2 s, 3 min 05 s, 2 h 05 min. The unit is chosen after rounding, so
- * nothing reads "1000 ms" or "60.0 s". */
-export function duration(v: number): string {
+/** A length of time, the one way everywhere. As measured (the default):
+ * 0.4 ms, 84 ms, 2.35 s, 41.2 s, 3 min 05 s, 2 h 05 min — the unit chosen
+ * after rounding, so nothing reads "1000 ms" or "60.0 s". As an `age` (how
+ * long ago, how old): whole and coarse, in the reader's words — now, 5 min,
+ * 3 h, 86 d. As a `counter` (a run's time so far): 0:07, 12:40, 1:05:09.
+ * No other function writes one. */
+export function duration(v: number, as: "measured" | "age" | "counter" = "measured"): string {
   if (!Number.isFinite(v)) return "—";
+  if (as === "age") {
+    const m = Math.round(v / 60000);
+    if (m < 1) return t("time.now");
+    if (m < 60) return t("time.minutes", { n: m });
+    const h = Math.round(m / 60);
+    return h < 48 ? t("time.hours", { n: h }) : t("time.days", { n: count(Math.round(h / 24)) });
+  }
+  if (as === "counter") {
+    const s = Math.max(0, Math.floor(v / 1000));
+    const h = Math.floor(s / 3600);
+    return h ? `${h}:${p2(Math.floor((s % 3600) / 60))}:${p2(s % 60)}` : `${Math.floor(s / 60)}:${p2(s % 60)}`;
+  }
   const a = Math.abs(v);
   if (a === 0) return "0 ms";
   if (a < 9.95) return `${v.toFixed(1)} ms`;
@@ -122,6 +124,9 @@ export function duration(v: number): string {
   const m = Math.round(s / 60);
   return `${sign}${Math.floor(m / 60)} h ${p2(m % 60)} min`;
 }
+
+/** How long ago a moment was, as an age: "now", "5 min", "3 h", "86 d". */
+export const since = (iso: string | null | undefined): number => (iso ? Date.now() - new Date(iso).getTime() : Number.NaN);
 
 /** A share as people read it: whole percents, "<1%" for a sliver, "0%" for none. */
 export function percent(fraction: number): string {
@@ -177,13 +182,6 @@ export function clock(iso: string, precision: "m" | "s" | "ms" = "ms"): string {
   if (precision === "m") return hms;
   const s = `${hms}:${p2(d.getSeconds())}`;
   return precision === "s" ? s : `${s}.${String(d.getMilliseconds()).padStart(3, "0")}`;
-}
-
-/** A run's time so far, as a counter: 0:07, 12:40, 1:05:09. */
-export function elapsed(v: number): string {
-  const s = Math.max(0, Math.floor(v / 1000));
-  const h = Math.floor(s / 3600);
-  return h ? `${h}:${p2(Math.floor((s % 3600) / 60))}:${p2(s % 60)}` : `${Math.floor(s / 60)}:${p2(s % 60)}`;
 }
 
 /** A long key cut in its middle, so the end that tells keys apart stays:

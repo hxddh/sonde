@@ -16,6 +16,6 @@ mod ring;
 pub mod sqlite;
 
 pub use record::{
-    Header, MAX_LATENCY_MS, MAX_REQUEST_BODY, Record, RecordSummary, is_control_operation,
+    Header, MAX_LATENCY_MS, MAX_REQUEST_BODY, Record, RecordSummary, Text, is_control_operation,
 };
 pub use ring::{DEFAULT_CAPACITY, Filter, RequestLog, Sink, StatusFilter};

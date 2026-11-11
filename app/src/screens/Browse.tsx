@@ -2,7 +2,7 @@
 // page and kept in Rust), and an object's details.
 
 import { batch, cleanup, computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
-import { DataTable, type DataTableRef, Link, ResizablePanel, ResizablePanelGroup } from "nsh/base";
+import { DataTable, type DataTableRef, ResizablePanel, ResizablePanelGroup } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { bytes, count, date } from "../format";
 import { t } from "../i18n";
@@ -11,7 +11,7 @@ import { api, Listing, watch } from "../native";
 import { bucket, copy, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Await, Back, Badge, Bar, Button, Card, Choice, Disclosure, Empty, fitColumns, FOCUS, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE } from "../ui/kit";
+import { Await, Back, Bar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
 import { invalidate, Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
@@ -24,9 +24,10 @@ const WINDOW = 400;
  * whole, none clipped. */
 const NAME = 240;
 const OBJECT_COLUMNS = [
-  { key: "modified", width: 150 },
+  // (a date in full, in every language: "Sep 30, 2026, 12:59 PM" is the widest)
+  { key: "modified", width: 172 },
   { key: "class", width: 124 },
-  { key: "parts", width: 56 },
+  { key: "parts", width: 64 },
 ] as const;
 const SIZE = 96;
 
@@ -40,21 +41,21 @@ function Breadcrumbs() {
   return (
     <View class="min-w-0 flex-row flex-wrap items-center gap-1">
       {/* links of the path (the last one the place shown): screen readers hear them so */}
-      <Link testID="crumb-root" href={`s3://${bucket()}/`} openWith="app" onOpen={() => prefix.set("")} current={parts().length === 0} accessibilityLabel={bucket() ?? ""} class={`flex-row items-center gap-1 rounded-(--radius-sm) px-1 py-1 hover:bg-muted ${FOCUS}`}>
+      <Crumb testID="crumb-root" href={`s3://${bucket()}/`} onOpen={() => prefix.set("")} current={parts().length === 0} label={bucket() ?? ""}>
         <If when={!terminal()}>
           <Icon name="database" tint="foreground" />
         </If>
         <Strong>{bucket()}</Strong>
-      </Link>
+      </Crumb>
       <Each of={parts()}>
         {(p, i) => (
           <View class="flex-row items-center gap-1">
             <If when={!terminal()} else={<Text class="text-muted-foreground">/</Text>}>
               <Icon name="chevron-right" size={ICON.small} />
             </If>
-            <Link href={`s3://${bucket()}/${p().prefix}`} openWith="app" onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} accessibilityLabel={p().name} class={`rounded-(--radius-sm) px-1 py-1 hover:bg-muted ${FOCUS}`}>
-              <Text class={i() === parts().length - 1 ? "text-body font-medium text-foreground" : "text-body text-muted-foreground"}>{p().name}</Text>
-            </Link>
+            <Crumb href={`s3://${bucket()}/${p().prefix}`} onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} label={p().name}>
+              <Text class={i() === parts().length - 1 ? "text-body text-foreground" : "text-body text-muted-foreground"}>{p().name}</Text>
+            </Crumb>
           </View>
         )}
       </Each>
@@ -196,7 +197,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                   <View class="flex-row flex-wrap items-center gap-2">
                     <Text class="text-small text-muted-foreground">{t("browse.expires")}</Text>
                     <Choice
-                      class="w-36"
+                      class={WIDTH.choice}
                       placeholder={t("browse.expires")}
                       value={presignSecs()}
                       items={[
@@ -440,7 +441,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             {t("browse.objects", { n: count(total()) })}
             {done() ? "" : ` · ${t("browse.more")}`}
           </Text>
-          <SearchField small class="w-72 min-w-0 shrink" testID="listing-filter" value={filter()} placeholder={t("browse.filterHint")} label={t("browse.filterOrSearch")} onChange={applyFilter} onSubmit={search}>
+          <SearchField small class={`${WIDTH.long} min-w-0 shrink`} testID="listing-filter" value={filter()} placeholder={t("browse.filterHint")} label={t("browse.filterOrSearch")} onChange={applyFilter} onSubmit={search}>
             <If when={filter()}>
               <IconButton inField icon="corner-down-left" label={t("browse.searchAll")} onPress={search} testID="search" />
             </If>
@@ -464,14 +465,15 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       <If when={searchHits()}>
         {(hits) => (
           <Card pad="none" testID="search-hits">
-            <View class="flex-row items-center gap-2 py-1 ps-3 pe-1">
-              <Text class="text-body font-medium text-foreground">{t("browse.matches", { n: count(hits().length) })}</Text>
+            <Row first>
+              <Text class="text-body text-foreground">{t("browse.matches", { n: count(hits().length) })}</Text>
               <Text class="min-w-0 flex-1 text-small text-muted-foreground line-clamp-1">{searchState() ?? ""}</Text>
               <IconButton icon="x" label={t("common.close")} onPress={() => (stopSearch(), searchHits.set(null))} />
-            </View>
+            </Row>
             {/* six rows show; the rest scroll under them, so the table keeps its room */}
             <If when={hits().length > 0}>
-              <Scroll class="max-h-44 border-t border-border" contentClass="p-1">
+              <Row bare>
+              <Scroll class="max-h-44 flex-1" contentClass="p-1">
                 <Each of={hits().slice(0, HITS)} key={(h) => h.key}>
                   {(h) => (
                     <ListRow label={h().key} selected={props.selected === h().key} onPress={() => props.onSelect(h())}>
@@ -486,6 +488,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                   <Empty compact text={t("browse.moreMatches", { n: count(hits().length - HITS) })} />
                 </If>
               </Scroll>
+              </Row>
             </If>
           </Card>
         )}
@@ -501,9 +504,9 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             columns={[
               { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : 380, minWidth: 120 },
               { key: "size", title: t("browse.size"), width: SIZE, align: "end" as const },
-              ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: 150 }] : []),
+              ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: 172 }] : []),
               ...(ranked().includes("class") ? [{ key: "class", title: t("browse.class"), width: 124 }] : []),
-              ...(ranked().includes("parts") ? [{ key: "parts", title: t("mpu.parts"), width: 56, align: "end" as const }] : []),
+              ...(ranked().includes("parts") ? [{ key: "parts", title: t("mpu.parts"), width: 64, align: "end" as const }] : []),
             ]}
             data={tableData()}
             dataStart={start()}
@@ -525,7 +528,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                       return (
                         <View class="flex-1 flex-row items-center gap-2">
                           <Icon name={folder ? "folder" : "file"} tint={folder ? "foreground" : "muted-foreground"} />
-                          <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${folder ? "font-medium text-foreground" : "text-foreground"}`}>{c.text}</Text>
+                          <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${folder ? "text-foreground" : "text-foreground"}`}>{c.text}</Text>
                         </View>
                       );
                     }

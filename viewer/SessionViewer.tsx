@@ -10,7 +10,7 @@ import { duration } from "../app/src/format";
 import { t } from "../app/src/i18n";
 import type { Episode, LogLine, RecordSummary, RequestRecord, SessionView } from "../app/src/types";
 import { BREAK, Button, Muted, PanelHeader, Segmented, SPLIT_HANDLE, Strong } from "../app/src/ui/kit";
-import { SessionShape } from "../app/src/ui/plots";
+import { SessionShape, SHAPE_STRIP, TICK_ROOM } from "../app/src/ui/plots";
 import { RecordView } from "../app/src/ui/record";
 import { findingMarks, linesOf, Observations, OperationsTable, OperationView, OutputTable, operationsAt, SessionHeader } from "../app/src/ui/sessionview";
 import { TimePane } from "../app/src/ui/profile";
@@ -109,7 +109,7 @@ export function SessionViewer(props: { data: SharedSession }) {
   const findings = () => <Observations view={d} dense narrow={box().w < BREAK.inspector || inspecting()} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(104, Math.round(box().h * 0.3))} />;
   const strip = () => (
     <If when={d.profile && box().h >= BREAK.short}>
-      <SessionShape strip profile={d.profile} slice={slice()} onSlice={(i) => slice.set(i)} annotate marks={findingMarks(d)} class="mt-3 h-11 w-full shrink-0" />
+      <SessionShape strip axis profile={d.profile} slice={slice()} onSlice={(i) => slice.set(i)} annotate marks={findingMarks(d)} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
     </If>
   );
   const body = () => {
@@ -158,8 +158,9 @@ export function SessionViewer(props: { data: SharedSession }) {
           value={pane()}
           items={[
             { value: "operations", title: t("sessions.operations"), icon: "list-filter" },
-            ...(d.lines.length ? [{ value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const }] : []),
-            ...(d.profile ? [{ value: "time", title: t("profile.pane"), icon: "chart-pie" as const }] : []),
+            // (as in the app: a tab with nothing to show is dimmed, it does not go)
+            { value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const, disabled: !d.lines.length, why: t("sessions.noOutput") },
+            { value: "time", title: t("profile.pane"), icon: "chart-pie" as const, disabled: !d.profile },
           ]}
           onChange={(p) => pane.set(p as Pane)}
         />

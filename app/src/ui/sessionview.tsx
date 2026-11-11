@@ -7,15 +7,15 @@
 import { type ContextMenuEvent, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
 import { isAvailable } from "nsh/desktop";
-import { bytes, change, clock, count, date, day, duration, hm, middle, percent } from "../format";
+import { change, clock, count, date, day, duration, hm, middle, transfer } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { Chart, sessionStory, Sparkline, timed, Waterfall } from "./plots";
+import { Chart, sessionStory, Sparkline, timed, Waterfall, MARK } from "./plots";
 import { type SignalId, signalsOf, signalTiles } from "../signals";
 import { worstStanding } from "../trials";
-import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
+import type { Episode, LogLine, Observation, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, InWindowMenu, ListRow, Options, Path, Row, ROW, rowHeight, Stat, Strong, TABLE, terminal, type TileLook, Tiles, Title, TYPE } from "./kit";
+import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, InWindowMenu, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -198,7 +198,6 @@ const TONE_BAR: Record<Tone, string> = {
   server: "bg-status-server",
   refused: "bg-status-refused",
 };
-export const toneText = (t: Tone) => TONE_TEXT[t];
 
 /** An HTTP status, the same everywhere: a dot in its tone and the code, a
  * success quiet, anything else in its tone (none: the request never got
@@ -257,7 +256,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
     const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: duration(s().seconds * 1000) })];
     if (s().errors) parts.push(t("timeline.errors", { n: s().errors }));
     if (s().misses) parts.push(t("timeline.notFound", { n: s().misses }));
-    parts.push(`↑${bytes(s().bytesUp)} ↓${bytes(s().bytesDown)}`);
+    parts.push(transfer(s().bytesUp, s().bytesDown));
     return parts.join(" · ");
   };
   const command = () => props.view.header.command;
@@ -292,7 +291,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           tone={x().tone}
           hint={props.onSignal ? t("signal.open") : undefined}
           onPress={props.onSignal ? () => props.onSignal?.(SIGNALS[i]) : undefined}
-          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class="h-5 w-16 shrink-0" fill={x().tone === "bad" ? "fill-status-server/80" : undefined} />}
+          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class={MARK.tile} kind={x().kind} tone={x().tone === "bad" ? "bad" : "plain"} />}
         />
       </If>
     );
@@ -317,15 +316,14 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
       {/* one reading of a run: rate, errors, latency, bytes, and how many at once; each opens its chart */}
       {/* (a page shared before sessions had a profile: its figures in a line) */}
       <If when={tiles().length > 0} else={<Text testID="session-summary" accessibilityLabel={line()} class="tabular-nums text-small text-muted-foreground">{line()}</Text>}>
-        <Tiles ranked short={props.short} min={SIGNAL_TILE} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
+        <Tiles ranked short={props.short} min={SIZES.signalTile} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
       </If>
     </View>
   );
 }
 
-/** The signals in rank order, and the least width a tile of one reads in. */
+/** The signals in rank order (the least width a tile of one reads in is the kit's `SIZES.signalTile`). */
 const SIGNALS: SignalId[] = ["rate", "errors", "latency", "bytes", "inFlight"];
-const SIGNAL_TILE = 168;
 
 const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3" } as const;
 type Sdk = keyof typeof SDKS | "config";
@@ -400,7 +398,8 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
             {/* highlighted, with a copy button over it (Native Shell's TextView) */}
             <TextView
               testID="fix-code"
-              markdown={`\`\`\`${LANG[f().sdk]}\n${f().code}\n\`\`\``}
+              // (the sample as written, without the blank lines around it)
+              markdown={`\`\`\`${LANG[f().sdk]}\n${f().code.replace(/^\s*\n|\s+$/g, "")}\n\`\`\``}
               codeBlockActions={[{ id: "copy", label: t("fix.copy") }]}
               classes={{ codeBlock: "rounded-(--radius) border border-border bg-background p-2 font-mono text-small" }}
             />
@@ -436,16 +435,19 @@ export function whatIfText(v: SessionView): string | null {
  * about. `compact` (beside a run's live operations): the sentences only. */
 export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
-  // a finding pressed brings its fixes into view, under the list
+  // a finding pressed opens what to change inside its own row, under its title; the row comes
+  // to the top of the findings' room, so its title stays in view over its advice
   // (Native Shell's `reveal`: the scroll views around a view bring it to show)
-  let fixes: ViewRef | undefined;
-  const showFixes = () => fixes?.reveal({ vertical: "nearest" });
-  effect(() => {
+  const places: (ViewRef | undefined)[] = [];
+  const showChosen = () => {
     const f = props.filter;
-    if (f == null || !props.view.observations[f]?.fixes?.length) return;
-    // another finding's fixes in the same panel; a panel that has just come reveals itself
-    showFixes();
+    if (f != null) places[f]?.reveal({ vertical: "start" });
+  };
+  effect(() => {
+    if (props.filter != null) showChosen();
   });
+  /** Whether a finding has anything to open: its fixes, or (the app's own) a line for sonde.toml. */
+  const advised = (o: Observation) => !!o.fixes?.length || !!(props.onExpect && o.identity);
   const list = () => props.view.observations.slice(0, props.max ?? props.view.observations.length);
   if (terminal()) {
     return (
@@ -482,7 +484,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   const saving = (v: () => string, i: () => number) => (
     <View class="shrink-0 flex-row items-center gap-1">
       <Icon name="trending-down" size={ICON.small} tint="info" />
-      <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small font-medium text-info">{v()}</Text>
+      <Text testID={`observation-saving-${i()}`} class="tabular-nums text-small text-info">{v()}</Text>
     </View>
   );
   const row = (o: () => Observation, i: () => number) => (
@@ -502,7 +504,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
         <>
           <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
           <If when={props.onFilter && o().episodes?.length}>
-            <View class={`${props.narrow ? "" : "w-28"} flex-row items-center justify-end gap-1`}>
+            <View class={`${props.narrow ? "" : WIDTH.count} flex-row items-center justify-end gap-1`}>
               <If when={!props.narrow}>
                 <Text class="tabular-nums text-caption text-muted-foreground group-selected:text-foreground">{t("figure.operationsN", { n: o().episodes.length })}</Text>
               </If>
@@ -527,31 +529,33 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   const findings = () => (
     // a short window keeps room for the operations: the findings scroll
     <Scroll class={`overflow-hidden ${CARD}`} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
-      <Each of={list()}>{(o: () => Observation, i) => row(o, i)}</Each>
-      {/* the finding pressed: what to change, in the findings' own room */}
-      <If when={!props.compact && props.filter != null && props.view.observations[props.filter!] && (props.view.observations[props.filter!].fixes?.length || (props.onExpect && props.view.observations[props.filter!].identity)) ? props.view.observations[props.filter!] : null}>
-        {(o) => (
-          <View
-            ref={(r) => {
-              fixes = r;
-              showFixes();
-            }}
-            class="border-t border-border p-3"
-          >
-            <If
-              when={o().fixes?.length}
-              else={
-                <View class="flex-row items-center gap-2">
-                  <Text class="min-w-0 flex-1 text-small text-muted-foreground">{t("expect.hint")}</Text>
-                  <ExpectButton o={o()} onExpect={props.onExpect} />
-                </View>
-              }
-            >
-              <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} />
+      <Each of={list()}>
+        {(o: () => Observation, i) => (
+          <View ref={(r) => (places[i()] = r)}>
+            {row(o, i)}
+            {/* the finding pressed: what to change, inside its own row — never under another finding's title */}
+            <If when={!props.compact && props.filter === i() && advised(o())}>
+              <View
+                testID="finding-advice"
+                ref={() => showChosen()}
+                class="border-t border-border bg-muted/40 p-3"
+              >
+                <If
+                  when={o().fixes?.length}
+                  else={
+                    <View class="flex-row items-center gap-2">
+                      <Text class="min-w-0 flex-1 text-small text-muted-foreground">{t("expect.hint")}</Text>
+                      <ExpectButton o={o()} onExpect={props.onExpect} />
+                    </View>
+                  }
+                >
+                  <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} />
+                </If>
+              </View>
             </If>
           </View>
         )}
-      </If>
+      </Each>
     </Scroll>
   );
   return (
@@ -691,18 +695,14 @@ export function OperationsTable(props: {
     return order.map(column);
   };
   const data = () => {
-    // the name is cut for the room it has, not at a fixed length
-    const room = Math.max(24, Math.floor((titleWidth() - 12) / 6.4));
-    // a key is cut in its middle (its end tells two apart); a sentence is left to the cell, which cuts its end
-    const fit = (text: string) => (text.includes("/") ? middle(text, room) : text);
     return shown().map((i) => {
       const e = props.view.episodes[i];
       return {
         status: episodeTone(e),
         time: clock(e.start),
         format: family(e).label,
-        // cut in the middle: the end of a key is what tells two apart
-        title: terminal() ? middle(e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72) : fit(episodeTitle(e)),
+        // a terminal cuts it by a count of characters; a window where it runs out of room (the cell's own middle ellipsis)
+        title: terminal() ? middle(e.outcome.kind !== "ok" ? `${episodeTitle(e)} ✗` : episodeTitle(e), props.compact ? 40 : 72) : episodeTitle(e),
         requests: count(e.records.length),
         duration: duration(episodeMs(e)),
         bar: "",
@@ -729,7 +729,12 @@ export function OperationsTable(props: {
           </View>
         );
       case "title":
-        return <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e)]}`}>{c.text}</Text>;
+        // cut in its middle, by the text itself: a name's end (a key's file, an id) is what tells two rows apart
+        return (
+          <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e)]}`} style={{ textOverflow: "ellipsis-middle" }}>
+            {c.text}
+          </Text>
+        );
       case "bar": {
         const [a, b] = range();
         const total = b - a;
@@ -850,7 +855,7 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
   const request = (r: () => RecordSummary, i: () => number) => (
     <View style={{ height: rowHeight(ROW.twoLine) }}>
       <ListRow divided first={i() === 0} testID={`op-request-${i()}`} label={`${r().operation} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 py-0" trailing={<><Text class="text-small tabular-nums text-muted-foreground">{duration(r().latencyMs)}</Text><Icon name="chevron-right" size={ICON.small} /></>}>
-        <View class="w-12">
+        <View class={WIDTH.status}>
           <StatusMark status={r().status} injected={r().injected} />
         </View>
         <View class="min-w-0 flex-1">
@@ -875,18 +880,19 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
         <View class="flex-row items-center gap-2">
           {props.back}
           <If when={fam().label}>
-            <Text class={`text-small font-medium ${fam().class}`}>{fam().label}</Text>
+            <Text class={`text-small ${fam().class}`}>{fam().label}</Text>
           </If>
           <View class="flex-1" />
           <If when={e().outcome.kind !== "ok"}>
             <View class="flex-row items-center gap-2">
               <Dot tone={episodeTone(e())} />
-              <Text class={`text-small font-medium ${TONE_TEXT[episodeTone(e())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
+              {/* emphasis: how it failed, in its tone */}
+              <Text class={`text-small ${EMPHASIS} ${TONE_TEXT[episodeTone(e())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
             </View>
           </If>
         </View>
         <Title class="leading-5">{episodeTitle(e())}</Title>
-        <Text class="tabular-nums text-caption text-muted-foreground">{`${clock(e().start)} · ${duration(episodeMs(e()))} · ↑${bytes(e().bytesUp)} ↓${bytes(e().bytesDown)}`}</Text>
+        <Text class="tabular-nums text-caption text-muted-foreground">{`${clock(e().start)} · ${duration(episodeMs(e()))} · ${transfer(e().bytesUp, e().bytesDown)}`}</Text>
       </View>
       <If when={notes().length > 0}>
         <View class="gap-2">
@@ -1031,20 +1037,24 @@ export function SessionList(props: {
         <If when={x().s.live}>
           <Dot tone="live" label={t("timeline.live")} />
         </If>
-        <Text class="min-w-0 shrink text-body font-medium text-foreground line-clamp-1">{name(x().s)}</Text>
+        <Text class="min-w-0 shrink text-body text-foreground line-clamp-1">{name(x().s)}</Text>
         <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{told().get(x().s.path)?.args ?? args(x().s)}</Text>
         {/* the same command run again: its time at the row's end, to the second */}
         <If when={told().get(x().s.path)?.twin}>
-          <Text testID="session-time" class="shrink-0 tabular-nums text-caption font-medium text-foreground">{clock(x().s.created, "s")}</Text>
+          <Text testID="session-time" class="shrink-0 tabular-nums text-caption text-foreground">{clock(x().s.created, "s")}</Text>
         </If>
       </View>
       <View class="flex-row items-center gap-2">
-        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{`${hm(x().s.created)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
-        {/* tried under faults, and the program broke: said on its row */}
+        {/* (a twin's time is at its row's end, to the second: not said twice) */}
+        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{[told().get(x().s.path)?.twin ? "" : hm(x().s.created), x().s.endpoint, t("sessions.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
+        {/* tried under faults, and the program broke: said on its row, in a word (in full to a screen reader) */}
         <If when={worstStanding(x().s.trials) === "broke"}>
-          <Badge testID="session-broke" label={t("trial.brokeBadge")} tone="fail" />
+          <View accessibilityLabel={t("trial.brokeBadge")}>
+            <Badge testID="session-broke" label={t("trial.broke")} tone="fail" />
+          </View>
         </If>
-        <If when={x().s.shape?.length}>
+        {/* (a row that says it broke keeps its line for its words: no mark beside the badge) */}
+        <If when={x().s.shape?.length && worstStanding(x().s.trials) !== "broke"}>
           <Sparkline shape={x().s.shape!} id={x().s.path} />
         </If>
       </View>

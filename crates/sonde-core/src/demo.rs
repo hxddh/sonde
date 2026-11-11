@@ -4,6 +4,12 @@
 //! generated on the fly) and `demo-layouts` (real SlateDB, Iceberg, lakeFS
 //! and Woodpecker layouts). Requests are not authenticated; it listens on
 //! 127.0.0.1 only.
+//!
+//! It honours what a program's commits rest on: `If-None-Match: *` and
+//! `If-Match` on a write (412 when the condition does not hold), ranged
+//! reads, and `DeleteObjects`. An answer leaves in one write on a socket
+//! without Nagle's delay: head and body sent apart on a kept connection
+//! waited 40 ms for the client's delayed ACK, every time.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -255,6 +261,8 @@ pub async fn start() -> std::io::Result<DemoServer> {
                 continue;
             };
             let state = state.clone();
+            // an answer goes when it is written, not when the last one is ACKed
+            let _ = sock.set_nodelay(true);
             tokio::spawn(async move {
                 let mut buf = Vec::with_capacity(8192);
                 loop {
@@ -304,11 +312,12 @@ pub async fn start() -> std::io::Result<DemoServer> {
                         resp.push_str(&format!("{k}: {v}\r\n"));
                     }
                     resp.push_str("\r\n");
-                    let is_head = request_line.starts_with("HEAD ");
-                    if sock.write_all(resp.as_bytes()).await.is_err() {
-                        return;
+                    // head and body in one write: one segment for a small answer
+                    let mut out = resp.into_bytes();
+                    if !request_line.starts_with("HEAD ") {
+                        out.extend_from_slice(&payload);
                     }
-                    if !is_head && sock.write_all(&payload).await.is_err() {
+                    if sock.write_all(&out).await.is_err() {
                         return;
                     }
                 }
@@ -333,6 +342,7 @@ fn reason(s: u16) -> &'static str {
         400 => "Bad Request",
         404 => "Not Found",
         409 => "Conflict",
+        412 => "Precondition Failed",
         416 => "Range Not Satisfiable",
         501 => "Not Implemented",
         _ => "",
@@ -468,6 +478,9 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
                 out.push_str("</ListVersionsResult>");
                 xml(out)
             }
+            ("POST", _) if q.contains_key("delete") => {
+                delete_objects(b, &String::from_utf8_lossy(&body), &seq_id, now)
+            }
             ("GET", _) => list_v2(&bucket, b, &q),
             ("HEAD", _) => (200, vec![], vec![]),
             _ => err(501, "NotImplemented", "not in the demo server"),
@@ -522,6 +535,9 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
             }
             // the parts in order, whatever the request's list says: enough for a demo
             "POST" => {
+                if let Some(refused) = precondition(b, &key, &header) {
+                    return refused;
+                }
                 let u = b.uploads.remove(pos);
                 let mut data = Vec::new();
                 for (n, _) in &u.parts {
@@ -608,6 +624,9 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
             (200, h, data)
         }
         "PUT" => {
+            if let Some(refused) = precondition(b, &key, &header) {
+                return refused;
+            }
             let id = if b.versioning == Some("Enabled") {
                 seq_id
             } else {
@@ -661,6 +680,129 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
         }
         _ => err(501, "NotImplemented", "not in the demo server"),
     }
+}
+
+/// The ETag of what a key holds now: none when it is absent or deleted.
+fn current_etag(b: &Bucket, key: &str) -> Option<String> {
+    if b.synthetic > 0 {
+        return find(b, key, None).ok().map(|(d, _)| etag(&d));
+    }
+    b.objects.get(key)?.last()?.data.as_deref().map(etag)
+}
+
+/// Why a conditional write is refused, if it is: `If-None-Match: *` with
+/// something there, `If-Match` with something else there (or nothing).
+fn precondition(b: &Bucket, key: &str, header: &dyn Fn(&str) -> Option<String>) -> Option<Resp> {
+    let now = current_etag(b, key);
+    let refuse = |condition: &str| {
+        let mut r = err(
+            412,
+            "PreconditionFailed",
+            "At least one of the pre-conditions you specified did not hold",
+        );
+        r.2 = String::from_utf8_lossy(&r.2)
+            .replace(
+                "</Message>",
+                &format!("</Message><Condition>{condition}</Condition>"),
+            )
+            .into_bytes();
+        r
+    };
+    if header("if-none-match").is_some_and(|v| v.trim() == "*") && now.is_some() {
+        return Some(refuse("If-None-Match"));
+    }
+    if let Some(want) = header("if-match") {
+        let holds = now.as_deref().is_some_and(|have| {
+            want.split(',')
+                .any(|w| w.trim() == "*" || w.trim().trim_matches('"') == have.trim_matches('"'))
+        });
+        if !holds {
+            return Some(refuse("If-Match"));
+        }
+    }
+    None
+}
+
+/// Every `<name>…</name>` of a document, in order.
+fn tags<'a>(xml: &'a str, name: &str) -> Vec<&'a str> {
+    let (open, close) = (format!("<{name}>"), format!("</{name}>"));
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(i) = rest.find(&open) {
+        let after = &rest[i + open.len()..];
+        let Some(j) = after.find(&close) else { break };
+        out.push(&after[..j]);
+        rest = &after[j + close.len()..];
+    }
+    out
+}
+
+fn unesc(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+/// `POST /bucket?delete`: each object of the document deleted as
+/// `DELETE` would (a delete marker where the bucket keeps versions, the
+/// version itself when one is named), and each answered for.
+fn delete_objects(b: &mut Bucket, doc: &str, seq_id: &str, now: DateTime<Utc>) -> Resp {
+    if b.synthetic > 0 {
+        return err(501, "NotImplemented", "demo-large is read-only");
+    }
+    let objects = tags(doc, "Object");
+    if objects.is_empty() || objects.len() > 1000 {
+        return err(
+            400,
+            "MalformedXML",
+            "The XML you provided was not well-formed or did not validate against our published schema",
+        );
+    }
+    let quiet = tags(doc, "Quiet")
+        .first()
+        .is_some_and(|q| q.trim() == "true");
+    let mut out = String::from("<DeleteResult>");
+    for (n, object) in objects.iter().enumerate() {
+        let Some(key) = tags(object, "Key").first().map(|k| unesc(k)) else {
+            continue;
+        };
+        let version = tags(object, "VersionId").first().map(|v| unesc(v));
+        let mut said = format!("<Key>{}</Key>", esc(&key));
+        match version {
+            Some(vid) => {
+                if let Some(vs) = b.objects.get_mut(&key) {
+                    vs.retain(|v| v.id != vid);
+                    if vs.is_empty() {
+                        b.objects.remove(&key);
+                    }
+                }
+                said.push_str(&format!("<VersionId>{}</VersionId>", esc(&vid)));
+            }
+            None if b.versioning == Some("Enabled") => {
+                // a marker of its own for each key of the batch
+                let id = format!("{seq_id}{n:03x}");
+                b.objects.entry(key).or_default().push(Version {
+                    id: id.clone(),
+                    data: None,
+                    time: now,
+                    class: "STANDARD",
+                });
+                said.push_str(&format!(
+                    "<DeleteMarker>true</DeleteMarker><DeleteMarkerVersionId>{id}</DeleteMarkerVersionId>"
+                ));
+            }
+            None => {
+                b.objects.remove(&key);
+            }
+        }
+        if !quiet {
+            out.push_str(&format!("<Deleted>{said}</Deleted>"));
+        }
+    }
+    out.push_str("</DeleteResult>");
+    xml(out)
 }
 
 fn find(b: &Bucket, key: &str, version: Option<&String>) -> Result<(Vec<u8>, Version), Resp> {
@@ -998,5 +1140,149 @@ mod paging {
             .await
             .unwrap();
         assert_eq!(all.len(), super::LARGE_KEYS);
+    }
+}
+
+#[cfg(test)]
+mod commits {
+    use s3raw::{Body, S3Request};
+
+    /// A store of its own: the installed one is every test's.
+    async fn demo() -> (super::DemoServer, s3raw::S3Client) {
+        let server = super::start().await.unwrap();
+        let mut cfg = s3raw::ClientConfig::new("demo", &server.url(), "us-east-1").unwrap();
+        cfg.addressing = s3raw::Addressing::Path;
+        let c = s3raw::S3Client::new(
+            cfg,
+            std::sync::Arc::new(s3raw::StaticProvider(Some(s3raw::Credentials::new(
+                "AKIADEMODEMODEMO0000",
+                "demo",
+                None,
+            )))),
+            reqlog::RequestLog::default(),
+        )
+        .unwrap();
+        (server, c)
+    }
+
+    fn put(key: &str, body: &str) -> S3Request {
+        S3Request::new("PutObject", http::Method::PUT)
+            .bucket("demo")
+            .key(key)
+            .body(Body::from(body.to_string()))
+            .no_retry()
+    }
+
+    #[tokio::test]
+    async fn a_conditional_write_is_refused_when_its_condition_does_not_hold() {
+        let (_dir, c) = demo().await;
+        let key = "cond/create-once";
+        let create = || put(key, "one").header("if-none-match", "*");
+        let first = c.send_raw(create()).await.unwrap();
+        assert_eq!(first.status, 200);
+        let etag = first.header("etag").unwrap().to_string();
+        // it is there now
+        let second = c.send_raw(create()).await.unwrap();
+        assert_eq!(second.status, 412);
+        assert!(second.text().contains("<Code>PreconditionFailed</Code>"));
+        assert!(
+            second
+                .text()
+                .contains("<Condition>If-None-Match</Condition>")
+        );
+        // If-Match: the ETag read, then a stale one
+        let swap = |tag: &str, body: &str| put(key, body).header("if-match", tag);
+        let ok = c.send_raw(swap(&etag, "two")).await.unwrap();
+        assert_eq!(ok.status, 200);
+        assert_eq!(c.send_raw(swap(&etag, "three")).await.unwrap().status, 412);
+        // nothing there: If-Match cannot hold, If-None-Match does
+        assert_eq!(
+            c.send_raw(put("cond/absent", "x").header("if-match", &etag))
+                .await
+                .unwrap()
+                .status,
+            412
+        );
+        // a deleted key (its latest is a marker) can be created again
+        assert_eq!(
+            c.send_raw(put("config/app.yaml", "x").header("if-none-match", "*"))
+                .await
+                .unwrap()
+                .status,
+            200
+        );
+        let got = c.get_object("demo", key, None).await.unwrap();
+        assert_eq!(got.body.as_ref(), b"two");
+    }
+
+    #[tokio::test]
+    async fn a_batch_of_deletes_is_made_and_answered_key_by_key() {
+        let (_dir, c) = demo().await;
+        for k in ["batch/a", "batch/b", "batch/c"] {
+            assert_eq!(c.send_raw(put(k, "x")).await.unwrap().status, 200);
+        }
+        let keys = vec![
+            ("batch/a".to_string(), None),
+            ("batch/b".to_string(), None),
+            ("batch/never-there".to_string(), None),
+        ];
+        let done = c.delete_objects("demo", &keys, false).await.unwrap();
+        assert_eq!(done.deleted.len(), 3);
+        assert!(done.error.is_empty());
+        let left = c.list_all("demo", "batch/", 100).await.unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].key, "batch/c");
+        // the bucket keeps versions: each delete left a marker, and the
+        // versions go by their ids
+        let page = c
+            .list_object_versions("demo", Some("batch/a"), None, None, None)
+            .await
+            .unwrap();
+        assert_eq!((page.version.len(), page.delete_marker.len()), (1, 1));
+        let all: Vec<(String, Option<String>)> = page
+            .version
+            .iter()
+            .map(|v| (v.key.clone(), v.version_id.clone()))
+            .chain(
+                page.delete_marker
+                    .iter()
+                    .map(|m| (m.key.clone(), m.version_id.clone())),
+            )
+            .collect();
+        let quiet = c.delete_objects("demo", &all, true).await.unwrap();
+        assert!(quiet.deleted.is_empty() && quiet.error.is_empty());
+        let page = c
+            .list_object_versions("demo", Some("batch/a"), None, None, None)
+            .await
+            .unwrap();
+        assert!(page.version.is_empty() && page.delete_marker.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_answer_with_a_body_on_a_kept_connection_comes_at_once() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let server = super::start().await.unwrap();
+        let mut s = tokio::net::TcpStream::connect(server.addr).await.unwrap();
+        let mut took = Vec::new();
+        let mut buf = vec![0u8; 16384];
+        for _ in 0..12 {
+            let began = std::time::Instant::now();
+            s.write_all(b"GET /demo/README.md HTTP/1.1\r\nhost: demo\r\n\r\n")
+                .await
+                .unwrap();
+            // head and the 900 bytes of the body
+            let mut got = 0;
+            while got < 900 {
+                got += s.read(&mut buf).await.unwrap();
+            }
+            took.push(began.elapsed().as_secs_f64() * 1000.0);
+        }
+        took.sort_by(f64::total_cmp);
+        // head and body sent apart waited 40 ms for a delayed ACK each time
+        assert!(
+            took[took.len() / 2] < 20.0,
+            "the median answer took {:.1} ms: {took:?}",
+            took[took.len() / 2]
+        );
     }
 }

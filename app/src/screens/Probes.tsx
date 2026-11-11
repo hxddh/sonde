@@ -3,7 +3,7 @@
 // runs and the difference between two of them.
 
 import { cleanup, Scroll, signal, Text, View } from "nsh";
-import { Button as BaseButton, DataTable } from "nsh/base";
+import { DataTable } from "nsh/base";
 import { count, date, duration } from "../format";
 import { t } from "../i18n";
 import { core, endpointName } from "../phrases";
@@ -11,7 +11,7 @@ import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
 import { endpoint, endpoints, go, notify, readOnly, report, showRequest } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
-import { Back, Badge, Bar, Button, Card, Check, Choice, Disclosure, Empty, Field, FOCUS, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE } from "../ui/kit";
+import { Back, Badge, Bar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH } from "../ui/kit";
 import { Document } from "../ui/record";
 import { StatusMark } from "../ui/sessionview";
 
@@ -28,7 +28,7 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
         <Heading>{t("probes.aws")}</Heading>
         <Text class="text-body text-foreground">{core(props.probe.awsBehaviorText, props.probe.awsBehavior)}</Text>
         <Heading>{t("probes.observed")}</Heading>
-        <Text class="text-body font-medium text-foreground">{core(props.result.summaryText, props.result.summary)}</Text>
+        <Text class="text-body text-foreground">{core(props.result.summaryText, props.result.summary)}</Text>
         <Each of={props.result.observations}>{(o, i) => <Mono>{core(props.result.observationsText?.[i()], o())}</Mono>}</Each>
         <Muted>{duration(props.result.durationMs)}</Muted>
       </Card>
@@ -39,7 +39,7 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
           <View selectable class={`gap-2 ${i() > 0 ? "pt-2" : ""}`}>
             <View class="flex-row items-center gap-2">
               <StatusMark status={r().status} />
-              <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{r().operation}</Text>
+              <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{r().operation}</Text>
               <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(r().id)} />
             </View>
             <Text class="font-mono text-caption text-muted-foreground">{`${r().method} ${r().url}`}</Text>
@@ -95,9 +95,12 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
               const c = row.cells[i];
               if (!c) return <Text class="text-small text-muted-foreground">—</Text>;
               return (
-                <BaseButton testID={`cell-${row.probe.id}-${i}`} accessibilityLabel={`${row.probe.id} ${props.matrix.columns[i].name} ${verdictLabel(c.verdict)}`} onPress={() => props.onOpen(row.probe, i)} class={`self-start rounded-(--radius-sm) px-1 py-1 hover:bg-muted active:bg-muted ${FOCUS}`}>
+                // at its cell's start: the press area is the badge's, not the cell's
+                <View class="flex-row">
+                <Pressable testID={`cell-${row.probe.id}-${i}`} label={`${row.probe.id} ${props.matrix.columns[i].name} ${verdictLabel(c.verdict)}`} onPress={() => props.onOpen(row.probe, i)}>
                   <Badge label={`${SYMBOL[c.verdict]} ${verdictLabel(c.verdict)}`} tone={verdictTone(c.verdict)} />
-                </BaseButton>
+                </Pressable>
+                </View>
               );
             }
       }
@@ -113,13 +116,12 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
       }
       classes={terminal() ? undefined : TABLE}
       // its rows and its titles, and no more: nothing empty under a short matrix
-      style={terminal() ? { height: TERMINAL_MATRIX } : { height: (shown() + 1) * (rowHeight(ROW.twoLine) ?? ROW.twoLine) }}
+      style={terminal() ? { height: SIZES.terminalMatrix } : { height: (shown() + 1) * (rowHeight(ROW.twoLine) ?? ROW.twoLine) }}
     />
   );
 }
 
 /** A terminal's matrix: a box of its own to scroll in (its page scrolls too). */
-const TERMINAL_MATRIX = 640;
 
 export function Probes() {
   // the endpoint in use to start from; the bucket probes write to is chosen on purpose
@@ -234,8 +236,8 @@ export function Probes() {
                 </Each>
               </View>
               <View class="flex-row flex-wrap items-center gap-3">
-                <Field bare class="w-56" label={t("probes.scratch")} placeholder={t("probes.scratch")} value={scratch()} onChange={(v) => scratch.set(v)} onSubmit={run} mono testID="probe-bucket" />
-                <Field bare class="w-72" label={t("probes.only")} placeholder={t("probes.onlyHint")} value={only()} onChange={(v) => only.set(v)} onSubmit={run} mono testID="probe-only" />
+                <Field bare class={WIDTH.field} label={t("probes.scratch")} placeholder={t("probes.scratch")} value={scratch()} onChange={(v) => scratch.set(v)} onSubmit={run} mono testID="probe-bucket" />
+                <Field bare class={WIDTH.long} label={t("probes.only")} placeholder={t("probes.onlyHint")} value={only()} onChange={(v) => only.set(v)} onSubmit={run} mono testID="probe-only" />
                 <SwitchRow label={t("probes.tempBuckets")} checked={temp()} onChange={(v) => temp.set(v)} />
                 <SwitchRow label={t("probes.slow")} checked={slow()} onChange={(v) => slow.set(v)} />
                 <Button variant="primary" label={t("common.run")} onPress={run} disabled={!canRun()} testID="probe-run" />
@@ -258,9 +260,9 @@ export function Probes() {
               <Heading>{t("probes.diff")}</Heading>
               <View class="flex-row flex-wrap items-center gap-2">
                 <Text class="text-small text-muted-foreground">{t("probes.earlier")}</Text>
-                <Choice class="w-80" value={earlier()} items={runItems()} onChange={(v) => earlier.set(v)} placeholder={t("probes.runs")} testID="probe-earlier" />
+                <Choice class={WIDTH.wide} value={earlier()} items={runItems()} onChange={(v) => earlier.set(v)} placeholder={t("probes.runs")} testID="probe-earlier" />
                 <Text class="text-small text-muted-foreground">{t("probes.later")}</Text>
-                <Choice class="w-80" value={later()} items={runItems()} onChange={(v) => later.set(v)} placeholder={t("probes.runs")} testID="probe-later" />
+                <Choice class={WIDTH.wide} value={later()} items={runItems()} onChange={(v) => later.set(v)} placeholder={t("probes.runs")} testID="probe-later" />
                 <Button label={t("probes.compare")} disabled={!earlier() || !later()} onPress={compare} testID="probe-compare" />
               </View>
               <If when={diff()}>

@@ -7,7 +7,7 @@
 // shows as a timeline, replays on another endpoint, compares with another
 // session, and opens in a window of its own. In a terminal the levels stack.
 
-import { batch, cleanup, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
+import { batch, cleanup, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, untracked, View, type ViewRef } from "nsh";
 import { createNavStack, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, Menu, type MenuItem, Window } from "nsh/desktop";
 import { count, duration, hm } from "../format";
@@ -30,7 +30,7 @@ import { HistoryPane, ProgramList, scenarioLabel } from "../ui/history";
 import { TrialDialog } from "../ui/trial";
 import { TimePane } from "../ui/profile";
 import type { SignalId } from "../signals";
-import { SessionShape } from "../ui/plots";
+import { SessionShape, SHAPE_STRIP, TICK_ROOM, faultMoments } from "../ui/plots";
 import { RecordDetail } from "./Requests";
 import { running, runAgain } from "../run";
 
@@ -69,6 +69,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
 
   const read = analysis(() => props.path, props.tick);
   const view = read.view;
+  // a trial's session: the clean run it is judged against, for the Time pane to draw it over
+  const clean = analysis(() => view()?.trial?.clean ?? null);
   // this pane's own size (windowSize() follows whichever window has the focus)
   const box = signal({ w: 1000, h: 760 });
   const lines = computed<LogLine[]>(() => {
@@ -303,13 +305,15 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
 
   const v0 = () => view();
+  // a run of a program has runs (a trial is no run of its own: its verdict is on the run it is a trial of)
+  const hasRuns = () => ranCommand(v0()?.header.command) && !v0()?.trial;
+  // the four tabs are there for every session, whatever it holds: one with nothing to show is
+  // dimmed and says why, it does not go (and the others do not move)
   const panes = () => [
     { value: "operations", title: t("sessions.operations"), icon: "list-filter" as const },
-    ...(hasOutput() ? [{ value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const }] : []),
+    { value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const, disabled: !hasOutput(), why: t("sessions.noOutput") },
     { value: "time", title: t("profile.pane"), icon: "chart-pie" as const },
-    // a run of a program: its runs
-    // (a trial is no run of its own: its verdict is on the run it is a trial of)
-    ...(ranCommand(v0()?.header.command) && !v0()?.trial ? [{ value: "runs", title: t("history.pane"), icon: "activity" as const }] : []),
+    { value: "runs", title: t("history.pane"), icon: "activity" as const, disabled: !hasRuns(), why: t("sessions.noRuns") },
   ];
 
   const findings = (v: () => SessionView) => (
@@ -330,11 +334,11 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   /** When: the session's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
   const strip = (v: () => SessionView) => (
     <If when={!terminal() && v().profile && box().h >= BREAK.short}>
-      <SessionShape strip profile={v().profile} slice={slice()} onSlice={(i) => slice.set(i)} annotate marks={findingMarks(v())} class="mt-3 h-11 w-full shrink-0" />
+      <SessionShape strip axis profile={v().profile} slice={slice()} onSlice={(i) => slice.set(i)} annotate marks={findingMarks(v())} faults={faultMoments(v().profile, v().injected)} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
     </If>
   );
   const body = (v: () => SessionView) => {
-    if (pane() === "time") return <TimePane view={v()} onRequest={chooseRequest} reveal={reveal()} />;
+    if (pane() === "time") return <TimePane view={v()} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} />;
     if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTry={() => tryingFaults.set(true)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
@@ -521,7 +525,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         )}
       </If>
       <If when={tryingFaults()}>
-        <TrialDialog path={props.path} onClose={() => tryingFaults.set(false)} onDone={() => pane.set("runs")} />
+        <TrialDialog path={props.path} onClose={() => tryingFaults.set(false)} onDone={() => pane.set("runs")} onOpen={open} />
       </If>
       <ReplayDialog
         path={props.path}
@@ -712,6 +716,7 @@ export function Sessions() {
       </If>
       <View class={terminal() ? "flex-row items-center gap-2" : "gap-2 px-2 pb-2"}>
         {/* a run at a time, or a program over its runs */}
+        <View class="flex-row">
         <Options
           testID="sessions-by"
           value={byProgram() ? "programs" : "runs"}
@@ -720,8 +725,8 @@ export function Sessions() {
             { value: "programs", title: t("sessions.byProgram") },
           ]}
           onChange={(v) => byProgram.set(v === "programs")}
-          class="self-start"
         />
+        </View>
         <If when={terminal()}>
           <IconButton icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
         </If>

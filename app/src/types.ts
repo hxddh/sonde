@@ -542,6 +542,8 @@ export interface WhatIf {
 }
 
 export interface SessionSummary {
+  /** The run by operation, busiest first (absent before 16.0). */
+  operations?: { operation: string; count: number; errors: number; misses: number; errorShare: number; bytesUp: number; bytesDown: number; p50Ms: number; p95Ms: number; p99Ms: number; maxMs: number; few?: true }[];
   requests: number;
   errors: number;
   misses: number;
@@ -696,6 +698,10 @@ export interface Trial {
   leftUploads: number;
   wroteTwice: number;
   reasons: string[];
+  /** The request the verdict turns on, when it is not "survived": its operation, `bucket/key`, and the program's line when the run named callers. */
+  where?: { operation: string; key: string; caller?: string } | null;
+  /** What to change, as a phrase (`trial.advice.*`: the app has its words in both languages). */
+  advice?: { key: string; args?: Record<string, string> } | null;
   /** The trial's own session (an absolute path), when it is still there. */
   session?: string | null;
 }
@@ -747,6 +753,8 @@ export interface SizeBucket {
  * with its line over the session's slices (crates/proxy/src/signals.rs). A figure
  * that cannot be said (no time, no request) is null, never 0. */
 export interface Signals {
+  /** A run too short to have a pace (under a second, or a handful of requests): totals are said, not rates. Absent before 16.0. */
+  short?: boolean;
   timed: boolean;
   wallMs: number;
   binMs: number;

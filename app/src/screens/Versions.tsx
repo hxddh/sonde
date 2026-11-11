@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { bucket, endpoint, report, versionKey } from "../store";
 import type { Plan, Timeline } from "../types";
-import { Await, Badge, Button, Card, Dot, Empty, Field, Heading, IconButton, KeyValue, Notice, Path, Row, terminal, ToolBar } from "../ui/kit";
+import { Await, Badge, Button, Card, Dot, Empty, Field, Heading, IconButton, KeyValue, Notice, Path, Row, terminal, ToolBar, WIDTH } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { versioningLabel } from "../ui/overview";
@@ -115,7 +115,7 @@ export function Versions() {
                             <Path path={v().versionId} max={64} class="text-muted-foreground" />
                           </View>
                           {/* sizes in one column, at its end */}
-                          <Text class="w-20 shrink-0 text-right text-small tabular-nums text-muted-foreground">{v().isDeleteMarker ? "" : bytes(v().size)}</Text>
+                          <Text class={`${WIDTH.size} shrink-0 text-right text-small tabular-nums text-muted-foreground`}>{v().isDeleteMarker ? "" : bytes(v().size)}</Text>
                           <IconButton icon="trash" label={t("versions.deleteVersionOpen")} onPress={() => del(v().versionId, v().size)} />
                         </Row>
                       )}

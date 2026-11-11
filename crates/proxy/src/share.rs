@@ -12,7 +12,7 @@ use http_body_util::Full;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::episode::{episodes, observations, shared_notes};
 use crate::session::Session;
@@ -26,40 +26,248 @@ mod embedded {
 pub fn has_viewer() -> bool {
     !embedded::VIEWER.is_empty()
 }
+/// A JSON document written as it is made: a session of a million requests
+/// is never one tree in memory and then one string. Objects and arrays are
+/// opened and closed; a value is written whole, its keys in order (as
+/// `serde_json::Value` orders them, so a document reads the same whichever
+/// way it was made). Pretty or on one line.
+pub struct JsonOut<W: std::io::Write> {
+    out: W,
+    pretty: bool,
+    /// For each open object or array: whether it has anything yet.
+    open: Vec<bool>,
+    /// A key was written: what follows is its value, on the same line.
+    keyed: bool,
+}
+
+impl JsonOut<Vec<u8>> {
+    /// How much has been written so far.
+    pub fn written(&self) -> usize {
+        self.out.len()
+    }
+}
+
+impl<W: std::io::Write> JsonOut<W> {
+    pub fn new(out: W, pretty: bool) -> Self {
+        JsonOut {
+            out,
+            pretty,
+            open: Vec::new(),
+            keyed: false,
+        }
+    }
+
+    fn indent(&mut self, depth: usize) -> std::io::Result<()> {
+        if self.pretty {
+            self.out.write_all(b"\n")?;
+            for _ in 0..depth {
+                self.out.write_all(b"  ")?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Before a key, or a value of an array: the comma and the line.
+    fn place(&mut self) -> std::io::Result<()> {
+        if self.keyed {
+            self.keyed = false;
+            return Ok(());
+        }
+        let depth = self.open.len();
+        if let Some(any) = self.open.last_mut() {
+            if *any {
+                self.out.write_all(b",")?;
+            }
+            *any = true;
+            self.indent(depth)?;
+        }
+        Ok(())
+    }
+
+    pub fn key(&mut self, name: &str) -> std::io::Result<()> {
+        self.place()?;
+        serde_json::to_writer(&mut self.out, name)?;
+        self.out.write_all(if self.pretty { b": " } else { b":" })?;
+        self.keyed = true;
+        Ok(())
+    }
+
+    pub fn begin_object(&mut self) -> std::io::Result<()> {
+        self.place()?;
+        self.open.push(false);
+        self.out.write_all(b"{")
+    }
+
+    pub fn begin_array(&mut self) -> std::io::Result<()> {
+        self.place()?;
+        self.open.push(false);
+        self.out.write_all(b"[")
+    }
+
+    fn end(&mut self, close: &[u8]) -> std::io::Result<()> {
+        if self.open.pop() == Some(true) {
+            let depth = self.open.len();
+            self.indent(depth)?;
+        }
+        self.out.write_all(close)
+    }
+
+    pub fn end_object(&mut self) -> std::io::Result<()> {
+        self.end(b"}")
+    }
+
+    pub fn end_array(&mut self) -> std::io::Result<()> {
+        self.end(b"]")
+    }
+
+    /// A value, whole.
+    pub fn value(&mut self, v: &impl serde::Serialize) -> std::io::Result<()> {
+        let v = serde_json::to_value(v)?;
+        self.json(&v)
+    }
+
+    /// A value already a tree.
+    pub fn json(&mut self, v: &Value) -> std::io::Result<()> {
+        self.place()?;
+        if !self.pretty {
+            return Ok(serde_json::to_writer(&mut self.out, v)?);
+        }
+        // its lines, moved in to where it stands (a string's own line
+        // breaks are escaped: every line break here is the printer's)
+        let text = serde_json::to_string_pretty(v)?;
+        let depth = self.open.len();
+        for (i, line) in text.split('\n').enumerate() {
+            if i > 0 {
+                self.indent(depth)?;
+            }
+            self.out.write_all(line.as_bytes())?;
+        }
+        Ok(())
+    }
+
+    /// A key and its value.
+    pub fn field(&mut self, name: &str, v: &impl serde::Serialize) -> std::io::Result<()> {
+        self.key(name)?;
+        self.value(v)
+    }
+
+    /// A key and an array of the values `items` gives, one at a time.
+    pub fn array<T: serde::Serialize>(
+        &mut self,
+        name: &str,
+        items: impl IntoIterator<Item = T>,
+    ) -> std::io::Result<()> {
+        self.key(name)?;
+        self.begin_array()?;
+        for item in items {
+            self.value(&item)?;
+        }
+        self.end_array()
+    }
+
+    /// The writer back, flushed, once everything opened is closed.
+    pub fn finish(mut self) -> std::io::Result<W> {
+        self.out.flush()?;
+        Ok(self.out)
+    }
+}
+
+/// A session's records as they are in its file, each handed to `each` with
+/// the id the session read gave it (`ids`, in the file's order: a file joined
+/// from two recordings is numbered afresh). For writing every record out in
+/// full beside an analysis made of [`Session::open_lean`].
+pub fn each_record(
+    path: &Path,
+    ids: &mut dyn Iterator<Item = u64>,
+    each: &mut dyn FnMut(reqlog::Record) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let mut lines = crate::session::Lines::open(path)?;
+    // the header
+    lines.line()?;
+    while let Some(raw) = lines.line()? {
+        if !raw.starts_with(b"{") || raw.starts_with(b"{\"log\":") {
+            continue;
+        }
+        let text = String::from_utf8_lossy(raw);
+        // a torn last line: the session read skipped it too
+        let Ok(mut r) = serde_json::from_str::<reqlog::Record>(text.trim_end_matches('\r')) else {
+            continue;
+        };
+        let Some(id) = ids.next() else { break };
+        r.id = id;
+        each(r)?;
+    }
+    Ok(())
+}
+
+/// A record as the viewer has it: with its short target.
+fn shared_record(r: &reqlog::Record) -> Value {
+    let mut v = serde_json::to_value(r).unwrap_or(Value::Null);
+    if let Value::Object(m) = &mut v {
+        m.insert("target".into(), Value::String(r.summary().target));
+    }
+    v
+}
+
 /// Everything the viewer shows, computed: header, summary, operations,
 /// observations, records (with their short target) and output lines.
 pub fn session_json(s: &Session, prices: &crate::profile::RequestPrices) -> Value {
+    let mut doc = Vec::new();
+    // (into memory: nothing to fail)
+    let _ = write_session_json(s, None, prices, &mut doc);
+    serde_json::from_slice(&doc).unwrap_or(Value::Null)
+}
+
+/// [`session_json`], written as it is made. `s` may be a session read with
+/// [`Session::open_lean`] when `full` is its file: the records are then
+/// written from the file, one at a time, and never all held.
+pub fn write_session_json(
+    s: &Session,
+    full: Option<&Path>,
+    prices: &crate::profile::RequestPrices,
+    out: impl std::io::Write,
+) -> std::io::Result<()> {
     let eps = episodes(&s.records);
-    let records: Vec<Value> = s
-        .records
-        .iter()
-        .map(|r| {
-            let mut v = serde_json::to_value(r).unwrap_or(Value::Null);
-            if let Value::Object(m) = &mut v {
-                m.insert("target".into(), Value::String(r.summary().target));
-            }
-            v
-        })
-        .collect();
     // a page meant for others: a variable set before the program (a key,
     // say) never reaches it
     let mut header = s.header.clone();
     header.command = header.command.as_deref().map(crate::program::scrub_command);
     // the folder names this machine's user
     header.cwd = None;
-    json!({
-        "format": "sonde-share",
-        "version": 1,
-        "header": header,
-        "summary": summarize(&s.records),
-        "episodes": eps,
-        "observations": observations(&s.records, &eps),
-        "sharedNotes": shared_notes(&eps).into_iter().map(|(_, n, _, _)| n).collect::<Vec<_>>(),
-        "profile": crate::profile::profile(&s.records, prices),
-        "signals": crate::signals::signals(&s.records, prices),
-        "records": records,
-        "lines": crate::logs::lines(&s.logs),
-    })
+    let mut w = JsonOut::new(out, false);
+    w.begin_object()?;
+    w.array("episodes", &eps)?;
+    w.field("format", &"sonde-share")?;
+    w.field("header", &header)?;
+    w.field("lines", &crate::logs::lines(&s.logs))?;
+    w.field("observations", &observations(&s.records, &eps))?;
+    w.field("profile", &crate::profile::profile(&s.records, prices))?;
+    w.key("records")?;
+    w.begin_array()?;
+    match full {
+        Some(path) => each_record(path, &mut s.records.iter().map(|r| r.id), &mut |r| {
+            w.json(&shared_record(&r))
+        })?,
+        None => {
+            for r in &s.records {
+                w.json(&shared_record(r))?;
+            }
+        }
+    }
+    w.end_array()?;
+    w.field(
+        "sharedNotes",
+        &shared_notes(&eps)
+            .into_iter()
+            .map(|(_, n, _, _)| n)
+            .collect::<Vec<_>>(),
+    )?;
+    w.field("signals", &crate::signals::signals(&s.records, prices))?;
+    w.field("summary", &summarize(&s.records))?;
+    w.field("version", &1)?;
+    w.end_object()?;
+    w.finish()?;
+    Ok(())
 }
 
 /// Writes the site to `dir`: the viewer's files and `doc` as `session.json`.

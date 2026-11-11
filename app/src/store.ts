@@ -24,8 +24,6 @@ export type Section = "run" | "sessions" | StoreTab | SettingsTab | ActivityTab;
 
 /** Every place, as a terminal lists them. */
 export const AREAS: Area[] = ["run", "sessions", "store", "activity", "settings"];
-/** The places a window's sidebar holds. */
-export const PLACES: Area[] = ["run", "sessions", "store"];
 export const STORE_TABS: StoreTab[] = ["browse", "multipart", "versions", "capacity", "layouts", "probes"];
 export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints"];
 export const ACTIVITY_TABS: ActivityTab[] = ["requests", "jobs", "audit"];

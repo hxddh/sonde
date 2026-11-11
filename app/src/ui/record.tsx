@@ -2,9 +2,9 @@
 // in the app and in the web viewer. Its parts fold away (Accordion); an
 // error body is highlighted as the XML it is (TextView).
 
-import { type JSX, signal, Text, View } from "nsh";
+import { type JSX, Text, View } from "nsh";
 import { Editor, type EditorDiagnostic } from "nsh/base";
-import { bytes, count, day, duration } from "../format";
+import { count, day, duration, transfer } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
 import { Back, Disclosure, KeyValue, Notice, terminal, Title, TYPE } from "./kit";
@@ -100,7 +100,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
       [t("requests.latency"), duration(r().latencyMs)],
       ...(r().firstByteMs != null ? [[t("requests.firstByte"), duration(r().firstByteMs!)] as [string, string]] : []),
       ...(r().requester ? [[t("requests.requester"), r().requester!] as [string, string]] : []),
-      [t("requests.size"), `↑${bytes(r().requestBytes ?? 0)} ↓${bytes(r().responseBytes ?? 0)}`],
+      [t("requests.size"), transfer(r().requestBytes, r().responseBytes)],
       [t("requests.retries"), count(r().retries)],
       ["x-amz-request-id", r().requestId ?? "—"],
       ["x-amz-id-2", r().hostId ?? "—"],

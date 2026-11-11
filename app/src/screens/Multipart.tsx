@@ -4,14 +4,14 @@
 
 import { cleanup, type JSX, Scroll, signal, Text, View } from "nsh";
 import { DataTable, type DataTableSort } from "nsh/base";
-import { bytes, count, date, day, days, money } from "../format";
+import { bytes, count, date, day, duration, money } from "../format";
 import { type Key, t } from "../i18n";
 import { core } from "../phrases";
 import { Icon } from "../ui/icon";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
-import { Await, Badge, Bar, Button, Card, Disclosure, Empty, Field, Heading, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE } from "../ui/kit";
+import { Await, Badge, Bar, Button, Card, Disclosure, Empty, Field, Heading, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
@@ -99,7 +99,7 @@ export function Multipart() {
         <If when={terminal()}>
           <EndpointPicker />
           <BucketPicker />
-          <Field bare class="w-56" label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} onSubmit={scan} mono />
+          <Field bare class={WIDTH.field} label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} onSubmit={scan} mono />
         </If>
         <Button small variant={report_() ? "outline" : "primary"} label={report_() ? t("overview.rescan") : t("common.scan")} onPress={scan} disabled={!bucket() || progress() !== null} testID="mpu-scan" />
         <If when={progress()}>
@@ -135,7 +135,7 @@ export function Multipart() {
                   <If when={r().lifecycle.status !== "covered"}>
                     <View class="flex-1" />
                     <Text class="text-small text-muted-foreground">{t("mpu.days")}</Text>
-                    <NumberField bare class="w-28" label={t("mpu.days")} value={days_()} min={1} max={3650} onChange={(v) => days_.set(v)} />
+                    <NumberField bare class={WIDTH.number} label={t("mpu.days")} value={days_()} min={1} max={3650} onChange={(v) => days_.set(v)} />
                     <Button label={t("mpu.generateRule")} onPress={planRule} testID="plan-rule" />
                   </If>
                 </View>
@@ -162,15 +162,16 @@ export function Multipart() {
                       // fits the detail panel (760pt) without a sideways scroll: the date as a day
                       // the upload's id is the request inspector's: the columns that decide stay whole
                       { key: "flag", title: "", width: 24, resizable: false },
-                      { key: "key", title: t("mpu.key"), width: 220, minWidth: 120, sortable: true },
-                      { key: "initiated", title: t("mpu.initiated"), width: 104, sortable: true },
-                      { key: "age", title: t("mpu.age"), width: 72, align: "end", sortable: true },
-                      { key: "parts", title: t("mpu.parts"), width: 64, align: "end", sortable: true },
-                      { key: "bytes", title: t("mpu.bytes"), width: 88, align: "end", sortable: true },
-                      { key: "cost", title: t("mpu.costMonth"), width: 104, align: "end", sortable: true },
+                      { key: "key", title: t("mpu.key"), width: 188, minWidth: 120, sortable: true },
+                      // (a day in full, in every language: "2026年12月30日" is the widest)
+                      { key: "initiated", title: t("mpu.initiated"), width: 124, sortable: true },
+                      { key: "age", title: t("mpu.age"), width: 84, align: "end", sortable: true },
+                      { key: "parts", title: t("mpu.parts"), width: 72, align: "end", sortable: true },
+                      { key: "bytes", title: t("mpu.bytes"), width: 104, align: "end", sortable: true },
+                      { key: "cost", title: t("mpu.costMonth"), width: 112, align: "end", sortable: true },
                     ]}
                     // an old upload is marked in its first cell (an icon; "!" in a terminal), not shouted: the one way a row says it
-                    data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "!" : "", key: u.key, initiated: day(u.initiated), age: days(u.ageDays), parts: count(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
+                    data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "!" : "", key: u.key, initiated: day(u.initiated), age: u.ageDays == null ? "—" : duration(u.ageDays * 86400000, "age"), parts: count(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
                     fontSize={TYPE.body}
                     rowHeight={rowHeight(ROW.table)}
                     classes={terminal() ? undefined : TABLE}

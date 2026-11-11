@@ -4,20 +4,18 @@
 import { type JSX, List, resource, Scroll, signal, Text, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
 import { count, date, day, duration, factor, money } from "../format";
-import { t } from "../i18n";
+import { type Key, t } from "../i18n";
 import { scenarioLabel } from "../trials";
 import { api } from "../native";
 import { copy, report, sessionsChanged, sessionsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, Section, SimpleTable, Title, terminal, textual } from "./kit";
+import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH } from "./kit";
 import { cost, RunTrend, Sparkline } from "./plots";
 import { programOf, scrubCommand } from "./sessionview";
 
 export { scenarioLabel };
 
-/** How high a dialog's scrolling part (a comment, a file's diff) grows before it scrolls: one cap for all. */
-const TALL = 480;
 
 export const STANDING = { survived: "pass", degraded: "warn", broke: "fail", untested: "neutral" } as const;
 
@@ -48,6 +46,53 @@ export function trialText(x: Trial): string {
   return parts.join(" · ");
 }
 
+/** What to change after a verdict, by the phrase Rust gives (crates/proxy/src/phrase.rs): the app's words for each. */
+const ADVICE: Record<string, Key> = { "trial.advice.retries": "trial.advice.retries", "trial.advice.retry": "trial.advice.retry", "trial.advice.cut": "trial.advice.cut", "trial.advice.race": "trial.advice.race" };
+
+/** Where a verdict turns, and what to change: the request (its operation and
+ * key), the line of the program that sent it when the run named its callers,
+ * and the fix in a sentence. Under a trial that broke or degraded. */
+export function TrialWhere(props: { trial: Trial }) {
+  const w = () => props.trial.where;
+  const advice = () => {
+    const a = props.trial.advice;
+    // a sentence sonde has no words for here yet is left unsaid, never shown as its key
+    const key = a ? ADVICE[a.key] : undefined;
+    return key ? t(key, a!.args ?? {}) : null;
+  };
+  return (
+    <If when={w() || advice()}>
+      <View testID="trial-where" class="gap-1">
+        <If when={w()}>
+          {(x) => (
+            <View class="flex-row items-start gap-2">
+              <View class="min-h-5 justify-center">
+                <Icon name="circle-dot" size={ICON.small} />
+              </View>
+              {/* the request, then (after a dot) the program's line when the run named its callers */}
+              <Text class="min-w-0 flex-1 text-small leading-5 text-foreground">
+                {`${x().operation} `}
+                <Text class="font-mono text-caption text-foreground">{x().key}</Text>
+                <If when={x().caller}>{(c) => <Text class="font-mono text-caption text-muted-foreground">{` · ${c()}`}</Text>}</If>
+              </Text>
+            </View>
+          )}
+        </If>
+        <If when={advice()}>
+          {(a) => (
+            <View class="flex-row items-start gap-2">
+              <View class="min-h-5 justify-center">
+                <Icon name="sparkles" size={ICON.small} />
+              </View>
+              <Text testID="trial-advice" class="min-w-0 flex-1 text-small leading-5 text-foreground">{a()}</Text>
+            </View>
+          )}
+        </If>
+      </View>
+    </If>
+  );
+}
+
 /** The run under faults: a row a scenario, its standing first, and under a
  * trial that broke or degraded, why; a press opens the trial's own session
  * (a row whose session is gone only says what it found). */
@@ -58,7 +103,7 @@ function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; actio
         <Each of={props.trials} key={(x) => x.scenario}>
           {(x, i) => (
             <ListRow divided first={i() === 0} top testID={`trial-${x().scenario}`} label={`${t(`trial.${x().standing}`)}: ${scenarioLabel(x().scenario)}`} disabled={!x().session || !props.onOpen} onPress={() => x().session && props.onOpen?.(x().session!)} trailing={x().session && props.onOpen ? <Icon name="chevron-right" size={ICON.small} /> : undefined}>
-              <View class="w-24 shrink-0">
+              <View class={`${WIDTH.badge} shrink-0 flex-row`}>
                 <Badge label={t(`trial.${x().standing}`)} tone={STANDING[x().standing]} />
               </View>
               <View class={`min-w-0 flex-1 gap-1 ${x().session ? "" : "opacity-60"}`}>
@@ -72,6 +117,10 @@ function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; actio
                   <View testID="trial-reasons" class="gap-1">
                     <Each of={x().reasons}>{(r) => <Text class={`text-small ${x().standing === "broke" ? "text-fail" : "text-foreground"}`}>{r()}</Text>}</Each>
                   </View>
+                </If>
+                {/* where it turned (the request, the program's line), and what to change */}
+                <If when={x().standing !== "survived"}>
+                  <TrialWhere trial={x()} />
                 </If>
                 <If when={!x().session}>
                   <Muted class="text-caption">{t("trial.sessionGone")}</Muted>
@@ -106,7 +155,7 @@ function Verdicts(props: { h: ProgramHistory }) {
           <Title>{t("history.comment")}</Title>
           <Muted class="text-small">{t("history.commentHint")}</Muted>
           <Card pad="none">
-            <Scroll style={{ maxHeight: TALL }} contentClass="p-4">
+            <Scroll style={{ maxHeight: SIZES.dialogScroll }} contentClass="p-4">
               <TextView testID="comment-markdown" markdown={props.h.markdown!} class="text-body text-foreground" />
             </Scroll>
           </Card>
@@ -163,7 +212,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
       <Await loading={change.loading()} error={change.error()} retry={() => change.refetch()}>
         <If when={change()}>
           {(x) => (
-            <Scroll style={{ maxHeight: TALL }} contentClass="gap-3">
+            <Scroll style={{ maxHeight: SIZES.dialogScroll }} contentClass="gap-3">
               <Muted class="font-mono text-small">{`${x().from.slice(0, 7)} → ${x().to.slice(0, 7)}`}</Muted>
               <If when={x().files.length} else={<Muted>{t("history.noCodeChange")}</Muted>}>
                 <Each of={x().files} key={(f) => f.path}>
@@ -179,7 +228,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
                         annotations={f().notes.map((n, k) => ({ id: `${k}`, side: "new" as const, line: Math.max(0, n.line - 1) }))}
                         renderAnnotation={(a) => <Notice tone="warn" icon="radio" class="mx-2 my-1" text={f().notes[Number(a.id)]?.text ?? ""} />}
                         class="rounded-(--radius) border border-border"
-                        style={{ height: TALL }}
+                        style={{ height: SIZES.dialogScroll }}
                       />
                     </Disclosure>
                   )}
@@ -352,7 +401,7 @@ export function ProgramList(props: { onOpen: (path: string) => void; /** the pla
                 lines={2}
               >
                 <View class="flex-row items-center gap-2">
-                  <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{programOf(p().program) ?? scrubCommand(p().program)}</Text>
+                  <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{programOf(p().program) ?? scrubCommand(p().program)}</Text>
                   <If when={p().regressed}>
                     <View testID="program-regressed"><Badge label={t("programs.regressed")} tone="warn" /></View>
                   </If>
@@ -361,7 +410,7 @@ export function ProgramList(props: { onOpen: (path: string) => void; /** the pla
                   {/* how often it runs, and what a month of it costs at that pace */}
                   <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{[t("programs.runs", { n: p().runs }), day(p().created), p().monthly ? t("programs.monthly", { cost: money(p().monthly!.cost, p().points[0]?.currency ?? "USD") }) : ""].filter(Boolean).join(" · ")}</Text>
                   <If when={p().points.length > 1}>
-                    <Sparkline shape={p().points.map((x) => x.requests)} id={`program:${p().program}`} class="h-4 w-20" />
+                    <Sparkline shape={p().points.map((x) => x.requests)} id={`program:${p().program}`} />
                   </If>
                 </View>
               </ListRow>
