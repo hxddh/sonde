@@ -3,7 +3,7 @@
 
 import { signal, Text, token, View } from "nsh";
 import { Bar, Cell, Plot, PlotAxis, Sankey, Treemap } from "nsh/base/plot";
-import { cost, count, duration, percent } from "../../format";
+import { cost, count, duration, percent, costParts } from "../../format";
 import { t } from "../../i18n";
 import { nearestLimit } from "../../signals";
 import type { Profile, Signals } from "../../types";
@@ -136,7 +136,8 @@ export function Flows(props: { profile: Profile }) {
           hoverDim={1 - INACTIVE}
           // one line, name then count: two lines over a middle node reached the bar of the node above it
           nodeLabel={(n) => `${axisName(name(n))} · ${count(through(n))}`}
-          nodeLabelClass="max-w-44 px-2 py-1 tabular-nums text-small text-foreground"
+          // (on a chip: a name over the middle column stands on its ribbons, and reads off them)
+          nodeLabelClass="max-w-44 rounded-(--radius-sm) bg-card/85 px-2 py-1 tabular-nums text-small text-foreground"
         />
       </Plot>
       <PrefixNote prefixes={props.profile.prefixes} common={named().common} gutter />
@@ -336,12 +337,17 @@ export function CostBy(props: { signals: Signals; max?: number }) {
   const rows = () => c().operations.filter((x) => x.cost > 0).slice(0, props.max ?? 8);
   const hovered = signal<number | null>(null);
   const label = () => (rows()[0] ? t("costBy.text", { op: rows()[0].operation, pct: percent(rows()[0].share), total: cost(c().amount, c().currency) }) : "");
+  // every row's cost in one unit (all of them thousandths of a cent, or none): the figure at the bar, the unit once under the chart
+  const parts = () => rows().map((r) => costParts(r.cost, c().currency));
+  const unit = () => (parts().length && parts().every((x) => x.per1000 === parts()[0].per1000) ? parts()[0].unit : null);
+  const money = (v: number) => (unit() ? costParts(v, c().currency).figure : cost(v, c().currency));
   const tip = () => {
     const r = hovered() === null ? null : rows()[hovered()!];
     return r ? { title: r.operation, lines: [`${cost(r.cost, c().currency)} · ${percent(r.share)}`, t("costBy.line", { n: count(r.billed), class: t(`costBy.${r.class}`) })] } : null;
   };
   return (
     <If when={!textual()} else={<SimpleTable columns={[t("column.operation"), t("figure.requests"), t("profile.cost"), t("profile.share")]} rows={rows().map((r) => [r.operation, count(r.requests), cost(r.cost, c().currency), percent(r.share)])} />}>
+      <View class="gap-1">
       <Plot
         testID="profile-cost"
         data={rows()}
@@ -359,9 +365,12 @@ export function CostBy(props: { signals: Signals; max?: number }) {
         class={GUTTER}
         style={{ height: rowsHeight(rows().length) }}
       >
-        <Bar value="cost" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} stagger={0.3} label={(_, i) => `${percent(rows()[i].share)} · ${t("run.bandRequests", { n: rows()[i].billed })}`} labelClass={BAR_LABEL} />
+        {/* what each cost, in money, then its share: the bar is of the money (the unit is said once, under the chart) */}
+        <Bar value="cost" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} stagger={0.3} label={(_, i) => `${money(rows()[i].cost)} · ${percent(rows()[i].share)}`} labelClass={BAR_LABEL} />
         <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.operation ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
+      <If when={unit()}>{(u) => <ChartNote gutter testID="cost-unit">{t("costBy.unit", { unit: u() })}</ChartNote>}</If>
+      </View>
     </If>
   );
 }

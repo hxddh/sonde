@@ -807,7 +807,7 @@
  "history.codeChangeOpen": "查看代码变更",
  "history.noCodeChange": "两次提交之间没有文件变化。",
  "history.moreFiles": "另有 %{n} 个文件",
- "prefixUse.title": "按前缀看去向",
+ "prefixUse.title": "按前缀",
  "prefixUse.hint": "面积为所选度量；超过 S3 限额一半的为警示色",
  "prefixUse.byRequests": "请求",
  "prefixUse.byCost": "费用",
@@ -1036,5 +1036,6 @@
  "trial.left.one": "留下 %{n} 个未完成的分片上传",
  "sessions.copiedFirst": "已复制 %{of} 个操作中的前 %{n} 个",
  "cost.unitPerThousand": "每 1,000 次运行，%{cur}",
- "cost.perThousand": "每 1,000 次运行 %{v} %{cur}"
+ "cost.perThousand": "每 1,000 次运行 %{v} %{cur}",
+ "costBy.unit": "单位：%{unit}"
 }

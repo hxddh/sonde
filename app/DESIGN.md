@@ -165,7 +165,14 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   do not go). A value arrives in its place; the layout does not change to make it.
 - **One settings width.** Settings and Endpoints are `FORM` wide, so their edges line up across the tabs.
 - **Tables fit their own width.** The operation's name takes the room the others leave; notes, then bars go as
-  the table (not the window) narrows — from the end only: DataTable keeps a column's state by its place.
+  the table (not the window) narrows — from the end only: DataTable keeps a column's state by its place. A
+  table whose columns are set by hand gives its free width to the column that would be cut (a request's
+  target, an upload's key), and a column of dates is as wide as the widest date in either language.
+- **A session of any size.** A session's view carries its totals, its signals, its findings and the first page
+  of its operations; the table holds a window of rows over however many there are (`Operations`, `paged.ts`)
+  and asks for the rest as it scrolls, sorts or is narrowed — sorted and narrowed where the operations are
+  kept, never in the interface. The inspector reads one operation whole when it is chosen. A shared page holds
+  its session whole and answers the same table from it (`operations.ts`).
 
 ## One rendering per concept
 
@@ -323,8 +330,16 @@ the live list, sheets come from their edge. Nothing moves with reduced motion.
 
 Sentence case, no final period on labels, `…` for commands that ask for more (and only those: see Actions).
 A trial's scenario is said in words (`scenario.<name>`: "The store asks to slow down") with its id in mono beside
-it, as `sonde run --trial` takes it. Every literal a reader sees goes through `t()`, in both languages; a key
+it, as `sonde run --trial` takes it, and what it does and how hard it presses in a line under them
+(`scenario.about.<name>`; a project's own scenario keeps the line its `sonde.toml` gives). The trial's dialog
+says the limit the program runs under and lets it be changed; **Stop** ends a running trial and is its own
+word (nothing dismisses the dialog while it runs), the time it has taken counts beside its progress, and a
+finished scenario opens its own session. A verdict that is not "survived" says where it turned (the request,
+the program's line) and what to change, from Rust's phrase. Every literal a reader sees goes through `t()`, in both languages; a key
 nothing uses fails `check-locales.py`. Nouns
 for places (Run, Sessions, Buckets, Activity), verbs for commands. Chinese is written,
-not translated: `桶`, `会话`, `未完成的上传`. What sonde says about a session comes from
-phrases (`src/phrases.ts`) in both languages.
+not translated: `桶`, `会话`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of
+their own (运行 the place, 启动 its button, 各次运行 and 历次运行 the runs in the list and on the tab; 操作 what
+a program did, 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create). What sonde says about a session comes from
+phrases (`src/phrases.ts`) in both languages: English from Rust's own templates, which `check-locales.py`
+holds the app's to, letter for letter.

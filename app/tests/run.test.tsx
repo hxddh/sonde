@@ -83,8 +83,8 @@ test("an example session reads as operations, each opening on its requests", asy
   expect(app.shows("id:fix-code")).toBe(true);
   await app.press("id:fix-sdk-go");
   await app.waitFor("text:Go SDK v2");
-  // the fixes scrolled into view under the findings; back up to the first
-  await app.scroll("id:fix", -2000);
+  // the advice opened inside its own row, under its title: the row is there to press again
+  expect(app.shows("id:finding-advice")).toBe(true);
   await app.press("id:observation-0");
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
@@ -197,7 +197,8 @@ test("a session's time: where it went, and two runs before and after", async () 
   expect(app.shows("label:/^Waiting on S3 .* of .*; up to 8 requests in flight/")).toBe(true);
   // the header's four signals and in flight: a figure each, and a press opens the signal's chart on the Time pane
   for (const id of ["rate", "errors", "latency", "bytes", "inFlight"]) expect(app.shows(`id:signal-${id}`)).toBe(true);
-  expect(app.shows("label:/^Rate: 368\/s, 172 requests in 467 ms, shows its chart$/")).toBe(true);
+  // (a run under a second has totals, not a rate: 172 requests in 467 ms are not "368 a second")
+  expect(app.shows("label:/^Requests: 172, in 467 ms, shows its chart$/")).toBe(true);
   expect(app.shows("label:/^Errors: 0%, No request failed/")).toBe(true);
   await app.press("id:signal-latency");
   await app.waitFor("id:time-pane");

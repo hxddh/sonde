@@ -215,7 +215,8 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
               </Text>
             }
           >
-            <View class="flex-row items-center gap-6" onLayout={measure("figures")}>
+            <View class="flex-row flex-wrap items-center gap-x-6 gap-y-2" onLayout={measure("figures")}>
+              {/* (at the least window they take a second line among themselves: none stands under the commands) */}
               <Figure small value={count(x().requests)} label={t("figure.requests")} />
               <If when={x().errors > 0}>
                 <Figure small value={count(x().errors)} label={t("figure.errors")} tone="bad" />

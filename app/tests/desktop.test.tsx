@@ -378,7 +378,9 @@ test("a run reads as four signals and in flight; what a log without times cannot
   // Rust's own flag (under a second) says totals too; with requests enough, their line stays
   expect(brief({ ...s, short: true })).toBe(true);
   const quick = signalTiles({ ...s, short: true });
-  expect(quick[0].value).toBe("40 requests");
+  // (the figure alone under "Requests" where its line stands beside it: nothing in the tile is cut)
+  expect(quick[0].label).toBe("Requests");
+  expect(quick[0].value).toBe("40");
   expect(quick[1].value).toBe("3%");
   expect(quick[0].series.length).toBe(2);
   // the run by operation: Rust's table, or what an older share's profile holds of it

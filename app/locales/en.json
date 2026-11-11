@@ -807,7 +807,7 @@
  "history.codeChangeOpen": "Show code change",
  "history.noCodeChange": "No file changed between the two commits.",
  "history.moreFiles": "and %{n} more files",
- "prefixUse.title": "Where, by prefix",
+ "prefixUse.title": "By prefix",
  "prefixUse.hint": "Area by the measure chosen; warm past half of S3's limit",
  "prefixUse.byRequests": "Requests",
  "prefixUse.byCost": "Cost",
@@ -1036,5 +1036,6 @@
  "trial.left.one": "1 upload left unfinished",
  "sessions.copiedFirst": "Copied the first %{n} of %{of} operations",
  "cost.unitPerThousand": "%{cur} per 1,000 runs",
- "cost.perThousand": "%{v} %{cur} per 1,000 runs"
+ "cost.perThousand": "%{v} %{cur} per 1,000 runs",
+ "costBy.unit": "in %{unit}"
 }
