@@ -52,8 +52,9 @@ async fn every_text_is_phrases() {
             assert_eq!(en(&e.detail_text), e.detail);
         }
     }
+    // (a fresh checkout has one issue fewer: SlateDB's GC lag is read from the files' age)
     assert!(
-        issues > 3 && events > 10,
+        issues >= 3 && events > 10,
         "{issues} issues, {events} events"
     );
 }
