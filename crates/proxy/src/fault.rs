@@ -565,7 +565,14 @@ mod tests {
             .push(reqlog::Header::new(BODY_HASH_HEADER, &sent));
         assert_eq!(
             identity_of(&r),
-            identity("POST", "DeleteObjects", Some("b"), None, &r.query, Some(&sent))
+            identity(
+                "POST",
+                "DeleteObjects",
+                Some("b"),
+                None,
+                &r.query,
+                Some(&sent)
+            )
         );
         // a key's request is its key: the body (a part's ETags) is not its name
         r.key = Some("k".into());

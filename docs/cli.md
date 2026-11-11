@@ -1,28 +1,42 @@
 # CLI
 
-`sonde` is the CLI and, with no GUI libraries, the terminal UI. Global options: `--config-dir`, `--data-dir`,
-`--url`, `--region`, `--path-style`, `--ca-file` (an ad hoc endpoint `adhoc`), `--rate`, `--concurrency`,
-`--log-out <file.har|file.json>` (the run's request log, redacted). Output formats: `--format table` (default),
-`json`, `markdown`, `csv` where they apply (real Markdown tables and RFC 4180 CSV); a format a command does not write is a usage error (64). The answer goes to stdout; hints,
+`sonde` is the CLI and, with no GUI libraries, the terminal UI. Global options (under their own heading in each
+command's help): `--config-dir`, `--data-dir`, and, for the commands that talk to a store, `--url`, `--region`,
+`--path-style`, `--ca-file` (an ad hoc endpoint `adhoc`), `--rate`, `--concurrency`, `--log-out
+<file.har|file.json>` (sonde's own requests of the run, redacted; refused on `run`, `proxy` and `watch`, whose
+requests are the session file). Commands that only read files (`show`, `sessions`, `compare`, `check`, `diff`,
+`share`, `export`, `import`) do not list the store's options. Output formats: `--format table` (default), `json`,
+`markdown`, `csv`, `github` where they apply (real Markdown tables and RFC 4180 CSV); each command's help lists the
+ones it writes, and a format a command does not write is a usage error (64). The answer goes to stdout; hints,
 progress and `run`'s summary (which shares the terminal with the program) go to stderr. Ctrl+C cancels the running
-job (its requests stop). A session argument is a path or a name in the data directory's `sessions/`
-(`20261108-073328-etl`, with or without `.sonde`).
+job (its requests stop).
+
+**A session argument** is a path or a name in the data directory's `sessions/` (`20261108-073328-etl`, with or
+without `.sonde`), for every command that takes one (`show`, `check`, `compare`, `diff`, `replay`, `share`,
+`export`); a name that is no session is a usage error that says where it was looked for. **The newest session**
+(a bare `show`, `check`, `share`, `export`) is the newest one recorded by `run`, `proxy` or `watch`: not a replay,
+an import or a trial, which are read by name.
+
+**A program's name.** Runs are grouped, and a baseline kept, by program. A program is its name when it has one —
+`name = "nightly-etl"` under `[program]` in `sonde.toml`, or `sonde run --name nightly-etl` — and else its whole
+command line, so that without a name a changed argument or interpreter path is another program. `sonde check` says
+which program it judged and whether that is its name or its command.
 
 | Command | Does |
 |---|---|
 | `sonde demo [--app]` | A tour: a small program's requests to the built-in store, recorded and explained (`--app` opens it in the app). |
 | `sonde run [--no-delete\|--read-only] [--live] [--callers] [-o FILE] -- COMMAND…` | Runs a command against a local endpoint that re-signs and records its S3 requests; prints the session's summary (and, when the program sent nothing, how each common SDK is pointed at sonde); exits with the command's status (128 + the signal's number when a signal ended it, as a shell says it). `--callers` names the code that sent each request in a Python, Node.js or Java program (see below). |
-| `sonde run --trial [--fault SCENARIO …] -- COMMAND…` | The clean run, then the command again under each fault scenario (chosen from what it did, or `sonde.toml`'s `[[scenario]]`, or the ones named), and whether it survived each: see [trials.md](trials.md). `{trial}` in an argument (and `SONDE_TRIAL`) is `clean`, then the scenario's name. Exits with the command's status when that is not 0, else 1 when a trial broke. |
+| `sonde run --trial [--fault SCENARIO …] [--name NAME] -- COMMAND…` | The clean run, then the command again under each fault scenario (chosen from what it did, or `sonde.toml`'s `[[scenario]]`, or the ones named), and whether it survived each: see [trials.md](trials.md). `{trial}` in the command (and `SONDE_TRIAL`) is `clean`, then the scenario's name; only when a trial runs. A clean run that fails or is interrupted is not tried. Ctrl-C or SIGTERM ends the whole trial (130, 143) and writes no verdict for the scenario it interrupted. Exits with the command's status when that is not 0, else 1 when a trial broke. Every `sonde run` to a session path first removes that session's earlier verdicts and trial sessions. |
 | `sonde proxy [--listen ADDR] [--allow-remote] [--no-delete\|--read-only] [-o FILE]` | The same endpoint, standing: prints the variables to set, then every request. It listens on loopback only unless `--allow-remote`. |
 | `sonde watch [--listen ADDR] [--rotate MIN] [--alert URL] …` | A proxy left running: one status line for the last minute (requests a second, errors, p95), each new warning as it appears, and a new session file every `--rotate` minutes (60), the finished one compressed. A finished file over `sonde.toml`'s budget is said on stderr (the last one at Ctrl-C too); `--alert` posts each new warning, and each such file, to a webhook as `{"text": …}` (Slack, Teams, Mattermost). |
 | `sonde watch --logs s3://BUCKET/PREFIX [--every 15m] [--once] [-e ENDPOINT] [--alert URL]` | Production through its logs, no proxy in the path: the S3 server access logs or CloudTrail files written under the prefix are read as they arrive (GET and LIST only), each pass kept as a session of the program `logs of s3://…` (so it has a history, a baseline and `sonde check`), its new warnings said and posted, the pass held to `sonde.toml`'s budget. Where it got to is kept; `--once` reads what is new and exits (cron, CI): 1 when the pass is over the budget, 70 when the logs could not be listed or none of the files listed could be read. |
-| `sonde sessions [list] [-f json\|csv\|markdown]` / `sonde sessions prune --keep N [--yes]` | The recorded sessions, newest first; prune deletes all but the newest N (baselines kept), a dry run without `--yes`. |
-| `sonde show [FILE] [--requests] [--errors] [--summary] [--app] [-f json]` | A session (default: the newest) as operations (or requests) and observations, and where its time went: the time it waited on its store by kind of request, the peak in flight and the requests' cost; and what acting on every finding would leave (requests, waiting, cost). JSON carries each finding's fixes by SDK. |
-| `sonde replay FILE -e E [-e E2 …] [--bucket A=B] [--prefix P\|--in-place] [--keep] [--yes] [-o FILE]` | Re-enacts a session on another endpoint, cleans up, compares every answer. With several `-e`, replays on each at once and prints them side by side: answers that differ and each kind's p95 against the recording (`-f markdown\|csv` too); a store it could not be replayed on exits 70. |
+| `sonde sessions [list] [-f json\|csv\|markdown]` / `sonde sessions prune --keep N [--yes]` | The recorded sessions, newest first, each with its program, requests, how long it took, its errors and how its trials stood (the worst of them); prune deletes all but the newest N (baselines kept), a dry run without `--yes`. |
+| `sonde show [FILE] [--requests] [--errors] [--summary] [--app] [-f json]` | A session (default: the newest) as operations (or requests) and observations, and where its time went: the time it waited on its store by kind of request, the peak in flight and the requests' cost. `--errors` on a session without one says there are none. "Acting on N findings" is the session with the requests those findings name taken out and reckoned again (their own waiting, their own price; a finding that names no request is left out, and the line says which it counts when not all). JSON carries each finding's fixes by SDK; `--summary -f json` is the summary alone (`summary`, `waiting` with `byKind`, `p95Ms`, `peakInFlight`, `cost`, `whatIf`, `observations`), without the requests. |
+| `sonde replay FILE -e E [-e E2 …] [--bucket A=B] [--prefix P\|--in-place] [--keep] [--yes] [-o FILE]` | Re-enacts a session on another endpoint, cleans up, compares every answer. The cleanup removes what the replay wrote under its prefix: the objects and, on a bucket that keeps versions, every version and delete marker; when anything is still there afterwards it says how much and exits 70. With several `-e`, replays on each at once and prints them side by side: answers that differ and each kind's p95 against the recording (`-f markdown\|csv` too); a store it could not be replayed on exits 70. |
 | `sonde import FILE\|FOLDER [-o FILE]` | Production traffic as a session (a folder is every file under it, in the order of their names, as one session; S3 delivers logs as thousands of small files): an S3 server access log, CloudTrail data events (`{"Records": …}` or one a line) or a HAR (gzipped or not), with the same operations, findings and figures as a recording; lines left out (not requests, or unreadable) are counted on stderr. |
-| `sonde export [FILE] --otlp [-o FILE \| --to URL]` | A session as OpenTelemetry traces (OTLP/JSON): each operation a span, its requests under it; `--to` posts it to a collector (`http://localhost:4318/v1/traces`). |
+| `sonde export [FILE] [-o FILE \| --to URL]` | A session as OpenTelemetry traces (OTLP/JSON): each operation a span, its requests under it; `--to` posts it to a collector (`http://localhost:4318/v1/traces`). |
 | `sonde diff ORIGINAL REPLAY [-f json]` | Compares a session with its replay (two ordinary runs are a usage error, 64: that is `sonde compare`), and each kind's p50 and p95 on both stores (`replay` prints the same table). |
-| `sonde check [FILE] [--config sonde.toml] [--baseline FILE\|auto\|URL] [--set-baseline] [--max-requests N] [--max-waiting MS] [--max-cost X] [--max-errors N] [--max-p95 MS] [--tolerance PCT] [--no-new-warnings] [--init] [-f json\|markdown\|github]` | A run against a budget and a baseline run: exits 1 when it is over either, or when the run's trial broke (for CI). It names the session it judged first; a failed row says by how much (`+23%`). The budget may live with the code in `sonde.toml` (here or in a folder above, to the repository's root); flags win over it. `--baseline auto` is the baseline set for the run's program (in the app or with `--set-baseline`; `sessions/baselines.json`, shared with the app); an `https://` baseline (a CI artifact, a presigned URL) is fetched; a baseline of another program is named on stderr; a `baselines.json` that is there and does not read is a configuration error (64) for `--baseline auto`, `--set-baseline` and `sonde sessions prune`, never read as empty or written over. `-f markdown` is a pull request's comment; `-f github` writes GitHub Actions annotations (failed verdicts as errors, findings on the line of code that sent their requests). Past a baseline, it says since which run and the commits around it. `--init` writes a `sonde.toml` this run passes. Nothing to check is a usage error (64), as are `--tolerance` and `--no-new-warnings` without a baseline. |
+| `sonde check [FILE] [--config sonde.toml] [--baseline FILE\|auto\|URL] [--set-baseline] [--max-requests N] [--max-waiting MS] [--max-cost X] [--max-errors N] [--max-p95 MS] [--tolerance PCT] [--no-new-warnings] [--init] [-f json\|markdown\|github]` | A run against a budget, a baseline run and its trials: exits 1 when it is over either, or when a trial broke — the trials alone are a check, no budget needed. It closes by saying which (`within budget`, `over budget`, `broke under a trial`, `within budget, and broke under a trial`), in every format; `-f json` carries `trials`, `passed` (true to both) and `verdict`. A trial's row is `pass` (survived), `warn` (degraded), `FAIL` (broke) or `skip` (untested). It names the session and the program it judged first; a failed row says by how much (`+23%`): over its limit for a budget's row, over the baseline's own figure for a baseline's row. `--max-waiting` and `--max-p95` take a time as `sonde.toml` writes it (`2s`, `250ms`, or ms). The budget may live with the code in `sonde.toml` (here or in a folder above, to the repository's root); flags win over it. `--baseline auto` is the baseline set for the run's program (in the app or with `--set-baseline`; `sessions/baselines.json`, shared with the app); an `https://` baseline (a CI artifact, a presigned URL) is fetched; a baseline of another program is named on stderr; a `baselines.json` that is there and does not read is a configuration error (64) for `--baseline auto`, `--set-baseline` and `sonde sessions prune`, never read as empty or written over. `-f markdown` is a pull request's comment; `-f github` writes GitHub Actions annotations (failed verdicts as errors, findings on the line of code that sent their requests). Past a baseline, it says since which run and the commits around it. `--init` writes a `sonde.toml` this run passes: the counts as limits, the limits of time commented out with the measured value beside them (time varies from one identical run to the next). Nothing to check (no budget, no baseline, no trials) is a usage error (64), as are `--tolerance` and `--no-new-warnings` without a baseline, and a `sonde.toml` that does not read or has a key sonde does not know. |
 | `sonde compare BEFORE AFTER [-f json]` | Two runs of a program, before and after a change: requests, waiting, time, errors and request cost, by kind of request, and the findings gone and new. Two different programs compare by their figures only (it says so). |
 | `sonde share [FILE] [-o DIR] [--serve [--port N]] [--json] [--html] [--redact]` | A session (default: the newest) as a static web page: sonde's viewer and the computed `session.json`; `--serve` on 127.0.0.1 until Ctrl-C. `--html` writes one self-contained HTML file instead (findings, where the time went, a timeline, every operation at `#op-N`). `--redact` replaces bucket and key names with tokens (the same name, the same token; layout names, numbers and file types kept) and drops headers, bodies, URLs, request ids, the program's output and its arguments. |
 | `sonde probe -e A -e B -b BUCKET [--only checksum.] [--temp-buckets] [--no-slow] [-f json\|markdown\|csv] [-o FILE]` | Runs the probes on each endpoint in parallel; saves the runs. A run writes and deletes under `sonde-probe/` in the scratch bucket named on the command line (that is its consent: read-only mode holds the app's window, not this command), and is in the audit log. |
@@ -40,13 +54,14 @@ job (its requests stop). A session argument is a path or a name in the data dire
 | Code | Meaning |
 |---|---|
 | 0 | Done; nothing to report |
-| 1 | A probe failed (a guarantee broke), or a layout has errors; `check` (or a `watch --logs --once` pass) is over its budget or baseline |
+| 1 | A probe failed (a guarantee broke), or a layout has errors; `check` (or a `watch --logs --once` pass) is over its budget or baseline, or the run broke under a trial; `run --trial` when a trial broke |
 | 2 | Probes behaved differently from AWS (and none failed); a replay answered differently |
 | 3 | Probes could not run (errors only) |
 | 4 | Findings worth attention: stale uploads or no abort rule, layout warnings, a changed probe diff, a dry run |
 | 64 | Usage or configuration error (an unknown command or option too, and a `-f` format the command does not write; `--help` and `--version` exit 0) |
-| 70 | The operation failed (connection, credentials, permission) |
-| 77 | Refused: read-only mode, the confirmation did not match, or a replay without `--yes` and no terminal to ask |
+| 70 | The operation failed (connection, credentials, permission); a replay could not remove what it wrote |
+| 130, 143 | `run --trial` interrupted by Ctrl-C or SIGTERM (`run` otherwise exits as its command did) |
+| 77 | Refused: read-only mode (`read-only = false` under `[settings]` in `config.toml` turns it off), the confirmation did not match, or a replay without `--yes` and no terminal to ask |
 
 A failed request prints its readable error, its request id and the request line from the log.
 
@@ -67,6 +82,9 @@ URL).
 The budget can be kept with the code, in `sonde.toml`:
 
 ```toml
+[program]
+name = "nightly-etl"      # what its runs and its baseline go by, whatever the arguments
+
 [check]
 max-requests = 5000
 max-waiting = "2s"        # or ms as a number
@@ -97,7 +115,9 @@ Or as annotations on the pull request's diff, each finding on the line of code t
       - run: sonde check -f github
 ```
 
-`sonde check --init` writes a first `sonde.toml` from a run (its figures with 10% of room) and prints these steps.
+`sonde.toml` has three tables, `[program]`, `[check]` and `[[scenario]]` ([trials.md](trials.md)); any other key
+is an error. `sonde check --init` writes a first `sonde.toml` from a run (its counts with 10% of room, its times
+commented out for a person to set) and prints these steps.
 Past its baseline, `sonde check` says since which run, and the commits of that run and the last one within: each
 run records the commit its code was at (`git`, or `GITHUB_SHA` in CI), so the change between the two is what to look
 at.

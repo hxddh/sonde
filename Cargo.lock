@@ -4576,6 +4576,7 @@ dependencies = [
  "nsh-engine",
  "nsh-platform-tui",
  "nsh-tui-host",
+ "parking_lot",
  "probes",
  "ratatui-core",
  "ratatui-crossterm",

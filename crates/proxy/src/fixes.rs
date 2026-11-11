@@ -309,11 +309,7 @@ impl WhatIf {
         use crate::program::{money_text, ms_text};
         let which = if self.findings < self.of_findings {
             // which ones, when not all: the reader cannot guess
-            let mut kinds: Vec<&str> = self
-                .counted
-                .iter()
-                .map(|k| kind_name(k))
-                .collect();
+            let mut kinds: Vec<&str> = self.counted.iter().map(|k| kind_name(k)).collect();
             kinds.dedup();
             format!(
                 "{} of {} findings ({})",
@@ -330,7 +326,10 @@ impl WhatIf {
         };
         let mut parts = Vec::new();
         if self.requests.0 != self.requests.1 {
-            parts.push(format!("{} → {} requests", self.requests.0, self.requests.1));
+            parts.push(format!(
+                "{} → {} requests",
+                self.requests.0, self.requests.1
+            ));
         }
         if ms_text(self.waiting_ms.0) != ms_text(self.waiting_ms.1) {
             parts.push(format!(
@@ -485,8 +484,9 @@ mod tests {
         assert_eq!((w.findings, w.of_findings), (1, 2));
         assert_eq!(w.requests, (20, 1));
         assert!(
-            w.line()
-                .starts_with("acting on 1 of 2 findings (a key read again and again): 20 → 1 requests"),
+            w.line().starts_with(
+                "acting on 1 of 2 findings (a key read again and again): 20 → 1 requests"
+            ),
             "{}",
             w.line()
         );

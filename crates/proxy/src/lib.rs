@@ -942,7 +942,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         None
     };
 
-
     // a control document (DeleteObjects, a lifecycle rule) is read now: it
     // is small, it is kept on the record, and it tells one request without a
     // key from the next (two batches of deletes are two requests to fail)
@@ -967,7 +966,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 // (kept now: a request sonde answers itself has it too)
                 let hash = match streaming_sig.then(|| chunked::decode(&raw)) {
                     Some(Ok(d)) => {
-                        record.request_body = Some(String::from_utf8_lossy(&d.payload).into_owned());
+                        record.request_body =
+                            Some(String::from_utf8_lossy(&d.payload).into_owned());
                         fault::body_hash(&d.payload)
                     }
                     _ => {

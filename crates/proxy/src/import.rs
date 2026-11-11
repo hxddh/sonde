@@ -118,12 +118,9 @@ impl Parts {
         }
         let (mut malformed, mut not_requests) = (0, 0);
         let records = match source {
-            Source::AccessLog => access_log(
-                text,
-                &mut malformed,
-                &mut not_requests,
-                &mut self.sources,
-            ),
+            Source::AccessLog => {
+                access_log(text, &mut malformed, &mut not_requests, &mut self.sources)
+            }
             Source::CloudTrail => cloudtrail(text)?,
             Source::Har => har(text)?,
         };

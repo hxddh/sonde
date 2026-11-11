@@ -299,9 +299,9 @@ impl Tables {
         let trimmed = prefix.trim_end_matches('/');
         match part_of(trimmed) {
             // a listing of a data file's path is of a table only when the table is
-            Some(Part::IcebergData | Part::DeltaData) => self
-                .data_part(&r.bucket, trimmed)
-                .map(|p| p.format()),
+            Some(Part::IcebergData | Part::DeltaData) => {
+                self.data_part(&r.bucket, trimmed).map(|p| p.format())
+            }
             _ => listed_format(prefix).map(|(f, _)| f),
         }
     }
@@ -1383,7 +1383,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         saves_requests: 0,
         saves_ms: 0.0,
         saved_ids: Vec::new(),
-            timed_ids: Vec::new(),
+        timed_ids: Vec::new(),
         fixes: Vec::new(),
         callers: Vec::new(),
         sdk: None,
@@ -1400,7 +1400,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         saves_requests: 0,
         saves_ms: 0.0,
         saved_ids: Vec::new(),
-            timed_ids: Vec::new(),
+        timed_ids: Vec::new(),
         fixes: Vec::new(),
         callers: Vec::new(),
         sdk: None,
@@ -1989,14 +1989,30 @@ mod tests {
         for i in 0..6u64 {
             let key = format!("k{i}");
             let at = i as i64 * 300;
-            rs.push(fault(rec(i * 2 + 1, at, "PUT", "PutObject", Some(&key), 503)));
-            rs.push(rec(i * 2 + 2, at + 110, "PUT", "PutObject", Some(&key), 200));
+            rs.push(fault(rec(
+                i * 2 + 1,
+                at,
+                "PUT",
+                "PutObject",
+                Some(&key),
+                503,
+            )));
+            rs.push(rec(
+                i * 2 + 2,
+                at + 110,
+                "PUT",
+                "PutObject",
+                Some(&key),
+                200,
+            ));
         }
         let obs = observations(&rs, &episodes(&rs));
         assert_eq!(obs[0].phrases[0].key, "obs.injected", "{obs:#?}");
         let keys: Vec<&str> = obs.iter().map(|o| o.phrases[0].key).collect();
         assert!(
-            !keys.iter().any(|k| k.starts_with("obs.throttled") || *k == "obs.retried"),
+            !keys
+                .iter()
+                .any(|k| k.starts_with("obs.throttled") || *k == "obs.retried"),
             "the store asked for nothing: {keys:?}"
         );
         // a 503 of the store's own, in the same session, is still the store's
@@ -2011,7 +2027,10 @@ mod tests {
             .find(|o| o.phrases[0].key.starts_with("obs.throttled"))
             .expect("the store's own 503");
         assert_eq!(throttled.phrases[0].args["n"], "1");
-        assert!(obs.iter().any(|o| o.text == "1 request repeated after a retryable failure"));
+        assert!(
+            obs.iter()
+                .any(|o| o.text == "1 request repeated after a retryable failure")
+        );
     }
 
     #[test]
@@ -2059,8 +2078,22 @@ mod tests {
     #[test]
     fn a_delta_table_under_a_data_folder_keeps_its_files() {
         let rs = [
-            rec(1, 0, "PUT", "PutObject", Some("lake/data/events/part-00000-a.snappy.parquet"), 200),
-            rec(2, 10, "PUT", "PutObject", Some("lake/data/events/day=1/f1.parquet"), 200),
+            rec(
+                1,
+                0,
+                "PUT",
+                "PutObject",
+                Some("lake/data/events/part-00000-a.snappy.parquet"),
+                200,
+            ),
+            rec(
+                2,
+                10,
+                "PUT",
+                "PutObject",
+                Some("lake/data/events/day=1/f1.parquet"),
+                200,
+            ),
             rec(
                 3,
                 20,

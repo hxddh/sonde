@@ -264,12 +264,12 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
  * is the one title of a page that is only an introduction (the welcome, an
  * empty Run); `mono` for a title that is a command, a key or a bucket. A
  * terminal has one weight and no sizes. */
-export function Title(props: { children: JSX.Element; page?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string }) {
+export function Title(props: { children: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string }) {
   return (
     <Text
       testID={props.testID}
       role="header"
-      class={`${terminal() ? "" : props.page ? "text-title" : "text-heading"} font-semibold text-foreground ${props.mono ? "font-mono" : ""} ${props.center ? "text-center" : ""} ${props.lines === 1 ? "line-clamp-1" : props.lines === 2 ? "line-clamp-2" : ""} ${props.class ?? ""}`}
+      class={`${terminal() ? "" : props.page ? "text-title" : props.small ? "text-body" : "text-heading"} font-semibold text-foreground ${props.mono ? "font-mono" : ""} ${props.center ? "text-center" : ""} ${props.lines === 1 ? "line-clamp-1" : props.lines === 2 ? "line-clamp-2" : ""} ${props.class ?? ""}`}
     >
       {props.children}
     </Text>
@@ -329,13 +329,13 @@ export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD
 }
 
 /** The one row a press opens: hover, pressed, selected and focus, one look
- * in every list (sessions, programs, requests, findings, hits). `lines={2}`
+ * in every list (sessions, programs, requests, findings, hits; `plain` for a terminal's line). `lines={2}`
  * stacks two lines of text; `divided` is a row of a card that draws its
  * rows edge to edge under hairlines (`first` has none); `top` keeps what
  * stands beside wrapped text at its first line. What ends the row
  * (`trailing`: a count, a time, a chevron) keeps its width and its middle. */
-export function ListRow(props: { children: JSX.Element; onPress?: () => void; selected?: boolean; disabled?: boolean; label?: string; testID?: string; class?: string; trailing?: JSX.Element; lines?: 1 | 2; divided?: boolean; first?: boolean; top?: boolean }) {
-  const shape = () => (props.divided ? `px-3 py-2 ${props.first ? "" : "border-t border-border"}` : "min-h-7 rounded-(--radius-sm) px-2 py-1");
+export function ListRow(props: { children: JSX.Element; onPress?: () => void; selected?: boolean; disabled?: boolean; label?: string; testID?: string; class?: string; trailing?: JSX.Element; lines?: 1 | 2; divided?: boolean; first?: boolean; top?: boolean; /** a terminal's line: the states, no room around it */ plain?: boolean }) {
+  const shape = () => (props.plain ? "" : props.divided ? `px-3 py-2 ${props.first ? "" : "border-t border-border"}` : "min-h-7 rounded-(--radius-sm) px-2 py-1");
   const flow = () => (props.lines === 2 ? "flex-col items-stretch justify-center gap-1" : `flex-row gap-2 ${props.top ? "items-start" : "items-center"}`);
   return (
     <BaseButton
@@ -559,7 +559,7 @@ export function Figures(props: { items: { /** whether it has anything to say now
   const rank = (i: number) => props.items.slice(0, i).filter((_, k) => on(k)).length;
   const fit = () => figuresFit(width(), props.items.filter((_, k) => on(k)).length);
   return (
-    <View testID={props.testID} accessibilityLabel={props.label} class="flex-row items-start overflow-hidden" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+    <View testID={props.testID} accessibilityLabel={props.label} class="flex-row items-start" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
       {props.items.map((f, i) => (
         <View style={{ width: FIGURE_WIDTH }} class={on(i) && rank(i) < fit() ? "shrink-0 pr-4" : "hidden"}>
           {f.figure}

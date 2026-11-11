@@ -684,7 +684,12 @@ pub fn check(
                     ok: value <= limit + 1e-12,
                 })
             };
-            held("requests", r.requests as f64, l.requests, base.requests as f64);
+            held(
+                "requests",
+                r.requests as f64,
+                l.requests,
+                base.requests as f64,
+            );
             held("waiting", r.busy_ms, l.waiting_ms, base.busy_ms);
             held("cost", r.cost, l.cost, base.cost);
             held("errors", r.errors as f64, l.errors, base.errors as f64);
@@ -848,7 +853,11 @@ pub fn check_markdown_with(
     let mut md = format!(
         "### sonde: {} {}\n",
         check_closing(c, trials),
-        if check_passed(c, trials) { "✅" } else { "❌" }
+        if check_passed(c, trials) {
+            "✅"
+        } else {
+            "❌"
+        }
     );
     if !c.verdicts.is_empty() {
         md.push_str("\n| | | run | limit | from |\n|---|---|---:|---:|---|\n");
@@ -1254,7 +1263,10 @@ mod tests {
         );
         assert!(!check_passed(&within, &[broke.clone()]));
         // trials alone are a check: no budget is needed to fail one
-        assert_eq!(check_closing(&none, &[broke.clone()]), "broke under a trial");
+        assert_eq!(
+            check_closing(&none, &[broke.clone()]),
+            "broke under a trial"
+        );
         assert!(!check_passed(&none, &[broke.clone()]));
         assert_eq!(
             check_closing(&none, &[fine.clone()]),
@@ -1268,13 +1280,20 @@ mod tests {
             "{md}"
         );
         assert!(!md.contains("over budget"), "{md}");
-        assert!(md.contains("| **FAIL** | slowdown | exited 1 \\| really |"), "{md}");
-        assert!(md.contains("| warn | slowdown |"), "degraded is not a pass: {md}");
+        assert!(
+            md.contains("| **FAIL** | slowdown | exited 1 \\| really |"),
+            "{md}"
+        );
+        assert!(
+            md.contains("| warn | slowdown |"),
+            "degraded is not a pass: {md}"
+        );
     }
 
     #[test]
     fn a_named_program_is_its_name_whatever_its_command() {
-        let mut h = crate::session::SessionHeader::new("e", "", "", Some("python etl.py /tmp/a".into()));
+        let mut h =
+            crate::session::SessionHeader::new("e", "", "", Some("python etl.py /tmp/a".into()));
         assert_eq!(key_of(&h).as_deref(), Some("python etl.py /tmp/a"));
         h.name = Some("nightly-etl".into());
         assert_eq!(key_of(&h).as_deref(), Some("nightly-etl"));

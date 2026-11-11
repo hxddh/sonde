@@ -173,11 +173,25 @@ mod tests {
     fn every_name_a_request_is_given_is_a_name_a_scenario_may_say() {
         let all = operation_names();
         let none: &[(String, String)] = &[];
-        let copy = vec![("x-amz-copy-source".to_string(), "/b/k".to_string())];
+        let copy = [("x-amz-copy-source".to_string(), "/b/k".to_string())];
         let queries = [
-            "", "list-type=2", "versions", "uploads", "location", "delete", "lifecycle",
-            "versioning", "uploadId=u", "partNumber=1&uploadId=u", "acl", "tagging",
-            "attributes", "retention", "legal-hold", "restore", "select",
+            "",
+            "list-type=2",
+            "versions",
+            "uploads",
+            "location",
+            "delete",
+            "lifecycle",
+            "versioning",
+            "uploadId=u",
+            "partNumber=1&uploadId=u",
+            "acl",
+            "tagging",
+            "attributes",
+            "retention",
+            "legal-hold",
+            "restore",
+            "select",
         ];
         for method in ["GET", "HEAD", "PUT", "POST", "DELETE"] {
             for (bucket, key) in [(None, None), (Some("b"), None), (Some("b"), Some("k"))] {

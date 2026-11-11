@@ -14,7 +14,14 @@ pub struct SessionsArgs {
     #[command(subcommand)]
     action: Option<Action>,
     /// The format written: table, json, markdown or csv (the list).
-    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true, global = true)]
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true,
+        global = true
+    )]
     format: Format,
 }
 
@@ -76,8 +83,7 @@ fn rows(s: &Sonde) -> Vec<Row> {
                 requests: sum.as_ref().map_or(0, |s| s.requests),
                 seconds: sum.as_ref().map_or(0.0, |s| s.seconds),
                 errors: sum.as_ref().map_or(0, |s| s.errors),
-                trials: sonde_proxy::trial::worst(&sonde_proxy::trial::load(&p))
-                    .map(|s| s.label()),
+                trials: sonde_proxy::trial::worst(&sonde_proxy::trial::load(&p)).map(|s| s.label()),
             })
         })
         .collect();
@@ -102,10 +108,7 @@ pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
 /// A session named on the command line, opened: every command that takes a
 /// session takes it by path or by name, and one that is not there is said
 /// with where it was looked for.
-pub fn open(
-    s: &Sonde,
-    f: &PathBuf,
-) -> anyhow::Result<(PathBuf, sonde_proxy::session::Session)> {
+pub fn open(s: &Sonde, f: &PathBuf) -> anyhow::Result<(PathBuf, sonde_proxy::session::Session)> {
     let file = resolve(s, f);
     if !file.exists() {
         return Err(super::usage(format!(

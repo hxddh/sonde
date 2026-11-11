@@ -79,8 +79,6 @@ export const endpointsMode = signal<"list" | "add" | "import">("list");
 /** The main window's width, as its shell measures it (windowSize() follows
  * whichever window has the focus). */
 export const shellWidth = signal(1280);
-/** And its height. */
-export const shellHeight = signal(820);
 /** What the sidebar lists under the places: the current place's own list
  * (its sessions, its buckets, the commands run before), given by the place
  * while it is on screen. One left column for the whole window. */

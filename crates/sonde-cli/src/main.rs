@@ -24,16 +24,31 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 #[command(name = "sonde", version, about = "See what your software does to S3: its requests recorded, read as operations, replayed elsewhere", long_about = None)]
 pub struct Cli {
     /// Configuration directory (default: $SONDE_CONFIG_DIR or the platform's).
-    #[arg(long, global = true, env = "SONDE_CONFIG_DIR", help_heading = "Global options")]
+    #[arg(
+        long,
+        global = true,
+        env = "SONDE_CONFIG_DIR",
+        help_heading = "Global options"
+    )]
     config_dir: Option<std::path::PathBuf>,
     /// Data directory (sessions, request log, scans, probe runs, audit log).
-    #[arg(long, global = true, env = "SONDE_DATA_DIR", help_heading = "Global options")]
+    #[arg(
+        long,
+        global = true,
+        env = "SONDE_DATA_DIR",
+        help_heading = "Global options"
+    )]
     data_dir: Option<std::path::PathBuf>,
     /// Use an endpoint not in the configuration: its URL (credentials from the AWS default chain).
     #[arg(long, global = true, help_heading = "Global options")]
     url: Option<String>,
     /// Region for --url.
-    #[arg(long, global = true, default_value = "us-east-1", help_heading = "Global options")]
+    #[arg(
+        long,
+        global = true,
+        default_value = "us-east-1",
+        help_heading = "Global options"
+    )]
     pub region: String,
     /// Path-style addressing for --url.
     #[arg(long, global = true, help_heading = "Global options")]

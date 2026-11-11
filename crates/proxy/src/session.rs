@@ -127,9 +127,10 @@ impl SessionHeader {
     pub fn is_recording(&self) -> bool {
         self.scenario.is_none()
             && self.trial_of.is_none()
-            && self.command.as_deref().is_none_or(|c| {
-                !c.starts_with("replay of ") && !c.starts_with("imported from ")
-            })
+            && self
+                .command
+                .as_deref()
+                .is_none_or(|c| !c.starts_with("replay of ") && !c.starts_with("imported from "))
     }
 
     /// The folder the program runs in, and the commit its code is at there.

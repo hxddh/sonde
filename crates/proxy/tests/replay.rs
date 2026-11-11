@@ -452,5 +452,9 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
         .iter()
         .map(|(_, k, _, _)| k.clone())
         .collect();
-    assert_eq!(left, ["mine.txt"], "nothing under the prefix, all outside it");
+    assert_eq!(
+        left,
+        ["mine.txt"],
+        "nothing under the prefix, all outside it"
+    );
 }

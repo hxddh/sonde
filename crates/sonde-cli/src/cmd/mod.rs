@@ -195,6 +195,30 @@ mod tests {
         })
     }
 
+    #[test]
+    fn what_points_at_the_app_is_said_for_a_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Sonde::open(Paths {
+            config_dir: dir.path().join("c"),
+            data_dir: dir.path().join("d"),
+        })
+        .unwrap();
+        let refusal = said(
+            &s,
+            "read-only mode is on: turn it off in Settings to run destructive operations",
+        );
+        assert!(
+            refusal.contains("`read-only = false` under [settings]")
+                && refusal.contains("config.toml"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("in Settings"), "{refusal}");
+        assert_eq!(
+            said(&s, "billed but not listed as objects. See Multipart."),
+            "billed but not listed as objects. See `sonde mpu scan`."
+        );
+    }
+
     #[tokio::test]
     async fn one_endpoint_failing_does_not_leave_the_others_runs_behind() {
         let jobs = sonde_core::JobManager::new();

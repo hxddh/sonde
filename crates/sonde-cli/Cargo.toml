@@ -53,3 +53,5 @@ base64 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+# the small S3 of the proxy's tests, which the trial tests run sonde against
+parking_lot.workspace = true

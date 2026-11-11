@@ -140,7 +140,7 @@ test("sessions are looked after: renamed, searched, deleted, dropped on the wind
   await app.waitFor("id:session-search");
   // a title of the user's, from the row's context menu
   await app.rightClick("id:session-0");
-  expect(app.menu()!.map((m) => m.label)).toEqual(["Open in a window", "Share as a web page…", "Copy file path", "Rename…", "Delete…"]);
+  expect(app.menu()!.map((m) => m.label)).toEqual(["Open in a window", "Share as a web page", "Copy file path", "Rename…", "Delete…"]);
   await app.chooseMenuItem("Rename…");
   await app.waitFor("id:rename-dialog");
   await app.clear("id:rename-input");
@@ -248,7 +248,7 @@ test("a shared session opens in the browser, on a local address", async () => {
   await app.press("id:open-example");
   await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.press("id:session-more");
-  await app.chooseMenuItem("Share as a web page…");
+  await app.chooseMenuItem("Share as a web page");
   const noViewer = "text:Copied the command that makes the web page";
   await app.waitUntil(() => app.openedUrls().length > 0 || app.shows(noViewer), { timeout: 10000 });
   if (app.shows(noViewer)) {

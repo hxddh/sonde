@@ -1001,7 +1001,10 @@ async fn two_batches_of_deletes_each_meet_the_fault_and_each_has_its_retry() {
     names.sort();
     names.dedup();
     assert_eq!(names.len(), 2, "{names:?}");
-    assert!(recs.iter().all(|r| r.request_body.is_some()), "kept on a failed one too");
+    assert!(
+        recs.iter().all(|r| r.request_body.is_some()),
+        "kept on a failed one too"
+    );
     // read as a trial: both failed, both sent again
     let clean: Vec<reqlog::Record> = recs
         .iter()
@@ -1052,7 +1055,12 @@ async fn a_lost_answer_on_a_large_read_is_not_held_to_be_thrown_away() {
         }
     });
     let log = RequestLog::default();
-    let target = client(&format!("http://{addr}"), REAL_KEY, REAL_SECRET, RequestLog::default());
+    let target = client(
+        &format!("http://{addr}"),
+        REAL_KEY,
+        REAL_SECRET,
+        RequestLog::default(),
+    );
     let all = sonde_proxy::fault::Scenario {
         name: "lose-all".into(),
         about: String::new(),

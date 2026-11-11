@@ -33,7 +33,13 @@ enum LayoutAction {
         #[arg(long)]
         at: Option<String>,
         /// The format written: table or json.
-        #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
+        #[arg(
+            long,
+            short = 'f',
+            value_enum,
+            default_value_t,
+            hide_possible_values = true
+        )]
         format: Format,
     },
 }

@@ -525,6 +525,18 @@ fn read_exit(session: &Path) -> Option<i32> {
         .ok()
 }
 
+/// A run's verdicts for the app: each with the path of its trial's session
+/// (the file keeps a name, which only this run's folder resolves).
+fn trials_of(session: &Path) -> Vec<sonde_proxy::trial::Trial> {
+    let mut trials = sonde_proxy::trial::load(session);
+    for t in &mut trials {
+        t.session = sonde_proxy::trial::session_path(session, t)
+            .filter(|p| p.is_file())
+            .map(|p| p.to_string_lossy().into_owned());
+    }
+    trials
+}
+
 /// A run's trials as a list row marks them: the scenario, how the program
 /// stood, and the trial's own session where it is still there.
 fn trial_marks(session: &Path) -> Vec<JsonValue> {
@@ -572,7 +584,7 @@ fn with_trials(view: &JsonValue, path: &str) -> JsonValue {
             );
         }
         None => {
-            let trials = sonde_proxy::trial::load(p);
+            let trials = trials_of(p);
             if !trials.is_empty() {
                 o.insert("trials".into(), to_json(trials));
             }
@@ -1609,7 +1621,7 @@ impl Sessions {
                 .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
             {
                 if let Some(h) = header_of(&p)
-                    && let Some(k) = sonde_proxy::program::program_key(h.command.as_deref())
+                    && let Some(k) = sonde_proxy::program::key_of(&h)
                 {
                     commands.insert(k.clone(), (h.created.to_rfc3339(), h.command.clone()));
                     by.entry(k).or_default().push((h.created.to_rfc3339(), p));
@@ -1679,7 +1691,7 @@ impl Sessions {
         tokio::task::spawn_blocking(move || {
             let header = header_of(Path::new(&path));
             let command = header.as_ref().and_then(|h| h.command.clone());
-            let Some(key) = sonde_proxy::program::program_key(command.as_deref()) else {
+            let Some(key) = header.as_ref().and_then(sonde_proxy::program::key_of) else {
                 return Ok(JsonValue::Null);
             };
             let dir = sonde().paths().sessions();
@@ -1691,9 +1703,8 @@ impl Sessions {
                 .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
                 .filter_map(|p| {
                     let h = header_of(&p)?;
-                    (sonde_proxy::program::program_key(h.command.as_deref()).as_deref()
-                        == Some(key.as_str()))
-                    .then(|| (h.created.to_rfc3339(), p))
+                    (sonde_proxy::program::key_of(&h).as_deref() == Some(key.as_str()))
+                        .then(|| (h.created.to_rfc3339(), p))
                 })
                 .collect();
             runs.sort();
@@ -1777,7 +1788,7 @@ impl Sessions {
                 "check": check,
                 "markdown": markdown,
                 // what the run's last trial found (`sonde run --trial`)
-                "trials": sonde_proxy::trial::load(Path::new(&path)),
+                "trials": trials_of(Path::new(&path)),
             }))
         })
         .await
@@ -1799,7 +1810,7 @@ impl Sessions {
     pub fn set_baseline(path: String, on: bool) -> Result<bool, String> {
         let (_, name) = own_session(&path)?;
         let key = header_of(Path::new(&path))
-            .and_then(|h| sonde_proxy::program::program_key(h.command.as_deref()))
+            .and_then(|h| sonde_proxy::program::key_of(&h))
             .ok_or_else(|| err_msg("only a run of a program has a baseline"))?;
         let mut all = map_to_change(&sonde().paths().sessions().join("baselines.json"))?;
         if on {

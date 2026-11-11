@@ -297,7 +297,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element 
     <View class="gap-3">
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
-          <Title mono lines={2} class="text-body">
+          <Title mono small lines={2}>
             {command() ? commandLine(command()!) : props.view.header.endpoint}
           </Title>
           <Text class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git)].filter(Boolean).join(" · ")}</Text>
@@ -453,6 +453,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
             {(o, i) => (
               // a finding narrows the operations to its own, as on the desktop
               <ListRow
+                plain
                 testID={`observation-${i()}`}
                 label={observationText(o())}
                 selected={props.filter === i()}

@@ -13,7 +13,7 @@ import { followNotifications, running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLink, wouldOpen, openSession, openSessionFile, readOnly, report, section, setOverlay, settings, shellHeight, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLink, wouldOpen, openSession, openSessionFile, readOnly, report, section, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
@@ -107,7 +107,7 @@ function DesktopShell() {
     <View
       testID="shell"
       class={`flex-1 ${windowMaterial() ? "" : "bg-background"}`}
-      onLayout={(e) => batch(() => (shellWidth.set(e.bounds.size.width), shellHeight.set(e.bounds.size.height)))}
+      onLayout={(e) => shellWidth.set(e.bounds.size.width)}
       // a .sonde file dropped anywhere on the window opens it; while one is over it, it says so
       onFileDrop={(e) => {
         dragging.set(null);

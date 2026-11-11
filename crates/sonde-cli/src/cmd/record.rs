@@ -129,7 +129,13 @@ pub struct CheckArgs {
     #[arg(long)]
     init: bool,
     /// The format written: table, json, markdown (a pull request's comment) or github (annotations).
-    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
     format: Format,
 }
 
@@ -140,7 +146,13 @@ pub struct CompareArgs {
     /// The run after it.
     after: PathBuf,
     /// The format written: table or json.
-    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
     format: Format,
 }
 
@@ -161,7 +173,13 @@ pub struct ShowArgs {
     #[arg(long)]
     app: bool,
     /// The format written: table or json.
-    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
     format: Format,
 }
 
@@ -579,6 +597,12 @@ fn print_summary(
     for (what, n) in &s.error_codes {
         say(format!("  {n} × {what}"));
     }
+    // the four signals, each with its line over the run
+    let signals =
+        sonde_proxy::signals::text(&sonde_proxy::signals::signals(records, prices), color);
+    for line in signals.lines() {
+        say(line.to_string());
+    }
     let prof = profile(records, prices);
     print_profile(&prof, color, &say);
     let obs = observations(records, &eps);
@@ -878,12 +902,9 @@ fn load_project(explicit: Option<&PathBuf>) -> anyhow::Result<Project> {
     })?;
     let mut scenarios: Vec<sonde_proxy::fault::Scenario> = Vec::new();
     for p in &file.scenario {
-        let scenario = p.scenario().map_err(&wrong)?;
+        let scenario = p.scenario().map_err(wrong)?;
         if scenarios.iter().any(|s| s.name == scenario.name) {
-            return Err(wrong(format!(
-                "scenario {}: named twice",
-                scenario.name
-            )));
+            return Err(wrong(format!("scenario {}: named twice", scenario.name)));
         }
         scenarios.push(scenario);
     }
@@ -1339,7 +1360,13 @@ pub struct ReplayArgs {
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
     /// The format written: table or json; with several -e, markdown and csv too.
-    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
     format: Format,
 }
 
@@ -1350,7 +1377,13 @@ pub struct DiffArgs {
     /// Its replay (`sonde replay -o`).
     replay: PathBuf,
     /// The format written: table or json.
-    #[arg(long, short = 'f', value_enum, default_value_t, hide_possible_values = true)]
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
     format: Format,
 }
 
@@ -2076,7 +2109,8 @@ fn find_project_file() -> Option<PathBuf> {
 
 /// A duration on the command line, as `sonde.toml` writes one.
 fn duration_arg(text: &str) -> Result<f64, String> {
-    duration_text(text).ok_or_else(|| format!("{text:?} is not a time (2s, 250ms, or ms as a number)"))
+    duration_text(text)
+        .ok_or_else(|| format!("{text:?} is not a time (2s, 250ms, or ms as a number)"))
 }
 
 /// "250ms", "2s", "1.5 s", or ms as a number.
@@ -2106,8 +2140,9 @@ fn duration_ms(name: &str, v: &toml::Value) -> anyhow::Result<f64> {
     match v {
         toml::Value::Integer(n) => Ok(*n as f64),
         toml::Value::Float(f) => Ok(*f),
-        toml::Value::String(s) => duration_text(s)
-            .ok_or_else(|| super::usage(format!("{name}: {s:?} is not a duration"))),
+        toml::Value::String(s) => {
+            duration_text(s).ok_or_else(|| super::usage(format!("{name}: {s:?} is not a duration")))
+        }
         other => Err(super::usage(format!("{name}: {other} is not a duration"))),
     }
 }
@@ -2519,18 +2554,23 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             );
         }
     }
+    // a mistake in sonde.toml names the file it is in
+    let in_project = |e: anyhow::Error| match &project_path {
+        Some(p) => super::usage(format!("{}: {e}", p.display())),
+        None => e,
+    };
     let budget = Budget {
         max_requests: a.max_requests.or(project.max_requests),
         max_waiting_ms: match (a.max_waiting, &project.max_waiting) {
             (Some(v), _) => Some(v),
-            (None, Some(v)) => Some(waiting_ms(v)?),
+            (None, Some(v)) => Some(waiting_ms(v).map_err(in_project)?),
             (None, None) => None,
         },
         max_cost: a.max_cost.or(project.max_cost),
         max_errors: a.max_errors.or(project.max_errors),
         max_p95_ms: match (a.max_p95, &project.max_p95) {
             (Some(v), _) => Some(v),
-            (None, Some(v)) => Some(duration_ms("max-p95", v)?),
+            (None, Some(v)) => Some(duration_ms("max-p95", v).map_err(in_project)?),
             (None, None) => None,
         },
         expect: project.expect.clone(),

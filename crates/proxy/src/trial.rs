@@ -140,8 +140,7 @@ fn is_write(r: &Record) -> bool {
 fn answered(r: &Record) -> bool {
     !faulted(r)
         && r.transport_error.is_none()
-        && r.status
-            .is_some_and(|s| s < 500 && s != 429 && s != 408)
+        && r.status.is_some_and(|s| s < 500 && s != 429 && s != 408)
 }
 
 /// Whether a failed request is one a program should send again: a 5xx, a
@@ -528,10 +527,7 @@ impl Trial {
             ));
         }
         if self.clean_requests > 0 && self.requests != self.clean_requests {
-            let ratio = format!(
-                "{:.1}",
-                self.requests as f64 / self.clean_requests as f64
-            );
+            let ratio = format!("{:.1}", self.requests as f64 / self.clean_requests as f64);
             if ratio != "1.0" {
                 parts.push(format!("{ratio}× the requests"));
             }
@@ -597,7 +593,7 @@ mod tests {
         let mut r = fault(r, "lost-answer");
         r.status = Some(500);
         r.response_headers
-            .push(Header::new("x-sonde-store-status", &store.to_string()));
+            .push(Header::new("x-sonde-store-status", store.to_string()));
         r
     }
 
@@ -660,7 +656,9 @@ mod tests {
 
     #[test]
     fn a_poll_is_retried_when_the_program_gets_the_answers_it_meant_to() {
-        let clean: Vec<Record> = (0..4).map(|i| get(i + 1, i as i64 * 100, "job", 200)).collect();
+        let clean: Vec<Record> = (0..4)
+            .map(|i| get(i + 1, i as i64 * 100, "job", 200))
+            .collect();
         // the first poll fails, and the loop polls on: four answers still
         let mut run = vec![fault(get(1, 0, "job", 503), "slowdown")];
         run.extend((1..5).map(|i| get(i + 1, i as i64 * 100, "job", 200)));
@@ -708,7 +706,10 @@ mod tests {
             r
         };
         let clean = vec![part(1, 0, "u1", 200)];
-        let run = vec![fault(part(1, 0, "u1", 503), "slowdown"), part(2, 205, "u2", 200)];
+        let run = vec![
+            fault(part(1, 0, "u1", 503), "slowdown"),
+            part(2, 205, "u2", 200),
+        ];
         let t = judge(&slowdown(), &clean, 0, &run, 0);
         assert_eq!((t.faults, t.retried), (1, 1));
         assert_eq!(t.backoff_ms.map(|b| b[1]), Some(200.0));
@@ -832,14 +833,21 @@ mod tests {
     #[test]
     fn a_lost_answer_never_asked_about_again_is_a_write_and_a_read_is_a_read() {
         let s = crate::fault::scenario("lost-answer").unwrap();
-        let clean = vec![put(1, 0, "a", 200), put(2, 10, "b", 200), get(3, 20, "a", 200)];
+        let clean = vec![
+            put(1, 0, "a", 200),
+            put(2, 10, "b", 200),
+            get(3, 20, "a", 200),
+        ];
         let run = vec![
             lost(put(1, 0, "a", 500), 200),
             lost(put(2, 10, "b", 500), 200),
             lost(get(3, 20, "a", 500), 200),
         ];
         let t = judge(&s, &clean, 0, &run, 0);
-        assert_eq!((t.dropped_writes, t.lost_writes, t.dropped_reads), (2, 2, 1));
+        assert_eq!(
+            (t.dropped_writes, t.lost_writes, t.dropped_reads),
+            (2, 2, 1)
+        );
         assert_eq!(t.wrote_twice, 0);
         assert_eq!(t.standing, Standing::Broke);
         assert!(
@@ -942,7 +950,10 @@ mod tests {
             r.latency_ms = 305.0;
         }
         let t = judge(&s, &clean, 0, &run, 0);
-        assert_eq!((t.standing, t.faults, t.delayed), (Standing::Survived, 0, 2));
+        assert_eq!(
+            (t.standing, t.faults, t.delayed),
+            (Standing::Survived, 0, 2)
+        );
         assert_eq!((t.clean_wall_ms, t.wall_ms), (105.0, 705.0));
         assert_eq!(t.line(), "2 delayed · took 705 ms (the clean run 105 ms)");
     }
@@ -985,8 +996,14 @@ mod tests {
         assert!(!trials.join("run.slowdown.sonde").exists());
         assert!(!trials.join("run.error-2.sonde").exists());
         assert!(!file_for(&session).exists());
-        assert!(trials.join("run-2.slowdown.sonde").exists(), "another run's");
-        assert!(trials.join("run.notes.txt").exists(), "not a trial's session");
+        assert!(
+            trials.join("run-2.slowdown.sonde").exists(),
+            "another run's"
+        );
+        assert!(
+            trials.join("run.notes.txt").exists(),
+            "not a trial's session"
+        );
         remove(&other);
         assert!(!trials.join("run-2.slowdown.sonde").exists());
     }
