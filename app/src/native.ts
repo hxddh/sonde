@@ -109,6 +109,11 @@ export const api = {
     input: (data: string) => Sessions.input(data),
     resize: (cols: number, rows: number) => Sessions.resize(cols, rows),
     kill: () => Sessions.kill(),
+    /** What trying a session's program under faults would run, said before it runs; throws with why there is no trial. */
+    trialPlan: (path: string) => Sessions.trialPlan(path) as T.TrialPlan,
+    /** The session's command again, once per scenario, sonde answering in the store's place; `kill` cancels (and nothing is kept). */
+    trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent) => void) =>
+      Sessions.trial(path, scenarios, policy, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
     logLines: (path: string) => Sessions.logLines(path) as T.LogLine[],
     replayPlan: (path: string, endpoint: string) => Sessions.replayPlan(path, endpoint),
     replay: (path: string, endpoint: string, prefix: string) => Sessions.replay(path, endpoint, prefix),

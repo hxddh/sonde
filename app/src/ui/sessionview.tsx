@@ -10,10 +10,12 @@ import { isAvailable } from "nsh/desktop";
 import { bytes, change, clock, count, date, day, duration, hm, middle, percent } from "../format";
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
-import { Chart, cost, groupName, sessionStory, Sparkline, timed, Waterfall } from "./plots";
+import { Chart, sessionStory, Sparkline, timed, Waterfall } from "./plots";
+import { type SignalId, signalsOf, signalTiles } from "../signals";
+import { worstStanding } from "../trials";
 import type { Episode, LogLine, Observation, Profile, ProfileGroup, RecordSummary, SessionInfo, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, Figure, Figures, fitColumns, Heading, ICON, InWindowMenu, ListRow, Options, Row, ROW, rowHeight, Strong, TABLE, terminal, Title, TYPE } from "./kit";
+import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, InWindowMenu, ListRow, Options, Path, Row, ROW, rowHeight, Stat, Strong, TABLE, terminal, Tiles, Title, TYPE } from "./kit";
 import { rememberedSize } from "./sizes";
 
 const SHELL = new Set(["for", "while", "until", "if", "case", "sh", "bash", "zsh", "sudo", "(", "{"]);
@@ -200,14 +202,17 @@ export const toneText = (t: Tone) => TONE_TEXT[t];
 
 /** An HTTP status, the same everywhere: a dot in its tone and the code, a
  * success quiet, anything else in its tone (none: the request never got
- * an answer). */
-export function StatusMark(props: { status: number | null; text?: string }) {
+ * an answer). A request a fault scenario answered (`injected`: its name) is
+ * in the injected tone whatever it looked like, and says so to a screen reader:
+ * the store is not blamed for it. */
+export function StatusMark(props: { status: number | null; text?: string; injected?: string | null }) {
   const tone = () => statusTone(props.status);
+  const code = () => props.text ?? (props.status === null ? "—" : `${props.status}`);
   return (
-    <View class="flex-row items-center gap-2">
-      <Dot tone={tone()} />
+    <View class="flex-row items-center gap-2" accessibilityLabel={props.injected ? `${code()}, ${t("plots.injected")}` : undefined}>
+      <Dot tone={props.injected ? "injected" : tone()} />
       {/* emphasis: a status that is not a success stands out in its tone */}
-      <Text class={`font-mono text-caption tabular-nums ${tone() === "ok" ? "text-muted-foreground" : `${EMPHASIS} ${TONE_TEXT[tone()]}`}`}>{props.text ?? (props.status === null ? "—" : `${props.status}`)}</Text>
+      <Text class={`font-mono text-caption tabular-nums ${props.injected ? `${EMPHASIS} text-status-injected` : tone() === "ok" ? "text-muted-foreground" : `${EMPHASIS} ${TONE_TEXT[tone()]}`}`}>{code()}</Text>
     </View>
   );
 }
@@ -238,32 +243,6 @@ export function span(v: SessionView): [number, number] {
   return [a, Math.max(b, a + 1)];
 }
 
-/** What a session's requests were, by kind: a figure's preview. */
-function KindsPreview(props: { profile: Profile; by: "requests" | "time" }) {
-  const rows = () => [...props.profile.groups].sort((a, b) => (props.by === "requests" ? b.requests - a.requests : b.busyMs - a.busyMs)).slice(0, 5);
-  // kinds overlap in time: each bar against the largest, not a share of a whole
-  const total = () => rows().reduce((m, g) => Math.max(m, props.by === "requests" ? g.requests : g.busyMs), 0) || 1;
-  const value = (g: ProfileGroup) => (props.by === "requests" ? g.requests : g.busyMs);
-  return (
-    <View testID={`preview-${props.by}`} class="gap-2">
-      <Text class="text-caption font-medium text-muted-foreground">{props.by === "requests" ? t("figure.requests") : t("profile.spentTitle")}</Text>
-      <Each of={rows()}>
-        {(g) => (
-          <View class="gap-1">
-            <View class="flex-row items-baseline gap-2">
-              <Text class="min-w-0 flex-1 text-small text-popover-foreground line-clamp-1">{groupName(g())}</Text>
-              <Text class="tabular-nums text-caption text-muted-foreground">{props.by === "requests" ? count(g().requests) : duration(g().busyMs)}</Text>
-            </View>
-            <View class="h-1 overflow-hidden rounded-full bg-muted">
-              <View class="h-full rounded-full bg-chart-1" style={{ width: `${Math.max(2, Math.round((value(g()) * 100) / total()))}%` }} />
-            </View>
-          </View>
-        )}
-      </Each>
-    </View>
-  );
-}
-
 /** The commit a run's code was at, as a person reads it: a1b2c3d (main), changed. */
 export function gitText(g: SessionView["header"]["git"]): string {
   if (!g) return "";
@@ -271,7 +250,7 @@ export function gitText(g: SessionView["header"]["git"]): string {
 }
 
 /** The command and where it ran, then the session's figures. */
-export function SessionHeader(props: { view: SessionView; actions?: JSX.Element }) {
+export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element }) {
   const s = () => props.view.summary;
   const line = () => {
     const parts = [t("timeline.operations", { n: s().requests, ops: t("figure.operationsN", { n: props.view.episodes.length }), secs: duration(s().seconds * 1000) })];
@@ -285,6 +264,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element 
     return (
       <View class="gap-0">
         <Title>{command() ? commandLine(command()!) : props.view.header.endpoint}</Title>
+        {props.children}
         <Text class="text-muted-foreground" testID="session-summary">
           {line()}
         </Text>
@@ -293,6 +273,28 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element 
     );
   }
   const profile = () => props.view.profile;
+  // the four signals, then in flight: by rank, so a narrow pane drops the last first
+  const tiles = () => {
+    const x = signalsOf(props.view);
+    return x ? signalTiles(x) : [];
+  };
+  const tile = (i: number) => {
+    const x = () => tiles()[i];
+    return (
+      <If when={x()}>
+        <Stat
+          testID={`signal-${SIGNALS[i]}`}
+          label={x().label}
+          value={x().value}
+          detail={x().detail}
+          tone={x().tone}
+          hint={props.onSignal ? t("signal.open") : undefined}
+          onPress={props.onSignal ? () => props.onSignal?.(SIGNALS[i]) : undefined}
+          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class="h-5 w-16 shrink-0" fill={x().tone === "bad" ? "fill-status-server/80" : undefined} />}
+        />
+      </If>
+    );
+  };
   return (
     <View class="gap-3">
       <View class="flex-row items-start gap-3">
@@ -309,24 +311,19 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element 
         </View>
         {props.actions}
       </View>
-      {/* by rank: as the pane narrows the line holds fewer figures, the last ones go first, none wraps */}
-      <Figures
-        testID="session-summary"
-        label={line()}
-        items={[
-          { figure: <Figure testID="figure-requests" value={count(s().requests)} label={t("figure.requests")} preview={profile()?.groups.length ? <KindsPreview profile={profile()} by="requests" /> : undefined} /> },
-          // the program's time on S3: one figure, with its share, and what it was made of
-          { show: () => !!profile()?.groups.length && timed(profile()), figure: <Figure testID="profile-waiting" value={duration(profile()?.busyMs ?? 0)} label={`${t("profile.waiting")} · ${percent((profile()?.busyMs ?? 0) / Math.max(profile()?.wallMs ?? 0, 1e-9))}`} preview={profile() ? <KindsPreview profile={profile()} by="time" /> : undefined} /> },
-          { show: () => s().errors > 0, figure: <Figure value={count(s().errors)} label={t("figure.errors")} tone="bad" /> },
-          { figure: <Figure value={duration(s().seconds * 1000)} label={t("figure.took")} /> },
-          { show: () => !!profile() && profile().cost.amount > 0, figure: <Figure testID="profile-cost" value={profile() ? cost(profile().cost.amount, profile().cost.currency) : ""} label={t("profile.cost")} /> },
-          { figure: <Figure value={count(props.view.episodes.length)} label={t("figure.operations")} /> },
-          { show: () => s().misses > 0, figure: <Figure value={count(s().misses)} label={t("figure.notFound")} /> },
-        ]}
-      />
+      {props.children}
+      {/* one reading of a run: rate, errors, latency, bytes, and how many at once; each opens its chart */}
+      {/* (a page shared before sessions had a profile: its figures in a line) */}
+      <If when={tiles().length > 0} else={<Text testID="session-summary" accessibilityLabel={line()} class="tabular-nums text-small text-muted-foreground">{line()}</Text>}>
+        <Tiles ranked min={SIGNAL_TILE} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
+      </If>
     </View>
   );
 }
+
+/** The signals in rank order, and the least width a tile of one reads in. */
+const SIGNALS: SignalId[] = ["rate", "errors", "latency", "bytes", "inFlight"];
+const SIGNAL_TILE = 168;
 
 const SDKS = { python: "Python · boto3", java: "Java SDK v2", go: "Go SDK v2", js: "JavaScript v3" } as const;
 type Sdk = keyof typeof SDKS | "config";
@@ -838,6 +835,26 @@ export function operationsAt(episodes: Episode[], line: LogLine): number[] {
 
 /** An operation in the inspector: what it is, its notes, its requests; `onRecord` opens one. */
 export function OperationView(props: { episode: Episode; shared: string[]; rows: RecordSummary[]; onRecord: (id: number) => void; onBack?: () => void; back?: JSX.Element }) {
+  // one request of the operation: its status (a scenario's answer marked), what it was, how long it took
+  const request = (r: () => RecordSummary, i: () => number) => (
+    <View style={{ height: rowHeight(ROW.twoLine) }}>
+      <ListRow divided first={i() === 0} testID={`op-request-${i()}`} label={`${r().operation} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 py-0" trailing={<><Text class="text-small tabular-nums text-muted-foreground">{duration(r().latencyMs)}</Text><Icon name="chevron-right" size={ICON.small} /></>}>
+        <View class="w-12">
+          <StatusMark status={r().status} injected={r().injected} />
+        </View>
+        <View class="min-w-0 flex-1">
+          <View class="flex-row items-center gap-2">
+            <Text class="min-w-0 shrink text-small text-foreground line-clamp-1">{r().operation}</Text>
+            {/* a fault scenario answered it, not the store */}
+            <If when={r().injected}>
+              <Text testID="op-request-injected" class="shrink-0 text-caption text-status-injected">{t("plots.injected")}</Text>
+            </If>
+          </View>
+          <Path path={r().target} max={40} class="text-muted-foreground" />
+        </View>
+      </ListRow>
+    </View>
+  );
   const e = () => props.episode;
   const notes = () => episodeNotes(e(), props.shared);
   const fam = () => family(e());
@@ -880,29 +897,26 @@ export function OperationView(props: { episode: Episode; shared: string[]; rows:
       </If>
       <View class="gap-2">
         <Heading count={e().records.length}>{t("timeline.requestsOf")}</Heading>
-        {/* an operation may hold thousands of requests: only those in view are drawn */}
-        <List
-          testID="op-requests"
-          each={props.rows}
-          keyExtractor={(r) => `${r.id}`}
-          estimatedItemSize={rowHeight(ROW.twoLine) ?? 32}
-          class={CARD}
-          style={{ height: Math.min(props.rows.length, 10) * (rowHeight(ROW.twoLine) ?? 32) + 2 }}
+        {/* a few are drawn whole; an operation may hold thousands of requests, and then only those in view are */}
+        <If
+          when={props.rows.length > 40}
+          else={
+            <Card pad="none" testID="op-requests">
+              <Each of={props.rows} key={(r) => `${r.id}`}>{(r, i) => request(r, i)}</Each>
+            </Card>
+          }
         >
-            {(r, i) => (
-              <View style={{ height: rowHeight(ROW.twoLine) }}>
-                <ListRow divided first={i() === 0} testID={`op-request-${i()}`} label={`${r().operation} ${r().target}`} onPress={() => props.onRecord(r().id)} class="flex-1 py-0" trailing={<><Text class="text-small tabular-nums text-muted-foreground">{duration(r().latencyMs)}</Text><Icon name="chevron-right" size={ICON.small} /></>}>
-                  <View class="w-12">
-                    <StatusMark status={r().status} />
-                  </View>
-                  <View class="min-w-0 flex-1">
-                    <Text class="text-small text-foreground line-clamp-1">{r().operation}</Text>
-                    <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{middle(r().target, 40)}</Text>
-                  </View>
-                </ListRow>
-              </View>
-            )}
-        </List>
+          <List
+            testID="op-requests"
+            each={props.rows}
+            keyExtractor={(r) => `${r.id}`}
+            estimatedItemSize={rowHeight(ROW.twoLine) ?? 32}
+            class={CARD}
+            style={{ height: 10 * (rowHeight(ROW.twoLine) ?? 32) + 2 }}
+          >
+            {(r, i) => request(r, i)}
+          </List>
+        </If>
       </View>
     </View>
   );
@@ -1015,6 +1029,10 @@ export function SessionList(props: {
       </View>
       <View class="flex-row items-center gap-2">
         <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{`${hm(x().s.created)} · ${x().s.endpoint} · ${t("sessions.requestsN", { n: x().s.requests })}`}</Text>
+        {/* tried under faults, and the program broke: said on its row */}
+        <If when={worstStanding(x().s.trials) === "broke"}>
+          <Badge testID="session-broke" label={t("trial.brokeBadge")} tone="fail" />
+        </If>
         <If when={x().s.shape?.length}>
           <Sparkline shape={x().s.shape!} id={x().s.path} />
         </If>

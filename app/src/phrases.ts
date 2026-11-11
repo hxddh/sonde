@@ -4,6 +4,7 @@
 // other languages say the phrases from their templates here. A phrase with
 // no template in a language falls back to the English text, whole.
 
+import { type CorePhrase, sayCoreText } from "./corephrases";
 import { type Key, lang, t } from "./i18n";
 import type { Episode, Observation, Phrase } from "./types";
 
@@ -79,6 +80,16 @@ const zh: Record<string, string> = {
 };
 
 const TEMPLATES: Record<string, Record<string, string>> = { zh };
+
+/** What sonde's services say (a finding, a verdict, a plan, a job, a probe's
+ * sentence), in the reader's language: its phrases beside its English
+ * (`corephrases.ts`). English shows the text; Chinese says the phrases, or
+ * the English whole where one has no words yet. The one way a page shows
+ * a sentence Rust wrote. */
+export const core = (text: CorePhrase[] | undefined | null, en: string | null | undefined): string => sayCoreText(text ?? undefined, en ?? "", lang() === "zh");
+
+/** An endpoint's name as the reader sees it: the built-in demo's is the app's own word, in its language. */
+export const endpointName = (e: { id: string; name: string }): string => (e.id === "demo" ? t("endpoints.demoName") : e.name);
 
 /** `text` in the reader's language; `en` (Rust's English) when there is no template. */
 export function say(text: Phrase[] | undefined, en: string): string {

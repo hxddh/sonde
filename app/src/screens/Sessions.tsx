@@ -18,7 +18,7 @@ import { away, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpe
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, Back, BREAK, Button, Empty, IconButton, More, Options, PanelHeader, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
+import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { fileName, removeSession, rename, RenameDialog, sessionName, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
@@ -26,8 +26,10 @@ import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, o
 import { findingMarks, operationsText } from "../ui/sessionview";
 import { episodeTitle } from "../phrases";
 import { programOf, ranCommand } from "../ui/sessionview";
-import { HistoryPane, ProgramList } from "../ui/history";
+import { HistoryPane, ProgramList, scenarioLabel } from "../ui/history";
+import { TrialDialog } from "../ui/trial";
 import { TimePane } from "../ui/profile";
+import type { SignalId } from "../signals";
 import { SessionShape } from "../ui/plots";
 import { RecordDetail } from "./Requests";
 import { running, runAgain } from "../run";
@@ -58,6 +60,10 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     if (c && c.after === props.path) untracked(() => batch(() => (compareWith.set(c.before), compareOnOpen.set(null))));
   });
   const replaying = signal(false);
+  const tryingFaults = signal(false);
+  // a signal pressed in the header: the Time pane, on its chart
+  const reveal = signal<{ id: SignalId; n: number } | null>(null);
+  const showSignal = (id: SignalId) => batch(() => (reveal.set({ id, n: (reveal()?.n ?? 0) + 1 }), pane.set("time")));
   let opsRef: DataTableRef | undefined;
   let outRef: DataTableRef | undefined;
 
@@ -93,10 +99,11 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const v = view();
     return i === null || !v ? null : (v.episodes[i] ?? null);
   };
-  const record = () => {
+  // read once per request chosen: the inspector asks for it in several places
+  const record = computed(() => {
     const id = rec();
     return id === null ? null : api.sessions.record(props.path, id);
-  };
+  });
   /** A slice of the session's shape: the time it covers, from the session's start. */
   const slice = signal<number | null>(null);
   // a live session's slices change length as it grows: a picked one would point at another time
@@ -161,13 +168,30 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   };
   const closeInspector = () => {
     if (!reduceMotion()) LayoutAnimation.easeInEaseOut();
-    op.set(null);
-    rec.set(null);
-    opHighlight.set([]);
-    outHighlight.set([]);
+    // at once: the inspector goes whole, not its request first and then what held it
+    batch(() => {
+      op.set(null);
+      rec.set(null);
+      opHighlight.set([]);
+      outHighlight.set([]);
+    });
   };
 
   const openWindow = () => openSessionWindow(props.path);
+  /** Another session from here (a trial's, the clean run's, a run of the trend): where this pane's holder shows it. */
+  const open = (p: string) => (props.onOpen ? props.onOpen(p) : openSession.set(p));
+  /** A trial's session says so under its title, with the way back to the run it is a trial of. */
+  const trialNote = (v: () => SessionView) => (
+    <If when={v().trial}>
+      {(x) => (
+        <Notice testID="trial-note" icon="flask-conical" text={t("trial.note", { run: program(v().header.command) ?? x().of, scenario: scenarioLabel(x().scenario) })}>
+          <If when={x().clean}>
+            <Button small variant="outline" icon="chevron-left" label={t("trial.openClean")} onPress={() => open(x().clean!)} testID="trial-open-clean" />
+          </If>
+        </Notice>
+      )}
+    </If>
+  );
 
   /** The operation's commands: native menus where there are any. */
   const operationActions = (i: number): { label: string; icon: "copy" | "file" | "scroll-text"; run: () => void }[] => {
@@ -263,7 +287,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     ...(hasOutput() ? [{ value: "aligned", title: t("sessions.withOutput"), icon: "scroll-text" as const }] : []),
     { value: "time", title: t("profile.pane"), icon: "chart-pie" as const },
     // a run of a program: its runs
-    ...(ranCommand(v0()?.header.command) ? [{ value: "runs", title: t("history.pane"), icon: "activity" as const }] : []),
+    // (a trial is no run of its own: its verdict is on the run it is a trial of)
+    ...(ranCommand(v0()?.header.command) && !v0()?.trial ? [{ value: "runs", title: t("history.pane"), icon: "activity" as const }] : []),
   ];
 
   const findings = (v: () => SessionView) => (
@@ -271,7 +296,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       view={v()}
       dense={dense()}
       // a narrow pane keeps the line for what was found; what it saves is in the finding once chosen
-      narrow={!roomy()}
+      narrow={!roomy() || inspecting()}
       onExpect={(o) => copy(`expect = [${JSON.stringify(o.identity)}]`, t("expect.copied"))}
       filter={filter()}
       onFilter={(f) => filter.set(f)}
@@ -288,8 +313,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     </If>
   );
   const body = (v: () => SessionView) => {
-    if (pane() === "time") return <TimePane view={v()} onRequest={(id) => rec.set(id)} />;
-    if (pane() === "runs") return <HistoryPane path={props.path} onOpen={(p) => (props.onOpen ? props.onOpen(p) : openSession.set(p))} />;
+    if (pane() === "time") return <TimePane view={v()} onRequest={(id) => rec.set(id)} reveal={reveal()} />;
+    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTry={() => tryingFaults.set(true)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
       return (
@@ -320,7 +345,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     <View class="flex-row items-center gap-2">
       {/* the program again, after a change: it opens compared with this run */}
       {/* the built-in demo is not saved: running a demo session again starts it */}
-      <If when={ranCommand(view()?.header.command) && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
+      <If when={ranCommand(view()?.header.command) && !view()?.trial && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
         <Button
           small
           variant="primary"
@@ -373,7 +398,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
             <If when={props.onBack}>
               <Back label={t("timeline.sessions")} onPress={() => props.onBack?.()} testID="sessions-back" />
             </If>
-            <SessionHeader view={v()} />
+            <SessionHeader view={v()}>{trialNote(v)}</SessionHeader>
             {findings(v)}
             {actions()}
           </View>
@@ -388,7 +413,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     >
       <View class="min-h-0 flex-1">
         <View class="shrink-0 px-4 pt-4">
-          <SessionHeader view={v()} actions={actions()} />
+          <SessionHeader view={v()} actions={actions()} onSignal={showSignal}>
+            {trialNote(v)}
+          </SessionHeader>
         </View>
         <View class="shrink-0 flex-row items-center gap-3 border-b border-border px-4 pb-3 pt-3">
           {tabs()}
@@ -415,7 +442,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           <More testID="operation-more" actions={() => (op() === null ? [] : operationActions(op()!))} />
         </If>
       </PanelHeader>
-      <Scroll class="flex-1" contentClass="p-4">
+      <Scroll testID="inspector-scroll" class="flex-1" contentClass="p-4">
         {detail(false)}
       </Scroll>
     </View>
@@ -465,13 +492,17 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           </If>
         )}
       </If>
+      <If when={tryingFaults()}>
+        <TrialDialog path={props.path} onClose={() => tryingFaults.set(false)} onDone={() => pane.set("runs")} />
+      </If>
       <ReplayDialog
         path={props.path}
         open={replaying()}
         onClose={() => replaying.set(false)}
         onDone={(replay) => {
           sessionsChanged();
-          props.onOpen?.(replay);
+          // a terminal and a session's own window go to the replay; the main window stays, comparing
+          if (terminal() || props.inWindow) props.onOpen?.(replay);
           compareWith.set(replay);
         }}
       />
@@ -711,9 +742,10 @@ export function Sessions() {
       // only a live session is read again as it grows
       tick={() => (sessions().some((s) => s.path === p && s.live) ? tick() : 0)}
       onBack={terminal() ? () => selected.set(null) : undefined}
+      // another session asked for from this one (a trial's, a replay's, a run of the trend): shown
       onOpen={(np) => {
         sessions.set(api.sessions.list());
-        if (terminal()) selected.set(np);
+        selected.set(np);
       }}
     />
   );
@@ -742,9 +774,10 @@ export function Sessions() {
   );
 
   // a session removed elsewhere (its own pane's menu): leave it
+  // (a trial's session is in no list: it stays while the run it is a trial of names it)
   effect(() => {
     const p = selected();
-    if (p && !sessions().some((s) => s.path === p)) untracked(() => selected.set(sessions()[0]?.path ?? null));
+    if (p && !sessions().some((s) => s.path === p || s.trials?.some((x) => x.session === p))) untracked(() => selected.set(sessions()[0]?.path ?? null));
   });
 
   // the sessions are the sidebar's list while this place shows

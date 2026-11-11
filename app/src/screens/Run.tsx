@@ -4,7 +4,7 @@
 // over a band of live figures. When it ends, a toast and a notification
 // say how, and the session opens lined up with the output.
 
-import { cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View } from "nsh";
+import { batch, cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View } from "nsh";
 import { Input, ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { change, count, elapsed, duration, percent, rate } from "../format";
@@ -12,7 +12,8 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, runAgain, running, start, startedAt, stop } from "../run";
-import { away, endpoint, endpoints, endpointsMode, go, openSession, report, sessionsChanged, showInSidebar } from "../store";
+import { away, endpoint, endpoints, endpointsMode, go, openSession, paneOnOpen, report, sessionsChanged, showInSidebar } from "../store";
+import { TrialDialog } from "../ui/trial";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
 import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title } from "../ui/kit";
@@ -138,6 +139,9 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
     },
   );
   const failed = () => verdict()?.check?.verdicts.filter((v) => !v.ok) ?? [];
+  // "Try under faults…": its dialog
+  const trying = signal(false);
+  let tried = false;
   const verdictText = () => {
     const c = verdict()?.check;
     if (!c) return null;
@@ -205,6 +209,19 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
       <If when={r() && r()!.removed}>
         <Button small variant="primary" icon="play" label={t("sessions.runAgain")} onPress={() => start(r()!.command, r()!.endpoint)} disabled={!r()!.command.trim()} testID="run-again-empty" />
       </If>
+      <If when={trying() && r() && !r()!.removed}>
+        <TrialDialog
+          path={r()!.path}
+          // read here first; closed after a trial, the run opens on its Runs pane, where the verdicts stay
+          onClose={() => {
+            trying.set(false);
+            if (!tried) return;
+            tried = false;
+            batch(() => (paneOnOpen.set({ path: r()!.path, pane: "runs" }), openSession.set(r()!.path), go("sessions")));
+          }}
+          onDone={() => (tried = true)}
+        />
+      </If>
       <If when={r() && !r()!.removed}>
         <View class="flex-row flex-wrap items-center gap-2">
           {/* the demo done: the next step is the user's own program and store */}
@@ -213,6 +230,10 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
           </If>
           {/* the loop in one place: change the program, run it again, see what it did */}
           <Button small variant="outline" icon="list-clock" label={t("run.lineUp")} onPress={() => openLastRun(go)} testID="run-open-session" />
+          {/* …then under faults: the same command, sonde answering in the store's place, said before it runs */}
+          <If when={!terminal() && (s()?.requests ?? 0) > 0}>
+            <Button small variant="outline" icon="flask-conical" label={t("trial.try")} onPress={() => trying.set(true)} disabled={!!running()} testID="run-try" />
+          </If>
           {/* the loop's next step, and so the one primary here (a run that sent nothing has nothing to be compared with: it only starts again) */}
           <Button small variant="primary" icon="play" label={t("sessions.runAgain")} onPress={() => (s()?.requests ? runAgain(r()!.path, r()!.command, r()!.endpoint, cwd() || null) : start(r()!.command, r()!.endpoint))} testID="run-again-band" />
         </View>

@@ -1,7 +1,7 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
 import { effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, MenuItem, Input, NumberInput, Popover, Progress, Select, Sheet, Switch, Tab, Tabs, Toggle as BaseToggle, ToggleGroup, Tooltip } from "nsh/base";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
 import { t } from "../i18n";
 import { count, middle, separators } from "../format";
 import { isAvailable, Menu } from "nsh/desktop";
@@ -378,10 +378,10 @@ export function IconTile(props: { icon: IconName; tint?: Tint }) {
  * line about it; with `onPress`, the tile is a button and says where it goes.
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string }) {
-  const tint = () => (props.tone === "warn" ? "text-warn" : props.tone === "ok" ? "text-status-ok" : "text-foreground");
+export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string }) {
+  const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
   return (
-    <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress ? `${props.label}: ${props.value}` : undefined} onPress={props.onPress}>
+    <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress ? [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ") : undefined} onPress={props.onPress}>
       <View class="flex-row items-center gap-1">
         <If when={props.icon}>{(i) => <Icon name={i()} size={ICON.small} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />}</If>
         <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
@@ -390,10 +390,13 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
         </If>
       </View>
       <If when={!props.pending} else={<View class="my-1 h-4 w-24 rounded-(--radius-sm) bg-muted" />}>
-        <Text class={`text-heading font-semibold tabular-nums line-clamp-1 ${tint()}`}>{props.value}</Text>
+        <View class="flex-row items-center gap-2">
+          <Text class={`min-w-0 flex-1 text-heading font-semibold tabular-nums line-clamp-1 ${tint()}`}>{props.value}</Text>
+          {props.mark}
+        </View>
       </If>
       <If when={!props.pending} else={<View class="h-3 w-32 rounded-(--radius-sm) bg-muted/70" />}>
-        <Text class="text-caption text-muted-foreground line-clamp-2">{props.detail ?? ""}</Text>
+        <Text class={`text-caption text-muted-foreground ${props.mark ? "line-clamp-1" : "line-clamp-2"}`}>{props.detail ?? ""}</Text>
       </If>
     </Card>
   );
@@ -403,8 +406,9 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
  * start and the end that tells it apart stay; screen readers hear it whole. */
 export function Path(props: { path: string; max?: number; class?: string; testID?: string }) {
   return (
-    <Text testID={props.testID} accessibilityLabel={props.path} class={`font-mono text-caption line-clamp-1 ${props.class ?? "text-foreground"}`}>
-      {middle(props.path, props.max ?? 48)}
+    // a window cuts it where it runs out of room (Native Shell's middle ellipsis); a terminal by a count of characters
+    <Text testID={props.testID} accessibilityLabel={props.path} class={`font-mono text-caption line-clamp-1 ${props.class ?? "text-foreground"}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
+      {terminal() ? middle(props.path, props.max ?? 48) : props.path}
     </Text>
   );
 }
@@ -579,16 +583,20 @@ export function tilesPerRow(width: number, n: number, min: number, gap = 12): nu
   const half = Math.ceil(n / 2);
   return fit >= half ? half : Math.min(fit, 2);
 }
-/** Tiles in rows by that rule: the row measures itself and gives each tile its width. */
-export function Tiles(props: { items: JSX.Element[]; min?: number; testID?: string }) {
+/** How many tiles a single row `width` wide holds, of `n` that each need `min`: two at least. */
+export const tilesFit = (width: number, n: number, min: number, gap = 12) => (width > 0 ? Math.min(n, Math.max(2, Math.floor((width + gap) / (min + gap)))) : n);
+/** Tiles in rows by that rule: the row measures itself and gives each tile its width.
+ * `ranked` keeps them to one row: as many as fit, in the order given (their
+ * rank), the last ranked left out — as `Figures` does a line of figures. */
+export function Tiles(props: { items: JSX.Element[]; min?: number; testID?: string; ranked?: boolean; label?: string }) {
   const GAP = 12;
   const width = signal(0);
-  const per = () => tilesPerRow(width(), props.items.length, props.min ?? 144, GAP);
+  const per = () => (props.ranked ? tilesFit(width(), props.items.length, props.min ?? 144, GAP) : tilesPerRow(width(), props.items.length, props.min ?? 144, GAP));
   const each = () => (width() > 0 ? Math.floor((width() - GAP * (per() - 1)) / per()) : undefined);
   return (
-    <View testID={props.testID} class="flex-row flex-wrap gap-3" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
-      {props.items.map((tile) => (
-        <View style={each() ? { width: each() } : undefined} class={each() ? "" : "min-w-36 flex-1"}>
+    <View testID={props.testID} accessibilityLabel={props.label} class={`flex-row gap-3 ${props.ranked ? "" : "flex-wrap"}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+      {props.items.map((tile, i) => (
+        <View style={each() ? { width: each() } : undefined} class={props.ranked && i >= per() ? "hidden" : each() ? "" : "min-w-36 flex-1"}>
           {tile}
         </View>
       ))}
@@ -677,15 +685,24 @@ export function Badge(props: { label: string; tone?: Tone; testID?: string }) {
 export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxed?: boolean }) {
   if (props.boxed)
     return (
-      <View selectable class="overflow-hidden rounded-(--radius) border border-border bg-card">
-        <Each of={props.rows}>
-          {(row, i) => (
-            <View class={`flex-row gap-3 px-2 py-1 ${i() > 0 ? "border-t border-border" : ""}`}>
-              <Text class="w-[136px] shrink-0 font-mono text-caption text-muted-foreground line-clamp-1">{row()[0]}</Text>
-              <Text class={`min-w-0 flex-1 text-caption text-foreground ${props.mono === false ? "" : "font-mono"}`}>{row()[1]}</Text>
-            </View>
-          )}
-        </Each>
+      // a table to a screen reader: names in the first column, values in the second
+      <View selectable>
+      <Table class="overflow-hidden rounded-(--radius) border border-border bg-card">
+        <TableBody>
+          <Each of={props.rows}>
+            {(row, i) => (
+              <TableRow class={`flex-row gap-3 px-2 py-1 ${i() > 0 ? "border-t border-border" : ""}`}>
+                <TableCell class="w-[136px] shrink-0">
+                  <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{row()[0]}</Text>
+                </TableCell>
+                <TableCell class="min-w-0 flex-1">
+                  <Text class={`text-caption text-foreground ${props.mono === false ? "" : "font-mono"}`}>{row()[1]}</Text>
+                </TableCell>
+              </TableRow>
+            )}
+          </Each>
+        </TableBody>
+      </Table>
       </View>
     );
   return (
@@ -711,9 +728,9 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxe
  * `leading` stands before the text inside the field (a prompt, an icon) and
  * `trailing` after it (an `IconButton inField`); `small` is the second
  * control height. A field that matters more is wider and in mono, never higher. */
-export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element }) {
+export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: read-only, and dimmed so it reads as off */ disabled?: boolean }) {
   const boxed = () => !!props.leading || !!props.trailing;
-  const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""}`;
+  const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} ${props.disabled ? "opacity-50" : ""}`;
   const input = (cls: string) => (
     <Input
       testID={props.testID}
@@ -722,6 +739,8 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       placeholder={props.placeholder}
       autoCapitalize="none"
       autoCorrect={false}
+      readonly={props.readonly || props.disabled}
+      accessibilityState={props.disabled ? { disabled: true } : undefined}
       onChange={({ value }) => props.onChange(value)}
       onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
       submitBehavior={props.onSubmit ? "submit" : undefined}
@@ -919,35 +938,36 @@ export function Segmented(props: { value: string; items: { value: string; title:
   );
 }
 
-/** One value of a few, as a row of toggles (Native Shell's ToggleGroup:
- * arrow keys move between them, screen readers hear toggle buttons). For a
- * value; `Segmented` (tabs) switches what a place shows. */
+/** One value of a few, as a row of radios (Native Shell's RadioGroup: one
+ * is checked, arrow keys move between them, screen readers hear a set of
+ * radio buttons and which is chosen). For a value; `Segmented` (tabs)
+ * switches what a place shows. */
 export function Options(props: { value: string; items: { value: string; title: string; icon?: IconName }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
-    <ToggleGroup testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`}>
+    <RadioGroup testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`}>
       <Each of={props.items} key={(i) => i.value}>
         {(item) => (
-          <BaseToggle
+          <Radio
             testID={props.testID ? `${props.testID}-${item().value}` : undefined}
             accessibilityLabel={item().title}
-            pressed={props.value === item().value}
+            checked={props.value === item().value}
             onChange={() => props.onChange(item().value)}
-            class={`group ${CONTROL.segment} aria-pressed:bg-background aria-pressed:shadow-sm ${FOCUS}`}
+            class={`group ${CONTROL.segment} checked:bg-background checked:shadow-sm ${FOCUS}`}
           >
             <If when={item().icon}>
               <Icon name={item().icon!} size={12} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
-            <Text class="text-small text-muted-foreground group-aria-pressed:font-medium group-aria-pressed:text-foreground">{item().title}</Text>
-          </BaseToggle>
+            <Text class="text-small text-muted-foreground group-checked:font-medium group-checked:text-foreground">{item().title}</Text>
+          </Radio>
         )}
       </Each>
-    </ToggleGroup>
+    </RadioGroup>
   );
 }
 
 /** A status mark: a small dot in a status color, with its meaning for screen readers. */
-export function Dot(props: { tone: "ok" | "miss" | "client" | "server" | "refused" | "live"; label?: string }) {
-  const bg = { ok: "bg-status-ok", miss: "bg-status-miss", client: "bg-status-client", server: "bg-status-server", refused: "bg-status-refused", live: "bg-primary" }[props.tone];
+export function Dot(props: { tone: "ok" | "miss" | "client" | "server" | "refused" | "injected" | "live"; label?: string }) {
+  const bg = { ok: "bg-status-ok", miss: "bg-status-miss", client: "bg-status-client", server: "bg-status-server", refused: "bg-status-refused", injected: "bg-status-injected", live: "bg-primary" }[props.tone];
   return <View accessibilityLabel={props.label} class={`size-2 rounded-full ${bg}`} />;
 }
 

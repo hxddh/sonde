@@ -8,6 +8,7 @@ import { AlertDialog, DataTable } from "nsh/base";
 import { isAvailable, Menu } from "nsh/desktop";
 import { ago, clock, count, date, middle, duration } from "../format";
 import { t } from "../i18n";
+import { core } from "../phrases";
 import { api } from "../native";
 import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, openSession, report, sessionsChanged } from "../store";
@@ -222,14 +223,14 @@ function Jobs() {
                   <View class="shrink-0">
                     <Badge tone={JOB_TONE[j().state] ?? "neutral"} label={t(`jobs.state.${j().state}` as never)} />
                   </View>
-                  <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{j().title}</Text>
+                  <Text class="min-w-0 flex-1 text-body font-medium text-foreground line-clamp-1">{core(j().titleText, j().title)}</Text>
                   <Text class="shrink-0 text-caption text-muted-foreground">{age(j().started)}</Text>
                   <If when={j().state === "running"}>
                     <Button small variant="outline" label={t("jobs.cancel")} onPress={() => api.cancelJob(j().id)} />
                   </If>
                 </View>
                 <If when={j().state === "running"}>
-                  <Bar value={j().progress.total ? j().progress.done / Math.max(1, j().progress.total!) : null} label={j().progress.message} />
+                  <Bar value={j().progress.total ? j().progress.done / Math.max(1, j().progress.total!) : null} label={core(j().progress.messageText, j().progress.message)} />
                 </If>
                 <If when={j().error}>{(e) => <Text class="text-small text-destructive">{e().message}</Text>}</If>
               </Row>

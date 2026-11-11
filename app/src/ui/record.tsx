@@ -9,6 +9,7 @@ import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
 import { Back, Disclosure, KeyValue, Notice, terminal, Title, TYPE } from "./kit";
 import { clock, StatusMark } from "./sessionview";
+import { scenarioLabel } from "../trials";
 
 /** An XML document as code, read-only: the S3 error's code marked where it stands. */
 export function Document(props: { text: string; testID?: string; mark?: boolean }) {
@@ -113,7 +114,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
           <Back onPress={() => props.onBack?.()} testID="record-back" />
         </If>
         <View class="flex-row items-center gap-2">
-          <StatusMark status={r().status} text={r().status === null ? t("requests.transport") : undefined} />
+          <StatusMark status={r().status} text={r().status === null ? t("requests.transport") : undefined} injected={r().injected} />
           <Title>{r().operation}</Title>
         </View>
         <Text class="font-mono text-caption leading-4 text-muted-foreground">{`${r().method} ${r().url}`}</Text>
@@ -121,6 +122,8 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
       <If when={props.actions}>
         <View class="flex-row flex-wrap gap-2">{props.actions}</View>
       </If>
+      {/* sonde answered it in the store's place: the store is not to blame for what it says */}
+      <If when={r().injected}>{(name) => <Notice testID="record-injected" icon="flask-conical" text={t("requests.injected", { scenario: scenarioLabel(name()) })} />}</If>
       <If when={r().transportError}>
         {(e) => (
           <Notice tone="error" icon="circle-x" text={e()} />

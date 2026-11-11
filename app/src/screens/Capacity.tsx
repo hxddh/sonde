@@ -4,6 +4,7 @@
 import { cleanup, effect, Scroll, signal, Text, untracked, View } from "nsh";
 import { bytes, count, date, money } from "../format";
 import { t } from "../i18n";
+import { core } from "../phrases";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, notify, prefix, report } from "../store";
 import { remember } from "../ui/overview";
@@ -47,7 +48,7 @@ export function Capacity() {
     let mine: string | null = null;
     try {
       mine = job = await api.duScan(ep, b, p, mpu());
-      const r = await watch<DuReport>(mine, (e) => e.type === "Progress" && shown === of && progress.set(`${e.progress.message} · ${bytes(e.progress.bytes)}`));
+      const r = await watch<DuReport>(mine, (e) => e.type === "Progress" && shown === of && progress.set(`${core(e.progress.messageText, e.progress.message)} · ${bytes(e.progress.bytes)}`));
       remember(ep, b, p, { size: r });
       // the answer of a place since left is kept for it, not shown here
       if (shown === of) result.set(r);
@@ -147,7 +148,7 @@ export function Capacity() {
               </Chart>
               <Card testID="du-findings">
                 <Heading>{t("du.why")}</Heading>
-                <Each of={r().findings}>{(f) => <Text class="text-body text-foreground">{`• ${f()}`}</Text>}</Each>
+                <Each of={r().findings}>{(f, i) => <Text class="text-body text-foreground">{`• ${core(r().findingsText?.[i()], f())}`}</Text>}</Each>
               </Card>
               <View class={terminal() ? "gap-4" : "flex-row flex-wrap gap-4"}>
                 <Chart class={HALF} title={t("du.byClass")} empty={r().byClass.length === 0 && t("common.empty")}>

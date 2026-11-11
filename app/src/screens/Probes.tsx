@@ -6,6 +6,7 @@ import { cleanup, Scroll, signal, Text, View } from "nsh";
 import { Button as BaseButton, DataTable } from "nsh/base";
 import { count, date, duration } from "../format";
 import { t } from "../i18n";
+import { core, endpointName } from "../phrases";
 import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
 import { endpoint, endpoints, go, notify, readOnly, report, showRequest } from "../store";
@@ -19,16 +20,16 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
     <View class="gap-4" testID="probe-detail">
       <View class="flex-row items-center gap-2">
         <Back onPress={props.onBack} />
-        <Title class="min-w-0 flex-1">{`${props.probe.title} — ${props.endpointName}`}</Title>
+        <Title class="min-w-0 flex-1">{`${core(props.probe.titleText, props.probe.title)} — ${props.endpointName}`}</Title>
         <Badge label={verdictLabel(props.result.verdict)} tone={verdictTone(props.result.verdict)} />
       </View>
-      <Muted>{props.probe.description}</Muted>
+      <Muted>{core(props.probe.descriptionText, props.probe.description)}</Muted>
       <Card>
         <Heading>{t("probes.aws")}</Heading>
-        <Text class="text-body text-foreground">{props.probe.awsBehavior}</Text>
+        <Text class="text-body text-foreground">{core(props.probe.awsBehaviorText, props.probe.awsBehavior)}</Text>
         <Heading>{t("probes.observed")}</Heading>
-        <Text class="text-body font-medium text-foreground">{props.result.summary}</Text>
-        <Each of={props.result.observations}>{(o) => <Mono>{o()}</Mono>}</Each>
+        <Text class="text-body font-medium text-foreground">{core(props.result.summaryText, props.result.summary)}</Text>
+        <Each of={props.result.observations}>{(o, i) => <Mono>{core(props.result.observationsText?.[i()], o())}</Mono>}</Each>
         <Muted>{duration(props.result.durationMs)}</Muted>
       </Card>
       <Heading>{t("probes.exchanges")}</Heading>
@@ -61,11 +62,11 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
   // a row a probe, a column a store: the probe's column stays while the stores scroll under it
   const columns = () => [
     { key: "probe", title: t("probes.probe"), width: 288, fixed: true },
-    ...props.matrix.columns.map((c, i) => ({ key: `s${i}`, title: c.server ? `${c.name} · ${c.server}` : `${c.name} · ${c.vendor}`, width: 150, align: "start" as const })),
+    ...props.matrix.columns.map((c, i) => ({ key: `s${i}`, title: c.server ? `${endpointName({ id: c.endpoint, name: c.name })} · ${c.server}` : `${endpointName({ id: c.endpoint, name: c.name })} · ${c.vendor}`, width: 150, align: "start" as const })),
   ];
   const data = () =>
     props.matrix.rows.map((r) => ({
-      probe: `${r.probe.title}\n${r.probe.id}`,
+      probe: `${core(r.probe.titleText, r.probe.title)}\n${r.probe.id}`,
       ...Object.fromEntries(r.cells.map((c, i) => [`s${i}`, c ? `${SYMBOL[c.verdict]} ${verdictLabel(c.verdict)}` : "—"])),
     }));
   const shown = () => Math.max(1, Math.min(props.matrix.rows.length, props.maxRows));
@@ -86,7 +87,7 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
               if (cell.key === "probe")
                 return (
                   <View class="flex-1 justify-center">
-                    <Text class="line-clamp-1 text-small text-foreground">{row.probe.title}</Text>
+                    <Text class="line-clamp-1 text-small text-foreground">{core(row.probe.titleText, row.probe.title)}</Text>
                     <Text class="line-clamp-1 font-mono text-caption text-muted-foreground">{row.probe.id}</Text>
                   </View>
                 );
@@ -159,7 +160,7 @@ export function Probes() {
       await Promise.all(
         ids.map(async (id, i) => {
           try {
-            await watch(id, (e) => e.type === "Progress" && running.update((r) => ({ ...r, [eps[i]]: `${e.progress.done}/${e.progress.total ?? "?"} ${e.progress.message}` })));
+            await watch(id, (e) => e.type === "Progress" && running.update((r) => ({ ...r, [eps[i]]: `${e.progress.done}/${e.progress.total ?? "?"} ${core(e.progress.messageText, e.progress.message)}` })));
           } catch (e) {
             report(e);
           }
@@ -181,7 +182,7 @@ export function Probes() {
     const col = matrix().columns[o.col];
     const r = api.probeRun(col.run, col.endpoint);
     const res = r?.results.find((x) => x.id === o.probe.id);
-    return res ? { probe: o.probe, result: res, name: col.name } : null;
+    return res ? { probe: o.probe, result: res, name: endpointName({ id: col.endpoint, name: col.name }) } : null;
   };
   const exportAs = (f: "markdown" | "json") => {
     try {
@@ -199,7 +200,7 @@ export function Probes() {
   };
   const nameOf = (id: string) => endpoints().find((e) => e.id === id)?.name ?? id;
   // a run as people read one: where, when, and how it went in words
-  const runItems = () => runs().map((r) => ({ value: `${r.id}:${r.endpoint}`, title: `${r.endpointName} · ${date(r.started)} · ${t("probes.tally", { pass: count(r.pass), fail: count(r.fail), differs: count(r.differs) })}` }));
+  const runItems = () => runs().map((r) => ({ value: `${r.id}:${r.endpoint}`, title: `${endpointName({ id: r.endpoint, name: r.endpointName })} · ${date(r.started)} · ${t("probes.tally", { pass: count(r.pass), fail: count(r.fail), differs: count(r.differs) })}` }));
   const rowPoints = () => rowHeight(ROW.twoLine) ?? ROW.twoLine;
   return (
     <View class="flex-1" onLayout={({ bounds }) => height.set(Math.round(bounds.size.height))}>
@@ -266,7 +267,7 @@ export function Probes() {
                   <If when={d().length > 0} else={<Empty compact text={t("probes.noChange")} />}>
                     <SimpleTable
                       columns={[t("probes.probe"), t("probes.earlier"), t("probes.later"), t("probes.now")]}
-                      rows={d().map((c) => [c.probe, c.before ? verdictLabel(c.before) : "—", c.after ? verdictLabel(c.after) : "—", `${c.afterSummary ?? ""}${c.stepsChanged ? ` (${t("probes.responsesChanged")})` : ""}`])}
+                      rows={d().map((c) => [c.probe, c.before ? verdictLabel(c.before) : "—", c.after ? verdictLabel(c.after) : "—", `${core(c.afterSummaryText, c.afterSummary)}${c.stepsChanged ? ` (${t("probes.responsesChanged")})` : ""}`])}
                     />
                   </If>
                 )}

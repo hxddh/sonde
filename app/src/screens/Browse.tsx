@@ -6,6 +6,7 @@ import { DataTable, type DataTableRef, Link, ResizablePanel, ResizablePanelGroup
 import { isAvailable, Menu } from "nsh/desktop";
 import { bytes, count, date } from "../format";
 import { t } from "../i18n";
+import { core } from "../phrases";
 import { api, Listing, watch } from "../native";
 import { bucket, copy, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
@@ -377,7 +378,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
       searchJob = job;
       const r = await watch<{ matches: Entry[]; scanned: number }>(job, (ev) => {
         if (!here() || searchJob !== job) return;
-        if (ev.type === "Progress") searchState.set(ev.progress.message);
+        if (ev.type === "Progress") searchState.set(core(ev.progress.messageText, ev.progress.message));
         if (ev.type === "Partial") searchHits.update((h) => [...(h ?? []), ...(ev.data as Entry[])]);
       });
       // what another place's search found is not shown here

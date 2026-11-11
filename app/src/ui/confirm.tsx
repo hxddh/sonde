@@ -4,6 +4,7 @@
 import { signal, Text, View } from "nsh";
 import { bytes, count } from "../format";
 import { t } from "../i18n";
+import { core } from "../phrases";
 import { api, asError } from "../native";
 import { go, notify, readOnly, report, showRequest } from "../store";
 import type { Outcome, Plan } from "../types";
@@ -61,9 +62,9 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
           <View class="gap-3" testID="confirm-dialog">
             <Title>{t("confirm.title")}</Title>
             <Heading>{t("confirm.dryRun")}</Heading>
-            <Text class="text-body text-popover-foreground">{p().summary}</Text>
+            <Text class="text-body text-popover-foreground">{core(p().summaryText, p().summary)}</Text>
             <If when={p().items.length > 0}>
-              <SimpleTable max={12} columns={[t("confirm.colKey"), t("confirm.colVersion"), t("confirm.colSize"), ""]} rows={p().items.map((i) => [i.key, i.id ?? "", i.bytes === null ? "" : bytes(i.bytes), i.detail])} />
+              <SimpleTable max={12} columns={[t("confirm.colKey"), t("confirm.colVersion"), t("confirm.colSize"), ""]} rows={p().items.map((i) => [i.key, i.id ?? "", i.bytes === null ? "" : bytes(i.bytes), core(i.detailText, i.detail)])} />
             </If>
             <If when={p().document}>
               {(doc) => (
@@ -82,7 +83,7 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
               }
             >
               {/* Return commits, once what is typed matches */}
-              <Field label={t("confirm.type", { hint: p().confirmHint, value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} onSubmit={run} testID="confirm-input" mono />
+              <Field label={t("confirm.type", { hint: core(p().confirmHintText, p().confirmHint), value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} onSubmit={run} testID="confirm-input" mono />
             </If>
             <Actions>
               <Button variant="ghost" label={t("common.cancel")} onPress={() => close(null)} disabled={running()} testID="confirm-cancel" />

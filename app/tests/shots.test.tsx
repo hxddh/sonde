@@ -82,11 +82,16 @@ for (const v of variants) {
 
     await go("sessions");
     await app.press("id:open-example");
-    await app.waitFor("id:session-pane", { timeout: 10000 });
+    // read off the interface's thread: there once its header is (a variant after the first
+    // opens on the example already, and reads it again as the list changes: let that settle)
+    await app.wait(900);
+    await app.waitFor("id:session-summary", { timeout: 10000 });
     await shot("03-session");
     await app.press(v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128");
     await app.waitFor("id:inspector");
     await shot("03b-operation");
+    // a narrow window's inspector comes in from the edge, its requests under the fold
+    if (width < 1000) await app.scroll("id:inspector-scroll", 400);
     await app.press("id:op-request-0");
     await app.waitFor("id:record-detail");
     await shot("03c-request");
@@ -116,10 +121,23 @@ for (const v of variants) {
     await shot("03j-spent");
     await app.scroll("id:time-pane", 400);
     await shot("03k-prefixes");
-    await app.scroll("id:time-pane", 600);
+    // to the board's end: where requests went
+    await app.scroll("id:time-pane", 4000);
     // the flows on demand, pressed last: the shots above show the pane as it opens
     if (app.shows("id:flows-show")) await app.press("id:flows-show").catch(() => {});
     await shot("03l-flows");
+    // a signal pressed in the header brings its chart into view: latency's bands, then bytes each way
+    await app.press("id:signal-latency");
+    await app.wait(700);
+    await shot("03m-latency");
+    if (app.shows("id:signal-bytes")) {
+      await app.press("id:signal-bytes");
+      await app.wait(700);
+      await shot("03n-bytes");
+    }
+    await app.press("id:signal-errors");
+    await app.wait(700);
+    await shot("03o-errors");
     // the same program run twice: before and after
     await app.press("id:compare-open");
     const run = app.menu()?.map((m) => m.label).find((l) => l.startsWith("curl"));

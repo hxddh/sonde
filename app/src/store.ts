@@ -2,9 +2,10 @@
 // errors, and navigation between sections. Rust owns the data; these
 // signals mirror it and are refreshed after each change.
 
-import { batch, Clipboard, type JSX, lifecycle, Picker, signal } from "nsh";
+import { batch, Clipboard, computed, type JSX, lifecycle, Picker, signal } from "nsh";
 import { api, asError } from "./native";
 import { language, t } from "./i18n";
+import { core, endpointName } from "./phrases";
 import { toast, type ToastKind } from "./ui/toast";
 import type { EndpointView, Settings, SondeError } from "./types";
 
@@ -36,7 +37,9 @@ export function areaOf(s: Section): Area {
   return "settings";
 }
 
-export const endpoints = signal<EndpointView[]>([]);
+const stored = signal<EndpointView[]>([]);
+/** The endpoints, each under the name the reader sees (the built-in demo's is in the app's language). */
+export const endpoints = computed(() => stored().map((e) => ({ ...e, name: endpointName(e), credentials: core(e.credentialsText, e.credentials) })));
 export const settings = signal<Settings | null>(null);
 export const endpoint = signal<string | null>(null);
 export const bucket = signal<string | null>(null);
@@ -109,7 +112,7 @@ export function useEndpoint(id: string | null) {
 export function refreshEndpoints() {
   const list = api.endpoints();
   batch(() => {
-    endpoints.set(list);
+    stored.set(list);
     if (endpoint() && !list.some((e) => e.id === endpoint())) useEndpoint(null);
     if (!endpoint() && list.length > 0) useEndpoint(list[0].id);
   });

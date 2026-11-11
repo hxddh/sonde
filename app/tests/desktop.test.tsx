@@ -71,7 +71,8 @@ test("a session file opens from Sessions: a picked .sonde, and a refusal for any
   app.onPick((p) => (p.filters[0]?.extensions.includes("sonde") ? [{ name: "elsewhere.sonde", data: encode(SESSION) }] : null));
   await app.keyboard.press("mod+o");
   await app.waitFor("id:session-pane", { timeout: 10000 });
-  expect(app.shows("text:$ python gen_delta.py s3://lake/delta")).toBe(true);
+  // the session is read off the interface's thread: its header comes when the reading ends
+  await app.waitFor("text:$ python gen_delta.py s3://lake/delta", { timeout: 10000 });
   app.onPick(() => [{ name: "notes.sonde", data: encode("hello") }]);
   await app.press("id:open-file");
   await app.waitFor("text:/notes.sonde: not a sonde session/", { timeout: 5000 });
@@ -171,6 +172,39 @@ test("a trial reads as figures: the faults and retries, the wait, the load, what
   const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
   expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
   expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried · 2 writes never sent again · exited 1 (clean run: 0)");
+  // too few waits to tell jitter from step: neither is said
+  const { jitter: _, ...unsaid } = base;
+  expect(trialText({ ...unsaid, standing: "survived", faults: 2, retried: 2, backoffMs: [100, 150, 200], requests: 64 })).toBe("2 faults, all retried · after 100 ms to 200 ms");
+  // faults no retry was owed for, writes the store made unheard, requests held back and what that did to the run's time
+  expect(trialText({ ...unsaid, standing: "degraded", faults: 3, retried: 1, notRetryable: 2, lostWrites: 1, delayed: 40, wallMs: 4200, cleanWallMs: 900, requests: 64 })).toBe(
+    "3 faults, 1 retried · 2 no retry was owed for · 40 requests held back · took 4.20 s (clean run: 900 ms) · 1 write made and never heard of",
+  );
+});
+
+test("a trial is followed scenario by scenario: waiting, running, done with its standing", async () => {
+  const { trialSteps, foldTrial, trialDone, worstStanding, scenarioLabel } = await import("../src/trials");
+  let steps = trialSteps([{ name: "slowdown", about: "503 SlowDown" }, { name: "lost-answer", about: "" }]);
+  expect(steps.map((s) => s.state)).toEqual(["waiting", "waiting"]);
+  steps = foldTrial(steps, { scenario: "slowdown", state: "running" });
+  // the program's output and its recording change nothing in the list
+  steps = foldTrial(steps, { data: "hello\n", scenario: "slowdown" });
+  expect(steps.map((s) => s.state)).toEqual(["running", "waiting"]);
+  const trial = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, requests: 2, cleanRequests: 2, leftUploads: 0, wroteTwice: 0, reasons: ["1 write never sent again"] } as import("../src/types").Trial;
+  steps = foldTrial(steps, { scenario: "slowdown", state: "done", trial });
+  // a late "running" does not take a verdict back; a scenario not chosen is left out
+  steps = foldTrial(steps, { scenario: "slowdown", state: "running" });
+  steps = foldTrial(steps, { scenario: "error", state: "running" });
+  expect(steps.map((s) => s.state)).toEqual(["done", "waiting"]);
+  expect(steps[0].trial?.standing).toBe("broke");
+  expect(steps.length).toBe(2);
+  expect(trialDone(steps)).toBe(1);
+  expect(worstStanding([{ standing: "survived" }, { standing: "broke" }])).toBe("broke");
+  expect(worstStanding([{ standing: "survived" }, { standing: "degraded" }])).toBe("degraded");
+  expect(worstStanding([{ standing: "survived" }, { standing: "untested" }])).toBe(null);
+  expect(worstStanding(undefined)).toBe(null);
+  // a project's own scenario keeps its name
+  expect(scenarioLabel("lost-answer")).toBe("A write's answer is lost");
+  expect(scenarioLabel("my-own")).toBe("my-own");
 });
 
 test("prefixes with a doubled or a leading slash keep their own names", async () => {
@@ -263,4 +297,60 @@ test("one function writes a duration, and a scenario has words", async () => {
   expect(scenarioLabel("slowdown")).toBe("The store asks to slow down");
   // one sonde has no words for keeps its own name
   expect(scenarioLabel("made-up")).toBe("made-up");
+});
+
+test("a run reads as four signals and in flight; what a log without times cannot say is said, never 0", async () => {
+  const { signalsFromProfile, signalTiles, signalChanges, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
+  const bin = (tMs: number, ok: number, server = 0, retried = 0) => ({ tMs, ok, miss: 0, client: 0, server, p50Ms: 2, p95Ms: 6, p99Ms: 9, retried, bytesUp: 1024 * ok, bytesDown: 0 });
+  const profile = {
+    wallMs: 2000,
+    binMs: 1000,
+    peakInFlight: 4,
+    peakAtMs: 1200,
+    rate: [bin(0, 30), bin(1000, 9, 1, 2)],
+    inFlight: [{ tMs: 100, n: 2 }, { tMs: 1200, n: 4 }],
+    p50Ms: 2,
+    p95Ms: 6,
+    p99Ms: 9,
+    cost: { amount: 0, currency: "USD" },
+  } as never;
+  const summary = { requests: 40, errors: 1, misses: 0, refused: 0, seconds: 2, bytesUp: 39936, bytesDown: 0 };
+  const s = signalsFromProfile(profile, summary);
+  expect(s.rate.value).toBe(20);
+  expect(s.inFlight.series).toEqual([2, 4]);
+  const tiles = signalTiles(s);
+  expect(tiles.map((x) => x.id)).toEqual(["rate", "errors", "latency", "bytes", "inFlight"]);
+  expect(tiles[0].value).toBe("20/s");
+  expect(tiles[0].detail).toBe("40 requests in 2.00 s");
+  expect(tiles[1].value).toBe("3%");
+  expect(tiles[1].detail).toBe("1 server · 2 retries");
+  expect(tiles[1].tone).toBe("bad");
+  expect(tiles[2].value).toBe("2.0 ms");
+  expect(tiles[2].detail).toBe("p95 6.0 ms · p99 9.0 ms");
+  expect(tiles[3].value).toBe("19.5 KiB/s");
+  expect(tiles[3].detail).toBe("↑ 19.5 KiB/s ↓ 0 B/s");
+  expect(tiles[4].value).toBe("4");
+  // a CloudTrail file has no times: no rate, no latency, no pace of bytes, and nothing drawn over time
+  const untimed = signalTiles(signalsFromProfile({ ...(profile as object), timed: false } as never, summary));
+  expect(untimed[0].value).toBe("Not timed");
+  expect(untimed[0].detail).toBe("40 requests");
+  expect(untimed[2].value).toBe("Not timed");
+  expect(untimed[3].value).toBe("39.0 KiB");
+  expect(untimed[3].detail).toBe("↑ 39.0 KiB ↓ 0 B");
+  expect(untimed[4].value).toBe("Not timed");
+  expect(untimed.every((x) => x.id === "errors" || x.series.length === 0)).toBe(true);
+  // before and after in one tile: both figures, and by how much
+  const slower = signalsFromProfile({ ...(profile as object), p50Ms: 3 } as never, summary);
+  const changed = signalChanges(s, slower);
+  expect(changed.length).toBe(4);
+  expect(changed[2].value).toBe("2.0 ms → 3.0 ms");
+  expect(changed[2].detail.startsWith("+50% · ")).toBe(true);
+  expect(changed[2].tone).toBe("bad");
+  expect(changed[0].detail).toBe("40 requests in 2.00 s");
+  // sizes by their bounds; a prefix by the nearer of its two limits
+  expect(sizeLabel(0)).toBe("empty");
+  expect(sizeLabel(1024)).toBe("≤ 1.0 KiB");
+  expect(sizeRange(1024)).toBe("512 B – 1.0 KiB");
+  expect(sizeRange(0)).toBe("empty");
+  expect(nearestLimit({ readShare: 0.1, writeShare: 0.4 })).toEqual({ share: 0.4, kind: "writes" });
 });

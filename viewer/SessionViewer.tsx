@@ -14,6 +14,7 @@ import { SessionShape } from "../app/src/ui/plots";
 import { RecordView } from "../app/src/ui/record";
 import { findingMarks, linesOf, Observations, OperationsTable, OperationView, OutputTable, operationsAt, SessionHeader } from "../app/src/ui/sessionview";
 import { TimePane } from "../app/src/ui/profile";
+import type { SignalId } from "../app/src/signals";
 
 /** What `sonde share` writes. */
 export interface SharedSession extends SessionView {
@@ -34,6 +35,9 @@ export function SessionViewer(props: { data: SharedSession }) {
   const outHighlight = signal<number[]>([]);
   const filter = signal<number | null>(null);
   const pane = signal<Pane>(d.lines.length ? "aligned" : "operations");
+  // a signal pressed in the header: the Time pane, on its chart
+  const reveal = signal<{ id: SignalId; n: number } | null>(null);
+  const showSignal = (id: SignalId) => batch(() => (reveal.set({ id, n: (reveal()?.n ?? 0) + 1 }), pane.set("time")));
   let opsRef: DataTableRef | undefined;
   let outRef: DataTableRef | undefined;
   // the operations in the order their table shows them (sorted by a column)
@@ -102,14 +106,14 @@ export function SessionViewer(props: { data: SharedSession }) {
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
   // the app's session page, read-only: its header, then what is shown of it (the tabs), then
   // the pane chosen — the shape of the session and what stands out over its operations
-  const findings = () => <Observations view={d} dense narrow={box().w < BREAK.inspector} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(104, Math.round(box().h * 0.3))} />;
+  const findings = () => <Observations view={d} dense narrow={box().w < BREAK.inspector || inspecting()} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(104, Math.round(box().h * 0.3))} />;
   const strip = () => (
     <If when={d.profile && box().h >= BREAK.short}>
       <SessionShape strip profile={d.profile} slice={slice()} onSlice={(i) => slice.set(i)} annotate marks={findingMarks(d)} class="mt-3 h-11 w-full shrink-0" />
     </If>
   );
   const body = () => {
-    if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} />;
+    if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} reveal={reveal()} />;
     if (pane() === "operations" || !d.lines.length)
       return (
         <View class="min-h-0 flex-1 gap-3">
@@ -138,6 +142,7 @@ export function SessionViewer(props: { data: SharedSession }) {
       <View class="shrink-0 px-4 pt-4">
         <SessionHeader
           view={d}
+          onSignal={d.profile ? showSignal : undefined}
           actions={
             // where the app has a session's commands: whose page this is
             <View class="shrink-0 flex-row items-baseline gap-2">

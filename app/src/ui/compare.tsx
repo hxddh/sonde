@@ -10,8 +10,9 @@ import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange, SessionInfo } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Figure, Heading, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, TABLE, terminal, Title, TYPE } from "./kit";
+import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Figure, Heading, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, Title, TYPE } from "./kit";
 import { fileName, sessionName } from "./manage";
+import { signalChanges, signalsOf } from "../signals";
 import { Chart, cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency } from "./plots";
 
 interface Comparison {
@@ -142,6 +143,20 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
     () => `${props.a}\n${props.b}`,
     () => api.sessions.compareRuns(props.a, props.b),
   );
+  // both runs by their four signals, as each session's header has them
+  const signals = resource(
+    () => `${props.a}\n${props.b}`,
+    async () => {
+      try {
+        const [a, b] = await Promise.all([api.sessions.analyse(props.a), api.sessions.analyse(props.b)]);
+        const [x, y] = [signalsOf(a), signalsOf(b)];
+        return x && y ? signalChanges(x, y) : null;
+      } catch {
+        // the figures below still say what changed
+        return null;
+      }
+    },
+  );
   // each difference marked where it first shows in the replay's transcript
   const notes = (d: { comparison: Comparison; b: string }) => {
     const lines = d.b.split("\n");
@@ -202,6 +217,10 @@ export function CompareView(props: { a: string; b: string; onClose: () => void }
       </View>
       <Scroll class="min-h-0 flex-1" contentClass="gap-6 pb-4">
         <If when={replayOf() && answers()}>{(d) => answersPart(d() as Answers)}</If>
+        {/* the four signals, before and after, in the header's own tiles */}
+        <If when={terminal() ? null : signals()}>
+          {(x) => <Tiles ranked min={200} testID="compare-signals" items={x().map((s) => <Stat testID={`compare-signal-${s.id}`} label={s.label} value={s.value} detail={s.detail} tone={s.tone} />)} />}
+        </If>
         <Await loading={runs.loading()} error={runs.error()} retry={() => runs.refetch()}>
           <If when={runs()}>{(r) => <RunChangeView change={r()} inline />}</If>
         </Await>

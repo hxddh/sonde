@@ -1,6 +1,6 @@
 # Findings from building sonde
 
-sonde was written against Native Shell as it is (commit `beeb9fc`), without changing it. These are the gaps it
+sonde was written against Native Shell as it is (now pinned at commit `ec8430f`, see `Cargo.toml`), without changing it. These are the gaps it
 met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS.md`.
 
 ## Open
@@ -33,8 +33,8 @@ Both drafted as issues for Native Shell in [docs/nsh-issues.md](docs/nsh-issues.
 
 - No styled components: every control (buttons, fields, switches, selects, segmented control, badges) is sonde's own
   look on `nsh/base` behavior (`app/src/ui/kit.tsx`), with theme tokens (`app/theme.json`).
-- Charts are drawn on `Canvas` in windows; in a terminal, as the TUI guide says, the same data is a table and a
-  sentence (`app/src/ui/charts.tsx`).
+- Charts are Native Shell's `Plot` in windows (one chart system, `app/src/ui/plots.tsx`; Capacity's three in
+  `app/src/ui/charts.tsx`); in a terminal, as the TUI guide says, the same data is a table and a sentence.
 
 ## Fixed
 

@@ -1,10 +1,11 @@
 // A program over its runs: the same command run again and again, each run's
 // requests, waiting, cost and warnings, its baseline, and this run held to it.
 
-import { List, resource, Scroll, signal, Text, View } from "nsh";
+import { type JSX, List, resource, Scroll, signal, Text, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
 import { count, date, day, duration, factor, money } from "../format";
-import { type Key, t } from "../i18n";
+import { t } from "../i18n";
+import { scenarioLabel } from "../trials";
 import { api } from "../native";
 import { copy, report, sessionsChanged, sessionsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
@@ -13,22 +14,32 @@ import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, 
 import { cost, RunTrend, Sparkline } from "./plots";
 import { programOf, scrubCommand } from "./sessionview";
 
+export { scenarioLabel };
+
 /** How high a dialog's scrolling part (a comment, a file's diff) grows before it scrolls: one cap for all. */
 const TALL = 480;
 
-const STANDING = { survived: "pass", degraded: "warn", broke: "fail", untested: "neutral" } as const;
+export const STANDING = { survived: "pass", degraded: "warn", broke: "fail", untested: "neutral" } as const;
 
-/** What a trial found, in figures: the faults and their retries, the wait
- * before a retry, the load it made, and what went wrong. */
+/** What a trial found, in figures: the faults and their retries (and those
+ * no retry was owed for), the wait before a retry, what it did to the load
+ * and to the run's time, and what went wrong. What the verdict does not say
+ * (whether the waits were jittered, with too few of them) is left unsaid. */
 export function trialText(x: Trial): string {
   const parts: string[] = [];
   if (x.faults > 0) parts.push(x.retried === x.faults ? t("trial.allRetried", { n: count(x.faults) }) : t("trial.retried", { n: count(x.faults), m: count(x.retried) }));
+  if (x.notRetryable) parts.push(t("trial.notRetryable", { n: count(x.notRetryable) }));
   if (x.backoffMs) {
     const [lo, , hi] = x.backoffMs;
-    parts.push(hi - lo < 1 ? t("trial.after", { t: duration(lo) }) : t(x.jitter ? "trial.afterJitter" : "trial.afterStep", { lo: duration(lo), hi: duration(hi) }));
+    // jittered or in step only where the verdict says which
+    parts.push(hi - lo < 1 ? t("trial.after", { t: duration(lo) }) : t(x.jitter === undefined || x.jitter === null ? "trial.afterRange" : x.jitter ? "trial.afterJitter" : "trial.afterStep", { lo: duration(lo), hi: duration(hi) }));
   }
+  if (x.delayed) parts.push(t("trial.delayed", { n: count(x.delayed) }));
   if (x.cleanRequests > 0 && x.requests !== x.cleanRequests) parts.push(t("trial.load", { x: factor(x.requests / x.cleanRequests) }));
+  // how long it took against the clean run, once that is more than a blink apart
+  if (x.wallMs && x.cleanWallMs && Math.abs(x.wallMs - x.cleanWallMs) >= Math.max(50, x.cleanWallMs * 0.1)) parts.push(t("trial.took", { t: duration(x.wallMs), clean: duration(x.cleanWallMs) }));
   if (x.wroteTwice > 0) parts.push(t("trial.twice", { n: count(x.wroteTwice) }));
+  if (x.lostWrites) parts.push(t("trial.lostWrites", { n: count(x.lostWrites) }));
   if (x.leftUploads > 0) parts.push(t("trial.left", { n: count(x.leftUploads) }));
   if (x.droppedReads > 0) parts.push(t("trial.gaveUp", { n: count(x.droppedReads) }));
   if (x.droppedWrites > 0) parts.push(t("trial.droppedWrites", { n: count(x.droppedWrites) }));
@@ -37,27 +48,34 @@ export function trialText(x: Trial): string {
   return parts.join(" · ");
 }
 
-/** A scenario as people say it ("The store asks to slow down"); one sonde has
- * no words for yet keeps its own name. Its id stands beside it in mono: what
- * `sonde run --trial` is given. */
-const SCENARIOS = ["slowdown", "error", "lost-answer", "fail-complete", "slow", "s3-limits"];
-export const scenarioLabel = (name: string): string => (SCENARIOS.includes(name) ? t(`scenario.${name}` as Key) : name);
-
-/** The run under faults: a row a scenario, its standing first; a press opens the trial's own session. */
-function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void }) {
+/** The run under faults: a row a scenario, its standing first, and under a
+ * trial that broke or degraded, why; a press opens the trial's own session
+ * (a row whose session is gone only says what it found). */
+function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; action?: JSX.Element }) {
   return (
-    <Section testID="history-trials" title={t("trial.title")} description={t("trial.hint")}>
-      <Card pad="tile">
+    <Section testID="history-trials" title={t("trial.title")} description={t("trial.hint")} action={props.action} plain>
+      <Card pad="none">
         <Each of={props.trials} key={(x) => x.scenario}>
-          {(x) => (
-            <ListRow top testID={`trial-${x().scenario}`} label={`${t(`trial.${x().standing}` as never)}: ${scenarioLabel(x().scenario)}`} disabled={!x().session || !props.onOpen} onPress={() => x().session && props.onOpen?.(x().session!)}>
-              <Badge label={t(`trial.${x().standing}` as never)} tone={STANDING[x().standing]} />
-              <View class="min-w-0 flex-1 gap-1">
+          {(x, i) => (
+            <ListRow divided first={i() === 0} top testID={`trial-${x().scenario}`} label={`${t(`trial.${x().standing}`)}: ${scenarioLabel(x().scenario)}`} disabled={!x().session || !props.onOpen} onPress={() => x().session && props.onOpen?.(x().session!)} trailing={x().session && props.onOpen ? <Icon name="chevron-right" size={ICON.small} /> : undefined}>
+              <View class="w-24 shrink-0">
+                <Badge label={t(`trial.${x().standing}`)} tone={STANDING[x().standing]} />
+              </View>
+              <View class={`min-w-0 flex-1 gap-1 ${x().session ? "" : "opacity-60"}`}>
                 <View class="flex-row flex-wrap items-baseline gap-x-2">
                   <Text class="text-body text-foreground">{scenarioLabel(x().scenario)}</Text>
                   <Text testID="trial-id" class="font-mono text-caption text-muted-foreground">{x().scenario}</Text>
                 </View>
                 <Muted class="text-small">{trialText(x())}</Muted>
+                {/* why it is not "survived", a line each */}
+                <If when={x().standing !== "survived" && x().reasons.length > 0}>
+                  <View testID="trial-reasons" class="gap-1">
+                    <Each of={x().reasons}>{(r) => <Text class={`text-small ${x().standing === "broke" ? "text-fail" : "text-foreground"}`}>{r()}</Text>}</Each>
+                  </View>
+                </If>
+                <If when={!x().session}>
+                  <Muted class="text-caption">{t("trial.sessionGone")}</Muted>
+                </If>
               </View>
             </ListRow>
           )}
@@ -182,7 +200,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 }
 
 /** The Runs pane of a session: its program over its runs. */
-export function HistoryPane(props: { path: string; onOpen?: (path: string) => void }) {
+export function HistoryPane(props: { path: string; onOpen?: (path: string) => void; /** "Try under faults…": the app's own (a shared page runs nothing) */ onTry?: () => void }) {
   // a failure is said as one (with Try again), never as "one run so far"
   // read again when the sessions change: a run ended, one was deleted, a baseline set elsewhere
   const h = resource(
@@ -257,6 +275,10 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                     </View>
                   }
                 />
+              </If>
+              {/* the same command again, sonde answering in the store's place: asked first what will run */}
+              <If when={props.onTry && !terminal()}>
+                <Button small variant="outline" icon="flask-conical" label={t("trial.try")} onPress={() => props.onTry?.()} testID="trial-open" />
               </If>
               {/* one button, its words the action: set, or (already the baseline) clear */}
               <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : undefined} onPress={toggle} testID="history-baseline" />

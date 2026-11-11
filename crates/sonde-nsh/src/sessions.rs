@@ -423,6 +423,8 @@ fn view_of(path: &str) -> Result<Arc<JsonValue>, String> {
             &crate::state::request_prices_for(&s.header.endpoint),
         ),
         "whatIf": what_if,
+        // the requests a fault scenario answered, by id: the charts mark their dots and cells
+        "injected": s.records.iter().filter(|r| r.injected.is_some()).map(|r| r.id).collect::<Vec<_>>(),
         "episodes": eps,
         "observations": obs,
         "sharedNotes": shared,

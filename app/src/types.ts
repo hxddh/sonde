@@ -1,5 +1,7 @@
 // The shapes sonde/native returns (serde JSON of sonde-core, probes and decoders).
 
+import type { CorePhrase } from "./corephrases";
+
 export interface EndpointView {
   id: string;
   name: string;
@@ -11,6 +13,7 @@ export interface EndpointView {
   hasCa: boolean;
   caFile?: string | null;
   credentials: string;
+  credentialsText?: CorePhrase[];
   buckets: string[];
 }
 
@@ -124,12 +127,14 @@ export interface Progress {
   total: number | null;
   bytes: number;
   message: string;
+  messageText?: CorePhrase[];
 }
 
 export interface JobInfo {
   id: string;
   kind: string;
   title: string;
+  titleText?: CorePhrase[];
   state: "running" | "finished" | "failed" | "cancelled";
   progress: Progress;
   started: string;
@@ -161,6 +166,8 @@ export interface RecordSummary {
   requestId: string | null;
   /** Time to the response's first byte, when measured (the proxy, an access log's turnaround). */
   firstByteMs?: number;
+  /** The fault scenario that answered it, not the store. */
+  injected?: string;
 }
 
 export interface RequestRecord extends RecordSummary {
@@ -223,6 +230,7 @@ export interface MpuReport {
     status: "covered" | "partial" | "missing" | "unknown";
     rules: { id: string | null; prefix: string | null; days: number; enabled: boolean }[];
     message: string;
+    messageText?: CorePhrase[];
     suggestedRule: string;
     error: SondeError | null;
   };
@@ -234,6 +242,7 @@ export interface PlanItem {
   id: string | null;
   bytes: number | null;
   detail: string;
+  detailText?: CorePhrase[];
 }
 
 export interface Plan {
@@ -245,8 +254,10 @@ export interface Plan {
   document: string | null;
   previousDocument: string | null;
   summary: string;
+  summaryText?: CorePhrase[];
   confirm: string;
   confirmHint: string;
+  confirmHintText?: CorePhrase[];
   created: string;
 }
 
@@ -290,6 +301,8 @@ export interface Slice {
   current: Agg;
   noncurrent: Agg;
   deleteMarkers: number;
+  /** Its old versions could not be counted: unknown, not 0. */
+  versionsUnknown?: boolean;
 }
 
 export interface DuReport {
@@ -308,6 +321,8 @@ export interface DuReport {
   byPrefix: Slice[];
   bySize: { label: string; min: number; max: number | null; objects: number; bytes: number }[];
   findings: string[];
+  /** Each finding as phrases, as `findings`. */
+  findingsText?: CorePhrase[][];
   costPerMonth: number;
   currency: string;
   scannedAt: string;
@@ -320,8 +335,11 @@ export interface ProbeMeta {
   id: string;
   category: string;
   title: string;
+  titleText?: CorePhrase[];
   description: string;
+  descriptionText?: CorePhrase[];
   awsBehavior: string;
+  awsBehaviorText?: CorePhrase[];
   needs: string[];
 }
 
@@ -339,7 +357,9 @@ export interface ProbeResult {
   category: string;
   verdict: Verdict;
   summary: string;
+  summaryText?: CorePhrase[];
   observations: string[];
+  observationsText?: CorePhrase[][];
   steps: Step[];
   exchanges: RequestRecord[];
   durationMs: number;
@@ -372,7 +392,7 @@ export interface RunSummary {
 
 export interface Matrix {
   columns: { endpoint: string; name: string; vendor: string; server: string | null; run: string; started: string }[];
-  rows: { probe: ProbeMeta; cells: ({ verdict: Verdict; summary: string; run: string } | null)[] }[];
+  rows: { probe: ProbeMeta; cells: ({ verdict: Verdict; summary: string; summaryText?: CorePhrase[]; run: string } | null)[] }[];
 }
 
 export interface Change {
@@ -381,6 +401,8 @@ export interface Change {
   after: Verdict | null;
   beforeSummary: string | null;
   afterSummary: string | null;
+  beforeSummaryText?: CorePhrase[];
+  afterSummaryText?: CorePhrase[];
   stepsChanged: boolean;
 }
 
@@ -393,6 +415,8 @@ export interface Detection {
 export interface Fact {
   label: string;
   value: string;
+  labelText?: CorePhrase[];
+  valueText?: CorePhrase[];
 }
 
 export interface Table {
@@ -414,9 +438,10 @@ export interface Layout {
   formatVersion: string | null;
   decoded: boolean;
   headline: string;
+  headlineText?: CorePhrase[];
   facts: Fact[];
-  issues: { severity: "info" | "warning" | "error"; message: string }[];
-  timeline: { time: string | null; kind: string; label: string; detail: string; key: string | null; bytes: number | null }[];
+  issues: { severity: "info" | "warning" | "error"; message: string; messageText?: CorePhrase[] }[];
+  timeline: { time: string | null; kind: string; label: string; detail: string; labelText?: CorePhrase[]; detailText?: CorePhrase[]; key: string | null; bytes: number | null }[];
   tables: Table[];
   snapshots: Snapshot[];
   objects: number;
@@ -455,6 +480,8 @@ export interface SessionInfo {
   title?: string | null;
   /** A finished session's requests over its time, in slices: the list's sparkline. */
   shape?: number[];
+  /** The run's trials, when it was tried under faults: how the program stood in each. */
+  trials?: { scenario: string; standing: Trial["standing"]; session: string | null }[];
 }
 
 /** A phrase of what sonde says: a key and its arguments (crates/proxy/src/phrase.rs). */
@@ -651,17 +678,26 @@ export interface Trial {
   retried: number;
   droppedReads: number;
   droppedWrites: number;
+  /** Writes the store did and the program never heard of. */
+  lostWrites?: number;
+  /** Faults the program was right not to retry. */
+  notRetryable?: number;
+  /** Requests the scenario held back. */
+  delayed?: number;
   attempts: number;
   /** The waits before a retry: shortest, median, longest (ms). */
   backoffMs?: [number, number, number];
-  jitter: boolean;
+  /** Whether the waits differ within one attempt; absent: not said (too few retries to tell). */
+  jitter?: boolean;
   requests: number;
   cleanRequests: number;
+  wallMs?: number;
+  cleanWallMs?: number;
   leftUploads: number;
   wroteTwice: number;
   reasons: string[];
-  /** The trial's own session. */
-  session?: string;
+  /** The trial's own session (an absolute path), when it is still there. */
+  session?: string | null;
 }
 
 export interface ProgramHistory {
@@ -700,9 +736,79 @@ export interface RunChange {
   prefixes?: { prefix: string; requests: [number, number] }[];
 }
 
-export interface SessionView {
+/** A size bucket of bodies: up to `leBytes` (each twice the last; 0 is the empty body). */
+export interface SizeBucket {
+  leBytes: number;
+  count: number;
+  bytes: number;
+}
+
+/** A run by its four signals and how many requests were in flight, each a figure
+ * with its line over the session's slices (crates/proxy/src/signals.rs). A figure
+ * that cannot be said (no time, no request) is null, never 0. */
+export interface Signals {
+  timed: boolean;
+  wallMs: number;
+  binMs: number;
+  bins: number;
+  rate: { value: number | null; unit: string; series: number[]; requests: number };
+  errors: {
+    value: number | null;
+    series: number[];
+    count: number;
+    counts: { client: number; server: number; transport: number; injected: number };
+    client: number[];
+    server: number[];
+    transport: number[];
+    injected: number[];
+    retries: number[];
+    retriesTotal: number;
+  };
+  latency: { value: number | null; series: number[]; p50Ms: number | null; p95Ms: number | null; p99Ms: number | null; p95: number[]; p99: number[] };
+  bytes: { value: number | null; series: number[]; upPerSec: number | null; downPerSec: number | null; up: number[]; down: number[]; upBytes: number; downBytes: number };
+  inFlight: { value: number | null; series: number[]; peak: number; peakAtMs: number };
+  /** Null when no request's first byte was timed. */
+  firstByte: { share: number; count: number; kinds: { operation: string; count: number; firstByteMs: number; restMs: number }[] } | null;
+  sizes: { request: SizeBucket[]; response: SizeBucket[]; throughput: { operation: string; bucket: number; count: number; mibPerSec: number }[]; mibPerSec: number | null };
+  statuses: { status: number | null; code: string | null; count: number; injected: number; firstMs: number; lastMs: number }[];
+  cost: { amount: number; currency: string; operations: { operation: string; class: "write" | "list" | "read" | "free"; requests: number; billed: number; cost: number; share: number }[] };
+  prefixes: { prefix: string; folders: number; requests: number; peakReads: number; peakWrites: number; readShare: number; writeShare: number }[];
+}
+
+/** What a trial of a session would run (`Sessions.trialPlan`). */
+export interface TrialPlan {
+  command: string;
+  cwd: string | null;
+  scenarios: { name: string; about: string }[];
+  /** The scenarios are sonde.toml's own. */
+  project: boolean;
+  /** The command names no `{trial}`: the runs write where the clean run wrote. */
+  sharesPlace: boolean;
+  cleanExit: number;
+  /** sonde is read-only: no trial runs. */
+  readOnly: boolean;
+}
+
+/** A trial as the app hears it run. */
+export type TrialEvent = { scenario: string; state: "running" } | { started: RecordingView; scenario: string } | { data: string; scenario: string } | { scenario: string; state: "done"; trial: Trial };
+
+export interface TrialResult {
   path: string;
-  header: { endpoint: string; url: string; region: string; created: string; command?: string | null; cwd?: string | null; git?: GitStamp | null };
+  trials: Trial[];
+  cancelled: boolean;
+}
+
+export interface SessionView {
+  /** The run's four signals (absent in a share made before 15.0). */
+  signals?: Signals;
+  /** A trial's session: its scenario, the clean run it is a trial of (and that run's file, when it is still there). */
+  trial?: { scenario: string; of: string; clean: string | null };
+  /** A clean run's trials, each with its own session's path. */
+  trials?: Trial[];
+  /** The requests a fault scenario answered, by id. */
+  injected?: number[];
+  path: string;
+  header: { endpoint: string; url: string; region: string; created: string; command?: string | null; cwd?: string | null; git?: GitStamp | null; /** a trial's session: the scenario its requests met */ scenario?: string | null };
   summary: SessionSummary;
   profile: Profile;
   whatIf?: WhatIf | null;

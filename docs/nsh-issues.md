@@ -107,13 +107,6 @@ page's folder shown).
 **Expected.** A JS module for them, behind a capability.
 
 
-## An Input cannot be disabled
-
-**What happens.** `Input` has no `disabled` (or `editable`) prop; `NumberInput`, `Select` and `Combobox` do. A field
-that may not change once set (an endpoint's id while editing) is shown as text instead.
-
-**Expected.** `disabled` on `Input`, with `disabled:` styles and screen readers saying it is dimmed.
-
 ## Plot has no log scale, and no horizontal rule
 
 **What happens.** Scales are `point`, `linear` and `band`; latencies spread over decades are drawn as their logs and
