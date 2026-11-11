@@ -17,7 +17,9 @@ const TAB_ICON: Record<SettingsTab, IconName> = { settings: "sliders-horizontal"
 /** The tabs and the page of the one chosen. */
 export function SettingsBody() {
   return (
-    <View class="flex-1 bg-background" testID="screen-settings-area">
+    // the window opens with the keyboard on the page itself, not in its first field (which a
+    // window's first focus would select whole: a number to type over by accident)
+    <View class="flex-1 bg-background" testID="screen-settings-area" focusable ref={(r) => setTimeout(() => !terminal() && r.focus(), 0)}>
       {/* the window's two pages, switched as every place switches what it shows */}
       <View class={terminal() ? "flex-row" : "h-12 shrink-0 flex-row items-center border-b border-border px-4"}>
         <Segmented testID="tab" value={settingsTab()} items={SETTINGS_TABS.map((s) => ({ value: s, title: sectionLabel(s), icon: TAB_ICON[s] }))} onChange={(s) => settingsTab.set(s as SettingsTab)} />

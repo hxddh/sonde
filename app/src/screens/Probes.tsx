@@ -227,7 +227,11 @@ export function Probes() {
               </Notice>
             </If>
             <Card>
-              <Heading>{t("probes.run")}</Heading>
+              {/* one considered head: what the card does, and at its end the one command that does it */}
+              <View class="flex-row items-center gap-3">
+                <Heading class="min-w-0 flex-1">{t("probes.run")}</Heading>
+                <Button variant="primary" icon="play" label={t("common.run")} onPress={run} disabled={!canRun()} testID="probe-run" />
+              </View>
               <View class="flex-row flex-wrap items-center gap-3">
                 {/* which endpoints: said in place when none is chosen (Run stays off until one is) */}
                 <Text class="text-small text-muted-foreground">{picked().length > 0 ? t("endpoints.title") : t("probes.chooseEndpoint")}</Text>
@@ -240,7 +244,6 @@ export function Probes() {
                 <Field bare class={WIDTH.long} label={t("probes.only")} placeholder={t("probes.onlyHint")} value={only()} onChange={(v) => only.set(v)} onSubmit={run} mono testID="probe-only" />
                 <SwitchRow label={t("probes.tempBuckets")} checked={temp()} onChange={(v) => temp.set(v)} />
                 <SwitchRow label={t("probes.slow")} checked={slow()} onChange={(v) => slow.set(v)} />
-                <Button variant="primary" label={t("common.run")} onPress={run} disabled={!canRun()} testID="probe-run" />
               </View>
               {/* what a run does to the bucket, before it runs */}
               <Text testID="probe-writes" class="text-small text-muted-foreground">
