@@ -474,6 +474,60 @@ async fn a_program_that_retries_survives_every_scenario() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_scenario_pressed_harder_fails_more_attempts_in_a_row() {
+    // the program makes four attempts at a request: three failures in a
+    // row it gets through, four it does not
+    let b = Bench::new().await;
+    let session = b.path("run.sonde");
+    let run = |fault: &'static str| {
+        let (b, session) = (&b, session.clone());
+        async move {
+            b.run(
+                Some("retrying"),
+                &["run", "--fault", fault, "-o", session.to_str().unwrap()],
+            )
+            .await
+        }
+    };
+    let o = run("slowdown:3").await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    // the row says how it was asked for; the session keeps the scenario's name
+    assert!(o.stderr.contains("slowdown:3"), "{}", o.stderr);
+    let all = trials(&session);
+    let t = trial(&all, "slowdown");
+    assert_eq!(t["standing"], "survived", "{t:#}");
+    assert_eq!(t["times"], 3, "{t:#}");
+    assert_eq!(t["attempts"], 4, "{t:#}");
+    assert_eq!(t["faults"], 9, "three requests, three attempts each: {t:#}");
+    assert_eq!(t["session"], "run.slowdown.sonde");
+    assert_eq!(
+        t["about"],
+        "503 SlowDown on each request's first 3 attempts"
+    );
+    let o = run("slowdown:4").await;
+    let all = trials(&session);
+    let t = trial(&all, "slowdown");
+    // its first write fails four times: three retries, then it gives up and exits
+    assert_eq!(t["standing"], "broke", "{t:#}\n{}", o.stderr);
+    assert_eq!(t["faults"], 4, "{t:#}");
+    assert_eq!(t["retried"], 3, "{t:#}");
+    assert_eq!(t["droppedWrites"], 1, "{t:#}");
+    // asked for once, without a count: nothing says "times"
+    let o = run("slowdown").await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    assert!(trial(&trials(&session), "slowdown").get("times").is_none());
+    // a count out of range, and a scenario that takes none, are usage errors
+    for (fault, says) in [
+        ("slowdown:0", "a count from 1 to 5"),
+        ("lost-answer:2", "only slowdown and error take a count"),
+    ] {
+        let o = run(fault).await;
+        assert_eq!(o.code, Some(64), "{fault}: {}", o.stderr);
+        assert!(o.stderr.contains(says), "{fault}: {}", o.stderr);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
     let b = Bench::new().await;
     let session = b.path("run.sonde");

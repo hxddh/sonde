@@ -148,7 +148,7 @@ export function SessionList(props: {
         // a recycled cell: what it shows follows the item it is given
         <If when={dayOf(r())} else={row(() => r() as { s: SessionInfo; i: number })}>
           {(day) => (
-            <View class={`${terminal() ? "" : "bg-sidebar"} px-2 pb-1 pt-2`}>
+            <View class="bg-sidebar px-2 pb-1 pt-2 terminal:bg-transparent">
               <Heading quiet>{day()}</Heading>
             </View>
           )}

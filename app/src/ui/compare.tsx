@@ -420,7 +420,7 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
     }
   };
   return (
-    <Modal open={props.open} onClose={props.onClose} testID="replay-dialog">
+    <Modal open={props.open} onClose={props.onClose} testID="replay-dialog" describe={t("replay.hint")}>
       <Title>{t("replay.title")}</Title>
       <Muted class="text-body">{t("replay.hint")}</Muted>
       <Choice label={t("common.endpoint")} value={target()} placeholder={t("replay.choose")} items={endpoints().map((e) => ({ value: e.id, title: e.name }))} onChange={(v) => target.set(v)} testID="replay-endpoint" />

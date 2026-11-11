@@ -1,6 +1,7 @@
 # Native Shell issues found by sonde
 
-Drafts for `longbridge/nsh`, begun in sonde 9.0 at Native Shell `1662115` and read again at `744d950` (15.0),
+Drafts for `longbridge/nsh`, begun in sonde 9.0 at Native Shell `1662115` and read again at `744d950` (15.0) and at
+the tag `v0.5.0` (16.0, 81 commits later: Plot, the table, the sheet and the terminal are as they were),
 where the three Plot requests (press and selection, a log scale, a row without a value) still stand, each with what
 it would remove. sonde works around the first two (FINDINGS 18, 19) and does not change Native Shell's source.
 
@@ -62,7 +63,9 @@ screen and the app laid out for the size it got.
 
 ## Plot has no press, selection or brush
 
-Asked again at `744d950` (15.0): Plot there differs from the old pin by a doc comment.
+Asked again at `744d950` (15.0): Plot there differs from the old pin by a doc comment. And at `v0.5.0` (16.0): Plot is
+unchanged. (0.5.0's `onMouseUp` and `onWheel` are a view's, not a plot's: a drag over a plot would still be sonde's
+own arithmetic from pixels to rows.)
 
 **What happens.** A Plot reports `onHoverChange` only. Picking a slice needs the plot wrapped in a Button (two focus
 stops; Enter on the plot does nothing), and a range (zoom) needs two presses on that button.
@@ -80,7 +83,7 @@ about 20 of the two-press zoom (`app/src/ui/profile.tsx` `pick`, `zoomFrom`).
 
 ## A Plot's value function cannot say "no value"
 
-Asked again at `744d950` (15.0).
+Asked again at `744d950` (15.0) and at `v0.5.0` (16.0).
 
 **What happens.** Marks are typed `(d, i) => number`; the docs say a row without a value draws no line, but
 returning one takes `undefined as unknown as number`.
@@ -134,7 +137,7 @@ with one value.
 
 **Expected.** `{ type: "log" }` for x and y, and `Rule` (or `Grid`) taking a label for a reference line.
 
-Asked again at `744d950` (15.0).
+Asked again at `744d950` (15.0) and at `v0.5.0` (16.0).
 
 **What sonde does today.** The scatter (time or size against latency) and the comparison of two distributions take
 the logarithm of every value before the plot sees it (`log10`), work out the decades for the grid and the ticks
@@ -186,3 +189,37 @@ new columns but the titles keep the old places for a frame or more: "Operation" 
 not its SVG icons: no close button, no chevrons on a `Select`. The same components paint in the window itself.
 
 **Expected.** The sheet's layer paints icons as its window does; and a way to place it below the window's own bar.
+
+## On GTK a window gives its first text field the focus when the focused one is unfocused by the program
+
+**What happens.** (Linux, GTK 4; at `744d950` and at `v0.5.0`.) A window whose focused `Input` loses the focus by
+the program's doing, not the user's, gives the focus to the first text field in the window, with its text selected:
+
+- `Keyboard.dismiss()` while an input has the focus;
+- `ref.focus()` on a `focusable` `View`;
+- a `Dialog` opening after another window of the app (Settings) was opened and closed;
+- the focused input's page going away.
+
+sonde's toolbar begins with a `Combobox` (the endpoint): after any of these it stood with a focus ring and its
+name selected, through every later screen. In a second window the first `NumberInput` took it the same way.
+
+**Repro.** A window with `<Combobox … />` first and an `<Input />` further down. Type in the input, then call
+`Keyboard.dismiss()`: the combobox is focused and its query selected. Under `nsh test --target linux` (Xvfb,
+openbox) the screenshot shows it.
+
+**Expected.** Unfocusing leaves no text field focused (as on macOS), and `focus()` on a focusable view takes the
+keyboard to that view.
+
+**What sonde does.** Each window's first text field is an invisible, read-only one (`FocusRest`), on Linux only.
+
+## DataTable cannot open at its end, or tell where its viewport starts
+
+**What happens.** 0.5.0 gave `List` `initialScrollAtEnd` and `measureScrollPosition()`. `DataTable` has neither:
+its ref has `scrollToRow`, `visibleRows()` and `onVisibleRowsChange`. A table of rows that arrive (a log, live
+requests) opens at its top, and following its end is the app's bookkeeping.
+
+**Expected.** The same two on `DataTable`: open at the end and follow it while rows are added, and a viewport
+start (`{ row, offset }`) that `scrollToRow` can restore.
+
+**What it would remove.** `OperationsTable`'s `follow` in sonde (where the view ended, how many rows there were,
+a `scrollToRow` a tick later).

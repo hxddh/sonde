@@ -287,3 +287,15 @@ export function followNotifications(open: (path: string) => void) {
     if (lifecycle() === "active") void Notifications.setBadge(0).catch(() => {});
   });
 }
+
+/** The app is quitting: ends the program being recorded (and what it started)
+ * and a running trial, and has the recording written as a finished session.
+ * Resolves once the file is whole; the system waits 200 ms for it. A trial
+ * cut short keeps nothing, as when it is stopped by hand. */
+export async function endForQuit(): Promise<void> {
+  try {
+    await api.sessions.quit();
+  } catch {
+    // nothing was being recorded, or the bridge has gone first: there is nothing left to end
+  }
+}

@@ -97,7 +97,8 @@ export const CONTROL = {
 export const TABLE = {
   header: "bg-card border-b border-border",
   headerCell: "px-2 text-caption text-muted-foreground",
-  cell: "px-2",
+  // (its text in the theme's own colour: a table that draws its cells itself was black on dark)
+  cell: "px-2 text-foreground",
   rowHover: "bg-row-hover",
   rowSelected: "bg-selection",
   fixedEdge: "border-r border-border",
@@ -698,10 +699,11 @@ export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => 
 /** A modal dialog: one surface, one width per size, over the scrim. */
 const MODAL = { narrow: "w-[420px]", default: "w-[560px]", wide: "w-[880px]" } as const;
 
-export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string }) {
+export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string; /** what the dialog asks or says, in a sentence: a screen reader hears it after the dialog's name, as it opens */ describe?: string }) {
   return (
     <Dialog
       open={props.open}
+      accessibilityDescription={props.describe}
       onOpenChange={(e) => !e.open && props.onClose()}
       backdropClass={SCRIM}
       testID={props.testID}
@@ -819,8 +821,9 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxe
  * `leading` stands before the text inside the field (a prompt, an icon) and
  * `trailing` after it (an `IconButton inField`); `small` is the second
  * control height. A field that matters more is wider and in mono, never higher. */
-export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean }) {
+export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean; /** what is typed is refused: said under the field, drawn on its edge, and told to a screen reader (the field is `invalid`, the reason its description) */ error?: string | null; /** refused without words of its own here (the reason stands beside it, or is the label's): the edge and the state only */ invalid?: boolean }) {
   const boxed = () => !!props.leading || !!props.trailing;
+  const refused = () => !!props.error || !!props.invalid;
   const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} disabled:opacity-50`;
   const input = (cls: string) => (
     <Input
@@ -832,6 +835,8 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       autoCorrect={false}
       readonly={props.readonly}
       disabled={props.disabled}
+      accessibilityState={refused() ? { invalid: true } : undefined}
+      accessibilityDescription={props.error ?? undefined}
       onChange={({ value }) => props.onChange(value)}
       onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
       submitBehavior={props.onSubmit ? "submit" : undefined}
@@ -843,14 +848,30 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       <If when={!props.bare}>
         <Text class="text-small text-muted-foreground">{props.label}</Text>
       </If>
-      <If when={boxed()} else={input(`${props.small ? CONTROL.small : CONTROL.field} rounded-(--radius) border border-input bg-background px-2 focus-visible:border-ring ${FOCUS} ${text()}`)}>
-        <View class={`${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box}`}>
+      <If when={boxed()} else={input(`${props.small ? CONTROL.small : CONTROL.field} rounded-(--radius) border ${refused() ? "border-fail" : "border-input"} bg-background px-2 focus-visible:border-ring ${FOCUS} ${text()}`)}>
+        <View class={`${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box} ${refused() ? "border-fail" : ""}`}>
           {props.leading}
           {input(`min-w-0 flex-1 ${text()}`)}
           {props.trailing}
         </View>
       </If>
+      {/* why it is refused, under it: the same words a screen reader is given as the field's description */}
+      <If when={props.error}>{(why) => <Text testID={props.testID ? `${props.testID}-error` : undefined} class="text-small text-fail">{why()}</Text>}</If>
     </View>
+  );
+}
+
+/** Where the keyboard rests when no field has it. On GTK a window whose
+ * focused field is unfocused by the program (a dialog opens after another
+ * window closed, a field goes with its page) gives its first text field the
+ * focus: the toolbar's endpoint then stood ringed, its name selected, in
+ * every picture (FINDINGS 22). The first text field is this one: nothing to
+ * see, nothing to read out, nothing to type into. */
+export function FocusRest() {
+  return (
+    <If when={platform.os === "linux"}>
+      <Input testID="focus-rest" value="" readonly accessibilityElementsHidden class="absolute left-0 top-0 h-px w-px opacity-0" />
+    </If>
   );
 }
 

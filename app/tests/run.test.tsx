@@ -416,3 +416,32 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   await app.waitUntil(() => app.shows("id:session-pane-mode-runs") && app.enabled("id:session-pane-mode-runs"), { timeout: 10000 });
   expect(app.shows("id:trial-note")).toBe(false);
 }, 120000);
+
+test("quitting ends the program being recorded and leaves its session a finished file", async () => {
+  const app = await demo();
+  // a request, then a program that would outlive the app
+  await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; echo fetched; sleep 60");
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
+  await app.press("id:run-start");
+  await app.waitFor("id:run-terminal", { timeout: 10000 });
+  await app.waitFor("text:/GetObject demo\\/README\\.md/", { timeout: 10000 });
+  expect(app.shows("id:run-ended")).toBe(false);
+  // what `Application.on("quit")` runs: the system waits 200 ms for it
+  const { api } = await import("../src/native");
+  const began = Date.now();
+  const ended = await api.sessions.quit();
+  const took = Date.now() - began;
+  expect(ended.program).toBe(true);
+  expect(ended.trial).toBe(false);
+  expect(typeof ended.session).toBe("string");
+  expect(took < 200).toBe(true);
+  // the program is gone, and the session is a finished one: nothing is still recording
+  await app.waitFor("id:run-ended", { timeout: 5000 });
+  const kept = api.sessions.list().find((s) => s.path === ended.session);
+  expect(kept?.live).toBe(false);
+  expect(kept?.requests).toBe(1);
+  // nothing left to end: quitting again says so
+  const again = await api.sessions.quit();
+  expect(again.program).toBe(false);
+  expect(again.session).toBe(null);
+});

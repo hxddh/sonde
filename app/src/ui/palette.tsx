@@ -10,10 +10,10 @@ import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
 import { command, history, lastRun, openLastRun, running, stop } from "../run";
 import { checkRequested } from "./updates";
-import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, STORE_TABS, useEndpoint } from "../store";
+import { ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, readOnly, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, shellHeight, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
-import { CONTROL, EMPHASIS, Empty, glass, Kbd, keyLabel, POPUP, ROWS, SCRIM, terminal, SURFACE, Row } from "./kit";
+import { BREAK, CONTROL, EMPHASIS, Empty, glass, Kbd, keyLabel, POPUP, ROWS, SCRIM, terminal, SURFACE, Row } from "./kit";
 import { scrubCommand } from "./sessionview";
 
 export const paletteOpen = signal(false);
@@ -205,7 +205,8 @@ export function Palette() {
       animation="fade"
       backdropClass={terminal() ? undefined : SCRIM}
       // the popup surface, its hairlines from edge to edge
-      style={terminal() ? undefined : { marginTop: 96, padding: 0, ...glass }}
+      // (nearer the top of a short window: its list and its hint stay inside the least one)
+      style={terminal() ? undefined : { marginTop: shellHeight() < BREAK.short ? 40 : 96, padding: 0, ...glass }}
       class={terminal() ? "w-full" : `${SURFACE.palette} self-center overflow-hidden ${POPUP}`}
       testID="palette-dialog"
     >
@@ -229,7 +230,7 @@ export function Palette() {
         listClass={terminal() ? SURFACE.paletteListTerminal : `${SURFACE.paletteList} p-1`}
         // emphasis: a terminal marks the row the keys are on by its weight
         itemClass={terminal() ? `px-1 text-foreground focus:bg-accent checked:${EMPHASIS}` : ROWS.palette}
-        groupClass={terminal() ? "px-1 text-muted-foreground" : "px-2 pb-1 pt-2 text-caption text-muted-foreground"}
+        groupClass="px-2 pb-1 pt-2 text-caption text-muted-foreground terminal:px-1 terminal:pb-0 terminal:pt-0"
         separatorClass="my-1 h-px bg-border"
         renderItem={
           terminal()

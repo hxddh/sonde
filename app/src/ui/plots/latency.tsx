@@ -15,7 +15,14 @@ import { terminal, textual, SimpleTable } from "../kit";
  * p95) and their tail (p95 to p99). */
 export const LATENCY_FILL = { body: "fill-latency-body", tail: "fill-latency-tail" } as const;
 /** What the bands stand for, for a frame's legend. */
-export const latencyLegend = (): LegendItem[] => [{ label: t("latencyTime.p50"), swatch: "bg-foreground" }, { label: t("latencyTime.p95"), swatch: "bg-latency-body" }, { label: t("latencyTime.p99"), swatch: "bg-latency-tail" }];
+/** Whether any slice has a tail to draw: with few requests in each, a slice's p95 is its p99 and the band between them is nothing. */
+export const hasTail = (profile: Profile): boolean => profile.rate.some((b) => b.p99Ms > b.p95Ms + 1e-9);
+/** The bands' legend: the tail is named where one is drawn; where no slice has one, that is said in its place. */
+export const latencyLegend = (profile?: Profile): LegendItem[] => [
+  { label: t("latencyTime.p50"), swatch: "bg-foreground" },
+  { label: t("latencyTime.p95"), swatch: "bg-latency-body" },
+  ...(!profile || hasTail(profile) ? [{ label: t("latencyTime.p99"), swatch: "bg-latency-tail" }] : []),
+];
 
 /** How long requests took over the session: the band from median to p95,
  * the p99 a line above it; slices without requests leave a gap. */
@@ -42,7 +49,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
     return b && has(b) ? { title: `+${duration(b.tMs)}`, lines: [t("band.line", { p50: duration(b.p50Ms), p95: duration(b.p95Ms), p99: duration(b.p99Ms) })] } : null;
   };
   return (
-    <If when={!terminal() && answered().length > 1} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{label()}</Text>}>
+    <If when={!terminal() && answered().length > 1} else={<Text class="hidden text-muted-foreground terminal:flex">{label()}</Text>}>
       <Plot
         testID={props.testID ?? "latency-band"}
         data={rows()}
@@ -127,7 +134,7 @@ export function LatencyHeat(props: { profile: Profile; range?: [number, number] 
     return b !== undefined && b % PER_DECADE === 0 ? `≤ ${duration(edge(b))}` : "";
   };
   return (
-    <If when={!terminal() && bins().length > 1} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{label()}</Text>}>
+    <If when={!terminal() && bins().length > 1} else={<Text class="hidden text-muted-foreground terminal:flex">{label()}</Text>}>
       <If when={rows().length > 0} else={<NoneInStretch />}>
         <Plot
           testID="latency-heat"
@@ -335,7 +342,7 @@ export function Distribution(props: { profile: Profile }) {
             <Bar value="n" color={(_, i) => (first95() >= 0 && i >= first95() ? "tail" : "body")} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} stagger={0.2} label={(_, i) => ((rows()[i]?.n ?? 0) > 0 ? count(rows()[i].n) : "")} labelClass={TOP_LABEL} />
             <Line y="cum" scale="y2" curve="linear" class="stroke-muted-foreground stroke-1" style={{ strokeDasharray: "3 3" }} hoverDotClass="size-1.5 rounded-full bg-muted-foreground" />
             <PlotAxis format={(i) => rows()[i]?.name ?? ""} labelClass={TIME_TICK} />
-            <ValueAxis peak={peak()} say={(v) => t("run.bandRequests", { n: v })} />
+            <ValueAxis marked peak={peak()} say={(v) => t("run.bandRequests", { n: v })} />
             <PlotAxis placement="right" scale="y2" labelPlacement="inside" tickValues={[50, 100]} format={(v) => percent(v / 100)} labelClass={VALUE_TICK_END} />
           </Plot>
           <Legend items={[{ label: t("dist.requests"), swatch: "bg-chart-1" }, ...(tailShare() > 0 ? [{ label: t("dist.tail", { pct: percent(tailShare()) }), swatch: "bg-chart-tail" }] : []), { label: t("dist.cumulative"), swatch: "bg-muted-foreground" }]} />

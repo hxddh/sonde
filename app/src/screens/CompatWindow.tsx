@@ -6,6 +6,7 @@
 import { View } from "nsh";
 import { Window } from "nsh/desktop";
 import { t } from "../i18n";
+import { FocusRest } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { Probes } from "./Probes";
 
@@ -19,6 +20,7 @@ export function openCompatWindow() {
   Window.open(
     () => (
       <View class="flex-1 bg-background" testID="compat-window">
+        <FocusRest />
         <Probes />
         <Toaster />
       </View>

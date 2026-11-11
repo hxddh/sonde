@@ -15,7 +15,7 @@ import type { Policy } from "./session";
 import { report, sessionsChanged } from "../store";
 import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, trialSteps } from "../trials";
 import type { Trial, TrialPlan } from "../types";
-import { STANDING, TrialWhere, trialText } from "./history";
+import { STANDING, trialAsked, TrialWhere, trialReasons, trialText } from "./history";
 import { Icon } from "./icon";
 import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, Mono, Muted, Notice, Options, Row, Title } from "./kit";
 import { scrubCommand } from "./sessionview";
@@ -54,6 +54,10 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
   // every scenario is on until one is taken off
   const off = signal<string[]>([]);
   const chosen = () => (the()?.scenarios ?? []).filter((s) => !off().includes(s.name));
+  // how hard the two that fail a request's first attempt press: its first n attempts
+  const times = signal(1);
+  const pressed = (s: { name: string; maxTimes?: number | null }) => (s.maxTimes && times() > 1 ? Math.min(times(), s.maxTimes) : 1);
+  const asked = (s: { name: string; maxTimes?: number | null }) => (pressed(s) > 1 ? `${s.name}:${pressed(s)}` : s.name);
   // what the program may do while tried: as the last run was limited, until changed here
   const limit = signal<Policy>(policy());
   const steps = signal<TrialStep[] | null>(null);
@@ -70,7 +74,7 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
     if (!list.length || trying()) return;
     batch(() => (steps.set(trialSteps(list)), ended.set(null), trying.set(true), started.set(Date.now()), now.set(Date.now())));
     api.sessions
-      .trial(props.path, list.map((s) => s.name), limit(), 100, 30, (e) => steps.set(foldTrial(steps() ?? [], e)))
+      .trial(props.path, list.map(asked), limit(), 100, 30, (e) => steps.set(foldTrial(steps() ?? [], e)))
       .then((r) => {
         batch(() => (now.set(Date.now()), ended.set({ cancelled: r.cancelled }), trying.set(false)));
         sessionsChanged();
@@ -126,12 +130,12 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
         <View class="min-w-0 flex-1 gap-1">
           <View class="flex-row flex-wrap items-baseline gap-x-2">
             <Text class="text-body text-foreground">{scenarioLabel(s().scenario)}</Text>
-            <Text class="font-mono text-caption text-muted-foreground">{s().scenario}</Text>
+            <Text class="font-mono text-caption text-muted-foreground">{s().trial ? trialAsked(s().trial!) : s().scenario}</Text>
           </View>
           <If when={s().trial}>
             {(x) => (
               <>
-                <Muted class="text-small">{[trialText(x()), ...x().reasons].filter(Boolean).join(" · ")}</Muted>
+                <Muted class="text-small">{[trialText(x()), ...trialReasons(x())].filter(Boolean).join(" · ")}</Muted>
                 <If when={x().standing !== "survived"}>
                   <TrialWhere trial={x()} />
                 </If>
@@ -143,7 +147,7 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
     );
   };
   return (
-    <Modal open onClose={close} testID="trial-dialog">
+    <Modal open onClose={close} testID="trial-dialog" describe={refused() ?? (steps() ? (ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : undefined) : t("trial.dialogHint"))}>
       <Title>{t("trial.dialogTitle")}</Title>
       <If when={plan.loading() && !plan()}>
         <Loading />
@@ -169,9 +173,9 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
                           <View class="min-w-0 flex-1">
                             <Check testID={`trial-scenario-${s().name}`} label={scenarioLabel(s().name)} checked={!off().includes(s().name)} onChange={(on) => off.set(on ? off().filter((n) => n !== s().name) : [...off(), s().name])} />
                           </View>
-                          <Text class="shrink-0 font-mono text-caption text-muted-foreground">{s().name}</Text>
+                          <Text class="shrink-0 font-mono text-caption text-muted-foreground">{asked(s())}</Text>
                         </View>
-                        <Muted class="pl-6 text-small">{scenarioAbout(s().name, s().about, p().project)}</Muted>
+                        <Muted class="pl-6 text-small">{scenarioAbout(s().name, s().about, p().project, pressed(s()))}</Muted>
                       </Row>
                     )}
                   </Each>
@@ -179,10 +183,19 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
                 <If when={p().project}>
                   <Muted class="text-small">{t("trial.project")}</Muted>
                 </If>
-                {/* the limit on what the program does while tried: its own choice here */}
-                <Labeled label={t("trial.limit")}>
-                  <Options testID="trial-limit" value={limit()} items={LIMITS()} onChange={(v) => limit.set(v as Policy)} />
-                </Labeled>
+                {/* side by side where there is room: the least window is no taller than the dialog with each on a row of its own */}
+                <View class="flex-row flex-wrap gap-x-6 gap-y-3">
+                  {/* how hard: one number, for the scenarios it means one thing for; a project's own say theirs in sonde.toml */}
+                  <If when={p().scenarios.some((s) => s.maxTimes)}>
+                    <Labeled label={t("trial.strength")}>
+                      <Options testID="trial-times" value={`${times()}`} items={[1, 2, 3].map((n) => ({ value: `${n}`, title: t("trial.times", { n }) }))} onChange={(v) => times.set(Number(v))} />
+                    </Labeled>
+                  </If>
+                  {/* the limit on what the program does while tried: its own choice here */}
+                  <Labeled label={t("trial.limit")}>
+                    <Options testID="trial-limit" value={limit()} items={LIMITS()} onChange={(v) => limit.set(v as Policy)} />
+                  </Labeled>
+                </View>
                 <If when={p().sharesPlace}>
                   <Notice testID="trial-shares" tone="warn" text={t("trial.sharesPlace")} />
                 </If>

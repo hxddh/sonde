@@ -1,6 +1,6 @@
 # Findings from building sonde
 
-sonde was written against Native Shell as it is (now pinned at commit `744d950`, see `Cargo.toml`), without changing it. These are the gaps it
+sonde was written against Native Shell as it is (now pinned at the tag `v0.5.0`, commit `f4d68f7`, see `Cargo.toml`), without changing it. These are the gaps it
 met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS.md`.
 
 ## Open
@@ -27,8 +27,23 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 | 19 | Window (macOS) | `setColorScheme` gives its appearance to the main window's root view and to windows opened later, not to the main NSWindow: the window's backdrop (`"backdrop": "sidebar"`, a sibling of the root) keeps the system's. App dark on a light system: a light sidebar under light text. | While the app's scheme is its own (not System), the shell and sidebar are opaque (`windowMaterial()`); the material shows only when it matches. |
 | 20 | Testing | A UI test cannot act on a row of a `Plot`: `app.hover` goes to the plot's middle, where a scatter or the lanes may have no mark, and the plot's keys move no hover under `nsh test`. `open`'s `modules` stands in for a module's functions and a class's static methods, not for a method of an instance (`Listing.loadMore`). | A chart's press is tested through what it calls; the tour's pictures show the charts. A listing that fails is a real one: `Sonde.buckets` is stood in for with a bucket the store does not have. |
 | 21 | Components | A conditional in an `If`'s `else` (`else={reading() ? <A /> : <B />}`) is read once: the branch does not change with the signal. An unreadable session stayed an outline for ever. | An `If` inside the `else`. |
+| 22 | Desktop (Linux) | On GTK, when the text field that has the focus is unfocused by the program (a dialog opens after another window of the app closed, `Keyboard.dismiss()`, `focus()` on a view, the field's page goes), the window gives its *first* text field the focus, selected whole. The toolbar's endpoint (a `Combobox`) stood ringed with its name selected in every picture after Settings had been open; Settings' and Compatibility's first fields likewise. `focus()` on a focusable `View` does not take the focus away from it: it lands there too. Still so at `v0.5.0`. | Each window's first text field is one nobody sees (`FocusRest` in the kit: read-only, a point wide, hidden from screen readers), on Linux only: the keyboard rests there. It is one silent stop in the Tab order. |
+| 23 | Components | `DataTable` has no way to open at its end or to tell where its viewport starts: `initialScrollAtEnd` and `measureScrollPosition()` (0.5.0) are a `List`'s. sonde's operations and output are tables. | A live table follows its end with what `DataTableRef` has: `onVisibleRowsChange` says where the view ended, `scrollToRow` takes it to the newest row while it was at the end (`OperationsTable`'s `follow`). A page read again keeps its rows' indices, so the table keeps its place by itself. |
 
-18 and 19 are drafted as issues for Native Shell in [docs/nsh-issues.md](docs/nsh-issues.md).
+18, 19, 22 and 23 are drafted as issues for Native Shell in [docs/nsh-issues.md](docs/nsh-issues.md).
+
+## Taken from Native Shell 0.5.0 (sonde 16.0)
+
+| What 0.5.0 added | What sonde does with it |
+|---|---|
+| `fileTypes` in `nsh.json`, `Application.on("openFiles")` | A `.sonde` file opens from the system (a double click, Open With, a drop on the app's icon), as one dropped on the window does. `.sonde.gz` is not declared: a type is its last extension, and sonde does not claim every `.gz`. |
+| `Application.on("quit")` | The program being recorded and a running trial are ended, and the recording is written as a finished session, within the 200 ms the system waits (`Sessions.quit`). |
+| `terminal:` as a class variant | 14 `terminal()` conditionals that only chose class strings say it in the class (39 → 25 class picks; those left choose between no classes at all and a set, or change what is drawn). |
+| `accessibilityState.invalid`, `accessibilityDescription` | The kit's `Field` has an error state (a refused endpoint id, URL or profile; a confirmation typed wrong): its edge, the reason under it, and both told to a screen reader. A dialog's message is its description (`Modal`'s `describe`). |
+| Per-platform icons | `icon` is an object: macOS artwork inset (824 of 1024), Windows and Linux edge to edge; both made from the one drawing by `scripts/icons.py`. |
+| `initialScrollAtEnd`, `measureScrollPosition()` | Not usable: they are a `List`'s, and what follows its end in sonde is a `DataTable` (finding 23). |
+| Views out of sight made over frames | Nothing to adopt; measured on the Time pane (docs/performance.md). |
+| `onWheel`, `onMouseUp` | Not taken, on purpose (D-123). |
 
 ## By design
 

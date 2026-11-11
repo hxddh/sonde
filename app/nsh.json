@@ -3,9 +3,21 @@
   "id": "dev.sonde.app",
   "version": "15.0.0",
   "build": 18,
-  "icon": "assets/icon.png",
+  "icon": {
+    "macos": "assets/icon-macos.png",
+    "windows": "assets/icon-fill.png",
+    "linux": "assets/icon-fill.png"
+  },
   "rust": "../crates/sonde-nsh",
   "schemes": ["sonde"],
+  "fileTypes": [
+    {
+      "name": "sonde session",
+      "extensions": ["sonde"],
+      "mimeTypes": ["application/x-sonde-session"],
+      "role": "viewer"
+    }
+  ],
   "singleInstance": true,
   "locales": ["zh"],
   "theme": "theme.json",

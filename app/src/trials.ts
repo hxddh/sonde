@@ -12,10 +12,16 @@ export const SCENARIOS = ["slowdown", "error", "lost-answer", "fail-complete", "
 const known = (name: string): name is (typeof SCENARIOS)[number] => (SCENARIOS as readonly string[]).includes(name);
 export const scenarioLabel = (name: string): string => (known(name) ? t(`scenario.${name}`) : name);
 /** What a scenario does and how hard it presses, in a line: sonde's own words
- * for the ones it knows; a project's own scenario (`own`: sonde.toml may
- * give a known name other rules) and one sonde has no words for keep the
+ * for the ones it knows (`times` above 1: its first attempts, for the two
+ * that can be pressed harder); a project's own scenario (`own`: sonde.toml
+ * may give a known name other rules) and one sonde has no words for keep the
  * line the plan gives. */
-export const scenarioAbout = (name: string, about: string, own = false): string => (known(name) && !own ? t(`scenario.about.${name}`) : about);
+export const scenarioAbout = (name: string, about: string, own = false, times = 1): string => {
+  if (!known(name) || own) return about;
+  if (times > 1 && name === "slowdown") return t("scenario.times.slowdown", { n: times });
+  if (times > 1 && name === "error") return t("scenario.times.error", { n: times });
+  return t(`scenario.about.${name}`);
+};
 
 /** One scenario of a trial: yet to run, running, or done with how the program stood. */
 export interface TrialStep {

@@ -738,7 +738,11 @@ export interface Trial {
   cleanWallMs?: number;
   leftUploads: number;
   wroteTwice: number;
+  /** The attempts in a row it failed at each request, when asked to press harder than once (`slowdown:3`). */
+  times?: number | null;
   reasons: string[];
+  /** The same reasons as phrases, each a sentence of one or more (`trial.why.*`); absent in a verdict kept before 16.0. */
+  reasonsText?: { key: string; args?: Record<string, string> }[][];
   /** The request the verdict turns on, when it is not "survived": its operation, `bucket/key`, and the program's line when the run named callers. */
   where?: { operation: string; key: string; caller?: string } | null;
   /** What to change, as a phrase (`trial.advice.*`: the app has its words in both languages). */
@@ -828,7 +832,8 @@ export interface Signals {
 export interface TrialPlan {
   command: string;
   cwd: string | null;
-  scenarios: { name: string; about: string }[];
+  /** `maxTimes`: the attempts in a row it may be asked to fail (`name:N`), for the two that take a count. */
+  scenarios: { name: string; about: string; maxTimes?: number | null }[];
   /** The scenarios are sonde.toml's own. */
   project: boolean;
   /** The command names no `{trial}`: the runs write where the clean run wrote. */

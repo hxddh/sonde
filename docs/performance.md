@@ -140,6 +140,8 @@ a million requests read and analysed in 15 s and 2 GiB of peak memory (8 s and
 1.75 GiB here), an outage and small uploads of 300 thousand each in 10 s (2 s),
 the app's first view of 100 thousand in 2 s (0.9 s).
 
+TIME-PANE-PLACEHOLDER
+
 ## Long jobs
 
 Jobs (probes, multipart scan, capacity, layout scans) run in Rust on tokio and

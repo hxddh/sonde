@@ -2,7 +2,7 @@
 // markers, incomplete uploads, by storage class, prefix and size.
 
 import { cleanup, effect, Scroll, signal, Text, untracked, View } from "nsh";
-import { bytes, count, date, money } from "../format";
+import { bytes, count, day, money } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, asError, watch } from "../native";
@@ -127,7 +127,7 @@ export function Capacity() {
               <Tiles
                 min={SIZES.capacityTile}
                 items={[
-                  <Stat label={t("overview.size")} value={bytes(r().totalBytes)} detail={`${date(r().scannedAt)} · ${r().source}${r().versionsUnknown ? ` · ${t("du.versionsNotCounted")}` : ""}`} testID="du-size" />,
+                  <Stat label={t("overview.size")} value={bytes(r().totalBytes)} detail={`${day(r().scannedAt)} · ${r().source}${r().versionsUnknown ? ` · ${t("du.versionsNotCounted")}` : ""}`} testID="du-size" />,
                   <Stat label={t("nav.objects")} value={count(r().current.objects)} detail={`${t("du.current")} · ${bytes(r().current.bytes)}`} />,
                   <Stat label={t("browse.versions")} value={r().versionsUnknown ? "—" : count(r().noncurrent.objects)} detail={r().versionsUnknown ? t("du.versionsUnknown") : `${t("du.noncurrent")} · ${bytes(r().noncurrent.bytes)} · ${t("du.markers")}: ${count(r().deleteMarkers)}`} />,
                   <Stat label={t("du.multipart")} value={count(r().multipart.objects)} detail={bytes(r().multipart.bytes)} />,
@@ -150,7 +150,7 @@ export function Capacity() {
                 <Heading>{t("du.why")}</Heading>
                 <Each of={r().findings}>{(f, i) => <Text class="text-body text-foreground">{`• ${core(r().findingsText?.[i()], f())}`}</Text>}</Each>
               </Card>
-              <View class={terminal() ? "gap-4" : "flex-row flex-wrap gap-4"}>
+              <View class="flex-row flex-wrap gap-4 terminal:flex-col terminal:flex-nowrap">
                 <Chart class={HALF} title={t("du.byClass")} empty={r().byClass.length === 0 && t("common.empty")}>
                   <BarChart testID="du-classes" items={r().byClass.map((c) => ({ label: c.name, value: c.current.bytes + c.noncurrent.bytes }))} />
                 </Chart>

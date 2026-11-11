@@ -72,6 +72,13 @@ Without `--fault`, the scenarios are `sonde.toml`'s if it has any, else chosen f
 
 `--fault NAME` (repeatable) runs the named ones instead; a name given twice runs once.
 
+**How hard a scenario presses.** `slowdown` and `error` fail each request's first attempt. `--fault slowdown:3`
+fails its first three (1 to 5), so a program that retries once or twice is seen to give up: the one number that
+means one thing, and only for these two. The verdict's row then reads `slowdown:3`; the trial's session and
+`{trial}` keep the name `slowdown`. The others have no such number (a lost race's next commit and a cut body's
+resume are not "the same request again"), and a scenario of the project's own says its `times` in `sonde.toml`.
+In the app the dialog offers the same count for the same two.
+
 A rule matches by **operation and key**, and counts the attempts at one request. "Each request's first attempt" is
 therefore the same in a program that sends one request at a time and in one that sends fifty at once: there is no
 "the third UploadPart", which would be a race.

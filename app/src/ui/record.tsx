@@ -4,11 +4,11 @@
 
 import { type JSX, Text, View } from "nsh";
 import { Editor, type EditorDiagnostic } from "nsh/base";
-import { count, day, duration, transfer } from "../format";
+import { count, date, duration, transfer } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
 import { Back, Disclosure, KeyValue, Notice, terminal, Title, TYPE } from "./kit";
-import { clock, StatusMark } from "./sessionview";
+import { StatusMark } from "./sessionview";
 import { scenarioLabel } from "../trials";
 
 /** An XML document as code, read-only: the S3 error's code marked where it stands. */
@@ -95,7 +95,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
   const r = () => props.record;
   const facts = (): [string, string][] =>
     [
-      [t("column.time"), `${day(r().time)} ${clock(r().time)}`],
+      [t("column.time"), date(r().time, "ms")],
       [t("common.endpoint"), r().endpoint],
       [t("requests.latency"), duration(r().latencyMs)],
       ...(r().firstByteMs != null ? [[t("requests.firstByte"), duration(r().firstByteMs!)] as [string, string]] : []),

@@ -4,7 +4,7 @@ import { batch, effect, signal, Text, untracked, View } from "nsh";
 import { count, duration } from "../format";
 import { t } from "../i18n";
 import { vendorName } from "../labels";
-import { api } from "../native";
+import { api, asError } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert } from "../ui/kit";
@@ -28,9 +28,22 @@ const blank = (): Draft => ({ id: "", name: "", url: "", region: "us-east-1", pa
 
 const fromView = (e: EndpointView): Draft => ({ id: e.id, name: e.name, url: e.url, region: e.region, pathStyle: e.pathStyle, caFile: e.caFile ?? "", vendor: e.vendor, credentials: "keep", profile: "", buckets: e.buckets.join(", ") });
 
+/** The field of the form a refused save is about, from what the refusal says: its id (taken, or not
+ * letters and digits), its URL (not one, or not http), its profile (none named). None: said as a toast. */
+export type RefusedField = "id" | "url" | "profile";
+export function refusedField(why: string): RefusedField | null {
+  if (/\bURL\b/.test(why)) return "url";
+  if (/\bprofile name\b/.test(why)) return "profile";
+  if (/\bid\b/.test(why)) return "id";
+  return null;
+}
+
 function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onSaved?: (id: string) => void }) {
   const d = signal<Draft>(props.initial);
-  const set = (k: keyof Draft, v: string | boolean) => d.update((x) => ({ ...x, [k]: v }));
+  const set = (k: keyof Draft, v: string | boolean) => {
+    if (refused()?.field === k) refused.set(null);
+    d.update((x) => ({ ...x, [k]: v }));
+  };
   const vendors = api.vendors();
   // an id from the name: its ASCII letters and digits ("endpoint" for a name
   // with none), made unique among the endpoints there are, so adding never
@@ -66,9 +79,16 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
       props.onSaved?.(id);
       props.onDone();
     } catch (e) {
-      report(e);
+      // the field the save was refused for says why under itself (and to a screen reader); anything else is a toast
+      const why = asError(e).message;
+      const field = refusedField(why);
+      refused.set(field ? { field, why } : null);
+      if (!field) report(e);
     }
   };
+  // which field a save was refused for, until it is typed in again
+  const refused = signal<{ field: RefusedField; why: string } | null>(null);
+  const errorOf = (field: RefusedField) => (refused()?.field === field ? refused()!.why : null);
   const creds = [
     ...(props.editing ? [{ value: "keep", title: t("endpoints.cred.keep") }] : []),
     { value: "default", title: t("endpoints.cred.default") },
@@ -91,7 +111,7 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
             </Labeled>
           }
         >
-          <Field class={CELL} label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} onSubmit={save} testID="ep-id" mono />
+          <Field class={CELL} label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} onSubmit={save} testID="ep-id" mono error={errorOf("id")} />
         </If>
         <Choice
           class={CELL}
@@ -116,12 +136,12 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
         />
         <Field class={CELL} label={t("endpoints.field.region")} value={d().region} onChange={(v) => set("region", v)} onSubmit={save} testID="ep-region" mono />
       </View>
-      <Field label={t("endpoints.field.url")} value={d().url} onChange={(v) => set("url", v)} onSubmit={save} placeholder="https://s3.eu-west-1.amazonaws.com" testID="ep-url" mono />
+      <Field label={t("endpoints.field.url")} value={d().url} onChange={(v) => set("url", v)} onSubmit={save} placeholder="https://s3.eu-west-1.amazonaws.com" testID="ep-url" mono error={errorOf("url")} />
       <SwitchRow label={t("endpoints.field.pathStyle")} checked={d().pathStyle} onChange={(v) => set("pathStyle", v)} testID="ep-path-style" />
       <View class={GRID}>
         <Choice class={CELL} label={t("endpoints.field.credentials")} value={d().credentials} items={creds} onChange={(v) => set("credentials", v)} testID="ep-creds" />
         <If when={d().credentials === "profile"} else={<View class={CELL} />}>
-          <Field class={CELL} label={t("endpoints.field.profile")} value={d().profile} onChange={(v) => set("profile", v)} onSubmit={save} mono />
+          <Field class={CELL} label={t("endpoints.field.profile")} value={d().profile} onChange={(v) => set("profile", v)} onSubmit={save} mono error={errorOf("profile")} />
         </If>
       </View>
       <Field label={t("endpoints.field.ca")} value={d().caFile} onChange={(v) => set("caFile", v)} onSubmit={save} placeholder="/etc/ssl/my-ca.pem" mono />

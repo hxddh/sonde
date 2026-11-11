@@ -44,15 +44,15 @@ pub const TEMPLATES: &[(&str, &str)] = &[
     ),
     ("du.empty", "{place} holds no bytes"),
     ("du.empty.current", " in current objects"),
-    ("du.empty.markers", " but {n} delete markers"),
+    ("du.empty.markers", " but {n} delete marker{s}"),
     ("du.stop", "."),
     (
         "du.current",
-        "Current versions: {size} in {n} objects ({pct}%).",
+        "Current versions: {size} in {n} object{s} ({pct}%).",
     ),
     (
         "du.noncurrent",
-        "Noncurrent versions: {size} in {n} versions ({pct}%), invisible to plain listings.",
+        "Noncurrent versions: {size} in {n} version{s} ({pct}%), invisible to plain listings.",
     ),
     (
         "du.noncurrent.rule",
@@ -60,7 +60,7 @@ pub const TEMPLATES: &[(&str, &str)] = &[
     ),
     (
         "du.multipart",
-        "Incomplete multipart uploads: {size} in {n} uploads ({pct}%), billed but not listed as objects. See Multipart.",
+        "Incomplete multipart uploads: {size} in {n} upload{s} ({pct}%), billed but not listed as objects. See Multipart.",
     ),
     (
         "du.multipart.uncounted",
@@ -68,9 +68,9 @@ pub const TEMPLATES: &[(&str, &str)] = &[
     ),
     (
         "du.markers.many",
-        "{n} delete markers, more than the {objects} current objects: listings slow down; ExpiredObjectDeleteMarker cleans up the ones with no versions left.",
+        "{n} delete marker{ms}, more than the {objects} current object{s}: listings slow down; ExpiredObjectDeleteMarker cleans up the ones with no versions left.",
     ),
-    ("du.markers", "{n} delete markers."),
+    ("du.markers", "{n} delete marker{s}."),
     (
         "du.prefix",
         "Prefix {prefix} holds {pct}% of the bytes ({size}).",
@@ -115,7 +115,7 @@ pub const TEMPLATES: &[(&str, &str)] = &[
         "plan.runProbes",
         "Run compatibility probes {n} item(s) in {bucket} ({size})",
     ),
-    ("plan.item.upload", "{parts} parts, started {started}"),
+    ("plan.item.upload", "{parts} part{s}, started {started}"),
     (
         "plan.item.abortRule",
         "abort incomplete uploads after {days} days",

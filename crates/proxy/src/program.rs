@@ -952,7 +952,7 @@ pub fn check_markdown_with(
                         "FAIL" => "**FAIL**".to_string(),
                         mark => mark.to_string(),
                     },
-                    md_text(&t.scenario),
+                    md_text(&t.asked()),
                     md_text(&t.line()),
                 ]
             })

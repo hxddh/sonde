@@ -77,15 +77,28 @@ export function count(n: number): string {
   }
 }
 
-/** A moment (ISO 8601 or an HTTP date) as the reader writes dates: "7 Nov 2026, 14:05". */
-export function date(s: string | null | undefined): string {
+/** A moment (ISO 8601 or an HTTP date) as the reader writes dates: "Nov 7,
+ * 2026, 14:05". The one form of a date with its time: to the millisecond
+ * (`precision` "ms": a request's own moment) it is the same writing with the
+ * seconds after the minutes, "Nov 7, 2026, 14:05:11.204". */
+export function date(s: string | null | undefined, precision: "m" | "ms" = "m"): string {
   if (!s) return "—";
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return s;
+  const fine = `:${p2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
   const f = dateFormat();
-  if (f) return f.format(d);
-  const p = (x: number) => String(x).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (f) {
+    if (precision === "m") return f.format(d);
+    try {
+      return f
+        .formatToParts(d)
+        .map((x) => (x.type === "minute" ? `${x.value}${fine}` : x.value))
+        .join("");
+    } catch {
+      return f.format(d);
+    }
+  }
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}${precision === "ms" ? fine : ""}`;
 }
 
 export function money(v: number, currency: string): string {

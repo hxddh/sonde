@@ -121,6 +121,9 @@ export const HOVER = "rounded-(--radius-sm) outline-2 outline-foreground";
 export const TIME_TICK = "pt-1 tabular-nums text-caption text-muted-foreground";
 /** A value axis's ticks, inside the plot on a chip. */
 export const VALUE_TICK = "ml-1 rounded-(--radius-sm) bg-card/85 px-1 tabular-nums text-caption text-muted-foreground";
+/** Zero of a value scale, outside the plot beside its baseline. */
+export const ZERO_TICK = "pr-1 tabular-nums text-caption text-muted-foreground";
+export const ZERO_TICK_END = "pl-1 tabular-nums text-caption text-muted-foreground";
 /** The same at the plot's far edge (a second scale). */
 export const VALUE_TICK_END = "mr-1 rounded-(--radius-sm) bg-card/85 px-1 tabular-nums text-caption text-muted-foreground";
 /** A figure at a bar's end, a note in the plot. */
@@ -177,19 +180,27 @@ export function TimeAxis(props: { domain: [number, number]; slices?: number; len
   );
 }
 
-/** The one value scale of a chart of counts: two ticks on chips inside the
- * plot, zero and the peak with its unit (`say`). `end` for a second scale at
- * the plot's far edge. */
-export function ValueAxis(props: { peak: number; say: (v: number) => string; /** a second quantity under the line (bytes received) */ low?: number; scale?: "y" | "y2"; end?: boolean }) {
+/** The one value scale of a chart of counts: zero and the peak with its unit
+ * (`say`). The peak is on a chip inside the plot, over its own line: a chart
+ * leaves headroom above its peak (its domain a fifth higher), so the chip
+ * stands clear of every mark. Zero is outside the plot, in the frame's own
+ * padding beside the baseline: inside it stood on the first bar. `end` for a
+ * second scale at the plot's far edge. */
+export function ValueAxis(props: { peak: number; say: (v: number) => string; /** a second quantity under the line (bytes received) */ low?: number; scale?: "y" | "y2"; end?: boolean; /** every mark says its own value over itself (the histogram's bars): the scale writes zero alone, its chip would stand on the tallest one's */ marked?: boolean }) {
   return (
-    <PlotAxis
-      placement={props.end ? "right" : "left"}
-      scale={props.scale}
-      labelPlacement="inside"
-      tickValues={[...(props.low !== undefined ? [props.low] : []), 0, props.peak]}
-      format={(v) => (v === 0 ? "0" : props.say(Math.abs(v)))}
-      labelClass={props.end ? VALUE_TICK_END : VALUE_TICK}
-    />
+    <>
+      <If when={!props.marked}>
+      <PlotAxis
+        placement={props.end ? "right" : "left"}
+        scale={props.scale}
+        labelPlacement="inside"
+        tickValues={[...(props.low !== undefined ? [props.low] : []), props.peak]}
+        format={(v) => props.say(Math.abs(v))}
+        labelClass={props.end ? VALUE_TICK_END : VALUE_TICK}
+      />
+      </If>
+      <PlotAxis placement={props.end ? "right" : "left"} scale={props.scale} tickValues={[0]} format={() => "0"} labelClass={props.end ? ZERO_TICK_END : ZERO_TICK} />
+    </>
   );
 }
 

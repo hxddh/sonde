@@ -277,8 +277,11 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   A length of time on an axis (the waterfall, from its operation's first request) has the same ticks, said as
   lengths. lint-charts fails a `PlotAxis` that writes a moment anywhere else.
 - **One value scale** (`ValueAxis`) on every chart of counts (`COUNTS`: the timeline, the bands, the histogram,
-  bytes, errors and their rate, sizes, a trial over its clean run): two ticks inside the plot on chips, zero and
-  the peak with its unit ("24 requests", "538 KiB/s"). A second quantity has its tick at the far edge (in
+  bytes, errors and their rate, sizes, a trial over its clean run): zero and the peak with its unit
+  ("24 requests", "538 KiB/s"). The peak is on a chip inside the plot over its own line, in the headroom every such
+  chart leaves above its peak (a fifth of it), so it stands on no mark; zero is outside the plot beside the
+  baseline, in the frame's padding. Where every bar says its own count over itself (the histogram), the scale
+  writes zero alone. A second quantity has its tick at the far edge (in
   flight on the timeline, the share done on the histogram). Latencies on a log scale are drawn as logs, the
   ticks saying times.
 - **A whole legend**: every colour and every line a chart draws is named under it — the timeline's stack, its

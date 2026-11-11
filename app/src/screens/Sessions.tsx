@@ -304,7 +304,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   // pane is not rebuilt each second, so a stretch zoomed to or a finding chosen stays)
   const operations = (v: () => SessionView) => (
     <View class="min-h-0 flex-1" ref={(r: ViewRef) => (opsAnchor = r)}>
-    <OperationsTable view={v()} source={source} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} />
+    <OperationsTable view={v()} source={source} onSelect={chooseOperation} onContextMenu={isAvailable ? operationMenu : undefined} ref={(r) => ((opsRef = r), showOperation())} highlight={opHighlight()} compact={pane() === "aligned"} follow={props.others().some((x) => x.path === props.path && x.live)} />
     </View>
   );
   const output = () => <OutputTable lines={lines()} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
@@ -528,7 +528,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
             </If>
           }>
             {(other) => (
-              <View class={terminal() ? "flex-1" : "flex-1 px-4 py-4"}>
+              <View class="flex-1 px-4 py-4 terminal:p-0">
                 <CompareView a={props.path} b={other()} onClose={() => compareWith.set(null)} />
               </View>
             )}
@@ -718,7 +718,7 @@ export function Sessions() {
     );
   };
   const list = () => (
-    <View class={terminal() ? "flex-1 gap-1" : "flex-1"}>
+    <View class="flex-1 terminal:gap-1">
       <If when={!terminal()}>
         <SideHeader title={t("nav.sessions")}>
           <IconButton icon="folder-open" label={t("sessions.openFile")} shortcut="mod+o" onPress={() => void openSessionFile()} testID="open-file" />

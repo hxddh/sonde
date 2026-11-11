@@ -89,6 +89,12 @@ test("a second launch hands over its files: relative ones from where it was star
   expect(launchFiles(["run.sonde", "D:\\logs\\b.sonde"], "C:\\Users\\me\\")).toEqual(["C:\\Users\\me\\run.sonde", "D:\\logs\\b.sonde"]);
   expect(launchFiles(["file:///home/me/a%20b.sonde"], "/")).toEqual(["/home/me/a b.sonde"]);
   expect(launchFiles([], "/home/me")).toEqual([]);
+  // a second launch says its file twice (its arguments, the file the system opened it with): handed over once
+  const { once } = await import("../src/store");
+  expect(once(["/tmp/a.sonde", "/tmp/a.sonde", "/tmp/b.sonde"], 1000)).toEqual(["/tmp/a.sonde", "/tmp/b.sonde"]);
+  expect(once(["/tmp/a.sonde", "/tmp/c.sonde"], 1500)).toEqual(["/tmp/c.sonde"]);
+  // later, the same file is opened again as asked
+  expect(once(["/tmp/a.sonde"], 4000)).toEqual(["/tmp/a.sonde"]);
 });
 
 test("a dropped file's URL becomes its path on every platform", async () => {
@@ -178,17 +184,24 @@ test("prefixes are named by what tells them apart: the shared start once, the en
   expect(twins.name("aaaaaaaaaaaaaaaaaaaaaaaa/same-ending/")).not.toBe(twins.name("bbbbbbbbbbbbbbbbbbbbbbbb/same-ending/"));
 });
 
-test("a trial reads as figures: the faults and retries, the wait, the load, what went wrong", async () => {
-  const { trialText } = await import("../src/ui/history");
+test("a trial reads as figures (the faults and retries, the wait, the load), and what went wrong is said once, by its reasons", async () => {
+  const { trialText, trialReasons } = await import("../src/ui/history");
   const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
   expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
-  expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried · 2 writes never sent again · exited 1 (clean run: 0)");
+  expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried");
+  // why: Rust's phrases in the reader's language (two make one sentence), its English for a verdict kept before 16.0
+  const why = { ...base, standing: "broke" as const, faults: 2, retried: 0, droppedWrites: 2, reasons: ["2 writes failed and were never sent again, and the program exited 0", "an older reason"] };
+  expect(trialReasons(why)).toEqual(why.reasons);
+  const said = [[{ key: "trial.why.writes", args: { n: "2", s: "s", it: "them", was: "were" } }, { key: "trial.why.exit0" }], []];
+  expect(trialReasons({ ...why, reasonsText: said })).toEqual(why.reasons);
+  const text = [trialText(why), ...trialReasons({ ...why, reasonsText: said })].join(" · ");
+  expect(text.match(/never sent again/g)?.length).toBe(1);
   // too few waits to tell jitter from step: neither is said
   const { jitter: _, ...unsaid } = base;
   expect(trialText({ ...unsaid, standing: "survived", faults: 2, retried: 2, backoffMs: [100, 150, 200], requests: 64 })).toBe("2 faults, all retried · after 100 ms to 200 ms");
   // faults no retry was owed for, writes the store made unheard, requests held back and what that did to the run's time
   expect(trialText({ ...unsaid, standing: "degraded", faults: 3, retried: 1, notRetryable: 2, lostWrites: 1, delayed: 40, wallMs: 4200, cleanWallMs: 900, requests: 64 })).toBe(
-    "3 faults, 1 retried · 2 no retry was owed for · 40 requests held back · took 4.20 s (clean run: 900 ms) · 1 write made and never heard of",
+    "3 faults, 1 retried · 2 no retry was owed for · 40 requests held back · took 4.20 s (clean run: 900 ms)",
   );
 });
 
@@ -302,6 +315,17 @@ test("runs of one command are told apart by the argument that differs", async ()
   expect(tellApart(["a.py --x", "b.py --y"])).toEqual(["a.py --x", "b.py --y"]);
 });
 
+test("a refused save names the field it is about, so the field says why", async () => {
+  const { refusedField } = await import("../src/screens/Endpoints");
+  expect(refusedField('an endpoint with the id "prod" exists: choose another id')).toBe("id");
+  expect(refusedField("endpoint id \"my store\": letters, digits, '-', '_' and '.' only")).toBe("id");
+  expect(refusedField('endpoint prod: URL "s3.example": relative URL without a base')).toBe("url");
+  expect(refusedField("endpoint prod: URL must be http or https")).toBe("url");
+  expect(refusedField("a profile name is required")).toBe("profile");
+  // anything else is said as a toast
+  expect(refusedField("a role ARN is required")).toBe(null);
+});
+
 test("one function writes a duration, and a scenario has words", async () => {
   const format = await import("../src/format");
   expect(format.duration(0.42)).toBe("0.4 ms");
@@ -313,7 +337,20 @@ test("one function writes a duration, and a scenario has words", async () => {
   expect(format.factor(1.5)).toBe("1.5");
   expect(format.rate(4.25)).toBe("4.3");
   expect(format.rate(120.4)).toBe("120");
+  // one writing of a date with its time: to the millisecond it is the same, the seconds after the minutes
+  const at = "2026-11-07T00:22:25.074";
+  const coarse = format.date(at);
+  const fine = format.date(at, "ms");
+  expect(coarse.includes("22")).toBe(true);
+  expect(fine.replace(":25.074", "")).toBe(coarse);
+  expect(fine.startsWith(format.day(at))).toBe(true);
   const { scenarioLabel } = await import("../src/ui/history");
+  const { scenarioAbout } = await import("../src/trials");
+  // how hard the two that can be pressed harder press, said where it is more than once
+  expect(scenarioAbout("slowdown", "x")).toBe("503 SlowDown on each request's first attempt");
+  expect(scenarioAbout("slowdown", "x", false, 3)).toBe("503 SlowDown on each request's first 3 attempts");
+  expect(scenarioAbout("cut-body", "x", false, 3)).toBe("Each download's first answer stops half way through its body");
+  expect(scenarioAbout("slowdown", "the project's own", true, 3)).toBe("the project's own");
   expect(scenarioLabel("slowdown")).toBe("The store asks to slow down");
   // one sonde has no words for keeps its own name
   expect(scenarioLabel("made-up")).toBe("made-up");

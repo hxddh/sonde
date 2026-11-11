@@ -14,7 +14,7 @@ import { FEW, type OpStats, operationStats, type SignalId, signalsOf } from "../
 import type { SessionView, Signals } from "../types";
 import { Button, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable } from "./kit";
 import { findingMarks, StatusMark } from "./sessionview";
-import { BytesOverTime, Chains, Chart, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean } from "./plots";
+import { BytesOverTime, Chains, Chart, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean } from "./plots";
 
 /** The board's groups, in order: never more than these four. */
 const GROUPS = ["traffic", "latency", "errors", "where"] as const;
@@ -228,10 +228,11 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       group: "latency",
       when: () => graphic() && overTime(),
       title: () => t("latencyTime.title"),
-      text: () => (latencyAs() === "heat" ? `${t("latencyHeat.hint")}${sampled()}` : t("latencyTime.hint")),
+      // (no slice with a tail: said, rather than a band named and not drawn)
+      text: () => (latencyAs() === "heat" ? `${t("latencyHeat.hint")}${sampled()}` : hasTail(p()) ? t("latencyTime.hint") : t("latencyTime.hintNoTail")),
       // the bands are of every request; the grid shows what a band averages away (two modes, a slow few)
       action: () => <Options testID="latency-as" value={latencyAs()} items={[{ value: "bands", title: t("latencyTime.bands") }, { value: "heat", title: t("latencyTime.heat") }]} onChange={(v) => latencyAs.set(v as "bands" | "heat")} />,
-      legend: () => (latencyAs() === "heat" ? [{ label: t("latencyHeat.scale"), swatch: "bg-chart-1" }] : latencyLegend()),
+      legend: () => (latencyAs() === "heat" ? [{ label: t("latencyHeat.scale"), swatch: "bg-chart-1" }] : latencyLegend(p())),
       body: () => (
         <If when={latencyAs() === "heat"} else={<LatencyBand profile={p()} domainMs={zoomMs()} focus={focus} class={`${TICK_ROOM} ${PLOT} w-full`} testID="latency-over-time" axis />}>
           <LatencyHeat profile={p()} range={zoom()} focus={focus} />
@@ -333,7 +334,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
     if (target) show(target.id);
   });
   return (
-    <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-6 pb-2"}>
+    <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass="gap-6 pb-2 terminal:gap-2 terminal:pb-0">
       {/* the figures are the session header's; here, a terminal's sentence */}
       <If when={terminal() && timed(p())}>
         <Text class="text-foreground">{shapeSentence(p())}</Text>
@@ -358,10 +359,10 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       {/* the board: four groups at most, every chart in the one frame, by one loop */}
       <Each of={GROUPS.filter((g) => of(g).length > 0)} key={(g) => g}>
         {(g) => (
-          <View testID={`board-${g()}`} class={terminal() ? "gap-2" : "gap-3"}>
+          <View testID={`board-${g()}`} class="gap-3 terminal:gap-2">
             <Heading>{t(`board.${g()}`)}</Heading>
             {/* a card is as high as its content: a chart of two bars is not stretched to its neighbour */}
-            <View class={terminal() ? "gap-2" : "flex-row flex-wrap items-start gap-4"}>
+            <View class="flex-row flex-wrap items-start gap-4 terminal:flex-col terminal:flex-nowrap terminal:items-stretch terminal:gap-2">
               <Each of={of(g())} key={(c) => c.id}>
                 {(c) => (
                   <View

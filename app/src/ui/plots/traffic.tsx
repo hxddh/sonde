@@ -191,6 +191,9 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     return props.range ? all.slice(props.range[0], props.range[1] + 1) : all;
   };
   const top = () => Math.max(1, ...rows().map((r) => r.ok + r.miss + r.client + r.server));
+  // the plot's own top: a fifth over the busiest slice where the scale is written
+  const room = () => (props.axis && !props.strip ? 1.2 : 1);
+  const ceiling = () => top() * room();
   // the most in flight: the session's own figure (`peak`, what the In flight tile says) while
   // the whole session shows, the stretch's own when zoomed
   const flightTop = () => (props.range ? Math.max(0, ...rows().map((r) => r.inFlight)) : (props.peak ?? props.profile.peakInFlight));
@@ -236,7 +239,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
   };
   return (
     // a handful of requests has no shape worth a chart
-    <If when={!terminal() && rows().length > 1 && props.profile.samples.length >= 12} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{shapeSentence(props.profile)}</Text>}>
+    <If when={!terminal() && rows().length > 1 && props.profile.samples.length >= 12} else={<Text class="hidden text-muted-foreground terminal:flex">{shapeSentence(props.profile)}</Text>}>
       <BaseButton
         testID={props.testID ?? "session-shape"}
         accessibilityLabel={shapeSentence(props.profile)}
@@ -251,7 +254,9 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
         <Plot
           data={rows()}
           xScale={{ type: "band", ...BARS.slices }}
-          y2Scale={{ type: "linear", domain: [0, Math.max(1, flightTop())] }}
+          // headroom over the busiest slice where the scale is written: its chip stands over the peak's line, clear of the bars
+          yScale={{ type: "linear", domain: [0, ceiling()] }}
+          y2Scale={{ type: "linear", domain: [0, Math.max(1, flightTop()) * room()] }}
           alignTicks={false}
           colorScale={tones()}
           accessibilityLabel={shapeSentence(props.profile)}
@@ -284,16 +289,16 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
             <PlotAxis placement="right" scale="y2" labelPlacement="inside" tickValues={[flightTop()]} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass={VALUE_TICK_END} />
           </If>
           {/* the moment another chart rests on */}
-          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
+          <Rule value={(_, i) => (i === focused() ? ceiling() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
           {/* where sonde answered in the store's place */}
           <If when={faulted().size > 0}>
-            <Rule value={(_, i) => (faulted().has(i) ? top() : (undefined as unknown as number))} class="stroke-status-injected stroke-[1.5]" />
+            <Rule value={(_, i) => (faulted().has(i) ? ceiling() : (undefined as unknown as number))} class="stroke-status-injected stroke-[1.5]" />
           </If>
           {/* where each finding begins */}
           <If when={props.annotate && marked().size > 0}>
-            <Rule value={(_, i) => (marked().has(i) ? top() : (undefined as unknown as number))} class="stroke-warn/70 stroke-1" style={{ strokeDasharray: "2 2" }} />
+            <Rule value={(_, i) => (marked().has(i) ? ceiling() : (undefined as unknown as number))} class="stroke-warn/70 stroke-1" style={{ strokeDasharray: "2 2" }} />
             {/* (a mark near the plot's edge is set from that edge, so its numbers are not cut) */}
-            <PlotLabel /* emphasis: a finding's number over its slice */ class={`tabular-nums text-caption ${EMPHASIS} text-warn`} texts={[...marked()].map(([i, ns]) => ({ text: ns.join(", "), x: i, y: top(), align: i < 2 ? ("left" as const) : i > rows().length - 3 ? ("right" as const) : ("center" as const), class: "-translate-y-full pb-1" }))} />
+            <PlotLabel /* emphasis: a finding's number over its slice */ class={`tabular-nums text-caption ${EMPHASIS} text-warn`} texts={[...marked()].map(([i, ns]) => ({ text: ns.join(", "), x: i, y: ceiling(), align: i < 2 ? ("left" as const) : i > rows().length - 3 ? ("right" as const) : ("center" as const), class: "-translate-y-full pb-1" }))} />
           </If>
           {/* the busiest moment, named where it happened */}
           {/* (left out where a finding's number stands near it: the two would cross; Time says it too) */}

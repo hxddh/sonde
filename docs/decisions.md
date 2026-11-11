@@ -5,7 +5,7 @@ Product and engineering decisions, with the options considered and why. Newest l
 | # | Decision | Options | Choice and reason |
 |---|---|---|---|
 | D-001 | Language of the core | Rust; TSX with Rust helpers | **Rust for everything but screens.** The core (S3, credentials, jobs, probes, decoders) is testable without a UI and survives a UI change; TSX holds presentation only. |
-| D-002 | Native Shell version | crates.io 0.4.0; a git commit | **`longbridge/nsh` at commit `744d950` (15.0.0; was `ec8430f`, before it `1662115`)** (0.4.0 + main), in `Cargo.toml` (`rev = …`) and in CI's nsh install (`NSH_REV`). The CLI must match the crates it links; a commit pins both. |
+| D-002 | Native Shell version | crates.io 0.4.0; a git commit | **`longbridge/nsh` at the tag `v0.5.0`, commit `f4d68f7` (16.0.0; was `744d950` in 15.0.0, before it `ec8430f` and `1662115`)**, pinned by the commit's full hash, in `Cargo.toml` (`rev = …`) and in CI's nsh install (`NSH_REV`). The CLI must match the crates it links; a commit pins both. |
 | D-003 | SigV4 | `aws-sigv4`; our own | **Our own (`s3raw::sigv4`, ~150 lines)**, tested against the AWS SigV4 test suite and the S3 documentation's examples. It exposes the canonical request and string to sign, which a diagnosis tool wants, and handles `STREAMING-UNSIGNED-PAYLOAD-TRAILER` and deliberate clock skew for probes. |
 | D-004 | HTTP | `reqwest` + rustls; hyper | **reqwest with rustls and native roots**: custom CAs per endpoint, no OpenSSL (static-libc binaries). Redirects are not followed: a 301/307 is a finding (wrong region / addressing). |
 | D-005 | Where the listing lives | rows in JS; rows in Rust | **Rust (`Listing` class)**; TSX asks for the visible window. 100 000 rows never cross into the VM. |

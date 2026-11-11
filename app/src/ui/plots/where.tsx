@@ -108,7 +108,7 @@ export function Flows(props: { profile: Profile }) {
     return t("flows.text", { n: all, ok: pct(ok / Math.max(all, 1)), prefix: top?.prefix ?? "", share: pct((top?.requests ?? 0) / Math.max(all, 1)) });
   };
   return (
-    <If when={!terminal() && props.profile.flows.length > 0} else={<Text class={terminal() ? "text-muted-foreground" : "hidden"}>{label()}</Text>}>
+    <If when={!terminal() && props.profile.flows.length > 0} else={<Text class="hidden text-muted-foreground terminal:flex">{label()}</Text>}>
       <View class="gap-1">
       <Plot
         testID="flows"

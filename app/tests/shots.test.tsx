@@ -20,7 +20,9 @@ function command(cmd: boolean) {
   const get = (k: string) => `${curl} -o ${sink} ${url}/demo/${k} && echo fetched ${k}`;
   // small objects, one of 3 MiB (its first byte against the rest of it), a key that is not
   // there (a miss) and a bucket that is not (a failure: the errors chart has something to draw)
-  return [...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
+  // a pause first: a trial of it runs long enough to be seen running
+  const pause = cmd ? "ping -n 3 127.0.0.1 >NUL" : "sleep 1.5";
+  return [pause, ...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
 }
 
 interface Variant {
@@ -85,6 +87,8 @@ for (const v of variants) {
     // which shell Run uses: cmd.exe on Windows (no probe run: it would sit in every list)
     const env = (globalThis as any).process?.env ?? {};
     const cmd = (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
+    // (the demo left its own first command in the field: typed after it, the two ran as one)
+    await app.clear("id:run-command");
     await app.type("id:run-command", command(cmd));
     // (the button follows the field a frame later)
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
@@ -219,6 +223,8 @@ for (const v of variants) {
     if (run) {
       await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });
+      // (each run's signals and the charts arrive after the figures: a picture taken at once showed "Not timed" over empty charts)
+      await app.wait(1500);
       await shot("03h-runs");
       await app.press("id:compare-back");
     } else if (app.menu()) await app.closeMenu();

@@ -356,7 +356,7 @@ function LiveOperations() {
             </If>
             <Observations view={view()!} compact max={3} />
           </If>
-          <OperationsTable view={view()!} source={operations} onSelect={() => lastRun() && openLastRun(go)} compact />
+          <OperationsTable view={view()!} source={operations} onSelect={() => lastRun() && openLastRun(go)} compact follow={!!running()} />
         </View>
       </If>
     </View>
@@ -454,7 +454,7 @@ export function Run() {
   const active = () => running() !== null || lastRun() !== null;
   if (!terminal()) cleanup(showInSidebar("run", () => <Recent />));
   return (
-    <View class={terminal() ? "flex-1 gap-1 p-1" : "flex-1 gap-4 px-4 pb-4 pt-4"} testID="screen-run">
+    <View class="flex-1 gap-4 p-4 terminal:gap-1 terminal:p-1" testID="screen-run">
       <CommandBar />
       <If when={active()} else={<Intro />}>
         <If

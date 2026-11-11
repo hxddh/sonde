@@ -22,8 +22,9 @@ export const STANDING = { survived: "pass", degraded: "warn", broke: "fail", unt
 
 /** What a trial found, in figures: the faults and their retries (and those
  * no retry was owed for), the wait before a retry, what it did to the load
- * and to the run's time, and what went wrong. What the verdict does not say
- * (whether the waits were jittered, with too few of them) is left unsaid. */
+ * and to the run's time. What went wrong is said once, by its reasons
+ * ([`trialReasons`]). What the verdict does not say (whether the waits were
+ * jittered, with too few of them) is left unsaid. */
 export function trialText(x: Trial): string {
   const parts: string[] = [];
   if (x.faults > 0) parts.push(x.retried === x.faults ? t("trial.allRetried", { n: count(x.faults) }) : t("trial.retried", { n: count(x.faults), m: count(x.retried) }));
@@ -38,13 +39,20 @@ export function trialText(x: Trial): string {
   // how long it took against the clean run, once that is more than a blink apart
   if (x.wallMs && x.cleanWallMs && Math.abs(x.wallMs - x.cleanWallMs) >= Math.max(50, x.cleanWallMs * 0.1)) parts.push(t("trial.took", { t: duration(x.wallMs), clean: duration(x.cleanWallMs) }));
   if (x.wroteTwice > 0) parts.push(t("trial.twice", { n: count(x.wroteTwice) }));
-  if (x.lostWrites) parts.push(t("trial.lostWrites", { n: count(x.lostWrites) }));
-  if (x.leftUploads > 0) parts.push(t("trial.left", { n: count(x.leftUploads) }));
-  if (x.droppedReads > 0) parts.push(t("trial.gaveUp", { n: count(x.droppedReads) }));
-  if (x.droppedWrites > 0) parts.push(t("trial.droppedWrites", { n: count(x.droppedWrites) }));
-  if (x.exit !== x.cleanExit) parts.push(t("trial.exit", { n: x.exit, m: x.cleanExit }));
-  if (x.standing === "untested") parts.push(t("trial.notMet"));
   return parts.join(" · ");
+}
+
+/** A verdict's scenario as it was asked for: its id, and how hard it pressed when that was more than once (`slowdown:3`, what `sonde run --fault` takes). */
+export const trialAsked = (x: Trial): string => (x.times && x.times > 1 ? `${x.scenario}:${x.times}` : x.scenario);
+
+/** Why a trial is not "survived", a sentence each, in the reader's language:
+ * Rust's phrases, or its English where a verdict kept before 16.0 has none.
+ * The one place each of these is said: [`trialText`] is the figures only. */
+export function trialReasons(x: Trial): string[] {
+  return x.reasons.map((en, i) => {
+    const said = x.reasonsText?.[i];
+    return said?.length ? say(said.map((p) => ({ key: p.key, args: p.args ?? {} })), en) : en;
+  });
 }
 
 /** Where a verdict turns, and what to change: the request (its operation and
@@ -107,13 +115,13 @@ function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; actio
               <View class={`min-w-0 flex-1 gap-1 ${x().session ? "" : "opacity-60"}`}>
                 <View class="flex-row flex-wrap items-baseline gap-x-2">
                   <Text class="text-body text-foreground">{scenarioLabel(x().scenario)}</Text>
-                  <Text testID="trial-id" class="font-mono text-caption text-muted-foreground">{x().scenario}</Text>
+                  <Text testID="trial-id" class="font-mono text-caption text-muted-foreground">{trialAsked(x())}</Text>
                 </View>
                 <Muted class="text-small">{trialText(x())}</Muted>
                 {/* why it is not "survived", a line each */}
                 <If when={x().standing !== "survived" && x().reasons.length > 0}>
                   <View testID="trial-reasons" class="gap-1">
-                    <Each of={x().reasons}>{(r) => <Text class={`text-small ${x().standing === "broke" ? "text-fail" : "text-foreground"}`}>{r()}</Text>}</Each>
+                    <Each of={trialReasons(x())}>{(r) => <Text class={`text-small ${x().standing === "broke" ? "text-fail" : "text-foreground"}`}>{r()}</Text>}</Each>
                   </View>
                 </If>
                 {/* where it turned (the request, the program's line), and what to change */}
@@ -293,7 +301,7 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
     <Await loading={h.loading() && !h()} error={h.error()} retry={() => h.refetch()}>
       <If when={h()} else={<Empty icon="list-clock" text={t("history.none")} />}>
         {(x) => (
-          <Scroll testID="history-pane" class="min-h-0 flex-1" contentClass={terminal() ? "gap-2" : "gap-4 pb-4 pr-2"}>
+          <Scroll testID="history-pane" class="min-h-0 flex-1" contentClass="gap-4 pb-4 pr-2 terminal:gap-2 terminal:pb-0 terminal:pr-0">
             <PageHeader title={t("history.title", { program: scrubCommand(x().program), n: x().runs.length })} subtitle={t("history.hint")}>
               <If when={!terminal()}>
                 <DatePicker

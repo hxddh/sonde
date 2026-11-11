@@ -335,6 +335,57 @@ pub fn scenario(name: &str) -> Option<Scenario> {
     scenarios().into_iter().find(|s| s.name == name)
 }
 
+/// The most attempts in a row a built-in scenario may be asked to fail.
+pub const MAX_TIMES: u32 = 5;
+
+/// The built-in scenarios that can be pressed harder: the two that answer
+/// each request's first attempt with an error in the store's place. How
+/// hard is one number there, the attempts in a row that fail. The others
+/// have none that means one thing (a lost race's next commit, a cut body's
+/// resume), and a project's own say theirs in `sonde.toml` (`times`).
+pub const PRESSED: &[&str] = &["slowdown", "error"];
+
+/// A built-in scenario as it is asked for: its name, or its name and how
+/// hard it presses (`slowdown:3` fails each request's first three
+/// attempts). None when there is no scenario of that name.
+pub fn scenario_asked(spec: &str) -> Result<Option<Scenario>, String> {
+    let Some((name, times)) = spec.split_once(':') else {
+        return Ok(scenario(spec));
+    };
+    let Some(mut s) = scenario(name) else {
+        return Ok(None);
+    };
+    if !PRESSED.contains(&name) {
+        return Err(format!(
+            "{spec}: only {} take a count of attempts (a project's own scenario says its times in sonde.toml)",
+            PRESSED.join(" and ")
+        ));
+    }
+    let times: u32 = times
+        .parse()
+        .ok()
+        .filter(|n| (1..=MAX_TIMES).contains(n))
+        .ok_or_else(|| {
+            format!("{spec}: the attempts that fail are a count from 1 to {MAX_TIMES}")
+        })?;
+    if times > 1 {
+        for r in &mut s.rules {
+            r.times = times;
+        }
+        s.about = s
+            .about
+            .replace("first attempt", &format!("first {times} attempts"));
+    }
+    Ok(Some(s))
+}
+
+/// How hard a scenario presses, where that is one number above 1: the
+/// attempts in a row it fails at each request ([`scenario_asked`]).
+pub fn pressed(s: &Scenario) -> Option<u32> {
+    let times = s.rules.first()?.times;
+    (PRESSED.contains(&s.name.as_str()) && times > 1).then_some(times)
+}
+
 /// A scenario of a project's own, from what its `[[scenario]]` in
 /// `sonde.toml` says: checked and built in this one place, for the command
 /// line and for the app. `times` is 1 unless said (every attempt for a
@@ -684,6 +735,43 @@ impl Faults {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_built_in_scenario_is_pressed_harder_by_a_count_after_its_name() {
+        let plain = scenario_asked("slowdown").unwrap().unwrap();
+        assert_eq!(plain, scenario("slowdown").unwrap());
+        assert_eq!(pressed(&plain), None);
+        assert_eq!(scenario_asked("slowdown:1").unwrap().unwrap(), plain);
+        let hard = scenario_asked("error:3").unwrap().unwrap();
+        assert_eq!(hard.name, "error", "its name, and its run's place, stay");
+        assert_eq!(hard.rules[0].times, 3);
+        assert_eq!(
+            hard.about,
+            "500 InternalError on each request's first 3 attempts"
+        );
+        assert_eq!(pressed(&hard), Some(3));
+        assert_eq!(scenario_asked("nope").unwrap(), None);
+        assert_eq!(scenario_asked("nope:2").unwrap(), None);
+        for spec in ["slowdown:0", "slowdown:6", "slowdown:", "slowdown:two"] {
+            let e = scenario_asked(spec).unwrap_err();
+            assert!(e.contains("a count from 1 to 5"), "{e}");
+        }
+        // the others have no one number: said, not guessed
+        for spec in ["lost-race:2", "cut-body:2", "slow:2", "s3-limits:2"] {
+            let e = scenario_asked(spec).unwrap_err();
+            assert!(e.contains("only slowdown and error"), "{e}");
+        }
+        // three attempts in a row fail, the fourth is let through
+        let f = Faults::new(&hard);
+        let met = |f: &Faults| {
+            f.decide(&Asked::new("GET", "GetObject", Some("b"), Some("k")))
+                .is_some()
+        };
+        assert_eq!(
+            [met(&f), met(&f), met(&f), met(&f)],
+            [true, true, true, false]
+        );
+    }
 
     fn decide(f: &Faults, method: &str, op: &str, key: &str) -> Option<Verdict> {
         f.decide(&Asked::new(method, op, Some("b"), Some(key)))

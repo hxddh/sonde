@@ -503,6 +503,8 @@ export function OperationsTable(props: {
   /** The operations marked (chosen, or running when an output line was printed), by index. */
   highlight?: number[];
   compact?: boolean;
+  /** A session still being recorded: the table opens at its newest operation and stays at its end as more arrive, until the reader scrolls up (back at the end, it follows again). */
+  follow?: boolean;
 }) {
   const notes = (e: EpisodeRow) => episodeNotes(e, props.view.sharedNotes).join(" · ");
   // the slowest or busiest first, at a press on their column's title: sorted where the operations are kept
@@ -512,6 +514,19 @@ export function OperationsTable(props: {
     const { sort: _, descending: __, ...rest } = props.source.query();
     props.source.ask(next ? { ...rest, sort: next.key === "duration" ? "duration" : next.key === "requests" ? "requests" : "time", descending: next.direction === "descending" } : rest);
   };
+  // following the end: where the table's view ended at its last report, against how many rows there were then
+  let table: DataTableRef | undefined;
+  let endSeen = 0;
+  let known = 0;
+  effect(() => {
+    const n = props.source.total();
+    const follows = !!props.follow && sort() === null;
+    untracked(() => {
+      // (at the end, or not yet scrolled at all: a reader who went up to look at a row is left there)
+      if (follows && n > known && endSeen >= known) setTimeout(() => table?.scrollToRow(n - 1), 0);
+      known = n;
+    });
+  });
   const held = () => props.source.rows();
   const start = () => props.source.start();
   const formats = () => Object.keys(props.view.families.formats).length > 0 || ["multipart", "retry", "listing", "probe"].some((k) => (props.view.families.kinds[k] ?? 0) > 0);
@@ -622,7 +637,10 @@ export function OperationsTable(props: {
   return (
     <View class={`min-h-0 flex-1 ${CARD}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
     <DataTable
-      ref={props.ref}
+      ref={(r) => {
+        table = r;
+        props.ref?.(r);
+      }}
       testID="operations"
       accessibilityLabel={t("sessions.operations")}
       class="min-h-0 flex-1"
@@ -631,7 +649,10 @@ export function OperationsTable(props: {
       data={data()}
       dataStart={start()}
       rowCount={props.source.total()}
-      onVisibleRowsChange={({ range }) => props.source.show(range.start, range.end)}
+      onVisibleRowsChange={({ range }) => {
+        endSeen = range.end;
+        props.source.show(range.start, range.end);
+      }}
       fontSize={TYPE.body}
       rowHeight={rowHeight(ROW.table)}
       resizableColumns={!terminal()}

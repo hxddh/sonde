@@ -100,6 +100,10 @@ impl Said {
 pub struct Trial {
     pub scenario: String,
     pub about: String,
+    /// The attempts in a row it failed at each request, when it was asked
+    /// to press harder than once (`slowdown:3`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub times: Option<u32>,
     pub standing: Standing,
     /// The program's exit code under the scenario, and without it.
     pub exit: i32,
@@ -185,6 +189,11 @@ pub struct Trial {
     pub wrote_twice: usize,
     /// Why it is not "survived", a line each.
     pub reasons: Vec<String>,
+    /// The same reasons as phrases (each a sentence of one or more), for
+    /// the app to say in the reader's language. Empty in a verdict kept
+    /// before 16.0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons_text: Vec<Vec<Said>>,
     /// The request the verdict turns on, when it is not "survived": the
     /// first write never sent again, the first body taken cut, the first
     /// race not run again, else the first read given up or (when only the
@@ -553,7 +562,8 @@ pub fn judge(
     // (which attempt the wait came before, the wait)
     let mut waits: Vec<(u32, f64)> = Vec::new();
     // retries of a write the store had made, which the store then refused
-    let mut refused: Vec<String> = Vec::new();
+    // (its operation, how it was answered, whether an upload's completion)
+    let mut refused: Vec<(String, String, bool)> = Vec::new();
     // the first request of each kind the verdict may turn on
     let mut at_write: Option<&Record> = None;
     let mut at_cut: Option<&Record> = None;
@@ -704,16 +714,14 @@ pub fn judge(
             if lost_answer(r) && is_write(r) && answered(next) {
                 if next.is_error() {
                     // the store had done it: the second attempt found it done
-                    refused.push(format!(
-                        "the retried {} was answered {}{}: {}",
-                        next.operation,
-                        next.status.unwrap_or(0),
-                        s3_code(next).map(|c| format!(" {c}")).unwrap_or_default(),
-                        if next.operation == "CompleteMultipartUpload" {
-                            "the upload had completed"
-                        } else {
-                            "the store had made the first attempt"
-                        }
+                    refused.push((
+                        next.operation.clone(),
+                        format!(
+                            "{}{}",
+                            next.status.unwrap_or(0),
+                            s3_code(next).map(|c| format!(" {c}")).unwrap_or_default()
+                        ),
+                        next.operation == "CompleteMultipartUpload",
                     ));
                 } else if r.method != "DELETE"
                     && r.operation != "DeleteObjects"
@@ -879,129 +887,129 @@ pub fn judge(
         .filter(|r| r.injected.is_some() && !faulted(r))
         .count();
 
-    let mut reasons = Vec::new();
+    // why it is not "survived": each reason a sentence of phrases
+    let mut why: Vec<Vec<Said>> = Vec::new();
+    let n_of = |n: usize| {
+        vec![
+            ("n", n.to_string()),
+            ("s", plural(n).to_string()),
+            ("it", if n == 1 { "it" } else { "them" }.to_string()),
+        ]
+    };
+    let said = |key: &str, n: usize| vec![Said::new(key, &n_of(n))];
     let mut standing = Standing::Survived;
     let any = run.iter().any(|r| r.injected.is_some());
     if !any {
         standing = Standing::Untested;
-        reasons.push("the scenario met none of the program's requests".into());
+        why.push(vec![Said::new("trial.why.notMet", &[])]);
     }
     if left_uploads > 0 {
         standing = Standing::Degraded;
-        reasons.push(format!(
-            "left {left_uploads} multipart upload{} unfinished (their parts are billed until aborted)",
-            plural(left_uploads)
-        ));
+        why.push(said("trial.why.uploads", left_uploads));
     }
     if dropped_reads > 0 {
         standing = Standing::Degraded;
-        reasons.push(format!(
-            "gave up on {dropped_reads} failed read{} without sending {} again",
-            plural(dropped_reads),
-            if dropped_reads == 1 { "it" } else { "them" }
-        ));
+        why.push(said("trial.why.reads", dropped_reads));
     }
     if orphans > 0 {
         standing = Standing::Degraded;
-        reasons.push(format!(
-            "{orphans} more object{} left than the clean run leaves: what the lost commit wrote, unless the commit that followed names {}",
-            plural(orphans),
-            if orphans == 1 { "it" } else { "them" }
-        ));
+        why.push(said("trial.why.orphans", orphans));
     }
     if blind > 0 {
         standing = Standing::Degraded;
-        reasons.push(format!(
-            "{blind} lost write{} sent again with the same If-Match: a real writer's ETag would refuse it again",
-            plural(blind)
-        ));
+        why.push(said("trial.why.blind", blind));
     }
     let plain = dropped_writes - lost_writes;
     if lost_writes > 0 {
         standing = Standing::Degraded;
-        reasons.push(format!(
-            "{lost_writes} write{} answered 500 and not retried; the store has {}",
-            plural(lost_writes),
-            if lost_writes == 1 { "it" } else { "them" }
-        ));
+        why.push(said("trial.why.lost", lost_writes));
     }
     if plain > 0 {
         standing = Standing::Degraded;
-        reasons.push(format!(
-            "{plain} write{} failed and {} never sent again",
-            plural(plain),
-            if plain == 1 { "was" } else { "were" }
-        ));
+        let mut args = n_of(plain);
+        args.push(("was", if plain == 1 { "was" } else { "were" }.to_string()));
+        why.push(vec![Said::new("trial.why.writes", &args)]);
     }
     if dropped_writes > 0 && exit == 0 {
         // told of a failed write, it said all was well
         standing = Standing::Broke;
-        if let Some(last) = reasons.last_mut() {
-            last.push_str(", and the program exited 0");
+        if let Some(last) = why.last_mut() {
+            last.push(Said::new("trial.why.exit0", &[]));
         }
     }
     if taken > 0 {
         // half a body and no read of the rest: with the clean run's exit,
         // the half was taken for the whole
-        standing = if exit == clean_exit {
-            Standing::Broke
+        let mut reason = said("trial.why.taken", taken);
+        if exit == clean_exit {
+            standing = Standing::Broke;
+            reason.push(Said::new(
+                "trial.why.taken.whole",
+                &[("exit", exit.to_string())],
+            ));
         } else {
-            Standing::Degraded
-        };
-        reasons.push(format!(
-            "{taken} download{} cut short and the rest never read{}",
-            plural(taken),
-            if exit == clean_exit {
-                format!(": the half was taken as the whole (exit {exit}, as the clean run)")
-            } else {
-                String::new()
-            }
-        ));
+            standing = Standing::Degraded;
+        }
+        why.push(reason);
     }
     if holes > 0 {
         standing = Standing::Broke;
-        reasons.push(format!(
-            "{holes} download{} cut short and read on from past the cut: bytes are missing",
-            plural(holes)
-        ));
+        why.push(said("trial.why.holes", holes));
     }
     if unrun > 0 {
-        standing = if exit == clean_exit {
-            Standing::Broke
+        let mut args = n_of(unrun);
+        args.push(("its", if unrun == 1 { "its" } else { "their" }.to_string()));
+        let mut reason = vec![Said::new("trial.why.unrun", &args)];
+        if exit == clean_exit {
+            standing = Standing::Broke;
+            reason.push(Said::new(
+                "trial.why.unrun.exit",
+                &[("exit", exit.to_string())],
+            ));
         } else {
-            Standing::Degraded
-        };
-        reasons.push(format!(
-            "{unrun} conditional write{} lost {} race and the commit was never made{}",
-            plural(unrun),
-            if unrun == 1 { "its" } else { "their" },
-            if exit == clean_exit {
-                format!(", and the program exited {exit}")
-            } else {
-                String::new()
-            }
-        ));
+            standing = Standing::Degraded;
+        }
+        why.push(reason);
     }
     if overwrote > 0 {
         standing = Standing::Broke;
-        reasons.push(format!(
-            "{overwrote} lost race{} answered by writing the key without a condition: the other writer's commit would be gone",
-            plural(overwrote)
-        ));
+        why.push(said("trial.why.overwrote", overwrote));
     }
     if clean_exit != 0 && standing == Standing::Survived {
         // a program that fails without faults says nothing by its exit
         standing = Standing::Degraded;
-        reasons.push(format!("the clean run exited {clean_exit} itself"));
+        why.push(vec![Said::new(
+            "trial.why.cleanExit",
+            &[("exit", clean_exit.to_string())],
+        )]);
     }
     if exit != clean_exit && !fenced {
         standing = Standing::Broke;
-        reasons.push(format!("exited {exit} (the clean run exited {clean_exit})"));
+        why.push(vec![Said::new(
+            "trial.why.exit",
+            &[
+                ("exit", exit.to_string()),
+                ("clean", clean_exit.to_string()),
+            ],
+        )]);
         // and why, where the requests say
         refused.sort();
         refused.dedup();
-        reasons.extend(refused);
+        why.extend(refused.into_iter().map(|(op, answer, completed)| {
+            vec![Said::new(
+                if completed {
+                    "trial.why.refused.completed"
+                } else {
+                    "trial.why.refused.made"
+                },
+                &[("op", op), ("answer", answer)],
+            )]
+        }));
     }
+    let reasons: Vec<String> = why
+        .iter()
+        .map(|r| r.iter().map(Said::en).collect())
+        .collect();
 
     // where: the request the verdict turns on, and what to change there
     let last_failed = || {
@@ -1046,6 +1054,7 @@ pub fn judge(
     Trial {
         scenario: scenario.name.clone(),
         about: scenario.about.clone(),
+        times: crate::fault::pressed(scenario),
         standing,
         exit,
         clean_exit,
@@ -1074,6 +1083,7 @@ pub fn judge(
         left_uploads,
         wrote_twice,
         reasons,
+        reasons_text: why,
         at: turned_on.map(where_of),
         advice,
         session: None,
@@ -1170,6 +1180,15 @@ pub fn worst(trials: &[Trial]) -> Option<Standing> {
 }
 
 impl Trial {
+    /// The scenario as it was asked for: its name, and how hard it pressed
+    /// when that was more than once (`slowdown:3`).
+    pub fn asked(&self) -> String {
+        match self.times {
+            Some(n) => format!("{}:{n}", self.scenario),
+            None => self.scenario.clone(),
+        }
+    }
+
     /// What happened, in a line: the figures behind the standing, then why
     /// it is not "survived", the request it turns on and what to change.
     pub fn line(&self) -> String {
@@ -1202,16 +1221,15 @@ impl Trial {
             if self.reread > 0 {
                 how.push(format!("{} read again whole", self.reread));
             }
-            parts.push(format!(
-                "{} bod{} cut{}",
-                self.cut,
-                if self.cut == 1 { "y" } else { "ies" },
-                if how.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {}", how.join(", "))
-                }
-            ));
+            // (cut and never made good: the reasons say it, once)
+            if !how.is_empty() {
+                parts.push(format!(
+                    "{} bod{} cut: {}",
+                    self.cut,
+                    if self.cut == 1 { "y" } else { "ies" },
+                    how.join(", ")
+                ));
+            }
         }
         if self.read_back > 0 {
             parts.push(format!(
@@ -2166,7 +2184,7 @@ mod tests {
         assert_eq!((t.faults, t.retried, t.dropped_reads), (1, 0, 1));
         assert_eq!(
             t.line(),
-            "1 fault, 0 retried · 1 body cut · 1 download cut short and the rest never read: the half was taken as the whole (exit 0, as the clean run) · at GetObject b/big · check the bytes read against Content-Length, and read the rest (Range) or the whole again"
+            "1 fault, 0 retried · 1 download cut short and the rest never read: the half was taken as the whole (exit 0, as the clean run) · at GetObject b/big · check the bytes read against Content-Length, and read the rest (Range) or the whole again"
         );
         let w = t.at.as_ref().unwrap();
         assert_eq!(

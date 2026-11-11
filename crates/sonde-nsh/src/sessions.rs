@@ -36,10 +36,15 @@ impl Recording {
     /// Ends it: the requests in flight are answered and recorded (those
     /// still going after [`SHUTDOWN_GRACE`] are left out), then the file is
     /// compressed. The session file's path.
-    async fn finish(mut self) -> String {
+    async fn finish(self) -> String {
+        self.finish_within(SHUTDOWN_GRACE).await
+    }
+
+    /// [`Recording::finish`], waiting `grace` for the requests in flight.
+    async fn finish_within(mut self, grace: std::time::Duration) -> String {
         // compressing renames a new file over this one: a connection still
         // writing would write to a file nobody reads
-        self.proxy.shutdown(SHUTDOWN_GRACE).await;
+        self.proxy.shutdown(grace).await;
         let _ = self.writer.flush();
         let file = self.path.clone();
         drop(self);
@@ -788,7 +793,8 @@ fn trial_plan_of(s: &Session) -> Result<TrialPlan, String> {
     })
 }
 
-/// The scenarios asked for by name, from the plan's and the built-in ones;
+/// The scenarios asked for by name, from the plan's and the built-in ones
+/// (`slowdown:3`: pressed harder, see [`sonde_proxy::fault::scenario_asked`]);
 /// all of the plan's when none is named.
 fn scenarios_named(
     plan: &TrialPlan,
@@ -800,11 +806,18 @@ fn scenarios_named(
     names
         .iter()
         .map(|n| {
-            plan.scenarios
-                .iter()
-                .find(|s| &s.name == n)
-                .cloned()
-                .or_else(|| sonde_proxy::fault::scenario(n))
+            if let Some(s) = plan.scenarios.iter().find(|s| &s.name == n) {
+                return Ok(s.clone());
+            }
+            // a project's own scenario of the name says its times itself
+            let name = n.split_once(':').map_or(n.as_str(), |(name, _)| name);
+            if plan.project && plan.scenarios.iter().any(|s| s.name == name) {
+                return Err(err_msg(format!(
+                    "{n}: {name} is the project's own scenario (sonde.toml says its times)"
+                )));
+            }
+            sonde_proxy::fault::scenario_asked(n)
+                .map_err(err_msg)?
                 .ok_or_else(|| err_msg(format!("{n}: no such scenario")))
         })
         .collect()
@@ -837,8 +850,53 @@ impl Newest {
     }
 }
 
+/// The command a run's shell is given: as the session keeps it, every
+/// separator, pipe and quote where it was written, with `{trial}` alone
+/// replaced (`clean`, or the scenario's name under one).
+fn command_under(command: &str, trial: Option<&str>) -> String {
+    command.replace("{trial}", trial.unwrap_or("clean"))
+}
+
+/// How long the app's quit waits for the requests in flight: the system
+/// gives a quitting app 200 ms in all (Native Shell's `quit` event).
+const QUIT_GRACE: std::time::Duration = std::time::Duration::from_millis(60);
+
+/// The app is quitting: the program being recorded is ended (with what it
+/// started), a running trial is stopped, and the recording is written as a
+/// finished session. A trial keeps nothing, as when it is stopped by hand:
+/// its half-recorded session and those of the scenarios before it go.
+/// What it ended: `{ program, trial, session }`.
+async fn end_for_quit() -> JsonValue {
+    use std::sync::atomic::Ordering::SeqCst;
+    let trial = TRYING.load(SeqCst);
+    if trial {
+        TRIAL_STOPPED.store(true, SeqCst);
+    }
+    let program = RUNNING.lock().take().is_some_and(|mut r| r.kill());
+    let recording = RECORDING.lock().take();
+    let mut session = None;
+    if let Some(r) = recording {
+        let path = r.path.clone();
+        // (on the runtime's own threads, as every recording is finished)
+        let _ = background(r.finish_within(QUIT_GRACE)).await;
+        if trial {
+            // (the run it is a trial of is beside the folder it is in)
+            let _ = std::fs::remove_file(&path);
+            let of = TRIAL_OF.lock().take();
+            if let Some(clean) = of {
+                sonde_proxy::trial::remove(&clean);
+            }
+        } else {
+            session = Some(path.to_string_lossy().into_owned());
+        }
+    }
+    json!({ "program": program, "trial": trial, "session": session })
+}
+
 /// A trial is running, and was asked to stop ([`Sessions::kill`]).
 static TRYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The run the trial under way is of (its session's file).
+static TRIAL_OF: Mutex<Option<PathBuf>> = Mutex::new(None);
 static TRIAL_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// One run of `command` in a pseudo-terminal, recorded: the exit code and
@@ -885,7 +943,7 @@ async fn run_recorded(
         )
     };
     let started = crate::run::spawn(
-        &command.replace("{trial}", trial.as_deref().unwrap_or("clean")),
+        &command_under(command, trial.as_deref()),
         cwd,
         &env_set,
         &env_unset,
@@ -1412,7 +1470,7 @@ impl Sessions {
     }
 
     /// What trying a session's program under faults would run, said before
-    /// it runs: `{ command, cwd, scenarios: [{ name, about }], project,
+    /// it runs: `{ command, cwd, scenarios: [{ name, about, maxTimes }], project,
     /// sharesPlace, cleanExit, readOnly }`. `project`: the scenarios are the
     /// `sonde.toml`'s own; `sharesPlace`: the command has no `{trial}` (or
     /// `SONDE_TRIAL`), so every run writes where the clean run wrote;
@@ -1426,7 +1484,14 @@ impl Sessions {
             "scenarios": plan
                 .scenarios
                 .iter()
-                .map(|s| json!({ "name": s.name, "about": s.about }))
+                .map(|s| json!({
+                    "name": s.name,
+                    "about": s.about,
+                    // the attempts in a row it may be asked to fail (`name:N`)
+                    "maxTimes": (!plan.project
+                        && sonde_proxy::fault::PRESSED.contains(&s.name.as_str()))
+                    .then_some(sonde_proxy::fault::MAX_TIMES),
+                }))
                 .collect::<Vec<_>>(),
             "project": plan.project,
             "sharesPlace": plan.shares_place,
@@ -1437,7 +1502,8 @@ impl Sessions {
 
     /// Tries a session's program under faults: its recorded command runs
     /// again in its recorded folder, once per scenario (`scenarios` by
-    /// name; none: the plan's), each run recorded to
+    /// name, `slowdown:3` to fail each request's first three attempts;
+    /// none: the plan's), each run recorded to
     /// `trials/<run>.<scenario>.sonde` and judged against the clean run.
     /// Events: `{ scenario, state: "running" }`, the program's output as
     /// `{ data, scenario }`, then `{ scenario, state: "done", trial }`.
@@ -1476,10 +1542,12 @@ impl Sessions {
         impl Drop for Trying {
             fn drop(&mut self) {
                 TRYING.store(false, std::sync::atomic::Ordering::SeqCst);
+                TRIAL_OF.lock().take();
             }
         }
         let _trying = Trying;
         TRIAL_STOPPED.store(false, SeqCst);
+        *TRIAL_OF.lock() = Some(file.clone());
         let clean_exit = read_exit(&file).unwrap_or(0);
         // a new trial replaces the last one's verdicts and sessions
         sonde_proxy::trial::remove(&file);
@@ -2150,6 +2218,15 @@ impl Sessions {
             }
         };
         Ok(json!({ "dir": dir.to_string_lossy(), "url": url }))
+    }
+
+    /// The app is quitting: ends the program being recorded and a running
+    /// trial, and writes the recording as a finished session, within the
+    /// 200 ms a quitting app has. `{ program, trial, session }`: whether a
+    /// program was ended, whether a trial was, and the session written (none
+    /// for a trial, which keeps nothing when it is cut short).
+    pub async fn quit() -> JsonValue {
+        end_for_quit().await
     }
 
     /// Stops recording; the session file's path. No longer the recording
@@ -2875,6 +2952,27 @@ mod tests {
         assert_eq!(one.len(), 1);
         assert_eq!(scenarios_named(&plan, &[]).unwrap().len(), names.len());
         assert!(scenarios_named(&plan, &["nope".into()]).is_err());
+        // pressed harder: the two that fail a request's first attempt, by a count
+        let hard = scenarios_named(&plan, &["slowdown:3".into(), "error".into()]).unwrap();
+        assert_eq!(
+            (hard[0].name.as_str(), hard[0].rules[0].times),
+            ("slowdown", 3)
+        );
+        assert_eq!(
+            hard[0].about,
+            "503 SlowDown on each request's first 3 attempts"
+        );
+        assert_eq!(hard[1].rules[0].times, 1);
+        for (spec, says) in [
+            ("slowdown:0", "from 1 to 5"),
+            ("slowdown:9", "from 1 to 5"),
+            ("slowdown:x", "from 1 to 5"),
+            ("cut-body:2", "only slowdown and error"),
+            ("nope:2", "no such scenario"),
+        ] {
+            let e = scenarios_named(&plan, &[spec.into()]).unwrap_err();
+            assert!(e.contains(says), "{spec}: {e}");
+        }
         // a trial is not tried again
         let t = Session::open(Path::new(&trial)).unwrap();
         assert!(trial_plan_of(&t).unwrap_err().contains("a trial itself"));
@@ -2892,6 +2990,67 @@ mod tests {
             assert!(!plan.shares_place, "{command}");
             // the session keeps the command as written, to run it again
             assert_eq!(plan.command, command);
+        }
+    }
+
+    /// The bridge's own path for a large session, timed: what a window
+    /// asks for when it opens one (`view`), again (kept), a later page of
+    /// its operations, and the size of what crosses to the interface.
+    /// `SONDE_BIG_SESSION=<file> cargo test -p sonde-nsh -- --ignored
+    /// a_large_session --nocapture`.
+    #[test]
+    #[ignore = "needs a large session: SONDE_BIG_SESSION names it"]
+    fn a_large_session_through_the_bridge_is_timed() {
+        let Ok(path) = std::env::var("SONDE_BIG_SESSION") else {
+            return;
+        };
+        let t = std::time::Instant::now();
+        let view = view_of(&path).unwrap();
+        let first = t.elapsed();
+        let bytes = view.to_string().len();
+        let t = std::time::Instant::now();
+        let again = view_of(&path).unwrap();
+        let second = t.elapsed();
+        let total = again["episodesTotal"].as_u64().unwrap();
+        let q = query_of(json!({ "offset": total / 2, "limit": 200 })).unwrap();
+        let t = std::time::Instant::now();
+        let page = analysis_of(&path).unwrap().1.page(&q);
+        let paged = t.elapsed();
+        println!(
+            "{} requests, {total} operations: first view {first:?} ({} KiB of JSON), again {second:?}, a page from the middle {paged:?} ({} KiB)",
+            view["summary"]["requests"],
+            bytes / 1024,
+            page.to_string().len() / 1024
+        );
+    }
+
+    #[test]
+    fn a_trial_runs_the_command_as_written_with_only_its_place_changed() {
+        // several steps, a pipe, both quotes, an escape, a line break
+        let command = "cd etl; A='x y' python load.py \"s3://b/{trial}/in put\" | tee log-{trial}.txt && curl -s $AWS_ENDPOINT_URL/demo/missing.txt\ncurl -s x\\ y || true";
+        let dir = tempfile::tempdir().unwrap();
+        let (clean, _, _) = run_and_trial(dir.path(), command, None);
+        let plan = trial_plan_of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
+        assert_eq!(plan.command, command, "kept as written");
+        assert_eq!(
+            command_under(&plan.command, Some("slowdown")),
+            command.replace("{trial}", "slowdown")
+        );
+        assert_eq!(
+            command_under(&plan.command, None),
+            command.replace("{trial}", "clean")
+        );
+        // a shell given it runs each step: no separator is lost between two
+        #[cfg(unix)]
+        {
+            let out = std::process::Command::new("sh")
+                .args([
+                    "-c",
+                    &command_under("echo a-{trial}; echo 'b c' && echo \"d\" | cat", Some("x")),
+                ])
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), "a-x\nb c\nd\n");
         }
     }
 
@@ -2919,6 +3078,12 @@ mod tests {
         assert!(plan.project);
         let names: Vec<_> = plan.scenarios.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["flaky-puts", "lag"]);
+        // (its own times are sonde.toml's: not asked for here)
+        assert!(
+            scenarios_named(&plan, &["flaky-puts:3".into()])
+                .unwrap_err()
+                .contains("the project's own")
+        );
         // a built-in one can still be asked for by name
         assert_eq!(
             scenarios_named(&plan, &["flaky-puts".into(), "error".into()])

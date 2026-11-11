@@ -60,7 +60,8 @@ pub struct RunArgs {
     trial: bool,
     /// A fault scenario to try by name (repeatable): slowdown, error,
     /// lost-answer, fail-complete, cut-body, lost-race, slow, s3-limits, or
-    /// one of sonde.toml's.
+    /// one of sonde.toml's. `slowdown:3` and `error:3` fail each request's
+    /// first three attempts rather than its first (1 to 5).
     /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
     faults: Vec<String>,
@@ -1029,7 +1030,7 @@ pub fn trial_line(t: &sonde_proxy::trial::Trial, color: bool) -> String {
     format!(
         "  {}  {:<14} {}",
         paint(&format!("{:<8}", t.standing.label()), code, color),
-        t.scenario,
+        t.asked(),
         t.line()
     )
 }
@@ -1078,7 +1079,9 @@ fn named_scenario(
     if let Some(s) = project.iter().find(|s| s.name == name) {
         return Ok(s.clone());
     }
-    sonde_proxy::fault::scenario(name).ok_or_else(|| {
+    let asked = sonde_proxy::fault::scenario_asked(name)
+        .map_err(|e| super::usage(format!("--fault {e}")))?;
+    asked.ok_or_else(|| {
         let known: Vec<String> = sonde_proxy::fault::scenarios()
             .iter()
             .chain(project)
@@ -3082,7 +3085,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 Standing::Broke => "breaks under",
                 Standing::Untested => "untested:",
             },
-            t.scenario,
+            t.asked(),
             if t.line().is_empty() {
                 String::new()
             } else {
