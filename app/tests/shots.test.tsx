@@ -78,6 +78,8 @@ for (const v of variants) {
     const env = (globalThis as any).process?.env ?? {};
     const cmd = (globalThis as any).process?.platform === "win32" || env.OS === "Windows_NT" || env.RUNNER_OS === "Windows";
     await app.type("id:run-command", command(cmd));
+    // (the button follows the field a frame later)
+    await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
     await app.waitFor("id:run-ended", { timeout: 20000 });
     await shot("02b-ran");

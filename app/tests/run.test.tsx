@@ -16,6 +16,8 @@ async function demo() {
 test("run a command: its requests become operations, the session lines them up with its output", async () => {
   const app = await demo();
   await app.type("id:run-command", "echo fetching; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null; echo done");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-terminal", { timeout: 10000 });
   await app.waitFor("id:run-ended", { timeout: 20000 });
@@ -38,6 +40,8 @@ test("run a command: its requests become operations, the session lines them up w
 test("a program that sends sonde nothing: how each SDK is pointed at it", async () => {
   const app = await demo();
   await app.type("id:run-command", "echo nothing to store");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   await app.waitFor("id:run-no-requests", { timeout: 5000 });
@@ -113,6 +117,8 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   await app.waitFor("label:Writes enabled");
   await place(app, "run");
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/t.txt -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/t.txt");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   await app.press("id:run-open-session");
@@ -324,6 +330,8 @@ test("programs: each with its runs at a glance; one opens on its runs", async ()
 test("run again: the program after a change, compared with the run before", async () => {
   const app = await demo();
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/README.md -o /dev/null");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   await app.press("id:run-open-session");
@@ -338,6 +346,8 @@ test("run again: the program after a change, compared with the run before", asyn
 test("a run tried under faults: said before it runs, followed as it goes, its trial opened and marked as one", async () => {
   const app = await demo();
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/trial.txt -o /dev/null");
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
   // read-only: the plan is said, and nothing runs
