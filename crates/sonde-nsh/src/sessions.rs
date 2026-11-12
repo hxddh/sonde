@@ -1521,7 +1521,9 @@ impl Sessions {
             return JsonValue::Null;
         };
         match project_budget(Path::new(&dir)) {
-            Some((p95, errors, waiting)) => json!({ "maxP95Ms": p95, "maxErrors": errors, "maxWaitingMs": waiting }),
+            Some((p95, errors, waiting)) => {
+                json!({ "maxP95Ms": p95, "maxErrors": errors, "maxWaitingMs": waiting })
+            }
             None => JsonValue::Null,
         }
     }
@@ -3164,16 +3166,30 @@ mod tests {
         std::fs::create_dir_all(project.path().join(".git")).unwrap();
         // none without a file, or without the three
         assert_eq!(super::project_budget(&inner), None);
-        std::fs::write(project.path().join("sonde.toml"), "[check]\nmax-requests = 9\n").unwrap();
+        std::fs::write(
+            project.path().join("sonde.toml"),
+            "[check]\nmax-requests = 9\n",
+        )
+        .unwrap();
         assert_eq!(super::project_budget(&inner), None);
         std::fs::write(
             project.path().join("sonde.toml"),
             "[check]\nmax-p95 = \"50ms\"\nmax-errors = 3\nmax-waiting = \"2s\"\n",
         )
         .unwrap();
-        assert_eq!(super::project_budget(&inner), Some((Some(50.0), Some(3), Some(2000.0))));
-        std::fs::write(project.path().join("sonde.toml"), "[check]\nmax-p95 = 120\n").unwrap();
-        assert_eq!(super::project_budget(&inner), Some((Some(120.0), None, None)));
+        assert_eq!(
+            super::project_budget(&inner),
+            Some((Some(50.0), Some(3), Some(2000.0)))
+        );
+        std::fs::write(
+            project.path().join("sonde.toml"),
+            "[check]\nmax-p95 = 120\n",
+        )
+        .unwrap();
+        assert_eq!(
+            super::project_budget(&inner),
+            Some((Some(120.0), None, None))
+        );
     }
 
     #[test]

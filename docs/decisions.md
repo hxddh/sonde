@@ -161,3 +161,12 @@ Newest last.
 | D-155 | Timed tests | every push; nightly | **Nightly**; a missed memory budget runs once more. |
 | D-156 | Supply chain | tags; commits | **Actions pinned by commit, Dependabot, cargo-deny (ignores with reasons), provenance attestations**; an unsigned release warns. |
 | D-157 | Fuzzing | every push; weekly | **Weekly**, ten targets. |
+| D-158 | Chinese for a broke trial | 失败; 未通过 | **未通过**: 失败 is also a failed request, job and budget. |
+| D-159 | A short run's sparkline | under 20 requests; under 1 s or 20 | **Both**, in the app and in `show`. |
+| D-160 | Findings in a short pane | a fixed height; whole findings | **Whole findings, with how many are in view**: no row cut. |
+| D-161 | A budget on its chart | the check's verdicts; `sonde.toml` | **`sonde.toml`** (`max-p95`, `max-errors` as a share, `max-waiting`), drawn as a dashed line. |
+| D-162 | A range in a link | slice indices; ms | **ms**: slices are the reader's, times the session's. |
+| D-163 | A chart's CSV | clipboard; save dialog; exports folder | **Exports folder**: Native Shell has no save dialog. |
+| D-164 | Widths in pages | constants per file; the kit's names | **The kit's `COLUMN` and `PANE`**, read by the layout lint. |
+| D-165 | A dialog taller than the window | fixed height; its body scrolls | **`ModalBody` scrolls; the title and actions stay.** |
+| D-166 | `record.rs` | one file; a module per command | **A module per command**; shared start code in `record.rs`. |

@@ -1,6 +1,6 @@
 # History
 
-Past release comparisons and reviews, kept for reference. The current plan is [review-16.0.md](../review-16.0.md).
+Past release comparisons and reviews, kept for reference.
 
 | File | What |
 |---|---|
@@ -15,3 +15,4 @@ Past release comparisons and reviews, kept for reference. The current plan is [r
 | [review-13.0.md](review-13.0.md) | 13.0 reviewed, 14.0 proposed |
 | [review-14.0.md](review-14.0.md) | 14.0 reviewed, 15.0 proposed |
 | [review-15.0.md](review-15.0.md) | 15.0 reviewed, 16.0 proposed |
+| [review-16.0.md](review-16.0.md) | 16.0 reviewed, 17.0 proposed |

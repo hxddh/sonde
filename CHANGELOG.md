@@ -4,6 +4,68 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [17.0.0] - 2026-11-12
+
+A verdict without exceptions, a declared contract, safe defaults, and the reach of a lake. The review this came
+from is [docs/history/review-16.0.md](docs/history/review-16.0.md).
+
+### Added
+
+- **Four trial scenarios**: `skew` (403 RequestTimeTooSkewed), `complete-500` (a completion made but answered 500),
+  `slow-first-byte` (a download held 10 s), `stale-list` (a listing that misses a key just written). See
+  [trials](docs/trials.md).
+- **A contract** ([contract.md](docs/contract.md)): the session format ([spec](docs/session-format.md)), a JSON
+  Schema for each of the 18 `-f json` outputs (checked by tests), `sonde.toml`, flags and exit codes are stable.
+  A major version now means one of them broke.
+- **Spark and Flink** are pointed at sonde by `sonde run` (`spark-submit`, `pyspark`, `flink run`, …); recipes for
+  Hadoop and Trino.
+- **TLS on the local endpoint**: `--tls` or `[record] tls = true`.
+- **Hudi and Paimon** commits read as operations. A rename-based commit out of `_temporary/` is a warning.
+- **A budget on its chart** (`max-p95`, `max-errors`, `max-waiting`), **a time range in a link**
+  (`sonde://…?range=`), **a chart's rows as CSV**.
+- **A Windows terminal binary**; Windows tests in CI.
+- Build provenance attestations, checked by `install.sh` when `gh` is signed in. Actions pinned by commit,
+  Dependabot, `cargo deny`, ten fuzz targets run weekly.
+- `--policy allow|no-delete|read-only`, `--allow-writes`, `[record] policy`, and the app's setting.
+
+### Changed
+
+- **A recorded program may not delete by default.** `run`, `proxy`, `watch` and the app's Run use `no-delete`,
+  which now also refuses overwriting an object the run did not write, bucket policies and suspending versioning.
+  Use `--allow-writes` for a program that deletes. See [recording](docs/recording.md#what-a-recorded-program-may-do).
+- **Memory**: about 1.1 KB a request (1.75): `show` of a million requests in 1.1 GiB. `compare` and `diff` read one
+  session at a time: two runs of a million in 1.2 GiB (4.7).
+- **One retry rule** for trials, episodes and signals, by status and S3 code.
+- `lost-race` is offered only where a 412 means a lost commit.
+- Figures are written one way in the CLI and the app (`1.0 MiB`, `1h 40m`, `12,345`).
+- "Waiting" means the same in `show` and `compare`.
+- A baseline allows 50 ms more waiting (was 5 ms): short runs on CI runners failed on noise.
+- The trial dialog's body scrolls and its buttons stay in view; Run's trial opens a scenario's session; the dial
+  is 1–5. In Chinese a broke trial is 未通过.
+- The app's rough places from the 16.0 review: cut columns, tiles and findings; Compare's legend; chart scales,
+  labels and legends; dark mode's segments. The lints cover `App.tsx`, column widths and paths cut at their end.
+- S3 Express One Zone is refused with a reason (501) instead of failing on signatures.
+- Sessions, caches and the audit log are 0600 on Unix. `sonde.toml` has one parser, shared by the CLI and the app.
+- The README and the docs are about half as long. Old comparisons and reviews moved to `docs/history/`.
+
+### Fixed
+
+- **With `{trial}` in a key that also holds `clean` or the scenario's name, a program that never retries was
+  "survived".**
+- A `400 RequestTimeout` was not owed a retry in trials.
+- A `_SUCCESS` writer taking a 412 as done was "broke".
+- On Windows a trial could hang when the cursor query came in two reads.
+- `show` drew sparklines for runs under a second.
+- A cut gzip session could not be opened; it is read to the cut. A malformed session exits 65 (was 70).
+- The summary cache could keep old counts for a rewritten file, and kept warnings across analysis changes.
+- An Iceberg Avro file of a few bytes could reserve gigabytes (found by fuzzing).
+- `sonde://open` took any path, including a Windows share; it takes only `.sonde` files.
+- The Java hook's jars differed by JDK; they are now the same bytes on any.
+
+### Removed
+
+- `docs/compare-*.md` and `docs/review-12.0` to `15.0` from `docs/` (in `docs/history/`).
+
 ## [16.0.0] - 2026-11-11
 
 A verdict to trust, sessions of any size, charts that can be read. The review this came from is

@@ -770,7 +770,10 @@ impl Sonde {
     /// exports folder as `<name>-<stamp>.csv`; the file's path. Native
     /// Shell has no save dialog: the file goes where every export goes.
     pub fn export_csv(name: String, text: String) -> Result<String, String> {
-        write_export(&format!("{}-{}.csv", csv_name(&name), stamp()), text.as_bytes())
+        write_export(
+            &format!("{}-{}.csv", csv_name(&name), stamp()),
+            text.as_bytes(),
+        )
     }
 
     /// Writes runs (default: the newest of each endpoint) as `markdown` or `json`; the path.
@@ -854,11 +857,21 @@ fn stamp() -> String {
 fn csv_name(name: &str) -> String {
     let s: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .take(48)
         .collect();
     let s = s.trim_matches('-');
-    if s.is_empty() { "chart".into() } else { s.into() }
+    if s.is_empty() {
+        "chart".into()
+    } else {
+        s.into()
+    }
 }
 
 fn write_export(name: &str, bytes: &[u8]) -> Result<String, String> {
