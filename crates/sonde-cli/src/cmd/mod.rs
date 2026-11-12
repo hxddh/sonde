@@ -1,13 +1,21 @@
+pub mod check;
+pub mod compare;
+pub mod demo;
 pub mod du;
 pub mod endpoints;
 pub mod layout;
 pub mod mpu;
 pub mod probe;
+pub mod proxy;
 pub mod record;
+pub mod replay;
+pub mod run;
 pub mod sessions;
 pub mod share;
+pub mod show;
 #[cfg(feature = "tui")]
 pub mod tui;
+pub mod watch;
 
 use std::sync::Arc;
 
