@@ -367,8 +367,8 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 The screenshot tour (`scripts/shots.sh`: wide, least, dark, Chinese) gates a merge: CI compares it with the last
 green tour, and a screen that changed or is new must match its approved picture in `app/shots.approved.json`.
 Approving is looking at the difference images and committing that file (`scripts/shots-diff.py approve`).
-Screens that chart what the tour's run measured (its timeline, latencies) move between runs of the same code and
-are matched more loosely (`LIVE` in `scripts/shots-diff.py`); every other screen, tightly.
+Screens that chart what the tour's run measured (its timeline, latencies, a request's timings) move between runs of
+the same code: they are reported with their difference images, not held (`LIVE` in `scripts/shots-diff.py`).
 
 ## Motion
 
