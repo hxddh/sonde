@@ -93,7 +93,7 @@ Counted again, as 15.0's review counted:
 What a reader used to Grafana, Datadog or Honeycomb still misses: a time range shared by every pane and kept in a
 link; a breakdown by any attribute (prefix, status, size, SDK, thread) and "what is different about the slow
 ones"; a threshold line from the budget on its chart; more than two runs overlaid; one key's conversation followed
-across operations; a chart's data out as CSV.
+across operations; a chart's data out as CSV. (17.0's M7 takes the threshold, the range and the CSV; 18.0 the rest.)
 
 ## Large sessions, measured
 
@@ -147,10 +147,27 @@ isolation and the faults.
 | **M4: the reach of a lake** | Spark, Trino and Flink: `sonde run` writes `fs.s3a.*` / `s3.*` for the JVM engines it recognises, and a recipe each, checked in the `record` CI job with Spark. S3 Express One Zone: `CreateSession` passed through, its session credentials honoured. TLS on the local endpoint (a key made on first run) for SDKs that require it. Paimon and Hudi's timeline as layouts and operations. | L |
 | **M5: the rough places, seen** | Every row above under "The interface". The tour's pictures of every 16.0 and 17.0 screen checked in (or attached to a release) so a review can see them. The lints learn what they missed: `App.tsx`, numbers in column objects, a bound that cuts a row, a path cut at its end, the sizes chart's exception. One word for a broke trial (未通过 or 中断). Compare's legend and its few marks. One byte and count formatter, shared by Rust and TS through the phrases. | M |
 | **M6: Windows and the line of releases** | `cargo test` on Windows in CI, a Windows CLI binary, the UI perf test in CI. The main line builds at every commit: work in progress on a branch, squashed. `record.rs` split into one module per command, and the project file and budgets moved into `sonde-proxy`. Fuzz targets for the decoders, importers and XML. | M |
+| **M7: small things with a large reach** | A budget drawn on its chart: `sonde.toml`'s p95, error share and waiting as a threshold line on latency, error rate and waiting, with how far the run is from it. A range kept in a link: the slices chosen go into a `sonde://` link and a shared page, so who opens it sees the same time (D-123 stands: no drag, no wheel). A chart's data out as CSV, from the rows Rust already holds. Four scenarios that production has met: a clock skewed (`RequestTimeTooSkewed`), a `CompleteMultipartUpload` answered 500 though it completed, a first byte that comes very late, a listing that does not yet show a write. Chinese in the CLI: the phrases' templates move to Rust with M5's one formatter, so `show`, `check` and a trial speak the reader's language. | S each |
 
-**Not in 17.0**: drag or wheel zoom (D-123 stands); a query language; a daemon for production (`/metrics` waits
-for M1's contract and M3's memory); eBPF; Azure gateways. A breakdown by any attribute is the largest thing
-users of other tools miss, and it is the first candidate for 18.0, once the contract says what a session holds.
+M7 comes after M0 to M6 and is the first thing cut if they run long; of it, the budget on its chart goes first.
+
+**For 18.0**, once M1's contract says what a session holds:
+
+- a breakdown by any attribute (prefix, status, size, SDK, thread) and "what is different about the slow ones",
+  the largest thing users of other tools miss;
+- more than two runs overlaid;
+- one key's conversation followed across operations;
+- a sidecar for production (an image, `/metrics`, a Kubernetes example), which needs M3's memory as well;
+- DuckLake, S3 Tables, Iceberg's REST catalog and v3's deletion vectors;
+- SigV4a and HTTP/2 on the local endpoint.
+
+**Not in 17.0 or 18.0**:
+
+- drag or wheel zoom (D-123 stands) and a query language;
+- eBPF and Azure gateways;
+- a replay at a multiple of its speed, which would make sonde a load tester;
+- prices of other clouds, a table that goes stale;
+- an MCP server for agents, which waits for the JSON schemas of M1 to have held a while.
 
 The risk, named: M1 is a promise, and after it a careless change costs a major. It is written from what the
 outputs are today, checked by tests that fail on any change to a schema, and released only with M0 and M2 so the
