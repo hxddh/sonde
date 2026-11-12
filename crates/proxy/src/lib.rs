@@ -26,6 +26,7 @@ pub mod report;
 pub mod session;
 pub mod share;
 pub mod signals;
+pub mod split;
 pub mod summary;
 pub mod tls;
 pub mod trial;

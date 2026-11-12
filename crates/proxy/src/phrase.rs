@@ -207,6 +207,22 @@ fn template(key: &str) -> &'static str {
         }
         "obs.savesTime" => "about {time} sooner ({pct}% of the time waiting)",
         "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
+        "split.slow" => "{pct}% of the slow requests (over {ms}) are ",
+        "split.spread" => "the slow requests are spread: no one group holds half of them",
+        "split.cost.first" => "{pct}% of the cost is ",
+        "split.cost" => "; {pct}% of the cost is ",
+        "split.and" => ", ",
+        "split.end" => ".",
+        "split.operation" => "{v}",
+        "split.prefix" => "under {v}",
+        "split.caller" => "from {v}",
+        "split.sdk" => "from {v}",
+        "split.status" => "answered {v}",
+        "split.status.none" => "without an answer",
+        "split.size.none" => "without a body",
+        "split.size.under" => "under {hi}",
+        "split.size.between" => "of {lo} to {hi}",
+        "split.size.over" => "over {lo}",
         "trial.advice.retries" => "{sdk} did not send it again: turn its retries on ({setting})",
         "trial.advice.retry" => {
             "send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry, and so is S3's SlowDown, RequestTimeout or RequestTimeTooSkewed"
@@ -408,6 +424,30 @@ mod tests {
                 lines.iter().any(|l| l.contains(&quoted)),
                 "{key}: the app's English is not this file's"
             );
+        }
+    }
+
+    /// Group by's sentence is said by the app in both languages too.
+    #[test]
+    fn the_split_sentences_have_their_templates_in_the_app() {
+        let ts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/src/phrases.ts");
+        let ts = std::fs::read_to_string(ts).unwrap();
+        let src = include_str!("phrase.rs");
+        let keys: Vec<&str> = src
+            .lines()
+            .filter_map(|l| l.trim_start().strip_prefix("\"split."))
+            .filter_map(|l| l.split('"').next())
+            .collect();
+        assert!(keys.len() >= 16, "{keys:?}");
+        for k in keys {
+            let key = format!("split.{k}");
+            let quoted = serde_json::to_string(template(&key)).unwrap();
+            let lines: Vec<&str> = ts
+                .lines()
+                .filter(|l| l.trim_start().starts_with(&format!("\"{key}\": ")))
+                .collect();
+            assert_eq!(lines.len(), 2, "{key}: a line in each language");
+            assert!(lines.iter().any(|l| l.contains(&quoted)), "{key}");
         }
     }
 

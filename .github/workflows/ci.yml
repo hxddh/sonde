@@ -90,6 +90,37 @@ jobs:
             exit 1
           }
 
+  action:
+    # the GitHub Action (action.yml): its scripts linted and run against
+    # stand-ins, then the action itself with this commit's sonde
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: The action's metadata, scripts and the workflows that use it
+        run: |
+          pip install shellcheck-py==0.11.0.1 actionlint-py==1.7.12
+          python3 -c "import yaml; a = yaml.safe_load(open('action.yml')); assert a['runs']['using'] == 'composite'"
+          shellcheck action/*.sh install.sh
+          actionlint
+      - run: bash action/test.sh
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build -p sonde-cli && echo "$PWD/target/debug" >> "$GITHUB_PATH"
+      - uses: ./
+        id: sonde
+        with:
+          version: path
+          run: python3 -c 'print(1)'
+          run-args: --url http://127.0.0.1:9 --path-style
+          artifact: sonde-action-test
+          comment: "false"
+      - name: The action's outputs
+        env:
+          PASSED: ${{ steps.sonde.outputs.passed }}
+          SESSION: ${{ steps.sonde.outputs.session }}
+          REPORT: ${{ steps.sonde.outputs.report-url }}
+        run: test "$PASSED" = true && test -f "$SESSION" && test -n "$REPORT"
+
   integration:
     runs-on: ubuntu-24.04
     steps:

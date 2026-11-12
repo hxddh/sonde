@@ -16,6 +16,7 @@ What is listed under **Stable** changes only in a major release; everything else
 |---|---|
 | `sonde show -f json` (and `--errors`) | [show](schemas/show.schema.json) |
 | `sonde show --summary -f json` | [show-summary](schemas/show-summary.schema.json) |
+| `sonde show --by DIM -f json` | [show-by](schemas/show-by.schema.json) |
 | `sonde check -f json` | [check](schemas/check.schema.json) |
 | `sonde compare -f json` | [compare](schemas/compare.schema.json) |
 | `sonde sessions -f json` | [sessions](schemas/sessions.schema.json) |

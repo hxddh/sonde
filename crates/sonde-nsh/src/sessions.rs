@@ -1293,6 +1293,24 @@ fn shell_exports(set: &[(String, String)], unset: &[String]) -> String {
     s
 }
 
+/// The requests of `bucket`/`key` in a session, in time order, each with
+/// the operation it belongs to.
+fn key_history_of(s: &Session, a: &Analysis, bucket: &str, key: &str) -> Vec<JsonValue> {
+    let mut rows: Vec<&reqlog::Record> = s
+        .records
+        .iter()
+        .filter(|r| r.key.as_deref() == Some(key) && r.bucket.as_deref().unwrap_or("") == bucket)
+        .collect();
+    rows.sort_by_key(|r| (r.time, r.id));
+    rows.into_iter()
+        .map(|r| {
+            let mut v = to_json(r.summary());
+            v["operationIndex"] = json!(a.episode_of(r.id));
+            v
+        })
+        .collect()
+}
+
 /// Recorded sessions and the live recording, as TSX calls them.
 #[module]
 pub struct Sessions;
@@ -1444,6 +1462,38 @@ impl Sessions {
     /// One record of a session, in full.
     pub fn record(path: String, id: f64) -> Result<JsonValue, String> {
         Ok(to_json(full_record(&path, id as u64)?))
+    }
+
+    /// The operations table split by `by` (`operation`, `prefix`, `size`,
+    /// `caller`, `sdk`, `status`): each group's requests, errors, p50, p95,
+    /// p99, waiting and cost, and the sentence that says where the slow and
+    /// the costly requests are (`phrases`, for the reader's language).
+    pub async fn split(path: String, by: String) -> Result<JsonValue, String> {
+        let by = sonde_proxy::split::Dimension::parse(&by)
+            .ok_or_else(|| err_msg(format!("no dimension {by:?}")))?;
+        tokio::task::spawn_blocking(move || {
+            let s = open_session(&path)?;
+            let prices = crate::state::request_prices_for(&s.header.endpoint);
+            Ok(to_json(sonde_proxy::split::split(&s.records, by, &prices)))
+        })
+        .await
+        .map_err(err_msg)?
+    }
+
+    /// Every request of one key in a session, whatever its operation, in
+    /// time order: a request's history for the inspector. Each is the short
+    /// row with `operationIndex` (the operation it belongs to, or null).
+    pub async fn key_history(
+        path: String,
+        bucket: String,
+        key: String,
+    ) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let (s, a) = analysis_of(&path)?;
+            Ok(JsonValue::Array(key_history_of(&s, &a, &bucket, &key)))
+        })
+        .await
+        .map_err(err_msg)?
     }
 
     /// A session's record as `aws s3api` (`cli`) or unsigned curl (`curl`).
@@ -2775,6 +2825,37 @@ mod tests {
             });
         }
         w.flush().unwrap();
+    }
+
+    /// Group by's table, and a key's history for the inspector.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_session_splits_by_a_dimension_and_a_key_has_its_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many.sonde");
+        many(&path, 300);
+        let p = path.to_string_lossy().into_owned();
+        let v = Sessions::split(p.clone(), "operation".into())
+            .await
+            .unwrap();
+        assert_eq!(v["by"], "operation");
+        assert_eq!(v["sdk"], "aws-sdk-java 2.25");
+        let rows = v["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        let get = rows.iter().find(|r| r["key"] == "GetObject").unwrap();
+        assert!(get["errors"].as_u64().unwrap() > 0 && get["p99Ms"].is_number());
+        assert!(Sessions::split(p.clone(), "bucket".into()).await.is_err());
+        let h = Sessions::key_history(p.clone(), "b".into(), "data/k00007".into())
+            .await
+            .unwrap();
+        let h = h.as_array().unwrap();
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0]["operationIndex"].as_u64(), Some(7));
+        assert_eq!(h[0]["operation"], "PutObject");
+        assert_eq!(h[0]["target"], "b/data/k00007");
+        let none = Sessions::key_history(p, "b".into(), "nope".into())
+            .await
+            .unwrap();
+        assert_eq!(none, json!([]));
     }
 
     #[test]

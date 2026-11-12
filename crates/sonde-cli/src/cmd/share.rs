@@ -14,8 +14,14 @@ use sonde_proxy::share;
 
 #[derive(Args)]
 pub struct ShareArgs {
-    /// The session (default: the newest).
-    file: Option<PathBuf>,
+    /// The session (default: the newest). Two, with --html: the run before
+    /// and the run after, compared.
+    #[arg(num_args = 0..=2)]
+    files: Vec<PathBuf>,
+    /// With --html: the run to compare it with, as `sonde check` takes one
+    /// (a session, `auto` for its program's baseline, or an https URL).
+    #[arg(long, value_name = "FILE|auto|URL")]
+    baseline: Option<String>,
     /// Where to write the site (default: `<session>-share/` here).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
@@ -50,8 +56,53 @@ async fn serve(dir: PathBuf, port: u16) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The run a page is compared with: the first of two, or --baseline.
+async fn baseline_of(
+    s: &Arc<Sonde>,
+    a: &ShareArgs,
+    file: &std::path::Path,
+) -> anyhow::Result<Option<(PathBuf, Option<tempfile::TempPath>)>> {
+    let asked = match (a.files.as_slice(), &a.baseline) {
+        ([before, _], _) => return Ok(Some((super::sessions::resolve(s, before), None))),
+        (_, Some(b)) => b.as_str(),
+        _ => return Ok(None),
+    };
+    if asked.starts_with("https://") || asked.starts_with("http://") {
+        let t = super::check::fetch_baseline(asked).await?;
+        return Ok(Some((t.to_path_buf(), Some(t))));
+    }
+    if asked != "auto" {
+        return Ok(Some((
+            super::sessions::resolve(s, &PathBuf::from(asked)),
+            None,
+        )));
+    }
+    let dir = s.paths().sessions();
+    let key = sonde_proxy::session::read_header(file)
+        .as_ref()
+        .and_then(sonde_proxy::program::key_of);
+    let found = match (key, sonde_proxy::program::read_baselines(&dir)) {
+        (_, Err(e)) => anyhow::bail!("{e}"),
+        (Some(k), Ok(all)) => all.get(&k).map(|n| dir.join(n)).filter(|p| p.is_file()),
+        (None, Ok(_)) => None,
+    };
+    if found.is_none() {
+        eprintln!("no baseline yet for this run's program: the page shows the run alone");
+    }
+    Ok(found.map(|p| (p, None)))
+}
+
 pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
-    let file = match &a.file {
+    let compared = a.files.len() == 2 || a.baseline.is_some();
+    if compared && !a.html {
+        eprintln!("a run compared with another is a page: add --html");
+        return Ok(64);
+    }
+    if a.files.len() == 2 && a.baseline.is_some() {
+        eprintln!("two runs, or --baseline: not both");
+        return Ok(64);
+    }
+    let file = match a.files.last() {
         Some(f) => super::sessions::resolve(s, f),
         None => super::record::newest_session(s)?,
     };
@@ -76,9 +127,47 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         let prices = super::record::request_prices_for(s, &session.header.endpoint);
         ((session, prices), Some(file.as_path()))
     };
-    let (session, prices) = session;
+    let (mut session, prices) = session;
     if a.html {
-        let page = sonde_proxy::report::html(&session, &prices);
+        let base = baseline_of(s, a, &file).await?;
+        let page = match &base {
+            None => sonde_proxy::report::html(&session, &prices),
+            Some((path, _)) => {
+                // both read whole when redacted: their names become the same tokens
+                let mut before = super::sessions::read(
+                    path,
+                    if a.redact {
+                        sonde_proxy::session::Keep::All
+                    } else {
+                        sonde_proxy::session::Keep::Analysis
+                    },
+                )?;
+                let name = super::check::session_line(path, Some(&before.header));
+                if a.redact {
+                    // (the run was redacted alone above: read it again, for one salt)
+                    session = super::sessions::read(&file, sonde_proxy::session::Keep::All)?;
+                    sonde_proxy::report::redact_all(&mut [&mut before, &mut session]);
+                }
+                let run_of = |x: &sonde_proxy::session::Session| {
+                    sonde_proxy::profile::Run::analysed(&x.header, &x.records, &prices)
+                };
+                let change =
+                    sonde_proxy::profile::compare_runs(&run_of(&before), &run_of(&session))
+                        .of_programs(
+                            sonde_proxy::program::key_of(&before.header).as_deref(),
+                            sonde_proxy::program::key_of(&session.header).as_deref(),
+                        );
+                drop(before);
+                sonde_proxy::report::html_against(
+                    &session,
+                    &prices,
+                    Some(&sonde_proxy::report::Against {
+                        change: &change,
+                        name,
+                    }),
+                )
+            }
+        };
         match &a.out {
             Some(p) => {
                 std::fs::write(p, page)?;

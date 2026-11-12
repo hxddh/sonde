@@ -175,6 +175,7 @@ pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
             requests: false,
             all: false,
             app: a.app,
+            by: None,
             format: Format::Table,
         },
     )

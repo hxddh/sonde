@@ -907,6 +907,60 @@ pub fn check_markdown_with(
     findings: &[Observation],
     trials: &[crate::trial::Trial],
 ) -> String {
+    check_comment(
+        c,
+        &Comment {
+            currency,
+            since,
+            findings,
+            trials,
+            ..Default::default()
+        },
+    )
+}
+
+/// What a pull request's comment says besides the check's rows.
+#[derive(Default)]
+pub struct Comment<'a> {
+    pub currency: &'a str,
+    /// Since which run it is past its baseline, as a line.
+    pub since: Option<&'a str>,
+    /// The run's findings.
+    pub findings: &'a [Observation],
+    pub trials: &'a [crate::trial::Trial],
+    /// The run against its baseline ([`crate::profile::compare_runs`]).
+    pub change: Option<&'a crate::profile::RunChange>,
+    /// Why there is no baseline, when one was asked for and none was found.
+    pub no_baseline: Option<&'a str>,
+    /// Where the whole report is (`sonde share --html`, kept by CI).
+    pub report_url: Option<&'a str>,
+}
+
+/// Waiting moves this much from one identical run to the next: a change
+/// smaller than this and [`WAITING_SLACK_MS`] is not said as one.
+const WAITING_NOISE: f64 = 0.1;
+
+/// Whether waiting moved by more than a run's own noise.
+pub fn waiting_moved(a: f64, b: f64) -> bool {
+    (b - a).abs() >= WAITING_SLACK_MS && (b - a).abs() >= a * WAITING_NOISE
+}
+
+/// A figure before and after: `52 → 86 (+65%)`.
+fn moved(a: f64, b: f64, text: &dyn Fn(f64) -> String) -> String {
+    let pct = if a > 0.0 {
+        format!(" ({:+.0}%)", (b - a) * 100.0 / a)
+    } else {
+        String::new()
+    };
+    format!("{} → {}{pct}", text(a), text(b))
+}
+
+/// A check as a pull request's comment: the verdict first; the rows that
+/// failed, never those that passed; against a baseline only what changed
+/// (the figures, the kinds of request, the findings new and gone, new first);
+/// the trials that did not survive; one link to the report.
+pub fn check_comment(c: &Check, m: &Comment) -> String {
+    let currency = m.currency;
     let shown = |what: &str, v: f64| match what {
         "waiting" | "p95" => ms_text(v),
         "cost" => money_text(v, currency),
@@ -914,62 +968,178 @@ pub fn check_markdown_with(
     };
     let mut md = format!(
         "### sonde: {} {}\n",
-        check_closing(c, trials),
-        if check_passed(c, trials) {
+        check_closing(c, m.trials),
+        if check_passed(c, m.trials) {
             "✅"
         } else {
             "❌"
         }
     );
-    if !c.verdicts.is_empty() {
-        let rows: Vec<Vec<String>> = c
-            .verdicts
-            .iter()
-            .map(|v| {
-                vec![
-                    match v.over() {
-                        Some(over) => format!("**FAIL** {over}"),
-                        None => "pass".to_string(),
-                    },
-                    v.label().to_string(),
-                    shown(v.what, v.value),
-                    format!("≤ {}", shown(v.what, v.limit)),
-                    v.against.to_string(),
-                ]
-            })
-            .collect();
+    if let Some(t) = m.since {
+        md.push_str(&format!("\n{}\n", md_text(t)));
+    }
+    if let Some(why) = m.no_baseline {
+        md.push_str(&format!(
+            "\n> ⚠️ {}: nothing was compared\n",
+            // what is missing, not how to set one on this machine
+            md_text(why.split(": ").next().unwrap_or(why))
+        ));
+    }
+    // a baseline's rows are said as what changed, below
+    let said_below = |v: &Verdict| m.change.is_some() && v.against == "baseline";
+    let failed: Vec<Vec<String>> = c
+        .verdicts
+        .iter()
+        .filter(|v| !v.ok && !said_below(v))
+        .map(|v| {
+            vec![
+                format!("**FAIL** {}", v.over().unwrap_or_default()),
+                v.label().to_string(),
+                shown(v.what, v.value),
+                format!("≤ {}", shown(v.what, v.limit)),
+                v.against.to_string(),
+            ]
+        })
+        .collect();
+    if !failed.is_empty() {
         md.push('\n');
         md.push_str(&md_table(
             &["", "", "run", "limit", "from"],
             &[false, false, true, true, false],
-            &rows,
+            &failed,
         ));
     }
-    if !trials.is_empty() {
-        let rows: Vec<Vec<String>> = trials
+    let place = |text: &str| {
+        m.findings
             .iter()
-            .map(|t| {
+            .find(|f| f.text == text)
+            .and_then(|f| f.callers.first())
+            .map(|c| {
+                format!(
+                    " — `{}`",
+                    c.place.replace('`', "'").replace(['\n', '\r'], " ")
+                )
+            })
+            .unwrap_or_default()
+    };
+    if let Some(ch) = m.change {
+        let row = |what: &str| {
+            c.verdicts
+                .iter()
+                .find(|v| v.what == what && v.against == "baseline")
+        };
+        let mut figures = Vec::new();
+        for (what, a, b) in [
+            ("requests", ch.requests.0 as f64, ch.requests.1 as f64),
+            ("waiting", ch.busy_ms.0, ch.busy_ms.1),
+            ("cost", ch.cost.0, ch.cost.1),
+            ("errors", ch.errors.0 as f64, ch.errors.1 as f64),
+        ] {
+            let past = row(what).is_some_and(|v| !v.ok);
+            let changed = if what == "waiting" {
+                waiting_moved(a, b)
+            } else {
+                shown(what, a) != shown(what, b)
+            };
+            if !past && !changed {
+                continue;
+            }
+            let text = format!("{what} {}", moved(a, b, &|v| shown(what, v)));
+            figures.push(match row(what).filter(|_| past) {
+                Some(v) => format!("**{text}**, past the {} it may use", shown(what, v.limit)),
+                None => text,
+            });
+        }
+        md.push_str("\n**Against the baseline**");
+        if figures.is_empty() {
+            md.push_str(": the same requests, waiting, cost and errors\n");
+        } else {
+            md.push_str("\n\n");
+            for f in &figures {
+                md.push_str(&format!("- {f}\n"));
+            }
+        }
+        let kinds: Vec<Vec<String>> = ch
+            .groups
+            .iter()
+            .filter(|g| g.requests.0 != g.requests.1 || waiting_moved(g.busy_ms.0, g.busy_ms.1))
+            .take(8)
+            .map(|g| {
                 vec![
-                    match trial_mark(t.standing) {
-                        "FAIL" => "**FAIL**".to_string(),
-                        mark => mark.to_string(),
-                    },
-                    md_text(&t.asked()),
-                    md_text(&t.line()),
+                    md_text(&if g.missed {
+                        format!("{} (not found)", g.operation)
+                    } else {
+                        g.operation.clone()
+                    }),
+                    format!("{} → {}", g.requests.0, g.requests.1),
+                    format!("{} → {}", ms_text(g.busy_ms.0), ms_text(g.busy_ms.1)),
                 ]
             })
             .collect();
+        if !kinds.is_empty() {
+            md.push('\n');
+            md.push_str(&md_table(
+                &["kind", "requests", "waiting"],
+                &[false, true, true],
+                &kinds,
+            ));
+        }
+        // new first: what this change brought
+        let mut new: Vec<String> = ch.appeared.iter().map(|f| f.text.clone()).collect();
+        for w in &c.new_warnings {
+            if !new.contains(w) {
+                new.push(w.clone());
+            }
+        }
+        if !new.is_empty() {
+            md.push_str("\n**New findings**\n\n");
+            for t in &new {
+                md.push_str(&format!("- {}{}\n", md_text(t), place(t)));
+            }
+        }
+        if !ch.resolved.is_empty() {
+            md.push_str("\n**Gone**\n\n");
+            for f in &ch.resolved {
+                md.push_str(&format!("- {}\n", md_text(&f.text)));
+            }
+        }
+    } else if !c.new_warnings.is_empty() {
+        md.push_str("\n**New since the baseline**\n\n");
+        for w in &c.new_warnings {
+            md.push_str(&format!("- {}{}\n", md_text(w), place(w)));
+        }
+    }
+    // the trials that did not survive; the rest counted
+    use crate::trial::Standing;
+    let rows: Vec<Vec<String>> = m
+        .trials
+        .iter()
+        .filter(|t| matches!(t.standing, Standing::Broke | Standing::Degraded))
+        .map(|t| {
+            vec![
+                match trial_mark(t.standing) {
+                    "FAIL" => "**FAIL**".to_string(),
+                    mark => mark.to_string(),
+                },
+                md_text(&t.asked()),
+                md_text(&t.line()),
+            ]
+        })
+        .collect();
+    if !rows.is_empty() {
         md.push('\n');
         md.push_str(&md_table(&["", "under", ""], &[false, false, false], &rows));
     }
-    if let Some(t) = &since {
-        md.push_str(&format!("\n**Since** {}\n", md_text(t)));
-    }
-    if !c.new_warnings.is_empty() {
-        md.push_str("\n**New since the baseline**\n\n");
-        for w in &c.new_warnings {
-            md.push_str(&format!("- {}\n", md_text(w)));
-        }
+    let survived = m
+        .trials
+        .iter()
+        .filter(|t| t.standing == Standing::Survived)
+        .count();
+    if survived > 0 {
+        md.push_str(&format!(
+            "\n{survived} scenario{} survived\n",
+            if survived == 1 { "" } else { "s" }
+        ));
     }
     if !c.expected.is_empty() {
         md.push_str(&format!(
@@ -977,20 +1147,23 @@ pub fn check_markdown_with(
             c.expected.len()
         ));
     }
-    let findings: Vec<_> = findings.iter().take(5).collect();
-    if !findings.is_empty() {
+    // without a baseline, what the run has: its first findings
+    let findings: Vec<_> = m.findings.iter().take(5).collect();
+    if m.change.is_none() && !findings.is_empty() {
         md.push_str("\n<details><summary>What stands out</summary>\n\n");
         for f in findings {
-            md.push_str(&format!("- {}", md_text(&f.text)));
-            if let Some(c) = f.callers.first() {
-                md.push_str(&format!(
-                    " — `{}`",
-                    c.place.replace('`', "'").replace(['\n', '\r'], " ")
-                ));
-            }
-            md.push('\n');
+            md.push_str(&format!("- {}{}\n", md_text(&f.text), place(&f.text)));
         }
         md.push_str("\n</details>\n");
+    }
+    if let Some(url) = m.report_url {
+        // a link as given, its parentheses kept from ending it
+        md.push_str(&format!(
+            "\n[The report]({})\n",
+            url.replace('(', "%28")
+                .replace(')', "%29")
+                .replace(' ', "%20")
+        ));
     }
     md
 }
@@ -1428,10 +1601,8 @@ mod tests {
         let row = c.verdicts.iter().find(|v| v.what == "warnings").unwrap();
         assert_eq!((row.value, row.label()), (0.0, "new warnings"));
         let md = check_markdown(&c, "USD", None, &o);
-        assert!(
-            squeezed(&md).contains("| pass | new warnings | 0 | ≤ 0 | baseline |"),
-            "{md}"
-        );
+        // a row that passed is not repeated in a comment
+        assert!(!md.contains("| pass"), "{md}");
         // held to a baseline alone, and within it: not "within budget"
         assert!(md.starts_with("### sonde: within its baseline"), "{md}");
     }
@@ -1454,6 +1625,79 @@ mod tests {
         assert!(
             c.verdicts.iter().find(|v| v.what == "requests").unwrap().ok,
             "{c:#?}"
+        );
+    }
+
+    /// A reviewer reads the verdict, what changed against the baseline (by
+    /// kind, the new findings first) and one link; never a row that passed.
+    #[test]
+    fn a_pr_comment_says_only_what_changed_new_findings_first_and_one_link() {
+        use crate::profile::{Run, compare_runs};
+        let base: Vec<Record> = (0..20).map(|i| rec(i + 1, &format!("k{i}"))).collect();
+        // the same reads, each after a HEAD of its key
+        let mut after = Vec::new();
+        for (i, r) in base.iter().enumerate() {
+            let mut head = r.clone();
+            head.id = 100 + i as u64;
+            head.method = "HEAD".into();
+            head.operation = "HeadObject".into();
+            head.time = r.time - chrono::Duration::milliseconds(5);
+            after.push(head);
+            after.push(r.clone());
+        }
+        let (pb, prb, ob) = point(&base);
+        let (pa, pra, oa) = point(&after);
+        let c = check(
+            (&pa, &after, &pra, &oa),
+            Some((&pb, &base, &prb, &ob)),
+            &Budget {
+                max_requests: Some(1000),
+                tolerance: Some(0.1),
+                ..Default::default()
+            },
+        );
+        assert!(!c.passed);
+        let ch = compare_runs(
+            &Run::of(&base, prb.clone(), ob.to_vec()),
+            &Run::of(&after, pra.clone(), oa.to_vec()),
+        );
+        assert!(!ch.appeared.is_empty(), "HEAD before GET is new: {oa:#?}");
+        let md = check_comment(
+            &c,
+            &Comment {
+                currency: "USD",
+                findings: &oa,
+                change: Some(&ch),
+                report_url: Some("https://example.com/r(1)"),
+                ..Default::default()
+            },
+        );
+        assert!(md.starts_with("### sonde: past its baseline ❌"), "{md}");
+        // the figure past the baseline, bold, said once; no table of verdicts
+        assert!(
+            md.contains("- **requests 20 → 40 (+100%)**, past the 22 it may use"),
+            "{md}"
+        );
+        assert!(!md.contains("| pass") && !md.contains("**FAIL**"), "{md}");
+        assert!(squeezed(&md).contains("| HeadObject | 0 → 20 |"), "{md}");
+        let new = md.find("**New findings**").expect("new findings");
+        assert!(md[new..].contains("HEAD"), "{md}");
+        assert!(!md.contains("What stands out"), "{md}");
+        assert_eq!(md.matches("](").count(), 1, "one link: {md}");
+        assert!(md.contains("[The report](https://example.com/r%281%29)"));
+        // no baseline: said, and nothing compared
+        let alone = check((&pa, &after, &pra, &oa), None, &Budget::default());
+        let md = check_comment(
+            &alone,
+            &Comment {
+                currency: "USD",
+                no_baseline: Some("no baseline yet for program `etl`"),
+                ..Default::default()
+            },
+        );
+        assert!(
+            md.contains("> ⚠️ no baseline yet for program \\`etl\\`: nothing was compared"),
+            "{md}"
         );
     }
 }

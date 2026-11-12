@@ -8,6 +8,7 @@ use clap::Args;
 use reqlog::Record;
 use sonde_core::Sonde;
 use sonde_proxy::episode::{Episode, Outcome};
+use sonde_proxy::split::Dimension;
 use sonde_proxy::view::Analysis;
 
 use crate::output::{self, Format};
@@ -34,6 +35,11 @@ pub struct ShowArgs {
     /// Open it in the sonde app instead (a sonde:// link).
     #[arg(long)]
     pub(super) app: bool,
+    /// The operations table split by prefix, size, caller, sdk, status or
+    /// operation, and where the slow and the costly requests are.
+    #[arg(long, value_name = "DIMENSION", value_parser = by_arg,
+          conflicts_with_all = ["summary", "errors", "requests", "all", "app"])]
+    pub(super) by: Option<Dimension>,
     /// The format written: table or json.
     #[arg(
         long,
@@ -43,6 +49,93 @@ pub struct ShowArgs {
         hide_possible_values = true
     )]
     pub(super) format: Format,
+}
+
+fn by_arg(text: &str) -> Result<Dimension, String> {
+    Dimension::parse(text).ok_or_else(|| {
+        let all: Vec<&str> = Dimension::ALL.iter().map(|d| d.name()).collect();
+        format!("{text:?} is not one of {}", all.join(", "))
+    })
+}
+
+/// `sonde show --by`: the operations table split by one dimension, and the
+/// sentence that says where the slow and the costly requests are.
+fn print_split(
+    split: &sonde_proxy::split::Split,
+    header: &sonde_proxy::session::SessionHeader,
+    requests: usize,
+    seconds: f64,
+    color: bool,
+) {
+    use sonde_proxy::program::money_text;
+    if let Some(c) = &header.command {
+        println!("{}", paint(&format!("$ {c}"), "1", color));
+    }
+    let from = split
+        .sdk
+        .as_deref()
+        .map(|s| format!(" from {s}"))
+        .unwrap_or_default();
+    println!(
+        "{}",
+        paint(
+            &format!(
+                "{}{from} to {} in {}",
+                output::count(requests, "request"),
+                header.endpoint,
+                output::duration(seconds * 1000.0)
+            ),
+            "1",
+            color
+        )
+    );
+    let rows: Vec<Vec<String>> = split
+        .rows
+        .iter()
+        .map(|r| {
+            vec![
+                if r.other {
+                    format!("other ({})", output::count(r.requests, "request"))
+                } else {
+                    r.key.clone()
+                },
+                output::grouped(r.requests as u64),
+                if r.errors > 0 {
+                    format!(
+                        "{} ({})",
+                        output::grouped(r.errors as u64),
+                        share_text(r.error_share)
+                    )
+                } else {
+                    String::new()
+                },
+                output::duration(r.p50_ms),
+                output::duration(r.p95_ms),
+                output::duration(r.p99_ms),
+                share_text(r.share),
+                money_text(r.cost, &split.currency),
+            ]
+        })
+        .collect();
+    println!(
+        "{}",
+        output::table(
+            &[
+                split.by.name(),
+                "requests",
+                "errors",
+                "p50",
+                "p95",
+                "p99",
+                "waiting",
+                "cost",
+            ],
+            &rows,
+        )
+    );
+    if !split.text.is_empty() {
+        println!("{}", split.text);
+    }
 }
 
 /// One operation on one line: time, format, what happened, size of it, notes.
@@ -148,6 +241,26 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     // what it amounts to, once: every part below reads this
     let analysis = Analysis::of(&session, &prices);
     let eps = &analysis.episodes;
+    if let Some(by) = a.by {
+        let split = sonde_proxy::split::split(all, by, &prices);
+        match a.format {
+            Format::Json => println!(
+                "{}",
+                output::json(&serde_json::json!({
+                    "session": session.header,
+                    "split": split,
+                }))
+            ),
+            _ => print_split(
+                &split,
+                &session.header,
+                all.len(),
+                analysis.summary.seconds,
+                std::io::stdout().is_terminal(),
+            ),
+        }
+        return Ok(0);
+    }
     match a.format {
         // the summary alone: what the table's summary shows, and no more
         Format::Json if a.summary => {
@@ -298,6 +411,7 @@ pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
             requests: false,
             all: false,
             app: false,
+            by: None,
             format: Format::Table,
         },
     )
