@@ -1702,19 +1702,18 @@ impl Sessions {
     /// cost and findings, by kind of request.
     pub async fn compare_runs(before: String, after: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
-            let (a, b) = (open_session(&before)?, open_session(&after)?);
-            let price = |s: &Session| crate::state::request_prices_for(&s.header.endpoint);
-            let (pa, pb) = (
-                sonde_proxy::profile::profile(&a.records, &price(&a)),
-                sonde_proxy::profile::profile(&b.records, &price(&b)),
-            );
-            let (oa, ob) = (
-                sonde_proxy::episode::observations_of(&a.header, &a.records, &episodes(&a.records)),
-                sonde_proxy::episode::observations_of(&b.header, &b.records, &episodes(&b.records)),
-            );
+            // one reckoned before the other is opened: a run of either
+            // size is held with what the other amounts to, not with it
+            let run = |path: &str| -> Result<_, String> {
+                let s = open_session(path)?;
+                let prices = crate::state::request_prices_for(&s.header.endpoint);
+                let run = sonde_proxy::profile::Run::analysed(&s.header, &s.records, &prices);
+                Ok((s.header.command.clone(), run))
+            };
+            let ((ca, a), (cb, b)) = (run(&before)?, run(&after)?);
             Ok(to_json(
-                sonde_proxy::profile::compare_runs((&a.records, &pa, &oa), (&b.records, &pb, &ob))
-                    .of_programs(a.header.command.as_deref(), b.header.command.as_deref()),
+                sonde_proxy::profile::compare_runs(&a, &b)
+                    .of_programs(ca.as_deref(), cb.as_deref()),
             ))
         })
         .await

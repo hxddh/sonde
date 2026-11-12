@@ -251,6 +251,9 @@ pub struct Lines {
     end: usize,
     done: bool,
     read: u64,
+    /// Compressed: a stream that stops short is read up to where it stops.
+    gz: bool,
+    cut: Option<String>,
 }
 
 impl Lines {
@@ -259,7 +262,8 @@ impl Lines {
         let mut magic = [0u8; 2];
         let n = f.read(&mut magic)?;
         f.seek(SeekFrom::Start(0))?;
-        let from: Box<dyn Read + Send> = if n == 2 && magic == [0x1f, 0x8b] {
+        let gz = n == 2 && magic == [0x1f, 0x8b];
+        let from: Box<dyn Read + Send> = if gz {
             Box::new(flate2::read::MultiGzDecoder::new(BufReader::with_capacity(
                 1 << 16,
                 f,
@@ -267,7 +271,10 @@ impl Lines {
         } else {
             Box::new(f)
         };
-        Ok(Lines::of(from))
+        Ok(Lines {
+            gz,
+            ..Lines::of(from)
+        })
     }
 
     /// The lines of any reader (already decompressed).
@@ -279,7 +286,16 @@ impl Lines {
             end: 0,
             done: false,
             read: 0,
+            gz: false,
+            cut: None,
         }
+    }
+
+    /// Why a compressed file's text ended before its end (a partial copy, a
+    /// disk that filled while it was written), when it did: what came
+    /// before was read, its last line torn as a killed recorder's is.
+    pub fn cut(&self) -> Option<&str> {
+        self.cut.as_deref()
     }
 
     /// Reads more into the buffer, making room first. False at the end.
@@ -295,10 +311,10 @@ impl Lines {
         if self.end == self.buf.len() {
             // one line fills the buffer: it may grow, to a point
             if self.buf.len() >= MAX_LINE {
-                return Err(std::io::Error::other(format!(
-                    "a line longer than {} MiB: not a session's",
-                    MAX_LINE >> 20
-                )));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("a line longer than {} MiB: not a session's", MAX_LINE >> 20),
+                ));
             }
             self.buf.resize(self.buf.len() * 2, 0);
         }
@@ -306,16 +322,20 @@ impl Lines {
             match self.from.read(&mut self.buf[self.end..]) {
                 Ok(n) => break n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) if self.gz => {
+                    self.cut = Some(e.to_string());
+                    break 0;
+                }
                 Err(e) => return Err(e),
             }
         };
         self.end += n;
         self.read += n as u64;
         if self.read > MAX_TEXT {
-            return Err(std::io::Error::other(format!(
-                "it holds more than {} GiB",
-                MAX_TEXT >> 30
-            )));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("it holds more than {} GiB", MAX_TEXT >> 30),
+            ));
         }
         self.done = n == 0;
         Ok(n > 0)
@@ -423,7 +443,9 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
     }
     std::fs::rename(&tmp, path)?;
     if let Some((header, counter)) = tally.and_then(Tally::finish) {
-        crate::summary::keep(path, &counter.finish(path, &header));
+        // (the file is ours, just written: its stamp is of what was counted)
+        let at = crate::summary::stamp(path);
+        crate::summary::keep(path, &counter.finish(at, &header));
     }
     Ok(())
 }
@@ -573,22 +595,38 @@ impl Session {
     /// Reads a session file as a stream: the file is never held as text, its
     /// lines are parsed as they are decompressed, on the cores there are.
     pub fn read(path: &Path, keep: Keep) -> Result<Session, String> {
-        let mut lines = Lines::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Session::read_said(path, keep)
+            .map(|r| r.session)
+            .map_err(|e| e.to_string())
+    }
+
+    /// [`Session::read`], saying what it could not read: a file that is no
+    /// session apart from one that could not be read at all, and a
+    /// compressed file cut short (read up to its cut) apart from a whole one.
+    pub fn read_said(path: &Path, keep: Keep) -> Result<Opened, ReadError> {
+        let io = |e: std::io::Error| match e.kind() {
+            std::io::ErrorKind::InvalidData => ReadError::Bad(e.to_string()),
+            _ => ReadError::Io(format!("{}: {e}", path.display())),
+        };
+        let mut lines = Lines::open(path).map_err(io)?;
         let first = lines
             .line()
-            .map_err(|e| e.to_string())?
-            .ok_or("empty session file")?;
+            .map_err(io)?
+            .ok_or(ReadError::Bad("empty session file".into()))?;
         let first = String::from_utf8_lossy(first);
         let header: SessionHeader = serde_json::from_str(first.trim_end_matches('\r'))
-            .map_err(|e| format!("not a sonde session: {e}"))?;
+            .map_err(|e| ReadError::Bad(format!("not a sonde session: {e}")))?;
         if header.format != FORMAT {
-            return Err(format!("not a sonde session (format {:?})", header.format));
+            return Err(ReadError::Bad(format!(
+                "not a sonde session (format {:?})",
+                header.format
+            )));
         }
         if header.version > VERSION {
-            return Err(format!(
+            return Err(ReadError::Bad(format!(
                 "session version {} is newer than this sonde reads ({VERSION})",
                 header.version
-            ));
+            )));
         }
         let small = std::fs::metadata(path).is_ok_and(|m| m.len() < 256 * 1024);
         let workers = if small {
@@ -597,13 +635,14 @@ impl Session {
             std::thread::available_parallelism().map_or(1, |n| n.get().min(8))
         };
         let mut all = Gathered::default();
-        if workers == 1 {
-            while let Some(b) = lines.block().map_err(|e| e.to_string())? {
-                all.add(parse_block(b, keep))?;
+        let cut = if workers == 1 {
+            while let Some(b) = lines.block().map_err(io)? {
+                all.add(parse_block(b, keep)).map_err(ReadError::Bad)?;
             }
+            lines.cut().map(String::from)
         } else {
-            read_blocks(lines, keep, workers, &mut all)?;
-        }
+            read_blocks(lines, keep, workers, &mut all)?
+        };
         let Gathered {
             mut records, logs, ..
         } = all;
@@ -615,13 +654,50 @@ impl Session {
                 r.id = i as u64 + 1;
             }
         }
-        Ok(Session {
-            header,
-            records,
-            logs,
+        let cut = cut.map(|why| {
+            format!(
+                "its compressed text stops short ({why}): read up to there, {} requests",
+                records.len()
+            )
+        });
+        Ok(Opened {
+            session: Session {
+                header,
+                records,
+                logs,
+            },
+            cut,
         })
     }
 }
+
+/// A session read, and what of its file was not.
+pub struct Opened {
+    pub session: Session,
+    /// The file is compressed and its text stops short of its end: what is
+    /// read is what came before (said, not refused, as a torn last line is).
+    pub cut: Option<String>,
+}
+
+/// Why a session file was not read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadError {
+    /// It could not be read (not there, not allowed, a disk's error).
+    Io(String),
+    /// It was read, and it is not a session: no header, a line no record
+    /// could be in the middle of it, a newer format.
+    Bad(String),
+}
+
+impl std::fmt::Display for ReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReadError::Io(e) | ReadError::Bad(e) => f.write_str(e),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {}
 
 /// What of each record a reading keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -779,7 +855,7 @@ fn read_blocks(
     keep: Keep,
     workers: usize,
     all: &mut Gathered,
-) -> Result<(), String> {
+) -> Result<Option<String>, ReadError> {
     use std::sync::mpsc;
     let (work, jobs) = mpsc::sync_channel::<(usize, Vec<u8>)>(workers * 2);
     // the workers hold the jobs' end between them: when they are gone the
@@ -808,12 +884,12 @@ fn read_blocks(
                 match lines.block() {
                     Ok(Some(b)) => {
                         if work.send((seq, b.to_vec())).is_err() {
-                            return Ok(());
+                            return Ok(None);
                         }
                         seq += 1;
                     }
-                    Ok(None) => return Ok(()),
-                    Err(e) => return Err(e.to_string()),
+                    Ok(None) => return Ok(lines.cut().map(String::from)),
+                    Err(e) => return Err(e),
                 }
             }
         });
@@ -837,8 +913,13 @@ fn read_blocks(
         }
         let read = reader
             .join()
-            .unwrap_or_else(|_| Err("reading failed".into()));
-        gathered.and(read)
+            .unwrap_or_else(|_| Err(std::io::Error::other("reading failed")));
+        // a line no record could be names its place; failing that, the read
+        gathered.map_err(ReadError::Bad)?;
+        read.map_err(|e| match e.kind() {
+            std::io::ErrorKind::InvalidData => ReadError::Bad(e.to_string()),
+            _ => ReadError::Io(e.to_string()),
+        })
     })
 }
 
@@ -958,6 +1039,67 @@ mod tests {
         std::fs::write(&path, &bad).unwrap();
         let e = Session::open(&path).unwrap_err();
         assert!(e.starts_with("line 1502: "), "{e}");
+    }
+
+    #[test]
+    fn a_compressed_session_cut_short_is_read_up_to_its_cut_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cut.sonde");
+        recorded(&path, 6000);
+        compress(&path).unwrap();
+        let whole = Session::read_said(&path, Keep::All).unwrap();
+        assert_eq!((whole.session.records.len(), whole.cut), (6000, None));
+        // a partial copy: the gzip stream stops in its middle
+        let bytes = std::fs::read(&path).unwrap();
+        for keep in [bytes.len() / 3, bytes.len() * 2 / 3, bytes.len() - 4] {
+            std::fs::write(&path, &bytes[..keep]).unwrap();
+            let r = Session::read_said(&path, Keep::Analysis).unwrap();
+            let n = r.session.records.len();
+            assert!(n > 0 && n <= 6000, "{n}");
+            assert!(
+                r.session
+                    .records
+                    .iter()
+                    .enumerate()
+                    .all(|(i, r)| r.id == i as u64 + 1)
+            );
+            let said = r.cut.expect("said");
+            assert!(
+                said.contains(&format!("read up to there, {n} requests")),
+                "{said}"
+            );
+            // and every reader of it agrees: opened, counted
+            assert_eq!(Session::open(&path).unwrap().records.len(), n);
+            assert_eq!(crate::summary::counted(&path).unwrap().requests, n as u64);
+        }
+    }
+
+    #[test]
+    fn a_file_that_is_no_session_is_told_from_one_that_could_not_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.sonde");
+        let bad = |e: Result<Opened, ReadError>| match e {
+            Err(ReadError::Bad(why)) => why,
+            Err(other) => panic!("{other:?}"),
+            Ok(_) => panic!("read"),
+        };
+        assert!(matches!(
+            Session::read_said(&path, Keep::All),
+            Err(ReadError::Io(_))
+        ));
+        std::fs::write(&path, b"").unwrap();
+        assert_eq!(
+            bad(Session::read_said(&path, Keep::All)),
+            "empty session file"
+        );
+        std::fs::write(&path, b"hello\n").unwrap();
+        assert!(bad(Session::read_said(&path, Keep::All)).starts_with("not a sonde session"));
+        recorded(&path, 10);
+        let mut text = std::fs::read(&path).unwrap();
+        let at = text.iter().position(|b| *b == b'\n').unwrap() + 1;
+        text.splice(at..at, b"garbage\n".iter().copied());
+        std::fs::write(&path, &text).unwrap();
+        assert!(bad(Session::read_said(&path, Keep::All)).starts_with("line 2: "));
     }
 
     #[test]

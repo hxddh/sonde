@@ -32,6 +32,24 @@ pub fn usage(msg: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(Usage(msg.into()))
 }
 
+/// A file given to read that is not what it should be (a session with a
+/// line no record could be, no header, a newer format): exit 65, the data's
+/// fault, not the 70 of an operation that failed.
+#[derive(Debug)]
+pub struct BadData(pub String);
+
+impl std::fmt::Display for BadData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for BadData {}
+
+pub fn bad_data(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(BadData(msg.into()))
+}
+
 /// An error as the CLI says it: where sonde's own text points at the app
 /// (its Settings, its Multipart place), what to do from a terminal.
 pub fn said(s: &Sonde, text: &str) -> String {

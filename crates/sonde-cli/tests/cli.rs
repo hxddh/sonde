@@ -960,6 +960,114 @@ fn sessions_are_listed_from_what_was_counted_beside_them() {
 }
 
 #[test]
+fn a_session_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
+    let t = tempfile::tempdir().unwrap();
+    let file = session_of(
+        t.path(),
+        "bad.sonde",
+        "python etl.py",
+        "2026-11-01T10:00:00Z",
+    );
+    let text = std::fs::read_to_string(&file).unwrap();
+    let (header, records) = text.split_once('\n').unwrap();
+    std::fs::write(&file, format!("{header}\n{{\"id\": \"x\"}}\n{records}")).unwrap();
+    // show refuses it as bad data, not as an operation that failed
+    let shown = sonde(t.path(), &["show", "bad"]);
+    assert_eq!(shown.status.code(), Some(65), "{}", stderr(&shown));
+    assert!(stderr(&shown).contains("line 2: "), "{}", stderr(&shown));
+    for args in [
+        &["check", "bad", "--max-requests", "100"][..],
+        &["compare", "bad", "bad"],
+    ] {
+        assert_eq!(sonde(t.path(), args).status.code(), Some(65), "{args:?}");
+    }
+    // and the list says so, rather than listing it as a session that reads
+    let listed = sonde(t.path(), &["sessions", "-f", "json"]);
+    let rows: serde_json::Value = serde_json::from_str(&stdout(&listed)).unwrap();
+    assert!(
+        rows[0]["unreadable"]
+            .as_str()
+            .unwrap()
+            .starts_with("line 2: "),
+        "{rows}"
+    );
+    let table = sonde(t.path(), &["sessions"]);
+    assert!(
+        stderr(&table).contains("bad.sonde is not a session: line 2: "),
+        "{}",
+        stderr(&table)
+    );
+}
+
+#[test]
+fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
+    let t = tempfile::tempdir().unwrap();
+    let a = session_of(t.path(), "a.sonde", "python etl.py", "2026-11-01T10:00:00Z");
+    let b = session_of(t.path(), "b.sonde", "python etl.py", "2026-11-01T11:00:00Z");
+    // the second run made one upload part fewer
+    let text = std::fs::read_to_string(&b).unwrap();
+    let mut lines: Vec<&str> = text.lines().collect();
+    let part = lines
+        .iter()
+        .position(|l| l.contains("\"UploadPart\""))
+        .unwrap();
+    lines.remove(part);
+    std::fs::write(&b, lines.join("\n") + "\n").unwrap();
+    let out = sonde(t.path(), &["compare", "a", "b"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("UploadPart"), "{text}");
+    // ten kinds, one changed: the nine others are said, not dropped
+    assert!(
+        text.contains("… and 9 more kinds of request, unchanged"),
+        "{text}"
+    );
+    // a kind's waiting is its share of the run's, as show's table says it
+    let json: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["compare", "a", "b", "-f", "json"],
+    )))
+    .unwrap();
+    let shown: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["show", "a", "--summary", "-f", "json"],
+    )))
+    .unwrap();
+    let kinds = shown["waiting"]["byKind"].as_array().unwrap();
+    for g in json["groups"].as_array().unwrap() {
+        let s = kinds
+            .iter()
+            .find(|k| k["operation"] == g["operation"] && k["missed"] == g["missed"])
+            .unwrap();
+        assert_eq!(g["busyMs"][0], s["waitedMs"], "{g} {s}");
+    }
+}
+
+#[test]
+fn a_compressed_session_cut_short_is_read_up_to_its_cut() {
+    use std::io::Write;
+    let t = tempfile::tempdir().unwrap();
+    let file = session_of(
+        t.path(),
+        "cut.sonde",
+        "python etl.py",
+        "2026-11-01T10:00:00Z",
+    );
+    let text = std::fs::read(&file).unwrap();
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(&text).unwrap();
+    let whole = gz.finish().unwrap();
+    std::fs::write(&file, &whole[..whole.len() * 3 / 4]).unwrap();
+    let shown = sonde(t.path(), &["show", "cut", "--summary"]);
+    assert_eq!(shown.status.code(), Some(0), "{}", stderr(&shown));
+    assert!(
+        stderr(&shown).contains("its compressed text stops short"),
+        "{}",
+        stderr(&shown)
+    );
+}
+
+#[test]
 fn a_long_command_is_cut_in_its_middle_to_fit_the_terminal() {
     let t = tempfile::tempdir().unwrap();
     let long = format!(

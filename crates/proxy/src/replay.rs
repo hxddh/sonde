@@ -630,10 +630,26 @@ pub fn is_replay(records: &[Record]) -> bool {
 /// Compares an original session with its replay (records tagged by
 /// [`replay_tag`]). `replayed` gives the reasons for requests not sent.
 pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) -> Comparison {
-    let by_original: HashMap<u64, &Record> = replay
+    compare_answers(original, &answers(replay), replayed)
+}
+
+/// What [`compare`] reads of a replay: each answer ([`outcome`], and
+/// whether it was a lookup that found nothing) by the request it repeats.
+/// A few bytes a request: a replay is read, kept as this, and let go before
+/// its session is read.
+pub fn answers(replay: &[Record]) -> HashMap<u64, (String, bool)> {
+    replay
         .iter()
-        .filter_map(|r| original_of(r).map(|o| (o, r)))
-        .collect();
+        .filter_map(|r| original_of(r).map(|o| (o, (outcome(r), is_miss(r)))))
+        .collect()
+}
+
+/// [`compare`] with the replay's [`answers`].
+pub fn compare_answers(
+    original: &[Record],
+    by_original: &HashMap<u64, (String, bool)>,
+    replayed: &[Replayed],
+) -> Comparison {
     let mut c = Comparison::default();
     let mut groups: BTreeMap<(String, String, String), Difference> = BTreeMap::new();
     for o in original {
@@ -647,8 +663,8 @@ pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) ->
             continue;
         };
         c.compared += 1;
-        let (a, b) = (outcome(o), outcome(r));
-        if a == b || (is_miss(o) && is_miss(r)) {
+        let (a, b) = (outcome(o), r.0.clone());
+        if a == b || (is_miss(o) && r.1) {
             c.same += 1;
             continue;
         }

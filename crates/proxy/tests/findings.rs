@@ -156,7 +156,7 @@ fn warnings_come_first_then_the_findings_that_bear_on_more_requests() {
 
 #[test]
 fn a_finding_whose_details_change_is_the_same_finding() {
-    use sonde_proxy::profile::{RequestPrices, compare_runs, profile};
+    use sonde_proxy::profile::{RequestPrices, Run, compare_runs, profile};
     let run = |slow: &str| {
         let mut recs: Vec<Record> = (0..20u64)
             .map(|i| rec(i + 1, i as i64 * 100, "GetObject", Some("k"), 200, 8.0))
@@ -168,7 +168,7 @@ fn a_finding_whose_details_change_is_the_same_finding() {
     let prices = RequestPrices::default();
     let (pa, pb) = (profile(&a, &prices), profile(&b, &prices));
     let (oa, ob) = (findings(&a), findings(&b));
-    let c = compare_runs((&a, &pa, &oa), (&b, &pb, &ob));
+    let c = compare_runs(&Run::of(&a, pa, oa), &Run::of(&b, pb, ob));
     assert!(c.resolved.is_empty() && c.appeared.is_empty(), "{c:?}");
 }
 
