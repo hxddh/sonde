@@ -1,19 +1,16 @@
 # What is stable
 
-sonde's version says what a user can rely on from one release to the next. What is listed under **Stable** changes
-only in a major release; everything else may change in any release.
+What is listed under **Stable** changes only in a major release; everything else may change in any release.
 
 ## Stable
 
-| | What | Where it is written down | What holds it |
+| | What | Documented in | Tested by |
 |---|---|---|---|
-| Session files | The `.sonde` format: its header, records and log lines, and how versions are told apart | [session-format.md](session-format.md) | `the_format_as_its_spec_says` (`crates/proxy/src/session.rs`) |
-| JSON outputs | Every `-f json` output (and `share --json`): the fields each schema requires, their types and meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) per output | `crates/sonde-cli/tests/schemas.rs`: the real outputs, checked against the schemas |
-| `sonde.toml` | Its tables and keys: `[check]` (`max-requests`, `max-waiting`, `max-cost`, `max-errors`, `max-p95`, `expect`, `tolerance`, `no-new-warnings`, `baseline`), `[program]` (`name`), `[record]` (`policy`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and what each value means | [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/proxy/src/project.rs`: one reading, for the CLI and the app |
+| Session files | The `.sonde` format: header, records, log lines, versioning | [session-format.md](session-format.md) | `the_format_as_its_spec_says` (`crates/proxy/src/session.rs`) |
+| JSON outputs | Every `-f json` output (and `share --json`): required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas) |
+| `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-cost`, `max-errors`, `max-p95`, `expect`, `tolerance`, `no-new-warnings`, `baseline`), `[program]` (`name`), `[record]` (`policy`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/proxy/src/project.rs` (one reader for CLI and app) |
 | Exit codes | Each code's meaning | [cli.md](cli.md#exit-codes) | `crates/sonde-cli/tests/cli.rs` |
-| Commands and flags | The subcommands, their flags and arguments, the formats each writes (`-f`), and the environment a recorded program is given | [cli.md](cli.md), [recording.md](recording.md) | `crates/sonde-cli/tests/cli.rs` |
-
-The JSON outputs:
+| Commands and flags | Subcommands, flags, arguments, `-f` formats, the environment a recorded program gets | [cli.md](cli.md), [recording.md](recording.md) | `crates/sonde-cli/tests/cli.rs` |
 
 | Command | Schema |
 |---|---|
@@ -22,7 +19,7 @@ The JSON outputs:
 | `sonde check -f json` | [check](schemas/check.schema.json) |
 | `sonde compare -f json` | [compare](schemas/compare.schema.json) |
 | `sonde sessions -f json` | [sessions](schemas/sessions.schema.json) |
-| `sonde share --json` | [share](schemas/share.schema.json) (its `profile` and `signals` are the page's, not stable) |
+| `sonde share --json` | [share](schemas/share.schema.json) (`profile` and `signals` not stable) |
 | `sonde replay -e E -f json` | [replay](schemas/replay.schema.json) |
 | `sonde replay -e A -e B … -f json` | [replay-stores](schemas/replay-stores.schema.json) |
 | `sonde diff -f json` | [diff](schemas/diff.schema.json) |
@@ -36,36 +33,33 @@ The JSON outputs:
 | `sonde probe runs -f json` | [probe-runs](schemas/probe-runs.schema.json) |
 | `sonde probe diff -f json` | [probe-diff](schemas/probe-diff.schema.json) |
 
-`sonde export` writes OpenTelemetry's OTLP/JSON, whose contract is OpenTelemetry's.
+`sonde export` writes OpenTelemetry OTLP/JSON; that contract is OpenTelemetry's.
 
 ## Not stable
 
-- The text a command writes for people: tables, sentences, `-f markdown`, `-f csv`, `-f github`, and everything on
-  stderr. Read `-f json` instead.
-- The desktop app, the terminal UI, the shared HTML page, and the bridge between the app and Rust.
-- The files sonde keeps beside sessions and in its data directory (counts, verdicts, baselines, probe runs, caches):
-  sonde reads its own, and makes a cache again when it does not read.
-- The Rust crates' APIs: they are sonde's parts, not libraries.
-- A finding's text and the phrases it is made of. Its `identity` (what `[check] expect` names) is stable.
+- Text for people: tables, sentences, `-f markdown`, `-f csv`, `-f github`, all of stderr. Use `-f json`.
+- The desktop app, the terminal UI, the shared HTML page, the app–Rust bridge.
+- Files beside sessions and in the data directory (counts, verdicts, baselines, probe runs, caches); an unreadable
+  cache is rebuilt.
+- The Rust crates' APIs.
+- A finding's text. Its `identity` (what `[check] expect` names) is stable.
 
 ## Versions
 
-- **Major** (`18.0.0`): a stable thing breaks — a field a schema requires is removed, renamed or changes type or
-  meaning; a session format version is added; a `sonde.toml` key or flag is removed or means something else; an exit
-  code means something else.
-- **Minor** (`17.1.0`): anything else that changes what sonde does — a command, a flag, a field, a `sonde.toml` key,
-  a finding, a scenario added; the app and the text changed.
-- **Patch** (`17.0.1`): fixes, where what was documented did not hold.
+| Release | Changes |
+|---|---|
+| **Major** (`18.0.0`) | a stable thing breaks: a required field removed, renamed, retyped or redefined; a new session format version; a `sonde.toml` key or flag removed or redefined; an exit code redefined |
+| **Minor** (`17.1.0`) | any other change in behaviour: new commands, flags, fields, `sonde.toml` keys, findings, scenarios; app and text changes |
+| **Patch** (`17.0.1`) | fixes where documented behaviour did not hold |
 
-What may be added within a major, and what readers should expect of it:
+Within a major:
 
-- An object in a JSON output may gain fields; read the ones you know. A schema leaves objects open for that reason.
-  A value an `enum` lists may gain others only in a minor that says so.
-- A session file may gain fields within its version; a sonde reads every session version up to its own and
-  refuses a newer one by name.
-- `sonde.toml` may gain keys. An older sonde refuses a key it does not know (exit 64): a file written for a newer
-  sonde says so rather than being half read.
-- A deprecated flag keeps working, said on stderr, until the next major.
+- JSON objects may gain fields; read the ones you know (schemas leave objects open). An `enum` gains values only in
+  a minor that says so.
+- A session file may gain fields within its version. sonde reads every version up to its own and refuses a newer one
+  by name.
+- `sonde.toml` may gain keys. An older sonde refuses an unknown key (exit 64) rather than half-reading the file.
+- A deprecated flag keeps working, with a note on stderr, until the next major.
 
-A change to a stable thing changes its documentation and its test in the same commit; a test that fails on a change
-is the contract asking for a major.
+A change to a stable thing updates its documentation and its test in the same commit; a test failing on a change
+means the change needs a major.
