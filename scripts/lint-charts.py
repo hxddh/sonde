@@ -21,7 +21,12 @@ a chart bypasses the system:
   writes a moment (`sinceTick`, a row's `tMs`) anywhere else fails, as does
   a chart named in `OVER_TIME` that draws no `<TimeAxis`;
 - value scale: every chart named in `COUNTS` has a `<ValueAxis` (zero and
-  the peak, with its unit);
+  the peak, with its unit); where every bar says its own count (each `<Bar`
+  has a `label=`) the scale is `marked` (zero alone), and a `marked` scale
+  stands only under bars that all say theirs (16.0's lint demanded a peak
+  where DESIGN says there is none);
+- time's ticks: `TIME_TICK` only in `TimeAxis`; a bottom axis of buckets or
+  measures is `BUCKET_TICK`;
 - bars: thickness only from `BARS`/`CELLS`, tips only from `TIP`, heights
   only the named ones (`PLOT`, `SHAPE`, `STRIP`, `STACK`, `SHAPE_STRIP`, `MARK`,
   `TREEMAP`, `FLOWS`): a literal `paddingInner:`, `cornerRadii={…}` or `h-N`
@@ -80,6 +85,14 @@ for name in OVER_TIME:
 for name in COUNTS:
     if "<ValueAxis" not in body_of(name):
         say(plots, 1, f"{name} is a chart of counts and has no <ValueAxis>: zero and the peak, with its unit")
+for name in COUNTS:
+    body = body_of(name)
+    bars = re.findall(r"<Bar\b.*?/>", body)
+    marked = re.search(r"<ValueAxis\b[^\n]*?\bmarked\b", body)
+    if bars and all("label=" in b for b in bars) and not marked:
+        say(plots, 1, f"{name}: every bar says its own count, and its scale draws a peak too: <ValueAxis marked …/> (zero alone)")
+    if marked and not (bars and all("label=" in b for b in bars)):
+        say(plots, 1, f"{name}: a scale of zero alone (marked) over bars that do not all say their count")
 for name in OVER_TIME + COUNTS:
     if name not in CHARTS and name not in MARKS:
         say(plots, 1, f"{name} is named in OVER_TIME or COUNTS and is no chart")
@@ -133,6 +146,9 @@ for p in files:
                 strip = name == "SessionShape" and " strip" in line
                 if n not in framed and "body:" not in line and not strip and not re.search(r"body: \(\) =>", "\n".join(lines[max(0, n - 4) : n])):
                     say(p, n, f"<{name}> outside the frame: put it in a <Chart> (or a chart descriptor's body)")
+        # time's ticks are TimeAxis's: another bottom axis has its own name
+        if re.search(r"labelClass=\{TIME_TICK\}", line) and inside(n) != "TimeAxis":
+            say(p, n, "time's ticks on an axis that is not time: BUCKET_TICK")
         # one time axis: a moment is written on an axis by TimeAxis only
         if "<PlotAxis" in line and re.search(r"sinceTick|tMs\b", line) and inside(n) != "TimeAxis":
             say(p, n, "a time axis of its own: <TimeAxis domain={…} /> (slices={n} on a band scale)")

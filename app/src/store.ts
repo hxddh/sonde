@@ -3,6 +3,7 @@
 // signals mirror it and are refreshed after each change.
 
 import { batch, Clipboard, computed, type JSX, lifecycle, Picker, signal } from "nsh";
+import { rangeOf, rangeOnOpen } from "./range";
 import { api, asError } from "./native";
 import { language, t } from "./i18n";
 import { core, endpointName } from "./phrases";
@@ -240,17 +241,27 @@ export function pathOf(uri: string): string {
   return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;
 }
 
+/** A path a link may open: a session file (`.sonde`, `.sonde.gz`) on this
+ * machine. A UNC path (`\\host\share`, `//host/share`) would have Windows
+ * reach that host, with the user's credentials, before anything is read. */
+export function linkable(path: string): boolean {
+  return /\.sonde(\.gz)?$/i.test(path) && !/^[\\/]{2}/.test(path);
+}
+
 /**
  * A `sonde://` link (from `sonde show --app`, a shared page, the docs). Its
  * URL is anyone's to make: it only opens what sonde would open itself.
  *   sonde://open?path=/abs/file.sonde   a session file, added as a drop is
  *   sonde://session/<file name>         a session of the sessions folder
+ *   …&range=120-480 / ?range=120-480     either, on its Time pane over that stretch (ms from its start)
  *   sonde://bucket/<endpoint>/<bucket>[/<prefix>]
  */
 export function openLink(url: string) {
   const m = /^sonde:\/\/([a-z]+)(\/[^?#]*)?(\?[^#]*)?/i.exec(url.trim());
   if (!m) return;
   const [, what, rest = "", query = ""] = m;
+  // a stretch of the session's time: its Time pane opens over it
+  const range = rangeOf(query);
   const part = (s: string) => {
     try {
       return decodeURIComponent(s);
@@ -262,12 +273,15 @@ export function openLink(url: string) {
     // the value after the first "=", decoded once
     const kv = query.slice(1).split("&").find((x) => x.startsWith("path="));
     const path = kv === undefined ? undefined : part(kv.slice(5).replace(/\+/g, "%20"));
-    if (path?.toLowerCase().endsWith(".sonde")) openPaths([path]);
+    if (!path || !linkable(path)) return;
+    if (range) rangeOnOpen.set({ name: path.split(/[\\/]/).pop() ?? path, range });
+    openPaths([path]);
   } else if (what === "session") {
     const name = part(rest.slice(1));
     const s = api.sessions.list().find((x) => x.name === name);
     if (!s) return notify(t("link.noSession", { name }), { kind: "warning" });
     batch(() => {
+      if (range) rangeOnOpen.set({ name, range });
       openSession.set(s.path);
       go("sessions");
     });

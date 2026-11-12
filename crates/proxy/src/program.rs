@@ -302,7 +302,7 @@ pub fn write_baselines(
             .map(|d| d.as_nanos())
             .unwrap_or_default()
     ));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(all)?)?;
+    reqlog::private::write(&tmp, serde_json::to_vec_pretty(all)?)?;
     std::fs::rename(&tmp, dir.join("baselines.json"))
 }
 
@@ -564,6 +564,11 @@ pub struct BaselineLimits {
 
 pub const DEFAULT_TOLERANCE: f64 = 0.1;
 
+/// Waiting a run may add to its baseline's whatever the tolerance: a short
+/// run on a shared machine (a CI runner) varies by tens of milliseconds, and a
+/// budget of 1 ms + 10% failed on that noise alone.
+pub const WAITING_SLACK_MS: f64 = 50.0;
+
 pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
     let grow = 1.0 + tolerance;
     BaselineLimits {
@@ -571,8 +576,8 @@ pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
         requests: (base.requests as f64 * grow + 1e-9)
             .floor()
             .max(base.requests as f64),
-        // a run this short varies more than its tolerance: a few ms of slack
-        waiting_ms: base.busy_ms * grow + 5.0,
+        // a run this short varies more than its tolerance
+        waiting_ms: base.busy_ms * grow + WAITING_SLACK_MS,
         // a free baseline (deletes only) still lets a run cost a hundredth of a
         // cent; one that cost anything is held to its percent, however small
         // (the same floor on top was 100% of a run costing 0.0001)
@@ -734,12 +739,9 @@ pub fn check(
     }
 }
 
+/// A length of time ([`sonde_fmt::duration`]).
 pub fn ms_text(ms: f64) -> String {
-    if ms >= 1000.0 {
-        format!("{:.1} s", ms / 1000.0)
-    } else {
-        format!("{ms:.0} ms")
-    }
+    sonde_fmt::duration(ms)
 }
 
 /// Money to two significant digits under a cent: a session's requests often

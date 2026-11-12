@@ -239,6 +239,10 @@ pub struct Settings {
     /// for JavaScript v3 with NODE_OPTIONS, the AWS SDK for Java 2 with
     /// JAVA_TOOL_OPTIONS).
     pub name_callers: bool,
+    /// What a program recorded by Run may do to the store: `no-delete`
+    /// (the default: nothing removed, nothing there before written over),
+    /// `read-only` or `allow`. sonde's own acts are `read_only`'s.
+    pub record_policy: String,
     pub exports_dir: Option<PathBuf>,
     pub downloads_dir: Option<PathBuf>,
 }
@@ -257,6 +261,7 @@ impl Default for Settings {
             language: "auto".into(),
             stale_upload_days: 7,
             name_callers: false,
+            record_policy: "no-delete".into(),
             exports_dir: None,
             downloads_dir: None,
         }
@@ -296,6 +301,12 @@ impl Config {
         }
         if self.settings.concurrency == 0 || self.settings.concurrency > 1024 {
             return Err("settings.concurrency: 1 to 1024".into());
+        }
+        if !["allow", "no-delete", "read-only"].contains(&self.settings.record_policy.as_str()) {
+            return Err(format!(
+                "settings.record-policy {:?}: one of allow, no-delete, read-only",
+                self.settings.record_policy
+            ));
         }
         Ok(())
     }
@@ -431,6 +442,7 @@ credentials = { kind = "profile", name = "prod" }
     fn defaults_are_safe() {
         let c = Config::default();
         assert!(c.settings.read_only);
+        assert_eq!(c.settings.record_policy, "no-delete");
         assert_eq!(c.settings.reqlog_capacity, 5000);
         assert_eq!(c.settings.stale_upload_days, 7);
     }
@@ -438,6 +450,8 @@ credentials = { kind = "profile", name = "prod" }
     #[test]
     fn rejects_bad() {
         assert!(Config::parse("[[endpoint]]\nid='a b'\nname='x'\nurl='http://x'").is_err());
+        assert!(Config::parse("[settings]\nrecord-policy = 'everything'").is_err());
+        assert!(Config::parse("[settings]\nrecord-policy = 'allow'").is_ok());
         assert!(Config::parse("[[endpoint]]\nid='a'\nname='x'\nurl='ftp://x'").is_err());
         assert!(Config::parse("[[endpoint]]\nid='a'\nname='x'\nurl='http://x'\n[[endpoint]]\nid='a'\nname='y'\nurl='http://y'").is_err());
         assert!(

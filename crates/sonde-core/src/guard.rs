@@ -232,7 +232,7 @@ impl Guard {
         if let Some(dir) = self.audit_path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
-        let mut f = std::fs::OpenOptions::new()
+        let mut f = reqlog::private::options()
             .create(true)
             .append(true)
             .open(&self.audit_path)
@@ -266,19 +266,9 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+/// A size ([`sonde_fmt::bytes`]).
 pub fn human_bytes(b: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
-    let mut v = b as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < UNITS.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{b} B")
-    } else {
-        format!("{v:.1} {}", UNITS[i])
-    }
+    sonde_fmt::bytes(b)
 }
 
 /// Outcome of executing a plan.
@@ -405,6 +395,13 @@ mod tests {
         g.audit(&e).unwrap();
         g.audit(&e).unwrap();
         assert_eq!(g.audit_entries(10).len(), 2);
+        // what was done to which keys is the user's alone
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let m = std::fs::metadata(dir.path().join("a/audit.jsonl")).unwrap();
+            assert_eq!(m.permissions().mode() & 0o777, 0o600);
+        }
         assert_eq!(human_bytes(0), "0 B");
         assert_eq!(human_bytes(5 * 1024 * 1024 * 1024), "5.0 GiB");
     }

@@ -1,0 +1,62 @@
+name: Fuzz
+
+# Each fuzz target (fuzz/) for a few minutes, weekly, from the samples the
+# tests read and what the runs before found (kept in the cache). An input that
+# crashes one is kept as an artifact: `cargo +nightly fuzz run <target> <file>`
+# runs it again.
+on:
+  schedule:
+    - cron: "23 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds for each target
+        default: "300"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - iceberg_metadata
+          - iceberg_avro
+          - slatedb
+          - lakefs
+          - woodpecker
+          - import_access_log
+          - import_cloudtrail
+          - import_har
+          - s3_xml
+          - session_lines
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with: { tool: cargo-fuzz }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { workspaces: "fuzz -> target", key: "fuzz-${{ matrix.target }}" }
+      # the corpus grown by earlier runs, under a key of its own each time
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - run: fuzz/seeds.sh
+      - name: Fuzz ${{ matrix.target }}
+        run: |
+          cd fuzz
+          cargo fuzz run ${{ matrix.target }} corpus/${{ matrix.target }} -- \
+            -max_total_time=${{ inputs.seconds || '300' }} -rss_limit_mb=4096 -timeout=30
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}

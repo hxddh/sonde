@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use reqlog::Text;
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -15,12 +16,13 @@ pub struct Phrase {
 
 /// A phrase's arguments by name, in the order of their names: a map as it is
 /// written and read, kept as the two or three pairs it is. Every operation
-/// of a session has a title, and a session may have a million.
+/// of a session has a title, and a session may have a million: its values
+/// are shared text (an operation's name, a key its requests name already).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Args(Vec<(&'static str, String)>);
+pub struct Args(Vec<(&'static str, Text)>);
 
 impl Args {
-    pub fn get(&self, name: &str) -> Option<&String> {
+    pub fn get(&self, name: &str) -> Option<&Text> {
         self.0.iter().find(|(k, _)| *k == name).map(|(_, v)| v)
     }
 
@@ -28,11 +30,11 @@ impl Args {
         self.get(name).is_some()
     }
 
-    pub fn values(&self) -> impl Iterator<Item = &String> {
+    pub fn values(&self) -> impl Iterator<Item = &Text> {
         self.0.iter().map(|(_, v)| v)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &String)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &Text)> {
         self.0.iter().map(|(k, v)| (*k, v))
     }
 
@@ -46,17 +48,18 @@ impl Args {
 }
 
 impl std::ops::Index<&str> for Args {
-    type Output = String;
-    fn index(&self, name: &str) -> &String {
+    type Output = Text;
+    fn index(&self, name: &str) -> &Text {
         self.get(name).expect("an argument of that name")
     }
 }
 
-impl FromIterator<(&'static str, String)> for Args {
+impl<V: Into<Text>> FromIterator<(&'static str, V)> for Args {
     /// A name given twice keeps its last value, as a map would.
-    fn from_iter<I: IntoIterator<Item = (&'static str, String)>>(pairs: I) -> Self {
-        let mut all: Vec<(&'static str, String)> = Vec::new();
+    fn from_iter<I: IntoIterator<Item = (&'static str, V)>>(pairs: I) -> Self {
+        let mut all: Vec<(&'static str, Text)> = Vec::new();
         for (k, v) in pairs {
+            let v = v.into();
             match all.iter_mut().find(|(have, _)| *have == k) {
                 Some(slot) => slot.1 = v,
                 None => all.push((k, v)),
@@ -76,6 +79,15 @@ impl Serialize for Args {
 
 /// A phrase: `key`'s template with `args`.
 pub fn p(key: &'static str, args: &[(&'static str, String)]) -> Phrase {
+    Phrase {
+        key,
+        args: args.iter().cloned().collect(),
+    }
+}
+
+/// [`p`] of text shared already (an operation's name, a target its
+/// requests' key is in): a million operations hold it once.
+pub fn p_shared(key: &'static str, args: &[(&'static str, Text)]) -> Phrase {
     Phrase {
         key,
         args: args.iter().cloned().collect(),
@@ -120,6 +132,12 @@ fn template(key: &str) -> &'static str {
         "lance.read.v" => "read version {v}",
         "lance.read" => "read the dataset",
         "lance.ranges" => " · {n} ranges of {files} file{s} ({size})",
+        "hudi.instant" => "{action} {instant}",
+        "hudi.metadata" => "metadata table: {action} {instant}",
+        "hudi.properties" => "table properties written (hoodie.properties)",
+        "paimon.snapshot" => "snapshot {n}",
+        "paimon.schema" => "schema {n} written",
+        "paimon.hint" => "{file} hint updated",
         "delta.checkpoint" => "checkpoint written",
         "delta.last" => "_last_checkpoint updated",
         "step.other" => "{op} {key}",
@@ -139,6 +157,7 @@ fn template(key: &str) -> &'static str {
         "loose.listed" => "listed {dir}/",
         "loose.misses" => "{n} lookup{s} that found nothing",
         "loose.reads" => "{n} reads",
+        "loose.deletes" => "{n} file{s} deleted",
         "obs.shared" => "{n} {format} writes: ",
         "obs.injected" => {
             "{n} request{s} met a fault sonde injected (scenario {scenario}): the errors and retries here are the trial's, not the store's"
@@ -155,6 +174,12 @@ fn template(key: &str) -> &'static str {
         "obs.retried" => "{n} request{s} repeated after a retryable failure",
         "obs.small" => {
             "{n} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do"
+        }
+        "obs.rename" => {
+            "{n} object{s} copied out of _temporary/ and deleted: a commit by rename (Hadoop's FileOutputCommitter) writes each output file again on S3; an S3A committer writes it once"
+        }
+        "obs.markers" => {
+            "{n} directory marker{s} written (empty objects named …/), {m} delete requests of markers: s3a keeps them with fs.s3a.directory.marker.retention=keep"
         }
         "obs.races" => "{n} conditional write{s} lost a race (412): another writer got there first",
         "obs.hot" => "{key} was read {n} times ({pct}% of all requests)",
@@ -184,7 +209,16 @@ fn template(key: &str) -> &'static str {
         "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
         "trial.advice.retries" => "{sdk} did not send it again: turn its retries on ({setting})",
         "trial.advice.retry" => {
-            "send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry"
+            "send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry, and so is S3's SlowDown, RequestTimeout or RequestTimeTooSkewed"
+        }
+        "trial.advice.skew" => {
+            "a 403 RequestTimeTooSkewed is owed a retry signed again by the clock the answer's Date gives (the AWS SDKs for Java and JavaScript do this; boto3 does not); and keep the machine's clock in time"
+        }
+        "trial.advice.timeout" => {
+            "give each attempt a timeout well under a stall (a first byte comes in well under a second), so that a stalled request is sent again"
+        }
+        "trial.advice.list" => {
+            "a listing just after a write may not show it yet: keep the keys the program wrote, or list again before going on without one"
         }
         "trial.advice.cut" => {
             "check the bytes read against Content-Length, and read the rest (Range) or the whole again"
@@ -214,11 +248,26 @@ fn template(key: &str) -> &'static str {
             "{n} download{s} cut short and read on from past the cut: bytes are missing"
         }
         "trial.why.unrun" => {
-            "{n} conditional write{s} lost {its} race and the commit was never made"
+            "{n} conditional write{s} lost {its} race: no commit followed {it} and nothing read back what won"
         }
         "trial.why.unrun.exit" => ", and the program exited {exit}",
         "trial.why.overwrote" => {
             "{n} lost race{s} answered by writing the key without a condition: the other writer's commit would be gone"
+        }
+        "trial.why.waited" => {
+            "waited out {n} stall{s} of {time} before the first byte: no timeout cut {it} short"
+        }
+        "trial.why.reuploaded" => {
+            "{n} upload{s} made again from {its} first part though the store had completed {it}: every part sent twice"
+        }
+        "trial.why.rewrote" => {
+            "{n} key{s} a listing left out written again: the program took {it} for missing"
+        }
+        "trial.why.missed" => {
+            "{n} key{s} this run wrote and a listing left out {was} never read as the clean run read {it}: the program went on without {it}"
+        }
+        "trial.why.staleUnused" => {
+            "a listing left out {n} key{s} this run wrote, and nothing the program did after turned on {it}: the requests cannot tell whether it noticed"
         }
         "trial.why.cleanExit" => "the clean run exited {exit} itself",
         "trial.why.exit" => "exited {exit} (the clean run exited {clean})",
@@ -319,6 +368,9 @@ mod tests {
             "advice.retry",
             "advice.cut",
             "advice.race",
+            "advice.skew",
+            "advice.timeout",
+            "advice.list",
             "why.notMet",
             "why.uploads",
             "why.reads",
@@ -333,6 +385,11 @@ mod tests {
             "why.unrun",
             "why.unrun.exit",
             "why.overwrote",
+            "why.waited",
+            "why.reuploaded",
+            "why.rewrote",
+            "why.missed",
+            "why.staleUnused",
             "why.cleanExit",
             "why.exit",
             "why.refused.completed",

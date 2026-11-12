@@ -10,9 +10,9 @@ import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange, SessionInfo, Signals } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, Title, TYPE, EMPHASIS, SIZES, SURFACE } from "./kit";
+import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN } from "./kit";
 import { fileName, sessionName } from "./manage";
-import { brief, handful, signalsOf } from "../signals";
+import { brief, FEW, handful, signalsOf } from "../signals";
 import { Chart, cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency, MARK, Sparkline } from "./plots";
 
 interface Comparison {
@@ -33,7 +33,7 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
   const c = () => props.change;
   const s = () => props.signals ?? null;
   const n = (v: number) => count(Math.round(v));
-  type Fact = { id: string; label: string; a: number | null; b: number | null; text: (v: number) => string; detail?: () => string; series?: (x: Signals) => number[]; kind?: "bars" | "line" };
+  type Fact = { id: string; label: string; a: number | null; b: number | null; text: (v: number) => string; detail?: () => string; series?: (x: Signals) => number[]; kind?: "bars" | "line"; /** a percentile of fewer than `FEW` requests in that run: marked `~` */ few?: [boolean, boolean] };
   const of = <T,>(f: (x: Signals) => T): [T, T] | null => (s() ? [f(s()![0]), f(s()![1])] : null);
   const pair = (a: string, b: string) => (a === b ? a : `${a} → ${b}`);
   const oneUnit = () => costParts(c().cost[0], c().currency).per1000 === costParts(c().cost[1], c().currency).per1000;
@@ -41,12 +41,17 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     const pace = of((x) => (brief(x) || x.rate.value == null ? null : t("signal.perSecond", { n: rate(x.rate.value) })));
     const share = of((x) => percent(x.errors.value ?? 0));
     const p50 = of((x) => x.latency.p50Ms);
-    const p95 = of((x) => (x.latency.p95Ms == null ? null : `p95 ${duration(x.latency.p95Ms)}`));
+    // a percentile of a handful of requests is one of them: marked, in each run that had a handful
+    const few = of((x) => x.rate.requests < FEW) ?? undefined;
+    const mark = (i: 0 | 1, text: string) => (few?.[i] ? `~${text}` : text);
+    const p95 = of((x) => (x.latency.p95Ms == null ? null : duration(x.latency.p95Ms)));
+    // "p95" once, before the pair: "p95 ~5.7 ms → 69 ms"
+    const tails = () => (p95 && p95[0] && p95[1] ? `p95 ${p95[0] === p95[1] && !few?.[0] && !few?.[1] ? p95[0] : `${mark(0, p95[0])} → ${mark(1, p95[1])}`}` : "");
     const moved = of((x) => transfer(x.bytes.upBytes, x.bytes.downBytes));
     return [
       { id: "requests", label: t("compare.requests"), a: c().requests[0], b: c().requests[1], text: n, detail: () => (pace && pace[0] && pace[1] ? pair(pace[0], pace[1]) : ""), series: (x) => x.rate.series },
       { id: "errors", label: t("signal.errors"), a: c().errors[0], b: c().errors[1], text: n, detail: () => (share ? pair(share[0], share[1]) : ""), series: (x) => x.errors.series },
-      { id: "latency", label: t("signal.latency"), a: p50?.[0] ?? null, b: p50?.[1] ?? null, text: duration, detail: () => (p95 && p95[0] && p95[1] ? pair(p95[0], p95[1]) : ""), series: (x) => x.latency.series, kind: "line" },
+      { id: "latency", label: t("signal.latency"), a: p50?.[0] ?? null, b: p50?.[1] ?? null, text: duration, detail: tails, series: (x) => x.latency.series, kind: "line", few },
       { id: "waiting", label: t("compare.waiting"), a: c().busyMs[0], b: c().busyMs[1], text: duration, detail: () => t("compare.took", { t: pair(duration(c().wallMs[0]), duration(c().wallMs[1])) }) },
       // (both in one unit: the unit is said once, with the tile's name, so the two figures fit)
       { id: "cost", label: oneUnit() ? `${t("compare.cost")} · ${costParts(c().cost[1], c().currency).unit}` : t("compare.cost"), a: c().cost[0], b: c().cost[1], text: (v) => (oneUnit() ? costParts(v, c().currency).figure : cost(v, c().currency)), detail: () => (moved ? pair(moved[0], moved[1]) : "") },
@@ -55,7 +60,8 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
   const tile = (f: () => Fact) => {
     const known = () => f().a != null && f().b != null;
     const same = () => known() && (Math.abs(f().b! - f().a!) < 1e-9 || f().text(f().a!) === f().text(f().b!));
-    const value = () => (!known() ? t("signal.notTimed") : same() ? f().text(f().a!) : `${f().text(f().a!)} → ${f().text(f().b!)}`);
+    const side = (i: 0 | 1, v: number) => (f().few?.[i] ? `~${f().text(v)}` : f().text(v));
+    const value = () => (!known() ? t("signal.notTimed") : same() && !f().few?.[0] && !f().few?.[1] ? f().text(f().a!) : `${side(0, f().a!)} → ${side(1, f().b!)}`);
     // how much it changed, then what else there is to say of it; the same in both runs: said so, no "−0%"
     // (from nothing there is no share to say: the two figures say it)
     const detail = () => [!known() ? "" : same() ? t("compare.sameBoth") : f().a === 0 ? "" : change(f().a!, f().b!), f().detail?.() ?? ""].filter(Boolean).join(" · ");
@@ -311,9 +317,9 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
   };
   const p95 = (r: StoreRun, k: LatencyChange) => r.latency.find((l) => l.operation === k.operation && l.missed === k.missed)?.p95Ms[1];
   const columns = () => [
-    { key: "what", title: "", width: 190, fixed: true },
-    { key: "recorded", title: t("matrix.recorded"), width: 90, align: "end" as const },
-    ...props.runs.map((r, i) => ({ key: `s${i}`, title: r.endpoint, width: 100, align: "end" as const })),
+    { key: "what", title: "", width: COLUMN.matrixWhat, fixed: true },
+    { key: "recorded", title: t("matrix.recorded"), width: COLUMN.matrixRecorded, align: "end" as const },
+    ...props.runs.map((r, i) => ({ key: `s${i}`, title: r.endpoint, width: COLUMN.matrixRun, align: "end" as const })),
   ];
   const rows = () => [
     { what: t("matrix.differ"), recorded: "—", ...Object.fromEntries(props.runs.map((r, i) => [`s${i}`, t("matrix.of", { n: r.differ, of: r.compared })])) },

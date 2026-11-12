@@ -120,14 +120,15 @@ export function signalTiles(s: Signals): SignalTile[] {
   // a run of a moment says totals; a handful of requests has no line over its time
   const few = brief(s);
   const some = handful(s);
-  const over = (series: number[]) => (s.timed && !some ? series : []);
+  // (a run under a second, or of a handful: no line at all, as `show` draws none)
+  const over = (series: number[]) => (s.timed && !few ? series : []);
   // a percentile of a handful of requests is one of them: said
   const tails = s.latency.p95Ms == null || s.latency.p99Ms == null ? "" : t(s.rate.requests < FEW ? "signal.tailsFew" : "signal.tails", { p95: duration(s.latency.p95Ms), p99: duration(s.latency.p99Ms), n: count(s.rate.requests) });
   return [
     {
       id: "rate",
       label: few ? t("signal.requests") : t("signal.rate"),
-      // ("9 requests"; with its line beside it the figure alone, under "Requests": nothing in a tile is cut)
+      // ("9 requests"; of more, the figure alone under "Requests": a tile's name is not squeezed by its figure)
       value: few ? (some || !s.timed ? t("run.bandRequests", { n: s.rate.requests }) : count(s.rate.requests)) : s.rate.value == null ? none : t("signal.perSecond", { n: rate(s.rate.value) }),
       detail: few ? t("signal.inTime", { t: duration(s.wallMs) }) : s.timed ? t("signal.requestsIn", { n: count(s.rate.requests), t: duration(s.wallMs) }) : t("run.bandRequests", { n: s.rate.requests }),
       tone: !few && s.rate.value == null ? "quiet" : "plain",
@@ -141,7 +142,7 @@ export function signalTiles(s: Signals): SignalTile[] {
       value: some ? t("signal.failedOf", { n: count(s.errors.count), of: count(s.rate.requests) }) : s.errors.value == null ? "—" : percent(s.errors.value),
       detail: wrong.length ? wrong.join(" · ") : t("signal.noErrors"),
       tone: s.errors.count > 0 ? "bad" : "plain",
-      series: some ? [] : s.errors.series,
+      series: few ? [] : s.errors.series,
       kind: "bars",
     },
     {

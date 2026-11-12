@@ -258,6 +258,10 @@ pub struct Signals {
 /// A run under this long has no rate: there was no second to have one in.
 pub const SHORT_MS: f64 = 1000.0;
 
+/// Under this many requests a run has no shape over its time to draw: a
+/// sparkline of it is a few stray ticks (the app's `FEW`).
+pub const FEW: usize = 20;
+
 /// How long after a failure its retry may start: the bound the episodes
 /// group a request's attempts by.
 pub const RETRY_WINDOW_US: i64 = 60_000_000;
@@ -901,52 +905,21 @@ fn paint(s: &str, code: &str, color: bool) -> String {
     }
 }
 
-/// A length of time as sonde writes it: "0.4 ms", "12 ms", "1.5 s",
-/// "2m 26s".
+/// A length of time as sonde writes it: "0.4 ms", "12 ms", "2.35 s",
+/// "2m 26s", "1h 40m" ([`sonde_fmt::duration`], the app's figures).
 pub fn ms_text(v: f64) -> String {
-    if v >= 60_000.0 {
-        format!(
-            "{}m {:02}s",
-            (v / 60_000.0) as u64,
-            (v % 60_000.0 / 1000.0) as u64
-        )
-    } else if v >= 1000.0 {
-        format!("{:.1} s", v / 1000.0)
-    } else if v >= 0.95 {
-        format!("{v:.0} ms")
-    } else {
-        format!("{v:.1} ms")
-    }
+    sonde_fmt::duration(v)
 }
 
-/// A count of bytes as sonde writes it, on the one ladder: "0 B",
-/// "1.5 KiB", up to EiB (what a count of bytes can reach).
+/// A count of bytes as sonde writes it: "0 B", "1.5 KiB", "512 MiB"
+/// ([`sonde_fmt::bytes`], the app's figures).
 pub fn bytes_text(b: f64) -> String {
-    // the one ladder: as far as a count of bytes goes
-    let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
-    let (mut v, mut i) = (b.max(0.0), 0);
-    while v >= 1024.0 && i < units.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{v:.0} B")
-    } else {
-        format!("{v:.1} {}", units[i])
-    }
+    sonde_fmt::bytes_f64(b)
 }
 
-/// 1234567 as "1,234,567".
+/// 1234567 as "1,234,567" ([`sonde_fmt::count`]).
 pub fn count_text(n: usize) -> String {
-    let d = n.to_string();
-    let mut out = String::with_capacity(d.len() + d.len() / 3);
-    for (i, c) in d.chars().enumerate() {
-        if i > 0 && (d.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
+    sonde_fmt::count(n as u64)
 }
 
 /// "1 request", "1,234 requests".
@@ -992,6 +965,9 @@ pub fn text(s: &Signals, color: bool) -> String {
     if s.rate.requests == 0 {
         return out;
     }
+    // a run under a second, or of a handful of requests, has its figures
+    // and no line over its time
+    let drawn = !s.short && s.rate.requests >= FEW;
     // the figures in one column, the lines under one another
     let mut line = |label: &str,
                     figure: String,
@@ -1006,8 +982,13 @@ pub fn text(s: &Signals, color: bool) -> String {
             None => figure,
         };
         // as wide as its slices, and the lines after it still in a column
-        let spark = sparkline_of(series, SPARK_COLUMNS, how);
-        let gap = " ".repeat(SPARK_COLUMNS - spark.chars().count());
+        let (spark, gap) = if drawn {
+            let spark = sparkline_of(series, SPARK_COLUMNS, how);
+            let gap = " ".repeat(SPARK_COLUMNS - spark.chars().count());
+            (spark, gap)
+        } else {
+            (String::new(), String::new())
+        };
         let row = format!(
             "{}{figure}{pad}{spark}{gap}  {}",
             paint(&format!("{label:<9}"), "2", color),
@@ -1018,7 +999,7 @@ pub fn text(s: &Signals, color: bool) -> String {
     };
     // what a bar is, said when it stands for more than one slice
     let wide = s.bins > SPARK_COLUMNS;
-    let bar = |what: &str| wide.then(|| format!("a bar is {what}"));
+    let bar = |what: &str| (drawn && wide).then(|| format!("a bar is {what}"));
 
     let mut rest: Vec<String> = Vec::new();
     if s.in_flight.peak > 1 {
@@ -1095,14 +1076,16 @@ pub fn text(s: &Signals, color: bool) -> String {
             // the tail is what moves
             &s.latency.p95,
             Column::Max,
-            vec![
-                format!("p95 {}, p99 {}", ms_text(p95), ms_text(p99)),
-                if wide {
-                    "a bar is the highest p95 of its slices".into()
-                } else {
-                    "a bar is a slice's p95".into()
-                },
-            ],
+            [format!("p95 {}, p99 {}", ms_text(p95), ms_text(p99))]
+                .into_iter()
+                .chain(drawn.then(|| {
+                    if wide {
+                        "a bar is the highest p95 of its slices".into()
+                    } else {
+                        "a bar is a slice's p95".into()
+                    }
+                }))
+                .collect(),
         ),
         // a log without times
         _ => line(
@@ -1370,15 +1353,15 @@ mod tests {
         let said = text(&s, false);
         let rate = said.lines().next().unwrap();
         // the head line has the requests and the time: not said again
-        assert!(
-            rate.starts_with("rate     no rate: under a second  "),
-            "{said}"
-        );
+        assert_eq!(rate, "rate     no rate: under a second", "{said}");
         assert!(
             !said.contains("req/s") && !said.contains("1 request"),
             "{said}"
         );
         assert!(said.contains("0 B sent, 10 B received"), "{said}");
+        let spark = |said: &str| said.chars().any(|c| ('▁'..='█').contains(&c));
+        // under a second: no line over its time
+        assert!(!spark(&said) && !said.contains("a bar is"), "{said}");
         // a run of a second and more has its rate
         let long = [get(1, 0, "k", 200), get(2, 1995, "k", 200)];
         let s = signals(&long, &RequestPrices::default());
@@ -1393,10 +1376,21 @@ mod tests {
         // no failure: no line drawn for none
         let errors = said.lines().nth(1).unwrap();
         assert_eq!(errors, "errors   none");
+        // two requests: no shape over the time to draw either
+        assert!(!spark(&said) && !said.contains("a bar is"), "{said}");
+        // twenty over two seconds have one
+        let many: Vec<Record> = (0..FEW as u64)
+            .map(|i| get(i + 1, i as i64 * 100, "k", 200))
+            .collect();
+        let said = text(&signals(&many, &RequestPrices::default()), false);
+        assert!(spark(&said), "{said}");
         assert!(
             said.contains("a bar is the highest p95 of its slices"),
             "{said}"
         );
+        let few = &many[..FEW - 1];
+        let said = text(&signals(few, &RequestPrices::default()), false);
+        assert!(!spark(&said), "{said}");
     }
 
     #[test]
@@ -1441,7 +1435,7 @@ mod tests {
             .enumerate()
             .map(|(i, op)| {
                 let mut r = get(i as u64, i as i64 * 400, "k", 200);
-                r.operation = op.to_string();
+                r.operation = (*op).into();
                 r.method = if *op == "GetObject" { "GET" } else { "PUT" }.into();
                 r.first_byte_ms = Some(2.0);
                 r
@@ -1462,7 +1456,8 @@ mod tests {
         assert_eq!(crate::episode::human_bytes(5 << 50), "5.0 PiB");
         assert_eq!(bytes_text(0.0), "0 B");
         assert_eq!(bytes_text(1536.0), "1.5 KiB");
-        assert_eq!(bytes_text(600_000.0 * 1024f64.powi(4)), "585.9 PiB");
-        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3.0 EiB");
+        // whole from 100 of a unit, as the app writes them; PiB the last
+        assert_eq!(bytes_text(600_000.0 * 1024f64.powi(4)), "586 PiB");
+        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3072 PiB");
     }
 }

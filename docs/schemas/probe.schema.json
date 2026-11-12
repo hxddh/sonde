@@ -1,0 +1,384 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/probe.schema.json",
+  "title": "sonde probe -f json",
+  "description": "A probe run on each endpoint. Exit 1 when a guarantee broke, 2 when it differs from AWS, 3 when probes could not run.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "The run's id."
+      },
+      "endpoint": {
+        "type": "string"
+      },
+      "endpointName": {
+        "type": "string"
+      },
+      "vendor": {
+        "type": "string"
+      },
+      "server": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "started": {
+        "type": "string"
+      },
+      "finished": {
+        "type": "string"
+      },
+      "sondeVersion": {
+        "type": "string"
+      },
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string",
+              "description": "The guarantee's family (`conditionalWrites`, `multipart`, …)."
+            },
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "pass",
+                "fail",
+                "differs",
+                "unsupported",
+                "error",
+                "skipped"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "summaryText": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/phrase"
+              }
+            },
+            "observations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "observationsText": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/phrase"
+                }
+              }
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "code": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "headers": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ],
+                      "items": false
+                    }
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "recordId": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "label",
+                  "status",
+                  "code",
+                  "headers",
+                  "body",
+                  "recordId"
+                ]
+              }
+            },
+            "exchanges": {
+              "type": "array",
+              "description": "The requests it sent.",
+              "items": {
+                "$ref": "#/$defs/record"
+              }
+            },
+            "durationMs": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "category",
+            "verdict",
+            "summary",
+            "observations",
+            "steps",
+            "exchanges",
+            "durationMs"
+          ]
+        }
+      }
+    },
+    "required": [
+      "id",
+      "endpoint",
+      "endpointName",
+      "vendor",
+      "server",
+      "started",
+      "finished",
+      "sondeVersion",
+      "results"
+    ]
+  },
+  "$defs": {
+    "header": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The phrase's key in the app's locales (en, zh)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Its arguments, as text.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "record": {
+      "type": "object",
+      "description": "One request: a line of the session file (docs/session-format.md).",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Unique within the session."
+        },
+        "time": {
+          "type": "string",
+          "description": "When the request began (RFC 3339)."
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "The S3 operation (`GetObject`, `Unknown`)."
+        },
+        "method": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "description": "The URL, signatures masked."
+        },
+        "bucket": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "type": "array",
+          "description": "The query's pairs, signatures masked.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "items": false
+          }
+        },
+        "status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The HTTP status; null when no answer came."
+        },
+        "latencyMs": {
+          "type": "number"
+        },
+        "retries": {
+          "type": "integer"
+        },
+        "requestId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requestHeaders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/header"
+          }
+        },
+        "responseHeaders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/header"
+          }
+        },
+        "requestBytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "responseBytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "errorBody": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The error's body, up to 64 KiB."
+        },
+        "requestBody": {
+          "type": "string",
+          "description": "A control request's body (DeleteObjects, a lifecycle rule)."
+        },
+        "requestBodyTruncated": {
+          "type": "boolean"
+        },
+        "transportError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "region": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "firstByteMs": {
+          "type": "number"
+        },
+        "requester": {
+          "type": "string"
+        },
+        "injected": {
+          "type": "string",
+          "description": "The fault scenario that answered or changed it (a trial)."
+        }
+      },
+      "required": [
+        "id",
+        "time",
+        "endpoint",
+        "operation",
+        "method",
+        "url",
+        "bucket",
+        "key",
+        "query",
+        "status",
+        "latencyMs",
+        "retries",
+        "requestId",
+        "hostId",
+        "requestHeaders",
+        "responseHeaders",
+        "requestBytes",
+        "responseBytes",
+        "errorBody",
+        "transportError",
+        "region",
+        "job"
+      ]
+    }
+  }
+}

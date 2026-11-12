@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use chrono::Utc;
-use reqlog::{Header, Record, RequestLog};
+use reqlog::{Header, Record, RequestLog, Text};
 use serde::{Deserialize, Serialize};
 
 use crate::credentials::{Credentials, CredentialsProvider};
@@ -494,7 +494,7 @@ impl S3Client {
         record.query = url::Url::parse(url)
             .map(|u| {
                 u.query_pairs()
-                    .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                    .map(|(k, v)| (Text::new(&k), Text::new(&v)))
                     .collect()
             })
             .unwrap_or_default();
@@ -794,13 +794,17 @@ impl S3Client {
         Record {
             id: 0,
             time: Utc::now(),
-            endpoint: self.cfg.endpoint_id.clone(),
-            operation: req.operation.clone(),
-            method: req.method.to_string(),
+            endpoint: self.cfg.endpoint_id.as_str().into(),
+            operation: req.operation.as_str().into(),
+            method: req.method.as_str().into(),
             url: url.to_string(),
-            bucket: req.bucket.clone(),
-            key: req.key.clone(),
-            query: req.query.clone(),
+            bucket: req.bucket.as_deref().map(Into::into),
+            key: req.key.as_deref().map(Into::into),
+            query: req
+                .query
+                .iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
             status: None,
             latency_ms: latency.as_secs_f64() * 1000.0,
             retries: attempt,
@@ -819,7 +823,7 @@ impl S3Client {
             },
             request_body_truncated: false,
             transport_error: None,
-            region: Some(self.cfg.region.clone()),
+            region: Some(self.cfg.region.as_str().into()),
             job: self.job.clone(),
             first_byte_ms: None,
             requester: None,
@@ -963,6 +967,8 @@ struct Meta {
 fn is_retryable_status(r: &S3Response) -> bool {
     matches!(r.status, 500 | 502 | 503 | 504 | 429)
         || (r.status == 400 && r.text().contains("<Code>RequestTimeout</Code>"))
+        // signed again, with the clock as it is now
+        || (r.status == 403 && r.text().contains("<Code>RequestTimeTooSkewed</Code>"))
 }
 
 /// Header (name, value) pairs of a map, values read lossily.
@@ -1040,6 +1046,25 @@ pub fn encode_key(key: &str) -> String {
 mod tests {
     use super::*;
     use crate::credentials::StaticProvider;
+
+    #[test]
+    fn a_throttle_a_timeout_and_a_skewed_clock_are_sent_again_and_a_403_is_not() {
+        let answer = |status: u16, code: &str| S3Response {
+            status,
+            headers: Vec::new(),
+            body: Bytes::from(format!("<Error><Code>{code}</Code></Error>")),
+            record_id: 0,
+            request_id: None,
+            host_id: None,
+            latency: Duration::ZERO,
+            retries: 0,
+        };
+        assert!(is_retryable_status(&answer(503, "SlowDown")));
+        assert!(is_retryable_status(&answer(400, "RequestTimeout")));
+        assert!(is_retryable_status(&answer(403, "RequestTimeTooSkewed")));
+        assert!(!is_retryable_status(&answer(403, "AccessDenied")));
+        assert!(!is_retryable_status(&answer(400, "InvalidRequest")));
+    }
 
     fn client(endpoint: &str, addressing: Addressing) -> S3Client {
         let mut cfg = ClientConfig::new("t", endpoint, "us-east-1").unwrap();

@@ -1,0 +1,102 @@
+# Fuzz targets for what sonde reads from others: the layout decoders, the log
+# importers, S3's XML and a session's lines. Not a member of the workspace
+# (it needs nightly and cargo-fuzz):
+#
+#   fuzz/seeds.sh                      # each target's corpus from the samples
+#   cargo +nightly fuzz run <target> fuzz/corpus/<target> -- -max_total_time=60
+#
+# CI runs every target weekly (.github/workflows/fuzz.yml).
+[package]
+name = "sonde-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1"
+futures = "0.3"
+decoders = { path = "../crates/decoders" }
+s3raw = { path = "../crates/s3raw" }
+sonde-proxy = { path = "../crates/proxy" }
+
+# a workspace of its own: the repository's does not build it
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "iceberg_metadata"
+path = "fuzz_targets/iceberg_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "iceberg_avro"
+path = "fuzz_targets/iceberg_avro.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "slatedb"
+path = "fuzz_targets/slatedb.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lakefs"
+path = "fuzz_targets/lakefs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "woodpecker"
+path = "fuzz_targets/woodpecker.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_access_log"
+path = "fuzz_targets/import_access_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_cloudtrail"
+path = "fuzz_targets/import_cloudtrail.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_har"
+path = "fuzz_targets/import_har.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "s3_xml"
+path = "fuzz_targets/s3_xml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_lines"
+path = "fuzz_targets/session_lines.rs"
+test = false
+doc = false
+bench = false

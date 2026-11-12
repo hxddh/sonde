@@ -12,11 +12,17 @@ javac --release 8 -nowarn -d "$out/stubs" $(find stubs -name '*.java')
 javac --release 8 -nowarn -cp "$out/stubs" -d "$out/agent" src/dev/sonde/hook/Agent.java
 javac --release 8 -nowarn -cp "$out/stubs" -d "$out/caller" src/dev/sonde/hook/Caller.java
 cp -r resources/. "$out/caller/"
-printf 'Premain-Class: dev.sonde.hook.Agent\n' > "$out/manifest"
-dest=../../crates/proxy/src/hooks
+mkdir -p "$out/agent/META-INF"
+printf 'Manifest-Version: 1.0\r\nPremain-Class: dev.sonde.hook.Agent\r\n\r\n' > "$out/agent/META-INF/MANIFEST.MF"
+dest="$(pwd)/../../crates/proxy/src/hooks"
 mkdir -p "$dest"
-# the same bytes from the same sources: no timestamps in the jars
-find "$out/agent" "$out/caller" -exec touch -d @0 {} +
-jar --create --file "$dest/sonde-agent.jar" --manifest "$out/manifest" --date=1980-01-01T00:00:02Z -C "$out/agent" .
-jar --create --file "$dest/sonde-caller.jar" --no-manifest --date=1980-01-01T00:00:02Z -C "$out/caller" .
+# the same bytes from the same sources on any JDK: zip, not jar (whose manifest
+# names the JDK that made it), with no timestamps and a fixed order
+pack() {
+  rm -f "$2"
+  find "$1" -exec touch -d @315532802 {} +
+  (cd "$1" && find . -type f | LC_ALL=C sort | TZ=UTC zip -X -D -q "$2" -@)
+}
+pack "$out/agent" "$dest/sonde-agent.jar"
+pack "$out/caller" "$dest/sonde-caller.jar"
 ls -l "$dest"

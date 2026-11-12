@@ -1,6 +1,6 @@
 # Configuration
 
-sonde reads `config.toml` from its configuration directory:
+sonde reads `config.toml` from its configuration directory: settings, prices and endpoints.
 
 | | Linux | macOS |
 |---|---|---|
@@ -9,34 +9,41 @@ sonde reads `config.toml` from its configuration directory:
 | Exports | `<data>/exports` unless `exports-dir` | same |
 | Downloads | `~/Downloads/sonde` unless `downloads-dir` | same |
 
-The CLI takes `--config-dir` and `--data-dir` too. The file is written atomically, mode `0600` on Unix (it may hold
-static keys for local test servers). Unknown endpoint ids, duplicate ids and bad URLs are refused when it loads.
+The CLI also takes `--config-dir` and `--data-dir`.
 
-A file that does not load is never written over: the app starts with no endpoints, shows why, and refuses every
-save until the file is fixed and read again. A save reads the file first and applies only what changed (one
-setting, one endpoint), so edits made to the file while the app runs — by hand, or by `sonde endpoints` — are
-kept; comments are not. Two processes saving at once take turns (`config.toml.lock`).
+## Loading and saving
+
+- Written atomically, mode `0600` on Unix (it may hold static keys).
+- Unknown or duplicate endpoint ids and bad URLs are refused on load.
+- A file that does not load is never overwritten: the app starts with no endpoints, shows why, and refuses saves
+  until the file is fixed and reloaded.
+- A save rereads the file and applies only what changed, so edits made meanwhile (by hand or `sonde endpoints`) are
+  kept; comments are not.
+- Concurrent saves take turns (`config.toml.lock`).
+
+## Example
 
 ```toml
 [settings]
-read-only = true          # destructive operations refused while on (default)
-concurrency = 16          # requests in flight per job
-rate-limit = 50.0         # requests per second per job; omit for none
-reqlog-capacity = 5000    # records kept in the request log
-reqlog-persist = false    # also keep them in <data>/requests.sqlite
-theme = "system"          # system, light, dark
-language = "auto"         # auto, en, zh
-stale-upload-days = 7     # uploads older than this are flagged
-name-callers = false      # runs name the code that sent each request (Python, Node.js, Java)
+read-only = true            # sonde's own destructive operations refused (default)
+record-policy = "no-delete" # what a program Run records may do: no-delete (default), read-only, allow
+concurrency = 16            # requests in flight per job
+rate-limit = 50.0           # requests per second per job; omit for none
+reqlog-capacity = 5000      # records kept in the request log
+reqlog-persist = false      # also keep them in <data>/requests.sqlite
+theme = "system"            # system, light, dark
+language = "auto"           # auto, en, zh
+stale-upload-days = 7       # uploads older than this are flagged
+name-callers = false        # runs name the code that sent each request (Python, Node.js, Java)
 # exports-dir = "/srv/sonde/exports"
 # downloads-dir = "/srv/sonde/downloads"
 
-[settings.prices]          # per GiB-month, for multipart and capacity costs
+[settings.prices]           # for multipart, capacity and request costs
 default-per-gib-month = 0.023
 currency = "USD"
-per-1000-writes = 0.005    # PUT, COPY, POST, LIST: a session's request cost
-per-1000-reads = 0.0004    # GET, HEAD and the rest (DELETE is free)
-[settings.prices.by-class]
+per-1000-writes = 0.005     # PUT, COPY, POST, LIST
+per-1000-reads = 0.0004     # GET, HEAD and the rest (DELETE is free)
+[settings.prices.by-class]  # per GiB-month
 STANDARD = 0.023
 STANDARD_IA = 0.0125
 GLACIER = 0.0036
@@ -64,9 +71,11 @@ sign-payload = true                            # false: UNSIGNED-PAYLOAD
 credentials = { kind = "env", access-key-id-var = "LAB_KEY", secret-access-key-var = "LAB_SECRET" }
 ```
 
-`credentials.kind`: `default`, `profile`, `env`, `imds`, `web-identity`, `process`, `static`, `anonymous` —
-see [credentials.md](credentials.md).
+`credentials.kind`: `default`, `profile`, `env`, `imds`, `web-identity`, `process`, `static`, `anonymous`
+([credentials](credentials.md)).
 
-`sonde --url <URL> [--region R] [--path-style] [--ca-file F]` adds an endpoint `adhoc` for one run, with the
-default credential chain; it is not saved, and neither are `--rate` and `--concurrency`. A configured endpoint
-named `adhoc` (or `demo`, while the built-in demo runs) is hidden for that run, not replaced: it stays in the file.
+## One-off endpoint
+
+`sonde --url <URL> [--region R] [--path-style] [--ca-file F]` adds an unsaved endpoint `adhoc` with the default
+credential chain. `--rate` and `--concurrency` are not saved either. A configured endpoint named `adhoc` (or `demo`,
+while the demo runs) is hidden for that run, not replaced.

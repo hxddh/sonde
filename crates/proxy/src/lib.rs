@@ -13,18 +13,21 @@ pub mod episode;
 pub mod fault;
 pub mod fixes;
 pub mod import;
+pub mod jvm;
 pub mod logs;
 pub mod op;
 pub mod otlp;
 pub mod phrase;
 pub mod profile;
 pub mod program;
+pub mod project;
 pub mod replay;
 pub mod report;
 pub mod session;
 pub mod share;
 pub mod signals;
 pub mod summary;
+pub mod tls;
 pub mod trial;
 pub mod view;
 
@@ -48,19 +51,46 @@ use tokio::net::TcpListener;
 
 type Out = BoxBody<Bytes, std::io::Error>;
 
-/// What the proxy lets through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// What the proxy lets through. A recording takes [`Policy::NoDelete`]
+/// unless told otherwise (`--allow-writes`, `[record] policy`, the app's
+/// setting); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Policy {
     /// Everything.
-    #[default]
     Allow,
-    /// Everything but operations that remove data ([`op::is_destructive`]).
+    /// Nothing that removes or replaces data: deletes, aborts, lifecycle
+    /// rules, bucket policies, versioning suspended, and a write over an
+    /// object the recording did not write itself ([`Written`]).
+    #[default]
     NoDelete,
     /// GET and HEAD only.
     ReadOnly,
 }
 
 impl Policy {
+    /// By its name, as the flags, `sonde.toml` and the app say it.
+    pub fn named(name: &str) -> Option<Policy> {
+        match name {
+            "allow" => Some(Policy::Allow),
+            "no-delete" => Some(Policy::NoDelete),
+            "read-only" => Some(Policy::ReadOnly),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Policy::Allow => "allow",
+            Policy::NoDelete => "no-delete",
+            Policy::ReadOnly => "read-only",
+        }
+    }
+
+    /// The one of two that lets less through.
+    pub fn stricter(self, other: Policy) -> Policy {
+        self.max(other)
+    }
+
     /// Why `op` is refused, if it is. No-delete goes by the method and the
     /// query as well as the name: a request the proxy cannot name is forwarded
     /// as it came, and the store may read it as a delete.
@@ -71,10 +101,11 @@ impl Policy {
         query: &[(String, String)],
     ) -> Option<&'static str> {
         let q = |n: &str| query.iter().any(|(k, _)| k == n);
+        // a bucket policy can deny its owner the bucket
         let removes = op::is_destructive(op)
             || method == "DELETE"
             || (method == "POST" && q("delete"))
-            || (method == "PUT" && q("lifecycle"))
+            || (method == "PUT" && (q("lifecycle") || q("policy")))
             || (op == "Unknown" && method != "GET" && method != "HEAD");
         match self {
             Policy::Allow => None,
@@ -82,6 +113,54 @@ impl Policy {
             Policy::ReadOnly if method != "GET" && method != "HEAD" => Some("read-only"),
             _ => None,
         }
+    }
+
+    /// Why a request is refused for what its document says, once it is
+    /// read: versioning suspended (or a document not read) under no-delete.
+    /// A suspended bucket's next write replaces the version it would keep.
+    pub fn refuses_document(self, op: &str, body: Option<&str>) -> Option<&'static str> {
+        (self == Policy::NoDelete
+            && op == "PutBucketVersioning"
+            && body.is_none_or(|b| b.contains("Suspended")))
+        .then_some("no-delete")
+    }
+}
+
+/// Whether `op` writes an object whole at its key (and so may write over one).
+pub fn writes_object(op: &str) -> bool {
+    matches!(op, "PutObject" | "CompleteMultipartUpload" | "CopyObject")
+}
+
+/// The objects a recording wrote (bucket, key): under no-delete it may write
+/// them again, and of the objects already there only them. A program that
+/// writes a key twice, and a trial's runs after its clean run, share one.
+#[derive(Debug, Default)]
+pub struct Written(parking_lot::Mutex<std::collections::HashSet<(String, String)>>);
+
+impl Written {
+    /// What `records` wrote: a trial's runs may write again what its clean
+    /// run wrote, which that run's policy let through.
+    pub fn of(records: &[Record]) -> Written {
+        let w = Written::default();
+        for r in records {
+            if writes_object(&r.operation)
+                && r.status.is_some_and(|s| (200..300).contains(&s))
+                && let (Some(b), Some(k)) = (&r.bucket, &r.key)
+            {
+                w.add(b, k);
+            }
+        }
+        w
+    }
+
+    pub fn has(&self, bucket: &str, key: &str) -> bool {
+        self.0
+            .lock()
+            .contains(&(bucket.to_string(), key.to_string()))
+    }
+
+    fn add(&self, bucket: &str, key: &str) {
+        self.0.lock().insert((bucket.to_string(), key.to_string()));
     }
 }
 
@@ -109,6 +188,11 @@ pub struct ProxyConfig {
     pub allow_remote: bool,
     /// The faults this proxy answers with (a trial run's scenario).
     pub faults: Option<Arc<fault::Faults>>,
+    /// TLS as well as plain HTTP, on the same port (a connection that opens
+    /// with a TLS handshake is answered in TLS).
+    pub tls: Option<Arc<tls::Tls>>,
+    /// What the recording wrote, which no-delete lets it write again.
+    pub written: Arc<Written>,
 }
 
 /// A fresh client key and secret: the key names the proxy, the secret is 32
@@ -143,6 +227,8 @@ impl Default for ProxyConfig {
             client_secret: secret,
             allow_remote: false,
             faults: None,
+            tls: None,
+            written: Arc::default(),
         }
     }
 }
@@ -170,6 +256,7 @@ pub struct Proxy {
     addr: SocketAddr,
     region: String,
     keys: (String, String),
+    tls: Option<Arc<tls::Tls>>,
     task: tokio::task::JoinHandle<()>,
     /// Tells every connection to finish the request it is on and close.
     stop: tokio::sync::watch::Sender<bool>,
@@ -194,6 +281,10 @@ impl Proxy {
         let addr = listener.local_addr()?;
         let region = client.config().region.clone();
         let keys = (cfg.client_key.clone(), cfg.client_secret.clone());
+        let tls = cfg.tls.clone();
+        let acceptor = tls
+            .as_ref()
+            .map(|t| tokio_rustls::TlsAcceptor::from(t.config.clone()));
         let buffered = Arc::new(tokio::sync::Semaphore::new(
             (cfg.max_buffered_total / MIB).max(1),
         ));
@@ -211,21 +302,21 @@ impl Proxy {
                     continue;
                 };
                 let shared = shared.clone();
-                let mut stopping = stopping.clone();
+                let stopping = stopping.clone();
                 let alive = alive.clone();
+                let acceptor = acceptor.clone();
                 tokio::spawn(async move {
-                    let svc = service_fn(move |req| handle(shared.clone(), req));
-                    let conn = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(TokioIo::new(stream), svc);
-                    tokio::pin!(conn);
-                    tokio::select! {
-                        _ = conn.as_mut() => {}
-                        // (a proxy dropped without a shutdown leaves them be)
-                        Ok(()) = stopping.changed() => {
-                            // the request it is on is answered and recorded
-                            conn.as_mut().graceful_shutdown();
-                            let _ = conn.await;
+                    // a TLS connection opens with a handshake record (22)
+                    let mut first = [0u8; 1];
+                    let handshake = acceptor.is_some()
+                        && matches!(stream.peek(&mut first).await, Ok(1) if first[0] == 0x16);
+                    match acceptor.filter(|_| handshake) {
+                        Some(a) => {
+                            if let Ok(tls) = a.accept(stream).await {
+                                serve(shared, tls, stopping).await;
+                            }
                         }
+                        None => serve(shared, stream, stopping).await,
                     }
                     drop(alive);
                 });
@@ -235,6 +326,7 @@ impl Proxy {
             addr,
             region,
             keys,
+            tls,
             task,
             stop,
             open,
@@ -261,7 +353,17 @@ impl Proxy {
         (&self.keys.0, &self.keys.1)
     }
 
+    /// The endpoint's URL: https when it serves TLS.
     pub fn url(&self) -> String {
+        match self.tls {
+            Some(_) => format!("https://{}", self.addr),
+            None => self.plain_url(),
+        }
+    }
+
+    /// The endpoint in plain HTTP, which it always serves (the JVM engines
+    /// take it: they trust no bundle a variable names).
+    pub fn plain_url(&self) -> String {
         format!("http://{}", self.addr)
     }
 
@@ -289,7 +391,11 @@ impl Proxy {
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+        .collect::<Vec<_>>();
+        let mut set = set;
+        if let Some(t) = &self.tls {
+            set.extend(t.env());
+        }
         let unset = [
             "AWS_SESSION_TOKEN",
             "AWS_SECURITY_TOKEN",
@@ -305,6 +411,25 @@ impl Proxy {
         .map(|s| s.to_string())
         .collect();
         (set, unset)
+    }
+}
+
+/// Serves one connection until it closes, or until the proxy stops: then
+/// the request it is on is answered and recorded first.
+async fn serve<I>(shared: Arc<Shared>, io: I, mut stopping: tokio::sync::watch::Receiver<bool>)
+where
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let svc = service_fn(move |req| handle(shared.clone(), req));
+    let conn = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(io), svc);
+    tokio::pin!(conn);
+    tokio::select! {
+        _ = conn.as_mut() => {}
+        // (a proxy dropped without a shutdown leaves them be)
+        Ok(()) = stopping.changed() => {
+            conn.as_mut().graceful_shutdown();
+            let _ = conn.await;
+        }
     }
 }
 
@@ -461,6 +586,32 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
     } else {
         Err("its signature does not match the secret sonde gave the program".into())
     }
+}
+
+/// Whether a request is S3 Express One Zone's, which sonde does not record:
+/// a directory bucket (`name--azid--x-s3`), its CreateSession, or a request
+/// signed with a session's credentials (`x-amz-s3session-token`). The
+/// session's credentials are the store's, made for the keys that asked, and
+/// a zonal endpoint takes nothing else; sonde would have to hold a session
+/// of its own for each bucket and sign with it.
+pub fn express(bucket: Option<&str>, operation: &str, headers: &http::HeaderMap) -> Option<String> {
+    let directory = bucket.is_some_and(is_directory_bucket);
+    if !directory && operation != "CreateSession" && !headers.contains_key("x-amz-s3session-token")
+    {
+        return None;
+    }
+    Some(format!(
+        "{} is S3 Express One Zone (a directory bucket), which sonde does not record yet: its CreateSession credentials cannot be re-signed. Record against a general purpose bucket",
+        bucket.unwrap_or("the bucket")
+    ))
+}
+
+/// A directory bucket's name: `<name>--<zone id>--x-s3`.
+pub fn is_directory_bucket(bucket: &str) -> bool {
+    bucket
+        .strip_suffix("--x-s3")
+        .and_then(|rest| rest.rsplit_once("--"))
+        .is_some_and(|(name, zone)| !name.is_empty() && !zone.is_empty())
 }
 
 /// How far a signature's time may be from the clock, as S3 allows.
@@ -797,6 +948,55 @@ fn full(b: Bytes) -> Out {
     Full::new(b).map_err(|never| match never {}).boxed()
 }
 
+/// A request the policy refuses: recorded as refused, answered 403.
+fn refuse(shared: &Shared, mut record: Record, msg: String) -> Response<Out> {
+    record.status = Some(403);
+    record.error_body = Some(msg.clone());
+    record
+        .response_headers
+        .push(Header::new("x-sonde-proxy", "refused"));
+    shared.log.push(record);
+    xml_error(403, "AccessDenied", &msg)
+}
+
+/// Whether `bucket/key` is in the store: a HEAD of sonde's own, signed
+/// with the endpoint's credentials. Not a request of the program's, so not
+/// recorded.
+async fn stored(shared: &Shared, bucket: &str, key: &str) -> Result<bool, String> {
+    let client = &shared.client;
+    let cfg = client.config();
+    let (origin, path, host) = client.address(&cfg.endpoint, Some(bucket), Some(key));
+    let mut headers = vec![("host".to_string(), host)];
+    if let Some(creds) = client.credentials().await.map_err(|e| e.to_string())? {
+        sigv4::sign_headers(
+            &mut headers,
+            "HEAD",
+            &path,
+            &[],
+            sigv4::EMPTY_SHA256,
+            &cfg.region,
+            "s3",
+            Utc::now(),
+            &creds,
+        );
+    }
+    let mut rb = client.http_streaming().head(format!("{origin}{path}"));
+    for (k, v) in &headers {
+        if !k.eq_ignore_ascii_case("host") {
+            rb = rb.header(k.as_str(), v.as_str());
+        }
+    }
+    let resp = tokio::time::timeout(cfg.timeout, rb.send())
+        .await
+        .map_err(|_| "no answer".to_string())?
+        .map_err(|e| e.to_string())?;
+    match resp.status().as_u16() {
+        200..=299 => Ok(true),
+        404 => Ok(false),
+        s => Err(format!("the store answered {s}")),
+    }
+}
+
 fn header_value(headers: &http::HeaderMap, name: &str) -> String {
     headers
         .get(name)
@@ -843,17 +1043,17 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     // the request as the application saw it: from its arrival (a buffered
     // body's upload included) to the answer
-    let received = Instant::now();
+    let mut received = Instant::now();
     let mut record = Record {
         id: 0,
         time: Utc::now(),
-        endpoint: cfg.endpoint_id.clone(),
-        operation: operation.clone(),
-        method: method.clone(),
+        endpoint: cfg.endpoint_id.as_str().into(),
+        operation: operation.as_str().into(),
+        method: method.as_str().into(),
         url: url.clone(),
-        bucket: bucket.clone(),
-        key: key.clone(),
-        query: query.clone(),
+        bucket: bucket.as_deref().map(Into::into),
+        key: key.as_deref().map(Into::into),
+        query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
         status: None,
         latency_ms: 0.0,
         retries: 0,
@@ -872,7 +1072,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         request_body: None,
         request_body_truncated: false,
         transport_error: None,
-        region: Some(cfg.region.clone()),
+        region: Some(cfg.region.as_str().into()),
         job: shared.cfg.tag.clone(),
         first_byte_ms: None,
         requester: None,
@@ -883,6 +1083,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             "x-sonde-note",
             "presigned URL, re-signed by sonde",
         ));
+    }
+
+    // S3 Express One Zone is not recorded: said plainly, before its session
+    // credentials would be refused as a key sonde did not give
+    if let Some(why) = express(bucket.as_deref(), &operation, &parts.headers) {
+        let msg = format!("sonde refused the request: {why}");
+        record.status = Some(501);
+        record.error_body = Some(msg.clone());
+        record
+            .response_headers
+            .push(Header::new("x-sonde-proxy", "refused"));
+        shared.log.push(record);
+        return Ok(xml_error(501, "NotImplemented", &msg));
     }
 
     // only the program sonde gave its keys to, from this machine
@@ -926,14 +1139,51 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     if let Some(mode) = shared.cfg.policy.refuses(&method, &operation, &query) {
         let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
-        record.status = Some(403);
-        record.error_body = Some(msg.clone());
-        record
-            .response_headers
-            .push(Header::new("x-sonde-proxy", "refused"));
-        shared.log.push(record);
-        return Ok(xml_error(403, "AccessDenied", &msg));
+        return Ok(refuse(&shared, record, msg));
     }
+
+    // under no-delete, an object already there is written over only if
+    // this recording wrote it: a copy's target is looked for first (a HEAD
+    // of sonde's own, not recorded and not timed), a write that says no
+    // condition goes with `If-None-Match: *` and the store's 412 is the
+    // refusal. A write on `If-Match` names an object already there.
+    let mut guarded = false;
+    let mut looked = std::time::Duration::ZERO;
+    if shared.cfg.policy == Policy::NoDelete
+        && writes_object(&operation)
+        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
+        && !shared.cfg.written.has(b, k)
+    {
+        let said = |n: &str| app_headers.iter().any(|(h, _)| h.eq_ignore_ascii_case(n));
+        let over = |why: &str| {
+            format!(
+                "sonde refused {operation}: {b}/{k} {why}, and the proxy runs in no-delete mode (--allow-writes lets a program write over it)"
+            )
+        };
+        if said("if-match") {
+            return Ok(refuse(
+                &shared,
+                record,
+                over("is an object this recording did not write"),
+            ));
+        }
+        if operation == "CopyObject" {
+            let at = Instant::now();
+            let found = stored(&shared, b, k).await;
+            looked = at.elapsed();
+            match found {
+                Ok(false) => {}
+                Ok(true) => return Ok(refuse(&shared, record, over("was there before"))),
+                Err(e) => {
+                    let why = format!("may be there already (looking for it: {e})");
+                    return Ok(refuse(&shared, record, over(&why)));
+                }
+            }
+        } else {
+            guarded = !said("if-none-match");
+        }
+    }
+    received += looked;
 
     let content_sha = header_value(&parts.headers, "x-amz-content-sha256");
     let length: Option<u64> = header_value(&parts.headers, "content-length").parse().ok();
@@ -1005,6 +1255,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
         }
     }
+    if let Some(mode) = shared
+        .cfg
+        .policy
+        .refuses_document(&operation, record.request_body.as_deref())
+    {
+        let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
+        return Ok(refuse(&shared, record, msg));
+    }
 
     // a trial's faults: answered here, delayed, or sent on with the answer
     // to be lost. The record says so, so that no reader blames the store.
@@ -1052,7 +1310,16 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
         Some((name, fault::Verdict::Wait(d))) => {
             record.injected = Some(name);
+            // a program that stops waiting closes its connection, and this
+            // is dropped mid-wait: the record is kept all the same, as an
+            // attempt it gave up on, so that a trial reads what followed
+            let held = GivenUp {
+                record: Some(record.clone()),
+                log: shared.clone(),
+                received,
+            };
             tokio::time::sleep(d).await;
+            held.waited();
         }
         Some((name, fault::Verdict::LoseAnswer)) => {
             record.injected = Some(name);
@@ -1066,6 +1333,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             record.injected = Some(name);
             after = After::CutBody(met);
         }
+        Some((name, fault::Verdict::HideWritten)) => {
+            record.injected = Some(name);
+            after = After::HideWritten;
+        }
         None => {}
     }
 
@@ -1075,6 +1346,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .filter(|(k, _)| !DROP_REQUEST.contains(&k.to_ascii_lowercase().as_str()))
         .cloned()
         .collect();
+    // (signed, sent, and not on the record: the program did not ask it)
+    if guarded {
+        out.push(("if-none-match".into(), "*".into()));
+    }
     // no time for the whole exchange (a large body takes what it takes), only
     // for one that has stopped moving
     let idle = cfg.timeout;
@@ -1253,10 +1528,33 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.status = Some(status.as_u16());
     s3raw::fill_ids(&mut record, &headers);
     record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+    if guarded && status.as_u16() == 412 {
+        drain(resp, idle).await;
+        record
+            .response_headers
+            .push(Header::new("x-sonde-store-status", status.as_str()));
+        record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
+        let (b, k) = (bucket.unwrap_or_default(), key.unwrap_or_default());
+        let msg = format!(
+            "sonde refused {operation}: {b}/{k} was there before, and the proxy runs in no-delete mode (--allow-writes lets a program write over it)"
+        );
+        return Ok(refuse(&shared, record, msg));
+    }
+    if status.is_success()
+        && writes_object(&operation)
+        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
+    {
+        shared.cfg.written.add(b, k);
+    }
     // a fault that needed the store's answer first, and cannot be done to
     // this one, was no fault: the answer goes through as the store's own
     let mut cut: Option<(u64, u64)> = None;
     let faults = shared.cfg.faults.as_deref();
+    if let Some(f) = faults
+        && status.is_success()
+    {
+        f.wrote(&operation, bucket.as_deref(), key.as_deref());
+    }
     match &after {
         After::LoseRace(met) if !status.is_success() => {
             // the store refused the write itself: its answer, not sonde's
@@ -1280,6 +1578,71 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
         }
         _ => {}
+    }
+    let plain = !headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"));
+    if after == After::HideWritten
+        && status.is_success()
+        && plain
+        && resp.content_length().is_none_or(|n| n <= 16 << 20)
+    {
+        // the listing is read whole (it is a page, a thousand keys at most),
+        // the keys left out, and the rest goes as the store wrote it
+        let Ok(Ok(body)) = tokio::time::timeout(idle, resp.bytes()).await else {
+            let msg = "the store's listing stopped part way".to_string();
+            record.injected = None;
+            record.transport_error = Some(msg.clone());
+            shared.log.push(record);
+            return Ok(xml_error(502, "SondeUpstreamError", &msg));
+        };
+        {
+            let url = query
+                .iter()
+                .any(|(k, v)| k == "encoding-type" && v.eq_ignore_ascii_case("url"));
+            let stale = faults
+                .zip(std::str::from_utf8(&body).ok())
+                .and_then(|(f, text)| f.hide(bucket.as_deref().unwrap_or(""), text, url));
+            let name = record.injected.clone().unwrap_or_default();
+            let sent: Bytes = match stale {
+                Some((text, hidden)) => {
+                    record
+                        .response_headers
+                        .push(Header::new("x-sonde-fault", &name));
+                    for k in &hidden {
+                        record
+                            .response_headers
+                            .push(Header::new(fault::HIDDEN_HEADER, k));
+                    }
+                    Bytes::from(text)
+                }
+                None => {
+                    // nothing of this run's in it: the store's own answer
+                    record.injected = None;
+                    body
+                }
+            };
+            let mut builder = Response::builder().status(status);
+            for (k, v) in resp_headers_kept(&headers) {
+                builder = builder.header(k, v);
+            }
+            if record.injected.is_some() {
+                builder = builder.header("x-sonde-fault", name.as_str());
+            }
+            record.response_bytes = Some(sent.len() as u64);
+            record.first_byte_ms = Some(record.latency_ms);
+            record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
+            shared.log.push(record);
+            return Ok(builder
+                .header("content-length", sent.len().to_string())
+                .body(full(sent))
+                .expect("valid response"));
+        }
+    }
+    if after == After::HideWritten {
+        // an error, or a listing too large or compressed: the store's own
+        record.injected = None;
+        after = After::Forward;
     }
     if matches!(after, After::LoseAnswer | After::LoseRace(_)) {
         // the store acted; the program is told it failed
@@ -1404,6 +1767,56 @@ enum After {
     LoseRace(fault::Met),
     /// The answer's body stops part way.
     CutBody(fault::Met),
+    /// The listing leaves out keys this run wrote.
+    HideWritten,
+}
+
+/// The response headers that go back to the program as the store sent
+/// them: not the connection's own, nor a length a changed body no longer has.
+fn resp_headers_kept(headers: &[(String, String)]) -> impl Iterator<Item = (&str, &str)> {
+    headers
+        .iter()
+        .filter(|(k, _)| {
+            let k = k.to_ascii_lowercase();
+            !DROP_RESPONSE.contains(&k.as_str()) && k != "content-length"
+        })
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+}
+
+/// A request a fault holds (a delay): if the program stops waiting and its
+/// connection goes, the handler is dropped mid-wait, and this keeps its
+/// record, as an attempt the program gave up on.
+struct GivenUp {
+    record: Option<Record>,
+    log: Arc<Shared>,
+    received: Instant,
+}
+
+impl GivenUp {
+    /// The wait was sat out: the request goes on, and is recorded as usual.
+    fn waited(mut self) {
+        self.record = None;
+    }
+}
+
+impl Drop for GivenUp {
+    fn drop(&mut self) {
+        let Some(mut record) = self.record.take() else {
+            return;
+        };
+        let name = record.injected.clone().unwrap_or_default();
+        record.latency_ms = self.received.elapsed().as_secs_f64() * 1000.0;
+        record.transport_error = Some(format!(
+            "the program stopped waiting while sonde held the request (scenario {name})"
+        ));
+        record
+            .response_headers
+            .push(Header::new("x-sonde-fault", &name));
+        record
+            .response_headers
+            .push(Header::new(fault::GIVEN_UP_HEADER, "1"));
+        self.log.log.push(record);
+    }
 }
 
 /// The response header a record keeps the place of an injected cut in: the

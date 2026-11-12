@@ -340,6 +340,69 @@ test("a refused save names the field it is about, so the field says why", async 
   expect(refusedField("a role ARN is required")).toBe(null);
 });
 
+// the table the terminal is tested against too (crates/fmt/cases.json):
+// the same size and length of time, the same figure, here in the app's words
+test("one way to write a figure, in the app and in the terminal", async () => {
+  const { bytes, duration } = await import("../src/format");
+  const sizes: [number, string][] = [
+    [0, "0 B"],
+    [1, "1 B"],
+    [512, "512 B"],
+    [1023, "1023 B"],
+    [1024, "1.0 KiB"],
+    [1280, "1.3 KiB"],
+    [1536, "1.5 KiB"],
+    [10239, "10.0 KiB"],
+    [10240, "10.0 KiB"],
+    [10291, "10.0 KiB"],
+    [102348, "99.9 KiB"],
+    [102400, "100 KiB"],
+    [1048064, "1.0 MiB"],
+    [1048575, "1.0 MiB"],
+    [1048576, "1.0 MiB"],
+    [1572864, "1.5 MiB"],
+    [104805171, "99.9 MiB"],
+    [536870912, "512 MiB"],
+    [1073741823, "1.0 GiB"],
+    [1073741824, "1.0 GiB"],
+    [1099511627776, "1.0 TiB"],
+    [1125899906842624, "1.0 PiB"],
+    [1152921504606847000, "1024 PiB"],
+  ];
+  for (const [n, text] of sizes) expect(bytes(n)).toBe(text);
+  const times: [number, string][] = [
+    [0, "0 ms"],
+    [0.04, "0.0 ms"],
+    [0.25, "0.3 ms"],
+    [0.42, "0.4 ms"],
+    [1, "1.0 ms"],
+    [9.94, "9.9 ms"],
+    [9.95, "10 ms"],
+    [12.5, "13 ms"],
+    [84, "84 ms"],
+    [84.5, "85 ms"],
+    [999.4, "999 ms"],
+    [999.5, "1.00 s"],
+    [1000, "1.00 s"],
+    [2350, "2.35 s"],
+    [2345, "2.35 s"],
+    [9994, "9.99 s"],
+    [9995, "10.0 s"],
+    [41249, "41.2 s"],
+    [59949, "59.9 s"],
+    [59950, "1 min 00 s"],
+    [60000, "1 min 00 s"],
+    [146000, "2 min 26 s"],
+    [185000, "3 min 05 s"],
+    [3599499, "59 min 59 s"],
+    [3599500, "1 h 00 min"],
+    [5976000, "1 h 40 min"],
+    [86400000, "24 h 00 min"],
+    [-2350, "-2.35 s"],
+  ];
+  for (const [ms, text] of times) expect(duration(ms)).toBe(text);
+});
+
 test("one function writes a duration, and a scenario has words", async () => {
   const format = await import("../src/format");
   expect(format.duration(0.42)).toBe("0.4 ms");
@@ -426,14 +489,13 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(short[3].detail).toBe("↑ 0 B ↓ 3.0 MiB");
   expect(short[4].detail).toBe("of 9 requests");
   expect(short.every((x) => x.series.length === 0)).toBe(true);
-  // Rust's own flag (under a second) says totals too; with requests enough, their line stays
+  // Rust's own flag (under a second) says totals too, and draws no line, however many requests it holds
   expect(brief({ ...s, short: true })).toBe(true);
   const quick = signalTiles({ ...s, short: true });
-  // (the figure alone under "Requests" where its line stands beside it: nothing in the tile is cut)
   expect(quick[0].label).toBe("Requests");
   expect(quick[0].value).toBe("40");
   expect(quick[1].value).toBe("3%");
-  expect(quick[0].series.length).toBe(2);
+  expect(quick.every((x) => x.series.length === 0)).toBe(true);
   // the run by operation: Rust's table, or what an older share's profile holds of it
   const groups = [
     { operation: "GetObject", missed: false, requests: 30, errors: 3, p50Ms: 2, p95Ms: 6 },
@@ -452,4 +514,35 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(sizeRange(1024)).toBe("512 B – 1.0 KiB");
   expect(sizeRange(0)).toBe("empty");
   expect(nearestLimit({ readShare: 0.1, writeShare: 0.4 })).toEqual({ share: 0.4, kind: "writes" });
+});
+
+test("a stretch of time in a link: read from a query or a hash, as slices of the reader's own session", async () => {
+  const { rangeOf, rangeParam, slicesOf } = await import("../src/range");
+  expect(rangeOf("?range=120-480")).toEqual([120, 480]);
+  expect(rangeOf("?path=%2Fa.sonde&range=0-1500")).toEqual([0, 1500]);
+  expect(rangeOf("#range=10.5-20")).toEqual([10.5, 20]);
+  // backwards, empty or not a range: nothing
+  expect(rangeOf("?range=480-120")).toBe(null);
+  expect(rangeOf("?range=5-5")).toBe(null);
+  expect(rangeOf("?arrange=1-2")).toBe(null);
+  expect(rangeOf("")).toBe(null);
+  expect(rangeParam([120.4, 479.2])).toBe("range=120-480");
+  // 100 ms slices, 20 of them: the first and the last slice the stretch covers
+  expect(slicesOf([120, 480], 100, 20)).toEqual([1, 4]);
+  // past the session's end: up to its last slice; less than two slices: no stretch
+  expect(slicesOf([1500, 9000], 100, 20)).toEqual([15, 19]);
+  expect(slicesOf([120, 180], 100, 20)).toBe(null);
+});
+
+test("a chart's rows as CSV: a header, plain numbers, quoted where a field needs it", async () => {
+  const { toCsv } = await import("../src/csv");
+  expect(toCsv({ columns: ["ms", "p95_ms"], rows: [[0, 1.23456789], [100, null]] })).toBe("ms,p95_ms\r\n0,1.234568\r\n100,\r\n");
+  expect(toCsv({ columns: ["key"], rows: [['a,"b"'], ["line\nbreak"]] })).toBe('key\r\n"a,""b"""\r\n"line\nbreak"\r\n');
+});
+
+test("a trial's load: so many times the clean run's where it sent more, the two counts where it sent fewer", async () => {
+  const { trialText } = await import("../src/ui/history");
+  const base = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, leftUploads: 0, wroteTwice: 0, reasons: [] } as unknown as import("../src/types").Trial;
+  expect(trialText({ ...base, requests: 1, cleanRequests: 7 })).toBe("1 fault, 0 retried · 1 of the clean run's 7 requests");
+  expect(trialText({ ...base, requests: 14, cleanRequests: 7 })).toBe("1 fault, 0 retried · 2.0× the requests");
 });

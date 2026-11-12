@@ -14,7 +14,7 @@ import { RecordDetail } from "../screens/Requests";
 import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, openSession, report, sessionsChanged } from "../store";
 import type { AuditEntry, JobInfo, RecordSummary, RequestFilter } from "../types";
 import { iconSvg } from "./icon";
-import { Badge, Bar, Button, Card, Empty, IconButton, Options, PanelHeader, terminal, Row, ROW, rowHeight, SearchField, Segmented, type Tone, TYPE, TABLE, confirmAlert } from "./kit";
+import { Badge, Bar, Button, Card, Empty, IconButton, Options, PanelHeader, terminal, Row, ROW, rowHeight, SearchField, Segmented, type Tone, TYPE, TABLE, confirmAlert, COLUMN } from "./kit";
 import { StatusMark } from "./sessionview";
 
 export const activityOpen = signal(false);
@@ -129,6 +129,11 @@ function Requests() {
   };
   // the table's own width: its target column takes what the others leave
   const tableWidth = signal(0);
+  // the operation's column as wide as its longest name here (at the body's size, with the cell's inset),
+  // and in a narrow panel no wider than half the room the figures leave: the target has the other half
+  const rest = () => tableWidth() - (terminal() ? 0 : COLUMN.status) - COLUMN.took - COLUMN.clock - 2;
+  const opWidth = () => Math.min(COLUMN.operation, Math.ceil(Math.max(0, ...rows().map((r) => r.operation.length)) * TYPE.body * 0.6) + 16, tableWidth() > 0 ? Math.max(COLUMN.operationLeast, Math.floor(rest() / 2)) : COLUMN.operation);
+  const targetWidth = () => (tableWidth() > 0 ? Math.max(TARGET, tableWidth() - (terminal() ? 0 : COLUMN.status) - opWidth() - COLUMN.took - COLUMN.clock - 2) : TARGET);
   const list = () => (
     <View class="min-h-0 flex-1 gap-2">
       <View class="flex-row items-center gap-2">
@@ -155,14 +160,15 @@ function Requests() {
         class="min-h-0 flex-1"
         columns={[
           // a dot and the code, as StatusMark draws them
-          ...(terminal() ? [] : [{ key: "status", title: "", width: 52, resizable: false }]),
-          // fits the panel: the figures keep what they need, the operation its longest name's
-          // room, and the target takes all the rest (the table measures itself)
-          { key: "operation", title: t("requests.operation"), width: 196 },
-          { key: "target", title: t("activity.target"), width: tableWidth() > 0 ? Math.max(TARGET, tableWidth() - (terminal() ? 0 : 52) - 196 - 92 - 104 - 2) : TARGET, minWidth: 100 },
-          { key: "latency", title: t("sessions.took"), width: 92, align: "end" as const },
+          ...(terminal() ? [] : [{ key: "status", title: "", width: COLUMN.status, resizable: false }]),
+          // fits the panel: the figures keep what they need, the operation the room its longest
+          // name in these rows takes (never more than S3's longest), and the target all the rest
+          // (the table measures itself)
+          { key: "operation", title: t("requests.operation"), width: opWidth() },
+          { key: "target", title: t("activity.target"), width: targetWidth(), minWidth: COLUMN.targetLeast },
+          { key: "latency", title: t("sessions.took"), width: COLUMN.took, align: "end" as const },
           // to the millisecond, as operations show theirs
-          { key: "time", title: t("column.time"), width: 104 },
+          { key: "time", title: t("column.time"), width: COLUMN.clock },
         ]}
         data={rows().map((r) => ({ status: r.status === null ? "—" : `${r.status}`, operation: r.operation, target: terminal() ? middle(r.target, 30) : r.target, latency: duration(r.latencyMs), time: clock(r.time, "ms") }))}
         fontSize={TYPE.body}

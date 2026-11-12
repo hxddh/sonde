@@ -2,6 +2,9 @@
 //! million) written, compressed, read back and analysed, each step timed.
 //!
 //!     cargo run --release -p sonde-proxy --example scale -- 1000000
+//!
+//! A path after the count keeps the session there (the nightly run gives it to
+//! sonde-nsh's timed test of the bridge, `SONDE_BIG_SESSION`).
 
 use std::time::Instant;
 
@@ -40,7 +43,7 @@ fn main() {
                 method: method.into(),
                 operation: op.into(),
                 bucket: Some("lake".into()),
-                key: Some(format!("t/part={}/f-{:06}.parquet", i % 97, i / 7)),
+                key: Some(format!("t/part={}/f-{:06}.parquet", i % 97, i / 7).into()),
                 status: Some(if i % 501 == 0 { 404 } else { 200 }),
                 latency_ms: 2.0 + (i % 13) as f64,
                 response_bytes: Some(4096),
@@ -49,6 +52,7 @@ fn main() {
         }
         w.flush().unwrap();
     }
+    let keep = std::env::args().nth(2);
     let raw = std::fs::metadata(&path).unwrap().len();
     println!("write {n}: {:.2?} ({} MiB)", t.elapsed(), raw >> 20);
     let t = Instant::now();
@@ -63,6 +67,10 @@ fn main() {
     let t = Instant::now();
     let s = Session::open(&path).unwrap();
     println!("open: {:.2?}", t.elapsed());
+    if let Some(keep) = &keep {
+        std::fs::copy(&path, keep).unwrap();
+        println!("kept: {keep}");
+    }
     let t = Instant::now();
     let eps = episodes(&s.records);
     println!("episodes: {:.2?} ({})", t.elapsed(), eps.len());

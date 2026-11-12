@@ -41,7 +41,8 @@ for sdk in "${sdks[@]}"; do
   esac
   session="$out/$sdk.sonde"
   echo "== $sdk"
-  if ! "$sonde" "${opts[@]}" run -o "$session" -- "${cmd[@]}"; then
+  # (each program removes what it wrote: deletes are asked for)
+  if ! "$sonde" "${opts[@]}" run --allow-writes -o "$session" -- "${cmd[@]}"; then
     echo "!! $sdk: the program failed (session: $session)"; fail=1; continue
   fi
   errors="$("$sonde" show "$session" --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["summary"]["errors"])')"

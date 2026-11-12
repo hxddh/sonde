@@ -49,7 +49,7 @@ met, each with what sonde does instead. Format follows `examples/hopper/FINDINGS
 
 - No styled components: every control (buttons, fields, switches, selects, segmented control, badges) is sonde's own
   look on `nsh/base` behavior (`app/src/ui/kit.tsx`), with theme tokens (`app/theme.json`).
-- Charts are Native Shell's `Plot` in windows (one chart system, `app/src/ui/plots.tsx`; Capacity's three in
+- Charts are Native Shell's `Plot` in windows (one chart system, `app/src/ui/plots/` by family; Capacity's three in
   `app/src/ui/charts.tsx`); in a terminal, as the TUI guide says, the same data is a table and a sentence.
 
 ## Fixed

@@ -268,10 +268,11 @@ mod tests {
                 .map(|(_, v)| v.clone())
                 .unwrap()
         };
-        // a path with a space is one option, quoted
+        // a path with a space is one option, quoted (a backslash of Windows'
+        // paths doubled, as Node reads one in quotes)
         assert!(get("NODE_OPTIONS").ends_with(&format!(
-            "--require \"{}\"",
-            hooks.join("sonde-caller.cjs").display()
+            "--require {}",
+            node_quoted(&hooks.join("sonde-caller.cjs").to_string_lossy()).unwrap()
         )));
         assert!(get("JAVA_TOOL_OPTIONS").ends_with(&format!(
             "-javaagent:\"{}\"",

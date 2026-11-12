@@ -57,6 +57,14 @@ pub fn for_key(key: &str) -> Vec<Fix> {
                 "// GET alone: its response carries what HEAD would\nconst obj = await s3.send(new GetObjectCommand({ Bucket: b, Key: k }));\nconst size = obj.ContentLength;",
             ),
         ],
+        "obs.rename" => vec![f(
+            "config",
+            "# Spark: the S3A magic committer (Hadoop 3.3+), no rename\nspark.hadoop.fs.s3a.committer.name=magic\nspark.sql.sources.commitProtocolClass=org.apache.spark.internal.io.cloud.PathOutputCommitProtocol\nspark.sql.parquet.output.committer.class=org.apache.spark.internal.io.cloud.BindingParquetOutputCommitter",
+        )],
+        "obs.markers" => vec![f(
+            "config",
+            "# keep markers: no delete after each file written beneath one (Hadoop 3.3.1+)\nspark.hadoop.fs.s3a.directory.marker.retention=keep",
+        )],
         "obs.hot" => vec![
             f(
                 "python",
@@ -326,14 +334,14 @@ impl WhatIf {
             kinds.dedup();
             format!(
                 "{} of {} findings ({})",
-                self.findings,
-                self.of_findings,
+                count_text(self.findings),
+                count_text(self.of_findings),
                 kinds.join(", ")
             )
         } else {
             format!(
                 "{} finding{}",
-                self.findings,
+                count_text(self.findings),
                 if self.findings == 1 { "" } else { "s" }
             )
         };
@@ -367,6 +375,8 @@ impl WhatIf {
 fn kind_name(key: &str) -> &'static str {
     match key {
         "obs.hot" => "a key read again and again",
+        "obs.rename" => "a commit by rename",
+        "obs.markers" => "directory markers deleted",
         "obs.listed" => "a prefix listed again and again",
         "obs.headget" => "HEAD before GET",
         "obs.small" => "small files uploaded in parts",
@@ -394,7 +404,7 @@ mod tests {
                 key: Some(if i < 15 {
                     "conf.json".into()
                 } else {
-                    format!("k{i}")
+                    format!("k{i}").into()
                 }),
                 status: Some(200),
                 latency_ms: 10.0,
@@ -437,7 +447,7 @@ mod tests {
                 method: method.into(),
                 operation: op.into(),
                 bucket: Some("b".into()),
-                key: Some(format!("k{i}")),
+                key: Some(format!("k{i}").into()),
                 status: Some(200),
                 latency_ms: ms,
                 ..Default::default()
@@ -447,7 +457,7 @@ mod tests {
             rs.push(r(i * 3 + 2, at + 10, "GET", "GetObject", 60.0));
             // and a slow write, most of the cost
             let mut put = r(i * 3 + 3, at + 100, "PUT", "PutObject", 3.0);
-            put.key = Some(format!("out{i}"));
+            put.key = Some(format!("out{i}").into());
             rs.push(put);
         }
         let p = profile(&rs, &prices);

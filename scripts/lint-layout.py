@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Layout lint: a table shows its titles and its cells whole.
 
-Three checks, for every DataTable whose columns have literal widths
-(app/src and viewer), in English and in Chinese:
+Four checks, for every DataTable whose columns have literal widths or the
+kit's named ones (`COLUMN.x`; app/src, App.tsx and viewer), in English and
+in Chinese:
 
 - a column's title fits its width (with the cell's padding, and the sort
   mark where the column sorts): 15.0 shipped "Bytes h…";
@@ -12,7 +13,11 @@ Three checks, for every DataTable whose columns have literal widths
   old lint, which only added widths up, said ok;
 - the bucket's details (Incomplete uploads, Versions, Capacity, Layouts)
   open in the 760 pt side panel: their tables' columns add up to no more
-  than the panel holds (8.0's incomplete uploads lost Bytes and Cost).
+  than the panel holds (8.0's incomplete uploads lost Bytes and Cost);
+- a column of keys, paths, targets or names is cut in its middle or at its
+  start, never at its end (16.0 shipped "backups/db-2026-08-12.t…"): where
+  the table draws such a cell itself, it says `ellipsis-middle` or
+  `ellipsis-start`, or cuts it with `middle()` / `Path`.
 
 Widths are estimated from the text (a Latin letter, a digit, a CJK
 character, at the table's type size): a little wide, so what passes fits.
@@ -79,9 +84,17 @@ def kind_of(expr):
     return None
 
 
+# the kit's named column widths: `COLUMN.status` reads as 52
+kit_src = (app / "ui" / "kit.tsx").read_text()
+KIT = {}
+m = re.search(r"export const COLUMN = \{(.*?)\} as const;", kit_src, re.S)
+for k, v in re.findall(r"^\s*(\w+): (\d+),", m.group(1) if m else "", re.M):
+    KIT[f"COLUMN.{k}"] = int(v)
+# what a column of paths is keyed by
+PATHS = {"key", "target", "name", "path", "prefix", "url"}
 COLUMN = re.compile(r'\{\s*key(?:: "(?P<key>[\w-]+)")?, title: (?P<title>t\("[\w.]+"\)|"[^"]*"), width: (?P<width>[^,}]+)(?P<rest>[^}]*)\}')
 failed = False
-checked = {"titles": 0, "cells": 0, "tables": 0}
+checked = {"titles": 0, "cells": 0, "tables": 0, "paths": 0}
 
 
 def say(where, why):
@@ -90,7 +103,7 @@ def say(where, why):
     failed = True
 
 
-files = sorted(app.rglob("*.tsx")) + sorted((root / "viewer").glob("*.tsx"))
+files = sorted(app.rglob("*.tsx")) + [root / "app" / "App.tsx"] + sorted((root / "viewer").glob("*.tsx"))
 for path in files:
     src = path.read_text()
     if "DataTable" not in src:
@@ -98,6 +111,7 @@ for path in files:
     rel = path.relative_to(root).as_posix()
     lines = src.splitlines()
     consts = {m.group(1): int(m.group(2)) for m in re.finditer(r"^(?:export )?const (\w+) = (\d+);", src, re.M)}
+    consts.update(KIT)
     # a record of widths by column (`const OP_WIDTH = { status: 26, … }`), read as `x.widths.status`
     for m in re.finditer(r"const \w*WIDTH\w*(?:: [^=]+)? = \{([^}]*)\}", src):
         for k, v in re.findall(r"(\w+): (\d+)", m.group(1)):
@@ -147,18 +161,31 @@ for path in files:
                     if need > w:
                         say(f"{rel}:{n}", f"[cell] {key}: a {kind} as wide as “{widest}” ({lang}) needs {need:.0f} pt of {w} pt")
 
+    # a column of paths drawn by the table's own cell: cut in its middle or at its start
+    for m in re.finditer(r'c\.key === "([\w-]+)"', src):
+        key = m.group(1)
+        if key not in PATHS:
+            continue
+        n = src[: m.start()].count("\n") + 1
+        near = "\n".join(lines[n - 1 : n + 8])
+        checked["paths"] += 1
+        if "line-clamp-1" in near and not re.search(r"ellipsis-(?:middle|start)|\bmiddle\(|<Path\b", near):
+            say(f"{rel}:{n}", f"[path] {key}: cut at its end (line-clamp-1); a path is cut in its middle (`textOverflow: \"ellipsis-middle\"`) or at its start")
+
 # the bucket's sheets: their tables fit the panel
 store = (app / "screens" / "StoreArea.tsx").read_text()
 detail = set(re.findall(r"return <(\w+) />", store)) - {"Browse"}
 for name in sorted(detail):
     src = (app / "screens" / f"{name}.tsx").read_text()
     for m in re.finditer(r"<DataTable\b.*?columns=\{\[(.*?)\]\}", src, re.S):
-        widths = [int(w) for w in re.findall(r"\bwidth:\s*(\d+)", m.group(1))]
+        widths = [int(w) if w.isdigit() else KIT.get(w, 0) for w in re.findall(r"\bwidth:\s*(\d+|COLUMN\.\w+)", m.group(1))]
+        # a column that takes the room the others leave: its least
+        widths += [KIT.get(w, 0) for w in re.findall(r"width: \w+\(\), minWidth: (COLUMN\.\w+)", m.group(1))]
         if not widths:
             continue
         total = sum(widths)
         checked["tables"] += 1
         if total > FITS:
             say(f"app/src/screens/{name}.tsx:{src[: m.start()].count(chr(10)) + 1}", f"[sheet] columns {total} pt of {FITS} pt: too wide")
-print(f"layout: {checked['titles']} titles and {checked['cells']} widest cells against their columns' widths (en, zh); {checked['tables']} sheet tables against the panel's {FITS} pt: {'failed' if failed else 'ok'}")
+print(f"layout: {checked['titles']} titles and {checked['cells']} widest cells against their columns' widths (en, zh); {checked['tables']} sheet tables against the panel's {FITS} pt; {checked['paths']} columns of paths cut in their middle: {'failed' if failed else 'ok'}")
 sys.exit(1 if failed else 0)

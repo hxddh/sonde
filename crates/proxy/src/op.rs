@@ -27,16 +27,16 @@ const BUCKET_SUBRESOURCES: &[(&str, &str)] = &[
     ),
 ];
 
-fn has(query: &[(String, String)], name: &str) -> bool {
-    query.iter().any(|(k, _)| k == name)
+fn has<K: AsRef<str>, V>(query: &[(K, V)], name: &str) -> bool {
+    query.iter().any(|(k, _)| k.as_ref() == name)
 }
 
 /// The operation name, as the S3 API reference spells it.
-pub fn classify(
+pub fn classify<K: AsRef<str>, V>(
     method: &str,
     bucket: Option<&str>,
     key: Option<&str>,
-    query: &[(String, String)],
+    query: &[(K, V)],
     headers: &[(String, String)],
 ) -> String {
     let q = |n: &str| has(query, n);
@@ -58,11 +58,15 @@ pub fn classify(
                 ("GET", None) if q("versions") => "ListObjectVersions",
                 ("GET", None) if q("uploads") => "ListMultipartUploads",
                 ("GET", None) if q("location") => "GetBucketLocation",
+                // S3 Express One Zone's session credentials, for a directory bucket
+                ("GET", None) if q("session") => "CreateSession",
                 ("GET", None) => "ListObjects",
                 ("HEAD", _) => "HeadBucket",
                 // a subresource not listed above is a bucket setting sonde
                 // does not know, not the bucket's creation or removal
-                ("PUT" | "DELETE", None) if query.iter().any(|(k, _)| k != "x-id") => "Unknown",
+                ("PUT" | "DELETE", None) if query.iter().any(|(k, _)| k.as_ref() != "x-id") => {
+                    "Unknown"
+                }
                 ("PUT", None) => "CreateBucket",
                 ("DELETE", None) => "DeleteBucket",
                 ("POST", _) if q("delete") => "DeleteObjects",
@@ -106,6 +110,7 @@ const NAMED: &[&str] = &[
     "ListObjectVersions",
     "ListMultipartUploads",
     "GetBucketLocation",
+    "CreateSession",
     "ListObjects",
     "HeadBucket",
     "CreateBucket",

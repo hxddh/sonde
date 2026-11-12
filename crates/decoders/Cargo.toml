@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+sonde-fmt.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

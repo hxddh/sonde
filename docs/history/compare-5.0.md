@@ -1,8 +1,8 @@
 # 4.0 and 5.0, side by side
 
 The same states of the app in 4.0.0 (left) and 5.0.0 (right), from `scripts/shots.sh` on a GTK window at 1280×820
-(the session at the least window size, 900×560, too). What changed, and why, is in the [changelog](../CHANGELOG.md)
-and decisions D-051 to D-055 in [decisions.md](decisions.md).
+(the session at the least window size, 900×560, too). What changed, and why, is in the [changelog](../../CHANGELOG.md)
+and decisions D-051 to D-055 in [decisions.md](../decisions.md).
 
 ## A session
 
@@ -12,9 +12,9 @@ renames, shares and deletes it. Dates are written as the reader's language and c
 
 | 4.0 | 5.0 |
 |---|---|
-| ![A session in 4.0](images/4.0/session.png) | ![A session in 5.0](images/5.0/session.png) |
-| ![A session in 4.0, in Chinese](images/4.0/session-zh.png) | ![A session in 5.0, in Chinese](images/5.0/session-zh.png) |
-| ![A session in 4.0 at the least window size](images/4.0/session-min.png) | ![A session in 5.0 at the least window size](images/5.0/session-min.png) |
+| ![A session in 4.0](../images/4.0/session.png) | ![A session in 5.0](../images/5.0/session.png) |
+| ![A session in 4.0, in Chinese](../images/4.0/session-zh.png) | ![A session in 5.0, in Chinese](../images/5.0/session-zh.png) |
+| ![A session in 4.0 at the least window size](../images/4.0/session-min.png) | ![A session in 5.0 at the least window size](../images/5.0/session-min.png) |
 
 ## Run, Buckets
 
@@ -23,8 +23,8 @@ their row in equal columns.
 
 | 4.0 | 5.0 |
 |---|---|
-| ![Run in 4.0](images/4.0/run.png) | ![Run in 5.0](images/5.0/run.png) |
-| ![Buckets in 4.0](images/4.0/store.png) | ![Buckets in 5.0](images/5.0/store.png) |
+| ![Run in 4.0](../images/4.0/run.png) | ![Run in 5.0](../images/5.0/run.png) |
+| ![Buckets in 4.0](../images/4.0/store.png) | ![Buckets in 5.0](../images/5.0/store.png) |
 
 ## What a screenshot does not show
 

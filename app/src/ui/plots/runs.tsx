@@ -7,7 +7,7 @@ import { Area, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Treemap } from 
 import { count, day, duration, factor, percent, rate } from "../../format";
 import { t } from "../../i18n";
 import type { LatencyChange, ProgramHistory, RunChange, Profile } from "../../types";
-import { AREA_LABEL, AREA_VALUE, AXIS_LABEL, CROSS_BAND, CROSS_LINE, Chart, ChartTip, GUTTER, HOVER, INACTIVE, Legend, MOTION, PLOT, TICK_ROOM, TIME_TICK, TREEMAP, VALUE_TICK, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, TIP, TimeAxis, ValueAxis, sessionSpan, sinceTick, ROW_FIGURE } from "./system";
+import { AREA_LABEL, AREA_VALUE, AXIS_LABEL, BUCKET_TICK, CROSS_BAND, CROSS_LINE, Chart, ChartTip, GUTTER, HOVER, INACTIVE, Legend, MOTION, PLOT, TICK_ROOM, TIME_TICK, TREEMAP, VALUE_TICK, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, TIP, TimeAxis, ValueAxis, sessionSpan, sinceTick, ROW_FIGURE, Budget, budgetTop } from "./system";
 import { prefixNames } from "./where";
 import { Figure, terminal, textual, SimpleTable, SURFACE } from "../kit";
 
@@ -177,8 +177,16 @@ export function RunBars(props: { change: RunChange; max?: number; /** two differ
           <PlotLabel class="tabular-nums text-caption text-foreground" texts={rows().map((r, i) => ({ text: `${count(r.before)} → ${count(r.after)}`, x: Math.max(r.before, r.after), y: i, align: "left" as const, class: ROW_FIGURE }))} />
           <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.name ?? "")} labelClass={AXIS_LABEL} />
           {/* how many: none, and the most of either run */}
-          <PlotAxis placement="bottom" tickValues={[0, peak()]} format={(v) => (v === 0 ? "0" : t("run.bandRequests", { n: v }))} labelClass={TIME_TICK} />
+          <PlotAxis placement="bottom" tickValues={[0, peak()]} format={(v) => (v === 0 ? "0" : t("run.bandRequests", { n: v }))} labelClass={BUCKET_TICK} />
         </Plot>
+        {/* which dot is which run: the earlier hollow, the later in the colour of its change */}
+        <Legend
+          gutter
+          items={[
+            { label: t("runBars.before"), swatch: "border border-muted-foreground bg-card" },
+            ...(props.neutral ? [{ label: t("runBars.after"), swatch: "bg-chart-1" }] : [{ label: t("runBars.fewer"), swatch: "bg-status-ok" }, { label: t("runBars.more"), swatch: "bg-status-server" }]),
+          ]}
+        />
       </If>
     </If>
   );
@@ -248,7 +256,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
 type Measure = "requests" | "busyMs" | "cost" | "warnings";
 
 /** One figure of a program over its runs: a line through them, the baseline dashed, the latest run labelled. */
-export function RunTrend(props: { history: ProgramHistory; measure: Measure; title: string; format: (v: number) => string; onOpen?: (path: string) => void }) {
+export function RunTrend(props: { history: ProgramHistory; measure: Measure; title: string; format: (v: number) => string; onOpen?: (path: string) => void; /** the project's own limit on this measure (sonde.toml's `max-waiting`): its line */ budget?: number | null }) {
   const runs = () => props.history.runs;
   const values = () => runs().map((r) => r[props.measure] as number);
   const base = () => {
@@ -261,7 +269,7 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
     if (!l) return null;
     return props.measure === "requests" ? l.requests : props.measure === "busyMs" ? l.waitingMs : props.measure === "cost" ? l.cost : null;
   };
-  const hi = () => Math.max(...values(), base() ?? 0, limit() ?? 0, 1e-9) * 1.25;
+  const hi = () => budgetTop(Math.max(...values(), base() ?? 0, limit() ?? 0, 1e-9) * 1.25, props.budget);
   const hovered = signal<number | null>(null);
   const shown = () => runs()[hovered() ?? runs().length - 1];
   const last = () => runs().length - 1;
@@ -305,6 +313,7 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
             </If>
             <Grid y={[base()!]} class="stroke-muted-foreground/60" style={{ strokeDasharray: "3 3" }} />
           </If>
+          <Budget value={props.budget} say={props.format} />
           <Line curve="linear" class="stroke-chart-1 stroke-2" dot dotClass="size-1.5 rounded-full bg-chart-1" hoverDotClass="size-2.5 rounded-full border-2 border-card bg-chart-1" />
           <PlotLabel class="tabular-nums text-caption text-muted-foreground" texts={last() > 0 ? [{ text: props.format(values()[last()]), x: last(), y: values()[last()], align: "right", class: "-translate-y-full pb-1" }] : []} />
         </Plot>
@@ -358,7 +367,7 @@ export function DistributionCompare(props: { latency: [{ leMs: number | null; n:
         <Line y="b" curve="stepAfter" class="stroke-chart-1 stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-chart-1" />
         <PlotAxis placement="left" labelPlacement="inside" tickValues={[50, 95]} format={(v) => percent(v / 100)} labelClass={VALUE_TICK} />
         {/* a log scale ticks at its decades: 1 ms, 10 ms, 100 ms, never 3.16 ms */}
-        <PlotAxis tickValues={decades(rows()[0].x, rows()[rows().length - 1].x)} format={(v) => duration(10 ** v)} labelClass={TIME_TICK} />
+        <PlotAxis tickValues={decades(rows()[0].x, rows()[rows().length - 1].x)} format={(v) => duration(10 ** v)} labelClass={BUCKET_TICK} />
       </Plot>
     </If>
   );

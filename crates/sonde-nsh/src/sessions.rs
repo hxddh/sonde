@@ -122,7 +122,14 @@ fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     let root = dir
         .canonicalize()
         .map_err(|e| err_msg(format!("{}: {e}", dir.display())))?;
-    let candidate = Path::new(file);
+    // a canonical root on Windows is verbatim (`\\?\C:\…`), where `/` is no
+    // separator: a place written `etl/load.py` is joined as `etl\load.py`
+    let file = if cfg!(windows) {
+        std::borrow::Cow::Owned(file.replace('/', "\\"))
+    } else {
+        std::borrow::Cow::Borrowed(file)
+    };
+    let candidate = Path::new(file.as_ref());
     let joined = if candidate.is_absolute() {
         candidate.to_path_buf()
     } else {
@@ -144,16 +151,31 @@ fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     })
 }
 
-/// A recording policy by its name; an unknown one is refused, never "allow".
+/// A recording policy by its name, none the default (no-delete); an
+/// unknown one is refused, never "allow".
 fn policy_of(name: &str) -> Result<Policy, String> {
-    match name {
-        "allow" | "" => Ok(Policy::Allow),
-        "no-delete" => Ok(Policy::NoDelete),
-        "read-only" => Ok(Policy::ReadOnly),
-        other => Err(err_msg(format!(
-            "unknown recording policy \"{other}\": allow, no-delete or read-only"
-        ))),
+    if name.is_empty() {
+        return Ok(Policy::default());
     }
+    Policy::named(name).ok_or_else(|| {
+        err_msg(format!(
+            "unknown recording policy \"{name}\": allow, no-delete or read-only"
+        ))
+    })
+}
+
+/// The policy a run in `dir` is recorded under: the one asked (the app's
+/// setting, or Run's choice), narrowed by its project's `[record] policy`.
+/// A project's file may narrow what the person chose, never widen it.
+fn run_policy(asked: Policy, dir: Option<&Path>) -> Result<Policy, String> {
+    let project = match dir {
+        Some(d) => sonde_proxy::project::of(d).map_err(err_msg)?,
+        None => None,
+    };
+    Ok(match project.and_then(|p| p.policy) {
+        Some(p) => asked.stricter(p),
+        None => asked,
+    })
 }
 
 /// A JSON map beside the sessions (`titles.json`, `baselines.json`,
@@ -198,7 +220,7 @@ fn write_imports(dir: &Path, all: &std::collections::BTreeMap<String, String>) {
     ));
     if serde_json::to_vec(all)
         .ok()
-        .is_some_and(|b| std::fs::write(&tmp, b).is_ok())
+        .is_some_and(|b| reqlog::private::write(&tmp, b).is_ok())
     {
         let _ = std::fs::rename(&tmp, dir.join("imports.json"));
     }
@@ -216,6 +238,8 @@ struct Under {
     scenario: sonde_proxy::fault::Scenario,
     of: String,
     path: PathBuf,
+    /// What the clean run wrote: no-delete lets the trial write it again.
+    written: Arc<sonde_proxy::Written>,
 }
 
 /// Starts a recording: a local endpoint forwarding to `endpoint`; `under`
@@ -242,7 +266,12 @@ async fn begin(
     let _starting = Starting;
     let s = sonde();
     let client = s.client(&endpoint).map_err(crate::state::err)?;
-    let policy = policy_of(&policy)?;
+    // none asked: the setting's
+    let asked = match policy.as_str() {
+        "" => policy_of(&s.settings().record_policy)?,
+        p => policy_of(p)?,
+    };
+    let policy = run_policy(asked, cwd.as_deref())?;
     let dir = s.paths().sessions();
     std::fs::create_dir_all(&dir).map_err(err_msg)?;
     let name = command
@@ -268,6 +297,10 @@ async fn begin(
     let faults = under
         .as_ref()
         .map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario)));
+    let written = under
+        .as_ref()
+        .map(|u| u.written.clone())
+        .unwrap_or_default();
     let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
@@ -280,6 +313,7 @@ async fn begin(
                 ProxyConfig {
                     policy,
                     faults,
+                    written,
                     ..Default::default()
                 },
             )
@@ -544,7 +578,8 @@ fn save_titles(t: &std::collections::BTreeMap<String, String>) -> Result<(), Str
         std::process::id(),
         N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(t).map_err(err_msg)?).map_err(err_msg)?;
+    reqlog::private::write(&tmp, serde_json::to_vec_pretty(t).map_err(err_msg)?)
+        .map_err(err_msg)?;
     std::fs::rename(&tmp, dir.join("titles.json")).map_err(err_msg)
 }
 
@@ -592,7 +627,7 @@ fn exit_file(session: &Path) -> PathBuf {
 
 fn write_exit(session: &Path, code: Option<i32>) {
     if let Some(c) = code {
-        let _ = std::fs::write(exit_file(session), c.to_string());
+        let _ = reqlog::private::write(&exit_file(session), c.to_string());
     }
 }
 
@@ -674,74 +709,26 @@ fn with_trials(mut v: JsonValue, path: &str) -> JsonValue {
 }
 
 /// The scenarios a project names: the `[[scenario]]` tables of the
-/// `sonde.toml` found from `dir` upwards (to the repository's root), as
-/// `sonde run --trial` reads them. None when there is no such file.
+/// `sonde.toml` found from `dir` upwards (to the repository's root), read
+/// as `sonde run --trial` reads them ([`sonde_proxy::project`]). None when
+/// there is no such file.
 fn project_scenarios(dir: &Path) -> Result<Vec<sonde_proxy::fault::Scenario>, String> {
-    let mut at = dir.to_path_buf();
-    let file = loop {
-        let f = at.join("sonde.toml");
-        if f.is_file() {
-            break f;
-        }
-        if at.join(".git").exists() || !at.pop() {
-            return Ok(Vec::new());
-        }
-    };
-    let said = |e: String| format!("{}: {e}", file.display());
-    let text = std::fs::read_to_string(&file).map_err(|e| said(e.to_string()))?;
-    let doc: toml::Table = toml::from_str(&text).map_err(|e| said(e.to_string()))?;
-    // (checked where the command line's are: one reading of sonde.toml)
-    let name = doc
-        .get("program")
-        .and_then(|p| p.get("name"))
-        .and_then(|n| n.as_str());
-    sonde_proxy::fault::project_program_name(name).map_err(said)?;
-    let Some(list) = doc.get("scenario") else {
-        return Ok(Vec::new());
-    };
-    let list = list
-        .as_array()
-        .ok_or_else(|| said("scenario is written [[scenario]]".into()))?;
-    sonde_proxy::fault::project_scenarios(list.iter().map(scenario_of)).map_err(said)
+    Ok(sonde_proxy::project::of(dir)?
+        .map(|p| p.scenarios)
+        .unwrap_or_default())
 }
 
-/// One `[[scenario]]`: `name`, `fault` ("503 SlowDown", "500", "lost-answer",
-/// "delay 200ms"), `on` the operations, `prefix` the keys, `times` the
-/// attempts at each request that meet it (1 unless said; 0 is every one).
-fn scenario_of(t: &toml::Value) -> Result<sonde_proxy::fault::Scenario, String> {
-    let t = t.as_table().ok_or("a scenario is a table")?;
-    if let Some(k) = t
-        .keys()
-        .find(|k| !["name", "fault", "on", "prefix", "times"].contains(&k.as_str()))
-    {
-        return Err(format!("scenario: unknown key {k}"));
-    }
-    let name = t.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-    let fault = t
-        .get("fault")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("scenario {name}: no fault"))?;
-    let on: Vec<String> = match t.get("on") {
-        None => vec![],
-        Some(v) => v
-            .as_array()
-            .and_then(|a| a.iter().map(|x| x.as_str().map(String::from)).collect())
-            .ok_or_else(|| format!("scenario {name}: on is a list of operations"))?,
-    };
-    let prefix = t
-        .get("prefix")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let times = match t.get("times") {
-        None => None,
-        Some(v) => Some(
-            v.as_integer()
-                .and_then(|n| u32::try_from(n).ok())
-                .ok_or_else(|| format!("scenario {name}: times is a count"))?,
-        ),
-    };
-    sonde_proxy::fault::project_scenario(name, fault, &on, &prefix, times)
+/// The budget a project gives its program in the `[check]` of the
+/// `sonde.toml` found from `dir` upwards, read as `sonde check` reads it
+/// ([`sonde_proxy::project`]): what the app draws on a chart as a line —
+/// `max-p95` and `max-waiting` in ms, `max-errors` a count. None without a
+/// file (or one that does not read), or without any of the three.
+pub(crate) fn project_budget(dir: &Path) -> Option<(Option<f64>, Option<u64>, Option<f64>)> {
+    let check = sonde_proxy::project::of(dir).ok()??.file.check;
+    let p95 = check.max_p95_ms().ok()?;
+    let waiting = check.max_waiting_ms().ok()?;
+    let errors = check.max_errors.map(|n| n as u64);
+    (p95.is_some() || waiting.is_some() || errors.is_some()).then_some((p95, errors, waiting))
 }
 
 /// What a trial of a session would run: the project's scenarios when its
@@ -850,10 +837,37 @@ impl Newest {
     }
 }
 
-/// Whether a terminal's output asks where the cursor is (a Device Status
-/// Report, `ESC [ 6 n`), which its reader is to answer.
-fn asks_cursor(text: &str) -> bool {
-    text.contains("\x1b[6n")
+/// A terminal's question where the cursor is (a Device Status Report),
+/// which its reader is to answer.
+const ASKS_CURSOR: &str = "\x1b[6n";
+
+/// Finds the cursor's question in a terminal's output as it comes, a piece
+/// at a time: a question split between two reads is found in the second,
+/// from the start of it the first left over.
+#[derive(Default)]
+struct CursorAsks {
+    /// The end of the last piece that could begin the question.
+    carried: String,
+}
+
+impl CursorAsks {
+    /// How many times the output asks, this piece and what was carried.
+    fn asked(&mut self, text: &str) -> usize {
+        let joined = std::mem::take(&mut self.carried) + text;
+        let n = joined.matches(ASKS_CURSOR).count();
+        // the longest end of it that begins the question (all of it was
+        // counted, and is not carried)
+        let keep = (1..ASKS_CURSOR.len())
+            .rev()
+            .find(|&k| {
+                k <= joined.len()
+                    && joined.is_char_boundary(joined.len() - k)
+                    && ASKS_CURSOR.starts_with(&joined[joined.len() - k..])
+            })
+            .unwrap_or(0);
+        self.carried = joined[joined.len() - keep..].to_string();
+        n
+    }
 }
 
 /// The command a run's shell is given: as the session keeps it, every
@@ -941,6 +955,20 @@ async fn run_recorded(
             "SONDE_TRIAL".into(),
             trial.clone().unwrap_or_else(|| "clean".into()),
         ));
+        // a Python program that starts Spark reads s3a's endpoint from here
+        let region = set
+            .iter()
+            .find(|(k, _)| k == "AWS_REGION")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        set.push((
+            "PYSPARK_SUBMIT_ARGS".into(),
+            sonde_proxy::jvm::pyspark_submit_args(
+                std::env::var("PYSPARK_SUBMIT_ARGS").ok().as_deref(),
+                &r.proxy.plain_url(),
+                &region,
+            ),
+        ));
         (
             set,
             unset,
@@ -972,6 +1000,7 @@ async fn run_recorded(
         Some(t) => output.post(json!({ "started": view, "scenario": t })),
     };
     let mut decoder = crate::run::Utf8Stream::default();
+    let mut asks = CursorAsks::default();
     let mut exit_rx = exit_rx;
     let mut code = None;
     let mut exited = false;
@@ -989,11 +1018,15 @@ async fn run_recorded(
                     // starts and holds the program until it is told. A run's
                     // terminal answers; a trial's output goes to no terminal,
                     // so it is answered here, or the program never starts.
+                    // (each answered; the question may come in two reads)
+                    let asked = asks.asked(&text);
                     if trial.is_some()
-                        && asks_cursor(&text)
+                        && asked > 0
                         && let Some(r) = RUNNING.lock().as_mut()
                     {
-                        r.write(b"\x1b[1;1R");
+                        for _ in 0..asked {
+                            r.write(b"\x1b[1;1R");
+                        }
                     }
                     if !text.is_empty() {
                         writer.write_log(&text);
@@ -1425,8 +1458,9 @@ impl Sessions {
     }
 
     /// Starts recording: a local endpoint forwarding to `endpoint`, refusing
-    /// what `policy` (`allow`, `no-delete`, `read-only`) forbids. What to
-    /// point an application at, and the session file.
+    /// what `policy` (`allow`, `no-delete`, `read-only`; empty: the
+    /// `record-policy` setting) forbids, and a run's project's `[record]
+    /// policy` too. What to point an application at, and the session file.
     pub async fn start(endpoint: String, policy: String) -> Result<JsonValue, String> {
         begin(endpoint, policy, None, None, None).await
     }
@@ -1483,6 +1517,22 @@ impl Sessions {
             TRIAL_STOPPED.store(true, std::sync::atomic::Ordering::SeqCst);
         }
         RUNNING.lock().as_mut().is_some_and(|r| r.kill())
+    }
+
+    /// The budget the session's program has in its project's `sonde.toml`
+    /// (found from the folder it ran in), for the charts to draw:
+    /// `{ maxP95Ms, maxErrors, maxWaitingMs }`, each null where it gives
+    /// none; null for a session with no folder or a project with no budget.
+    pub fn budget(path: String) -> JsonValue {
+        let Some(dir) = header_of(Path::new(&path)).and_then(|h| h.cwd) else {
+            return JsonValue::Null;
+        };
+        match project_budget(Path::new(&dir)) {
+            Some((p95, errors, waiting)) => {
+                json!({ "maxP95Ms": p95, "maxErrors": errors, "maxWaitingMs": waiting })
+            }
+            None => JsonValue::Null,
+        }
     }
 
     /// What trying a session's program under faults would run, said before
@@ -1565,6 +1615,7 @@ impl Sessions {
         TRIAL_STOPPED.store(false, SeqCst);
         *TRIAL_OF.lock() = Some(file.clone());
         let clean_exit = read_exit(&file).unwrap_or(0);
+        let written = Arc::new(sonde_proxy::Written::of(&clean.records));
         // a new trial replaces the last one's verdicts and sessions
         sonde_proxy::trial::remove(&file);
         let dir = sonde_proxy::trial::folder_for(&file);
@@ -1579,6 +1630,7 @@ impl Sessions {
                 ),
                 of: of.clone(),
                 scenario: scenario.clone(),
+                written: written.clone(),
             };
             let ran = run_recorded(
                 &plan.command,
@@ -1702,19 +1754,18 @@ impl Sessions {
     /// cost and findings, by kind of request.
     pub async fn compare_runs(before: String, after: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
-            let (a, b) = (open_session(&before)?, open_session(&after)?);
-            let price = |s: &Session| crate::state::request_prices_for(&s.header.endpoint);
-            let (pa, pb) = (
-                sonde_proxy::profile::profile(&a.records, &price(&a)),
-                sonde_proxy::profile::profile(&b.records, &price(&b)),
-            );
-            let (oa, ob) = (
-                sonde_proxy::episode::observations_of(&a.header, &a.records, &episodes(&a.records)),
-                sonde_proxy::episode::observations_of(&b.header, &b.records, &episodes(&b.records)),
-            );
+            // one reckoned before the other is opened: a run of either
+            // size is held with what the other amounts to, not with it
+            let run = |path: &str| -> Result<_, String> {
+                let s = open_session(path)?;
+                let prices = crate::state::request_prices_for(&s.header.endpoint);
+                let run = sonde_proxy::profile::Run::analysed(&s.header, &s.records, &prices);
+                Ok((s.header.command.clone(), run))
+            };
+            let ((ca, a), (cb, b)) = (run(&before)?, run(&after)?);
             Ok(to_json(
-                sonde_proxy::profile::compare_runs((&a.records, &pa, &oa), (&b.records, &pb, &ob))
-                    .of_programs(a.header.command.as_deref(), b.header.command.as_deref()),
+                sonde_proxy::profile::compare_runs(&a, &b)
+                    .of_programs(ca.as_deref(), cb.as_deref()),
             ))
         })
         .await
@@ -1982,7 +2033,7 @@ impl Sessions {
                 "\"command\":\"gen-slatedb s3://slate\"",
             )
             .replace("\"endpoint\":\"adhoc\"", "\"endpoint\":\"rustfs\"");
-        std::fs::write(&path, text).map_err(err_msg)?;
+        reqlog::private::write(&path, text).map_err(err_msg)?;
         // a finished session, kept as every other is: compressed, so the
         // list reads its shape (an open file being written has none)
         sonde_proxy::session::compress(&path).map_err(err_msg)?;
@@ -2031,7 +2082,7 @@ impl Sessions {
             let (_, session) = sonde_proxy::import::import(&text, &stem)?;
             sonde_proxy::import::save(&session, &path).map_err(err_msg)?;
         } else {
-            std::fs::write(&path, text).map_err(err_msg)?;
+            reqlog::private::write(&path, text).map_err(err_msg)?;
             if let Err(e) = Session::open(&path) {
                 let _ = std::fs::remove_file(&path);
                 return Err(format!("{name}: {e}"));
@@ -2265,6 +2316,32 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn the_cursors_question_is_found_when_two_reads_split_it() {
+        let mut asks = CursorAsks::default();
+        assert_eq!(asks.asked("hello\x1b[6n"), 1);
+        assert_eq!(asks.asked("more"), 0, "a question is answered once");
+        // split at every place it can be
+        for at in 1..ASKS_CURSOR.len() {
+            let mut asks = CursorAsks::default();
+            let (a, b) = ASKS_CURSOR.split_at(at);
+            assert_eq!(asks.asked(&format!("starting{a}")), 0, "{at}");
+            assert_eq!(asks.asked(&format!("{b}then")), 1, "{at}");
+        }
+        // over three reads, and a piece that begins it but does not go on
+        let mut asks = CursorAsks::default();
+        assert_eq!(asks.asked("\x1b"), 0);
+        assert_eq!(asks.asked("["), 0);
+        assert_eq!(asks.asked("6n\x1b[6n"), 2);
+        assert_eq!(asks.asked("\x1b["), 0);
+        assert_eq!(asks.asked("1;1H"), 0);
+        assert_eq!(asks.asked("6n"), 0, "what was carried was not the question");
+        // the text around it is no part of what is carried
+        let mut asks = CursorAsks::default();
+        assert_eq!(asks.asked("日本\x1b[6"), 0);
+        assert_eq!(asks.asked("n語"), 1);
+    }
+
+    #[test]
     fn the_example_session_has_a_shape_for_the_list_once_it_is_kept_as_finished() {
         const EXAMPLE: &[u8] = include_bytes!("../../proxy/tests/fixtures/slatedb.sonde");
         let dir = tempfile::tempdir().unwrap();
@@ -2287,9 +2364,15 @@ mod tests {
         std::fs::write(root.join("etl/load.py"), "x").unwrap();
         std::fs::write(root.join("run.sh"), "x").unwrap();
         let outside = tempfile::NamedTempFile::new().unwrap();
+        // a .py is opened, except on Windows, where opening runs it
+        let load = root.join("etl").join("load.py");
         assert_eq!(
             code_target(&root, "etl/load.py:212 read").unwrap(),
-            CodeTarget::Open(root.join("etl/load.py"))
+            if cfg!(windows) {
+                CodeTarget::Reveal(load)
+            } else {
+                CodeTarget::Open(load)
+            }
         );
         assert_eq!(
             code_target(&root, "run.sh:1 main").unwrap(),
@@ -2356,10 +2439,28 @@ mod tests {
     #[test]
     fn an_unknown_recording_policy_is_refused_not_allowed() {
         assert_eq!(policy_of("allow").unwrap(), Policy::Allow);
+        assert_eq!(policy_of("").unwrap(), Policy::NoDelete, "safe by default");
         assert_eq!(policy_of("no-delete").unwrap(), Policy::NoDelete);
         assert_eq!(policy_of("read-only").unwrap(), Policy::ReadOnly);
         assert!(policy_of("readonly").unwrap_err().contains("readonly"));
         assert!(policy_of("no_delete").is_err());
+    }
+
+    #[test]
+    fn a_projects_policy_narrows_the_one_asked_and_never_widens_it() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(t.path().join(".git")).unwrap();
+        let at = |asked| run_policy(asked, Some(t.path()));
+        assert_eq!(at(Policy::Allow).unwrap(), Policy::Allow);
+        let file = t.path().join("sonde.toml");
+        std::fs::write(&file, "[record]\npolicy = \"read-only\"\n").unwrap();
+        assert_eq!(at(Policy::Allow).unwrap(), Policy::ReadOnly);
+        std::fs::write(&file, "[record]\npolicy = \"allow\"\n").unwrap();
+        assert_eq!(at(Policy::NoDelete).unwrap(), Policy::NoDelete);
+        // what the command line refuses, the app refuses
+        std::fs::write(&file, "[record]\npolicy = \"all\"\n").unwrap();
+        assert!(at(Policy::Allow).unwrap_err().contains("one of allow"));
+        assert_eq!(run_policy(Policy::Allow, None).unwrap(), Policy::Allow);
     }
 
     #[test]
@@ -2663,7 +2764,7 @@ mod tests {
                 operation: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
                 url: format!("http://s3/b/data/k{i:05}"),
                 bucket: Some("b".into()),
-                key: Some(format!("data/k{i:05}")),
+                key: Some(format!("data/k{i:05}").into()),
                 status: Some(if i % 50 == 3 { 500 } else { 200 }),
                 latency_ms: 1.0 + (n - i) as f64 / 10.0,
                 request_headers: vec![
@@ -2792,7 +2893,7 @@ mod tests {
             method: "GET".into(),
             operation: "GetObject".into(),
             bucket: Some("b".into()),
-            key: Some(format!("k{id}")),
+            key: Some(format!("k{id}").into()),
             status: Some(200),
             ..Default::default()
         };
@@ -2829,7 +2930,7 @@ mod tests {
             method: method.into(),
             operation: op.into(),
             bucket: Some("b".into()),
-            key: Some(format!("k{id}")),
+            key: Some(format!("k{id}").into()),
             status: Some(if injected.is_some() { 503 } else { 200 }),
             injected: injected.map(String::from),
             ..Default::default()
@@ -3071,6 +3172,40 @@ mod tests {
     }
 
     #[test]
+    fn a_projects_budget_is_read_for_its_charts_from_the_nearest_sonde_toml() {
+        let project = tempfile::tempdir().unwrap();
+        let inner = project.path().join("jobs");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::create_dir_all(project.path().join(".git")).unwrap();
+        // none without a file, or without the three
+        assert_eq!(super::project_budget(&inner), None);
+        std::fs::write(
+            project.path().join("sonde.toml"),
+            "[check]\nmax-requests = 9\n",
+        )
+        .unwrap();
+        assert_eq!(super::project_budget(&inner), None);
+        std::fs::write(
+            project.path().join("sonde.toml"),
+            "[check]\nmax-p95 = \"50ms\"\nmax-errors = 3\nmax-waiting = \"2s\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            super::project_budget(&inner),
+            Some((Some(50.0), Some(3), Some(2000.0)))
+        );
+        std::fs::write(
+            project.path().join("sonde.toml"),
+            "[check]\nmax-p95 = 120\n",
+        )
+        .unwrap();
+        assert_eq!(
+            super::project_budget(&inner),
+            Some((Some(120.0), None, None))
+        );
+    }
+
+    #[test]
     fn a_projects_own_scenarios_are_the_plan_when_its_sonde_toml_names_some() {
         let project = tempfile::tempdir().unwrap();
         let sub = project.path().join("etl");
@@ -3139,7 +3274,7 @@ mod tests {
         assert!(
             project_scenarios(&sub)
                 .unwrap_err()
-                .contains("unknown key when")
+                .contains("unknown field `when`")
         );
         // and no file above the repository's root is read
         let outside = tempfile::tempdir().unwrap();

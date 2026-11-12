@@ -11,7 +11,9 @@ import { batch, effect, type JSX, Scroll, signal, Text, untracked, View, type Vi
 import { t } from "../i18n";
 import { count, duration, percent } from "../format";
 import { FEW, type OpStats, operationStats, type SignalId, signalsOf } from "../signals";
-import type { SessionView, Signals } from "../types";
+import { type Range, slicesOf } from "../range";
+import { type ChartRows, toCsv } from "../csv";
+import type { ProjectBudget, SessionView, Signals } from "../types";
 import { Button, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable } from "./kit";
 import { findingMarks, StatusMark } from "./sessionview";
 import { BytesOverTime, Chains, Chart, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean } from "./plots";
@@ -35,6 +37,8 @@ interface ChartSpec {
   legend?: () => LegendItem[];
   testID?: string;
   body: () => JSX.Element;
+  /** what it draws, as rows: a CSV of it (each figure in one unit, named in its column) */
+  rows?: () => ChartRows;
 }
 
 /** The chart a signal's tile opens. */
@@ -101,7 +105,7 @@ function ByOperation(props: { view: SessionView }) {
 }
 
 /** The Time pane of a session. */
-export function TimePane(props: { view: SessionView; onRequest?: (id: number) => void; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null; /** a trial's session: the clean run it is judged against, when that run is still there */ clean?: SessionView | null }) {
+export function TimePane(props: { /** a chart's rows out as CSV, where the page can write a file (the app; a shared page cannot) */ onExport?: (name: string, csv: string) => void; view: SessionView; onRequest?: (id: number) => void; /** a stretch to open over (a link's), in ms from the session's start */ range?: Range | null; /** the stretch shown changed (null: the whole session): for a link to keep it */ onRange?: (r: Range | null) => void; /** the program's budget in its project's sonde.toml: drawn as a line on the charts it is about */ budget?: ProjectBudget | null; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null; /** a trial's session: the clean run it is judged against, when that run is still there */ clean?: SessionView | null }) {
   const p = () => props.view.profile;
   // the four signals, as Rust counted them (an older share: what its profile holds of them)
   const sig = () => signalsOf(props.view)!;
@@ -124,6 +128,15 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
     const z = zoom();
     return z ? [z[0] * p().binMs, (z[1] + 1) * p().binMs] : null;
   };
+  // a link's stretch, as this session's slices; and the stretch shown, told as it changes
+  untracked(() => {
+    const r = props.range ? slicesOf(props.range, p().binMs, p().rate.length) : null;
+    if (r) zoom.set(r);
+  });
+  effect(() => {
+    const r = zoomMs();
+    untracked(() => props.onRange?.(r));
+  });
   const latencyAs = signal<"bands" | "heat">("bands");
   // when sonde answered in the store's place (a trial's session), on the timeline itself
   const faults = () => faultMoments(p(), props.view.injected);
@@ -153,6 +166,11 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
   const graphic = () => !terminal();
   const overTime = () => timed(p()) && shaped();
   const failed = () => sig().errors.count + sig().errors.retriesTotal > 0;
+  // the budget's lines, and how far the run is from each (a share of the run's requests for its errors)
+  const p95Budget = () => props.budget?.maxP95Ms ?? null;
+  const errorBudget = () => (props.budget?.maxErrors != null && sig().rate.requests > 0 ? props.budget.maxErrors / sig().rate.requests : null);
+  const BUDGET_SAID = { p95: ["budget.p95", "budget.p95.over"], errors: ["budget.errors", "budget.errors.over"] } as const;
+  const budgetSaid = (what: keyof typeof BUDGET_SAID, over: boolean, vars: Record<string, string>) => ` ${t(BUDGET_SAID[what][over ? 1 : 0], vars)}`;
   const charts: ChartSpec[] = [
     // --- traffic: when, how many at once, how much
     {
@@ -181,6 +199,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       ),
       // every colour of the stack, the line, and what the numbers and rules over the slices are
       legend: () => [...shapeLegend(p(), findingMarks(props.view).length > 0), ...(faults().length ? [{ label: t("trialOver.faults"), swatch: "bg-status-injected" }] : [])],
+      rows: () => ({ columns: ["ms", "ok", "not_found", "client_error", "server_error", "p50_ms", "p95_ms"], rows: p().rate.map((b) => [b.tMs, b.ok, b.miss, b.client, b.server, b.p50Ms, b.p95Ms]) }),
       body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} faults={faults()} range={zoom()} slice={zoomFrom()} onSlice={pick} focus={focus} peak={sig().inFlight.peak} class={`${TICK_ROOM} mt-4 ${SHAPE} w-full`} testID="time-shape" />,
     },
     {
@@ -201,6 +220,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       title: () => t("bytesTime.title"),
       text: () => t("bytesTime.hint"),
       legend: () => [{ label: t("bytesTime.up"), swatch: "bg-chart-1" }, { label: t("bytesTime.down"), swatch: "bg-chart-4" }],
+      rows: () => ({ columns: ["ms", "sent_bytes_per_s", "received_bytes_per_s"], rows: sig().bytes.up.map((u, i) => [i * sig().binMs, u, sig().bytes.down[i] ?? 0]) }),
       body: () => <BytesOverTime signals={sig()} range={zoom()} focus={focus} />,
     },
     {
@@ -216,6 +236,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
         </If>
       ),
       legend: () => (sizesBy() === "speed" ? [] : [{ label: t("sizes.sent"), swatch: "bg-chart-1" }, { label: t("sizes.received"), swatch: "bg-chart-4" }]),
+      rows: () => ({ columns: ["up_to_bytes", "sent", "received"], rows: [...new Set([...sig().sizes.request, ...sig().sizes.response].map((b) => b.leBytes))].sort((a, b) => a - b).map((le) => [le, sig().sizes.request.find((b) => b.leBytes === le)?.count ?? 0, sig().sizes.response.find((b) => b.leBytes === le)?.count ?? 0]) }),
       body: () => (
         <If when={sizesBy() === "speed" && sig().sizes.throughput.length > 0} else={<Sizes signals={sig()} />}>
           <Throughput signals={sig()} />
@@ -229,12 +250,15 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       when: () => graphic() && overTime(),
       title: () => t("latencyTime.title"),
       // (no slice with a tail: said, rather than a band named and not drawn)
-      text: () => (latencyAs() === "heat" ? `${t("latencyHeat.hint")}${sampled()}` : hasTail(p()) ? t("latencyTime.hint") : t("latencyTime.hintNoTail")),
+      text: () =>
+        (latencyAs() === "heat" ? `${t("latencyHeat.hint")}${sampled()}` : hasTail(p()) ? t("latencyTime.hint") : t("latencyTime.hintNoTail")) +
+        (p95Budget() != null && sig().latency.p95Ms != null ? budgetSaid("p95", sig().latency.p95Ms! > p95Budget()!, { v: duration(sig().latency.p95Ms!), budget: duration(p95Budget()!) }) : ""),
       // the bands are of every request; the grid shows what a band averages away (two modes, a slow few)
       action: () => <Options testID="latency-as" value={latencyAs()} items={[{ value: "bands", title: t("latencyTime.bands") }, { value: "heat", title: t("latencyTime.heat") }]} onChange={(v) => latencyAs.set(v as "bands" | "heat")} />,
       legend: () => (latencyAs() === "heat" ? [{ label: t("latencyHeat.scale"), swatch: "bg-chart-1" }] : latencyLegend(p())),
+      rows: () => ({ columns: ["ms", "requests", "p50_ms", "p95_ms", "p99_ms"], rows: p().rate.map((b) => [b.tMs, b.ok + b.miss + b.client + b.server, b.p50Ms, b.p95Ms, b.p99Ms]) }),
       body: () => (
-        <If when={latencyAs() === "heat"} else={<LatencyBand profile={p()} domainMs={zoomMs()} focus={focus} class={`${TICK_ROOM} ${PLOT} w-full`} testID="latency-over-time" axis />}>
+        <If when={latencyAs() === "heat"} else={<LatencyBand profile={p()} domainMs={zoomMs()} focus={focus} class={`${TICK_ROOM} ${PLOT} w-full`} testID="latency-over-time" axis budgetMs={p95Budget()} />}>
           <LatencyHeat profile={p()} range={zoom()} focus={focus} />
         </If>
       ),
@@ -287,6 +311,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       title: () => t("failures.title"),
       text: () => t("failures.hint"),
       legend: () => failureLegend(sig()),
+      rows: () => ({ columns: ["ms", "client", "server", "transport", "injected", "retries"], rows: sig().errors.series.map((_, i) => [i * sig().binMs, sig().errors.client[i] ?? 0, sig().errors.server[i] ?? 0, sig().errors.transport[i] ?? 0, sig().errors.injected[i] ?? 0, sig().errors.retries[i] ?? 0]) }),
       body: () => <ErrorsOverTime signals={sig()} range={zoom()} focus={focus} />,
     },
     {
@@ -295,8 +320,9 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
       group: "errors",
       when: () => graphic() && sig().errors.count > 0 && shaped() && timed(p()),
       title: () => t("errorRate.title"),
-      text: () => t("errorRate.hint"),
-      body: () => <ErrorRate signals={sig()} range={zoom()} focus={focus} />,
+      text: () => t("errorRate.hint") + (props.budget?.maxErrors != null ? budgetSaid("errors", sig().errors.count > props.budget.maxErrors, { n: count(sig().errors.count), budget: count(props.budget.maxErrors) }) : ""),
+      rows: () => ({ columns: ["ms", "requests", "failed"], rows: sig().errors.series.map((x, i) => [i * sig().binMs, Math.round(((sig().rate.series[i] ?? 0) * sig().binMs) / 1000), x]) }),
+      body: () => <ErrorRate signals={sig()} range={zoom()} focus={focus} budgetShare={errorBudget()} />,
     },
     { id: "statuses", group: "errors", when: () => sig().statuses.length > 0, title: () => t("statuses.title"), text: () => t("statuses.hint"), body: () => <Statuses signals={sig()} /> },
     // --- where: which prefixes, at what cost, on which path
@@ -371,7 +397,7 @@ export function TimePane(props: { view: SessionView; onRequest?: (id: number) =>
                       if (wanted === c().id) show(wanted);
                     }}
                     class={terminal() ? "" : c().wide ? "w-full" : HALF}>
-                    <Chart testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={c().text?.()} action={c().action?.()} legend={c().legend?.()}>
+                    <Chart testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={c().text?.()} action={c().action?.()} legend={c().legend?.()} onExport={props.onExport && c().rows ? () => props.onExport!(c().id, toCsv(c().rows!())) : undefined}>
                       {c().body()}
                     </Chart>
                   </View>

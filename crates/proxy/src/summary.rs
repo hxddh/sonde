@@ -116,7 +116,7 @@ pub fn summarize(records: &[Record]) -> Summary {
         let e = ops.entry(r.operation.as_str()).or_insert_with(|| {
             (
                 OpStats {
-                    operation: r.operation.clone(),
+                    operation: r.operation.to_string(),
                     ..Default::default()
                 },
                 Vec::new(),
@@ -156,13 +156,15 @@ pub fn summarize(records: &[Record]) -> Summary {
 /// What a session file holds, counted once and kept beside it
 /// (`<name>.summary.json`): listing sessions, and holding a run to an earlier
 /// one, read this and never the session whole. It is of one version of the
-/// file (its length and the time it was written): another is counted again.
+/// file (its length and the time it was written, taken before it was read):
+/// another is counted again.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Counted {
     pub version: u32,
     pub len: u64,
-    pub modified_ms: u64,
+    /// When the file was last written, in ns: as finely as its file system says.
+    pub modified_ns: u64,
     pub created: DateTime<Utc>,
     pub endpoint: String,
     #[serde(default)]
@@ -184,6 +186,12 @@ pub struct Counted {
     pub bytes_down: u64,
     /// Its requests over its time, in [`SHAPE_BINS`] slices.
     pub shape: Vec<u32>,
+    /// The first line in its middle that is no record, and why: `sonde show`
+    /// refuses such a file, and the list says so rather than counting what
+    /// is around it as a session. (A torn last line is a recording cut
+    /// short: not counted, and no fault.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unreadable: Option<String>,
     /// The figures a baseline and a program's history need, once the
     /// session has been analysed ([`figures`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -195,12 +203,21 @@ pub struct Counted {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Figures {
+    /// The analysis they are of ([`ANALYSIS`]): another reckons them again.
+    #[serde(default)]
+    pub analysis: String,
     pub prices: crate::profile::RequestPrices,
     pub point: crate::program::RunPoint,
     pub warnings: Vec<String>,
 }
 
-pub const COUNTED_VERSION: u32 = 1;
+pub const COUNTED_VERSION: u32 = 2;
+
+/// The analysis a run's [`Figures`] are of: sonde's version, and a number
+/// raised whenever what they hold changes between versions (a finding, a
+/// warning, how waiting or cost is reckoned). A test reckons the fixtures'
+/// figures and fails, saying so, when they change and this does not.
+pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+1");
 pub const SHAPE_BINS: usize = 24;
 
 /// Where a session's counts are kept: `<name>.summary.json` beside it.
@@ -219,17 +236,25 @@ pub fn forget(session: &std::path::Path) {
 }
 
 /// What of a record's line the counts read: the rest of the line is skipped,
-/// not parsed.
+/// not parsed. What a record must have, a line must have to be counted
+/// ([`crate::session::Session::read`] refuses a line without it).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct CountedLine<'a> {
-    #[serde(default)]
-    time: Option<DateTime<Utc>>,
-    #[serde(borrow, default)]
+    id: u64,
+    time: DateTime<Utc>,
+    endpoint: serde::de::IgnoredAny,
+    operation: serde::de::IgnoredAny,
+    url: serde::de::IgnoredAny,
+    query: serde::de::IgnoredAny,
+    retries: serde::de::IgnoredAny,
+    request_headers: serde::de::IgnoredAny,
+    response_headers: serde::de::IgnoredAny,
+    #[serde(borrow)]
     method: std::borrow::Cow<'a, str>,
     #[serde(default)]
     status: Option<u16>,
-    #[serde(default)]
     latency_ms: f64,
     #[serde(default)]
     request_bytes: Option<u64>,
@@ -253,17 +278,34 @@ pub struct Counter {
     first: Option<i64>,
     last: Option<i64>,
     starts: Vec<i64>,
+    /// Lines given (the header is line 1), the last line when it did not
+    /// read (torn, if nothing follows it), and the first that did not read
+    /// with another after it.
+    lines: u64,
+    torn: Option<String>,
+    unreadable: Option<String>,
 }
 
 impl Counter {
     /// A line of a session file after its header: a record, the program's
-    /// output, or a line cut short (not counted).
+    /// output, or a line that is neither (not counted: the last line torn,
+    /// or, followed by another, a file that is not a session's).
     pub fn line(&mut self, line: &[u8]) {
-        if !line.starts_with(b"{") || line.starts_with(b"{\"log\"") {
+        self.lines += 1;
+        if self.unreadable.is_none() {
+            self.unreadable = self.torn.take();
+        } else {
+            self.torn = None;
+        }
+        if line.trim_ascii().is_empty() || line.starts_with(b"{\"log\"") {
             return;
         }
-        let Ok(r) = serde_json::from_slice::<CountedLine>(line) else {
-            return;
+        let r = match serde_json::from_slice::<CountedLine>(line) {
+            Ok(r) => r,
+            Err(e) => {
+                self.torn = Some(format!("line {}: {e}", self.lines + 1));
+                return;
+            }
         };
         let error = r.status.is_none_or(|s| s >= 400) || r.transport_error.is_some();
         let miss = r.status == Some(404)
@@ -274,7 +316,7 @@ impl Counter {
                 .is_some_and(|b| b.contains("<Code>NoSuchBucket</Code>"));
         let latency_us = (r.latency_ms.clamp(0.0, reqlog::MAX_LATENCY_MS) * 1000.0) as i64;
         self.add(
-            r.time.map(|t| t.timestamp_micros()),
+            r.time.timestamp_micros(),
             latency_us,
             error,
             miss,
@@ -285,7 +327,7 @@ impl Counter {
 
     pub fn record(&mut self, r: &Record) {
         self.add(
-            Some(r.time.timestamp_micros()),
+            r.time.timestamp_micros(),
             r.latency_us(),
             r.is_error(),
             is_miss(r),
@@ -294,35 +336,27 @@ impl Counter {
         );
     }
 
-    fn add(
-        &mut self,
-        start: Option<i64>,
-        latency_us: i64,
-        error: bool,
-        miss: bool,
-        up: u64,
-        down: u64,
-    ) {
+    fn add(&mut self, start: i64, latency_us: i64, error: bool, miss: bool, up: u64, down: u64) {
         self.requests += 1;
         self.misses += u64::from(miss);
         self.errors += u64::from(error && !miss);
         self.bytes_up += up;
         self.bytes_down += if error { 0 } else { down };
-        // (a line another tool wrote may have no time: counted, not placed)
-        let Some(start) = start else { return };
         let end = start + latency_us;
         self.first = Some(self.first.map_or(start, |f| f.min(start)));
         self.last = Some(self.last.map_or(end, |l| l.max(end)));
         self.starts.push(start);
     }
 
-    /// The counts, of the file as it is now.
+    /// The counts, of the file as it was when `stamp` was taken ([`stamp`],
+    /// before it was read: a file written again while it was read is then
+    /// counted again next time, not kept under the newer stamp).
     pub fn finish(
         self,
-        session: &std::path::Path,
+        stamp: Option<(u64, u64)>,
         header: &crate::session::SessionHeader,
     ) -> Counted {
-        let (len, modified_ms) = stamp(session).unwrap_or((0, 0));
+        let (len, modified_ns) = stamp.unwrap_or((0, 0));
         let mut shape = vec![0u32; SHAPE_BINS];
         if let (Some(a), Some(b)) = (self.starts.iter().min(), self.starts.iter().max()) {
             let span = (b - a).max(1) as f64;
@@ -334,7 +368,7 @@ impl Counter {
         Counted {
             version: COUNTED_VERSION,
             len,
-            modified_ms,
+            modified_ns,
             created: header.created,
             endpoint: header.endpoint.clone(),
             command: header.command.clone(),
@@ -352,26 +386,29 @@ impl Counter {
             bytes_up: self.bytes_up,
             bytes_down: self.bytes_down,
             shape,
+            unreadable: self.unreadable,
             figures: None,
         }
     }
 }
 
-/// A file's length and when it was last written, in ms.
-fn stamp(path: &std::path::Path) -> Option<(u64, u64)> {
+/// A file's length and when it was last written, in ns (as finely as its
+/// file system keeps it: a millisecond would not tell two writes apart that
+/// one keeps to the nanosecond).
+pub fn stamp(path: &std::path::Path) -> Option<(u64, u64)> {
     let m = std::fs::metadata(path).ok()?;
     let at = m
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_millis() as u64);
+        .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
     Some((m.len(), at))
 }
 
 /// The counts kept beside a session, when they are of the file as it is now.
 pub fn kept(session: &std::path::Path) -> Option<Counted> {
     let c: Counted = serde_json::from_slice(&std::fs::read(counted_file(session)).ok()?).ok()?;
-    (c.version == COUNTED_VERSION && Some((c.len, c.modified_ms)) == stamp(session)).then_some(c)
+    (c.version == COUNTED_VERSION && Some((c.len, c.modified_ns)) == stamp(session)).then_some(c)
 }
 
 /// Keeps a session's counts beside it. A failure to write is no error: they
@@ -387,7 +424,7 @@ pub fn keep(session: &std::path::Path, c: &Counted) {
     ));
     let written = serde_json::to_vec(c)
         .ok()
-        .and_then(|b| std::fs::write(&tmp, b).ok())
+        .and_then(|b| reqlog::private::write(&tmp, b).ok())
         .and_then(|_| std::fs::rename(&tmp, &file).ok());
     if written.is_none() {
         let _ = std::fs::remove_file(&tmp);
@@ -401,6 +438,7 @@ pub fn counted(session: &std::path::Path) -> Option<Counted> {
     if let Some(c) = kept(session) {
         return Some(c);
     }
+    let at = stamp(session);
     let mut lines = crate::session::Lines::open(session).ok()?;
     let header: crate::session::SessionHeader = serde_json::from_slice(lines.line().ok()??).ok()?;
     let mut n = Counter::default();
@@ -408,7 +446,7 @@ pub fn counted(session: &std::path::Path) -> Option<Counted> {
     while let Ok(Some(l)) = lines.line() {
         n.line(l);
     }
-    let c = n.finish(session, &header);
+    let c = n.finish(at, &header);
     // a live recording is still growing: its counts would be stale at once
     if crate::session::is_compressed(session) {
         keep(session, &c);
@@ -424,20 +462,24 @@ pub fn figures(
 ) -> Option<(Counted, Figures)> {
     let path = session.to_string_lossy().into_owned();
     if let Some(c) = kept(session)
-        && let Some(f) = c.figures.clone().filter(|f| f.prices == *prices)
+        && let Some(f) = c
+            .figures
+            .clone()
+            .filter(|f| f.prices == *prices && f.analysis == ANALYSIS)
     {
         let mut f = f;
         // as it is named now: the folder may have moved
         f.point.path = path;
         return Some((c, f));
     }
+    let at = stamp(session);
     let s = crate::session::Session::open_lean(session).ok()?;
     let f = figures_of(&path, &s, prices);
     let mut n = Counter::default();
     for r in &s.records {
         n.record(r);
     }
-    let mut c = n.finish(session, &s.header);
+    let mut c = n.finish(at, &s.header);
     c.figures = Some(f.clone());
     if crate::session::is_compressed(session) {
         keep(session, &c);
@@ -457,6 +499,7 @@ pub fn figures_of(
         ..
     } = crate::view::Analysis::of(s, prices);
     Figures {
+        analysis: ANALYSIS.to_string(),
         prices: prices.clone(),
         point: crate::program::run_point(
             path,
@@ -641,6 +684,90 @@ mod tests {
     }
 
     #[test]
+    fn counts_are_of_the_file_as_it_was_before_it_was_read_to_the_nanosecond() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(dir.path(), "slatedb.sonde", true);
+        let c = counted(&path).unwrap();
+        assert!(kept(&path).is_some());
+        // written again within the same millisecond, the same length: counted again
+        let f = std::fs::File::options().write(true).open(&path).unwrap();
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_nanos(c.modified_ns + 1_000);
+        f.set_modified(t).unwrap();
+        drop(f);
+        if stamp(&path).unwrap().1 != c.modified_ns {
+            assert_eq!(kept(&path), None);
+        }
+        // the stamp a count is kept under is the one taken before it read:
+        // a file written while it was read is not kept as counted
+        let before = stamp(&path);
+        let header = crate::session::read_header(&path).unwrap();
+        let other = fixture(dir.path(), "delta.sonde", true);
+        std::fs::copy(&other, &path).unwrap();
+        keep(&path, &Counter::default().finish(before, &header));
+        assert_eq!(kept(&path), None);
+    }
+
+    #[test]
+    fn a_line_that_is_no_record_in_the_middle_is_said_and_a_torn_last_line_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(dir.path(), "sdk-python.sonde", false);
+        let whole = std::fs::read(&path).unwrap();
+        let cut = |bytes: &[u8]| {
+            std::fs::write(&path, bytes).unwrap();
+            (
+                counted(&path).unwrap(),
+                crate::session::Session::open(&path).map(|s| s.records.len()),
+            )
+        };
+        // the last line torn: both read the twelve before it
+        let (c, read) = cut(&whole[..whole.len() - 30]);
+        assert_eq!((c.requests, c.unreadable), (12, None));
+        assert_eq!(read, Ok(12));
+        // a line no record could be, with lines after it: both say so
+        for junk in [&b"not json"[..], b"{\"id\": \"x\"}", b"{\"id\": 3}"] {
+            let mut bad = whole.clone();
+            let at = bad.iter().position(|b| *b == b'\n').unwrap() + 1;
+            bad.splice(at..at, junk.iter().copied().chain(*b"\n"));
+            let (c, read) = cut(&bad);
+            let said = c.unreadable.expect("said");
+            assert!(said.starts_with("line 2: "), "{said}");
+            assert!(read.unwrap_err().starts_with("line 2: "));
+        }
+    }
+
+    /// What the cache holds of a run, for the fixtures: when it changes,
+    /// [`ANALYSIS`] must, or a run kept with the old figures keeps them.
+    #[test]
+    fn the_figures_kept_change_only_with_the_analysis_they_are_of() {
+        let prices = crate::profile::RequestPrices::default();
+        let mut all = String::new();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let mut names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        names.sort();
+        for path in names {
+            let s = crate::session::Session::open(&path).unwrap();
+            let mut f = figures_of("", &s, &prices);
+            f.analysis.clear();
+            all.push_str(&serde_json::to_string(&f).unwrap());
+        }
+        // FNV-1a: the same on every machine
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in all.as_bytes() {
+            h = (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        // (what they hold is there to change: warnings among them)
+        assert!(all.contains("\"warnings\":[\""), "{all}");
+        const FIGURES: u64 = 0x1967_8f59_615c_bbe0;
+        assert_eq!(
+            h, FIGURES,
+            "the figures a run keeps changed: raise the number in `ANALYSIS` (summary.rs) and set FIGURES to {h:#x}"
+        );
+    }
+
+    #[test]
     fn a_runs_figures_are_reckoned_once_and_again_at_other_prices() {
         let dir = tempfile::tempdir().unwrap();
         let path = fixture(dir.path(), "sdk-python.sonde", true);
@@ -651,6 +778,7 @@ mod tests {
         // kept: the same answer from the small file
         let again = kept(&path).unwrap();
         assert_eq!(again.figures.as_ref(), Some(&f));
+        assert_eq!(f.analysis, ANALYSIS);
         assert_eq!(figures(&path, &prices).unwrap().1, f);
         // other prices are another cost
         let dear = crate::profile::RequestPrices {
@@ -660,5 +788,11 @@ mod tests {
         let (_, g) = figures(&path, &dear).unwrap();
         assert!(g.point.cost > f.point.cost * 100.0);
         assert_eq!(kept(&path).unwrap().figures.unwrap().prices, dear);
+        // of another analysis: reckoned again
+        let mut c = kept(&path).unwrap();
+        c.figures.as_mut().unwrap().analysis = "15.0.0+1".into();
+        c.figures.as_mut().unwrap().point.requests = 99;
+        keep(&path, &c);
+        assert_eq!(figures(&path, &dear).unwrap().1.point.requests, 13);
     }
 }

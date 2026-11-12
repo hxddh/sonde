@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/probe-diff.schema.json",
+  "title": "sonde probe diff -f json",
+  "description": "What changed between two saved probe runs. Exit 4 when anything did.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "probe": {
+        "type": "string"
+      },
+      "before": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "pass",
+          "fail",
+          "differs",
+          "unsupported",
+          "error",
+          "skipped",
+          null
+        ]
+      },
+      "after": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "pass",
+          "fail",
+          "differs",
+          "unsupported",
+          "error",
+          "skipped",
+          null
+        ]
+      },
+      "beforeSummary": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "afterSummary": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "beforeSummaryText": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/phrase"
+        }
+      },
+      "afterSummaryText": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/phrase"
+        }
+      },
+      "stepsChanged": {
+        "type": "boolean",
+        "description": "Same verdict, other statuses or codes in the steps."
+      }
+    },
+    "required": [
+      "probe",
+      "before",
+      "after",
+      "beforeSummary",
+      "afterSummary",
+      "stepsChanged"
+    ]
+  },
+  "$defs": {
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The phrase's key in the app's locales (en, zh)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Its arguments, as text.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  }
+}

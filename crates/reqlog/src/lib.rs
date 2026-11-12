@@ -9,6 +9,7 @@
 
 pub mod copy;
 pub mod export;
+pub mod private;
 mod record;
 pub mod redact;
 mod ring;

@@ -111,8 +111,9 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 | Rows | `ListRow` for every row a press opens, `Row` for every row only read; `ROW_STATE` stays in the kit, no hairline row by hand | `[row]` |
 | Base controls | A page takes from `nsh/base` only what has structure and no look (a table, a split, a tree, a terminal, an editor, a diff); a control comes from the kit. The shared pieces that draw one of their own are listed in the lint, each with why | `[base]` |
 | Open and close | `Disclosure` (with `trailing` for what stands beside its title): the findings use it | `[heading]` (its title is the kit's) |
-| Layout thresholds | The four `BREAK` names and no number compared with a width or a height anywhere else; a key nothing uses fails. A size a page needs (a tile's least width, a dialog's scrolling height) is a `SIZES` name: none under a name of its own | `[threshold]` |
-| Sizes | No `w-N` and no arbitrary `[…]` size in a page: a field's or a column's width is a `WIDTH` name, a surface's a `SURFACE` name; a name nothing uses fails | `[width]`, `[size]` |
+| Layout thresholds | The four `BREAK` names and no number compared with a width or a height anywhere else; a key nothing uses fails. A size a page needs (a tile's least width, a dialog's scrolling height, the findings' bound) is a `SIZES` name: none under a name of its own; a literal `maxHeight` fails, and a split's `minSize`/`maxSize` is a `PANE` name. `App.tsx` is read like every page | `[threshold]` |
+| Sizes | No `w-N` and no arbitrary `[…]` size in a page: a field's or a column's width is a `WIDTH` name, a surface's a `SURFACE` name, a table column's a `COLUMN` name (no number in a column object); a name nothing uses fails | `[width]`, `[size]`, `[column]` |
+| Presses | Nothing pressable by hand: no `role="button"` on a `Text` or a `View` (it has no focus ring); `Button`, `ListRow` or `Back` | `[press]` |
 | Duration | `duration()` in `format.ts`, under that name only: no alias, no milliseconds written by hand, no other function that writes one (`elapsed`, `days` and `ago` are gone: an age and a counter are forms of `duration`), an age's words used nowhere else | `[duration]` |
 | Numbers | Every count through `count()`, every share through `percent()`/`pct()`, a ratio through `factor()`, a rate through `rate()`: no `String(` and no `.toFixed(` in `src/ui`, `src/screens` or `viewer` | `[number]` |
 | Spacing | 4, 8, 12, 16, 24 (`gap-1 2 3 4 6`, and `p-`, `m-` alike), every value checked, not two; in the kit an off-scale inset carries an `off-scale:` comment | `[spacing]` |
@@ -121,7 +122,7 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 | Nothing here | `Empty`, whole or `compact` | `[empty]` |
 | Words | Every key in every language with the same placeholders, and every key used: named whole, or a member of a family a template builds (`t(\`trial.${standing}\`)`), the family listed in the lint with its members, key by key — a prefix alone passes nothing | `check-locales.py` |
 | Charts | One frame, one left edge, one row pitch, one legend, one tooltip, one fade, one outline, one time axis, one value scale; bar thickness, tips and heights each a named small set (see Charts) | `lint-charts.py` |
-| Tables | A column's title fits its width, and so does the widest text a formatter can write into it (a day, a date, a size, an age), in English and in Chinese; the bucket's sheets' tables fit the sheet | `lint-layout.py` |
+| Tables | A column's title fits its width, and so does the widest text a formatter can write into it (a day, a date, a size, an age), in English and in Chinese; the bucket's sheets' tables fit the sheet; a column of keys, paths, targets or names is cut in its middle (`ellipsis-middle`) or at its start, never at its end | `lint-layout.py` |
 
 Sizes (`CONTROL`, `ROW`, `FORM`):
 
@@ -161,7 +162,9 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
     as fit, the rest behind `⋯`; they never wrap to a second line;
   - a finding's advice opens inside its own row, under its title, which comes to the top of the findings' room;
-    in a short pane that room is bounded so the operations under it keep rows;
+    in a short pane that room is bounded so the operations under it keep rows, ending on a whole finding, and
+    says how many are in view;
+  - free width goes to the column that would be cut (a target, a key, a name);
   - a chart's sentence wraps and is never cut; a row's name that does not fit its gutter is cut in its middle
     (`axisName`), a path at its start (`tail`); an operation's name in a table is cut in its middle by the text
     itself (`ellipsis-middle`), never at its end.
@@ -289,6 +292,10 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   writes zero alone. A second quantity has its tick at the far edge (in
   flight on the timeline, the share done on the histogram). Latencies on a log scale are drawn as logs, the
   ticks saying times.
+- **A budget on its chart**: `sonde.toml`'s `max-p95`, `max-errors` (as a share of the run) and `max-waiting`
+  (over the runs) are dashed lines with a chip ("budget 50 ms"); the sentence says how far the run is.
+- **Out and kept**: a Time chart's rows go out as CSV (its title's button, to the exports folder); the stretch
+  chosen goes into a `sonde://` link and a shared page's `#range=` (D-123: still two presses).
 - **A whole legend**: every colour and every line a chart draws is named under it — the timeline's stack, its
   line of requests in flight, the findings' numbers and a trial's faults; the scatter's outcomes and its p95.
 - **The histogram**: each bar says how many requests it holds; the share done by each time is a dashed line on
@@ -348,6 +355,7 @@ nothing uses fails `check-locales.py`. Nouns
 for places (Run, Sessions, Buckets, Activity), verbs for commands. Chinese is written,
 not translated: `桶`, `会话`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of
 their own (运行 the place, 启动 its button, 各次运行 and 历次运行 the runs in the list and on the tab; 操作 what
-a program did, 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create). What sonde says about a session comes from
+a program did, 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create; 未通过 a
+broke trial, 失败 a failed request, job or budget). What sonde says about a session comes from
 phrases (`src/phrases.ts`) in both languages: English from Rust's own templates, which `check-locales.py`
 holds the app's to, letter for letter.

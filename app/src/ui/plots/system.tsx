@@ -3,11 +3,11 @@
 // by a pane's charts. Here and nowhere else (scripts/lint-charts.py counts them).
 
 import { type JSX, signal, Text, token, View } from "nsh";
-import { PlotAxis } from "nsh/base/plot";
+import { Grid, PlotAxis } from "nsh/base/plot";
 import { duration, middle, percent } from "../../format";
 import { t } from "../../i18n";
 import type { ProfileGroup } from "../../types";
-import { Card, EMPHASIS, Empty, Heading, POPUP, terminal } from "../kit";
+import { Card, EMPHASIS, Empty, Heading, POPUP, terminal, IconButton } from "../kit";
 
 /** A kind of request as people say it: "HeadObject" or "HeadObject, not found". */
 export const groupName = (g: Pick<ProfileGroup, "operation" | "missed">) => (g.missed ? t("profile.notFound", { op: g.operation }) : g.operation);
@@ -117,15 +117,20 @@ export const CROSS_LINE = "w-px h-full bg-foreground/25";
 export const INACTIVE = 0.4;
 /** The one outline of the cell, the area or the node under the pointer. */
 export const HOVER = "rounded-(--radius-sm) outline-2 outline-foreground";
-/** A time axis's ticks: three, tabular, quiet. */
+/** A time axis's ticks: three, tabular, quiet (TimeAxis's alone: lint-charts fails it anywhere else). */
 export const TIME_TICK = "pt-1 tabular-nums text-caption text-muted-foreground";
-/** A value axis's ticks, inside the plot on a chip. */
-export const VALUE_TICK = "ml-1 rounded-(--radius-sm) bg-card/85 px-1 tabular-nums text-caption text-muted-foreground";
+/** A bottom axis of buckets or measures (sizes, latencies, a count's two ends): time's look, by its own name. */
+export const BUCKET_TICK = "pt-1 tabular-nums text-caption text-muted-foreground";
+/** A value axis's ticks, inside the plot on a chip (an edge of its own: it reads as one on the card). */
+export const VALUE_TICK = "ml-1 rounded-(--radius-sm) border border-border bg-card px-1 tabular-nums text-caption text-muted-foreground";
 /** Zero of a value scale, outside the plot beside its baseline. */
 export const ZERO_TICK = "pr-1 tabular-nums text-caption text-muted-foreground";
 export const ZERO_TICK_END = "pl-1 tabular-nums text-caption text-muted-foreground";
 /** The same at the plot's far edge (a second scale). */
-export const VALUE_TICK_END = "mr-1 rounded-(--radius-sm) bg-card/85 px-1 tabular-nums text-caption text-muted-foreground";
+export const VALUE_TICK_END = "mr-1 rounded-(--radius-sm) border border-border bg-card px-1 tabular-nums text-caption text-muted-foreground";
+/** A budget's line (sonde.toml's limit) and its chip: in the warning's tone, dashed, at the far edge. */
+export const BUDGET_LINE = "stroke-warn/70";
+export const BUDGET_TICK = "mr-1 rounded-(--radius-sm) border border-warn/60 bg-card px-1 tabular-nums text-caption text-warn";
 /** A figure at a bar's end, a note in the plot. */
 export const BAR_LABEL = "pl-2 tabular-nums text-caption text-muted-foreground";
 /** A row's figures on the row's own line, past its last mark: the label's middle on the line. */
@@ -190,6 +195,10 @@ export function ValueAxis(props: { peak: number; say: (v: number) => string; /**
   return (
     <>
       <If when={!props.marked}>
+      {/* the peak's own line, under its chip (a second scale's peak has the chip alone) */}
+      <If when={props.scale !== "y2"}>
+        <Grid y={[...(props.low !== undefined ? [props.low] : []), props.peak]} class={GRID} />
+      </If>
       <PlotAxis
         placement={props.end ? "right" : "left"}
         scale={props.scale}
@@ -203,6 +212,21 @@ export function ValueAxis(props: { peak: number; say: (v: number) => string; /**
     </>
   );
 }
+
+/** A budget drawn on its chart: sonde.toml's limit (`max-p95`, `max-errors`,
+ * `max-waiting`) as a dashed line in the warning's tone, its chip at the far
+ * edge ("budget 50 ms"). Nothing where the session's program has no budget
+ * for it. The chart's domain must reach it (`budgetTop`). */
+export function Budget(props: { value: number | null | undefined; say: (v: number) => string }) {
+  return (
+    <If when={props.value != null && props.value > 0}>
+      <Grid y={[props.value!]} class={BUDGET_LINE} style={{ strokeDasharray: "4 3" }} />
+      <PlotAxis placement="right" labelPlacement="inside" tickValues={[props.value!]} format={(v) => t("budget.line", { v: props.say(v) })} labelClass={BUDGET_TICK} />
+    </If>
+  );
+}
+/** A domain's top that leaves the budget's line (and its chip) in view: a fifth above the higher of the two. */
+export const budgetTop = (top: number, budget: number | null | undefined) => (budget != null && budget > 0 ? Math.max(top, budget * 1.2) : top);
 
 // the keys and screen readers step the hover with a spring; the pointer's own moves follow at once
 export const MOTION = { appear: { duration: 420, easing: "easeOut" as const }, update: { duration: 260, easing: "easeOut" as const }, enter: { duration: 100 }, exit: { duration: 160 }, pointer: { stiffness: 420, damping: 36 } };
@@ -237,7 +261,8 @@ export function ChartTip(props: { tip: ChartTipText | null | undefined }) {
 /** What a screen reader hears of the row under the pointer: the tooltip's words. */
 export const tipValue = (tip: ChartTipText | null | undefined) => ({ text: tip ? `${tip.title}: ${tip.lines.join(", ")}` : "" });
 
-export type LegendItem = { label: string; swatch: string };
+/** `line`: a line the chart draws (dashed: a p95, a share done), its swatch a short dash in that colour (`border-*`), never a dot. */
+export type LegendItem = { label: string; swatch: string; line?: boolean };
 
 /** What a chart's colors stand for: a round swatch (its `bg-*` class) and a
  * name each, in a row that wraps, and after them what else is to be said
@@ -249,7 +274,7 @@ export function Legend(props: { items: LegendItem[]; gutter?: boolean; children?
       <Each of={props.items} key={(it) => it.label}>
         {(it) => (
           <View class="flex-row items-center gap-1">
-            <View class={`size-2 rounded-full ${it().swatch}`} />
+            <View class={it().line ? `w-3 border-t-2 border-dashed ${it().swatch}` : `size-2 rounded-full ${it().swatch}`} />
             <Text class="text-caption text-muted-foreground">{it().label}</Text>
           </View>
         )}
@@ -274,7 +299,7 @@ export function ChartNote(props: { children: JSX.Element; gutter?: boolean; test
  * edge (`gutter` for a chart of rows), and `empty` said in the plot's room
  * when there is nothing to draw. A terminal gets the title and what the
  * chart says in words. */
-export function Chart(props: { title: string; text?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string }) {
+export function Chart(props: { title: string; text?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string; /** its rows out as CSV (where the page can write a file): a button at the title's end */ onExport?: () => void }) {
   if (terminal()) {
     return (
       <View testID={props.testID} class="gap-0">
@@ -295,6 +320,9 @@ export function Chart(props: { title: string; text?: string; action?: JSX.Elemen
           </If>
         </View>
         {props.action}
+        <If when={props.onExport && !props.empty}>
+          <IconButton icon="download" label={t("chart.csv")} onPress={() => props.onExport?.()} testID={props.testID ? `${props.testID}-csv` : undefined} />
+        </If>
       </View>
       <If when={!props.empty} else={<Empty compact class={PLOT} text={props.empty || ""} />}>
         {props.children}
@@ -335,7 +363,8 @@ export const statusTone = (s: number | null): Tone => (s === null || s >= 500 ? 
 // emphasis: a group's name over the areas in it
 export const GROUP_LABEL = `px-2 text-caption ${EMPHASIS} text-foreground`;
 export const AREA_LABEL = "p-2 font-mono text-caption text-foreground";
-export const AREA_VALUE = "font-sans tabular-nums text-caption text-muted-foreground";
+/** (on a chip of the card's colour: a figure reads on a saturated tile, light or dark) */
+export const AREA_VALUE = "ml-2 self-start rounded-(--radius-sm) bg-card/85 px-1 font-sans tabular-nums text-caption text-foreground";
 
 export const log10 = (v: number) => Math.log10(Math.max(v, 1e-3));
 /** Powers of ten across `[lo, hi]` (as logs): the ticks of a log scale. */

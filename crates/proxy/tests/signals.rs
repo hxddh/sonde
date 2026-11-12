@@ -42,7 +42,7 @@ fn rec(id: u64, at_ms: i64, op: &str, status: u16, latency: f64) -> Record {
         method: method.into(),
         operation: op.into(),
         bucket: Some("b".into()),
-        key: Some(format!("data/{}.bin", id % 7)),
+        key: Some(format!("data/{}.bin", id % 7).into()),
         status: Some(status),
         latency_ms: latency,
         ..Default::default()
@@ -286,7 +286,12 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
             // as wide as its slices, never wider than the line; none for no errors
             let bars = line.chars().filter(|c| ('▁'..='█').contains(c)).count();
             let none = label == "errors" && sig.errors.count == 0;
-            let want = if none { 0 } else { sig.bins.min(SPARK_COLUMNS) };
+            let few = sig.short || sig.rate.requests < sonde_proxy::signals::FEW;
+            let want = if none || few {
+                0
+            } else {
+                sig.bins.min(SPARK_COLUMNS)
+            };
             assert_eq!(bars, want, "{name}: {line}");
         }
         assert!(!t.contains('\x1b'), "{name}");
@@ -340,7 +345,7 @@ fn an_injected_error_is_counted_as_injected_not_as_the_stores() {
         .collect();
     // (ten requests, none of them another's retry)
     for r in &mut recs {
-        r.key = Some(format!("data/{}.bin", r.id));
+        r.key = Some(format!("data/{}.bin", r.id).into());
     }
     // a fault scenario answered 503 in the store's place; the store's own 503
     recs[2].status = Some(503);
@@ -670,7 +675,7 @@ fn million() -> Vec<Record> {
                 method: method.into(),
                 operation: op.into(),
                 bucket: Some("b".into()),
-                key: (!key.is_empty()).then_some(key),
+                key: (!key.is_empty()).then(|| key.into()),
                 status: Some(if failed { 503 } else { 200 }),
                 error_body: failed.then(|| "<Error><Code>SlowDown</Code></Error>".into()),
                 latency_ms: 3.0 + (i % 50) as f64,

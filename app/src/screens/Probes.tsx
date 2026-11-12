@@ -11,7 +11,7 @@ import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
 import { endpoint, endpoints, go, notify, readOnly, report, showRequest } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
-import { Back, Badge, Bar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH } from "../ui/kit";
+import { Back, Badge, Bar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN } from "../ui/kit";
 import { Document } from "../ui/record";
 import { StatusMark } from "../ui/sessionview";
 
@@ -61,8 +61,8 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
 function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: ProbeMeta, col: number) => void }) {
   // a row a probe, a column a store: the probe's column stays while the stores scroll under it
   const columns = () => [
-    { key: "probe", title: t("probes.probe"), width: 288, fixed: true },
-    ...props.matrix.columns.map((c, i) => ({ key: `s${i}`, title: c.server ? `${endpointName({ id: c.endpoint, name: c.name })} · ${c.server}` : `${endpointName({ id: c.endpoint, name: c.name })} · ${c.vendor}`, width: 150, align: "start" as const })),
+    { key: "probe", title: t("probes.probe"), width: COLUMN.probe, fixed: true },
+    ...props.matrix.columns.map((c, i) => ({ key: `s${i}`, title: c.server ? `${endpointName({ id: c.endpoint, name: c.name })} · ${c.server}` : `${endpointName({ id: c.endpoint, name: c.name })} · ${c.vendor}`, width: COLUMN.probeStore, align: "start" as const })),
   ];
   const data = () =>
     props.matrix.rows.map((r) => ({

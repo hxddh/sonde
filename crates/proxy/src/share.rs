@@ -434,6 +434,7 @@ mod tests {
             header: crate::session::SessionHeader {
                 format: "sonde-session".into(),
                 version: 1,
+                sonde: None,
                 created: chrono::Utc::now(),
                 endpoint: "e".into(),
                 url: String::new(),

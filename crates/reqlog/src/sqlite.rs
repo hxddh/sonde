@@ -24,6 +24,8 @@ CREATE INDEX IF NOT EXISTS records_time ON records(time);";
 impl SqliteSink {
     pub fn open(path: &Path) -> rusqlite::Result<SqliteSink> {
         let conn = Connection::open(path)?;
+        // (records of requests: the user's alone)
+        let _ = crate::private::restrict(path);
         conn.execute_batch(SCHEMA)?;
         let (tx, rx) = mpsc::channel::<Record>();
         thread::Builder::new()
@@ -34,7 +36,7 @@ impl SqliteSink {
                     let json = serde_json::to_string(&r).unwrap_or_default();
                     let _ = conn.execute(
                         "INSERT INTO records (id, time, endpoint, operation, status, request_id, json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                        params![r.id as i64, r.time.to_rfc3339(), r.endpoint, r.operation, r.status, r.request_id, json],
+                        params![r.id as i64, r.time.to_rfc3339(), r.endpoint.as_str(), r.operation.as_str(), r.status, r.request_id, json],
                     );
                 }
             })

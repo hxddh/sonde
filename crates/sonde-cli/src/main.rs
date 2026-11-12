@@ -10,6 +10,7 @@
 //! | 3 | probes could not run (errors only) |
 //! | 4 | findings worth attention (stale uploads, a missing lifecycle rule, layout warnings) |
 //! | 64 | usage error |
+//! | 65 | a session (or another file given to read) is not what it should be |
 //! | 70 | the operation failed (connection, credentials, permissions) |
 //! | 77 | refused: read-only mode or a confirmation mismatch |
 
@@ -21,7 +22,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "sonde", version, about = "See what your software does to S3: its requests recorded, read as operations, replayed elsewhere", long_about = None)]
+// (bin_name: "Usage: sonde", not the file's name, "sonde.exe" on Windows)
+#[command(name = "sonde", bin_name = "sonde", version, about = "See what your software does to S3: its requests recorded, read as operations, replayed elsewhere", long_about = None)]
 pub struct Cli {
     /// Configuration directory (default: $SONDE_CONFIG_DIR or the platform's).
     #[arg(
@@ -288,6 +290,10 @@ fn main() -> ExitCode {
             Err(e) if e.downcast_ref::<cmd::Usage>().is_some() => {
                 eprintln!("sonde: {e:#}");
                 64
+            }
+            Err(e) if e.downcast_ref::<cmd::BadData>().is_some() => {
+                eprintln!("sonde: {e:#}");
+                65
             }
             Err(e) => {
                 eprintln!("sonde: {}", cmd::said(&sonde, &format!("{e:#}")));

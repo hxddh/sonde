@@ -49,15 +49,15 @@ pub fn count(n: usize, one: &str) -> String {
 }
 
 /// A whole number as every command writes one: 1234567 as `1,234,567`
-/// (the signals' own writer: one way, everywhere).
+/// ([`sonde_fmt::count`]: one way, everywhere).
 pub fn grouped(n: u64) -> String {
-    sonde_proxy::signals::count_text(n as usize)
+    sonde_fmt::count(n)
 }
 
 /// A length of time as every command writes one: `0.4 ms`, `217 ms`,
-/// `12.5 s`, `2m 26s` (the signals' own writer).
+/// `2.35 s`, `2m 26s`, `1h 40m` ([`sonde_fmt::duration`]).
 pub fn duration(ms: f64) -> String {
-    sonde_proxy::signals::ms_text(ms)
+    sonde_fmt::duration(ms)
 }
 
 /// Prints rows as an aligned table (wide characters counted as two).
@@ -174,7 +174,7 @@ pub fn print(format: Format, headers: &[&str], rows: &[Vec<String>]) {
 }
 
 pub fn bytes(b: u64) -> String {
-    sonde_core::guard::human_bytes(b)
+    sonde_fmt::bytes(b)
 }
 
 #[cfg(test)]

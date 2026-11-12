@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/probe-runs.schema.json",
+  "title": "sonde probe runs -f json",
+  "description": "Saved probe runs, newest first.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "endpoint": {
+        "type": "string"
+      },
+      "endpointName": {
+        "type": "string"
+      },
+      "vendor": {
+        "type": "string"
+      },
+      "started": {
+        "type": "string"
+      },
+      "pass": {
+        "type": "integer"
+      },
+      "fail": {
+        "type": "integer"
+      },
+      "differs": {
+        "type": "integer"
+      },
+      "unsupported": {
+        "type": "integer"
+      },
+      "other": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "id",
+      "endpoint",
+      "endpointName",
+      "vendor",
+      "started",
+      "pass",
+      "fail",
+      "differs",
+      "unsupported",
+      "other"
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+# Weekly: the actions (pinned by commit, their tag in a comment, which
+# Dependabot moves together) and the crates. Native Shell is pinned by
+# commit in Cargo.toml and moved by hand (docs/decisions.md D-002).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/nsh"]
+    schedule: { interval: weekly, day: monday }
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule: { interval: weekly, day: monday }
+    ignore:
+      - dependency-name: "nsh-*"
+    groups:
+      # one pull request for what keeps within its version's line
+      patches-and-minors:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    open-pull-requests-limit: 10

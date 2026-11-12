@@ -178,6 +178,15 @@ async fn serve(
         }
         ("POST", Some(_)) if has("uploadId") => {
             let id = get("uploadId").unwrap();
+            // a completion on If-None-Match: * over a key there: the upload stays
+            if honor
+                && header("if-none-match").as_deref() == Some("*")
+                && s.uploads
+                    .get(&id)
+                    .is_some_and(|(b, k, _)| s.buckets.get(b).is_some_and(|o| o.contains_key(k)))
+            {
+                return Ok(err(412, "PreconditionFailed"));
+            }
             let Some((b, k, stored)) = s.uploads.remove(&id) else {
                 return Ok(err(404, "NoSuchUpload"));
             };
@@ -238,6 +247,8 @@ async fn serve(
             out.push_str("</DeleteResult>");
             reply(200, &[], out)
         }
+        ("HEAD", None) if s.buckets.contains_key(&bucket) => reply(200, &[], ""),
+        ("HEAD", None) => reply(404, &[], ""),
         ("GET", None) if has("uploads") => {
             let prefix = get("prefix").unwrap_or_default();
             let mut out =

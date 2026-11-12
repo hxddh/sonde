@@ -1,6 +1,6 @@
 # 9.0: what changed
 
-What 9.0.0 adds over 8.0.0, with the reasons in the [changelog](../CHANGELOG.md). The screens are CI's (Linux,
+What 9.0.0 adds over 8.0.0, with the reasons in the [changelog](../../CHANGELOG.md). The screens are CI's (Linux,
 GTK) on the built-in demo and the example SlateDB session.
 
 ## A run, as it goes
@@ -9,7 +9,7 @@ Run shows requests a second, the share that failed, in flight now and the p95 wh
 requests take as a band beside the session's shape. A small monitor floats above other windows (from Run or the
 tray); ⌘⌥R / Ctrl+Alt+R runs the last command again, or stops it, from any app.
 
-![Run after a program ended: the live figures and the latency band](images/9.0/wide-02b-ran.png)
+![Run after a program ended: the live figures and the latency band](../images/9.0/wide-02b-ran.png)
 
 ## A session, at a glance
 
@@ -18,7 +18,7 @@ finding would leave (requests, waiting, cost) under "What stands out"; a sparkli
 
 | English | 中文 |
 |---|---|
-| ![The example session](images/9.0/wide-03-session.png) | ![The example session in Chinese](images/9.0/zh-03-session.png) |
+| ![The example session](../images/9.0/wide-03-session.png) | ![The example session in Chinese](../images/9.0/zh-03-session.png) |
 
 ## Where the time went, and an operation's requests
 
@@ -27,14 +27,14 @@ time chart is marked in the others. An operation opens on its requests in time, 
 
 | Time (dark) | An operation |
 |---|---|
-| ![Time, dark](images/9.0/dark-03g-time.png) | ![An operation's requests](images/9.0/wide-03b-operation.png) |
+| ![Time, dark](../images/9.0/dark-03g-time.png) | ![An operation's requests](../images/9.0/wide-03b-operation.png) |
 
 ## Buckets
 
 The buckets as a tree beside the objects, the bucket's size, incomplete uploads and versioning on cards above them.
 The objects are Native Shell's table: columns that resize, rows drawn as they come into view.
 
-![A bucket's objects](images/9.0/wide-04b-objects.png)
+![A bucket's objects](../images/9.0/wide-04b-objects.png)
 
 ## What a screenshot does not show
 
@@ -49,4 +49,4 @@ The objects are Native Shell's table: columns that resize, rows drawn as they co
   changelog go further).
 
 The macOS screens CI keeps are cut off at the runner's 1024-point screen (an issue of Native Shell's test host,
-[nsh-issues](nsh-issues.md)); the Linux ones are whole.
+[nsh-issues](../nsh-issues.md)); the Linux ones are whole.
