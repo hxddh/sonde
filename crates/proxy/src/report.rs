@@ -309,7 +309,7 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
         let _ = write!(o, "<div class=\"stat\"><b>{v}</b><span>{l}</span></div>");
     };
     o.push_str("<div class=\"stats\">");
-    stat(&mut o, sonde_fmt::count(sum.requests as u64), "requests");
+    stat(&mut o, sonde_fmt::count(sum.requests), "requests");
     stat(&mut o, sonde_fmt::count(eps.len() as u64), "operations");
     stat(&mut o, ms(prof.wall_ms), "took");
     stat(
@@ -317,7 +317,7 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
         format!("{:.0}%", prof.busy_ms * 100.0 / prof.wall_ms.max(1e-9)),
         "waiting on the store",
     );
-    stat(&mut o, sonde_fmt::count(sum.errors as u64), "errors");
+    stat(&mut o, sonde_fmt::count(sum.errors), "errors");
     stat(
         &mut o,
         format!("↑{} ↓{}", bytes(sum.bytes_up), bytes(sum.bytes_down)),
