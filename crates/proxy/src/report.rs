@@ -229,18 +229,11 @@ fn esc(s: &str) -> String {
 }
 
 fn ms(v: f64) -> String {
-    if v >= 1000.0 {
-        format!("{:.1} s", v / 1000.0)
-    } else if v >= 0.95 {
-        format!("{v:.0} ms")
-    } else {
-        format!("{v:.1} ms")
-    }
+    sonde_fmt::duration(v)
 }
 
 fn bytes(b: u64) -> String {
-    // the one ladder of sizes
-    crate::signals::bytes_text(b as f64)
+    sonde_fmt::bytes(b)
 }
 
 const STYLE: &str = r#"
@@ -316,15 +309,15 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
         let _ = write!(o, "<div class=\"stat\"><b>{v}</b><span>{l}</span></div>");
     };
     o.push_str("<div class=\"stats\">");
-    stat(&mut o, sum.requests.to_string(), "requests");
-    stat(&mut o, eps.len().to_string(), "operations");
+    stat(&mut o, sonde_fmt::count(sum.requests as u64), "requests");
+    stat(&mut o, sonde_fmt::count(eps.len() as u64), "operations");
     stat(&mut o, ms(prof.wall_ms), "took");
     stat(
         &mut o,
         format!("{:.0}%", prof.busy_ms * 100.0 / prof.wall_ms.max(1e-9)),
         "waiting on the store",
     );
-    stat(&mut o, sum.errors.to_string(), "errors");
+    stat(&mut o, sonde_fmt::count(sum.errors as u64), "errors");
     stat(
         &mut o,
         format!("↑{} ↓{}", bytes(sum.bytes_up), bytes(sum.bytes_down)),
@@ -399,9 +392,9 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
     let left_out_text = (left_out > 0).then(|| {
         format!(
             "<p class=\"muted\">{} of its {} operations are on this page: the first {} and those the findings name. <code>sonde show --all</code> prints every one; <code>sonde share</code> without <code>--html</code> makes the whole session a site.</p>",
-            on_page.len(),
-            eps.len(),
-            PAGE_OPERATIONS
+            sonde_fmt::count(on_page.len() as u64),
+            sonde_fmt::count(eps.len() as u64),
+            sonde_fmt::count(PAGE_OPERATIONS as u64)
         )
     });
     o.push_str(&timeline(&eps, &on_page));
@@ -619,7 +612,7 @@ mod tests {
         assert_eq!((rows, bars), (PAGE_OPERATIONS + 5, PAGE_OPERATIONS + 5));
         assert!(page.contains("id=\"op-2600\"") && !page.contains("id=\"op-2599\""));
         assert!(
-            page.contains("2005 of its 3000 operations are on this page")
+            page.contains("2,005 of its 3,000 operations are on this page: the first 2,000")
                 && page.contains("sonde show --all"),
             "it says what it left out, and how to see it"
         );

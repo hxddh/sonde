@@ -901,52 +901,21 @@ fn paint(s: &str, code: &str, color: bool) -> String {
     }
 }
 
-/// A length of time as sonde writes it: "0.4 ms", "12 ms", "1.5 s",
-/// "2m 26s".
+/// A length of time as sonde writes it: "0.4 ms", "12 ms", "2.35 s",
+/// "2m 26s", "1h 40m" ([`sonde_fmt::duration`], the app's figures).
 pub fn ms_text(v: f64) -> String {
-    if v >= 60_000.0 {
-        format!(
-            "{}m {:02}s",
-            (v / 60_000.0) as u64,
-            (v % 60_000.0 / 1000.0) as u64
-        )
-    } else if v >= 1000.0 {
-        format!("{:.1} s", v / 1000.0)
-    } else if v >= 0.95 {
-        format!("{v:.0} ms")
-    } else {
-        format!("{v:.1} ms")
-    }
+    sonde_fmt::duration(v)
 }
 
-/// A count of bytes as sonde writes it, on the one ladder: "0 B",
-/// "1.5 KiB", up to EiB (what a count of bytes can reach).
+/// A count of bytes as sonde writes it: "0 B", "1.5 KiB", "512 MiB"
+/// ([`sonde_fmt::bytes`], the app's figures).
 pub fn bytes_text(b: f64) -> String {
-    // the one ladder: as far as a count of bytes goes
-    let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
-    let (mut v, mut i) = (b.max(0.0), 0);
-    while v >= 1024.0 && i < units.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{v:.0} B")
-    } else {
-        format!("{v:.1} {}", units[i])
-    }
+    sonde_fmt::bytes_f64(b)
 }
 
-/// 1234567 as "1,234,567".
+/// 1234567 as "1,234,567" ([`sonde_fmt::count`]).
 pub fn count_text(n: usize) -> String {
-    let d = n.to_string();
-    let mut out = String::with_capacity(d.len() + d.len() / 3);
-    for (i, c) in d.chars().enumerate() {
-        if i > 0 && (d.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
+    sonde_fmt::count(n as u64)
 }
 
 /// "1 request", "1,234 requests".
@@ -1462,7 +1431,8 @@ mod tests {
         assert_eq!(crate::episode::human_bytes(5 << 50), "5.0 PiB");
         assert_eq!(bytes_text(0.0), "0 B");
         assert_eq!(bytes_text(1536.0), "1.5 KiB");
-        assert_eq!(bytes_text(600_000.0 * 1024f64.powi(4)), "585.9 PiB");
-        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3.0 EiB");
+        // whole from 100 of a unit, as the app writes them; PiB the last
+        assert_eq!(bytes_text(600_000.0 * 1024f64.powi(4)), "586 PiB");
+        assert_eq!(bytes_text(3.0 * 1024f64.powi(6)), "3072 PiB");
     }
 }

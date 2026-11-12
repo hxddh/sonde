@@ -1,0 +1,12 @@
+# Text is checked out with LF on every system: the tests compare what sonde
+# writes with fixtures, and a Windows checkout would otherwise add CRs.
+* text=auto eol=lf
+*.jar binary
+*.avro binary
+*.sst binary
+*.manifest binary
+*.compactions binary
+*.blk binary
+*.png binary
+*.icns binary
+*.ico binary

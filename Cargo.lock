@@ -1084,6 +1084,7 @@ dependencies = [
  "serde",
  "serde_json",
  "snap",
+ "sonde-fmt",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -3494,9 +3495,9 @@ checksum = "5a651516ddc9168ebd67b24afd085a718be02f8858fe406591b013d101ce2f40"
 
 [[package]]
 name = "quick-xml"
-version = "0.37.5"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
  "serde",
@@ -4186,7 +4187,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4335,7 +4336,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8050abb251097357e24aff63ba2c52a6309ecb7d23a5474023df960a02694d8"
 dependencies = [
  "annotate-snippets",
- "base64 0.22.1",
+ "base64 0.23.1",
  "encoding_rs_io",
  "granit-parser",
  "nohash-hasher",
@@ -4684,6 +4685,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sonde-core",
+ "sonde-fmt",
  "sonde-nsh",
  "sonde-proxy",
  "tempfile",
@@ -4712,6 +4714,7 @@ dependencies = [
  "serde_json",
  "sha1 0.10.7",
  "sha2 0.10.9",
+ "sonde-fmt",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -4720,6 +4723,13 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "sonde-fmt"
+version = "16.0.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -4770,6 +4780,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1 0.10.7",
+ "sonde-fmt",
  "tempfile",
  "tokio",
  "tracing",

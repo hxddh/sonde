@@ -23,23 +23,29 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      # build provenance: a Sigstore attestation of each file, made with this
+      # workflow's identity and kept by GitHub (`gh attestation verify`)
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ inputs.version || github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Version
         run: |
           v="${VERSION#v}"
           grep -q "^version = \"$v\"" Cargo.toml || { echo "::error::Cargo.toml is not at $v"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         # the binaries and the app (not the viewer's site, which is inside them)
-        with: { path: dist, pattern: "sonde-[lmd]*", merge-multiple: true }
+        with: { path: dist, pattern: "sonde-[lmdw]*", merge-multiple: true }
       - name: Checksums
         run: cd dist && cat *.sha256 > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
         run: scripts/changelog-section.sh "$VERSION" > notes.md
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: ./.github/actions/nsh
         # (the tag v0.5.0)
         with: { rev: f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1 }
@@ -55,6 +61,13 @@ jobs:
           printf '%s' "$NSH_PACKAGE_CERT" > "$RUNNER_TEMP/release.cert"
           cd app && nsh publish --key "$RUNNER_TEMP/release.secret" --cert "$RUNNER_TEMP/release.cert" -o "../dist/sonde-$VERSION.nshpkg"
           rm -f "$RUNNER_TEMP/release.secret"
+      - name: No signed package of the app's code
+        env:
+          NSH_PACKAGE_KEY: ${{ secrets.NSH_PACKAGE_KEY }}
+          NSH_PACKAGE_CERT: ${{ secrets.NSH_PACKAGE_CERT }}
+        if: env.NSH_PACKAGE_KEY == '' || env.NSH_PACKAGE_CERT == ''
+        run: |
+          echo "::warning title=Not signed::no NSH_PACKAGE_KEY and NSH_PACKAGE_CERT: this release has no signed .nshpkg, and installed apps update only by a new app"
       - name: The manifest the app's updater reads (latest.json)
         run: |
           shopt -s nullglob
@@ -66,7 +79,17 @@ jobs:
             --base-url "https://github.com/${{ github.repository }}/releases/download/v$VERSION" \
             -o ../dist
           cat ../dist/latest.json
-      - uses: softprops/action-gh-release@v2
+      # who built each file, from which commit, by which workflow: install.sh
+      # checks it when gh is there (`gh attestation verify <file> -R hxddh/sonde`)
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.dmg
+            dist/*.nshpkg
+            dist/latest.json
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}

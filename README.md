@@ -116,7 +116,7 @@ brew install --cask hxddh/sonde/sonde-app                                       
 
 Or download from [Releases](https://github.com/hxddh/sonde/releases) (checksums in `SHA256SUMS`):
 
-- terminal binary: `sonde-{linux,macos}-{x86_64,aarch64}.tar.gz` (Linux also as static `…-musl`), needs only libc;
+- terminal binary: `sonde-{linux,macos}-{x86_64,aarch64}.tar.gz` (Linux also as static `…-musl`), needs only libc, and `sonde-windows-x86_64.zip`;
 - desktop app: `sonde-macos.dmg`, `sonde-<version>-linux-x86_64.tar.gz` (GTK 4), `sonde-<version>-windows-x86_64.zip`.
 
 ## Quick start

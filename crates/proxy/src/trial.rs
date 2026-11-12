@@ -1726,7 +1726,7 @@ mod tests {
         assert_eq!(t.jitter, Some(false), "1 s then 2 s is a backoff in step");
         assert_eq!(
             t.line(),
-            "8 faults, all retried · after 1.0 s to 2.0 s (in step) · 3.0× the requests"
+            "8 faults, all retried · after 1.00 s to 2.00 s (in step) · 3.0× the requests"
         );
         let t = fixed(&[100, 480, 900, 250], &[300, 1900, 800, 1200]);
         assert_eq!(t.jitter, Some(true));
@@ -1735,7 +1735,7 @@ mod tests {
         assert_eq!(t.jitter, None);
         assert_eq!(
             t.line(),
-            "6 faults, all retried · after 100 ms to 1.9 s · 3.0× the requests"
+            "6 faults, all retried · after 100 ms to 1.90 s · 3.0× the requests"
         );
     }
 
@@ -1745,11 +1745,11 @@ mod tests {
         let run = vec![
             fault(put(1, 0, "a", 503), "slowdown"),
             fault(put(2, 0, "b", 503), "slowdown"),
-            put(3, 1025, "a", 200),
-            put(4, 1045, "b", 200),
+            put(3, 1021, "a", 200),
+            put(4, 1024, "b", 200),
         ];
         let line = judge(&slowdown(), &clean, 0, &run, 0).line();
-        assert!(line.contains("after 1.0 s ·"), "{line}");
+        assert!(line.contains("after 1.02 s ·"), "{line}");
         assert!(!line.contains(" to "), "{line}");
     }
 
@@ -2143,7 +2143,7 @@ mod tests {
         assert_eq!((t.jitter, t.jitter_too_short), (None, true));
         assert_eq!(
             t.line(),
-            "5 faults, all retried · after 9 ms to 14 ms (too short to tell jitter) · 2.0× the requests"
+            "5 faults, all retried · after 9.0 ms to 14 ms (too short to tell jitter) · 2.0× the requests"
         );
     }
 
