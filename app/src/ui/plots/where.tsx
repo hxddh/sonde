@@ -136,8 +136,9 @@ export function Flows(props: { profile: Profile }) {
           hoverDim={1 - INACTIVE}
           // one line, name then count: two lines over a middle node reached the bar of the node above it
           nodeLabel={(n) => `${axisName(name(n))} · ${count(through(n))}`}
-          // (on a chip: a name over the middle column stands on its ribbons, and reads off them)
-          nodeLabelClass="max-w-44 rounded-(--radius-sm) bg-card/85 px-2 py-1 tabular-nums text-small text-foreground"
+          // (on a chip: a name over the middle column stands on its ribbons, and reads off them; the gap
+          // to its node is the chip's margin, not its padding, so the chip never lies over its own bar)
+          nodeLabelClass="m-2 max-w-44 rounded-(--radius-sm) bg-card/85 px-1 tabular-nums text-small text-foreground"
         />
       </Plot>
       <PrefixNote prefixes={props.profile.prefixes} common={named().common} gutter />

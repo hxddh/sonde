@@ -27,6 +27,10 @@ interface Action {
   shortcut?: string;
   keywords?: string[];
   checked?: boolean;
+  /** its label is a command: in mono, after `$ `, as a command is everywhere */
+  command?: boolean;
+  /** its hint is a command */
+  commandHint?: boolean;
   run: () => void;
 }
 
@@ -41,7 +45,7 @@ function actions(buckets: BucketEntry[]): Action[] {
   const list: Action[] = [];
   AREAS.forEach((a, i) => list.push({ id: `area:${a}`, label: areaLabel(a), group: t("palette.go"), icon: AREA_ICON[a], shortcut: a === "settings" ? "mod+," : a === "activity" ? "mod+shift+a" : `mod+${i + 1}`, run: () => go(a) }));
   if (running()) list.push({ id: "run:stop", label: t("run.stop"), group: t("palette.actions"), icon: "square", run: stop });
-  if (lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: scrubCommand(lastRun()!.command), run: () => openLastRun(go) });
+  if (lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: scrubCommand(lastRun()!.command), commandHint: true, run: () => openLastRun(go) });
 
   // the commands run before: the field filled, ready to run again
   history()
@@ -53,6 +57,7 @@ function actions(buckets: BucketEntry[]): Action[] {
         label: scrubCommand(c),
         group: t("palette.commands"),
         icon: "square-terminal",
+        command: true,
         keywords: ["run", "command"],
         run: () => {
           command.set(c);
@@ -72,6 +77,8 @@ function actions(buckets: BucketEntry[]): Action[] {
     list.push({
       id: `session:${s.path}`,
       label: s.title || (s.command ? scrubCommand(s.command) : s.name),
+      // a session called by its command reads as one
+      command: !s.title && !!s.command,
       group: t("palette.sessions"),
       icon: "list-clock",
       keywords: [s.endpoint, s.name, ...(s.title && s.command ? [scrubCommand(s.command)] : [])],
@@ -240,9 +247,9 @@ export function Palette() {
                 return (
                   <View class={`${CONTROL.field} flex-row items-center gap-2`}>
                     <Icon name={a?.icon ?? "chevron-right"} tint={a?.checked ? "primary" : "muted-foreground"} />
-                    <Text class={`min-w-0 shrink text-body line-clamp-1 ${a?.id.startsWith("cmd:") ? "font-mono text-small" : ""} ${a?.checked ? "text-primary" : "text-popover-foreground"}`}>{entry.label}</Text>
+                    <Text class={`min-w-0 shrink line-clamp-1 ${a?.command ? "font-mono text-small" : "text-body"} ${a?.checked ? "text-primary" : "text-popover-foreground"}`}>{a?.command ? `$ ${entry.label}` : entry.label}</Text>
                     <If when={a?.hint}>
-                      <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{a!.hint!}</Text>
+                      <Text class={`min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1 ${a?.commandHint ? "font-mono" : ""}`}>{a?.commandHint ? `$ ${a.hint}` : a!.hint!}</Text>
                     </If>
                     <If when={!a?.hint}>
                       <View class="flex-1" />

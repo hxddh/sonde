@@ -394,11 +394,9 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   expect(app.shows("id:trial-step-slowdown")).toBe(true);
   expect(app.shows("id:trial-step-lost-answer")).toBe(true);
   expect(app.shows("text:Waiting")).toBe(false);
-  // closed, the run opens on its Runs pane, where the verdicts stay
-  await app.press("id:trial-close");
-  await app.waitFor("id:history-trials", { timeout: 10000 });
-  // a trial's row opens its own session (it is in no list), marked as a trial
-  await app.press("id:trial-slowdown");
+  // a finished scenario, pressed in the dialog Run opened: its own session (it is in no list), marked as a trial
+  await app.press("id:trial-step-slowdown");
+  await app.waitFor("id:trial-dialog", { state: "gone", timeout: 10000 });
   await app.waitFor("id:trial-note", { timeout: 10000 });
   expect(app.shows("text:/^A trial of curl under “The store asks to slow down”/")).toBe(true);
   // no run of its own: not run again, no Runs of its own
@@ -418,6 +416,10 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   await app.waitFor("id:trial-note", { state: "gone", timeout: 10000 });
   await app.waitUntil(() => app.shows("id:session-pane-mode-runs") && app.enabled("id:session-pane-mode-runs"), { timeout: 10000 });
   expect(app.shows("id:trial-note")).toBe(false);
+  // the verdicts stay on the run's Runs pane, each a way into its session again
+  await app.press("id:session-pane-mode-runs");
+  await app.waitFor("id:history-trials", { timeout: 10000 });
+  expect(app.shows("id:trial-slowdown")).toBe(true);
 }, 120000);
 
 test("quitting ends the program being recorded and leaves its session a finished file", async () => {

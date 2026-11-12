@@ -11,7 +11,7 @@ import { api, Listing, watch } from "../native";
 import { bucket, copy, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Await, Back, Bar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row } from "../ui/kit";
+import { Await, Back, Bar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
 import { invalidate, Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
@@ -25,9 +25,9 @@ const WINDOW = 400;
 const NAME = 240;
 const OBJECT_COLUMNS = [
   // (a date in full, in every language: "Sep 30, 2026, 12:59 PM" is the widest)
-  { key: "modified", width: 172 },
-  { key: "class", width: 124 },
-  { key: "parts", width: 64 },
+  { key: "modified", width: COLUMN.date },
+  { key: "class", width: COLUMN.storageClass },
+  { key: "parts", width: COLUMN.objectParts },
 ] as const;
 const SIZE = 96;
 
@@ -502,11 +502,11 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             accessibilityLabel={t("nav.objects")}
             class="min-h-0 flex-1"
             columns={[
-              { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : 380, minWidth: 120 },
+              { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : COLUMN.name, minWidth: COLUMN.keyLeast },
               { key: "size", title: t("browse.size"), width: SIZE, align: "end" as const },
-              ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: 172 }] : []),
-              ...(ranked().includes("class") ? [{ key: "class", title: t("browse.class"), width: 124 }] : []),
-              ...(ranked().includes("parts") ? [{ key: "parts", title: t("mpu.parts"), width: 64, align: "end" as const }] : []),
+              ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: COLUMN.date }] : []),
+              ...(ranked().includes("class") ? [{ key: "class", title: t("browse.class"), width: COLUMN.storageClass }] : []),
+              ...(ranked().includes("parts") ? [{ key: "parts", title: t("mpu.parts"), width: COLUMN.objectParts, align: "end" as const }] : []),
             ]}
             data={tableData()}
             dataStart={start()}
@@ -528,7 +528,8 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                       return (
                         <View class="flex-1 flex-row items-center gap-2">
                           <Icon name={folder ? "folder" : "file"} tint={folder ? "foreground" : "muted-foreground"} />
-                          <Text class={`min-w-0 flex-1 text-body line-clamp-1 ${folder ? "text-foreground" : "text-foreground"}`}>{c.text}</Text>
+                          {/* a name is cut in its middle, never at its end: both ends tell two apart */}
+                          <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1" style={{ textOverflow: "ellipsis-middle" }}>{c.text}</Text>
                         </View>
                       );
                     }
@@ -591,11 +592,11 @@ export function Browse() {
           when={terminal()}
           else={
             <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("browse.resizeDetail")}>
-              <ResizablePanel minSize={420} class="min-w-0 gap-3 px-4 py-4">
+              <ResizablePanel minSize={PANE.objectsLeast} class="min-w-0 gap-3 px-4 py-4">
                 <Overview />
                 <Objects onSelect={(e) => selected.set(e)} selected={selected()?.key ?? null} />
               </ResizablePanel>
-              <ResizablePanel visible={!!selected()} size={detailWidth.size()} minSize={300} maxSize={720} onResize={detailWidth.onResize} class="bg-inspector">
+              <ResizablePanel visible={!!selected()} size={detailWidth.size()} minSize={PANE.detailLeast} maxSize={PANE.detailMost} onResize={detailWidth.onResize} class="bg-inspector">
               <If when={selected()}>
                 {(e) => (
                   <View class="flex-1">

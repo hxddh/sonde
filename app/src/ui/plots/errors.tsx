@@ -5,7 +5,7 @@ import { Bar, Dot, Plot, Rule } from "nsh/base/plot";
 import { count, duration, percent } from "../../format";
 import { t } from "../../i18n";
 import type { Signals } from "../../types";
-import { CROSS_BAND, ChartTip, type Focus, INACTIVE, type LegendItem, MOTION, NoneInStretch, PLOT, TICK_ROOM, nearest, stretch, tipValue, TimeAxis, ValueAxis, BARS, TIP, sinceTick } from "./system";
+import { CROSS_BAND, ChartTip, type Focus, INACTIVE, type LegendItem, MOTION, NoneInStretch, PLOT, TICK_ROOM, nearest, stretch, tipValue, TimeAxis, ValueAxis, BARS, TIP, sinceTick, Budget, budgetTop } from "./system";
 import { terminal } from "../kit";
 
 /** The classes a failure is of, in the order they stack: the store's own first, a scenario's last. */
@@ -25,7 +25,7 @@ export function failureLegend(s: Signals): LegendItem[] {
 /** The share of each slice's requests that failed: the rate beside the
  * counts — two failures of two requests and two of two hundred are not one
  * height here. */
-export function ErrorRate(props: { signals: Signals; range?: [number, number] | null; focus?: Focus }) {
+export function ErrorRate(props: { signals: Signals; range?: [number, number] | null; focus?: Focus; /** the share of the run's requests the project's `max-errors` allows: its line */ budgetShare?: number | null }) {
   const s = () => props.signals;
   const e = () => s().errors;
   const rows = () =>
@@ -53,7 +53,7 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
           testID="error-rate"
           data={rows()}
           xScale={{ type: "band", ...BARS.slices }}
-          yScale={{ type: "linear", domain: [0, peak() * 1.25] }}
+          yScale={{ type: "linear", domain: [0, budgetTop(peak() * 1.25, props.budgetShare)] }}
           accessibilityLabel={label()}
           accessibilityValue={tipValue(tip())}
           appearGeneration={1}
@@ -69,9 +69,10 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
           class={`${TICK_ROOM} ${PLOT} w-full`}
         >
           <Bar value="share" class="fill-status-server" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
-          <Rule value={(_, i) => (i === focused() ? peak() * 1.25 : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
+          <Rule value={(_, i) => (i === focused() ? budgetTop(peak() * 1.25, props.budgetShare) : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
           <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
           <ValueAxis peak={peak()} say={(v) => t("errorRate.peak", { pct: percent(v) })} />
+          <Budget value={props.budgetShare} say={percent} />
         </Plot>
       </If>
     </If>

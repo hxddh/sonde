@@ -14,7 +14,7 @@ import { type SignalId, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
 import type { EpisodeRow, LogLine, Observation, RecordSummary, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH } from "./kit";
+import { Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -302,6 +302,35 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   // to the top of the findings' room, so its title stays in view over its advice
   // (Native Shell's `reveal`: the scroll views around a view bring it to show)
   const places: (ViewRef | undefined)[] = [];
+  // each finding's height as drawn: a bounded room ends on a finding's edge, never through its text
+  const heights = signal<number[]>([]);
+  const measured = (i: number) => ({ bounds }: { bounds: { size: { height: number } } }) => {
+    const h = Math.round(bounds.size.height);
+    if (heights()[i] === h) return;
+    const next = [...heights()];
+    next[i] = h;
+    heights.set(next);
+  };
+  /** The room the findings take, and how many show whole in it: all of them where they fit; else
+   * as many whole ones as fit (the rest scroll, and the heading says so). A finding opened taller
+   * than the room keeps the room: its advice scrolls within it. */
+  const room = (): { height?: number; shown: number } => {
+    const n = list().length;
+    const max = props.maxHeight;
+    const hs = heights().slice(0, n);
+    if (!max || hs.length < n || hs.some((h) => h === undefined)) return { height: max, shown: n };
+    // (the card's border, above and below)
+    let used = 2;
+    let shown = 0;
+    for (const h of hs) {
+      if (used + h > max) break;
+      used += h;
+      shown++;
+    }
+    if (shown === n) return { height: max, shown };
+    if (shown === 0 || hs.some((h) => h > max)) return { height: max, shown: Math.max(shown, 1) };
+    return { height: used, shown };
+  };
   const showChosen = () => {
     const f = props.filter;
     if (f != null) places[f]?.reveal({ vertical: "start" });
@@ -394,10 +423,10 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   );
   const findings = () => (
     // a short window keeps room for the operations: the findings scroll
-    <Scroll class={`overflow-hidden ${CARD}`} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined} scrollbar={false}>
+    <Scroll class={`overflow-hidden ${CARD}`} style={room().height ? { maxHeight: room().height } : undefined} scrollbar={false}>
       <Each of={list()}>
         {(o: () => Observation, i) => (
-          <View ref={(r) => (places[i()] = r)}>
+          <View ref={(r) => (places[i()] = r)} onLayout={measured(i())}>
             {row(o, i)}
             {/* the finding pressed: what to change, inside its own row — never under another finding's title */}
             <If when={!props.compact && props.filter === i() && advised(o())}>
@@ -437,7 +466,15 @@ export function Observations(props: { view: SessionView; filter?: number | null;
           onToggle={(o) => open.set(o)}
           itemTestID="observations"
           testID="observations-toggle"
-          trailing={<If when={whatIfText(props.view)}>{(w) => <Text testID="what-if" class="min-w-0 flex-1 tabular-nums text-small text-muted-foreground line-clamp-1">{w()}</Text>}</If>}
+          trailing={
+            <>
+              {/* the room shows some of them whole: the rest scroll, and that is said */}
+              <If when={open() && room().shown < list().length}>
+                <Text testID="observations-scroll" class="shrink-0 tabular-nums text-caption text-muted-foreground">{t("obs.scrolls", { n: count(room().shown), of: count(list().length) })}</Text>
+              </If>
+              <If when={whatIfText(props.view)}>{(w) => <Text testID="what-if" class="min-w-0 flex-1 tabular-nums text-small text-muted-foreground line-clamp-1">{w()}</Text>}</If>
+            </>
+          }
         >
           {findings()}
         </Disclosure>
@@ -496,7 +533,7 @@ export function operationColumns(width: number, wanted: { format: boolean; bar: 
   // (2: the table's border)
   const ranked = fitColumns(width, always + 2, OP_NAME, OP_RANKED.filter(want).map((key) => ({ key, width: widths[key] })));
   const used = always + ranked.reduce((n, c) => n + widths[c], 0);
-  return { shown: ["status", "title", "duration", ...ranked], title: width > 0 ? Math.max(160, width - used - 2) : 340, widths };
+  return { shown: ["status", "title", "duration", ...ranked], title: width > 0 ? Math.max(COLUMN.titleLeast, width - used - 2) : COLUMN.title, widths };
 }
 
 export function OperationsTable(props: {
@@ -548,7 +585,7 @@ export function OperationsTable(props: {
       { format: formats() && !props.compact, bar: !terminal() && !props.compact, notes: !props.compact },
       { bar: kept("bar", 150), notes: kept("notes", 320) },
     );
-  const titleWidth = () => (terminal() || width() > 0 ? layout().title : props.compact ? 220 : 340);
+  const titleWidth = () => (terminal() || width() > 0 ? layout().title : props.compact ? COLUMN.titleCompact : COLUMN.title);
   const columns = () => {
     const l = layout();
     const column = (key: OpColumn) => {
@@ -556,7 +593,7 @@ export function OperationsTable(props: {
         case "status":
           return { key, title: "", width: l.widths.status, resizable: false, selectable: false };
         case "title":
-          return { key, title: t("column.operation"), width: titleWidth(), minWidth: 160 };
+          return { key, title: t("column.operation"), width: titleWidth(), minWidth: COLUMN.titleLeast };
         case "duration":
           return { key, title: t("sessions.took"), width: l.widths.duration, align: "end" as const, sortable: true };
         case "requests":
@@ -564,11 +601,11 @@ export function OperationsTable(props: {
         case "time":
           return { key, title: t("column.time"), width: l.widths.time, sortable: true };
         case "bar":
-          return { key, title: t("column.when"), width: l.widths.bar, minWidth: 80 };
+          return { key, title: t("column.when"), width: l.widths.bar, minWidth: COLUMN.whenLeast };
         case "format":
           return { key, title: t("column.format"), width: l.widths.format };
         case "notes":
-          return { key, title: t("column.notes"), width: l.widths.notes, minWidth: 120 };
+          return { key, title: t("column.notes"), width: l.widths.notes, minWidth: COLUMN.notesLeast };
       }
     };
     // a terminal draws no dot and reads left to right as a log does: when, what, how many, how long
@@ -691,8 +728,8 @@ export function OutputTable(props: { lines: LogLine[]; onSelect: (i: number) => 
       accessibilityLabel={t("sessions.output")}
       class={`min-h-0 flex-1 ${CARD}`}
       columns={[
-        { key: "time", title: t("column.time"), width: 110 },
-        { key: "line", title: t("sessions.output"), width: 2000, minWidth: 160 },
+        { key: "time", title: t("column.time"), width: COLUMN.outputTime },
+        { key: "line", title: t("sessions.output"), width: COLUMN.outputLine, minWidth: COLUMN.titleLeast },
       ]}
       data={props.lines.map((l) => ({ time: clock(l.time), line: l.text }))}
       fontSize={TYPE.small}

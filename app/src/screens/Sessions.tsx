@@ -15,11 +15,11 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { away, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo } from "../store";
+import { away, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo, notify } from "../store";
 import type { LogLine, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SPLIT_HANDLE, terminal } from "../ui/kit";
+import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, terminal, PANE } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { fileName, removeSession, rename, RenameDialog, sessionName, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
@@ -33,6 +33,7 @@ import { TimePane } from "../ui/profile";
 import type { SignalId } from "../signals";
 import { SessionShape, SHAPE_STRIP, TICK_ROOM, faultMoments } from "../ui/plots";
 import { RecordDetail } from "./Requests";
+import { type Range, rangeOnOpen, rangeParam, shownRange } from "../range";
 import { running, runAgain } from "../run";
 
 type Pane = "operations" | "aligned" | "time" | "runs";
@@ -45,8 +46,16 @@ const FINDINGS_HEAD = 28 + 36 + 12;
 const OPERATIONS_LEAST = 31 + 2 * 30 + 2;
 /** How many operations "Copy operations as a table" takes: what a paste into a sheet or a ticket holds well. */
 const COPY_ROWS = 20000;
+/** The budget a session's program has in its project's sonde.toml (null: none, or no folder to find it from). */
+const budgetOf = (path: string) => {
+  try {
+    return api.sessions.budget(path);
+  } catch {
+    return null;
+  }
+};
 /** The inspector's width, as the user leaves it. */
-const inspectorWidth = rememberedSize("sessions.inspector", 420);
+const inspectorWidth = rememberedSize("sessions.inspector", PANE.inspector);
 
 /** One session: its figures, its operations (and output), the inspector, and what can be done with it. */
 
@@ -78,6 +87,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const view = read.view;
   // a trial's session: the clean run it is judged against, for the Time pane to draw it over
   const clean = analysis(() => view()?.trial?.clean ?? null);
+  // the program's budget, for the Time pane's lines: read once per session shown
+  const budget = computed(() => budgetOf(props.path));
   // this pane's own size (windowSize() follows whichever window has the focus)
   const box = signal({ w: 1000, h: 760 });
   const lines = computed<LogLine[]>(() => {
@@ -97,6 +108,27 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const o = paneOnOpen();
     if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), paneOnOpen.set(null))));
   });
+  // a link with a stretch of time: the Time pane, over it
+  const linkRange = signal<Range | null>(null);
+  effect(() => {
+    const o = rangeOnOpen();
+    if (o && o.name === fileName(props.path)) untracked(() => batch(() => (linkRange.set(o.range), pane.set("time"), rangeOnOpen.set(null))));
+  });
+  /** A chart's rows, written as CSV where exports go; said, with the file's path. */
+  const exportRows = (name: string, csv: string) => {
+    try {
+      notify(t("common.exportedTo", { path: api.exportCsv(`${fileName(props.path).replace(/\.sonde(\.gz)?$/, "")}-${name}`, csv) }));
+    } catch (e) {
+      report(e);
+    }
+  };
+  /** A link to this session, over the stretch its Time pane shows (when one is chosen there). */
+  const link = () => {
+    const r = pane() === "time" ? (shownRange()[props.path] ?? null) : null;
+    const q = r ? rangeParam(r) : "";
+    // one of the sessions folder by its name; any other file by its path
+    return info() ? `sonde://session/${encodeURIComponent(fileName(props.path))}${q ? `?${q}` : ""}` : `sonde://open?path=${encodeURIComponent(props.path)}${q ? `&${q}` : ""}`;
+  };
 
   if (!props.inWindow) {
     effect(() => crumb.set(program(view()?.header.command) ?? view()?.header.endpoint ?? null));
@@ -265,6 +297,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       { label: t("sessions.window"), icon: iconSvg("app-window"), onSelect: openWindow, disabled: props.inWindow },
       { label: t("sessions.share"), icon: iconSvg("share-2"), onSelect: () => void shareSession(props.path) },
       { label: t("sessions.copyPath"), icon: iconSvg("copy"), onSelect: () => copy(props.path) },
+      // a link that opens it in sonde, over the stretch of time the Time pane shows
+      { label: pane() === "time" && shownRange()[props.path] ? t("sessions.copyLinkRange") : t("sessions.copyLink"), icon: iconSvg("link"), onSelect: () => copy(link()) },
       // the operations as shown, for a ticket or a spreadsheet
       {
         label: t("sessions.copyTable"),
@@ -335,7 +369,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       // a finding chosen there gets the room to read what to change
       // (a finding chosen there opens its advice in what the pane's body has left once the operations
       // have their titles and two rows: the advice scrolls within the findings, the table keeps rows)
-      maxHeight={box().h < BREAK.short ? (filter() === null ? 68 : Math.max(96, bodyHeight() - FINDINGS_HEAD - OPERATIONS_LEAST)) : Math.max(104, Math.round(box().h * (filter() === null ? 0.3 : 0.45)))}
+      // (rounded down to whole findings by the findings themselves: no row is cut through its text)
+      maxHeight={box().h < BREAK.short ? (filter() === null ? SIZES.findingsShort : Math.max(SIZES.findingsShortOpen, bodyHeight() - FINDINGS_HEAD - OPERATIONS_LEAST)) : Math.max(SIZES.findingsLeast, Math.round(box().h * (filter() === null ? SIZES.findingsShare : SIZES.findingsShareOpen)))}
     />
   );
   /** When: the session's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
@@ -345,7 +380,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     </If>
   );
   const body = (v: () => SessionView) => {
-    if (pane() === "time") return <TimePane view={v()} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} />;
+    if (pane() === "time") return <TimePane view={v()} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
     if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTry={() => tryingFaults.set(true)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
@@ -353,10 +388,10 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         <View class="min-h-0 flex-1 gap-3">
           {findings(v)}
           <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeOutput")}>
-            <ResizablePanel minSize={240}>
+            <ResizablePanel minSize={PANE.outputLeast}>
               <View class="flex-1 pr-2">{output()}</View>
             </ResizablePanel>
-            <ResizablePanel minSize={320}>
+            <ResizablePanel minSize={PANE.besideLeast}>
               <View class="flex-1 pl-2">{operations(v)}</View>
             </ResizablePanel>
           </ResizablePanelGroup>
@@ -512,9 +547,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
                   }
                 >
                   <ResizablePanelGroup axis="horizontal" class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeInspector")}>
-                    <ResizablePanel minSize={460}>{main(v)}</ResizablePanel>
+                    <ResizablePanel minSize={PANE.sessionLeast}>{main(v)}</ResizablePanel>
                     <If when={inspecting()}>
-                      <ResizablePanel size={inspectorWidth.size()} onResize={inspectorWidth.onResize} minSize={320} maxSize={680}>
+                      <ResizablePanel size={inspectorWidth.size()} onResize={inspectorWidth.onResize} minSize={PANE.inspectorLeast} maxSize={PANE.inspectorMost}>
                         {inspector()}
                       </ResizablePanel>
                     </If>

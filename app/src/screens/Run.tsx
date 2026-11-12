@@ -17,7 +17,7 @@ import { away, endpoint, endpoints, endpointsMode, go, openSession, paneOnOpen, 
 import { TrialDialog } from "../ui/trial";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, SURFACE, WIDTH } from "../ui/kit";
+import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, SURFACE, WIDTH, PANE } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, sessionStory, STRIP } from "../ui/plots";
@@ -79,7 +79,8 @@ function CommandBar() {
             </If>
           }
         />
-        <If when={running()} else={<Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" />}>
+        {/* the one primary of the place: Run, until a run ended and its band offers Run again (then this is the other way to run) */}
+        <If when={running()} else={<Button variant={lastRun() ? "outline" : "primary"} icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" />}>
           <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
         </If>
       </View>
@@ -130,6 +131,11 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   const s = () => props.view?.summary;
   const r = () => lastRun();
   const warnings = () => props.view?.observations.filter((o) => o.level === "warn").length ?? 0;
+  // the errors in the tone their rows are drawn in: the client's where every one was a 4xx
+  const errorTone = () => {
+    const c = props.view?.signals?.errors.counts;
+    return c && c.client > 0 && c.server + c.transport === 0 ? "client" : "bad";
+  };
   // once it ended: held to its program's baseline, as sonde check would
   const verdict = resource(
     () => (r() && !r()!.removed && r()!.path ? r()!.path : null),
@@ -219,7 +225,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
               {/* (at the least window they take a second line among themselves: none stands under the commands) */}
               <Figure small value={count(x().requests)} label={t("figure.requests")} />
               <If when={x().errors > 0}>
-                <Figure small value={count(x().errors)} label={t("figure.errors")} tone="bad" />
+                <Figure small value={count(x().errors)} label={t("figure.errors")} tone={errorTone()} />
               </If>
               <If when={x().misses > 0}>
                 <Figure small value={count(x().misses)} label={t("figure.notFound")} />
@@ -259,6 +265,11 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
             batch(() => (paneOnOpen.set({ path: r()!.path, pane: "runs" }), openSession.set(r()!.path), go("sessions")));
           }}
           onDone={() => (tried = true)}
+          // a finished scenario pressed: its own session (closing then leaves it open, not the Runs pane)
+          onOpen={(session) => {
+            tried = false;
+            batch(() => (openSession.set(session), go("sessions")));
+          }}
         />
       </If>
       <If when={r() && !r()!.removed}>
@@ -461,12 +472,12 @@ export function Run() {
           when={terminal()}
           else={
             <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("run.resizeOperations")}>
-              <ResizablePanel minSize={320}>
+              <ResizablePanel minSize={PANE.terminalLeast}>
                 <View class="flex-1 pr-2">
                   <ProgramTerminal />
                 </View>
               </ResizablePanel>
-              <ResizablePanel size={opsWidth.size()} onResize={opsWidth.onResize} minSize={340}>
+              <ResizablePanel size={opsWidth.size()} onResize={opsWidth.onResize} minSize={PANE.operationsLeast}>
                 <View class="flex-1 pl-2">
                   <LiveOperations />
                 </View>

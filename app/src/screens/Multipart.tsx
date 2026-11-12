@@ -11,7 +11,7 @@ import { Icon } from "../ui/icon";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
-import { Await, Badge, Bar, Button, Card, Disclosure, Empty, Field, Heading, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH } from "../ui/kit";
+import { Await, Badge, Bar, Button, Card, Disclosure, Empty, Field, Heading, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH, COLUMN } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
@@ -43,6 +43,10 @@ export function Multipart() {
   const days_ = signal<number | null>(settings()?.["stale-upload-days"] ?? 7);
   // the oldest first; a press on a title sorts by its column's values, not their text
   const uploadSort = signal<DataTableSort | null>({ key: "age", direction: "descending" });
+  // the uploads' table measures itself: the key takes what the figures leave
+  const tableWidth = signal(0);
+  const KEY_ROOM = COLUMN.flag + COLUMN.day + COLUMN.age + COLUMN.parts + COLUMN.bytes + COLUMN.cost + 2;
+  const keyWidth = () => (tableWidth() > 0 ? Math.max(COLUMN.keyLeast, tableWidth() - KEY_ROOM) : COLUMN.keyLeast);
   const sorted = (rows: UploadRow[]) =>
     sortRows(rows, uploadSort(), (u, key) =>
       key === "age" ? (u.ageDays ?? -1) : key === "parts" ? u.parts : key === "bytes" ? u.bytes : key === "cost" ? u.costPerMonth : key === "initiated" ? (u.initiated ?? "") : key === "key" ? u.key : key === "uploadId" ? u.uploadId : u.stale ? 1 : 0,
@@ -154,21 +158,22 @@ export function Multipart() {
                   <Button variant="destructive" small label={t("mpu.abortOlder", { age: age(r()) })} onPress={planAbort} disabled={r().staleUploads === 0} testID="plan-abort" />
                 </View>
                 {/* the table takes the sheet's remaining height: no box of its own to scroll in a scroll */}
-                <Card pad="none" class={TABLE_BOX}>
+                <Card pad="none" class={TABLE_BOX} onWidth={(w) => tableWidth.set(w)}>
                   <DataTable
                     testID="uploads"
                     class="min-h-0 flex-1"
                     columns={[
                       // fits the detail panel (760pt) without a sideways scroll: the date as a day
                       // the upload's id is the request inspector's: the columns that decide stay whole
-                      { key: "flag", title: "", width: 24, resizable: false },
-                      { key: "key", title: t("mpu.key"), width: 188, minWidth: 120, sortable: true },
+                      { key: "flag", title: "", width: COLUMN.flag, resizable: false },
+                      // the key takes the room the figures leave (the table measures itself), cut in its middle
+                      { key: "key", title: t("mpu.key"), width: keyWidth(), minWidth: COLUMN.keyLeast, sortable: true },
                       // (a day in full, in every language: "2026年12月30日" is the widest)
-                      { key: "initiated", title: t("mpu.initiated"), width: 124, sortable: true },
-                      { key: "age", title: t("mpu.age"), width: 84, align: "end", sortable: true },
-                      { key: "parts", title: t("mpu.parts"), width: 72, align: "end", sortable: true },
-                      { key: "bytes", title: t("mpu.bytes"), width: 104, align: "end", sortable: true },
-                      { key: "cost", title: t("mpu.costMonth"), width: 112, align: "end", sortable: true },
+                      { key: "initiated", title: t("mpu.initiated"), width: COLUMN.day, sortable: true },
+                      { key: "age", title: t("mpu.age"), width: COLUMN.age, align: "end", sortable: true },
+                      { key: "parts", title: t("mpu.parts"), width: COLUMN.parts, align: "end", sortable: true },
+                      { key: "bytes", title: t("mpu.bytes"), width: COLUMN.bytes, align: "end", sortable: true },
+                      { key: "cost", title: t("mpu.costMonth"), width: COLUMN.cost, align: "end", sortable: true },
                     ]}
                     // an old upload is marked in its first cell (an icon; "!" in a terminal), not shouted: the one way a row says it
                     data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "!" : "", key: u.key, initiated: day(u.initiated), age: u.ageDays == null ? "—" : duration(u.ageDays * 86400000, "age"), parts: count(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
@@ -186,7 +191,10 @@ export function Multipart() {
                               ) : (
                                 <View />
                               )
-                            ) : c.key === "key" || c.key === "initiated" ? (
+                            ) : c.key === "key" ? (
+                              // a key is cut in its middle, never at its end: both ends tell two apart
+                              <Text class="text-body text-foreground line-clamp-1" style={{ textOverflow: "ellipsis-middle" }}>{c.text}</Text>
+                            ) : c.key === "initiated" ? (
                               <Text class="text-body text-foreground line-clamp-1">{c.text}</Text>
                             ) : (
                               <View class="flex-1 items-end justify-center">

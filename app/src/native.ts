@@ -75,6 +75,8 @@ export const api = {
   probeMatrix: (runs?: string[]) => Sonde.probeMatrix(runs ?? null) as T.Matrix,
   probeDiff: (a: string, b: string) => Sonde.probeDiff(a, b) as T.Change[],
   exportProbes: (format: "markdown" | "json", runs?: string[]) => Sonde.exportProbes(format, runs ?? null),
+  /** A chart's rows as CSV, written into the exports folder; the file's path. */
+  exportCsv: (name: string, text: string) => Sonde.exportCsv(name, text) as string,
   detectLayouts: (ep: string, b: string, p: string) => Sonde.detectLayouts(ep, b, p),
   analyzeLayout: (ep: string, b: string, format: string, root: string) => Sonde.analyzeLayout(ep, b, format, root),
   layoutState: (job: string, time: number) => Sonde.layoutState(job, time) as T.Snapshot | null,
@@ -105,6 +107,8 @@ export const api = {
     current: () => Sessions.current() as T.RecordingView | null,
     stop: () => Sessions.stop() as string | null,
     example: () => Sessions.example() as string,
+    /** The budget the session's program has in its project's sonde.toml, for the charts' lines; null without one. */
+    budget: (path: string) => Sessions.budget(path) as T.ProjectBudget | null,
     import: (name: string, text: string) => Sessions.import(name, text) as string,
     importPath: (path: string) => Sessions.importPath(path) as string,
     pick: (sessionsKind: string, trafficKind: string) => Sessions.pick(sessionsKind, trafficKind) as Promise<string | null>,
