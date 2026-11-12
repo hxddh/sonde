@@ -258,6 +258,10 @@ pub struct Signals {
 /// A run under this long has no rate: there was no second to have one in.
 pub const SHORT_MS: f64 = 1000.0;
 
+/// Under this many requests a run has no shape over its time to draw: a
+/// sparkline of it is a few stray ticks (the app's `FEW`).
+pub const FEW: usize = 20;
+
 /// How long after a failure its retry may start: the bound the episodes
 /// group a request's attempts by.
 pub const RETRY_WINDOW_US: i64 = 60_000_000;
@@ -992,6 +996,9 @@ pub fn text(s: &Signals, color: bool) -> String {
     if s.rate.requests == 0 {
         return out;
     }
+    // a run under a second, or of a handful of requests, has its figures
+    // and no line over its time
+    let drawn = !s.short && s.rate.requests >= FEW;
     // the figures in one column, the lines under one another
     let mut line = |label: &str,
                     figure: String,
@@ -1006,8 +1013,13 @@ pub fn text(s: &Signals, color: bool) -> String {
             None => figure,
         };
         // as wide as its slices, and the lines after it still in a column
-        let spark = sparkline_of(series, SPARK_COLUMNS, how);
-        let gap = " ".repeat(SPARK_COLUMNS - spark.chars().count());
+        let (spark, gap) = if drawn {
+            let spark = sparkline_of(series, SPARK_COLUMNS, how);
+            let gap = " ".repeat(SPARK_COLUMNS - spark.chars().count());
+            (spark, gap)
+        } else {
+            (String::new(), String::new())
+        };
         let row = format!(
             "{}{figure}{pad}{spark}{gap}  {}",
             paint(&format!("{label:<9}"), "2", color),
@@ -1018,7 +1030,7 @@ pub fn text(s: &Signals, color: bool) -> String {
     };
     // what a bar is, said when it stands for more than one slice
     let wide = s.bins > SPARK_COLUMNS;
-    let bar = |what: &str| wide.then(|| format!("a bar is {what}"));
+    let bar = |what: &str| (drawn && wide).then(|| format!("a bar is {what}"));
 
     let mut rest: Vec<String> = Vec::new();
     if s.in_flight.peak > 1 {
@@ -1095,14 +1107,16 @@ pub fn text(s: &Signals, color: bool) -> String {
             // the tail is what moves
             &s.latency.p95,
             Column::Max,
-            vec![
-                format!("p95 {}, p99 {}", ms_text(p95), ms_text(p99)),
-                if wide {
-                    "a bar is the highest p95 of its slices".into()
-                } else {
-                    "a bar is a slice's p95".into()
-                },
-            ],
+            [format!("p95 {}, p99 {}", ms_text(p95), ms_text(p99))]
+                .into_iter()
+                .chain(drawn.then(|| {
+                    if wide {
+                        "a bar is the highest p95 of its slices".into()
+                    } else {
+                        "a bar is a slice's p95".into()
+                    }
+                }))
+                .collect(),
         ),
         // a log without times
         _ => line(
@@ -1370,15 +1384,15 @@ mod tests {
         let said = text(&s, false);
         let rate = said.lines().next().unwrap();
         // the head line has the requests and the time: not said again
-        assert!(
-            rate.starts_with("rate     no rate: under a second  "),
-            "{said}"
-        );
+        assert_eq!(rate, "rate     no rate: under a second", "{said}");
         assert!(
             !said.contains("req/s") && !said.contains("1 request"),
             "{said}"
         );
         assert!(said.contains("0 B sent, 10 B received"), "{said}");
+        let spark = |said: &str| said.chars().any(|c| ('▁'..='█').contains(&c));
+        // under a second: no line over its time
+        assert!(!spark(&said) && !said.contains("a bar is"), "{said}");
         // a run of a second and more has its rate
         let long = [get(1, 0, "k", 200), get(2, 1995, "k", 200)];
         let s = signals(&long, &RequestPrices::default());
@@ -1393,10 +1407,21 @@ mod tests {
         // no failure: no line drawn for none
         let errors = said.lines().nth(1).unwrap();
         assert_eq!(errors, "errors   none");
+        // two requests: no shape over the time to draw either
+        assert!(!spark(&said) && !said.contains("a bar is"), "{said}");
+        // twenty over two seconds have one
+        let many: Vec<Record> = (0..FEW as u64)
+            .map(|i| get(i + 1, i as i64 * 100, "k", 200))
+            .collect();
+        let said = text(&signals(&many, &RequestPrices::default()), false);
+        assert!(spark(&said), "{said}");
         assert!(
             said.contains("a bar is the highest p95 of its slices"),
             "{said}"
         );
+        let few = &many[..FEW - 1];
+        let said = text(&signals(few, &RequestPrices::default()), false);
+        assert!(!spark(&said), "{said}");
     }
 
     #[test]

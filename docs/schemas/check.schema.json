@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/check.schema.json",
+  "title": "sonde check -f json",
+  "description": "A run against its budget, its baseline and its trials. Exit 1 when `passed` is false.",
+  "type": "object",
+  "properties": {
+    "run": {
+      "$ref": "#/$defs/runPoint",
+      "description": "The run judged."
+    },
+    "program": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The program it is a run of."
+    },
+    "programNamed": {
+      "type": "boolean",
+      "description": "The program has a name of its own."
+    },
+    "check": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "boolean",
+          "description": "Every row passed (true when there are none)."
+        },
+        "verdicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/verdict"
+          }
+        },
+        "newWarnings": {
+          "type": "array",
+          "description": "Findings the baseline did not have.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expected": {
+          "type": "array",
+          "description": "Findings kept on purpose (`[check] expect`).",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "passed",
+        "verdicts",
+        "newWarnings"
+      ]
+    },
+    "trials": {
+      "type": "array",
+      "description": "The run's last trial, scenario by scenario.",
+      "items": {
+        "$ref": "#/$defs/trial"
+      }
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "The whole check: every row, and no trial that broke."
+    },
+    "verdict": {
+      "type": "string",
+      "description": "The closing sentence (`within budget`, `past its baseline`, …)."
+    },
+    "since": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Since which run it is past its baseline.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/since"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "noBaseline": {
+      "type": "string",
+      "description": "`--baseline auto` found none: why, and for which program."
+    }
+  },
+  "required": [
+    "run",
+    "program",
+    "programNamed",
+    "check",
+    "trials",
+    "passed",
+    "verdict",
+    "since"
+  ],
+  "$defs": {
+    "git": {
+      "type": "object",
+      "description": "The commit the program's code was at.",
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "dirty": {
+          "type": "boolean",
+          "description": "Changes not committed yet."
+        }
+      },
+      "required": [
+        "commit",
+        "dirty"
+      ]
+    },
+    "runPoint": {
+      "type": "object",
+      "description": "A run's figures.",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string"
+        },
+        "requests": {
+          "type": "integer"
+        },
+        "busyMs": {
+          "type": "number"
+        },
+        "wallMs": {
+          "type": "number"
+        },
+        "p95Ms": {
+          "type": "number"
+        },
+        "cost": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "errors": {
+          "type": "integer"
+        },
+        "warnings": {
+          "type": "integer"
+        },
+        "findings": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "created",
+        "requests",
+        "busyMs",
+        "wallMs",
+        "cost",
+        "currency",
+        "errors",
+        "warnings",
+        "findings"
+      ]
+    },
+    "since": {
+      "type": "object",
+      "description": "Since which run the program is past its baseline.",
+      "properties": {
+        "runsAgo": {
+          "type": "integer"
+        },
+        "firstPast": {
+          "type": "string"
+        },
+        "firstPastCommit": {
+          "$ref": "#/$defs/git"
+        },
+        "lastWithin": {
+          "type": "string"
+        },
+        "lastWithinCommit": {
+          "$ref": "#/$defs/git"
+        }
+      },
+      "required": [
+        "runsAgo",
+        "firstPast"
+      ]
+    },
+    "trial": {
+      "type": "object",
+      "description": "A trial's verdict (docs/trials.md).",
+      "properties": {
+        "scenario": {
+          "type": "string"
+        },
+        "about": {
+          "type": "string"
+        },
+        "times": {
+          "type": "integer"
+        },
+        "standing": {
+          "type": "string",
+          "enum": [
+            "survived",
+            "degraded",
+            "broke",
+            "untested"
+          ]
+        },
+        "exit": {
+          "type": "integer"
+        },
+        "cleanExit": {
+          "type": "integer"
+        },
+        "faults": {
+          "type": "integer"
+        },
+        "retried": {
+          "type": "integer"
+        },
+        "attempts": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "scenario",
+        "standing",
+        "exit",
+        "cleanExit",
+        "faults",
+        "retried"
+      ]
+    },
+    "verdict": {
+      "type": "object",
+      "description": "One row of the check.",
+      "properties": {
+        "what": {
+          "type": "string",
+          "enum": [
+            "requests",
+            "waiting",
+            "cost",
+            "errors",
+            "p95",
+            "warnings"
+          ]
+        },
+        "value": {
+          "type": "number"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "against": {
+          "type": "string",
+          "enum": [
+            "budget",
+            "baseline"
+          ]
+        },
+        "base": {
+          "type": "number",
+          "description": "The baseline's own figure, for a row held to it."
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "what",
+        "value",
+        "limit",
+        "against",
+        "ok"
+      ]
+    }
+  }
+}

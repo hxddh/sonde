@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/endpoints-list.schema.json",
+  "title": "sonde endpoints list -f json",
+  "description": "The endpoints configured, never their credentials.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "url": {
+        "type": "string"
+      },
+      "region": {
+        "type": "string"
+      },
+      "pathStyle": {
+        "type": "boolean"
+      },
+      "vendor": {
+        "type": "string"
+      },
+      "vendorLabel": {
+        "type": "string"
+      },
+      "hasCa": {
+        "type": "boolean"
+      },
+      "caFile": {
+        "type": "string"
+      },
+      "credentials": {
+        "type": "string",
+        "description": "How credentials are obtained (`profile dev`), not what they are."
+      },
+      "credentialsText": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/phrase"
+        }
+      },
+      "buckets": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "id",
+      "name",
+      "url",
+      "region",
+      "pathStyle",
+      "vendor",
+      "vendorLabel",
+      "hasCa",
+      "credentials",
+      "buckets"
+    ]
+  },
+  "$defs": {
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The phrase's key in the app's locales (en, zh)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Its arguments, as text.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  }
+}

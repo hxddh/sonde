@@ -808,10 +808,22 @@ export function Modal(props: { open: boolean; onClose: () => void; size?: keyof 
       onOpenChange={(e) => !e.open && props.onClose()}
       backdropClass={SCRIM}
       testID={props.testID}
-      class={`m-auto ${MODAL[props.size ?? "default"]} max-w-[94%] gap-4 ${CARD} bg-popover p-4 shadow-xl`}
+      // never taller than the window: a body that grows (`ModalBody`) scrolls, its title and actions stay
+      class={`m-auto ${MODAL[props.size ?? "default"]} max-h-[92%] max-w-[94%] gap-4 ${CARD} bg-popover p-4 shadow-xl`}
     >
       {props.children}
     </Dialog>
+  );
+}
+
+/** A dialog's part that grows with what it holds (a plan, a list of verdicts):
+ * it takes what the window leaves under the title and over the actions, and
+ * scrolls there, so the dialog's actions are always in view. */
+export function ModalBody(props: { children: JSX.Element; testID?: string; class?: string }) {
+  return (
+    <Scroll testID={props.testID} class="min-h-0 shrink" contentClass={`gap-3 ${props.class ?? ""}`}>
+      {props.children}
+    </Scroll>
   );
 }
 

@@ -2,8 +2,9 @@
 //!
 //! A recorded session is grouped into [`Episode`]s: a multipart upload, a
 //! retried request, a burst of lookups, a paged listing, or a step of a
-//! storage format — a SlateDB manifest or WAL write, an Iceberg or Delta
-//! commit — with the reads and file writes that led to it.
+//! storage format — a SlateDB manifest or WAL write, an Iceberg, Delta or
+//! Hudi commit, a Paimon snapshot — with the reads and file writes that led
+//! to it.
 //!
 //! The model per format is one idea: some writes are *commit points*. Other
 //! requests of the format wait in a buffer and are folded into the next commit
@@ -24,6 +25,8 @@ pub enum Format {
     Iceberg,
     Delta,
     Lance,
+    Hudi,
+    Paimon,
 }
 
 impl Format {
@@ -33,6 +36,8 @@ impl Format {
             Format::Iceberg => "Iceberg",
             Format::Delta => "Delta",
             Format::Lance => "Lance",
+            Format::Hudi => "Hudi",
+            Format::Paimon => "Paimon",
         }
     }
 }
@@ -64,6 +69,40 @@ pub enum Part {
     LanceIndex,
     /// Rows marked deleted in a fragment: `_deletions/*`.
     LanceDeletion,
+    /// A Hudi instant on its timeline: `.hoodie/<instant>.<action>[.<state>]`
+    /// (1.x: `.hoodie/timeline/<instant>_<completed>.<action>`).
+    HudiInstant {
+        instant: String,
+        action: String,
+        state: HudiState,
+        /// Of the metadata table under `.hoodie/metadata/`.
+        metadata: bool,
+    },
+    /// `.hoodie/hoodie.properties`: the table's settings.
+    HudiProperties,
+    /// What a write marks while it runs (`.hoodie/.temp/`), and `.hoodie/.aux/`.
+    HudiMarker,
+    /// A base file (`<file id>_<token>_<instant>.parquet`) or a log file
+    /// (`.<file id>_<instant>.log.<n>_<token>`).
+    HudiData,
+    /// `snapshot/snapshot-<n>`: a Paimon commit.
+    PaimonSnapshot(u64),
+    /// `snapshot/LATEST` or `snapshot/EARLIEST`: a hint to the newest or oldest.
+    PaimonHint,
+    /// `manifest/manifest-*`, `manifest-list-*`, `index-manifest-*`.
+    PaimonManifest,
+    /// `schema/schema-<n>`.
+    PaimonSchema(u64),
+    /// A data or changelog file in a bucket: `bucket-<n>/data-*`.
+    PaimonData,
+}
+
+/// Where a Hudi instant is: asked for, begun, or completed (the commit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HudiState {
+    Requested,
+    Inflight,
+    Completed,
 }
 
 impl Part {
@@ -79,7 +118,17 @@ impl Part {
             LanceManifest(_) | LanceTransaction | LanceData | LanceIndex | LanceDeletion => {
                 Format::Lance
             }
+            HudiInstant { .. } | HudiProperties | HudiMarker | HudiData => Format::Hudi,
+            PaimonSnapshot(_) | PaimonHint | PaimonManifest | PaimonSchema(_) | PaimonData => {
+                Format::Paimon
+            }
         }
+    }
+
+    /// A data file: only a guess from its name, taken beside its table's log.
+    fn is_data(&self) -> bool {
+        use Part::*;
+        matches!(self, IcebergData | DeltaData | HudiData | PaimonData)
     }
 
     /// Whether a write of this part ends a step of the format.
@@ -97,6 +146,14 @@ impl Part {
                 | DeltaCheckpoint
                 | DeltaLastCheckpoint
                 | LanceManifest(_)
+                | HudiInstant {
+                    state: HudiState::Completed,
+                    ..
+                }
+                | HudiProperties
+                | PaimonSnapshot(_)
+                | PaimonHint
+                | PaimonSchema(_)
         )
     }
 }
@@ -114,12 +171,50 @@ pub fn part_of(key: &str) -> Option<Part> {
     let mut segs = key.rsplit('/');
     let name = segs.next()?;
     let dir = segs.next().unwrap_or("");
+    let above = segs.next();
     // an index's files are a folder deeper: _indices/<uuid>/<file>
-    if segs.next() == Some("_indices") {
+    if above == Some("_indices") {
         return Some(Part::LanceIndex);
+    }
+    // Hudi's markers and its auxiliary files, any depth under .hoodie/
+    if [".hoodie/.temp/", ".hoodie/.aux/"]
+        .iter()
+        .any(|d| key.starts_with(d) || key.contains(&format!("/{d}")))
+    {
+        return Some(Part::HudiMarker);
+    }
+    if dir == ".hoodie" || (dir == "timeline" && above == Some(".hoodie")) {
+        if name == "hoodie.properties" {
+            return Some(Part::HudiProperties);
+        }
+        let metadata = key.contains(".hoodie/metadata/.hoodie/");
+        return hudi_instant(name, metadata);
+    }
+    if let Some(n) = dir.strip_prefix("bucket-")
+        && n.parse::<u32>().is_ok()
+        && (name.starts_with("data-") || name.starts_with("changelog-"))
+    {
+        return Some(Part::PaimonData);
+    }
+    if is_hudi_file(name) {
+        return Some(Part::HudiData);
     }
     let stem = |ext: &str| name.strip_suffix(ext);
     match dir {
+        "snapshot" => match name {
+            "LATEST" | "EARLIEST" => Some(Part::PaimonHint),
+            _ => name
+                .strip_prefix("snapshot-")
+                .and_then(|n| n.parse().ok())
+                .map(Part::PaimonSnapshot),
+        },
+        "schema" => name
+            .strip_prefix("schema-")
+            .and_then(|n| n.parse().ok())
+            .map(Part::PaimonSchema),
+        "manifest" if name.starts_with("manifest-") || name.starts_with("index-manifest-") => {
+            Some(Part::PaimonManifest)
+        }
         "manifest" => stem(".manifest")
             .and_then(|s| digits(s, 20))
             .map(Part::SlateManifest),
@@ -184,6 +279,62 @@ pub fn part_of(key: &str) -> Option<Part> {
     }
 }
 
+/// A Hudi instant's file: `<instant>[_<completed>].<action>[.requested|.inflight]`,
+/// or 0.x's `<instant>.inflight` for a commit. The instant is a time,
+/// 14 digits or more.
+fn hudi_instant(name: &str, metadata: bool) -> Option<Part> {
+    let mut parts = name.split('.');
+    let time = parts.next()?;
+    let instant = time.split('_').next()?;
+    if instant.len() < 14 || !instant.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let rest: Vec<&str> = parts.collect();
+    let (action, state) = match rest.as_slice() {
+        ["inflight"] => ("commit", HudiState::Inflight),
+        [a] => (*a, HudiState::Completed),
+        [a, "requested"] => (*a, HudiState::Requested),
+        [a, "inflight"] => (*a, HudiState::Inflight),
+        _ => return None,
+    };
+    const ACTIONS: &[&str] = &[
+        "commit",
+        "deltacommit",
+        "replacecommit",
+        "clean",
+        "compaction",
+        "logcompaction",
+        "clustering",
+        "rollback",
+        "savepoint",
+        "restore",
+        "indexing",
+        "schemacommit",
+    ];
+    ACTIONS.contains(&action).then(|| Part::HudiInstant {
+        instant: instant.to_string(),
+        action: action.to_string(),
+        state,
+        metadata,
+    })
+}
+
+/// A Hudi file slice's file: a base file `<file id>_<token>_<instant>.parquet`
+/// (or .orc, .hfile) or a log file `.<file id>_<instant>.log.<version>_<token>`.
+fn is_hudi_file(name: &str) -> bool {
+    if name.starts_with('.') && name.contains(".log.") {
+        return name[1..].split('_').count() >= 2;
+    }
+    let Some(stem) = [".parquet", ".orc", ".hfile"]
+        .iter()
+        .find_map(|e| name.strip_suffix(e))
+    else {
+        return false;
+    };
+    let parts: Vec<&str> = stem.split('_').collect();
+    parts.len() == 3 && parts[2].len() >= 14 && parts[2].bytes().all(|b| b.is_ascii_digit())
+}
+
 /// The format a listing belongs to, from its prefix (`…/manifest/`,
 /// `…/_delta_log/`, …), with the directory's name.
 pub fn listed_format(prefix: &str) -> Option<(Format, &str)> {
@@ -198,6 +349,8 @@ pub fn listed_format(prefix: &str) -> Option<(Format, &str)> {
         "_delta_log" => Format::Delta,
         "metadata" => Format::Iceberg,
         "_versions" | "_transactions" | "_indices" | "_deletions" => Format::Lance,
+        ".hoodie" => Format::Hudi,
+        "snapshot" => Format::Paimon,
         _ => return None,
     };
     Some((f, dir))
@@ -237,7 +390,7 @@ impl Tables {
                 continue;
             };
             let part = part_of(path);
-            if matches!(part, Some(Part::IcebergData | Part::DeltaData)) {
+            if part.as_ref().is_some_and(Part::is_data) {
                 continue;
             }
             // a listing of the directory itself has no part, a key in it does
@@ -246,9 +399,13 @@ impl Tables {
                 (None, Some(prefix)) => listed_format(prefix).map(|(f, _)| f),
                 (None, None) => None,
             };
-            let dir = match format {
-                Some(Format::Delta) => "_delta_log",
-                Some(Format::Iceberg) => "metadata",
+            let dir = match (format, &part) {
+                (Some(Format::Delta), _) => "_delta_log",
+                (Some(Format::Iceberg), _) => "metadata",
+                (Some(Format::Hudi), _) => ".hoodie",
+                (Some(Format::Paimon), Some(Part::PaimonManifest)) => "manifest",
+                (Some(Format::Paimon), Some(Part::PaimonSchema(_))) => "schema",
+                (Some(Format::Paimon), _) => "snapshot",
                 _ => continue,
             };
             if let Some(root) = root_before(path, dir) {
@@ -266,9 +423,10 @@ impl Tables {
     fn part(&self, r: &Record) -> Option<Part> {
         let key = r.key.as_deref()?;
         let part = part_of(key)?;
-        match part {
-            Part::IcebergData | Part::DeltaData => self.data_part(&r.bucket, key),
-            _ => Some(part),
+        if part.is_data() {
+            self.data_part(&r.bucket, key)
+        } else {
+            Some(part)
         }
     }
 
@@ -283,6 +441,8 @@ impl Tables {
             .and_then(|(_, f, _)| match f {
                 Format::Iceberg => Some(Part::IcebergData),
                 Format::Delta => Some(Part::DeltaData),
+                Format::Hudi => Some(Part::HudiData),
+                Format::Paimon => Some(Part::PaimonData),
                 _ => None,
             })
     }
@@ -299,9 +459,7 @@ impl Tables {
         let trimmed = prefix.trim_end_matches('/');
         match part_of(trimmed) {
             // a listing of a data file's path is of a table only when the table is
-            Some(Part::IcebergData | Part::DeltaData) => {
-                self.data_part(&r.bucket, trimmed).map(|p| p.format())
-            }
+            Some(p) if p.is_data() => self.data_part(&r.bucket, trimmed).map(|p| p.format()),
             _ => listed_format(prefix).map(|(f, _)| f),
         }
     }
@@ -874,19 +1032,37 @@ fn sondes_fault(r: &Record) -> bool {
 }
 
 /// The statuses a retry is owed for: the ones the AWS SDKs send again. A 501
-/// or a 505 is the store's answer however often it is asked, like a 404. The
-/// trial's verdict and the retries read from a session both go by this.
-pub fn status_owes_retry(status: u16) -> bool {
+/// or a 505 is the store's answer however often it is asked, like a 404.
+/// Asked only through [`retryable`], which reads the code as well.
+fn status_owes_retry(status: u16) -> bool {
     matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
 }
 
+/// The S3 codes a retry is owed for, whatever status they come with: S3
+/// sends `RequestTimeout` as a 400, and `RequestTimeTooSkewed` as a 403 to
+/// a request an SDK signs again, its clock set by the answer's `Date`.
+const CODES_OWE_RETRY: &[&str] = &["SlowDown", "RequestTimeout", "RequestTimeTooSkewed"];
+
+/// S3's code of an answer: in its error document, or, for an answer sonde
+/// gave in the store's place, at the head of what the record keeps
+/// (`SlowDown: sonde answered …`).
+pub(crate) fn code_of(r: &Record) -> Option<&str> {
+    if let Some(c) = s3_code(r) {
+        return Some(c);
+    }
+    let (code, _) = r.error_body.as_deref()?.split_once(": ")?;
+    (r.injected.is_some() && !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then_some(code)
+}
+
 /// Whether a client is expected to send the request again: no answer (or
-/// one cut short), a status that says so ([`status_owes_retry`]), or the
-/// store asking for fewer.
+/// one cut short), a status that says so (408, 429, 500, 502, 503, 504), or
+/// a code that does ([`CODES_OWE_RETRY`]). The one rule: the trial's
+/// verdict, the retries read from a session and the signals all ask this.
 pub(crate) fn retryable(r: &Record) -> bool {
     r.transport_error.is_some()
         || r.status.is_some_and(status_owes_retry)
-        || s3_code(r).is_some_and(|c| c == "SlowDown" || c == "RequestTimeout")
+        || code_of(r).is_some_and(|c| CODES_OWE_RETRY.contains(&c))
 }
 
 /// A request repeated after a retryable failure. A retried write of a
@@ -1087,6 +1263,32 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         (Part::DeltaCheckpoint, _) => p("delta.checkpoint", &[]),
         (Part::DeltaLastCheckpoint, _) => p("delta.last", &[]),
         (Part::LanceManifest(v), _) => p("lance.commit", &[("v", v.to_string())]),
+        (
+            Part::HudiInstant {
+                instant,
+                action,
+                metadata,
+                ..
+            },
+            _,
+        ) => p(
+            if *metadata {
+                "hudi.metadata"
+            } else {
+                "hudi.instant"
+            },
+            &[("action", action.clone()), ("instant", instant.clone())],
+        ),
+        (Part::HudiProperties, _) => p("hudi.properties", &[]),
+        (Part::PaimonSnapshot(n), _) => p("paimon.snapshot", &[("n", n.to_string())]),
+        (Part::PaimonHint, _) => p(
+            "paimon.hint",
+            &[(
+                "file",
+                file_name(commit.key.as_deref().unwrap_or("")).to_string(),
+            )],
+        ),
+        (Part::PaimonSchema(n), _) => p("paimon.schema", &[("n", n.to_string())]),
         _ => p(
             "step.other",
             &[
@@ -1140,6 +1342,29 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         if deletions > 0 {
             title.push(p("lance.deletions", &[]));
         }
+    } else if matches!(f, Format::Hudi | Format::Paimon) {
+        // the data files alone: an instant's own states, markers and
+        // manifests are how it commits, not what it brought
+        let data: Vec<&str> = files
+            .iter()
+            .copied()
+            .filter(|k| part_of(k).is_some_and(|p| p.is_data()))
+            .collect();
+        let bytes: u64 = before
+            .iter()
+            .filter(|r| r.key.as_deref().is_some_and(|k| data.contains(&k)))
+            .map(|r| data_bytes(r))
+            .sum();
+        if !data.is_empty() {
+            title.push(p(
+                "step.files",
+                &[
+                    ("n", data.len().to_string()),
+                    ("s", plural(data.len())),
+                    ("size", human(bytes)),
+                ],
+            ));
+        }
     } else if !files.is_empty() {
         title.push(p(
             "step.files",
@@ -1191,6 +1416,21 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
     }
     let misses = rs.iter().filter(|r| is_miss(r)).count();
     let n = rs.len();
+    // what a commit leaves to clear away afterwards (Hudi's markers)
+    if rs
+        .iter()
+        .all(|r| r.method == "DELETE" || r.operation == "DeleteObjects")
+    {
+        return build(
+            Kind::Step,
+            Some(f),
+            vec![p(
+                "loose.deletes",
+                &[("n", n.to_string()), ("s", plural(n))],
+            )],
+            rs,
+        );
+    }
     let wal_probe: Vec<u64> = rs
         .iter()
         .filter(|r| is_miss(r))
@@ -1382,6 +1622,8 @@ pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)>
         Format::Iceberg,
         Format::Delta,
         Format::Lance,
+        Format::Hudi,
+        Format::Paimon,
     ] {
         let of_f: Vec<&Episode> = episodes.iter().filter(|e| e.format == Some(f)).collect();
         let mut notes: Vec<&String> = of_f.iter().flat_map(|e| e.notes.iter()).collect();
@@ -1825,6 +2067,60 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .saving_of(pairs.iter().step_by(2).copied().collect()),
         );
     }
+    // Hadoop's s3a: a rename is a copy and a delete, and FileOutputCommitter
+    // commits by renaming out of _temporary/ (twice, with algorithm 1)
+    let (copies, deletes) = renamed_from_temporary(records);
+    if copies.len() >= 3 {
+        let n = copies.len();
+        let saved: Vec<u64> = copies.iter().chain(&deletes).copied().collect();
+        out.push(
+            warn(
+                p("obs.rename", &[("n", n.to_string()), ("s", plural(n))]),
+                of_records(&mut saved.iter().copied()),
+            )
+            .weigh(saved.len(), saved.len(), total)
+            .saving_of(saved),
+        );
+    }
+    // s3a's directory markers: empty objects named `…/`, and their deletes
+    let markers: Vec<u64> = records
+        .iter()
+        .filter(|r| r.operation == "PutObject" && !r.is_error())
+        .filter(|r| r.key.as_deref().is_some_and(|k| k.ends_with('/')))
+        .filter(|r| r.request_bytes.unwrap_or(0) == 0)
+        .map(|r| r.id)
+        .collect();
+    if markers.len() >= 3 {
+        let unmarked: Vec<u64> = records
+            .iter()
+            .filter(|r| {
+                (r.operation == "DeleteObject"
+                    && r.key.as_deref().is_some_and(|k| k.ends_with('/')))
+                    || (r.operation == "DeleteObjects"
+                        && r.request_body
+                            .as_deref()
+                            .is_some_and(|b| b.contains("/</Key>")))
+            })
+            .map(|r| r.id)
+            .collect();
+        let n = markers.len();
+        let ids: Vec<u64> = markers.iter().chain(&unmarked).copied().collect();
+        out.push(
+            info(
+                p(
+                    "obs.markers",
+                    &[
+                        ("n", n.to_string()),
+                        ("s", plural(n)),
+                        ("m", unmarked.len().to_string()),
+                    ],
+                ),
+                of_records(&mut ids.iter().copied()),
+            )
+            .weigh(ids.len(), unmarked.len(), total)
+            .saving_of(unmarked),
+        );
+    }
     // throttled: and how many requests were in flight when it happened
     // (the store's own: a 503 sonde answered in its place asks for nothing)
     let throttled: Vec<&Record> = records
@@ -2044,6 +2340,43 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         o.identity = crate::profile::finding_identity(o);
     }
     out
+}
+
+/// Copies out of a `_temporary/` folder and the deletes of what they copied
+/// (by id): a rename on S3, as Hadoop's FileOutputCommitter commits.
+fn renamed_from_temporary(records: &[Record]) -> (Vec<u64>, Vec<u64>) {
+    use std::collections::HashSet;
+    let mut sources: HashSet<(String, String)> = HashSet::new();
+    let mut copies = Vec::new();
+    for r in records
+        .iter()
+        .filter(|r| r.operation == "CopyObject" && !r.is_error())
+    {
+        let Some(src) = header(r, "x-amz-copy-source") else {
+            continue;
+        };
+        let src = percent_encoding::percent_decode_str(src.split('?').next().unwrap_or(""))
+            .decode_utf8_lossy()
+            .into_owned();
+        let src = src.trim_start_matches('/');
+        let Some((bucket, key)) = src.split_once('/') else {
+            continue;
+        };
+        if key.starts_with("_temporary/") || key.contains("/_temporary/") {
+            copies.push(r.id);
+            sources.insert((bucket.to_string(), key.to_string()));
+        }
+    }
+    let deletes = records
+        .iter()
+        .filter(|r| r.operation == "DeleteObject")
+        .filter(|r| match (&r.bucket, &r.key) {
+            (Some(b), Some(k)) => sources.contains(&(b.clone(), k.clone())),
+            _ => false,
+        })
+        .map(|r| r.id)
+        .collect();
+    (copies, deletes)
 }
 
 /// [`observations`] of a session, read with its header: a session whose
@@ -2632,5 +2965,218 @@ mod tests {
             Some(Part::LanceDeletion)
         );
         assert_eq!(part_of("d/data/a.parquet"), Some(Part::IcebergData));
+    }
+
+    /// A request at `ms`: PUT (with `bytes`), GET, DELETE or a copy.
+    fn req(id: u64, ms: i64, method: &str, key: &str, bytes: u64) -> Record {
+        let operation = match method {
+            "PUT" => "PutObject",
+            "DELETE" => "DeleteObject",
+            "COPY" => "CopyObject",
+            _ => "GetObject",
+        };
+        Record {
+            id,
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + ms).unwrap(),
+            method: if method == "COPY" { "PUT" } else { method }.into(),
+            operation: operation.into(),
+            bucket: Some("lake".into()),
+            key: Some(key.into()),
+            status: Some(if method == "DELETE" { 204 } else { 200 }),
+            latency_ms: 5.0,
+            request_bytes: Some(bytes),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn hudi_and_paimon_keys_are_parts() {
+        let instant = |s: &str| match part_of(s) {
+            Some(Part::HudiInstant { action, state, .. }) => Some((action, state)),
+            _ => None,
+        };
+        use HudiState::*;
+        assert_eq!(
+            instant("t/.hoodie/20261112093000123.commit"),
+            Some(("commit".into(), Completed))
+        );
+        assert_eq!(
+            instant("t/.hoodie/20261112093000123.deltacommit.requested"),
+            Some(("deltacommit".into(), Requested))
+        );
+        assert_eq!(
+            instant("t/.hoodie/20261112093000123.inflight"),
+            Some(("commit".into(), Inflight))
+        );
+        // 1.x: the timeline folder, the completion time in the name
+        assert_eq!(
+            instant(".hoodie/timeline/20261112093000123_20261112093001456.replacecommit"),
+            Some(("replacecommit".into(), Completed))
+        );
+        assert_eq!(instant("t/.hoodie/notes.txt"), None);
+        assert_eq!(
+            part_of("t/.hoodie/hoodie.properties"),
+            Some(Part::HudiProperties)
+        );
+        assert_eq!(
+            part_of("t/.hoodie/.temp/20261112093000123/dt=1/f1_0-1-2_2026.parquet.marker.CREATE"),
+            Some(Part::HudiMarker)
+        );
+        assert_eq!(
+            part_of("t/dt=1/3b2a-0_0-21-23_20261112093000123.parquet"),
+            Some(Part::HudiData)
+        );
+        assert_eq!(
+            part_of("t/dt=1/.3b2a-0_20261112093000123.log.1_0-21-23"),
+            Some(Part::HudiData)
+        );
+        assert!(matches!(
+            part_of("t/.hoodie/metadata/.hoodie/20261112093000123.deltacommit"),
+            Some(Part::HudiInstant { metadata: true, .. })
+        ));
+        assert_eq!(
+            part_of("p/snapshot/snapshot-7"),
+            Some(Part::PaimonSnapshot(7))
+        );
+        assert_eq!(part_of("p/snapshot/LATEST"), Some(Part::PaimonHint));
+        assert_eq!(part_of("p/schema/schema-0"), Some(Part::PaimonSchema(0)));
+        assert_eq!(
+            part_of("p/manifest/manifest-list-6f1a-0"),
+            Some(Part::PaimonManifest)
+        );
+        assert_eq!(
+            part_of("p/dt=1/bucket-0/data-6f1a-0.orc"),
+            Some(Part::PaimonData)
+        );
+        // SlateDB's manifests stay SlateDB's
+        assert_eq!(
+            part_of("db/manifest/00000000000000000001.manifest"),
+            Some(Part::SlateManifest(1))
+        );
+        assert_eq!(listed_format("t/.hoodie/").map(|x| x.0), Some(Format::Hudi));
+    }
+
+    #[test]
+    fn a_hudi_write_is_one_commit_with_its_files() {
+        let t = "t/.hoodie/20261112093000123";
+        let rs = vec![
+            req(1, 0, "GET", "t/.hoodie/hoodie.properties", 0),
+            req(2, 10, "PUT", &format!("{t}.commit.requested"), 0),
+            req(3, 20, "PUT", &format!("{t}.inflight"), 900),
+            req(
+                4,
+                30,
+                "PUT",
+                "t/.hoodie/.temp/20261112093000123/dt=1/a.marker.CREATE",
+                0,
+            ),
+            req(
+                5,
+                40,
+                "PUT",
+                "t/dt=1/a-0_0-1-2_20261112093000123.parquet",
+                4000,
+            ),
+            req(
+                6,
+                50,
+                "PUT",
+                "t/dt=2/b-0_0-1-3_20261112093000123.parquet",
+                6000,
+            ),
+            req(7, 60, "PUT", &format!("{t}.commit"), 1200),
+            req(
+                8,
+                70,
+                "DELETE",
+                "t/.hoodie/.temp/20261112093000123/dt=1/a.marker.CREATE",
+                0,
+            ),
+        ];
+        let eps = episodes(&rs);
+        let commit = eps
+            .iter()
+            .find(|e| e.format == Some(Format::Hudi) && e.records.contains(&7))
+            .unwrap();
+        assert_eq!(commit.records, [1, 2, 3, 4, 5, 6, 7], "{eps:#?}");
+        assert_eq!(commit.title, "commit 20261112093000123 · 2 files (9.8 KiB)");
+        // the markers cleared afterwards are said as deletes
+        let cleared = eps.iter().find(|e| e.records == [8]).unwrap();
+        assert_eq!(cleared.format, Some(Format::Hudi));
+        assert_eq!(cleared.title, "1 file deleted");
+    }
+
+    #[test]
+    fn a_paimon_commit_is_its_snapshot() {
+        let rs = vec![
+            req(1, 0, "GET", "p/snapshot/LATEST", 0),
+            req(2, 10, "PUT", "p/dt=1/bucket-0/data-6f1a-0.orc", 3000),
+            req(3, 20, "PUT", "p/manifest/manifest-6f1a-0", 500),
+            req(4, 30, "PUT", "p/manifest/manifest-list-6f1a-0", 200),
+            req(5, 40, "PUT", "p/snapshot/snapshot-7", 300),
+            req(6, 50, "PUT", "p/snapshot/LATEST", 1),
+        ];
+        let eps = episodes(&rs);
+        let titles: Vec<(&str, Option<Format>)> =
+            eps.iter().map(|e| (e.title.as_str(), e.format)).collect();
+        assert_eq!(
+            titles,
+            [
+                ("snapshot 7 · 1 file (2.9 KiB)", Some(Format::Paimon)),
+                ("LATEST hint updated", Some(Format::Paimon)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rename_commit_and_directory_markers_are_findings() {
+        let mut rs = Vec::new();
+        let mut id = 0;
+        let mut next = || {
+            id += 1;
+            id
+        };
+        for i in 0..4 {
+            let (src, dst) = (
+                format!("out/_temporary/0/task_{i}/part-{i}.parquet"),
+                format!("out/part-{i}.parquet"),
+            );
+            let mut copy = req(next(), i * 100, "COPY", &dst, 0);
+            copy.request_headers = vec![Header::new("x-amz-copy-source", format!("lake/{src}"))];
+            rs.push(copy);
+            rs.push(req(next(), i * 100 + 10, "DELETE", &src, 0));
+            rs.push(req(next(), i * 100 + 20, "PUT", &format!("out/d{i}/"), 0));
+            rs.push(req(
+                next(),
+                i * 100 + 30,
+                "DELETE",
+                &format!("out/d{i}/"),
+                0,
+            ));
+        }
+        let eps = episodes(&rs);
+        let obs = observations(&rs, &eps);
+        let find = |k: &str| {
+            obs.iter()
+                .find(|o| o.phrases[0].key == k)
+                .unwrap_or_else(|| panic!("{k}: {obs:#?}"))
+        };
+        let rename = find("obs.rename");
+        assert_eq!(rename.level, "warn");
+        assert_eq!(rename.saves_requests, 8);
+        assert!(
+            rename
+                .text
+                .starts_with("4 objects copied out of _temporary/")
+        );
+        assert!(
+            rename
+                .fixes
+                .iter()
+                .any(|f| f.code.contains("committer.name=magic"))
+        );
+        let markers = find("obs.markers");
+        assert_eq!(markers.saves_requests, 4);
+        assert!(markers.text.starts_with("4 directory markers written"));
     }
 }

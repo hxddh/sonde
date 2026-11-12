@@ -16,19 +16,20 @@
 //!
 //! Each run of a trial is given a place of its own by its name (`{trial}`,
 //! `SONDE_TRIAL`: `clean`, then the scenario's), so the two runs' keys
-//! differ by that name. Before a request is matched to the clean run the
-//! run's own name is taken out of its bucket, key, query and control body
-//! ([`unplace`]): only where it stands as a whole word, so that a scenario
-//! named `error` leaves a key `errors/x` alone. A key that holds the word
-//! by itself in both runs (`error/x` under the scenario `error`) is matched
-//! as it was written.
+//! differ by that name. A trial's request is the clean run's that is the
+//! same as written, else the one it [`fits`]: the same with the scenario's
+//! name, in some of the places it stands as a whole word, in the clean run's
+//! place, and nothing else different. Which places those are is read from
+//! the two keys, never from the command: `etl-slowdown/clean/state` is
+//! `etl-clean/clean/state`, whose second `clean` is the program's own word
+//! in both runs, and a scenario named `error` leaves `errors/x` alone.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use reqlog::Record;
 use serde::{Deserialize, Serialize};
 
-use crate::episode::{episodes, observations, status_owes_retry};
+use crate::episode::{code_of, episodes, observations, retryable};
 use crate::fault::{Condition, commit_family, condition_of, identity, identity_of};
 use crate::program::ms_text;
 
@@ -114,8 +115,9 @@ pub struct Trial {
     /// Of those, the ones the program sent again (see the module's note).
     pub retried: usize,
     /// Of the faults, the ones no retry is owed for: a 404, a 403, a 501
-    /// (any status but 408, 429, 500, 502, 503 and 504), and a request the
-    /// clean run itself never got an answer for. Neither retried nor dropped.
+    /// (any answer [`crate::episode::retryable`] does not call for another
+    /// attempt), a request the clean run itself never got an answer for, and
+    /// the races `yielded`. Neither retried nor dropped.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub not_retryable: usize,
     /// Failed reads of a key the clean run reads more than once, answered
@@ -129,6 +131,34 @@ pub struct Trial {
     /// answer was lost, and the program did not ask again.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub lost_writes: usize,
+    /// Writes whose answer was lost, not sent again, and whose key the
+    /// program then read (more often than its clean run reads it): it
+    /// asked the store, which had made them. Neither retried nor dropped.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub checked: usize,
+    /// Uploads whose completion the store made, its answer lost, that the
+    /// program started again from their first part.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reuploaded: usize,
+    /// Requests a stall held before their first byte
+    /// ([`crate::fault::STALL_MS`]); of them, the ones the program waited
+    /// out instead of cutting short and sending again.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub held: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub waited: usize,
+    /// Keys this run wrote that a listing left out; of them, the ones a
+    /// later listing showed (`relisted`), the ones the program then never
+    /// read as its clean run did (`missed`), and the ones it wrote again
+    /// (`rewrote`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub stale: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub relisted: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub missed: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rewrote: usize,
     /// Downloads whose body sonde cut short; of them, the ones made good by
     /// a read from the cut on (`resumed`) and by a read of the whole again
     /// (`reread`). The rest were taken as they came.
@@ -148,6 +178,12 @@ pub struct Trial {
     /// have gone on the same over another writer's, the requests do not say.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub read_back: usize,
+    /// Of the races, creates (`If-None-Match: *`) of a key that is no
+    /// table's log (a marker, a lock) that the program took as made, and
+    /// did not write over: the store has the key (sonde let it through), as
+    /// the program believes. Among `not_retryable`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub yielded: usize,
     /// A SlateDB writer that lost its race stopped and wrote nothing more:
     /// fenced, as the format means it. Its exit is not held against it.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -253,15 +289,34 @@ fn cut_body(r: &Record) -> bool {
     faulted(r) && response_header(r, crate::CUT_HEADER).is_some()
 }
 
+/// A listing sonde left keys out of ([`crate::fault::Effect::StaleList`]):
+/// the keys, as the listing wrote them.
+fn hidden(r: &Record) -> Vec<&str> {
+    if !faulted(r) {
+        return Vec::new();
+    }
+    r.response_headers
+        .iter()
+        .filter(|h| h.name.eq_ignore_ascii_case(crate::fault::HIDDEN_HEADER))
+        .map(|h| h.value.as_str())
+        .collect()
+}
+
+/// A request a fault held that the program stopped waiting for.
+fn given_up(r: &Record) -> bool {
+    faulted(r) && response_header(r, crate::fault::GIVEN_UP_HEADER).is_some()
+}
+
 /// A conditional write sonde answered 412.
 fn lost_race(r: &Record) -> bool {
     faulted(r) && r.status == Some(412) && is_write(r) && condition_of(r).is_some()
 }
 
 /// The program got the store's own answer, and not one that asks for
-/// another attempt: a 404, a 412 or a 501 is an answer, a 503 is not.
+/// another attempt ([`retryable`]): a 404, a 412 or a 501 is an answer, a
+/// 503 or a 400 RequestTimeout is not.
 fn answered(r: &Record) -> bool {
-    !faulted(r) && r.transport_error.is_none() && r.status.is_some_and(|s| !status_owes_retry(s))
+    !faulted(r) && r.status.is_some() && !retryable(r)
 }
 
 fn done(r: &Record) -> bool {
@@ -269,16 +324,11 @@ fn done(r: &Record) -> bool {
 }
 
 /// Whether a failed request is one a program should send again
-/// ([`status_owes_retry`]: the rule the retries read from a session go by).
-/// A 404 or a 501 is the answer, however often it is asked.
+/// ([`retryable`]: the rule the retries read from a session and the signals
+/// go by, status and code). A 404 or a 501 is the answer, however often it
+/// is asked.
 fn retry_owed(r: &Record) -> bool {
-    r.status.is_none_or(status_owes_retry)
-}
-
-fn s3_code(r: &Record) -> Option<&str> {
-    let b = r.error_body.as_deref()?;
-    let start = b.find("<Code>")? + 6;
-    Some(&b[start..start + b[start..].find("</Code>")?])
+    r.status.is_none() || retryable(r)
 }
 
 fn unfinished_uploads(records: &[Record]) -> usize {
@@ -353,37 +403,175 @@ pub fn unplace<'a>(text: &'a str, name: &str) -> std::borrow::Cow<'a, str> {
     out.into()
 }
 
-/// A request's name ([`identity_of`]) with its run's own name taken out.
-fn identity_without(r: &Record, name: &str) -> String {
+/// The clean run's name: each run's place in the first run of a trial.
+const CLEAN: &str = "clean";
+
+/// `text` with both runs' names taken out where they stand as whole words:
+/// the scenario's, then the clean run's. Two requests the same in both runs
+/// read the same this way, whichever of the names the program put where;
+/// so do some that are not ([`fits`] tells them apart).
+fn unplace_both<'a>(text: &'a str, name: &str) -> std::borrow::Cow<'a, str> {
+    match unplace(text, name) {
+        std::borrow::Cow::Borrowed(t) => unplace(t, CLEAN),
+        std::borrow::Cow::Owned(t) => unplace(&t, CLEAN).into_owned().into(),
+    }
+}
+
+/// Whether `clean` (a clean run's text) is `trial` (the trial's) with some
+/// of the scenario's `name`, where it stands as a whole word, in the clean
+/// run's name's place: the places the program filled from `{trial}` or
+/// `SONDE_TRIAL`, and no others. `etl-slowdown/clean/state` fits
+/// `etl-clean/clean/state` (the second `clean` is the program's own word in
+/// both runs) and does not fit `etl-clean/raw/state`.
+pub fn fits(trial: &str, clean: &str, name: &str) -> bool {
+    fn word(s: &[u8], i: usize, w: &[u8]) -> bool {
+        s[i..].starts_with(w)
+            && (i == 0 || !s[i - 1].is_ascii_alphanumeric())
+            && s.get(i + w.len())
+                .is_none_or(|b| !b.is_ascii_alphanumeric())
+    }
+    // from (i, j) on: a place may be taken wherever both names stand, or
+    // the two read on alike; the places tried and failed are not tried again
+    fn go(
+        t: &[u8],
+        c: &[u8],
+        name: &[u8],
+        (mut i, mut j): (usize, usize),
+        failed: &mut BTreeSet<(usize, usize)>,
+    ) -> bool {
+        loop {
+            if !name.is_empty()
+                && word(t, i, name)
+                && word(c, j, CLEAN.as_bytes())
+                && !failed.contains(&(i, j))
+            {
+                if go(t, c, name, (i + name.len(), j + CLEAN.len()), failed) {
+                    return true;
+                }
+                failed.insert((i, j));
+            }
+            match (t.get(i), c.get(j)) {
+                (None, None) => return true,
+                (Some(a), Some(b)) if a == b => (i, j) = (i + 1, j + 1),
+                _ => return false,
+            }
+        }
+    }
+    go(
+        trial.as_bytes(),
+        clean.as_bytes(),
+        name.as_bytes(),
+        (0, 0),
+        &mut BTreeSet::new(),
+    )
+}
+
+/// What a request (or a commit family) is called, three ways: as written;
+/// as written without its body's hash (what [`fits`] reads); and with both
+/// runs' names taken out ([`unplace_both`]), under which the clean run's
+/// are looked up.
+struct Named {
+    exact: String,
+    bare: String,
+    coarse: String,
+}
+
+/// A request's names ([`identity_of`]).
+fn named_request(r: &Record, name: &str) -> Named {
+    let exact = identity_of(r);
+    let bare = identity(
+        &r.method,
+        &r.operation,
+        r.bucket.as_deref(),
+        r.key.as_deref(),
+        &r.query,
+        None,
+    );
     let query: Vec<(String, String)> = r
         .query
         .iter()
-        .map(|(k, v)| (k.clone(), unplace(v, name).into_owned()))
+        .map(|(k, v)| (k.clone(), unplace_both(v, name).into_owned()))
         .collect();
-    // the body's hash is of what was sent: with the name in it, it is the
-    // hash of what is kept, the name taken out (a body cut short when it
+    // the body's hash is of what was sent: with a name in it, it is the
+    // hash of what is kept, the names taken out (a body cut short when it
     // was kept is left to its hash)
     let body = r
         .request_body
         .as_deref()
-        .filter(|b| r.key.is_none() && !r.request_body_truncated && b.contains(name))
-        .map(|b| crate::fault::body_hash(unplace(b, name).as_bytes()))
+        .filter(|_| r.key.is_none() && !r.request_body_truncated)
+        .map(|b| unplace_both(b, name))
+        .filter(|b| matches!(b, std::borrow::Cow::Owned(_)))
+        .map(|b| crate::fault::body_hash(b.as_bytes()))
         .or_else(|| crate::fault::kept_body_hash(r));
-    identity(
+    let coarse = identity(
         &r.method,
         &r.operation,
-        r.bucket.as_deref().map(|b| unplace(b, name)).as_deref(),
-        r.key.as_deref().map(|k| unplace(k, name)).as_deref(),
+        r.bucket
+            .as_deref()
+            .map(|b| unplace_both(b, name))
+            .as_deref(),
+        r.key.as_deref().map(|k| unplace_both(k, name)).as_deref(),
         &query,
         body.as_deref(),
-    )
+    );
+    Named {
+        exact,
+        bare,
+        coarse,
+    }
 }
 
-fn family_without(r: &Record, name: &str) -> String {
-    commit_family(
-        r.bucket.as_deref().map(|b| unplace(b, name)).as_deref(),
-        r.key.as_deref().map(|k| unplace(k, name)).as_deref(),
-    )
+/// A conditional write's commit family's names ([`commit_family`]).
+fn named_family(r: &Record, name: &str) -> Named {
+    let exact = commit_family(r.bucket.as_deref(), r.key.as_deref());
+    let coarse = commit_family(
+        r.bucket
+            .as_deref()
+            .map(|b| unplace_both(b, name))
+            .as_deref(),
+        r.key.as_deref().map(|k| unplace_both(k, name)).as_deref(),
+    );
+    Named {
+        bare: exact.clone(),
+        exact,
+        coarse,
+    }
+}
+
+/// The clean run's names, to find the one a trial's request goes by.
+struct Places<'a> {
+    /// The scenario's name: the trial's place.
+    name: &'a str,
+    /// By the name with both runs' names out: the clean run's as written,
+    /// and without a body's hash.
+    by_coarse: HashMap<String, Vec<(String, String)>>,
+}
+
+impl<'a> Places<'a> {
+    fn new(name: &'a str) -> Self {
+        Places {
+            name,
+            by_coarse: HashMap::new(),
+        }
+    }
+
+    fn add(&mut self, n: Named) {
+        let all = self.by_coarse.entry(n.coarse).or_default();
+        if !all.iter().any(|(e, _)| *e == n.exact) {
+            all.push((n.exact, n.bare));
+        }
+    }
+
+    /// The clean run's name for a trial's request: the same as written,
+    /// else the one it fits with the scenario's name in the clean run's
+    /// place. None for a request the clean run never sent.
+    fn find(&self, n: &Named) -> Option<&str> {
+        let all = self.by_coarse.get(&n.coarse)?;
+        all.iter()
+            .find(|(e, _)| *e == n.exact)
+            .or_else(|| all.iter().find(|(_, b)| fits(&n.bare, b, self.name)))
+            .map(|(e, _)| e.as_str())
+    }
 }
 
 /// The clean run's requests of one name.
@@ -506,19 +694,21 @@ pub fn judge(
     exit: i32,
 ) -> Trial {
     let name = scenario.name.as_str();
-    // how many times the program means to send each request, named without
-    // the clean run's place; and the same requests as they were written
+    // how many times the program means to send each request, by the clean
+    // run's name for it; and where each of the trial's is found among them
     let mut meant: HashMap<String, Meant> = HashMap::new();
-    let mut as_written: HashMap<String, String> = HashMap::new();
     let mut won: HashMap<String, usize> = HashMap::new();
+    let mut requests = Places::new(name);
+    let mut logs = Places::new(name);
+    // the bucket and key of each of the clean run's requests, by its name
+    let mut clean_place: HashMap<String, (Option<&str>, Option<&str>)> = HashMap::new();
     let mut in_time: Vec<&Record> = clean.iter().collect();
     in_time.sort_by_key(|r| (r.time, r.id));
     for r in in_time {
-        let id = identity_without(r, "clean");
-        let raw = identity_of(r);
-        if raw != id {
-            as_written.insert(raw, id.clone());
-        }
+        let n = named_request(r, name);
+        let id = n.exact.clone();
+        requests.add(n);
+        clean_place.insert(id.clone(), (r.bucket.as_deref(), r.key.as_deref()));
         let m = meant.entry(id).or_default();
         m.answered += answered(r) as usize;
         if let Some(end) = m.last_end {
@@ -531,32 +721,59 @@ pub fn judge(
         }
         m.last_end = Some(m.last_end.map_or(end_of(r), |e| e.max(end_of(r))));
         if is_write(r) && condition_of(r).is_some() && done(r) {
-            *won.entry(family_without(r, "clean")).or_default() += 1;
+            let n = named_family(r, name);
+            *won.entry(n.exact.clone()).or_default() += 1;
+            logs.add(n);
         }
     }
-    // each of the trial's requests under the clean run's name for it
+    // each of the trial's requests under the clean run's name for it, or
+    // its own when the clean run never sent it
     let named = |r: &Record| -> String {
-        let id = identity_without(r, name);
-        if meant.contains_key(&id) {
-            return id;
-        }
-        let raw = identity_of(r);
-        match as_written.get(&raw) {
-            Some(clean_id) => clean_id.clone(),
-            None if meant.contains_key(&raw) => raw,
-            None => id,
-        }
+        let n = named_request(r, name);
+        requests.find(&n).map_or(n.exact.clone(), str::to_string)
     };
     let mut by_request: BTreeMap<String, Vec<&Record>> = BTreeMap::new();
     let mut families: BTreeMap<String, Vec<&Record>> = BTreeMap::new();
     for r in run {
         if is_write(r) && condition_of(r).is_some() {
-            families.entry(family_without(r, name)).or_default().push(r);
+            let n = named_family(r, name);
+            let family = logs.find(&n).map_or(n.exact.clone(), str::to_string);
+            families.entry(family).or_default().push(r);
         }
         by_request.entry(named(r)).or_default().push(r);
     }
+    // the requests this run got more answers for than the clean run did
+    let more_than_meant: BTreeSet<String> = by_request
+        .iter()
+        .filter(|(id, g)| {
+            g.iter().filter(|r| answered(r)).count() > meant.get(*id).map_or(0, |m| m.answered)
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    // this run's requests by their bucket and key
+    type Place<'a> = (Option<&'a str>, Option<&'a str>);
+    let mut of_place: HashMap<Place, Vec<&Record>> = HashMap::new();
+    for r in run {
+        of_place
+            .entry((r.bucket.as_deref(), r.key.as_deref()))
+            .or_default()
+            .push(r);
+    }
+    // a write whose answer was lost, and whose key the program then read,
+    // more than its clean run reads it: it asked the store, which had it
+    let asked_after = |r: &Record| {
+        of_place[&(r.bucket.as_deref(), r.key.as_deref())]
+            .iter()
+            .any(|x| {
+                (x.time, x.id) > (r.time, r.id)
+                    && !is_write(x)
+                    && done(x)
+                    && more_than_meant.contains(&named(x))
+            })
+    };
     let (mut faults, mut retried, mut not_retryable, mut read_again) = (0, 0, 0, 0);
     let (mut dropped_reads, mut dropped_writes, mut lost_writes) = (0, 0, 0);
+    let mut checked = 0;
     let (mut attempts, mut wrote_twice) = (0u32, 0);
     let (mut cut, mut resumed, mut reread, mut holes, mut taken) = (0, 0, 0, 0, 0);
     // (which attempt the wait came before, the wait)
@@ -632,7 +849,10 @@ pub fn judge(
         }
 
         let failed: Vec<usize> = (0..group.len())
-            .filter(|&i| faulted(group[i]) && !cut_body(group[i]) && !lost_race(group[i]))
+            .filter(|&i| {
+                let r = group[i];
+                faulted(r) && !cut_body(r) && !lost_race(r) && hidden(r).is_empty()
+            })
             .collect();
         if failed.is_empty() {
             continue;
@@ -688,6 +908,9 @@ pub fn judge(
                 if read {
                     dropped_reads += 1;
                     keep(&mut at_read, r);
+                } else if lost_answer(r) && asked_after(r) {
+                    // not sent again: looked for, and found
+                    checked += 1;
                 } else {
                     dropped_writes += 1;
                     lost_writes += lost_answer(r) as usize;
@@ -719,7 +942,7 @@ pub fn judge(
                         format!(
                             "{}{}",
                             next.status.unwrap_or(0),
-                            s3_code(next).map(|c| format!(" {c}")).unwrap_or_default()
+                            code_of(next).map(|c| format!(" {c}")).unwrap_or_default()
                         ),
                         next.operation == "CompleteMultipartUpload",
                     ));
@@ -736,18 +959,56 @@ pub fn judge(
     // races lost: by commit, not by key. The clean run says how many
     // commits the program means to make in each log.
     let (mut races, mut unrun, mut overwrote, mut blind, mut read_back) = (0, 0, 0, 0, 0);
+    let mut yielded = 0;
     let mut fenced = false;
     let mut at_race: Option<&Record> = None;
     let mut in_time: Vec<&Record> = run.iter().collect();
     in_time.sort_by_key(|r| (r.time, r.id));
+    // the contested key written over without a condition: the other
+    // writer's commit, had there been one, is gone
+    let written_over = |r: &Record| {
+        in_time.iter().any(|w| {
+            (w.time, w.id) > (r.time, r.id)
+                && is_write(w)
+                && w.method != "DELETE"
+                && condition_of(w).is_none()
+                && done(w)
+                && w.bucket == r.bucket
+                && w.key == r.key
+                && !w
+                    .query
+                    .iter()
+                    .any(|(k, _)| k == "uploadId" || k == "uploads")
+        })
+    };
     for (family, group) in families.iter_mut() {
         group.sort_by_key(|r| (r.time, r.id));
-        let lost: Vec<usize> = (0..group.len()).filter(|&i| lost_race(group[i])).collect();
+        let all: Vec<usize> = (0..group.len()).filter(|&i| lost_race(group[i])).collect();
+        if all.is_empty() {
+            continue;
+        }
+        faults += all.len();
+        races += all.len();
+        // a create of a key that is no table's log (a marker, a lock), which
+        // the store made: a 412 says "it is there", and it is. Taking it so
+        // is what such a writer does against a real one; nothing is owed
+        let (yields, lost): (Vec<usize>, Vec<usize>) = all.into_iter().partition(|&i| {
+            let r = group[i];
+            condition_of(r) == Some(Condition::Create)
+                && lost_answer(r)
+                && !crate::fault::is_log(r.key.as_deref())
+        });
+        for &i in &yields {
+            if written_over(group[i]) {
+                overwrote += 1;
+                keep(&mut at_race, group[i]);
+            } else {
+                yielded += 1;
+            }
+        }
         if lost.is_empty() {
             continue;
         }
-        faults += lost.len();
-        races += lost.len();
         let made = group.iter().filter(|r| done(r)).count();
         let after_first = group[lost[0] + 1..].iter().filter(|r| done(r)).count();
         let short = match won.get(family).copied().unwrap_or(0) {
@@ -762,21 +1023,7 @@ pub fn judge(
         let rest_made = short <= lost.len();
         for (n, &i) in lost.iter().enumerate() {
             let r = group[i];
-            // the contested key written over without a condition: the
-            // other writer's commit, had there been one, is gone
-            let over = in_time.iter().any(|w| {
-                (w.time, w.id) > (r.time, r.id)
-                    && is_write(w)
-                    && w.method != "DELETE"
-                    && condition_of(w).is_none()
-                    && done(w)
-                    && w.bucket == r.bucket
-                    && w.key == r.key
-                    && !w
-                        .query
-                        .iter()
-                        .any(|(k, _)| k == "uploadId" || k == "uploads")
-            });
+            let over = written_over(r);
             if over {
                 overwrote += 1;
                 keep(&mut at_race, r);
@@ -916,6 +1163,108 @@ pub fn judge(
     }
     let jitter = (!told.is_empty()).then(|| told.iter().any(|j| *j));
     let jitter_too_short = jitter_too_short && jitter.is_none();
+    // a stall: a request held before its first byte. Cut short, it was
+    // given up on (its record says so, or another attempt at it began while
+    // it was held) and its retry is read as any failure's; else it was
+    // waited out
+    let (mut held, mut waited) = (0, 0);
+    let mut at_wait: Option<&Record> = None;
+    let stall = crate::fault::stall_of(scenario);
+    if stall.is_some() {
+        for group in by_request.values() {
+            for r in group.iter().filter(|r| r.injected.is_some()) {
+                if given_up(r) {
+                    held += 1;
+                } else if !faulted(r) {
+                    held += 1;
+                    let cut_short = group
+                        .iter()
+                        .any(|x| x.id != r.id && x.time > r.time && x.time < end_of(r));
+                    if !cut_short {
+                        waited += 1;
+                        keep(&mut at_wait, r);
+                    }
+                }
+            }
+        }
+    }
+
+    // a listing that left out keys this run wrote: what the program did
+    // with each key after, against what the clean run did with it
+    let (mut stale, mut relisted, mut missed, mut rewrote, mut unused) = (0, 0, 0, 0, 0);
+    let mut at_stale: Option<&Record> = None;
+    let listings: Vec<&Record> = in_time
+        .iter()
+        .copied()
+        .filter(|x| crate::fault::LISTINGS.contains(&x.operation.as_str()) && done(x))
+        .collect();
+    let mut at_clean_place: HashMap<Place, Vec<&str>> = HashMap::new();
+    for (id, place) in &clean_place {
+        at_clean_place.entry(*place).or_default().push(id);
+    }
+    for l in in_time.iter().filter(|r| !hidden(r).is_empty()) {
+        for key in hidden(l) {
+            stale += 1;
+            // listed again, past where the stale one left it out
+            let again = listings.iter().any(|x| {
+                (x.time, x.id) > (l.time, l.id)
+                    && x.bucket == l.bucket
+                    && x.query
+                        .iter()
+                        .find(|(k, _)| k == "prefix")
+                        .is_none_or(|(_, p)| key.starts_with(p.as_str()))
+            });
+            relisted += again as usize;
+            // the requests of the key, in this run and in the clean run
+            let of_key = of_place
+                .get(&(l.bucket.as_deref(), Some(key)))
+                .map_or(&[][..], Vec::as_slice);
+            let mut ids: BTreeSet<String> = of_key.iter().map(|x| named(x)).collect();
+            let clean_key = ids.iter().find_map(|id| clean_place.get(id)).copied();
+            if let Some(place) = clean_key {
+                ids.extend(at_clean_place[&place].iter().map(|id| id.to_string()));
+            }
+            let (mut short, mut more, mut used) = (0, 0, false);
+            for id in &ids {
+                let want = meant.get(id).map_or(0, |m| m.answered);
+                let got = by_request
+                    .get(id)
+                    .map_or(0, |g| g.iter().filter(|r| answered(r)).count());
+                let write = matches!(id.split(' ').next(), Some("PUT" | "POST" | "DELETE"));
+                if write {
+                    more += got.saturating_sub(want);
+                } else {
+                    short += want.saturating_sub(got);
+                    used |= want > 0;
+                }
+            }
+            if short > 0 {
+                missed += 1;
+                keep(&mut at_stale, l);
+            } else if more > 0 {
+                rewrote += 1;
+                keep(&mut at_stale, l);
+            } else if !used && !again {
+                unused += 1;
+            }
+        }
+    }
+
+    // an upload whose completion the store made, its answer lost, started
+    // again from its first part
+    let reuploaded = run
+        .iter()
+        .filter(|r| r.operation == "CompleteMultipartUpload" && faulted(r) && lost_answer(r))
+        .filter(|r| {
+            run.iter().any(|x| {
+                x.operation == "CreateMultipartUpload"
+                    && (x.time, x.id) > (r.time, r.id)
+                    && x.bucket == r.bucket
+                    && x.key == r.key
+            })
+        })
+        .count();
+
     let left_uploads = unfinished_uploads(run).saturating_sub(unfinished_uploads(clean));
     let delayed = run
         .iter()
@@ -954,6 +1303,25 @@ pub fn judge(
         standing = Standing::Degraded;
         why.push(said("trial.why.blind", blind));
     }
+    if waited > 0 {
+        standing = Standing::Degraded;
+        let mut args = n_of(waited);
+        args.push(("time", ms_text(stall.unwrap_or(0) as f64)));
+        why.push(vec![Said::new("trial.why.waited", &args)]);
+    }
+    if reuploaded > 0 {
+        standing = Standing::Degraded;
+        let mut args = n_of(reuploaded);
+        args.push((
+            "its",
+            if reuploaded == 1 { "its" } else { "their" }.to_string(),
+        ));
+        why.push(vec![Said::new("trial.why.reuploaded", &args)]);
+    }
+    if rewrote > 0 {
+        standing = Standing::Degraded;
+        why.push(said("trial.why.rewrote", rewrote));
+    }
     let plain = dropped_writes - lost_writes;
     if lost_writes > 0 {
         standing = Standing::Degraded;
@@ -991,6 +1359,13 @@ pub fn judge(
         standing = Standing::Broke;
         why.push(said("trial.why.holes", holes));
     }
+    if missed > 0 {
+        // it went on without what it wrote: whatever its exit says
+        standing = Standing::Broke;
+        let mut args = n_of(missed);
+        args.push(("was", if missed == 1 { "was" } else { "were" }.to_string()));
+        why.push(vec![Said::new("trial.why.missed", &args)]);
+    }
     if unrun > 0 {
         let mut args = n_of(unrun);
         args.push(("its", if unrun == 1 { "its" } else { "their" }.to_string()));
@@ -1009,6 +1384,11 @@ pub fn judge(
     if overwrote > 0 {
         standing = Standing::Broke;
         why.push(said("trial.why.overwrote", overwrote));
+    }
+    if stale > 0 && unused == stale && faults == 0 && standing == Standing::Survived {
+        // a listing nothing after it turned on: no reading of it to judge
+        standing = Standing::Untested;
+        why.push(said("trial.why.staleUnused", stale));
     }
     if clean_exit != 0 && standing == Standing::Survived {
         // a program that fails without faults says nothing by its exit
@@ -1059,13 +1439,15 @@ pub fn judge(
         _ => at_write
             .or(at_cut)
             .or(at_race)
+            .or(at_stale)
             .or(at_read)
+            .or(at_wait)
             .or_else(|| (exit != clean_exit).then(last_failed).flatten()),
     };
     // (a request that was sent again, or owed no retry, has no advice:
     // the exit is all that is known of it)
     let given_up = |r: &Record| {
-        [at_write, at_cut, at_race, at_read]
+        [at_write, at_cut, at_race, at_stale, at_read, at_wait]
             .iter()
             .flatten()
             .any(|x| x.id == r.id)
@@ -1076,6 +1458,12 @@ pub fn judge(
             Said::new("trial.advice.cut", &[])
         } else if lost_race(r) {
             Said::new("trial.advice.race", &[])
+        } else if !hidden(r).is_empty() {
+            Said::new("trial.advice.list", &[])
+        } else if at_wait.is_some_and(|w| w.id == r.id) {
+            Said::new("trial.advice.timeout", &[])
+        } else if code_of(r) == Some("RequestTimeTooSkewed") {
+            Said::new("trial.advice.skew", &[])
         } else {
             match sdk.as_deref().and_then(|s| Some((s, retry_setting(s)?))) {
                 Some((sdk, setting)) => Said::new(
@@ -1095,16 +1483,25 @@ pub fn judge(
         clean_exit,
         faults,
         retried,
-        not_retryable,
+        not_retryable: not_retryable + yielded,
         read_again,
         dropped_reads: dropped_reads + taken + holes,
         dropped_writes: dropped_writes + unrun,
         lost_writes,
+        checked,
+        reuploaded,
+        held,
+        waited,
+        stale,
+        relisted,
+        missed,
+        rewrote,
         cut,
         resumed,
         reread,
         races,
         read_back,
+        yielded,
         fenced,
         attempts,
         backoff_ms,
@@ -1190,7 +1587,7 @@ pub fn remove(session: &std::path::Path) {
 }
 
 pub fn save(session: &std::path::Path, trials: &[Trial]) -> std::io::Result<()> {
-    std::fs::write(file_for(session), serde_json::to_vec_pretty(trials)?)
+    reqlog::private::write(&file_for(session), serde_json::to_vec_pretty(trials)?)
 }
 
 /// A run's trials; none when it was never tried (or the file is damaged).
@@ -1266,6 +1663,39 @@ impl Trial {
                 ));
             }
         }
+        if self.checked > 0 {
+            parts.push(format!(
+                "{} lost answer{} not sent again but read back: the store has {}",
+                self.checked,
+                plural(self.checked),
+                if self.checked == 1 { "it" } else { "them" },
+            ));
+        }
+        // (one waited out: the reasons say it, and the time it took)
+        let cut_short = self.held - self.waited;
+        if cut_short > 0 {
+            parts.push(format!(
+                "{} held before {} first byte: {} cut short and sent again",
+                self.held,
+                if self.held == 1 { "its" } else { "their" },
+                if cut_short == self.held && cut_short > 1 {
+                    "all".to_string()
+                } else {
+                    cut_short.to_string()
+                },
+            ));
+        }
+        if self.stale > 0 {
+            let mut said = format!(
+                "{} key{} this run wrote left out of a listing",
+                self.stale,
+                plural(self.stale)
+            );
+            if self.relisted > 0 {
+                said.push_str(&format!(": {} listed again", self.relisted));
+            }
+            parts.push(said);
+        }
         if self.read_back > 0 {
             parts.push(format!(
                 "{} lost write{} read back and not written again: the store has {} (sonde let {} through), so no commit is missing",
@@ -1273,6 +1703,15 @@ impl Trial {
                 plural(self.read_back),
                 if self.read_back == 1 { "it" } else { "them" },
                 if self.read_back == 1 { "it" } else { "them" },
+            ));
+        }
+        if self.yielded > 0 {
+            parts.push(format!(
+                "{} create{} answered 412 and taken as made: the store has {} (sonde let {} through), as the program believes",
+                self.yielded,
+                plural(self.yielded),
+                if self.yielded == 1 { "the key" } else { "the keys" },
+                if self.yielded == 1 { "it" } else { "them" },
             ));
         }
         if self.fenced {
@@ -1342,17 +1781,32 @@ impl Trial {
 }
 
 /// The scenarios worth a program's time, from what its clean run did: the
-/// two every program meets, the lost answer if it writes, the failed
-/// completion if it uploads in parts, the body cut short if it downloads
-/// one large enough to cut, the lost race if it writes on a condition.
+/// two every program meets; the skewed clock if it signs its requests; the
+/// lost answer if it writes; the failed completion and the completion
+/// answered 500 if it uploads in parts; the body cut short if it downloads
+/// one large enough to cut, and the late first byte if it downloads at all;
+/// the lost race if it commits on a condition; the stale listing if it
+/// lists what it wrote.
 pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
     let has = |f: &dyn Fn(&Record) -> bool| clean.iter().any(f);
     let mut names = vec!["slowdown", "error"];
+    // signed by the program as it sent it: every request sonde let in was,
+    // but a presigned URL, signed once by someone else (and a lean reading
+    // has no Authorization to look at)
+    if has(&|r| {
+        let presigned = r.request_headers.iter().any(|h| {
+            h.name.eq_ignore_ascii_case("x-sonde-note") && h.value.starts_with("presigned")
+        });
+        !presigned && response_header(r, "x-sonde-proxy").is_none()
+    }) {
+        names.push("skew");
+    }
     if has(&|r| r.method == "PUT" || r.method == "POST" || r.method == "DELETE") {
         names.push("lost-answer");
     }
     if has(&|r| r.operation == "CompleteMultipartUpload") {
         names.push("fail-complete");
+        names.push("complete-500");
     }
     if has(&|r| {
         r.operation == "GetObject"
@@ -1362,8 +1816,42 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
     }) {
         names.push("cut-body");
     }
-    if has(&|r| is_write(r) && condition_of(r).is_some()) {
+    if has(&|r| r.operation == "GetObject" && done(r)) {
+        names.push("slow-first-byte");
+    }
+    // where a 412 means a commit was lost: a table's log, or an update of
+    // what was read (`If-Match`). A create of a marker or a lock that loses
+    // has lost nothing: what it wanted there is there
+    if has(&|r| {
+        is_write(r)
+            && match condition_of(r) {
+                Some(Condition::Match) => true,
+                Some(Condition::Create) => crate::fault::is_log(r.key.as_deref()),
+                None => false,
+            }
+    }) {
         names.push("lost-race");
+    }
+    // a listing after a write it would show: of the same bucket, the key
+    // under what it lists
+    let mut writes: Vec<&Record> = clean
+        .iter()
+        .filter(|r| crate::fault::MAKES_KEY.contains(&r.operation.as_str()) && done(r))
+        .collect();
+    writes.sort_by_key(|r| (r.time, r.id));
+    if has(&|l| {
+        crate::fault::LISTINGS.contains(&l.operation.as_str())
+            && done(l)
+            && writes.iter().any(|w| {
+                end_of(w) <= l.time
+                    && w.bucket == l.bucket
+                    && l.query
+                        .iter()
+                        .find(|(k, _)| k == "prefix")
+                        .is_none_or(|(_, p)| w.key.as_deref().unwrap_or("").starts_with(p.as_str()))
+            })
+    }) {
+        names.push("stale-list");
     }
     names
         .into_iter()
@@ -1855,25 +2343,93 @@ mod tests {
         assert_eq!(t.standing, Standing::Untested);
         let names =
             |c: &[Record]| -> Vec<String> { choose(c).into_iter().map(|s| s.name).collect() };
-        assert_eq!(names(&clean), ["slowdown", "error"]);
+        assert_eq!(names(&clean[..0]), ["slowdown", "error"]);
+        // a download: its first byte may come late
+        assert_eq!(
+            names(&clean),
+            ["slowdown", "error", "skew", "slow-first-byte"]
+        );
         let writes = vec![
             rec(1, 0, "PUT", "PutObject", "a", 200),
             rec(2, 9, "POST", "CompleteMultipartUpload", "b", 200),
         ];
         assert_eq!(
             names(&writes),
-            ["slowdown", "error", "lost-answer", "fail-complete"]
+            [
+                "slowdown",
+                "error",
+                "skew",
+                "lost-answer",
+                "fail-complete",
+                "complete-500"
+            ]
+        );
+        // only by presigned URLs, or refused: no clock of the program's signed it
+        let mut presigned = rec(1, 0, "PUT", "PutObject", "a", 200);
+        presigned.request_headers.push(Header::new(
+            "x-sonde-note",
+            "presigned URL, re-signed by sonde",
+        ));
+        let mut refused = get(2, 5, "b", 403);
+        refused
+            .response_headers
+            .push(Header::new("x-sonde-proxy", "refused"));
+        assert_eq!(
+            names(&[presigned, refused]),
+            ["slowdown", "error", "lost-answer"]
         );
         // a download large enough to cut, and a write on a condition
         let mut big = get(1, 0, "a", 200);
         big.response_bytes = Some(4096);
         let mut small = get(2, 5, "b", 200);
         small.response_bytes = Some(10);
-        assert_eq!(names(&[small.clone()]), ["slowdown", "error"]);
-        assert_eq!(names(&[small, big]), ["slowdown", "error", "cut-body"]);
+        assert_eq!(
+            names(&[small.clone()]),
+            ["slowdown", "error", "skew", "slow-first-byte"]
+        );
+        assert_eq!(
+            names(&[small, big]),
+            ["slowdown", "error", "skew", "cut-body", "slow-first-byte"]
+        );
         assert_eq!(
             names(&[create(1, 0, "t/_delta_log/00000000000000000001.json", 200)]),
-            ["slowdown", "error", "lost-answer", "lost-race"]
+            ["slowdown", "error", "skew", "lost-answer", "lost-race"]
+        );
+        // a create of a marker or a lock loses nothing to a race; an update
+        // on what was read does
+        assert_eq!(
+            names(&[create(1, 0, "out/_SUCCESS", 200)]),
+            ["slowdown", "error", "skew", "lost-answer"]
+        );
+        let mut swap = put(1, 0, "pointer", 200);
+        swap.request_headers.push(Header::new("If-Match", "\"e1\""));
+        assert_eq!(
+            names(&[swap]),
+            ["slowdown", "error", "skew", "lost-answer", "lost-race"]
+        );
+        // a listing after a write it would show
+        let list = |id, at, prefix: &str| {
+            let mut r = rec(id, at, "GET", "ListObjectsV2", "", 200);
+            r.key = None;
+            r.query = vec![
+                ("list-type".into(), "2".into()),
+                ("prefix".into(), prefix.into()),
+            ];
+            r
+        };
+        assert_eq!(
+            names(&[put(1, 0, "out/1", 200), list(2, 50, "out/")]),
+            ["slowdown", "error", "skew", "lost-answer", "stale-list"]
+        );
+        assert_eq!(
+            names(&[put(1, 0, "out/1", 200), list(2, 50, "in/")]),
+            ["slowdown", "error", "skew", "lost-answer"],
+            "not a listing that would show it"
+        );
+        assert_eq!(
+            names(&[list(1, 0, "out/"), put(2, 50, "out/1", 200)]),
+            ["slowdown", "error", "skew", "lost-answer"],
+            "a listing before the write"
         );
     }
 
@@ -2050,6 +2606,488 @@ mod tests {
             put(2, 30, "errors/x", 200),
         ];
         assert_eq!(judge(&error, &clean, 0, &run, 0).retried, 1);
+    }
+
+    #[test]
+    fn a_place_fits_only_where_the_scenarios_name_stands_for_the_clean_runs() {
+        assert!(fits("etl-slowdown/state", "etl-clean/state", "slowdown"));
+        // the program's own `clean` is its own in both runs
+        assert!(fits(
+            "etl-slowdown/clean/state",
+            "etl-clean/clean/state",
+            "slowdown"
+        ));
+        assert!(fits(
+            "etl-error/error.json",
+            "etl-clean/error.json",
+            "error"
+        ));
+        assert!(fits("clean/x", "clean/x", "slowdown"));
+        assert!(!fits("etl-slowdown/state", "etl-clean/raw", "slowdown"));
+        assert!(!fits("etl-clean/state", "etl-slowdown/state", "slowdown"));
+        // a whole word only, on each side
+        assert!(!fits("etl-slowdowns/x", "etl-cleans/x", "slowdown"));
+        assert!(!fits("error/clean", "clean/error", "error"));
+        // a name that holds the other: the first reading that fits wins
+        assert!(fits("clean-up/clean-up", "clean/clean-up", "clean-up"));
+        assert!(!fits("x", "y", ""));
+    }
+
+    #[test]
+    fn the_clean_runs_name_or_the_scenarios_elsewhere_in_a_placed_key_still_matches() {
+        // a program that writes its state twice and swallows errors: broke,
+        // whatever other word of the two runs' names the key holds; the same
+        // program retrying survived
+        let error = crate::fault::scenario("error").unwrap();
+        for (scenario, clean_key, trial_key) in [
+            (
+                slowdown(),
+                "etl-clean/clean/state",
+                "etl-slowdown/clean/state",
+            ),
+            (
+                slowdown(),
+                "etl-clean/clean-state",
+                "etl-slowdown/clean-state",
+            ),
+            (slowdown(), "clean/etl-clean/x", "clean/etl-slowdown/x"),
+            (
+                error.clone(),
+                "etl-clean/error.json",
+                "etl-error/error.json",
+            ),
+            (error.clone(), "error/etl-clean", "error/etl-error"),
+        ] {
+            let failed = |r: Record| fault(r, &scenario.name);
+            let clean = vec![put(1, 0, clean_key, 200), put(2, 205, clean_key, 200)];
+            let run = vec![
+                failed(put(1, 0, trial_key, 503)),
+                put(2, 205, trial_key, 200),
+            ];
+            let t = judge(&scenario, &clean, 0, &run, 0);
+            assert_eq!(
+                (t.retried, t.dropped_writes, t.standing),
+                (0, 1, Standing::Broke),
+                "{trial_key}: {}",
+                t.line()
+            );
+            let run = vec![
+                failed(put(1, 0, trial_key, 503)),
+                put(2, 25, trial_key, 200),
+                put(3, 230, trial_key, 200),
+            ];
+            let t = judge(&scenario, &clean, 0, &run, 0);
+            assert_eq!(
+                (t.retried, t.standing),
+                (1, Standing::Survived),
+                "{trial_key}: {}",
+                t.line()
+            );
+        }
+        // a body cut short under a key with `clean` in it: the program's own
+        // second read is not the read of the whole again
+        let clean = vec![
+            part(1, 0, "etl-clean/clean/big", 0, 999, 1000),
+            part(2, 300, "etl-clean/clean/big", 0, 999, 1000),
+        ];
+        let run = vec![
+            cut(part(1, 0, "etl-cut-body/clean/big", 0, 999, 1000), 500),
+            part(2, 300, "etl-cut-body/clean/big", 0, 999, 1000),
+        ];
+        let t = judge(&cut_scenario(), &clean, 0, &run, 0);
+        assert_eq!((t.reread, t.standing), (0, Standing::Broke), "{}", t.line());
+        let run = vec![
+            cut(part(1, 0, "etl-cut-body/clean/big", 0, 999, 1000), 500),
+            part(2, 20, "etl-cut-body/clean/big", 500, 999, 1000),
+            part(3, 300, "etl-cut-body/clean/big", 0, 999, 1000),
+        ];
+        let t = judge(&cut_scenario(), &clean, 0, &run, 0);
+        assert_eq!(
+            (t.retried, t.standing),
+            (1, Standing::Survived),
+            "{}",
+            t.line()
+        );
+        // two keys the clean run tells apart by the program's own word and
+        // by its place are told apart in the trial too
+        let clean = vec![put(1, 0, "clean/clean", 200), put(2, 10, "clean/x", 200)];
+        let run = vec![
+            fault(put(1, 0, "slowdown/clean", 503), "slowdown"),
+            put(2, 10, "clean/x", 200),
+        ];
+        let t = judge(&slowdown(), &clean, 0, &run, 0);
+        assert_eq!((t.dropped_writes, t.standing), (1, Standing::Broke));
+    }
+
+    #[test]
+    fn a_400_request_timeout_is_owed_a_retry_as_episodes_and_signals_read_it() {
+        let timeout =
+            crate::fault::project_scenario("timeout", "400 RequestTimeout", &[], "", None).unwrap();
+        let failed = |r: Record| {
+            let mut r = fault(r, "timeout");
+            r.error_body = Some("RequestTimeout: sonde answered in the store's place".into());
+            r
+        };
+        let clean = vec![put(1, 0, "a", 200)];
+        // dropped, and it said all was well
+        let run = vec![failed(put(1, 0, "a", 400))];
+        let t = judge(&timeout, &clean, 0, &run, 0);
+        assert_eq!(t.not_retryable, 0, "{}", t.line());
+        assert_eq!((t.dropped_writes, t.standing), (1, Standing::Broke));
+        // sent again: survived
+        let run = vec![failed(put(1, 0, "a", 400)), put(2, 30, "a", 200)];
+        let t = judge(&timeout, &clean, 0, &run, 0);
+        assert_eq!((t.retried, t.standing), (1, Standing::Survived));
+        // the store's own 400 RequestTimeout is no answer either: the clean
+        // run that got only that never got one
+        let mut own = put(1, 0, "a", 400);
+        own.error_body = Some("<Error><Code>RequestTimeout</Code></Error>".into());
+        assert!(crate::episode::retryable(&own) && !answered(&own));
+        // the same function: a 404 is an answer, a 403 RequestTimeTooSkewed is not
+        let mut skewed = put(1, 0, "a", 403);
+        skewed.error_body = Some("<Error><Code>RequestTimeTooSkewed</Code></Error>".into());
+        assert!(crate::episode::retryable(&skewed));
+        assert!(!crate::episode::retryable(&put(1, 0, "a", 404)));
+        // a code sonde did not answer is read only from the error document
+        let mut said = put(1, 0, "a", 400);
+        said.error_body = Some("SlowDown: as a program's own words".into());
+        assert!(!crate::episode::retryable(&said));
+    }
+
+    #[test]
+    fn a_marker_created_if_absent_that_takes_a_412_as_made_survives() {
+        // `_SUCCESS` with If-None-Match: *: sonde let it through and said
+        // 412. The program takes that as "it is there", and it is
+        let clean = vec![
+            put(1, 0, "out/part-0", 200),
+            create(2, 10, "out/_SUCCESS", 200),
+        ];
+        let run = vec![
+            put(1, 0, "out/part-0", 200),
+            race(create(2, 10, "out/_SUCCESS", 412), Some(200)),
+        ];
+        let t = judge(&lost_race_scenario(), &clean, 0, &run, 0);
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        assert_eq!((t.races, t.yielded, t.not_retryable), (1, 1, 1));
+        assert_eq!(
+            t.line(),
+            "1 fault, none a retry is owed for · 1 create answered 412 and taken as made: the store has the key (sonde let it through), as the program believes"
+        );
+        // and one that says it failed, though the key is there: its exit
+        let t = judge(&lost_race_scenario(), &clean, 0, &run, 1);
+        assert_eq!(t.standing, Standing::Broke);
+        // one that writes the marker over without its condition would have
+        // written over another writer's
+        let mut over = run.clone();
+        over.push(put(3, 30, "out/_SUCCESS", 200));
+        let t = judge(&lost_race_scenario(), &clean, 0, &over, 0);
+        assert_eq!(
+            (t.yielded, t.standing),
+            (0, Standing::Broke),
+            "{}",
+            t.line()
+        );
+    }
+
+    fn skew() -> crate::fault::Scenario {
+        crate::fault::scenario("skew").unwrap()
+    }
+
+    fn skewed(r: Record) -> Record {
+        let mut r = fault(r, "skew");
+        r.status = Some(403);
+        r.error_body = Some(
+            "RequestTimeTooSkewed: sonde answered in the store's place (scenario skew)".into(),
+        );
+        r
+    }
+
+    #[test]
+    fn a_skewed_clock_is_owed_a_retry_signed_again() {
+        let clean = vec![put(1, 0, "a", 200), get(2, 10, "a", 200)];
+        let run = vec![
+            skewed(put(1, 0, "a", 403)),
+            put(2, 30, "a", 200),
+            skewed(get(3, 40, "a", 403)),
+            get(4, 70, "a", 200),
+        ];
+        let t = judge(&skew(), &clean, 0, &run, 0);
+        assert_eq!((t.faults, t.retried, t.not_retryable), (2, 2, 0));
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        // a 403 taken as the answer: the write dropped, and it said all was well
+        let t = judge(&skew(), &clean, 0, &run[..1], 0);
+        assert_eq!((t.dropped_writes, t.standing), (1, Standing::Broke));
+        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.skew");
+        assert!(t.line().ends_with(
+            "a 403 RequestTimeTooSkewed is owed a retry signed again by the clock the answer's Date gives (the AWS SDKs for Java and JavaScript do this; boto3 does not); and keep the machine's clock in time"
+        ), "{}", t.line());
+    }
+
+    #[test]
+    fn a_completion_answered_500_is_retried_or_looked_for_and_never_uploaded_again() {
+        let s = crate::fault::scenario("complete-500").unwrap();
+        let upload = |id, at| {
+            let mut r = rec(id, at, "POST", "CreateMultipartUpload", "big", 200);
+            r.query = vec![("uploads".into(), String::new())];
+            r
+        };
+        let part = |id, at, upload: &str| {
+            let mut r = rec(id, at, "PUT", "UploadPart", "big", 200);
+            r.query = vec![
+                ("partNumber".into(), "1".into()),
+                ("uploadId".into(), upload.into()),
+            ];
+            r
+        };
+        let complete = |id, at, status, upload: &str| {
+            let mut r = rec(id, at, "POST", "CompleteMultipartUpload", "big", status);
+            r.query = vec![("uploadId".into(), upload.into())];
+            r
+        };
+        let head = |id, at, status| rec(id, at, "HEAD", "HeadObject", "big", status);
+        let clean = vec![upload(1, 0), part(2, 10, "u"), complete(3, 20, 200, "u")];
+        let lost = || lost(complete(3, 20, 500, "u"), 200);
+        // retried, and the store had completed it: 404 NoSuchUpload, taken
+        // for the success it is
+        let mut gone = complete(4, 60, 404, "u");
+        gone.error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
+        let run = vec![upload(1, 0), part(2, 10, "u"), lost(), gone.clone()];
+        let t = judge(&s, &clean, 0, &run, 0);
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        // the same, told as a failure while the object is there
+        let t = judge(&s, &clean, 0, &run, 1);
+        assert_eq!(t.standing, Standing::Broke);
+        assert!(
+            t.reasons[1].contains("the upload had completed"),
+            "{:?}",
+            t.reasons
+        );
+        // not retried, but looked for: the object is there
+        let run = vec![upload(1, 0), part(2, 10, "u"), lost(), head(4, 60, 200)];
+        let t = judge(&s, &clean, 0, &run, 0);
+        assert_eq!((t.checked, t.dropped_writes), (1, 0), "{}", t.line());
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        assert_eq!(
+            t.line(),
+            "1 fault, 0 retried · 1 lost answer not sent again but read back: the store has it · 1.3× the requests"
+        );
+        // a look the clean run takes too is no look at what was lost
+        let mut looks = clean.clone();
+        looks.push(head(4, 60, 200));
+        let t = judge(&s, &looks, 0, &run, 0);
+        assert_eq!(
+            (t.checked, t.standing),
+            (0, Standing::Broke),
+            "{}",
+            t.line()
+        );
+        // neither: told it failed, said all was well
+        let t = judge(&s, &clean, 0, &run[..3], 0);
+        assert_eq!((t.lost_writes, t.standing), (1, Standing::Broke));
+        // uploaded again from its first part: the store has it twice over
+        let run = vec![
+            upload(1, 0),
+            part(2, 10, "u"),
+            lost(),
+            upload(4, 60),
+            part(5, 70, "u2"),
+            complete(6, 80, 200, "u2"),
+        ];
+        let t = judge(&s, &clean, 0, &run, 0);
+        assert_eq!(
+            (t.reuploaded, t.standing),
+            (1, Standing::Degraded),
+            "{}",
+            t.line()
+        );
+        assert_eq!(
+            t.reasons,
+            [
+                "1 upload made again from its first part though the store had completed it: every part sent twice"
+            ]
+        );
+    }
+
+    fn stall_scenario() -> crate::fault::Scenario {
+        crate::fault::scenario("slow-first-byte").unwrap()
+    }
+
+    /// A download a stall held: answered after it, or given up on.
+    fn held(mut r: Record, waited: bool) -> Record {
+        r.injected = Some("slow-first-byte".into());
+        if waited {
+            r.latency_ms = 10_005.0;
+        } else {
+            r.latency_ms = 2_000.0;
+            r.status = None;
+            r.transport_error = Some("the program stopped waiting".into());
+            r.response_headers
+                .push(Header::new("x-sonde-fault", "slow-first-byte"));
+            r.response_headers
+                .push(Header::new(crate::fault::GIVEN_UP_HEADER, "1"));
+        }
+        r
+    }
+
+    #[test]
+    fn a_stalled_first_byte_is_cut_short_and_sent_again_or_waited_out() {
+        let clean = vec![get(1, 0, "a", 200), put(2, 10, "b", 200)];
+        // its timeout cut the stall short and it asked again
+        let run = vec![
+            held(get(1, 0, "a", 200), false),
+            get(2, 2_100, "a", 200),
+            put(3, 2_200, "b", 200),
+        ];
+        let t = judge(&stall_scenario(), &clean, 0, &run, 0);
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        assert_eq!((t.held, t.waited, t.retried), (1, 0, 1));
+        assert!(
+            t.line()
+                .contains("1 held before its first byte: 1 cut short and sent again"),
+            "{}",
+            t.line()
+        );
+        // it sat the stall out
+        let run = vec![held(get(1, 0, "a", 200), true), put(2, 10_010, "b", 200)];
+        let t = judge(&stall_scenario(), &clean, 0, &run, 0);
+        assert_eq!((t.held, t.waited), (1, 1));
+        assert_eq!(
+            t.line(),
+            "1 delayed · took 10.0 s (the clean run 15 ms) · waited out 1 stall of 10.0 s before the first byte: no timeout cut it short · at GetObject b/a · give each attempt a timeout well under a stall (a first byte comes in well under a second), so that a stalled request is sent again"
+        );
+        assert_eq!(t.standing, Standing::Degraded);
+        assert_eq!(
+            t.reasons,
+            ["waited out 1 stall of 10.0 s before the first byte: no timeout cut it short"]
+        );
+        assert_eq!(t.at.as_ref().unwrap().operation, "GetObject");
+        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.timeout");
+        // given up on, as another attempt began while it was held (a proxy
+        // that saw the close only when it answered)
+        let run = vec![
+            held(get(1, 0, "a", 200), true),
+            get(2, 2_000, "a", 200),
+            put(3, 2_100, "b", 200),
+        ];
+        let t = judge(&stall_scenario(), &clean, 0, &run, 0);
+        assert_eq!((t.held, t.waited, t.standing), (1, 0, Standing::Survived));
+        // given up on and never asked again: a read given up
+        let run = vec![held(get(1, 0, "a", 200), false), put(2, 2_100, "b", 200)];
+        let t = judge(&stall_scenario(), &clean, 0, &run, 0);
+        assert_eq!((t.dropped_reads, t.standing), (1, Standing::Degraded));
+        // a delay under a stall only slows: `slow` is not held to it
+        let slow = crate::fault::scenario("slow").unwrap();
+        let mut late = get(1, 0, "a", 200);
+        late.injected = Some("slow".into());
+        late.latency_ms = 305.0;
+        let t = judge(&slow, &clean[..1], 0, &[late], 0);
+        assert_eq!((t.held, t.standing), (0, Standing::Survived));
+    }
+
+    fn stale_scenario() -> crate::fault::Scenario {
+        crate::fault::scenario("stale-list").unwrap()
+    }
+
+    fn listing(id: u64, at_ms: i64, prefix: &str, hidden: &[&str]) -> Record {
+        let mut r = rec(id, at_ms, "GET", "ListObjectsV2", "", 200);
+        r.key = None;
+        r.query = vec![
+            ("list-type".into(), "2".into()),
+            ("prefix".into(), prefix.into()),
+        ];
+        if !hidden.is_empty() {
+            r.injected = Some("stale-list".into());
+            r.response_headers
+                .push(Header::new("x-sonde-fault", "stale-list"));
+            for k in hidden {
+                r.response_headers
+                    .push(Header::new(crate::fault::HIDDEN_HEADER, *k));
+            }
+        }
+        r
+    }
+
+    #[test]
+    fn a_listing_that_does_not_show_a_write_yet_is_listed_again_or_gone_on_without() {
+        // writes its parts, lists them and reads each it finds
+        let clean = vec![
+            put(1, 0, "etl-clean/out/1", 200),
+            put(2, 10, "etl-clean/out/2", 200),
+            listing(3, 20, "etl-clean/out/", &[]),
+            get(4, 30, "etl-clean/out/1", 200),
+            get(5, 40, "etl-clean/out/2", 200),
+        ];
+        let run = |rest: Vec<Record>| {
+            let mut all = vec![
+                put(1, 0, "etl-stale-list/out/1", 200),
+                put(2, 10, "etl-stale-list/out/2", 200),
+                listing(3, 20, "etl-stale-list/out/", &["etl-stale-list/out/2"]),
+            ];
+            all.extend(rest);
+            all
+        };
+        // it read only what it was shown, and went on without the rest
+        let t = judge(
+            &stale_scenario(),
+            &clean,
+            0,
+            &run(vec![get(4, 30, "etl-stale-list/out/1", 200)]),
+            0,
+        );
+        assert_eq!((t.stale, t.missed), (1, 1), "{}", t.line());
+        assert_eq!(t.standing, Standing::Broke);
+        assert_eq!(
+            t.reasons,
+            [
+                "1 key this run wrote and a listing left out was never read as the clean run read it: the program went on without it"
+            ]
+        );
+        assert_eq!(t.at.as_ref().unwrap().operation, "ListObjectsV2");
+        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.list");
+        // it listed again and read both
+        let t = judge(
+            &stale_scenario(),
+            &clean,
+            0,
+            &run(vec![
+                listing(4, 25, "etl-stale-list/out/", &[]),
+                get(5, 30, "etl-stale-list/out/1", 200),
+                get(6, 40, "etl-stale-list/out/2", 200),
+            ]),
+            0,
+        );
+        assert_eq!((t.relisted, t.missed), (1, 0));
+        assert_eq!(t.standing, Standing::Survived, "{}", t.line());
+        assert!(
+            t.line()
+                .starts_with("1 key this run wrote left out of a listing: 1 listed again"),
+            "{}",
+            t.line()
+        );
+        // it took the key for missing and wrote it again
+        let t = judge(
+            &stale_scenario(),
+            &clean,
+            0,
+            &run(vec![
+                put(4, 25, "etl-stale-list/out/2", 200),
+                get(5, 30, "etl-stale-list/out/1", 200),
+                get(6, 40, "etl-stale-list/out/2", 200),
+            ]),
+            0,
+        );
+        assert_eq!(
+            (t.rewrote, t.standing),
+            (1, Standing::Degraded),
+            "{}",
+            t.line()
+        );
+        // a listing nothing after it turned on: no verdict to give
+        let clean = vec![put(1, 0, "out/1", 200), listing(2, 20, "out/", &[])];
+        let run = vec![put(1, 0, "out/1", 200), listing(2, 20, "out/", &["out/1"])];
+        let t = judge(&stale_scenario(), &clean, 0, &run, 0);
+        assert_eq!(t.standing, Standing::Untested, "{}", t.line());
+        assert!(t.reasons[0].starts_with("a listing left out 1 key this run wrote"));
     }
 
     #[test]
@@ -2323,7 +3361,7 @@ mod tests {
         assert_eq!(
             t.reasons,
             [
-                "1 conditional write lost its race and the commit was never made, and the program exited 0"
+                "1 conditional write lost its race: no commit followed it and nothing read back what won, and the program exited 0"
             ]
         );
         assert_eq!(t.at.as_ref().unwrap().key, format!("b/{}", log(1)));

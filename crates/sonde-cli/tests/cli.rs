@@ -1209,3 +1209,70 @@ fn a_check_of_trials_alone_has_no_failed_budget_inside_it() {
         "nothing was checked: nothing failed there"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn spark_submit_is_given_s3as_endpoint_and_tls_its_certificate() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    // a spark-submit that says what it was given
+    let bin = t.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let said = t.path().join("said.txt");
+    let fake = bin.join("spark-submit");
+    std::fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do echo \"arg $a\"; done > {0}\n\
+             echo \"url $AWS_ENDPOINT_URL\" >> {0}\necho \"ca $AWS_CA_BUNDLE\" >> {0}\n\
+             echo \"py $PYSPARK_SUBMIT_ARGS\" >> {0}\n",
+            said.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let o = sonde(
+        t.path(),
+        &[
+            "--url",
+            "http://127.0.0.1:9",
+            "run",
+            "--tls",
+            "--",
+            fake.to_str().unwrap(),
+            "--master",
+            "local[2]",
+            "job.py",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(stderr(&o).contains("is given its endpoint with --conf spark.hadoop.fs.s3a.*"));
+    let said = std::fs::read_to_string(&said).unwrap();
+    let args: Vec<&str> = said
+        .lines()
+        .filter_map(|l| l.strip_prefix("arg "))
+        .collect();
+    // sonde's settings first, the command's own after them, as it gave them
+    assert_eq!(args[0], "--conf");
+    assert!(
+        args[1].starts_with("spark.hadoop.fs.s3a.endpoint=http://127.0.0.1:"),
+        "{said}"
+    );
+    assert!(args.contains(&"spark.hadoop.fs.s3a.path.style.access=true"));
+    assert_eq!(&args[args.len() - 3..], ["--master", "local[2]", "job.py"]);
+    assert!(!said.contains("secret.key"), "no key on a command line");
+    // the SDKs get TLS and a bundle; the JVM the plain endpoint beside it
+    assert!(said.contains("url https://127.0.0.1:"), "{said}");
+    let ca = said.lines().find_map(|l| l.strip_prefix("ca ")).unwrap();
+    assert!(
+        std::fs::read_to_string(ca)
+            .unwrap()
+            .contains("BEGIN CERTIFICATE")
+    );
+    assert!(said.contains("py --conf spark.hadoop.fs.s3a.endpoint=http://"));
+    let key = t.path().join("data/tls/key.pem");
+    assert_eq!(
+        std::fs::metadata(key).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}

@@ -17,7 +17,7 @@ import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, tri
 import type { Trial, TrialPlan } from "../types";
 import { STANDING, trialAsked, TrialWhere, trialReasons, trialText } from "./history";
 import { Icon } from "./icon";
-import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, Mono, Muted, Notice, Options, Row, Title } from "./kit";
+import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Mono, Muted, Notice, Options, Row, Title } from "./kit";
 import { scrubCommand } from "./sessionview";
 
 /** Whether a trial is running (one at a time, as a program is). */
@@ -168,7 +168,7 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
             when={steps()}
             else={
               // before it runs: what will run, how hard each scenario presses, what the program may do
-              <View class="gap-3" testID="trial-plan">
+              <ModalBody testID="trial-plan">
                 <Muted class="text-small">{t("trial.dialogHint")}</Muted>
                 <Mono class="line-clamp-2">{`$ ${scrubCommand(p().command)}`}</Mono>
                 <Card pad="none">
@@ -214,12 +214,12 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
                 <If when={!!running()}>
                   <Notice tone="info" text={t("trial.busy")} />
                 </If>
-              </View>
+              </ModalBody>
             }
           >
             {(list) => (
               // as it goes, and once it ended: a row a scenario, its standing when it has one
-              <View class="gap-3" testID="trial-progress">
+              <ModalBody testID="trial-progress">
                 <View class="flex-row items-center gap-2">
                   <Muted class="min-w-0 flex-1 text-small">{ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : t("trial.progress", { n: Math.min(trialDone(list()) + 1, list().length), of: list().length })}</Muted>
                   <Text testID="trial-elapsed" class="shrink-0 tabular-nums text-small text-muted-foreground">{took()}</Text>
@@ -229,7 +229,7 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
                     {(s, i) => row(s, i)}
                   </Each>
                 </Card>
-              </View>
+              </ModalBody>
             )}
           </If>
         )}

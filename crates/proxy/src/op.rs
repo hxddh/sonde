@@ -58,6 +58,8 @@ pub fn classify(
                 ("GET", None) if q("versions") => "ListObjectVersions",
                 ("GET", None) if q("uploads") => "ListMultipartUploads",
                 ("GET", None) if q("location") => "GetBucketLocation",
+                // S3 Express One Zone's session credentials, for a directory bucket
+                ("GET", None) if q("session") => "CreateSession",
                 ("GET", None) => "ListObjects",
                 ("HEAD", _) => "HeadBucket",
                 // a subresource not listed above is a bucket setting sonde
@@ -106,6 +108,7 @@ const NAMED: &[&str] = &[
     "ListObjectVersions",
     "ListMultipartUploads",
     "GetBucketLocation",
+    "CreateSession",
     "ListObjects",
     "HeadBucket",
     "CreateBucket",

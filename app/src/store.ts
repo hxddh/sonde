@@ -241,6 +241,13 @@ export function pathOf(uri: string): string {
   return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;
 }
 
+/** A path a link may open: a session file (`.sonde`, `.sonde.gz`) on this
+ * machine. A UNC path (`\\host\share`, `//host/share`) would have Windows
+ * reach that host, with the user's credentials, before anything is read. */
+export function linkable(path: string): boolean {
+  return /\.sonde(\.gz)?$/i.test(path) && !/^[\\/]{2}/.test(path);
+}
+
 /**
  * A `sonde://` link (from `sonde show --app`, a shared page, the docs). Its
  * URL is anyone's to make: it only opens what sonde would open itself.
@@ -266,7 +273,7 @@ export function openLink(url: string) {
     // the value after the first "=", decoded once
     const kv = query.slice(1).split("&").find((x) => x.startsWith("path="));
     const path = kv === undefined ? undefined : part(kv.slice(5).replace(/\+/g, "%20"));
-    if (!path?.toLowerCase().endsWith(".sonde")) return;
+    if (!path || !linkable(path)) return;
     if (range) rangeOnOpen.set({ name: path.split(/[\\/]/).pop() ?? path, range });
     openPaths([path]);
   } else if (what === "session") {

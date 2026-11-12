@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/layout-inspect.schema.json",
+  "title": "sonde layout inspect -f json",
+  "description": "The storage layouts found under a prefix, decoded.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "format": {
+        "type": "string",
+        "description": "`iceberg`, `delta`, `slatedb`, … or `generic`."
+      },
+      "root": {
+        "type": "string"
+      },
+      "formatVersion": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "decoded": {
+        "type": "boolean"
+      },
+      "headline": {
+        "type": "string"
+      },
+      "headlineText": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/phrase"
+        }
+      },
+      "facts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "value"
+          ]
+        }
+      },
+      "issues": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "timeline": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "tables": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "required": [
+            "title",
+            "columns",
+            "rows"
+          ]
+        }
+      },
+      "snapshots": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "objects": {
+        "type": "integer"
+      },
+      "bytes": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "format",
+      "root",
+      "formatVersion",
+      "decoded",
+      "headline",
+      "facts",
+      "issues",
+      "timeline",
+      "tables",
+      "snapshots",
+      "objects",
+      "bytes"
+    ]
+  },
+  "$defs": {
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The phrase's key in the app's locales (en, zh)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Its arguments, as text.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  }
+}

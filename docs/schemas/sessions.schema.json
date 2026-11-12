@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/sessions.schema.json",
+  "title": "sonde sessions -f json",
+  "description": "The sessions recorded, newest first.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "The file's name."
+      },
+      "path": {
+        "type": "string"
+      },
+      "created": {
+        "type": "string"
+      },
+      "program": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Its command, when it ran one."
+      },
+      "endpoint": {
+        "type": "string"
+      },
+      "bytes": {
+        "type": "integer",
+        "description": "The file's size."
+      },
+      "requests": {
+        "type": "integer"
+      },
+      "seconds": {
+        "type": "number"
+      },
+      "errors": {
+        "type": "integer"
+      },
+      "trials": {
+        "type": "string",
+        "description": "Its last trial, in short."
+      }
+    },
+    "required": [
+      "name",
+      "path",
+      "created",
+      "program",
+      "endpoint",
+      "bytes",
+      "requests",
+      "seconds",
+      "errors"
+    ]
+  }
+}

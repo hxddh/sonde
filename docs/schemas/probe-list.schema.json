@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/probe-list.schema.json",
+  "title": "sonde probe list -f json",
+  "description": "Every probe and the AWS behaviour it checks.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "category": {
+        "type": "string",
+        "description": "The guarantee's family (`conditionalWrites`, `multipart`, …)."
+      },
+      "title": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      },
+      "awsBehavior": {
+        "type": "string"
+      },
+      "titleText": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/phrase"
+        }
+      },
+      "descriptionText": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/phrase"
+        }
+      },
+      "awsBehaviorText": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/phrase"
+        }
+      },
+      "needs": {
+        "type": "array",
+        "description": "What it needs: `tempBucket`, `https`, `slow`.",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "id",
+      "category",
+      "title",
+      "description",
+      "awsBehavior",
+      "needs"
+    ]
+  },
+  "$defs": {
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The phrase's key in the app's locales (en, zh)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Its arguments, as text.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  }
+}

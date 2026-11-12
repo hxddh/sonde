@@ -13,6 +13,7 @@ use sonde_core::Sonde;
 use sonde_core::guard::human_bytes;
 use sonde_proxy::episode::{Episode, Outcome, episodes, observations};
 use sonde_proxy::profile::{Profile, RequestPrices, profile};
+use sonde_proxy::project::Project;
 use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
 use sonde_proxy::view::Analysis;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
@@ -20,20 +21,37 @@ use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use crate::Cli;
 use crate::output::{self, Format};
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 pub struct Recording {
     /// The endpoint requests go to (default: --url, or the only one configured).
     #[arg(long, short = 'e')]
     endpoint: Option<String>,
-    /// Refuse operations that remove data (deletes, aborts, lifecycle rules).
-    #[arg(long, conflicts_with = "read_only")]
+    /// What the program may do to the store: `no-delete` refuses what
+    /// removes or replaces data (deletes, aborts, lifecycle rules, bucket
+    /// policies, versioning suspended, a write over an object the recording
+    /// did not write); `read-only` lets only GET and HEAD through; `allow`
+    /// lets everything through. Default: `[record] policy` in sonde.toml,
+    /// else no-delete.
+    #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
+    policy: Option<String>,
+    /// `--policy allow`: the program may delete and write over what it finds.
+    #[arg(long, conflicts_with_all = ["policy", "no_delete", "read_only"])]
+    allow_writes: bool,
+    /// `--policy no-delete`.
+    #[arg(long, conflicts_with_all = ["policy", "read_only"])]
     no_delete: bool,
-    /// Let only GET and HEAD through.
-    #[arg(long)]
+    /// `--policy read-only`.
+    #[arg(long, conflicts_with = "policy")]
     read_only: bool,
     /// The session file (default: a new file in the data directory's sessions/).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
+    /// Serve TLS too, for SDKs that require it: AWS_ENDPOINT_URL is https,
+    /// and the program is given a certificate made on the first run to trust
+    /// (AWS_CA_BUNDLE, SSL_CERT_FILE, NODE_EXTRA_CA_CERTS). Also `tls` under
+    /// `[record]` in sonde.toml.
+    #[arg(long)]
+    tls: bool,
 }
 
 #[derive(Args)]
@@ -49,18 +67,19 @@ pub struct RunArgs {
     #[arg(long)]
     callers: bool,
     /// Then run the command again under faults chosen from what it did (a
-    /// 503 on each request's first attempt, a lost answer on each write, a
-    /// failed completion if it uploads in parts, a body cut short if it
-    /// downloads, a lost race if it writes on a condition), and say whether
-    /// it survived each. The command runs several times, so give each run a place of
+    /// 503 on each request's first attempt, a skewed clock if it signs, a
+    /// lost answer on each write, a failed completion if it uploads in
+    /// parts, a body cut short or a late first byte if it downloads, a lost
+    /// race if it commits on a condition, a stale listing if it lists what it
+    /// wrote), and say whether it survived each. The command runs several times, so give each run a place of
     /// its own: `{trial}` in the command is replaced by `clean`, then by
     /// each scenario's name, and the variable SONDE_TRIAL is set to the same
     /// (`-- python etl.py s3://scratch/etl-{trial}/`).
     #[arg(long)]
     trial: bool,
-    /// A fault scenario to try by name (repeatable): slowdown, error,
-    /// lost-answer, fail-complete, cut-body, lost-race, slow, s3-limits, or
-    /// one of sonde.toml's. `slowdown:3` and `error:3` fail each request's
+    /// A fault scenario to try by name (repeatable): slowdown, error, skew,
+    /// lost-answer, fail-complete, complete-500, cut-body, slow-first-byte,
+    /// lost-race, stale-list, slow, s3-limits, or one of sonde.toml's. `slowdown:3` and `error:3` fail each request's
     /// first three attempts rather than its first (1 to 5).
     /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
@@ -214,6 +233,38 @@ struct Under {
 struct Of<'a> {
     name: Option<String>,
     under: Option<&'a Under>,
+    /// What the runs before it wrote (a trial's clean run): no-delete lets
+    /// them be written again.
+    written: Option<Arc<sonde_proxy::Written>>,
+}
+
+impl Recording {
+    /// The policy asked for: the flags', else `[record] policy` of
+    /// sonde.toml, else no-delete. Said when it lets the program delete.
+    fn policy(&self) -> anyhow::Result<Policy> {
+        let flag = if self.allow_writes {
+            Some(Policy::Allow)
+        } else if self.read_only {
+            Some(Policy::ReadOnly)
+        } else if self.no_delete {
+            Some(Policy::NoDelete)
+        } else {
+            self.policy.as_deref().and_then(Policy::named)
+        };
+        if let Some(p) = flag {
+            return Ok(p);
+        }
+        let project = load_project(None)?;
+        if project.policy == Some(Policy::Allow)
+            && let Some(path) = &project.path
+        {
+            eprintln!(
+                "note: {} lets the program delete and write over objects ([record] policy = \"allow\")",
+                path.display()
+            );
+        }
+        Ok(project.policy.unwrap_or_default())
+    }
 }
 
 async fn start(
@@ -272,12 +323,14 @@ async fn start_under(
     let writer = Arc::new(SessionWriter::create(&path, &header)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
-    let policy = if r.read_only {
-        Policy::ReadOnly
-    } else if r.no_delete {
-        Policy::NoDelete
+    let policy = r.policy()?;
+    let tls = if r.tls {
+        let dir = s.paths().data_dir.join("tls");
+        let made = sonde_proxy::tls::Tls::load_or_make(&dir)
+            .map_err(|e| anyhow::anyhow!("cannot make the endpoint's certificate: {e}"))?;
+        Some(Arc::new(made))
     } else {
-        Policy::Allow
+        None
     };
     let proxy = Proxy::start(
         client,
@@ -287,6 +340,8 @@ async fn start_under(
             policy,
             allow_remote,
             faults: under.map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario))),
+            tls,
+            written: of.written.clone().unwrap_or_default(),
             ..Default::default()
         },
     )
@@ -766,6 +821,11 @@ struct RunCtx {
     /// and a trial follows: every run is fed the same.
     input: Option<Arc<std::sync::Mutex<KeptInput>>>,
     stop: Stop,
+    /// How it is recorded: the command line's, and sonde.toml's `[record]`.
+    rec: Recording,
+    /// What the runs wrote: a trial's runs may write again what the clean
+    /// run wrote, under no-delete as under allow.
+    written: Arc<sonde_proxy::Written>,
 }
 
 /// The most of a clean run's input kept in memory for the runs after it:
@@ -907,6 +967,11 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         name: a.name.clone().or(project.file.program.name.clone()),
         input: (trying && !std::io::stdin().is_terminal()).then(Default::default),
         stop: Stop::listen(),
+        rec: Recording {
+            tls: a.rec.tls || project.file.record.tls,
+            ..a.rec.clone()
+        },
+        written: Arc::default(),
     };
     if trying && !names_its_place(&a.command) {
         eprintln!(
@@ -1048,41 +1113,19 @@ pub fn trial_line(t: &sonde_proxy::trial::Trial, color: bool) -> String {
     )
 }
 
-/// A project's `sonde.toml`, read and checked: its budget, its program's
-/// name, its scenarios.
-#[derive(Default)]
-struct Project {
-    path: Option<PathBuf>,
-    file: ProjectFile,
-    scenarios: Vec<sonde_proxy::fault::Scenario>,
-}
-
 /// `sonde.toml` at `explicit`, or here or in a folder above. A file that
 /// does not read, or says what sonde does not know, is a mistake in the
 /// configuration (64): nothing of it is passed over in silence.
 fn load_project(explicit: Option<&PathBuf>) -> anyhow::Result<Project> {
-    let Some(path) = explicit.cloned().or_else(find_project_file) else {
+    let found = explicit.cloned().or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|d| sonde_proxy::project::find(&d))
+    });
+    let Some(path) = found else {
         return Ok(Project::default());
     };
-    let wrong = |e: String| super::usage(format!("{}: {e}", path.display()));
-    let text = std::fs::read_to_string(&path).map_err(|e| wrong(e.to_string()))?;
-    let file: ProjectFile = toml::from_str(&text).map_err(|e| {
-        let hint = if text.contains("[[scenarios]]") {
-            "\na scenario is a [[scenario]] table, one for each"
-        } else {
-            ""
-        };
-        wrong(format!("{}{hint}", e.to_string().trim_end()))
-    })?;
-    sonde_proxy::fault::project_program_name(file.program.name.as_deref()).map_err(wrong)?;
-    let scenarios =
-        sonde_proxy::fault::project_scenarios(file.scenario.iter().map(ProjectScenario::scenario))
-            .map_err(wrong)?;
-    Ok(Project {
-        path: Some(path),
-        file,
-        scenarios,
-    })
+    sonde_proxy::project::read(&path).map_err(super::usage)
 }
 
 fn named_scenario(
@@ -1119,13 +1162,14 @@ async fn run_once(
     let command = sonde_proxy::program::shell_join(&a.command);
     let mut started = start_under(
         s,
-        &a.rec,
+        &ctx.rec,
         SocketAddr::from(([127, 0, 0, 1], 0)),
         Some(command),
         false,
         &Of {
             name: ctx.name.clone(),
             under,
+            written: Some(ctx.written.clone()),
         },
     )
     .await?;
@@ -1144,9 +1188,36 @@ async fn run_once(
             word.clone()
         }
     };
-    let program = placed(&a.command[0]);
+    let words: Vec<String> = a.command.iter().map(placed).collect();
+    // the JVM engines read s3a's endpoint from their command line, not
+    // from AWS_ENDPOINT_URL (a Python program that starts Spark, from
+    // PYSPARK_SUBMIT_ARGS)
+    let plain = started.proxy.plain_url();
+    let region = set
+        .iter()
+        .find(|(k, _)| k == "AWS_REGION")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    set.push((
+        "PYSPARK_SUBMIT_ARGS".into(),
+        sonde_proxy::jvm::pyspark_submit_args(
+            std::env::var("PYSPARK_SUBMIT_ARGS").ok().as_deref(),
+            &plain,
+            &region,
+        ),
+    ));
+    let words = match sonde_proxy::jvm::with_settings(&words, &plain, &region) {
+        Some((engine, argv)) => {
+            if under.is_none() {
+                eprintln!("{}", engine_note(engine, &words));
+            }
+            argv
+        }
+        None => words,
+    };
+    let program = words[0].clone();
     let mut child = tokio::process::Command::new(&program);
-    child.args(a.command[1..].iter().map(placed));
+    child.args(&words[1..]);
     if ctx.trying {
         child.env("SONDE_TRIAL", trial);
     }
@@ -1293,6 +1364,22 @@ async fn run_once(
     })
 }
 
+/// What sonde wrote on an engine's command line, and whether the program's
+/// own arguments overrule it.
+fn engine_note(engine: sonde_proxy::jvm::Engine, command: &[String]) -> String {
+    let how = match engine {
+        sonde_proxy::jvm::Engine::Spark => "--conf spark.hadoop.fs.s3a.*",
+        sonde_proxy::jvm::Engine::Flink => "-Ds3.*",
+    };
+    match sonde_proxy::jvm::own_endpoint(command) {
+        Some(own) => format!(
+            "warning: sonde gave {} its endpoint ({how}), but the command names its own ({own}): those requests go there, not through sonde",
+            command[0]
+        ),
+        None => format!("sonde: {} is given its endpoint with {how}", command[0]),
+    }
+}
+
 /// Signals the process group `child` leads: an interrupt, or (`kill`) its
 /// end. Whether it was sent.
 #[cfg(unix)]
@@ -1347,7 +1434,9 @@ const NO_REQUESTS: &str = "\nThe program sent sonde no requests. sonde set AWS_E
   boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])
   AWS CLI             v2.13 or newer, or --endpoint-url \"$AWS_ENDPOINT_URL\"
   Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)
-  Java SDK v2         2.21 or newer; Hadoop s3a: -Dfs.s3a.endpoint=$AWS_ENDPOINT_URL -Dfs.s3a.path.style.access=true
+  Java SDK v2         2.21 or newer
+  Hadoop s3a          its configuration, not -D: fs.s3a.endpoint, fs.s3a.path.style.access=true (sonde writes them for spark-submit and flink run)
+  Trino               the server reads S3, not the trino client: s3.endpoint in the catalog's properties (docs/recording.md)
   DuckDB              SET s3_endpoint='127.0.0.1:PORT'; SET s3_url_style='path'; SET s3_use_ssl=false
   Node (@aws-sdk/*)   3.4xx or newer, or new S3Client({ endpoint: process.env.AWS_ENDPOINT_URL, forcePathStyle: true })
 Credentials must be the ones sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): a profile or a role bypasses them.";
@@ -2267,126 +2356,10 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
 }
 
 /// `sonde check`: a run against a budget and a baseline run; exit 1 when it is past either.
-/// A project's budget for `sonde check`: the `[check]` table of its
-/// `sonde.toml`, kept with the code it is about (`max-waiting` in ms, or
-/// "2s"; `baseline` a session, `auto`, or an https URL of one).
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct ProjectCheck {
-    max_requests: Option<usize>,
-    max_waiting: Option<toml::Value>,
-    max_cost: Option<f64>,
-    max_errors: Option<usize>,
-    max_p95: Option<toml::Value>,
-    /// Findings kept on purpose: never a new warning.
-    #[serde(default)]
-    expect: Vec<String>,
-    tolerance: Option<f64>,
-    #[serde(default)]
-    no_new_warnings: bool,
-    baseline: Option<String>,
-}
-
-/// A fault scenario of the project's own, a `[[scenario]]` of `sonde.toml`:
-/// `fault = "503 SlowDown"` (or `500`, `lost-answer`, `cut-body`,
-/// `lost-race`, `delay 200ms`), `on`
-/// the operations it is for, `prefix` the keys, `times` the attempts at each
-/// request that meet it (1 unless said; 0 is every attempt).
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct ProjectScenario {
-    name: String,
-    fault: String,
-    #[serde(default)]
-    on: Vec<String>,
-    #[serde(default)]
-    prefix: String,
-    times: Option<u32>,
-}
-
-impl ProjectScenario {
-    /// Checked and built where the app's are ([`sonde_proxy::fault::project_scenario`]).
-    fn scenario(&self) -> Result<sonde_proxy::fault::Scenario, String> {
-        sonde_proxy::fault::project_scenario(
-            &self.name,
-            &self.fault,
-            &self.on,
-            &self.prefix,
-            self.times,
-        )
-    }
-}
-
-/// What a project says of its program: the name its runs go by.
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct ProjectProgram {
-    name: Option<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct ProjectFile {
-    #[serde(default)]
-    check: ProjectCheck,
-    #[serde(default)]
-    program: ProjectProgram,
-    #[serde(default)]
-    scenario: Vec<ProjectScenario>,
-}
-
-/// `sonde.toml` here or in a folder above (to the repository's root).
-fn find_project_file() -> Option<PathBuf> {
-    let mut dir = std::env::current_dir().ok()?;
-    loop {
-        let f = dir.join("sonde.toml");
-        if f.is_file() {
-            return Some(f);
-        }
-        if dir.join(".git").exists() || !dir.pop() {
-            return None;
-        }
-    }
-}
-
 /// A duration on the command line, as `sonde.toml` writes one.
 fn duration_arg(text: &str) -> Result<f64, String> {
-    duration_text(text)
+    sonde_proxy::project::duration_text(text)
         .ok_or_else(|| format!("{text:?} is not a time (2s, 250ms, or ms as a number)"))
-}
-
-/// "250ms", "2s", "1.5 s", or ms as a number.
-fn duration_text(text: &str) -> Option<f64> {
-    let t = text.trim();
-    let (n, scale) = if let Some(n) = t.strip_suffix("ms") {
-        (n, 1.0)
-    } else if let Some(n) = t.strip_suffix('s') {
-        (n, 1000.0)
-    } else {
-        (t, 1.0)
-    };
-    n.trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|v| v.is_finite() && *v >= 0.0)
-        .map(|v| v * scale)
-}
-
-/// `max-waiting` as `sonde.toml` writes it.
-fn waiting_ms(v: &toml::Value) -> anyhow::Result<f64> {
-    duration_ms("max-waiting", v)
-}
-
-/// A duration as `sonde.toml` writes it: ms as a number, or "250ms", "2s", "1.5 s".
-fn duration_ms(name: &str, v: &toml::Value) -> anyhow::Result<f64> {
-    match v {
-        toml::Value::Integer(n) => Ok(*n as f64),
-        toml::Value::Float(f) => Ok(*f),
-        toml::Value::String(s) => {
-            duration_text(s).ok_or_else(|| super::usage(format!("{name}: {s:?} is not a duration")))
-        }
-        other => Err(super::usage(format!("{name}: {other} is not a duration"))),
-    }
 }
 
 /// `sonde check --init`: a `sonde.toml` whose `[check]` this run passes,
@@ -2410,7 +2383,7 @@ fn init_project(
     let tolerance = a.tolerance.unwrap_or(10.0);
     let grow = 1.0 + tolerance / 100.0;
     // whole figures a person reads and edits
-    let waiting = (run.busy_ms * grow + 5.0).ceil();
+    let waiting = (run.busy_ms * grow + sonde_proxy::program::WAITING_SLACK_MS).ceil();
     let cost = if run.cost > 0.0 {
         let c = run.cost * grow;
         let digits = (-c.log10().floor() as i32 + 1).clamp(2, 8);
@@ -2861,23 +2834,21 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
     }
     // a mistake in sonde.toml names the file it is in
-    let in_project = |e: anyhow::Error| match &project_path {
+    let in_project = |e: String| match &project_path {
         Some(p) => super::usage(format!("{}: {e}", p.display())),
-        None => e,
+        None => super::usage(e),
     };
     let budget = Budget {
         max_requests: a.max_requests.or(project.max_requests),
-        max_waiting_ms: match (a.max_waiting, &project.max_waiting) {
-            (Some(v), _) => Some(v),
-            (None, Some(v)) => Some(waiting_ms(v).map_err(in_project)?),
-            (None, None) => None,
+        max_waiting_ms: match a.max_waiting {
+            Some(v) => Some(v),
+            None => project.max_waiting_ms().map_err(in_project)?,
         },
         max_cost: a.max_cost.or(project.max_cost),
         max_errors: a.max_errors.or(project.max_errors),
-        max_p95_ms: match (a.max_p95, &project.max_p95) {
-            (Some(v), _) => Some(v),
-            (None, Some(v)) => Some(duration_ms("max-p95", v).map_err(in_project)?),
-            (None, None) => None,
+        max_p95_ms: match a.max_p95 {
+            Some(v) => Some(v),
+            None => project.max_p95_ms().map_err(in_project)?,
         },
         expect: project.expect.clone(),
         tolerance: base
@@ -3256,9 +3227,13 @@ pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
         .map_err(|e| anyhow::anyhow!(e))?;
     let rec = Recording {
         endpoint: Some(ep.id.clone()),
+        policy: None,
+        // the demo store is sonde's own, made for this tour
+        allow_writes: true,
         no_delete: false,
         read_only: false,
         out: None,
+        tls: false,
     };
     let started = start(
         s,
@@ -3666,7 +3641,7 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
         // the seen files old enough to be past the grace are forgotten
         mark.forget_old();
         if let Ok(b) = serde_json::to_vec(&mark) {
-            let _ = std::fs::write(&mark_file, b);
+            let _ = reqlog::private::write(&mark_file, b);
         }
         // the requests are the endpoint's: priced and checked as its
         for r in records.iter_mut() {
@@ -3778,21 +3753,9 @@ fn post_alert(url: &str, text: String) -> tokio::task::JoinHandle<()> {
 
 /// The project's budget (`sonde.toml`'s `[check]`), when there is one.
 fn project_budget() -> Option<sonde_proxy::program::Budget> {
-    let text = std::fs::read_to_string(find_project_file()?).ok()?;
-    let p: ProjectCheck = toml::from_str::<ProjectFile>(&text).ok()?.check;
-    Some(sonde_proxy::program::Budget {
-        max_requests: p.max_requests,
-        max_waiting_ms: p.max_waiting.as_ref().and_then(|v| waiting_ms(v).ok()),
-        max_cost: p.max_cost,
-        max_errors: p.max_errors,
-        max_p95_ms: p
-            .max_p95
-            .as_ref()
-            .and_then(|v| duration_ms("max-p95", v).ok()),
-        expect: p.expect.clone(),
-        tolerance: None,
-        no_new_warnings: false,
-    })
+    let here = std::env::current_dir().ok()?;
+    let project = sonde_proxy::project::of(&here).ok()??;
+    project.file.check.budget().ok()
 }
 
 /// A finished file held to the project's budget: what went over, when
@@ -4133,9 +4096,12 @@ mod tests {
             proxy: ProxyArgs {
                 rec: Recording {
                     endpoint: Some("demo".into()),
+                    policy: None,
+                    allow_writes: false,
                     no_delete: false,
                     read_only: true,
                     out: None,
+                    tls: false,
                 },
                 listen: "127.0.0.1:0".parse().unwrap(),
                 allow_remote: false,
@@ -4259,9 +4225,12 @@ mod tests {
             proxy: ProxyArgs {
                 rec: Recording {
                     endpoint: Some("demo".into()),
+                    policy: None,
+                    allow_writes: false,
                     no_delete: false,
                     read_only: true,
                     out: None,
+                    tls: false,
                 },
                 listen: "127.0.0.1:0".parse().unwrap(),
                 allow_remote: false,
@@ -4408,9 +4377,12 @@ mod tests {
             proxy: ProxyArgs {
                 rec: Recording {
                     endpoint: Some("refusing".into()),
+                    policy: None,
+                    allow_writes: false,
                     no_delete: false,
                     read_only: true,
                     out: None,
+                    tls: false,
                 },
                 listen: "127.0.0.1:0".parse().unwrap(),
                 allow_remote: false,

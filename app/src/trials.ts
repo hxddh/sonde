@@ -8,7 +8,7 @@ import type { Trial, TrialEvent } from "./types";
 /** A scenario as people say it ("The store asks to slow down"); one sonde has
  * no words for yet (a project's own) keeps its name. Its id stands beside it
  * in mono where it is listed: what `sonde run --trial` is given. */
-export const SCENARIOS = ["slowdown", "error", "lost-answer", "fail-complete", "cut-body", "lost-race", "slow", "s3-limits"] as const;
+export const SCENARIOS = ["slowdown", "error", "lost-answer", "fail-complete", "cut-body", "lost-race", "skew", "complete-500", "slow-first-byte", "stale-list", "slow", "s3-limits"] as const;
 const known = (name: string): name is (typeof SCENARIOS)[number] => (SCENARIOS as readonly string[]).includes(name);
 export const scenarioLabel = (name: string): string => (known(name) ? t(`scenario.${name}`) : name);
 /** What a scenario does and how hard it presses, in a line: sonde's own words

@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/diff.schema.json",
+  "title": "sonde diff -f json",
+  "description": "A recording and its replay: every answer compared.",
+  "type": "object",
+  "properties": {
+    "comparison": {
+      "$ref": "#/$defs/comparison"
+    },
+    "latency": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/latencyChange"
+      }
+    }
+  },
+  "required": [
+    "comparison",
+    "latency"
+  ],
+  "$defs": {
+    "comparison": {
+      "type": "object",
+      "description": "Every answer of a replay against the recording's.",
+      "properties": {
+        "compared": {
+          "type": "integer"
+        },
+        "same": {
+          "type": "integer"
+        },
+        "environment": {
+          "type": "integer",
+          "description": "Differences of the store's set-up, not its behaviour."
+        },
+        "differences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/difference"
+          }
+        },
+        "unmatched": {
+          "type": "object",
+          "description": "Requests with no counterpart, by why.",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        }
+      },
+      "required": [
+        "compared",
+        "same",
+        "environment",
+        "differences",
+        "unmatched"
+      ]
+    },
+    "difference": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "original": {
+          "type": "string",
+          "description": "The recorded answer."
+        },
+        "replay": {
+          "type": "string",
+          "description": "The replay's."
+        },
+        "count": {
+          "type": "integer"
+        },
+        "example": {
+          "type": "string"
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "operation",
+        "original",
+        "replay",
+        "count",
+        "example",
+        "conditions"
+      ]
+    },
+    "latencyChange": {
+      "type": "object",
+      "description": "A kind of request in two runs: each figure a pair (first, second).",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "missed": {
+          "type": "boolean"
+        },
+        "requests": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        },
+        "p50Ms": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "p95Ms": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "busyMs": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        }
+      },
+      "required": [
+        "operation",
+        "missed",
+        "requests",
+        "p50Ms",
+        "p95Ms",
+        "busyMs"
+      ]
+    }
+  }
+}

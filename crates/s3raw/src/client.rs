@@ -963,6 +963,8 @@ struct Meta {
 fn is_retryable_status(r: &S3Response) -> bool {
     matches!(r.status, 500 | 502 | 503 | 504 | 429)
         || (r.status == 400 && r.text().contains("<Code>RequestTimeout</Code>"))
+        // signed again, with the clock as it is now
+        || (r.status == 403 && r.text().contains("<Code>RequestTimeTooSkewed</Code>"))
 }
 
 /// Header (name, value) pairs of a map, values read lossily.
@@ -1040,6 +1042,25 @@ pub fn encode_key(key: &str) -> String {
 mod tests {
     use super::*;
     use crate::credentials::StaticProvider;
+
+    #[test]
+    fn a_throttle_a_timeout_and_a_skewed_clock_are_sent_again_and_a_403_is_not() {
+        let answer = |status: u16, code: &str| S3Response {
+            status,
+            headers: Vec::new(),
+            body: Bytes::from(format!("<Error><Code>{code}</Code></Error>")),
+            record_id: 0,
+            request_id: None,
+            host_id: None,
+            latency: Duration::ZERO,
+            retries: 0,
+        };
+        assert!(is_retryable_status(&answer(503, "SlowDown")));
+        assert!(is_retryable_status(&answer(400, "RequestTimeout")));
+        assert!(is_retryable_status(&answer(403, "RequestTimeTooSkewed")));
+        assert!(!is_retryable_status(&answer(403, "AccessDenied")));
+        assert!(!is_retryable_status(&answer(400, "InvalidRequest")));
+    }
 
     fn client(endpoint: &str, addressing: Addressing) -> S3Client {
         let mut cfg = ClientConfig::new("t", endpoint, "us-east-1").unwrap();

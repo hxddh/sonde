@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/compare.schema.json",
+  "title": "sonde compare -f json",
+  "description": "Two runs of a program, before and after a change: each figure a pair (before, after).",
+  "type": "object",
+  "properties": {
+    "requests": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "items": false
+    },
+    "wallMs": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false
+    },
+    "busyMs": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false
+    },
+    "errors": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "items": false
+    },
+    "cost": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false
+    },
+    "currency": {
+      "type": "string"
+    },
+    "peakInFlight": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "items": false
+    },
+    "groups": {
+      "type": "array",
+      "description": "Kinds of request, the largest change first.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string"
+          },
+          "missed": {
+            "type": "boolean"
+          },
+          "requests": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "items": false
+          },
+          "busyMs": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "items": false
+          }
+        },
+        "required": [
+          "operation",
+          "missed",
+          "requests",
+          "busyMs"
+        ]
+      }
+    },
+    "resolved": {
+      "type": "array",
+      "description": "Findings the second run no longer has.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "phrases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/phrase"
+            }
+          }
+        },
+        "required": [
+          "text",
+          "phrases"
+        ]
+      }
+    },
+    "appeared": {
+      "type": "array",
+      "description": "Findings only the second run has.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "phrases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/phrase"
+            }
+          }
+        },
+        "required": [
+          "text",
+          "phrases"
+        ]
+      }
+    },
+    "sameProgram": {
+      "type": "boolean",
+      "description": "Both are runs of one program: their findings compare."
+    },
+    "latency": {
+      "type": "array",
+      "description": "Each run's latency on the same buckets.",
+      "prefixItems": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "leMs": {
+                "type": "number",
+                "description": "The bucket's upper edge."
+              },
+              "n": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "leMs",
+              "n"
+            ]
+          }
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "leMs": {
+                "type": "number",
+                "description": "The bucket's upper edge."
+              },
+              "n": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "leMs",
+              "n"
+            ]
+          }
+        }
+      ],
+      "items": false
+    },
+    "prefixes": {
+      "type": "array",
+      "description": "The busiest prefixes.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "prefix": {
+            "type": "string"
+          },
+          "requests": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "items": false
+          }
+        },
+        "required": [
+          "prefix",
+          "requests"
+        ]
+      }
+    }
+  },
+  "required": [
+    "requests",
+    "wallMs",
+    "busyMs",
+    "errors",
+    "cost",
+    "currency",
+    "peakInFlight",
+    "groups",
+    "resolved",
+    "appeared",
+    "sameProgram",
+    "latency",
+    "prefixes"
+  ],
+  "$defs": {
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The phrase's key in the app's locales (en, zh)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Its arguments, as text.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  }
+}
