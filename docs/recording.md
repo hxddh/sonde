@@ -256,7 +256,7 @@ sonde share --html --redact -o run.html  # one HTML file, names replaced
 
 A static site: the embedded viewer and a precomputed `session.json` (header, summary, operations, observations,
 records, output); nothing runs server-side. It holds what the session holds: share it as you would the file.
-`--redact` and `--html`: [cli](cli.md#read-a-session).
+`--redact` and `--html`: [cli](cli.md#read-a-run).
 
 ## Limits
 

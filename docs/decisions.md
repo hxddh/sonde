@@ -170,3 +170,28 @@ Newest last.
 | D-164 | Widths in pages | constants per file; the kit's names | **The kit's `COLUMN` and `PANE`**, read by the layout lint. |
 | D-165 | A dialog taller than the window | fixed height; its body scrolls | **`ModalBody` scrolls; the title and actions stay.** |
 | D-166 | `record.rs` | one file; a module per command | **A module per command**; shared start code in `record.rs`. |
+| D-167 | Read-only mode and the recording policy | both; one | **The recording policy only.** sonde's own destructive acts keep the dry run, typed confirmation and audit log. |
+| D-168 | A folded command | remove; alias for one version | **An alias for 18.0** that says its new form; gone in 19.0. |
+| D-169 | `watch --logs` | `proxy`; `import` | **`import s3://… [--follow]`**: one verb reads logs. |
+| D-170 | `mpu` under `bucket` | nested; flat | **`size`, `uploads`, `abort-uploads`, `lifecycle`**, flat. |
+| D-171 | What sonde keeps of each session | files beside it; one index per folder | **`.index.jsonl` per folder**, append-only, compacted when mostly stale. |
+| D-172 | A setting gone from `config.toml` | an error; ignored | **Ignored, said once, dropped at the next save**: an older file always loads. |
+| D-173 | What no-delete lets a program write over | its own run's writes; its earlier runs' writes | **What its earlier runs wrote** (per program and endpoint, `written.json`), and keys under a `{trial}` place: a re-run and a re-trial work. |
+| D-174 | When `skew` is offered | always; by SDK | **When the SDK retries it** (Java, JavaScript), or when named: botocore cannot. |
+| D-175 | Trying again | everything; what did not survive | **`--trial --again`: broke, degraded and refused**, with each scenario's history per program (`verdicts.json`). |
+| D-176 | A refusal by the policy in a trial | broke; its own | **`refused`**: the program was not judged; `check` warns. |
+| D-177 | A finding across runs | by id; by kind and what it is about | **Kind and what it is about**; states fixed, less, back, new, open per program (`findings.json`). |
+| D-178 | Fixed or less | under the threshold; gone at any threshold | **Gone at any threshold**, else "less"; a fixed finding shows its measured saving beside the predicted. |
+| D-179 | Callers | opt-in; on | **On by default** (`--no-callers`): the fix loop needs the line; the Python hook loads lazily. |
+| D-180 | Default `show` | everything; the summary | **The summary, findings first, one table**; the rest behind `--all`. |
+| D-181 | The CI baseline | a local cache; the base branch's artifact | **The newest push run's artifact on the base branch**; none is a warning. |
+| D-182 | The PR comment | every row; what changed | **Verdict, failed rows, what changed (new findings first), one link.** |
+| D-183 | The GitHub Action | a repository of its own; this one | **This repository's root (`hxddh/sonde@v18`)**, versioned with the binary. |
+| D-184 | Why slow | a chart per dimension; one split table | **One table split by a dimension, one sentence** (`show --by`, Group by). |
+| D-185 | Run after a run | operations; findings | **The top three findings and one what-if**, and what changed since the run before. |
+| D-186 | The Time pane | fewer charts; all | **All, shown**, read Traffic → Latency → Errors → Where, each titled by its question, following the stretch. |
+| D-187 | Store tools | sheets and windows; sections | **One row of sections in Buckets**, reached from findings. Supersedes D-044. |
+| D-188 | Interaction | per screen; one grammar | **Select → inspect → act**; one inspector; every act on a key or in the palette. |
+| D-189 | Approving a visual change | a person looks; a committed baseline | **`app/shots.approved.json`**: a change past 0.5% not approved fails CI. |
+| D-190 | sonde's own requests | a list in Activity; nowhere | **Nowhere**: an error says its code, status and request id. |
+| D-191 | Compare's order | as opened; earlier first | **Earlier first**, from every door. |
