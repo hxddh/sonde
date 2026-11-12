@@ -8,8 +8,8 @@ The app's own decisions on top of Native Shell's Design Guides
 
 One task: see what a program does to S3. Three places — **Run** (start a program and
 watch its requests become operations; once it ends, its top findings, what each saves and
-the one figure for acting on them), **Sessions** (what a run did, what stands out,
-compared and replayed), **Buckets** (the store's side, in one row of sections: objects, size,
+the one figure for acting on them), **Sessions** (what a run did, what stands out and how
+it stands against the run before, grouped, compared and replayed), **Buckets** (the store's side, in one row of sections: objects, size,
 incomplete uploads, versions, layouts, compatibility). The window has two columns
 and no more: the **sidebar** (the places, and under them the current place's own list —
 the commands run before, the sessions, the buckets) and the place; a detail opens

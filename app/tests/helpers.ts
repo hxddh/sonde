@@ -6,7 +6,7 @@ export const desktop = { platform: "macos" as const, width: 1280, height: 860 };
 
 const STORE = ["browse", "multipart", "versions", "capacity", "layouts", "probes"];
 const SETTINGS = ["settings", "endpoints"];
-const ACTIVITY = ["requests", "jobs", "audit"];
+const ACTIVITY = ["jobs", "audit"];
 
 /** Goes to a place, or to a tab of one. A window opens Settings in a window
  * of their own (⌘,), Activity from its toolbar, and Buckets' sections (a

@@ -40,10 +40,35 @@ part of §1), for the release's changelog and decision log. The second UI wave w
   picture in `app/shots.approved.json`, or the job fails. Approving is running `scripts/shots-diff.py approve` on the
   run's screenshots and committing the file.
 
+### Added (the second wave: the other streams' features, wired in)
+
+- **A finding's state across runs.** A run's findings are marked against the program's run before — *new*,
+  *back*, *less* (*open* is left unmarked: it says nothing new). Beside them, "Since the run before": requests,
+  waiting and errors before → after, and each finding *fixed* or *back*, a fixed one with what it saved, measured,
+  against the predicted. In Run after a run (beside its top findings) and in a session's header; its Compare opens
+  the two runs.
+- **Compare says what changed of the findings**: fixed, less (with how it read before), back, new, each with its
+  measured saving; the earlier run is always "before", whichever was opened.
+- **Try again what broke.** From the trial's dialog once it ended, and from the Runs pane: the program runs
+  afresh, then only the scenarios that broke, degraded or were refused; the fresh run opens on its Runs pane.
+- Each scenario says its history: "Broke on Nov 12, survived since". A verdict the recording policy refused has
+  a tone of its own (`status-refused`), never a failure's or a degraded run's.
+- "Try under faults…" in a session's header too.
+- **Group by** on the operations: one control (each operation, kind of request, prefix, size, code line, SDK,
+  status) splits the table into groups with its figures (requests, errors, p50, p95, p99, waiting, cost) and one
+  sentence on where the slow and costly requests are. A finding or a slice chosen shows the operations again.
+- **A request's key history** in the inspector: every request of its key in the session, the one shown marked,
+  another a press away.
+- The SDK that sent a run's requests, in its header ("from boto3 1.34").
+
 ### Removed
 
 - The Compatibility window and its "Check compatibility…" button in Settings › Endpoints: Compatibility is a
   section of Buckets.
+- **Activity › Requests**, sonde's own requests: its list, export, "Open as a session", and every "Show request"
+  (the error toasts, a connection test, an object, a probe). An error says itself: what went wrong, the store's
+  code and status, the request id to quote. A session's requests stay in its inspector. Activity is jobs and
+  changes.
 - The bucket's context menu entries for its tools (they were a second door to the same sections), and the sheets
   over the objects.
 
@@ -65,3 +90,7 @@ part of §1), for the release's changelog and decision log. The second UI wave w
 | D-1xx | Heat maps' ramp | `bar-track` → `chart-1`; tones of their own | **`heat-low` → `heat-high`**, held by lint-charts against the card in light and dark. |
 | D-1xx | A bar of 0 | unsaid; a label without a bar; a sliver | **A sliver** (`ZERO_SLIVER`) under its "0": Native Shell draws no label for a bar of no value. |
 | D-1xx | Approving a visual change | a person looks at the artifact; a committed baseline | **A committed baseline of fingerprints** (`app/shots.approved.json`, a 40×25 grid of greys per picture): a change past 0.5% that does not match it fails CI. |
+| D-1xx | A finding's state in a session | a badge on every finding; only the telling ones; a column | **New, back, less on the finding; fixed and back beside them, once** ("Since the run before"); open unmarked: a badge on every row is noise. |
+| D-1xx | Where Group by lives | a pane; a tab; a control on the operations | **One control beside the operations' filter**: the same place, split; no new pane. |
+| D-1xx | sonde's own requests | a list in Activity; nowhere | **Nowhere**: an error says itself (code, status, request id); a session's requests are in its inspector. |
+| D-1xx | Compare's order | as opened; earlier first | **Earlier first**: "before → after" reads true from Run again, Since, and the menu alike. |

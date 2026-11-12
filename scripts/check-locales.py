@@ -47,6 +47,7 @@ FAMILIES = {
     "scenario.": "slowdown error lost-answer fail-complete cut-body lost-race skew complete-500 slow-first-byte stale-list slow s3-limits",
     "scenario.about.": "slowdown error lost-answer fail-complete cut-body lost-race skew complete-500 slow-first-byte stale-list slow s3-limits",
     "settings.path.": "config exports downloads audit",
+    "split.by.": "none operation prefix size caller sdk status",
     "trial.": "survived degraded broke untested refused",
     "verdict.": "pass fail differs unsupported error skipped requests waiting cost errors warnings p95",
     "why.": "obs.unfinished obs.orphans obs.small obs.hot obs.listed obs.headget obs.throttled obs.throttled.rate obs.serial obs.prefixrate",

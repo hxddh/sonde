@@ -3,13 +3,13 @@
 import { expect, open, test } from "nsh/test";
 import { desktop, place, withDemo } from "./helpers";
 
-test("request inspector: records, details, copy as curl without a signature", async () => {
-  const app = await withDemo("demo");
-  await app.waitFor("text:README.md", { timeout: 10000 });
-  await place(app, "requests");
-  await app.waitFor("id:requests");
-  await app.waitFor("text:ListObjectsV2", { timeout: 5000 });
-  await app.press("text:ListObjectsV2 >> nth=0");
+test("a session's request in the inspector: details, copy as curl without a signature", async () => {
+  const app = await open("../App.tsx", desktop);
+  await app.press("id:open-example");
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.press("text:manifest 3 written");
+  await app.waitFor("id:operation-detail");
+  await app.press("id:op-request-0");
   await app.waitFor("id:record-detail");
   expect(app.shows("text:x-amz-request-id")).toBe(true);
   await app.press("id:copy-curl");
@@ -17,6 +17,10 @@ test("request inspector: records, details, copy as curl without a signature", as
   expect(app.clipboard()).not.toContain("Signature=");
   await app.press("id:copy-cli");
   await app.waitUntil(() => (app.clipboard() ?? "").startsWith("aws s3api"));
+  // sonde's own requests are no list of their own: Activity is its jobs and its changes
+  await app.press("id:activity-open");
+  await app.waitFor("id:activity");
+  expect(app.shows("id:activity-tab-requests")).toBe(false);
 });
 
 test("multipart: scan, lifecycle verdict, the guard waits for the typed confirmation", async () => {
@@ -85,7 +89,6 @@ test("compatibility: runs probes on the demo and fills the matrix", async () => 
   await app.waitFor("id:probe-detail");
   expect(app.shows("text:/^aws behavior$/i")).toBe(true);
   expect(app.shows("text:/^requests and responses$/i")).toBe(true);
-  await app.window("compat").pressClose();
 }, 120_000);
 
 test("endpoints: adding never replaces one; a name in another script gets an id of its own", async () => {
@@ -129,7 +132,7 @@ test("browse: an object's detail is its own, never the one chosen before", async
   await app.waitFor("text:images/logo.png", { timeout: 10000 });
 });
 
-test("errors are readable and lead to their request", async () => {
+test("errors are readable: what went wrong, said whole", async () => {
   const app = await withDemo();
   await place(app, "endpoints");
   await app.press("id:add-endpoint");
@@ -140,8 +143,9 @@ test("errors are readable and lead to their request", async () => {
   await app.press("id:test-broken");
   await app.waitFor("id:test-result", { timeout: 15000 });
   expect(app.shows("text:Not reachable")).toBe(true);
-  await app.press("text:Show request");
-  await app.waitFor("id:record-detail");
+  // the error itself, not a way to a list of sonde's own requests
+  expect(app.shows("id:record-detail")).toBe(false);
+  expect(app.texts().some((x) => /connect|refused|error/i.test(x))).toBe(true);
 });
 
 test("settings: no read-only switch; a confirmed abort, the audit log", async () => {
@@ -219,7 +223,10 @@ test("language: Chinese strings", async () => {
   await app.press("id:nav-sessions");
   await app.press("id:open-example");
   await app.waitFor("text:查找最新的 WAL：探测了编号 1…128", { timeout: 10000 });
-  expect(app.shows("text:/27 次 SlateDB 写入都是：条件创建/")).toBe(true);
+  await app.press("text:写入 manifest 3");
+  await app.waitFor("id:operation-detail");
+  expect(app.shows("text:/条件创建（If-None-Match: \\*）/")).toBe(true);
+  await app.press("id:inspector-close");
   await app.press("label:语言");
   await app.press("text:English");
   await app.waitFor("text:General");

@@ -5,7 +5,7 @@ import { count, duration } from "../format";
 import { t } from "../i18n";
 import { vendorName } from "../labels";
 import { api, asError } from "../native";
-import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
+import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert } from "../ui/kit";
 import { CELL, ConfigNotice, GRID } from "./Settings";
@@ -165,14 +165,13 @@ function TestResult(props: { report: ConnectivityReport }) {
     // who the credentials are, or why that is not known: one line
     const who = [r().identity ? `${r().identity!.arn ?? ""} (${r().identity!.account ?? ""})` : "", r().identityNote ?? ""].filter(Boolean).join(" · ");
     if (who) out.push([t("endpoints.identity"), who]);
-    return [...(r().error ? [r().error!.message] : []), ...out.map(([k, v]) => `${k}: ${v}`)].join("\n");
+    // what went wrong whole: the store's code and status, and the request id to quote
+    const e = r().error;
+    const said = e ? [e.message, [e.code, e.status ? `${e.status}` : null].filter(Boolean).join(" "), e.requestId ? `${t("common.requestId")}: ${e.requestId}` : ""].filter(Boolean).join(" · ") : null;
+    return [...(said ? [said] : []), ...out.map(([k, v]) => `${k}: ${v}`)].join("\n");
   };
   return (
-    <Notice testID="test-result" tone={r().ok ? "info" : "error"} icon={r().ok ? "circle-check" : undefined} title={r().ok ? t("endpoints.reachable", { ms: duration(r().latencyMs) }) : t("endpoints.unreachable")} text={facts()}>
-      <If when={r().error && r().error!.recordId !== null && r().error!.recordId !== undefined}>
-        <Button small label={t("common.showRequest")} onPress={() => showRequest(r().error!.recordId)} />
-      </If>
-    </Notice>
+    <Notice testID="test-result" tone={r().ok ? "info" : "error"} icon={r().ok ? "circle-check" : undefined} title={r().ok ? t("endpoints.reachable", { ms: duration(r().latencyMs) }) : t("endpoints.unreachable")} text={facts()} />
   );
 }
 

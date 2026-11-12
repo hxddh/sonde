@@ -16,7 +16,7 @@ import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { away, chooseBucket, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
-import type { LogLine, Observation, SessionInfo, SessionView } from "../types";
+import type { LogLine, Observation, SessionInfo, SessionView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
 import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, terminal, PANE } from "../ui/kit";
@@ -29,10 +29,12 @@ import { episodeTitle } from "../phrases";
 import { programOf, ranCommand } from "../ui/sessionview";
 import { HistoryPane, ProgramList, scenarioLabel } from "../ui/history";
 import { TrialDialog } from "../ui/trial";
+import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
+import { type GroupBy, GroupByChoice, SplitTable } from "../ui/split";
 import { TimePane } from "../ui/profile";
 import type { SignalId } from "../signals";
 import { SessionShape, SHAPE_STRIP, TICK_ROOM, faultMoments } from "../ui/plots";
-import { RecordDetail } from "./Requests";
+import { RecordDetail } from "../ui/request";
 import { type Range, rangeOnOpen, rangeParam, shownRange } from "../range";
 import { running, runAgain } from "../run";
 
@@ -77,6 +79,10 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   });
   const replaying = signal(false);
   const tryingFaults = signal(false);
+  // "Try again what broke", from the Runs pane: the scenarios that did not survive
+  const tryingAgain = signal<Trial[] | null>(null);
+  // Group by: each operation, or the operations split by a dimension
+  const groupBy = signal<GroupBy>("none");
   // a signal pressed in the header: the Time pane, on its chart
   const reveal = signal<{ id: SignalId; n: number } | null>(null);
   const showSignal = (id: SignalId) => batch(() => (reveal.set({ id, n: (reveal()?.n ?? 0) + 1 }), pane.set("time")));
@@ -85,6 +91,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
 
   const read = analysis(() => props.path, props.tick);
   const view = read.view;
+  // the run against its program's run before: its findings' states, what was fixed
+  const since = sinceLastOf(() => props.path);
   // a trial's session: the clean run it is judged against, for the Time pane to draw it over
   const clean = analysis(() => view()?.trial?.clean ?? null);
   // the program's budget, for the Time pane's lines: read once per session shown
@@ -169,6 +177,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   effect(() => {
     const f = filter();
     const w = window();
+    // a finding or a slice chosen narrows the operations: they show, not their groups
+    if (f !== null || w) untracked(() => groupBy.set("none"));
     untracked(() => {
       const { finding: _, slice: __, ...kept } = source.query();
       source.ask({ ...kept, ...(f === null ? {} : { finding: f }), ...(w ? { slice: w } : {}) });
@@ -329,7 +339,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         </If>
       }
     >
-      {(r) => <RecordDetail record={r()} onBack={() => rec.set(null)} copyAs={(kind) => api.sessions.copy(props.path, r().id, kind)} />}
+      {(r) => <RecordDetail path={props.path} record={r()} onBack={() => rec.set(null)} onRecord={chooseRequest} />}
     </If>
   );
 
@@ -385,6 +395,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       onExpect={(o) => copy(`expect = [${JSON.stringify(o.identity)}]`, t("expect.copied"))}
       filter={filter()}
       onFilter={(f) => filter.set(f)}
+      states={statesOf(since())}
       onOpenCode={(place) => api.sessions.openCode(props.path, place).catch(report)}
       // a short window keeps two findings in view (the rest scroll): the operations need their rows;
       // a finding chosen there gets the room to read what to change
@@ -402,7 +413,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   );
   const body = (v: () => SessionView) => {
     if (pane() === "time") return <TimePane view={v()} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
-    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTry={() => tryingFaults.set(true)} />;
+    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTry={() => tryingFaults.set(true)} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
       return (
@@ -424,7 +435,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       <View class="min-h-0 flex-1 gap-3">
         {strip(v)}
         {findings(v)}
-        {operations(v)}
+        <If when={groupBy() !== "none"} else={operations(v)}>
+          <SplitTable path={props.path} by={groupBy() as Exclude<GroupBy, "none">} />
+        </If>
       </View>
     );
   };
@@ -447,6 +460,10 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           disabled={!!running()}
           testID="run-again"
         />
+      </If>
+      {/* the same command under faults, asked first what will run (a trial is no run of its own) */}
+      <If when={ranCommand(view()?.header.command) && !view()?.trial}>
+        <Button small variant="outline" icon="flask-conical" label={t("trial.try")} onPress={() => tryingFaults.set(true)} disabled={!!running()} testID="session-try" />
       </If>
       <Button small variant="outline" icon="repeat-2" label={t("replay.open")} onPress={() => replaying.set(true)} testID="replay-open" />
       <If when={isAvailable}>
@@ -503,13 +520,20 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         <View class="shrink-0 px-4 pt-4">
           <SessionHeader view={v()} actions={actions()} onSignal={showSignal} short={box().h < BREAK.short}>
             {trialNote(v)}
+            {/* what changed since the program's run before: what was fixed, with what it saved */}
+            <If when={!v().trial}>
+              <SinceRun since={since()} max={box().h < BREAK.short ? 0 : 2} onCompare={() => since()?.previous && compareWith.set(since()!.previous!)} />
+            </If>
           </SessionHeader>
         </View>
         <View class="shrink-0 flex-row items-center gap-3 border-b border-border px-4 pb-3 pt-3">
           {tabs()}
           <View class="flex-1" />
-          {/* what narrows the operations, said where they are */}
+          {/* what narrows the operations, said where they are; and the one way to group them */}
           <If when={pane() === "operations" || pane() === "aligned"}>{chip()}</If>
+          <If when={pane() === "operations"}>
+            <GroupByChoice value={groupBy()} onChange={(g) => batch(() => (g !== "none" && (filter.set(null), slice.set(null)), groupBy.set(g)))} />
+          </If>
         </View>
         <View class="min-h-0 flex-1 px-4 pb-4 pt-3" onLayout={({ bounds }) => bodyHeight.set(Math.round(bounds.size.height))}>
           {body(v)}
@@ -593,6 +617,12 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       </If>
       <If when={tryingFaults()}>
         <TrialDialog path={props.path} onClose={() => tryingFaults.set(false)} onDone={() => pane.set("runs")} onOpen={open} />
+      </If>
+      <If when={tryingAgain()}>
+        {(again) => (
+          // a fresh run, then what did not survive: the fresh run opens on its Runs pane
+          <TrialDialog path={props.path} again={again()} onClose={() => tryingAgain.set(null)} onOpen={open} onAgain={(fresh) => batch(() => (paneOnOpen.set({ path: fresh, pane: "runs" }), open(fresh)))} />
+        )}
       </If>
       <ReplayDialog
         path={props.path}

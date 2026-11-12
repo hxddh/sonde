@@ -14,8 +14,8 @@ import { policy, running } from "../run";
 import type { Policy } from "./session";
 import { report, sessionsChanged } from "../store";
 import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, trialSteps } from "../trials";
-import type { Trial, TrialPlan } from "../types";
-import { STANDING, trialAsked, TrialWhere, trialReasons, trialText } from "./history";
+import type { Trial, TrialEvent, TrialPlan } from "../types";
+import { AGAIN, STANDING, trialAsked, trialSince, TrialWhere, trialReasons, trialText } from "./history";
 import { Icon } from "./icon";
 import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Mono, Muted, Notice, Options, Row, Title } from "./kit";
 import { scrubCommand } from "./sessionview";
@@ -31,7 +31,18 @@ const LIMITS = (): { value: Policy; title: string; icon: "shield-check" | "ban" 
 ];
 
 /** "Try under faults…": the plan, the trial as it goes, its verdicts. */
-export function TrialDialog(props: { path: string; onClose: () => void; /** it ended with verdicts: the run's Runs pane shows them */ onDone?: (trials: Trial[]) => void; /** a finished scenario pressed: its own session */ onOpen?: (session: string) => void }) {
+export function TrialDialog(props: {
+  path: string;
+  onClose: () => void;
+  /** it ended with verdicts: the run's Runs pane shows them */
+  onDone?: (trials: Trial[]) => void;
+  /** a finished scenario pressed: its own session */
+  onOpen?: (session: string) => void;
+  /** "Try again what broke": these verdicts' scenarios, on a fresh run of the program */
+  again?: Trial[];
+  /** tried again: the fresh run, to open (on its Runs pane) as the dialog closes */
+  onAgain?: (fresh: string) => void;
+}) {
   // what would run, or why nothing can: read once, as the dialog opens
   const plan = resource(
     () => props.path,
@@ -63,7 +74,12 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
   // what the program may do while tried: as the last run was limited, until changed here
   const limit = signal<Policy>(policy());
   const steps = signal<TrialStep[] | null>(null);
-  const ended = signal<{ cancelled: boolean } | null>(null);
+  const ended = signal<{ cancelled: boolean; /** tried again: the fresh run's exit, when it failed (no trial then) */ cleanFailed?: number | null } | null>(null);
+  // trying again what did not survive: those verdicts (from the Runs pane, or this dialog's own once it ended)
+  const again = signal<Trial[] | null>(props.again ?? null);
+  // tried again: the fresh run, and whether it is still running before the first scenario
+  const fresh = signal<string | null>(null);
+  const afresh = signal(false);
   const going = () => steps() !== null && !ended();
   // how long the trial has taken: a second at a time while it runs, then as it ended
   const started = signal(0);
@@ -71,7 +87,43 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
   const clock = setInterval(() => going() && now.set(Date.now()), 1000);
   cleanup(() => clearInterval(clock));
   const took = () => duration(Math.max(0, now() - started()), "counter");
-  const start = () => {
+  const start = () => (again() ? startAgain() : startTrial());
+  /** The verdicts as the program keeps them (`run` the trial's run): each with its history over the program's runs. */
+  const withHistory = (run: string) =>
+    api.sessions
+      .history(run)
+      .then((h) => {
+        const kept = h?.trials ?? [];
+        steps.set((steps() ?? []).map((s) => ({ ...s, trial: s.trial && { ...s.trial, history: kept.find((x) => x.scenario === s.scenario)?.history ?? s.trial.history } })));
+      })
+      .catch(() => {});
+  const startAgain = () => {
+    const list = again() ?? [];
+    if (!list.length || trying()) return;
+    batch(() => (steps.set(trialSteps(list.map((x) => ({ name: x.scenario, about: x.about })))), ended.set(null), fresh.set(null), afresh.set(true), trying.set(true), started.set(Date.now()), now.set(Date.now())));
+    api.sessions
+      .trialAgain(props.path, limit(), 100, 30, (e) => {
+        // the fresh run's own events carry no scenario: the first that does ends it
+        if ("scenario" in e) {
+          if (afresh()) afresh.set(false);
+          steps.set(foldTrial(steps() ?? [], e as TrialEvent));
+          if ("state" in e && e.state === "done" && e.trial) announce(`${scenarioLabel(e.scenario)}: ${t(`trial.${e.trial.standing}`)}`);
+        }
+      })
+      .then((r) => {
+        const failed = r.cleanExit !== undefined && r.cleanExit !== null && r.cleanExit !== 0 ? r.cleanExit : null;
+        batch(() => (now.set(Date.now()), fresh.set(r.path), afresh.set(false), ended.set({ cancelled: r.cancelled, cleanFailed: failed }), trying.set(false)));
+        announce(r.cancelled ? t("trial.cancelled") : failed !== null ? t("trial.againFailed", { exit: failed }) : t("trial.endedSaid", { t: duration(Math.max(0, now() - started())) }));
+        sessionsChanged();
+        if (!r.cancelled && r.trials.length) void withHistory(r.path);
+        if (!r.cancelled && r.trials.length) props.onDone?.(r.trials);
+      })
+      .catch((e) => {
+        batch(() => (steps.set(null), afresh.set(false), trying.set(false)));
+        report(e);
+      });
+  };
+  const startTrial = () => {
     const list = chosen();
     if (!list.length || trying()) return;
     batch(() => (steps.set(trialSteps(list)), ended.set(null), trying.set(true), started.set(Date.now()), now.set(Date.now())));
@@ -85,6 +137,7 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
         batch(() => (now.set(Date.now()), ended.set({ cancelled: r.cancelled }), trying.set(false)));
         announce(r.cancelled ? t("trial.cancelled") : t("trial.endedSaid", { t: duration(Math.max(0, now() - started())) }));
         sessionsChanged();
+        if (!r.cancelled && r.trials.length) void withHistory(r.path);
         if (!r.cancelled && r.trials.length) props.onDone?.(r.trials);
       })
       .catch((e) => {
@@ -100,8 +153,17 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
       report(e);
     }
   };
-  // closing while it runs would leave a program running unseen: Stop first
-  const close = () => !going() && props.onClose();
+  // closing while it runs would leave a program running unseen: Stop first. Tried again, the
+  // fresh run opens (on its Runs pane, where the verdicts are)
+  const close = () => {
+    if (going()) return;
+    const f = fresh();
+    props.onClose();
+    if (f && props.onAgain) props.onAgain(f);
+  };
+  /** The verdicts of this dialog's trial that did not survive: what "Try again" would take up. */
+  const leftOver = () => (steps() ?? []).flatMap((s) => (s.trial && AGAIN.includes(s.trial.standing) ? [s.trial] : []));
+  const tryAgainHere = () => batch(() => (again.set(leftOver()), steps.set(null), ended.set(null)));
   // the session first, then the dialog closed: what closing does after a trial (the run's Runs pane) gives way to it
   const open = (session: string) => {
     props.onOpen?.(session);
@@ -143,6 +205,7 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
           <If when={s().trial}>
             {(x) => (
               <>
+                <If when={trialSince(x())}>{(h) => <Text testID={`trial-step-history-${s().scenario}`} class="text-small text-foreground">{h()}</Text>}</If>
                 <Muted class="text-small">{[trialText(x()), ...trialReasons(x())].filter(Boolean).join(" · ")}</Muted>
                 <If when={x().standing !== "survived"}>
                   <TrialWhere trial={x()} />
@@ -156,7 +219,7 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
   };
   return (
     <Modal open onClose={close} testID="trial-dialog" describe={refused() ?? (steps() ? (ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : undefined) : t("trial.dialogHint"))}>
-      <Title>{t("trial.dialogTitle")}</Title>
+      <Title>{again() ? t("trial.againTitle") : t("trial.dialogTitle")}</Title>
       <If when={plan.loading() && !plan()}>
         <Loading />
       </If>
@@ -169,8 +232,25 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
             else={
               // before it runs: what will run, how hard each scenario presses, what the program may do
               <ModalBody testID="trial-plan">
-                <Muted class="text-small">{t("trial.dialogHint")}</Muted>
+                <Muted class="text-small">{again() ? t("trial.againHint") : t("trial.dialogHint")}</Muted>
                 <Mono class="line-clamp-2">{`$ ${scrubCommand(p().command)}`}</Mono>
+                {/* trying again: the scenarios that did not survive, each with how it last stood */}
+                <If when={again()}>
+                  {(list) => (
+                    <Card pad="none" testID="trial-again-plan">
+                      <Each of={list()} key={(x) => x.scenario}>
+                        {(x, i) => (
+                          <Row first={i() === 0}>
+                            <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{scenarioLabel(x().scenario)}</Text>
+                            <Text class="shrink-0 font-mono text-caption text-muted-foreground">{trialAsked(x())}</Text>
+                            <Badge label={t(`trial.${x().standing}`)} tone={STANDING[x().standing]} />
+                          </Row>
+                        )}
+                      </Each>
+                    </Card>
+                  )}
+                </If>
+                <If when={!again()}>
                 <Card pad="none">
                   <Each of={p().scenarios} key={(s) => s.name}>
                     {(s, i) => (
@@ -188,13 +268,14 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
                     )}
                   </Each>
                 </Card>
-                <If when={p().project}>
+                </If>
+                <If when={p().project && !again()}>
                   <Muted class="text-small">{t("trial.project")}</Muted>
                 </If>
                 {/* side by side where there is room: the least window is no taller than the dialog with each on a row of its own */}
                 <View class="flex-row flex-wrap gap-x-6 gap-y-3">
                   {/* how hard: one number, for the scenarios it means one thing for; a project's own say theirs in sonde.toml */}
-                  <If when={p().scenarios.some((s) => s.maxTimes)}>
+                  <If when={!again() && p().scenarios.some((s) => s.maxTimes)}>
                     <Labeled label={t("trial.strength")}>
                       <Options testID="trial-times" value={`${times()}`} items={Array.from({ length: most() }, (_, i) => i + 1).map((n) => ({ value: `${n}`, title: t("trial.times", { n }) }))} onChange={(v) => times.set(Number(v))} />
                     </Labeled>
@@ -217,9 +298,13 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
               // as it goes, and once it ended: a row a scenario, its standing when it has one
               <ModalBody testID="trial-progress">
                 <View class="flex-row items-center gap-2">
-                  <Muted class="min-w-0 flex-1 text-small">{ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : t("trial.progress", { n: Math.min(trialDone(list()) + 1, list().length), of: list().length })}</Muted>
+                  <Muted class="min-w-0 flex-1 text-small">{ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : afresh() ? t("trial.afresh") : t("trial.progress", { n: Math.min(trialDone(list()) + 1, list().length), of: list().length })}</Muted>
                   <Text testID="trial-elapsed" class="shrink-0 tabular-nums text-small text-muted-foreground">{took()}</Text>
                 </View>
+                {/* tried again, the fresh run failed: no trial of it */}
+                <If when={ended()?.cleanFailed !== undefined && ended()?.cleanFailed !== null}>
+                  <Notice testID="trial-again-failed" tone="warn" text={t("trial.againFailed", { exit: ended()!.cleanFailed! })} />
+                </If>
                 <Card pad="none">
                   <Each of={list()} key={(s) => s.scenario}>
                     {(s, i) => row(s, i)}
@@ -235,9 +320,13 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
           when={going()}
           else={
             <>
-              <Button variant={steps() || refused() ? "outline" : "ghost"} label={steps() || refused() ? t("common.close") : t("common.cancel")} onPress={props.onClose} testID="trial-close" />
+              <Button variant={steps() || refused() ? "outline" : "ghost"} label={steps() || refused() ? t("common.close") : t("common.cancel")} onPress={close} testID="trial-close" />
+              {/* ended with scenarios that did not survive: after a change, only those again */}
+              <If when={ended() && !ended()!.cancelled && leftOver().length > 0}>
+                <Button variant="outline" icon="rotate-ccw" label={t("trial.again")} onPress={tryAgainHere} testID="trial-again-here" />
+              </If>
               <If when={the() && !steps()}>
-                <Button variant="primary" icon="play" label={t("trial.run", { n: chosen().length })} disabled={!chosen().length || !!running() || trying()} onPress={start} testID="trial-start" />
+                <Button variant="primary" icon="play" label={again() ? t("trial.againRun", { n: again()!.length }) : t("trial.run", { n: chosen().length })} disabled={(again() ? !again()!.length : !chosen().length) || !!running() || trying()} onPress={start} testID="trial-start" />
               </If>
             </>
           }

@@ -22,7 +22,11 @@ function command(cmd: boolean) {
   // there (a miss) and a bucket that is not (a failure: the errors chart has something to draw)
   // a pause first: a trial of it runs long enough to be seen running
   const pause = cmd ? "ping -n 3 127.0.0.1 >NUL" : "sleep 1.5";
-  return [pause, ...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
+  // its config read ten times (a finding: a key read again and again)
+  const again = cmd ? `(for /L %i in (1,1,10) do @${curl} -o ${sink} ${url}/demo/config/app.yaml)` : `for i in 1 2 3 4 5 6 7 8 9 10; do ${curl} -o ${sink} ${url}/demo/config/app.yaml; done`;
+  // a write whose refusal curl never hears (no -f): under faults it breaks
+  const put = `${curl} -X PUT --data hello -o ${sink} ${url}/demo/tour/notes.txt && echo wrote notes.txt`;
+  return [pause, ...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), again, put, `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
 }
 
 interface Variant {
@@ -119,7 +123,17 @@ for (const v of variants) {
     await app.waitFor("id:trial-elapsed");
     await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 90000 });
     await shot("02g-trial-done");
-    // closed, the run opens on its Runs pane, where the verdicts stay
+    // what broke, tried again on a fresh run (after a change, to see it survive): said first, then run
+    if (app.shows("id:trial-again-here")) {
+      await app.press("id:trial-again-here");
+      await app.waitFor("id:trial-again-plan", { timeout: 10000 });
+      await shot("02ga-again-plan");
+      await app.press("id:trial-start");
+      await app.waitFor("id:trial-progress", { timeout: 10000 });
+      await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 90000 });
+      await shot("02gb-again-done");
+    }
+    // closed, the run opens on its Runs pane, where the verdicts stay, each with its history
     await app.press("id:trial-close");
     await app.waitFor("id:history-trials", { timeout: 10000 });
     await shot("02h-runs-verdicts");
@@ -180,6 +194,14 @@ for (const v of variants) {
     await shot("03d-filtered");
     // a slice of the session's shape: the operations running then
     await app.press("id:clear-filter");
+    // why slow: the operations split by kind of request, and where the slow ones are, in a sentence
+    await app.press(v.lang ? "label:分组" : "label:Group by");
+    await app.press(v.lang ? "text:请求类型" : "text:Kind of request");
+    await app.waitFor("id:split-table", { timeout: 10000 });
+    await shot("03e-group-by");
+    await app.press(v.lang ? "label:分组" : "label:Group by");
+    await app.press(v.lang ? "text:逐个操作" : "text:Each operation");
+    await app.waitFor("id:operations");
     if (app.shows("id:session-shape")) {
       await app.hover("id:session-shape");
       await app.press("id:session-shape");
@@ -289,7 +311,7 @@ for (const v of variants) {
     await app.press("id:store-section-browse");
 
     await app.keyboard.press("mod+shift+a");
-    await app.waitFor("id:requests");
+    await app.waitFor("id:activity");
     await shot("05-activity");
     await app.press("id:activity-close");
 

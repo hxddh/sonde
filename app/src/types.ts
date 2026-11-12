@@ -948,6 +948,8 @@ export interface SessionView {
   trials?: Trial[];
   /** The requests a fault scenario answered, by id. */
   injected?: number[];
+  /** The SDK that sent most of its requests, from their user agents ("boto3 1.34"); absent in a share made before 18.0. */
+  sdk?: string | null;
   path: string;
   header: { endpoint: string; url: string; region: string; created: string; command?: string | null; cwd?: string | null; git?: GitStamp | null; /** a trial's session: the scenario its requests met */ scenario?: string | null };
   summary: SessionSummary;

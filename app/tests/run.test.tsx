@@ -74,7 +74,6 @@ test("an example session reads as operations, each opening on its requests", asy
   await app.waitFor("id:session-summary", { timeout: 10000 });
   expect(app.shows("label:/172 requests · 34 operations/")).toBe(true);
   expect(app.shows("label:/116 not found/")).toBe(true);
-  expect(app.shows("text:/27 SlateDB writes: conditional create/")).toBe(true);
   expect(app.shows("text:looked for the newest WAL: probed ids 1…128")).toBe(true);
   // acting on the findings, estimated; a finding pressed says what to change, by SDK
   expect(app.shows("text:/^Acting on \\d+ findings?: 172 → \\d+ requests/")).toBe(true);
@@ -89,6 +88,8 @@ test("an example session reads as operations, each opening on its requests", asy
   await app.press("text:manifest 3 written");
   await app.waitFor("id:operation-detail");
   expect(app.shows("text:/^requests · 5$/i")).toBe(true);
+  // the note most SlateDB writes share is each operation's own
+  expect(app.shows("text:/conditional create \\(If-None-Match: \\*\\)/")).toBe(true);
   await app.press("id:op-request-4");
   await app.waitFor("id:record-detail");
   expect(app.shows("text:if-none-match")).toBe(true);
@@ -97,9 +98,9 @@ test("an example session reads as operations, each opening on its requests", asy
   // the request's sections fold away as the inspector goes
   await app.waitUntil(() => !app.shows("id:inspector"), { timeout: 2000 });
   // a line each, so the operations keep the room; the one chosen says why it matters, in place
-  await app.press("id:observation-2");
-  expect(app.texts().some((t) => t.startsWith("Every operation of this kind made the same requests"))).toBe(true);
-  await app.press("id:observation-2");
+  await app.press("id:observation-1");
+  expect(app.texts().some((t) => t.startsWith("Listing the same prefix again and again is slow"))).toBe(true);
+  await app.press("id:observation-1");
   // ranked by the requests they bear on, with what acting on them saves
   expect(app.shows("text:/^slate\\/db\\/gc\\/manifest.boundary was read 46 times/")).toBe(true);
   expect(app.shows("id:observation-saving-0")).toBe(true);
@@ -354,15 +355,16 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   // what the run did chooses the scenarios: the two every program meets, and (it writes) the lost answer
   expect(app.shows("id:trial-scenario-slowdown")).toBe(true);
   expect(app.shows("id:trial-scenario-error")).toBe(true);
-  expect(app.shows("id:trial-scenario-skew")).toBe(true);
+  // a clock skew only for an SDK that retries it (curl does not)
+  expect(app.shows("id:trial-scenario-skew")).toBe(false);
   expect(app.shows("id:trial-scenario-lost-answer")).toBe(true);
   expect(app.shows("id:trial-scenario-fail-complete")).toBe(false);
-  expect(app.shows("label:Run 4 trials")).toBe(true);
+  expect(app.shows("label:Run 3 trials")).toBe(true);
   // one scenario taken off, the others run (the recording policy is the only limit)
   // the command names no {trial}: the runs write where the clean run wrote
   expect(app.shows("id:trial-shares")).toBe(true);
   await app.press("id:trial-scenario-error");
-  await app.waitFor("label:Run 3 trials");
+  await app.waitFor("label:Run 2 trials");
   await app.press("id:trial-start");
   await app.waitFor("id:trial-progress", { timeout: 10000 });
   expect(app.shows("id:trial-step-error")).toBe(false);
@@ -427,4 +429,102 @@ test("quitting ends the program being recorded and leaves its session a finished
   const again = await api.sessions.quit();
   expect(again.program).toBe(false);
   expect(again.session).toBe(null);
+});
+
+/** A command that reads one key ten times on its first run and once after: the finding it makes
+ * ("read 10 times") is fixed by the second run. The marker that tells the runs apart is the test's own. */
+function fixable() {
+  const marker = `/tmp/sonde-fixed-${Date.now()}`;
+  const get = "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/config/app.yaml -o /dev/null";
+  return `if [ -e ${marker} ]; then n=1; else n=10; touch ${marker}; fi; for i in $(seq $n); do ${get}; done`;
+}
+
+test("the fix loop: a finding fixed by the next run is said fixed, with what it saved, in Run and compared", async () => {
+  const app = await demo();
+  const cmd = fixable();
+  for (let i = 0; i < 2; i++) {
+    await app.clear("id:run-command");
+    await app.type("id:run-command", cmd);
+    await app.waitUntil(() => app.enabled("id:run-start"));
+    await app.press("id:run-start");
+    await app.waitFor("id:run-ended", { timeout: 20000 });
+    // the first run: its finding, and no run before it to be held to
+    if (i === 0) {
+      await app.waitFor("text:/demo\\/config\\/app\\.yaml was read 10 times/", { timeout: 10000 });
+      expect(app.shows("id:since-run")).toBe(false);
+    }
+  }
+  // the second: what changed since the run before, the finding fixed with what it saved
+  await app.waitFor("id:since-run", { timeout: 10000 });
+  expect(app.shows("text:/^Requests 10 → 1/")).toBe(true);
+  expect(app.shows("label:Fixed")).toBe(true);
+  expect(app.shows("text:/^saved 9 requests \\(predicted 9\\)/")).toBe(true);
+  // compared: the two runs, the finding fixed with its measured saving
+  await app.press("id:since-compare");
+  await app.waitFor("id:run-change", { timeout: 10000 });
+  await app.waitFor("id:compare-finding-0");
+  expect(app.shows("id:compare-saved-0")).toBe(true);
+  // the session itself says it too, and which SDK sent its requests
+  await app.press("id:compare-back");
+  await app.waitFor("id:since-run", { timeout: 10000 });
+  expect(app.shows("text:/from curl /")).toBe(true);
+});
+
+test("try again what broke: a fresh run, only what did not survive, each scenario with its history", async () => {
+  const app = await demo();
+  await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/again.txt -o /dev/null");
+  await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
+  await app.press("id:run-start");
+  await app.waitFor("id:run-ended", { timeout: 20000 });
+  await runAction(app, "run-try");
+  await app.waitFor("id:trial-plan", { timeout: 10000 });
+  // the slowdown alone: curl does not retry the write it was refused, and exits 0
+  for (const s of ["error", "skew", "lost-answer"]) if (app.shows(`id:trial-scenario-${s}`)) await app.press(`id:trial-scenario-${s}`);
+  await app.waitFor("label:Run 1 trial");
+  await app.press("id:trial-start");
+  await app.waitFor("text:/^How the program stood/", { timeout: 60000 });
+  expect(app.shows("label:Broke: The store asks to slow down")).toBe(true);
+  // what broke, again, from the dialog: said first (only that scenario), then run on a fresh run
+  await app.press("id:trial-again-here");
+  await app.waitFor("id:trial-again-plan");
+  expect(app.shows("label:Try 1 again")).toBe(true);
+  await app.press("id:trial-start");
+  await app.waitFor("text:/^How the program stood/", { timeout: 60000 });
+  // its history over the program's runs
+  await app.waitFor("id:trial-step-history-slowdown");
+  expect(app.shows("text:/^Broke since /")).toBe(true);
+  // closed, the fresh run opens on its Runs pane, where it can be tried again
+  await app.press("id:trial-close");
+  await app.waitFor("id:history-trials", { timeout: 10000 });
+  expect(app.shows("id:trial-history-slowdown")).toBe(true);
+  expect(app.shows("id:trial-again")).toBe(true);
+  // the session's header tries it under faults too
+  expect(app.shows("id:session-try")).toBe(true);
+}, 180000);
+
+test("why slow: Group by splits the operations with a sentence; a request's inspector shows its key's history", async () => {
+  const app = await open("../App.tsx", desktop);
+  await app.press("id:open-example");
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.press("label:Group by");
+  await app.press("text:Kind of request");
+  await app.waitFor("id:split-table", { timeout: 10000 });
+  expect(app.shows("id:split-sentence")).toBe(true);
+  expect(app.shows("id:operations")).toBe(false);
+  await app.press("label:Group by");
+  await app.press("text:Prefix");
+  await app.waitFor("text:Prefix");
+  // a finding chosen narrows the operations: they show again
+  await app.press("id:observation-0");
+  await app.waitFor("id:operations");
+  expect(app.shows("id:split-table")).toBe(false);
+  await app.press("id:observation-0");
+  // the hot key: every one of its requests, the one shown marked, another a press away
+  await app.press("text:manifest 3 written");
+  await app.waitFor("id:operation-detail");
+  await app.press("id:op-request-4");
+  await app.waitFor("id:record-detail");
+  await app.waitFor("id:key-history", { timeout: 10000 });
+  await app.press("id:key-request-0");
+  await app.waitFor("id:record-detail");
 });

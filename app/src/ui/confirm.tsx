@@ -6,7 +6,7 @@ import { bytes, count } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, asError } from "../native";
-import { notify, report, showRequest } from "../store";
+import { notify, report } from "../store";
 import type { Outcome, Plan } from "../types";
 import { Actions, Button, Field, Heading, Modal, Muted, Notice, SimpleTable, Title } from "./kit";
 import { Document } from "./record";
@@ -37,16 +37,13 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
       const o = await api.executePlan(p.id, typed());
       if (o.errors.length === 0) notify(t("confirm.done", { ok: count(o.succeeded), failed: count(o.failed) }));
       else {
-        // one toast for all of them: how many failed, and why the first did (its request a press away)
+        // one toast for all of them: how many failed, and why the first did (with the request id to quote)
         const first = asError(o.errors[0]);
-        const record = first.recordId;
         toast({
           id: "error",
           kind: "error",
           title: t("confirm.done", { ok: count(o.succeeded), failed: count(o.failed) }),
-          description: t("confirm.firstError", { reason: first.message }),
-          action: record !== null && record !== undefined ? t("common.showRequest") : undefined,
-          onAction: () => showRequest(record),
+          description: [t("confirm.firstError", { reason: first.message }), first.requestId ? `${t("common.requestId")}: ${first.requestId}` : ""].filter(Boolean).join(" · "),
         });
       }
       running.set(false);

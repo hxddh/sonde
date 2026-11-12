@@ -18,7 +18,24 @@ import { programOf, scrubCommand } from "./sessionview";
 export { scenarioLabel };
 
 
-export const STANDING = { survived: "pass", degraded: "warn", broke: "fail", untested: "neutral", refused: "warn" } as const;
+export const STANDING = { survived: "pass", degraded: "warn", broke: "fail", untested: "neutral", refused: "refused" } as const;
+
+/** The standings "Try again what broke" takes up: what did not survive, and what the policy refused (never judged). */
+export const AGAIN: Trial["standing"][] = ["broke", "degraded", "refused"];
+/** The verdicts to try again: the last of each scenario that did not survive. */
+export const toTryAgain = (trials: Trial[] | undefined): Trial[] => (trials ?? []).filter((x) => AGAIN.includes(x.standing));
+
+/** A scenario's verdicts over the program's runs, in a few words, when there are two or more: "Broke on Nov 12, survived since", or "Survived since Nov 10". */
+export function trialSince(x: Trial): string | null {
+  const h = x.history ?? [];
+  const last = h[h.length - 1];
+  if (!last || h.length < 2) return null;
+  const word = (s: Trial["standing"]) => t(`trial.${s}`).toLowerCase();
+  let i = h.length - 1;
+  while (i >= 0 && h[i].standing === last.standing) i--;
+  const said = i >= 0 ? t("trial.sinceChanged", { was: word(h[i].standing), day: day(h[i].at), now: word(last.standing) }) : t("trial.sinceSame", { now: word(last.standing), day: day(h[0].at) });
+  return said.charAt(0).toUpperCase() + said.slice(1);
+}
 
 /** What a trial found, in figures: the faults and their retries (and those
  * no retry was owed for), the wait before a retry, what it did to the load
@@ -105,6 +122,8 @@ export function TrialWhere(props: { trial: Trial }) {
  * trial that broke or degraded, why; a press opens the trial's own session
  * (a row whose session is gone only says what it found). */
 function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; action?: JSX.Element }) {
+  // the refused were never judged: their reasons in the policy's tone, not a failure's
+  const reasonTone = (x: Trial) => (x.standing === "broke" ? "text-fail" : x.standing === "refused" ? "text-status-refused" : "text-foreground");
   return (
     <Section testID="history-trials" title={t("trial.title")} description={t("trial.hint")} action={props.action} plain>
       <Card pad="none">
@@ -119,11 +138,13 @@ function Trials(props: { trials: Trial[]; onOpen?: (path: string) => void; actio
                   <Text class="text-body text-foreground">{scenarioLabel(x().scenario)}</Text>
                   <Text testID="trial-id" class="font-mono text-caption text-muted-foreground">{trialAsked(x())}</Text>
                 </View>
+                {/* the scenario over the program's runs: when it last changed */}
+                <If when={trialSince(x())}>{(h) => <Text testID={`trial-history-${x().scenario}`} class="text-small text-foreground">{h()}</Text>}</If>
                 <Muted class="text-small">{trialText(x())}</Muted>
                 {/* why it is not "survived", a line each */}
                 <If when={x().standing !== "survived" && x().reasons.length > 0}>
                   <View testID="trial-reasons" class="gap-1">
-                    <Each of={trialReasons(x())}>{(r) => <Text class={`text-small ${x().standing === "broke" ? "text-fail" : "text-foreground"}`}>{r()}</Text>}</Each>
+                    <Each of={trialReasons(x())}>{(r) => <Text class={`text-small ${reasonTone(x())}`}>{r()}</Text>}</Each>
                   </View>
                 </If>
                 {/* where it turned (the request, the program's line), and what to change */}
@@ -257,7 +278,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 }
 
 /** The Runs pane of a session: its program over its runs. */
-export function HistoryPane(props: { path: string; onOpen?: (path: string) => void; /** "Try under faults…": the app's own (a shared page runs nothing) */ onTry?: () => void }) {
+export function HistoryPane(props: { path: string; onOpen?: (path: string) => void; /** "Try under faults…": the app's own (a shared page runs nothing) */ onTry?: () => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
   // the program's own budget, where its project gives one
   const budget = () => {
     try {
@@ -352,7 +373,16 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
               <Verdicts h={x()} />
             </If>
             <If when={(x().trials?.length ?? 0) > 0}>
-              <Trials trials={x().trials!} onOpen={props.onOpen} />
+              <Trials
+                trials={x().trials!}
+                onOpen={props.onOpen}
+                action={
+                  // after a change to the program: only what did not survive, on a fresh run
+                  <If when={props.onTryAgain && !terminal() && toTryAgain(x().trials).length > 0}>
+                    <Button small variant="outline" icon="rotate-ccw" label={t("trial.again")} onPress={() => props.onTryAgain?.(toTryAgain(x().trials))} testID="trial-again" />
+                  </If>
+                }
+              />
             </If>
             <If when={x().since}>
               <SinceRow h={x()} />

@@ -1,16 +1,26 @@
-// A request in full, with the commands that redo it (aws s3api, curl
-// without a signature): the inspector's view in Activity and in Sessions.
+// A request of a session in the inspector: the request in full, the
+// commands that redo it (aws s3api, curl without a signature), and its key's
+// history in the session — every request to that key, whatever its
+// operation, each a press away.
 
+import { resource, Text, View } from "nsh";
+import { clock, count, duration } from "../format";
 import { t } from "../i18n";
 import { api } from "../native";
 import { copy } from "../store";
-import type { RequestRecord } from "../types";
-import { Button } from "../ui/kit";
-import { RecordView } from "../ui/record";
+import type { KeyRequest, RequestRecord } from "../types";
+import { Icon } from "./icon";
+import { Button, Card, Disclosure, ICON, ListRow, Muted, WIDTH } from "./kit";
+import { RecordView } from "./record";
+import { StatusMark } from "./sessionview";
 
-export function RecordDetail(props: { record: RequestRecord; onBack?: () => void; copyAs?: (kind: "cli" | "curl") => string | null }) {
+/** How many of a key's requests the inspector lists around the one shown. */
+const AROUND = 12;
+
+export function RecordDetail(props: { path: string; record: RequestRecord; onBack?: () => void; /** another request of the key pressed */ onRecord: (id: number) => void }) {
   const r = () => props.record;
-  const copyText = (text: string | null) => {
+  const copyAs = (kind: "cli" | "curl") => {
+    const text = api.sessions.copy(props.path, r().id, kind);
     if (text) copy(text);
   };
   return (
@@ -19,10 +29,72 @@ export function RecordDetail(props: { record: RequestRecord; onBack?: () => void
       onBack={props.onBack}
       actions={
         <>
-          <Button small variant="outline" icon="copy" label={t("requests.copyCli")} onPress={() => copyText(props.copyAs ? props.copyAs("cli") : api.copyAsAwsCli(r().id))} testID="copy-cli" />
-          <Button small variant="outline" icon="copy" label={t("requests.copyCurl")} onPress={() => copyText(props.copyAs ? props.copyAs("curl") : api.copyAsCurl(r().id))} testID="copy-curl" />
+          <Button small variant="outline" icon="copy" label={t("requests.copyCli")} onPress={() => copyAs("cli")} testID="copy-cli" />
+          <Button small variant="outline" icon="copy" label={t("requests.copyCurl")} onPress={() => copyAs("curl")} testID="copy-curl" />
         </>
       }
+      more={
+        <If when={r().key}>
+          <KeyHistory path={props.path} bucket={r().bucket ?? ""} keyName={r().key!} at={r().id} onRecord={props.onRecord} />
+        </If>
+      }
     />
+  );
+}
+
+/** Every request of the record's key in the session, in time order, the one shown marked: what
+ * happened to the key before and after it (written, read back, deleted, read again). Said only
+ * when the key had more than this one. */
+function KeyHistory(props: { path: string; bucket: string; keyName: string; at: number; onRecord: (id: number) => void }) {
+  const list = resource(
+    () => [props.path, props.bucket, props.keyName] as const,
+    async ([p, b, k]): Promise<KeyRequest[]> => {
+      try {
+        return await api.sessions.keyHistory(p, b, k);
+      } catch {
+        return [];
+      }
+    },
+  );
+  // a window of them around the one shown
+  const shown = () => {
+    const all = list() ?? [];
+    const i = Math.max(0, all.findIndex((x) => x.id === props.at));
+    const from = Math.max(0, Math.min(i - Math.floor(AROUND / 2), all.length - AROUND));
+    return { rows: all.slice(from, from + AROUND), from, total: all.length };
+  };
+  return (
+    <If when={(list()?.length ?? 0) > 1}>
+      <Disclosure open title={t("keyHistory.title")} count={list()!.length} testID="key-history">
+        <Card pad="none">
+          <Each of={shown().rows} key={(x) => `${x.id}`}>
+            {(x, i) => (
+              <ListRow
+                divided
+                first={i() === 0}
+                testID={`key-request-${shown().from + i()}`}
+                label={`${x().operation} ${clock(x().time, "ms")}`}
+                selected={x().id === props.at}
+                disabled={x().id === props.at}
+                onPress={() => props.onRecord(x().id)}
+                trailing={<Text class="shrink-0 tabular-nums text-small text-muted-foreground">{duration(x().latencyMs)}</Text>}
+              >
+                <View class={WIDTH.status}>
+                  <StatusMark status={x().status} injected={x().injected} />
+                </View>
+                <Text class="min-w-0 flex-1 text-small text-foreground line-clamp-1">{x().operation}</Text>
+                <Text class="shrink-0 font-mono text-caption text-muted-foreground">{clock(x().time, "ms")}</Text>
+                <If when={x().id !== props.at}>
+                  <Icon name="chevron-right" size={ICON.small} />
+                </If>
+              </ListRow>
+            )}
+          </Each>
+        </Card>
+        <If when={shown().total > shown().rows.length}>
+          <Muted class="text-caption">{t("keyHistory.more", { n: count(shown().rows.length), of: count(shown().total) })}</Muted>
+        </If>
+      </Disclosure>
+    </If>
   );
 }

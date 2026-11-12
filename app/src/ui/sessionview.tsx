@@ -8,13 +8,13 @@ import { Clipboard, effect, type JSX, List, Scroll, signal, Text, token, untrack
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
 import { change, clock, count, date, duration, middle, transfer } from "../format";
 import { t } from "../i18n";
-import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
+import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say } from "../phrases";
 import { Chart, sessionStory, Sparkline, timed, Waterfall, MARK } from "./plots";
 import { type SignalId, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
-import type { EpisodeRow, LogLine, Observation, RecordSummary, SessionView } from "../types";
+import type { EpisodeRow, FindingChange, LogLine, Observation, RecordSummary, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN } from "./kit";
+import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -25,6 +25,19 @@ export { SessionList, tellApart } from "./sessionlist";
 export { clock };
 
 const time = (iso: string) => new Date(iso).getTime();
+
+/** Where a finding stands against its program's run before (crates/proxy/src/fixloop.rs). */
+export type FindingState = FindingChange["state"];
+const STATE_TONE: Record<FindingState, "pass" | "info" | "warn" | "neutral"> = { fixed: "pass", less: "info", back: "warn", new: "info", open: "neutral" };
+/** A state as the reader's language says it ("Fixed", "又出现"). */
+export const stateLabel = (s: FindingState): string => {
+  const w = say([{ key: "fix." + s, args: {} }], s);
+  return w.charAt(0).toUpperCase() + w.slice(1);
+};
+/** A finding's state, as a badge. */
+export function StateBadge(props: { state: FindingState; testID?: string }) {
+  return <Badge testID={props.testID} label={stateLabel(props.state)} tone={STATE_TONE[props.state]} />;
+}
 
 export type Tone = "ok" | "miss" | "client" | "server" | "refused";
 
@@ -161,7 +174,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           <Title mono small lines={2}>
             {command() ? commandLine(command()!) : props.view.header.endpoint}
           </Title>
-          <Text class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git)].filter(Boolean).join(" · ")}</Text>
+          <Text testID="session-meta" class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
           {/* the session in a sentence: where its time went, and the first thing to do. It wraps
               to two lines as the pane narrows; what is past them is cut at the second line's end */}
           <If when={profile()?.groups.length}>
@@ -308,7 +321,7 @@ export function whatIfText(v: SessionView): string | null {
 /** What stands out in a session — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean }) {
+export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange> }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   /** How many operations a finding is about (a view lists the first of them only). */
   const about = (o: Observation) => o.episodesTotal ?? o.episodes?.length ?? 0;
@@ -355,6 +368,11 @@ export function Observations(props: { view: SessionView; filter?: number | null;
   /** Whether a finding has anything to open: its fixes, or (the app's own) a line for sonde.toml. */
   const advised = (o: Observation) => !!o.fixes?.length || !!(props.onExpect && o.identity) || !!(props.onStore && storeFixOf(o));
   const list = () => props.view.observations.slice(0, props.max ?? props.view.observations.length);
+  /** Its state against the run before, where it tells something: new, back or less (open is left unmarked). */
+  const state = (o: Observation) => {
+    const f = o.identity ? props.states?.[o.identity] : undefined;
+    return f && f.state !== "open" && f.state !== "fixed" ? f.state : null;
+  };
   if (terminal()) {
     return (
       <If when={props.view.observations.length > 0}>
@@ -372,6 +390,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
               >
                 <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
                   {o().level === "warn" ? "! " : "· "}
+                  <If when={state(o())}>{(st) => <Text class="text-info">{`[${stateLabel(st())}] `}</Text>}</If>
                   {observationText(o())}
                   <If when={!props.compact && observationSaving(o())}>{(s) => <Text class="text-status-ok">{` — ${s()}`}</Text>}</If>
                 </Text>
@@ -428,7 +447,17 @@ export function Observations(props: { view: SessionView; filter?: number | null;
         <Text class={`tabular-nums text-caption ${EMPHASIS} ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{count(i() + 1)}</Text>
       </View>
       <View class="min-w-0 flex-1 gap-1">
-        <Text class={`text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
+        <View class="flex-row items-start gap-2">
+          {/* where it stands against the program's run before: new, back, less */}
+          <If when={state(o())}>
+            {(st) => (
+              <View class="min-h-5 justify-center">
+                <StateBadge state={st()} testID={`observation-state-${i()}`} />
+              </View>
+            )}
+          </If>
+          <Text class={`min-w-0 flex-1 text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
+        </View>
         {/* why it matters and what acting on it saves: here, or (the finding opened, with fixes) once, in its advice */}
         <If when={(!dense() || props.filter === i()) && !opened(o, i) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
         <If when={(!dense() || props.filter === i()) && !opened(o, i) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>

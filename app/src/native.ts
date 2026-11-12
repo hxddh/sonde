@@ -40,20 +40,11 @@ export const api = {
   search: (ep: string, b: string, p: string, needle: string) => Sonde.search(ep, b, p, needle),
   jobs: () => Sonde.jobs() as T.JobInfo[],
   cancelJob: (id: string) => Sonde.cancelJob(id),
-  requests: (f: T.RequestFilter, limit: number) => Sonde.requests(f, limit) as T.RecordSummary[],
-  latestRequest: () => Sonde.latestRequest(),
   /** Follows the engine instead of asking it on a timer: `request` with the
    * newest record's id as records come, `jobs` with the number running as
    * jobs change; each at once with the value now. Stops with the view that
    * called it, or with the function it returns. */
-  on: ((event: string, listener: (v: number) => void) => Sonde.on(event, (v) => listener(v as number))) as (event: "request" | "jobs", listener: (v: number) => void) => () => void,
-  request: (id: number) => Sonde.request(id) as T.RequestRecord | null,
-  findRequest: (rid: string) => Sonde.findRequest(rid) as T.RequestRecord | null,
-  requestOperations: () => Sonde.requestOperations() as string[],
-  copyAsAwsCli: (id: number) => Sonde.copyAsAwsCli(id),
-  copyAsCurl: (id: number) => Sonde.copyAsCurl(id),
-  exportRequests: (format: "json" | "har", f: T.RequestFilter) => Sonde.exportRequests(format, f),
-  clearRequests: () => Sonde.clearRequests(),
+  on: ((event: string, listener: (v: number) => void) => Sonde.on(event, (v) => listener(v as number))) as (event: "jobs", listener: (v: number) => void) => () => void,
   mpuScan: (ep: string, b: string, p: string) => Sonde.mpuScan(ep, b, p),
   planAbort: (ep: string, b: string, rows: T.UploadRow[]) => Sonde.planAbort(ep, b, rows) as T.Plan,
   planLifecycle: async (ep: string, b: string, p: string, days: number) => (await Sonde.planLifecycle(ep, b, p, days)) as T.Plan,
@@ -83,8 +74,6 @@ export const api = {
     list: () => Sessions.list() as T.SessionInfo[],
     /** The programs run here, newest first, with their runs' trend. */
     programs: async () => (await Sessions.programs()) as unknown,
-    /** sonde's own requests (browsing, scans, probes) as a session file: its path. */
-    fromRequestLog: (limit = 100000) => Sessions.fromRequestLog(limit) as string,
     /** A session as a window opens it: its totals, signals, profile and findings, and the first page of its operations. Read off the interface's thread. */
     view: async (path: string) => (await Sessions.view(path)) as T.SessionView,
     /** The requests that started in a stretch of it (ms from its first request's start), reckoned as a session of their own: what the Time pane's charts not drawn over time read while a stretch is chosen. Off the interface's thread. */

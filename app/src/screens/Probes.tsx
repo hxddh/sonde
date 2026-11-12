@@ -11,7 +11,7 @@ import { t } from "../i18n";
 import { core, endpointName } from "../phrases";
 import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
-import { endpoint, endpoints, go, notify, report, showRequest } from "../store";
+import { endpoint, endpoints, go, notify, report } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
 import { Back, Badge, Bar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN } from "../ui/kit";
 import { Document } from "../ui/record";
@@ -42,7 +42,6 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
             <View class="flex-row items-center gap-2">
               <StatusMark status={r().status} />
               <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{r().operation}</Text>
-              <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(r().id)} />
             </View>
             <Text class="font-mono text-caption text-muted-foreground">{`${r().method} ${r().url}`}</Text>
             <If when={r().errorBody}>{(b) => <Document text={b()} mark />}</If>

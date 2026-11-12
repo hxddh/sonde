@@ -301,9 +301,11 @@ export function say(text: Phrase[] | undefined, fallback: string | undefined): s
 
 export const episodeTitle = (e: Pick<EpisodeRow, "titleText" | "title">) => say(e.titleText, e.title);
 
-/** An episode's notes, those said once for the whole session left out. */
-export function episodeNotes(e: Pick<EpisodeRow, "notes" | "notesText">, shared: string[]): string[] {
-  return e.notes.flatMap((n, i) => (shared.includes(n) ? [] : [say(e.notesText?.[i] ? [e.notesText[i]] : undefined, n)]));
+/** An episode's notes, in the reader's language. Those most writes of a format share (`shared`, a
+ * conditional create on every SlateDB write) were said once as a finding until 18.0; they are an
+ * operation's own notes again, so `shared` no longer leaves them out. */
+export function episodeNotes(e: Pick<EpisodeRow, "notes" | "notesText">, _shared: string[]): string[] {
+  return e.notes.map((n, i) => say(e.notesText?.[i] ? [e.notesText[i]] : undefined, n));
 }
 
 export const observationText = (o: Observation) => say(o.phrases, o.text);

@@ -13,7 +13,8 @@ import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
 import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, runAgain, running, start, startedAt, stop } from "../run";
-import { away, endpoint, endpoints, endpointsMode, go, openSession, paneOnOpen, report, sessionsChanged, showInSidebar } from "../store";
+import { away, compareOnOpen, endpoint, endpoints, endpointsMode, go, openSession, paneOnOpen, report, sessionsChanged, showInSidebar } from "../store";
+import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { TrialDialog } from "../ui/trial";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
@@ -270,6 +271,11 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
             tried = false;
             batch(() => (openSession.set(session), go("sessions")));
           }}
+          // tried again what broke: the fresh run, on its Runs pane
+          onAgain={(fresh) => {
+            tried = false;
+            batch(() => (paneOnOpen.set({ path: fresh, pane: "runs" }), openSession.set(fresh), go("sessions")));
+          }}
         />
       </If>
       <If when={r() && !r()!.removed}>
@@ -340,6 +346,17 @@ function LiveOperations() {
   const path = () => running()?.path ?? lastRun()?.path ?? null;
   // read again as the program's requests arrive, and once more as it ends
   const view = analysis(path, () => (tick(), lastRun())).view;
+  // once it ended: against the program's run before (its findings' states, what was fixed)
+  const since = sinceLastOf(() => {
+    const r = lastRun();
+    return r && !r.removed && r.path ? r.path : null;
+  });
+  const compareBefore = () => {
+    const r = lastRun();
+    const before = since()?.previous;
+    if (!r || !before) return;
+    batch(() => (compareOnOpen.set({ before, after: r.path }), openSession.set(r.path), go("sessions")));
+  };
   // its operations, in pages: the first of them as they arrive
   const operations = pagedOperations(() => path() ?? "", view);
 
@@ -366,7 +383,9 @@ function LiveOperations() {
             <If when={view()!.profile?.groups.length}>
               <Text testID="run-story" class="px-1 text-body leading-5 text-foreground">{sessionStory(view()!.profile)}</Text>
             </If>
-            <Observations view={view()!} dense max={3} whatIfUnder onFilter={(i) => i !== null && openLastRun(go, i)} />
+            <Observations view={view()!} dense max={3} whatIfUnder states={statesOf(since())} onFilter={(i) => i !== null && openLastRun(go, i)} />
+            {/* beside them, what changed since the program's run before: fixed (with what it saved), back */}
+            <SinceRun since={since()} max={3} onCompare={compareBefore} />
           </If>
           <OperationsTable view={view()!} source={operations} onSelect={() => lastRun() && openLastRun(go)} compact follow={!!running()} />
         </View>
