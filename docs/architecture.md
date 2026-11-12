@@ -33,74 +33,34 @@ reqlog ← s3raw ← sonde-proxy
 sonde-core, probes, decoders, sonde-proxy ← sonde-nsh, sonde-cli
 ```
 
-`sonde-proxy` needs no sonde configuration, only an endpoint. Only `sonde-nsh` and `sonde-cli` (feature `tui`)
-depend on Native Shell; replacing the UI framework keeps every crate but `sonde-nsh` and `app/`.
+- `sonde-proxy` needs no sonde configuration, only an endpoint.
+- Only `sonde-nsh` and `sonde-cli` (feature `tui`) depend on Native Shell: another UI framework replaces only
+  `sonde-nsh` and `app/`.
 
 ## Threads
 
-- **Engine thread** (Native Shell): the TSX VM and the reactive graph. `sonde/native` functions that wait are
-  `async` and hand their work to the runtime's threads with `background`; synchronous ones only read in-memory
-  state (the request log, a listing's rows).
-- **Tokio runtime**: requests, jobs, the demo server.
-- **Jobs** (`sonde-core::jobs`): each long operation is a job with its own `Throttle` (concurrency, requests per
-  second), a cancellation token and a broadcast of events. Cancelling drops the job's future, which aborts its
-  requests; screens cancel their jobs when they go (`cleanup`). TSX follows a job with `watchJob(id, listener)`,
-  which forwards events to a JS callback and resolves with the result.
-- **Retries**: `s3raw` retries 5xx, 429 and transport errors with exponential backoff and full jitter, honoring
-  `Retry-After`; each attempt is a record with its retry number.
+| Thread | Does |
+|---|---|
+| Engine (Native Shell) | The TSX VM and reactive graph. `sonde/native` calls that wait are `async` and run on the runtime (`background`); synchronous ones only read memory (the request log, a listing's rows). |
+| Tokio runtime | Requests, jobs, the demo server. |
+| Jobs (`sonde-core::jobs`) | Each long operation: its own `Throttle` (concurrency, rate), a cancellation token, a broadcast of events. Cancelling drops the future and its requests; screens cancel theirs on `cleanup`. TSX follows one with `watchJob(id, listener)`. |
 
-## Data flow of a listing
+Retries (`s3raw`): 5xx, 429 and transport errors, exponential backoff with full jitter, honouring `Retry-After`;
+each attempt is a record with its retry number.
 
-`new Listing(endpoint, bucket, prefix, "/")` holds the rows in Rust. TSX asks for the window it shows
-(`rows(start, 400)`) as the `DataTable` scrolls (`onVisibleRowsChange`), and `loadMore()` fetches the next
-ListObjectsV2 page when the table nears its end (`onLoadMore`). 100 000 keys never cross into JS at once.
+## Data paths
 
-## The terminal host
-
-`sonde tui` runs the embedded bundle on `nsh-platform-tui` with its own event loop (crossterm events through
-`nsh-tui-host::convert`) and an OSC 52 clipboard.
-
-## Run
-
-`Sessions.run` starts a recording endpoint, then the command through the user's shell in a pseudo-terminal
-(`portable-pty`: openpty on Unix, ConPTY on Windows) with the endpoint's variables set. A reader thread sends the
-output to the engine as it comes (a `Callback`: `{started}`, then `{data}`, decoded across UTF-8 boundaries) and
-appends it to the session as `{"log": {time, text}}` lines; Native Shell's `Terminal` draws it and sends keys and
-resizes back (`Sessions.input`, `Sessions.resize`). The run resolves with the exit status and the session's path.
-`sonde-proxy::logs` turns the chunks into timed lines, which the UI lines up with operations by time.
-
-## The web viewer
-
-`viewer/` is a second Native Shell project built with `--target web`: the same pure views as the app
-(`app/src/ui/sessionview.tsx`, `record.tsx`) reading a `session.json` that `sonde share` computes in Rust. No Rust
-runs in the browser. `crates/sonde-cli/build.rs` embeds the built site (from `$SONDE_VIEWER_DIR` or
-`viewer/.nsh/out/sonde-viewer`); a build without it says so when `sonde share` needs it.
-
-## The app's UI layer
-
-`app/src/ui/` is the styled layer over `nsh/base`: theme tokens (`app/theme.json`, read by the viewer too), icons
-(`icon.tsx` draws Lucide data from `lucide.ts`, written by `scripts/lucide.py`), shortcuts as each platform writes
-them (`keys.ts`), controls (`kit.tsx`), toasts (`toast.tsx`), the window's toolbar and sidebar (`shell.tsx`), the
-palette, and the session views shared with the web viewer (`sessionview.tsx`, `record.tsx`, `profile.tsx`). Pages
-compose these; they do not style base components of their own. The standards they follow — the type scale, surfaces,
-side panels, when a button is primary, motion and words — are in `app/DESIGN.md`, on top of Native Shell's design
-guides.
-
-## The two forms
-
-`App.tsx` branches on `platform.idiom === "terminal"`: windows get a sidebar with three places (Run, Sessions,
-Buckets), Settings and Compatibility in windows of their own (`Window.open`), Activity and a bucket's details in
-sheets (`setOverlay` in `store.ts` routes those sections there), the command palette and Canvas charts; terminals get
-a navigation stack holding every place, the F10 menu bar, keyboard shortcuts, tables and sentences instead of charts.
-The same screens serve both, adapting density (`terminal()` in `ui/kit.tsx`).
-
-A bucket's overview (`ui/overview.tsx`) starts the cheap scans as a bucket or prefix opens and keeps what they found
-per endpoint, bucket and prefix, shared with the sheets it opens, which reuse those results instead of scanning again.
+| Path | How |
+|---|---|
+| A listing | `new Listing(endpoint, bucket, prefix, "/")` holds rows in Rust; TSX asks for the visible window (`rows(start, 400)`, on `onVisibleRowsChange`); `loadMore()` fetches the next ListObjectsV2 page (`onLoadMore`). |
+| Run | `Sessions.run` starts an endpoint, then the command through the user's shell in a pty (`portable-pty`: openpty, ConPTY). A reader thread sends output to the engine (`{started}`, then `{data}`, UTF-8-safe) and appends `{"log": {time, text}}` lines; `Terminal` draws it and sends keys and resizes back (`Sessions.input`, `Sessions.resize`). Resolves with the exit status and session path. `sonde-proxy::logs` makes timed lines, lined up with operations by time. |
+| `sonde tui` | The embedded bundle on `nsh-platform-tui`, with its own event loop (crossterm via `nsh-tui-host::convert`) and an OSC 52 clipboard. |
+| The web viewer | `viewer/`, built with `--target web`: the app's pure views (`sessionview.tsx`, `record.tsx`) over a `session.json` computed in Rust; no Rust in the browser. `crates/sonde-cli/build.rs` embeds it from `$SONDE_VIEWER_DIR` or `viewer/.nsh/out/sonde-viewer`; without it `sonde share` says so. |
 
 ## A recording, and what is read from it
 
-The proxy re-signs each request with the real credentials and appends it to the `.sonde` file (a header line, a
-JSON line per request or output chunk; gzipped when finished). Then, in `sonde-proxy`:
+The proxy re-signs each request and appends it to the `.sonde` file (a header line, a JSON line per request or
+output chunk; gzipped when finished). Then, in `sonde-proxy`:
 
 | Module | Does |
 |---|---|
@@ -111,13 +71,27 @@ JSON line per request or output chunk; gzipped when finished). Then, in `sonde-p
 | `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
 | `summary.rs` | counts kept as `<name>.summary.json`, valid while file length, time and cache version match |
 | `view.rs` | analysed once, sent in pages (`Sessions.view`, `Sessions.episodes`): what crosses to the UI does not grow |
+| `phrase.rs` | each sentence as a key and arguments beside its English; the app and viewer render them per language (`app/src/phrases.ts`), falling back to English |
 
 Every size, count and duration in text comes from `sonde-fmt`, tested with the app's `format.ts` against
 `crates/fmt/cases.json`.
 
-## Phrases
+## The app
 
-What sonde says about a session — operation titles, notes, observations — is built in `sonde-proxy` as phrases
-(`phrase.rs`: a key and its arguments) beside the English text, which the same templates produce for the CLI. The
-app and the web viewer render the phrases in the reader's language (`app/src/phrases.ts`), falling back to the English
-text for a key they have no template for.
+- **UI layer** (`app/src/ui/`): the styled layer over `nsh/base` — theme tokens (`app/theme.json`, read by the
+  viewer too), icons (`icon.tsx`, Lucide data in `lucide.ts` from `scripts/lucide.py`), shortcuts (`keys.ts`),
+  controls (`kit.tsx`), toasts, toolbar and sidebar (`shell.tsx`), palette, and the session views shared with the
+  viewer (`sessionview.tsx`, `record.tsx`, `profile.tsx`). Pages compose these and never style base components.
+  Standards: `app/DESIGN.md`.
+- **Two forms**: `App.tsx` branches on `platform.idiom === "terminal"`.
+
+  | Window | Terminal |
+  |---|---|
+  | sidebar with Run, Sessions, Buckets | a navigation stack with every place |
+  | Settings, Compatibility in their own windows (`Window.open`) | the F10 menu bar, keyboard shortcuts |
+  | Activity, bucket details in sheets (`setOverlay` in `store.ts`) | |
+  | command palette, Canvas charts | tables and sentences |
+
+  The same screens serve both, adapting density (`terminal()` in `ui/kit.tsx`).
+- **Bucket overview** (`ui/overview.tsx`): starts the cheap scans when a bucket or prefix opens and keeps results per
+  endpoint, bucket and prefix, reused by the sheets it opens.
