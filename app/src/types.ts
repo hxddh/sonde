@@ -911,3 +911,7 @@ export interface RunResult {
   exit: number | null;
   path: string;
 }
+
+/** The requests that started in a stretch of a session, reckoned as a session of their own
+ * (`sessions.stretch`): its times are from its own first request, `offsetMs` after the session's. */
+export type Stretch = Pick<SessionView, "summary" | "profile"> & { signals: Signals; offsetMs: number };

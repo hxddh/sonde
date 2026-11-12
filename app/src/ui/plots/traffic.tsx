@@ -8,7 +8,7 @@ import { bytes, count, duration, rate, transfer } from "../../format";
 import { t } from "../../i18n";
 import { bytesRate, sizeLabel, sizeRange } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, GUTTER, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, TIME_TICK, TOP_LABEL, type Tone, VALUE_TICK_END, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, GRID, OUTCOMES } from "./system";
+import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, GUTTER, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, TIME_TICK, TOP_LABEL, type Tone, VALUE_TICK_END, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, GRID, OUTCOMES, ZERO_SLIVER } from "./system";
 import { EMPHASIS, terminal, textual, SimpleTable } from "../kit";
 
 // --- what ran at once ----------------------------------------------------------------
@@ -458,6 +458,10 @@ export function Sizes(props: { signals: Signals }) {
   const ticks = () => rows().map((_, i) => i).filter((i) => rows().length <= 12 || i % 2 === 0);
   // how many, at each bar's end (so the scale writes zero alone): "0" beside a bar that has a count, none where neither has
   const n = (r: { up: number; down: number }, v: number) => (v > 0 || r.up + r.down > 0 ? count(v) : "");
+  // a bar of none beside one with a count is drawn as a sliver on the baseline, so its "0" has a bar to stand on
+  // (a bar of no value is not drawn, and its label with it)
+  const top = () => Math.max(1, ...rows().map((r) => Math.max(r.up, r.down)));
+  const shown = (r: { up: number; down: number }, v: number) => (v > 0 ? v : r.up + r.down > 0 ? top() * ZERO_SLIVER : 0);
   return (
     <If when={!textual()} else={<SimpleTable columns={[t("requests.size"), t("sizes.sent"), t("sizes.received")]} rows={rows().map((r) => [r.name, count(r.up), count(r.down)])} />}>
       <Plot
@@ -476,8 +480,8 @@ export function Sizes(props: { signals: Signals }) {
         onHoverChange={({ index }) => hovered.set(index)}
         class={`${TICK_ROOM} ${PLOT} w-full`}
       >
-        <Bar value="up" class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].up)} labelClass={TOP_LABEL} />
-        <Bar value="down" class="fill-chart-4" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].down)} labelClass={TOP_LABEL} />
+        <Bar value={(r) => shown(r, r.up)} class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].up)} labelClass={TOP_LABEL} />
+        <Bar value={(r) => shown(r, r.down)} class="fill-chart-4" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].down)} labelClass={TOP_LABEL} />
         <PlotAxis tickValues={ticks()} format={(i) => rows()[i]?.name ?? ""} labelClass={BUCKET_TICK} />
         {/* every bar says its own count over itself: the scale writes zero alone (no peak chip) */}
         <ValueAxis marked peak={Math.max(1, ...rows().map((r) => Math.max(r.up, r.down)))} say={(v) => t("sizes.peak", { n: count(v) })} />

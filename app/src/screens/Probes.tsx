@@ -1,8 +1,10 @@
 // The compatibility matrix: probes run on several endpoints in parallel,
 // vendor × probe cells that open on the raw requests and responses, saved
-// runs and the difference between two of them.
+// runs and the difference between two of them. A section of Buckets: a run
+// takes minutes, so it outlives the section (its jobs are in Activity, where
+// they stop); back here, it shows how far it got, then its matrix.
 
-import { cleanup, Scroll, signal, Text, View } from "nsh";
+import { effect, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable } from "nsh/base";
 import { count, date, duration } from "../format";
 import { t } from "../i18n";
@@ -123,6 +125,12 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
 
 /** A terminal's matrix: a box of its own to scroll in (its page scrolls too). */
 
+// a run's state is the app's, not the section's: from the press on Run to its last job's end
+// a second press starts nothing; each endpoint's progress; bumped as a run ends (read again)
+const busy = signal(false);
+const running = signal<Record<string, string>>({});
+const ran = signal(0);
+
 export function Probes() {
   // the endpoint in use to start from; the bucket probes write to is chosen on purpose
   const chosen = signal<Record<string, boolean>>(endpoint() ? { [endpoint()!]: true } : {});
@@ -130,9 +138,6 @@ export function Probes() {
   const temp = signal(false);
   const slow = signal(true);
   const only = signal("");
-  // from the press on Run to its last job's end: a second press starts nothing
-  const busy = signal(false);
-  const running = signal<Record<string, string>>({});
   const matrix = signal<Matrix>(api.probeMatrix());
   const runs = signal<RunSummary[]>(api.probeRuns());
   const open = signal<{ probe: ProbeMeta; col: number } | null>(null);
@@ -141,14 +146,17 @@ export function Probes() {
   const diff = signal<Change[] | null>(null);
   // the page's own height: the matrix may take it, not more
   const height = signal(720);
-  const jobs: string[] = [];
-  cleanup(() => {
-    for (const j of jobs) api.cancelJob(j);
-  });
   const refresh = () => {
     matrix.set(api.probeMatrix());
     runs.set(api.probeRuns());
   };
+  // a run that ended while the section was away, or here
+  let seen = untracked(ran);
+  effect(() => {
+    const n = ran();
+    if (n !== seen) untracked(refresh);
+    seen = n;
+  });
   // the endpoints checked that are still there
   const picked = () => endpoints().filter((e) => chosen()[e.id]).map((e) => e.id);
   const canRun = () => !readOnly() && picked().length > 0 && scratch() !== "" && !busy();
@@ -158,7 +166,6 @@ export function Probes() {
     busy.set(true);
     try {
       const ids = await api.runProbes(eps, { bucket: scratch(), allowTempBuckets: temp(), includeSlow: slow(), only: only().split(",").map((s) => s.trim()).filter(Boolean) });
-      jobs.push(...ids);
       await Promise.all(
         ids.map(async (id, i) => {
           try {
@@ -172,11 +179,11 @@ export function Probes() {
           });
         }),
       );
-      refresh();
     } catch (e) {
       report(e);
     }
     busy.set(false);
+    ran.update((n) => n + 1);
   };
   const detail = () => {
     const o = open();

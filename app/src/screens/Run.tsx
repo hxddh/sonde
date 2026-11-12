@@ -360,12 +360,13 @@ function LiveOperations() {
           <If when={!terminal() && !lastRun() && view()!.profile}>
             <LivePanel profile={view()!.profile} />
           </If>
-          {/* once it ended: the run in a sentence and what stands out, where the user already looks */}
+          {/* once it ended: the run in a sentence, then its top findings with what each saves and the one
+              figure for acting on them; a finding pressed opens the session on it, its fix open */}
           <If when={lastRun() && view()}>
             <If when={view()!.profile?.groups.length}>
-              <Text testID="run-story" class="px-1 text-body leading-5 text-foreground">{sessionStory(view()!.profile, view()!.observations)}</Text>
+              <Text testID="run-story" class="px-1 text-body leading-5 text-foreground">{sessionStory(view()!.profile)}</Text>
             </If>
-            <Observations view={view()!} compact max={3} />
+            <Observations view={view()!} dense max={3} whatIfUnder onFilter={(i) => i !== null && openLastRun(go, i)} />
           </If>
           <OperationsTable view={view()!} source={operations} onSelect={() => lastRun() && openLastRun(go)} compact follow={!!running()} />
         </View>

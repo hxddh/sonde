@@ -87,7 +87,6 @@ test("compatibility: runs probes on the demo and fills the matrix", async () => 
   expect(app.shows("text:/^aws behavior$/i")).toBe(true);
   expect(app.shows("text:/^requests and responses$/i")).toBe(true);
   // read-only again, as the other tests find it
-  await app.window("compat").pressClose();
   await place(app, "settings");
   await app.press("id:read-only");
   await app.waitFor("label:Read-only");
@@ -207,6 +206,12 @@ test("sonde:// links keep a stretch of time: a session opens on its Time pane ov
   await app.waitFor("id:time-pane", { timeout: 10000 });
   // the timeline says the stretch it shows, and offers the whole session back
   await app.waitFor("id:zoom-reset", { timeout: 5000 });
+  // the stretch is the pane's selection: a chart not drawn over time is reckoned again from the
+  // requests that started in it, and says so
+  const held = await api.sessions.stretch(example!.path, 0, 200);
+  expect(held.summary.requests).toBeGreaterThan(0);
+  expect(held.summary.requests).toBeLessThan(172);
+  await app.waitFor("text:/ · in \\+.* – \\+200 ms$/", { timeout: 5000 });
 });
 
 test("language: Chinese strings", async () => {

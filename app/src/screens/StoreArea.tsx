@@ -1,8 +1,10 @@
-// Buckets: what is in a bucket. The endpoint's buckets in the sidebar, as a
-// tree whose folders are their prefixes (loaded as they open); beside it
-// the chosen prefix's objects, under cards that say what sonde noticed —
-// each opens its detail (incomplete uploads, versions, size, layouts) in a
-// sheet. A terminal keeps them as tabs.
+// Buckets: the store's side, in one place. The endpoint's buckets in the
+// sidebar, as a tree whose folders are their prefixes (loaded as they open);
+// beside it one row of sections — the chosen prefix's objects (under tiles
+// that say what sonde noticed, each a press to its section), its size, its
+// incomplete uploads, a key's versions, the layouts it holds, and the
+// endpoint's compatibility. The row is the one way to each (a finding whose
+// fix is one of them opens it too); a terminal has the same row.
 
 import { batch, cleanup, effect, resource, signal, Text, untracked, View } from "nsh";
 import { Tree, type TreeItem, type TreeRef } from "nsh/base";
@@ -10,18 +12,16 @@ import { isAvailable, Menu } from "nsh/desktop";
 import { t } from "../i18n";
 import { sectionLabel } from "../labels";
 import { api, asError, Listing } from "../native";
-import { bucket, chooseBucket, copy, endpoint, go, prefix, report, showInSidebar, STORE_TABS, type StoreTab, storeSheet, storeTab } from "../store";
+import { bucket, chooseBucket, copy, endpoint, go, prefix, report, showInSidebar, STORE_TABS, type StoreTab, storeTab } from "../store";
 import type { Entry } from "../types";
-import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Button, IconButton, Loading, Notice, PanelHeader, ROWS, Segmented, SideHeader, SidePanel, terminal, WIDTH } from "../ui/kit";
+import { Icon, iconSvg } from "../ui/icon";
+import { Button, IconButton, Loading, Notice, ROWS, Segmented, SideHeader, terminal, WIDTH } from "../ui/kit";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
 import { Layouts } from "./Layouts";
 import { Multipart } from "./Multipart";
 import { Probes } from "./Probes";
 import { Versions } from "./Versions";
-
-const TAB_ICON: Record<StoreTab, IconName> = { browse: "folder", multipart: "layers", versions: "file-clock", capacity: "chart-pie", layouts: "boxes", probes: "flask-conical" };
 
 function screen(s: StoreTab) {
   switch (s) {
@@ -147,8 +147,6 @@ function useBuckets() {
     void Menu.popup([
       { label: t("store.copyName"), icon: iconSvg("copy"), onSelect: () => copy(b) },
       { label: t("store.copyUri"), icon: iconSvg("link"), onSelect: () => copy(`s3://${b}/`) },
-      { type: "separator" },
-      ...(["multipart", "capacity", "layouts"] as StoreTab[]).map((s) => ({ label: sectionLabel(s), onSelect: () => (chooseBucket(b), go(s)) })),
     ]);
   };
 
@@ -217,24 +215,16 @@ function useBuckets() {
   return { list, needed };
 }
 
-/** A detail of the bucket, from the edge of the window. */
-function DetailSheet() {
-  const close = () => storeSheet.set(null);
+/** The sections of Buckets, in one row: Objects first, the endpoint's compatibility last. */
+const sections = () => STORE_TABS.map((s) => ({ value: s, title: s === "browse" ? t("nav.objects") : sectionLabel(s) }));
+
+/** A section, rebuilt per section and per place (endpoint, bucket, prefix): each owns its jobs,
+ * and another bucket's report is never left under this one's name. */
+function Section() {
   return (
-    <SidePanel open={storeSheet() !== null} onClose={close} size="wide">
-      <If when={storeSheet()}>
-        {(s) => (
-          <View class="flex-1" testID="store-sheet">
-            <PanelHeader icon={TAB_ICON[s()]} title={sectionLabel(s())} subtitle={`${bucket() ?? ""}/${prefix()}`} onClose={close} closeTestID="sheet-close" />
-            {/* rebuilt per detail and per place (endpoint, bucket, prefix): each owns its jobs, and
-                another bucket's report is never left under this one's name */}
-            <Each of={[{ tab: s(), at: `${s()}\n${endpoint()}\n${bucket()}\n${prefix()}` }]} key={(x) => x.at}>
-              {(x) => <View class="min-h-0 flex-1">{screen(x().tab)}</View>}
-            </Each>
-          </View>
-        )}
-      </If>
-    </SidePanel>
+    <Each of={[{ tab: storeTab(), at: `${storeTab()}\n${endpoint()}\n${bucket()}\n${prefix()}` }]} key={(x) => x.at}>
+      {(x) => <View class="min-h-0 flex-1">{screen(x().tab)}</View>}
+    </Each>
   );
 }
 
@@ -243,7 +233,7 @@ export function StoreArea() {
     return (
       <View class="flex-1" testID="screen-store">
         <View class="flex-row px-1">
-          <Segmented testID="tab" value={storeTab()} items={STORE_TABS.map((s) => ({ value: s, title: s === "browse" ? t("nav.objects") : sectionLabel(s) }))} onChange={(s) => go(s as StoreTab)} />
+          <Segmented testID="tab" value={storeTab()} items={sections()} onChange={(s) => go(s as StoreTab)} />
         </View>
         <View class="flex-1">{screen(storeTab())}</View>
       </View>
@@ -254,8 +244,11 @@ export function StoreArea() {
   cleanup(showInSidebar("store", list, needed));
   return (
     <View class="flex-1" testID="screen-store">
-      <Browse />
-      <DetailSheet />
+      {/* the sections (each says the bucket and prefix it is about itself) */}
+      <View class="flex-row items-center px-4 pt-4">
+        <Segmented testID="store-section" value={storeTab()} items={sections()} onChange={(s) => go(s as StoreTab)} />
+      </View>
+      <Section />
     </View>
   );
 }

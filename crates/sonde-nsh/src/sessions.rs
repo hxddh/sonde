@@ -540,6 +540,51 @@ fn view_of(path: &str) -> Result<JsonValue, String> {
     ))
 }
 
+/// [`Sessions::stretch`] over `records`: those that started from `from_ms`
+/// up to `to_ms` after the first one's start.
+fn stretch_of(
+    records: &[reqlog::Record],
+    prices: &sonde_proxy::profile::RequestPrices,
+    from_ms: f64,
+    to_ms: f64,
+) -> JsonValue {
+    let t0 = records
+        .iter()
+        .map(|r| r.time.timestamp_micros())
+        .min()
+        .unwrap_or(0);
+    let (from_us, to_us) = ((from_ms * 1000.0) as i64, (to_ms * 1000.0) as i64);
+    let held: Vec<reqlog::Record> = records
+        .iter()
+        .filter(|r| {
+            let at = r.time.timestamp_micros() - t0;
+            at >= from_us && at < to_us
+        })
+        .cloned()
+        .collect();
+    let (summary, signals, profile) = std::thread::scope(|scope| {
+        let summary = scope.spawn(|| sonde_proxy::summary::summarize(&held));
+        let signals = scope.spawn(|| sonde_proxy::signals::signals(&held, prices));
+        let profile = sonde_proxy::profile::profile(&held, prices);
+        (
+            summary
+                .join()
+                .unwrap_or_else(|p| std::panic::resume_unwind(p)),
+            signals
+                .join()
+                .unwrap_or_else(|p| std::panic::resume_unwind(p)),
+            profile,
+        )
+    });
+    // where the stretch's own first request started, from the session's: its times are from there
+    let offset_ms = held
+        .iter()
+        .map(|r| r.time.timestamp_micros())
+        .min()
+        .map_or(0.0, |at| (at - t0) as f64 / 1000.0);
+    json!({ "summary": to_json(summary), "profile": to_json(profile), "signals": to_json(signals), "offsetMs": offset_ms })
+}
+
 /// A page's query as the interface sends it.
 fn query_of(query: JsonValue) -> Result<sonde_proxy::view::Query, String> {
     if query.is_null() {
@@ -1367,6 +1412,26 @@ impl Sessions {
         tokio::task::spawn_blocking(move || view_of(&path))
             .await
             .map_err(err_msg)?
+    }
+
+    /// The requests that started in a stretch of a session (`from_ms` to
+    /// `to_ms` after its first request's start), reckoned as a session of
+    /// their own: `{ summary, profile, signals, offsetMs }` (its times are
+    /// from its own first request, `offsetMs` after the session's) — what the Time pane's
+    /// charts that are not drawn over time read while a stretch is chosen,
+    /// so every chart follows the selection. Off the interface's thread.
+    pub async fn stretch(path: String, from_ms: f64, to_ms: f64) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let s = open_session(&path)?;
+            Ok(stretch_of(
+                &s.records,
+                &crate::state::request_prices_for(&s.header.endpoint),
+                from_ms,
+                to_ms,
+            ))
+        })
+        .await
+        .map_err(err_msg)?
     }
 
     /// A range of a session's operations, sorted and narrowed as the table
@@ -2775,6 +2840,32 @@ mod tests {
             });
         }
         w.flush().unwrap();
+    }
+
+    #[test]
+    fn a_stretch_is_the_requests_that_started_in_it_reckoned_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many.sonde");
+        // one request every 100 ms
+        many(&path, 100);
+        let s = open_session(&path.to_string_lossy()).unwrap();
+        let prices = sonde_proxy::profile::RequestPrices::default();
+        // from 1 s up to (not including) 2 s: ten requests
+        let v = stretch_of(&s.records, &prices, 1000.0, 2000.0);
+        assert_eq!(v["summary"]["requests"], 10);
+        assert_eq!(
+            v["offsetMs"], 1000.0,
+            "its times are from its own first request"
+        );
+        assert!(
+            v["profile"]["groups"]
+                .as_array()
+                .is_some_and(|g| !g.is_empty())
+        );
+        assert!(v["signals"]["statuses"].is_array());
+        // a stretch nothing started in: a session of nothing, said as such
+        let none = stretch_of(&s.records, &prices, 50_000.0, 60_000.0);
+        assert_eq!(none["summary"]["requests"], 0);
     }
 
     #[test]

@@ -9,9 +9,9 @@ const SETTINGS = ["settings", "endpoints"];
 const ACTIVITY = ["requests", "jobs", "audit"];
 
 /** Goes to a place, or to a tab of one. A window opens Settings in a window
- * of their own (⌘,), Activity from its toolbar, a bucket's details from its
- * cards and compatibility from the endpoints; a terminal lists every
- * place on its home list. */
+ * of their own (⌘,), Activity from its toolbar, and Buckets' sections (a
+ * bucket's tools, compatibility) from the place's one row of sections; a
+ * terminal lists every place on its home list. */
 export async function place(app: App, where: string) {
   const area = STORE.includes(where) ? "store" : SETTINGS.includes(where) ? "settings" : ACTIVITY.includes(where) ? "activity" : where;
   const window = app.shows("id:toolbar");
@@ -21,22 +21,13 @@ export async function place(app: App, where: string) {
     await app.press(`id:tab-${where}`);
     return;
   }
-  if (window && where === "probes") {
-    await place(app, "endpoints");
-    await app.press("id:open-compat");
-    await app.waitFor("id:screen-probes");
-    return;
-  }
-  // a bucket's details open in a sheet over its objects, from its cards
+  // Buckets' sections, from its row of them
   if (window && area === "store") {
-    if (app.shows("id:store-sheet")) await app.press("id:sheet-close");
     // a narrow window folds the sidebar away
     if (!app.shows("id:nav-store")) await app.keyboard.press("mod+b");
     await app.press("id:nav-store");
-    if (where !== "browse") {
-      await app.press(`id:overview-${where}`);
-      await app.waitFor(`id:screen-${where}`);
-    }
+    await app.press(`id:store-section-${where}`);
+    await app.waitFor(`id:screen-${where}`);
     return;
   }
   if (window && area === "activity") {

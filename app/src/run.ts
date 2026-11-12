@@ -6,7 +6,7 @@ import { announce, batch, effect, lifecycle, Notifications, platform, signal, St
 import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { area, compareOnOpen, endpoint, go, notify, openSession, report, sessionsChanged, settings, wasRead } from "./store";
+import { area, compareOnOpen, endpoint, go, notify, openSession, paneOnOpen, report, sessionsChanged, settings, wasRead } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
 import { programOf, scrubCommand } from "./ui/sessionview";
@@ -263,11 +263,14 @@ export function input(data: string) {
 }
 
 /** Opens the last run in Sessions, lined up with its output. */
-export function openLastRun(go: (s: "sessions") => void) {
+export function openLastRun(go: (s: "sessions") => void, finding?: number) {
   const r = lastRun();
   if (!r || r.removed) return;
-  openSession.set(r.path);
-  go("sessions");
+  batch(() => {
+    if (finding !== undefined) paneOnOpen.set({ path: r.path, pane: "operations", finding });
+    openSession.set(r.path);
+    go("sessions");
+  });
 }
 
 const NOTIFY = "sonde-run:";

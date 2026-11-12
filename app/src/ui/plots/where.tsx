@@ -1,13 +1,13 @@
 // Where: prefixes named, where requests went (flows), when each prefix was
 // busy, the map of prefixes, and what the requests cost.
 
-import { signal, Text, token, View } from "nsh";
+import { signal, Text, View } from "nsh";
 import { Bar, Cell, Plot, PlotAxis, Sankey, Treemap } from "nsh/base/plot";
 import { cost, count, duration, percent, costParts } from "../../format";
 import { t } from "../../i18n";
 import { nearestLimit } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AREA_LABEL, AREA_VALUE, AXIS_LABEL, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, FLOWS, GROUP_LABEL, GUTTER, GUTTER_BOTH, GUTTER_CHARS, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, TICK_ROOM, TREEMAP, axisName, pct, rowsHeight, tipValue, tail, TimeAxis, BARS, CELLS, TIP } from "./system";
+import { AREA_LABEL, AREA_VALUE, AXIS_LABEL, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, FLOWS, GROUP_LABEL, GUTTER, GUTTER_BOTH, GUTTER_CHARS, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, TICK_ROOM, TREEMAP, axisName, pct, rowsHeight, tipValue, tail, TimeAxis, BARS, CELLS, TIP, HEAT_RAMP } from "./system";
 import { Options, terminal, textual, SimpleTable } from "../kit";
 
 // --- prefixes, named ---------------------------------------------------------------
@@ -189,7 +189,7 @@ export function Heat(props: { profile: Profile; range?: [number, number] | null 
         xScale={{ type: "band", domain: bins(), paddingInner: CELLS.heat }}
         yScale={{ type: "band", domain: names(), paddingInner: CELLS.heat }}
         // by the square root: one hot cell does not wash out the rest
-        colorScale={{ type: "sequential", domain: [0, Math.sqrt(max())], range: [token("bar-track" as never) as unknown as string, token("chart-1" as never) as unknown as string] }}
+        colorScale={{ type: "sequential", domain: [0, Math.sqrt(max())], range: HEAT_RAMP() }}
         accessibilityLabel={label()}
         accessibilityValue={tipValue(tip())}
         appearGeneration={1}

@@ -158,8 +158,6 @@ export const COLUMN = {
   keyLeast: 120,
   /** an upload's mark (an icon) */
   flag: 24,
-  /** a day in full ("2026年12月30日") */
-  day: 124,
   /** a date and time in full ("Sep 30, 2026, 12:59 PM") */
   date: 172,
   /** an age ("9,999 d") */

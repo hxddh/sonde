@@ -184,25 +184,38 @@ jobs:
           name: sonde-shots-${{ matrix.name }}
           path: app/shots/*.png
           if-no-files-found: warn
-      # what changed on screen since the last green run of this workflow, in
-      # the job summary, with before | after | difference images to look at
-      - name: Screens against the last green run
+      # the tour gates a merge: what changed on screen since the last green run
+      # of this workflow on the default branch, in the job summary with
+      # before | after | difference images; a screen that changed (past 0.5%
+      # of its pixels, font smoothing aside) or is new must match the picture
+      # approved for it in app/shots.approved.json, or the job fails. Approving
+      # is committing that file (scripts/shots-diff.py approve, on this run's
+      # sonde-shots-<platform> artifact). A platform with no approved pictures
+      # is reported, not held.
+      - name: Screens against the last green run, held to the approved ones
         if: success()
-        # a report for a person, never a failure
-        continue-on-error: true
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          prev=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].id' || true)
-          if [ -z "$prev" ]; then echo "no green run to compare with"; exit 0; fi
           mkdir -p shots-before
-          gh run download "$prev" -R "${{ github.repository }}" -n "sonde-shots-${{ matrix.name }}" -D shots-before || { echo "no screenshots in run $prev"; exit 0; }
+          prev=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?status=success&branch=${{ github.event.repository.default_branch }}&per_page=1" --jq '.workflow_runs[0].id' || true)
+          if [ -n "$prev" ]; then
+            gh run download "$prev" -R "${{ github.repository }}" -n "sonde-shots-${{ matrix.name }}" -D shots-before || echo "no screenshots in run $prev: every screen is held to the approved ones"
+          else
+            echo "no green run to compare with: every screen is held to the approved ones"
+          fi
           # a venv of its own: macOS's Python takes no packages system-wide (PEP 668)
           python3 -m venv "$RUNNER_TEMP/diff"
           py="$RUNNER_TEMP/diff/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/diff/Scripts/python"
           "$py" -m pip install -q pillow
-          "$py" scripts/shots-diff.py shots-before app/shots shots-diff >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          "$py" scripts/shots-diff.py shots-before app/shots shots-diff --approved app/shots.approved.json --platform ${{ matrix.name }} > shots-report.md || status=$?
+          cat shots-report.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" != 0 ]; then
+            echo "::error title=Screenshots::a screen changed and is not approved: see the job summary and the sonde-shots-diff-${{ matrix.name }} artifact; approve with scripts/shots-diff.py approve"
+          fi
+          exit "$status"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: success()
+        if: always()
         with:
           name: sonde-shots-diff-${{ matrix.name }}
           path: shots-diff/*.png
