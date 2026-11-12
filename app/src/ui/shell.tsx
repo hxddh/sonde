@@ -10,7 +10,7 @@ import { t } from "../i18n";
 import { areaLabel, sectionLabel, vendorName } from "../labels";
 import { api } from "../native";
 import { running } from "../run";
-import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, openSession, openSessionFile, readOnly, section, settings, sessionsTick, sideList, storeTab, useEndpoint } from "../store";
+import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, openSession, openSessionFile, section, settings, sessionsTick, sideList, storeTab, useEndpoint } from "../store";
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./sessionview";
@@ -206,18 +206,6 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
       <RunningPill />
       <EndpointSwitcher />
       <ActivityButton onPress={() => (activityOpen() ? activityOpen.set(false) : go("activity"))} />
-      {/* read-only is the calm state, a lock among the icons; writable is the one to notice, in words */}
-      <If
-        when={readOnly()}
-        else={
-          <BaseButton testID="toolbar-lock" accessibilityLabel={t("common.readOnlyOff")} tooltip={<Tip text={t("settings.readOnlyHint")} />} onPress={() => go("settings")} class={`h-7 flex-row items-center gap-2 rounded-(--radius) border border-warn/50 bg-warn/10 px-2 hover:bg-warn/15 ${FOCUS}`}>
-            <Icon name="lock-open" size={ICON.small} tint="warn" />
-            <Text class="text-small text-warn">{t("common.readOnlyOff")}</Text>
-          </BaseButton>
-        }
-      >
-        <IconButton testID="toolbar-lock" icon="lock" label={t("common.readOnlyOn")} onPress={() => go("settings")} />
-      </If>
       <SearchButton />
       <If when={!mac}>
         <IconButton

@@ -8,7 +8,7 @@ import { bytes, count, date } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, Listing, watch } from "../native";
-import { bucket, copy, endpoint, go, notify, prefix, report, showRequest, versionKey } from "../store";
+import { bucket, copy, endpoint, go, notify, prefix, report, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName, iconSvg } from "../ui/icon";
 import { Await, Back, Bar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE } from "../ui/kit";
@@ -142,7 +142,6 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                 <Button small variant="outline" icon="download" label={t("browse.download")} onPress={download} disabled={progress() !== null} testID="download" />
                 <Button small variant="outline" icon="copy" label={t("store.copyUri")} onPress={() => copy(uri())} testID="copy-uri" />
                 <Button small variant="outline" icon="file-clock" label={t("browse.versionsOpen")} onPress={() => batch(() => (versionKey.set(d().key), go("versions")))} />
-                <Button small variant="outline" icon="radio" label={t("common.showRequest")} onPress={() => showRequest(d().recordId)} />
               </View>
               <If when={progress()}>{(p) => <Bar value={null} label={p()} />}</If>
               <KeyValue

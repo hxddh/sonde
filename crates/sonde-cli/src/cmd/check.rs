@@ -62,6 +62,10 @@ pub struct CheckArgs {
     /// `[[scenario]]` is the project's own to add.
     #[arg(long)]
     init: bool,
+    /// With -f markdown: the link to the whole report (`sonde share --html`,
+    /// kept by CI) the comment ends with.
+    #[arg(long, value_name = "URL")]
+    report_url: Option<String>,
     /// The format written: table, json, markdown (a pull request's comment) or github (annotations).
     #[arg(
         long,
@@ -167,12 +171,15 @@ fn init_project(
         "{}",
         [
             "",
-            "In CI (GitHub Actions), run the program through sonde and check it:",
+            "In GitHub Actions, the sonde action records the program, checks it against",
+            "the base branch's run and keeps one comment on the pull request (docs/ci.md):",
             "",
-            "      - run: sonde run -- <your command>",
-            "      - run: sonde check -f github",
+            "      - uses: hxddh/sonde@v18",
+            "        with:",
+            "          run: <your command>",
+            "          run-args: --url <the S3 endpoint>",
             "",
-            "For a comment on the pull request, `sonde check -f markdown`.",
+            "Elsewhere: `sonde run -- <your command>`, then `sonde check -f markdown`.",
         ]
         .join("\n")
     );
@@ -249,9 +256,8 @@ fn program_runs(
     // the run checked is the newest, wherever its file is
     found.retain(|(_, p)| p.canonicalize().ok() != upto.canonicalize().ok());
     let from = found.len().saturating_sub(29);
-    // an earlier run's figures are kept beside it once reckoned
-    // (`<name>.summary.json`): thirty runs are thirty small files, not
-    // thirty sessions read whole
+    // an earlier run's figures are kept in its folder's index once
+    // reckoned: thirty runs are thirty entries, not thirty sessions read whole
     let mut runs: Vec<_> = found[from..]
         .iter()
         .filter_map(|(_, p)| {
@@ -266,8 +272,10 @@ fn program_runs(
 }
 
 /// [`sonde_proxy::program::Since`] in a line: "past the baseline since
-/// a1b2c3d (2 runs ago); within at 9f8e7d6".
-fn since_line(s: &sonde_proxy::program::Since) -> String {
+/// a1b2c3d, 2 runs ago; within at 9f8e7d6", or "the run before, at
+/// 9f8e7d6, was within it" when this run is the first past it. None when
+/// this run is the only one known: the verdict says it all.
+fn since_line(s: &sonde_proxy::program::Since) -> Option<String> {
     let short = |g: &Option<sonde_proxy::session::GitStamp>, path: &str| match g {
         Some(g) => format!(
             "{}{}",
@@ -279,22 +287,22 @@ fn since_line(s: &sonde_proxy::program::Since) -> String {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
     };
-    let ago = match s.runs_ago {
-        0 => "this run".to_string(),
-        1 => "1 run ago".to_string(),
-        n => format!("{n} runs ago"),
-    };
-    let mut t = format!(
-        "past the baseline since {} ({ago})",
-        short(&s.first_past_commit, &s.first_past)
-    );
-    if let Some(good) = &s.last_within {
-        t.push_str(&format!(
-            "; within at {}",
-            short(&s.last_within_commit, good)
-        ));
+    let within = s
+        .last_within
+        .as_ref()
+        .map(|good| short(&s.last_within_commit, good));
+    if s.runs_ago == 0 {
+        return within.map(|w| format!("the run before, at {w}, was within it"));
     }
-    t
+    let mut t = format!(
+        "past the baseline since {}, {} ago",
+        short(&s.first_past_commit, &s.first_past),
+        output::count(s.runs_ago, "run")
+    );
+    if let Some(w) = within {
+        t.push_str(&format!("; within at {w}"));
+    }
+    Some(t)
 }
 
 /// A code place's file as the repository has it: the program ran in `cwd`
@@ -344,7 +352,7 @@ pub(super) fn url_shown(url: &str) -> &str {
 
 /// A baseline at an https URL (a CI artifact, a presigned URL), fetched to a
 /// temporary file: in a minute at most, and 1 GiB at most.
-async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPath> {
+pub(super) async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPath> {
     const MAX: u64 = 1 << 30;
     let shown = url_shown(url);
     if !url.starts_with("https://") {
@@ -395,6 +403,10 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         ],
     ) {
         eprintln!("sonde: {why}");
+        return Ok(64);
+    }
+    if a.report_url.is_some() && a.format != Format::Markdown {
+        eprintln!("--report-url is for -f markdown: the link a pull request's comment ends with");
         return Ok(64);
     }
     use sonde_proxy::program::{Budget, check, run_point};
@@ -584,12 +596,13 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // what the run's last trial found: a program that broke fails the
     // check, with a budget or without one
     use sonde_proxy::program::{check_closing, check_passed, trial_mark};
-    let trials = sonde_proxy::trial::load(&file);
+    // each scenario with what it was before ("broke on 12 Nov, survived since")
+    let trials = sonde_proxy::trial::load_with_history(&file, program.as_deref());
     // `c.passed` is of its rows; the whole check also fails on a trial that broke
     let passed = check_passed(&c, &trials);
     let closing = match &no_baseline {
         // said in every format: the rows held to a baseline are not there
-        Some(_) if !c.verdicts.is_empty() => {
+        Some(_) => {
             format!("{} (no baseline yet)", check_closing(&c, &trials))
         }
         _ => check_closing(&c, &trials),
@@ -602,14 +615,18 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     if c.verdicts.is_empty() && trials.is_empty() {
         // with `baseline = "auto"` and no baseline yet there is nothing to
         // hold the run to, and nothing wrong with it: the first run passes
-        if no_baseline.is_some() {
+        // (the other formats say it below, as they say any verdict: a
+        // comment, an annotation, a field)
+        if no_baseline.is_some() && a.format == Format::Table {
             println!("nothing checked: no budget, and no baseline yet");
             return Ok(0);
         }
-        eprintln!(
-            "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors, --max-p95, or sonde.toml's [check]) or a --baseline, or try the program (`sonde run --trial`)"
-        );
-        return Ok(64);
+        if no_baseline.is_none() {
+            eprintln!(
+                "nothing to check: give a budget (--max-requests, --max-waiting, --max-cost, --max-errors, --max-p95, or sonde.toml's [check]) or a --baseline, or try the program (`sonde run --trial`)"
+            );
+            return Ok(64);
+        }
     }
     // which program this is, and what it goes by: a baseline is a program's
     let named = match (&program, header.name.as_deref().map(str::trim)) {
@@ -627,7 +644,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         _ => None,
     };
-    let since_text = since.as_ref().map(since_line);
+    let since_text = since.as_ref().and_then(since_line);
     if matches!(a.format, Format::Json) {
         let mut doc = serde_json::json!({
             "run": run.0,
@@ -656,6 +673,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // GitHub Actions: each verdict that failed on the run, each finding on
     // the line of code that sent its requests
     if matches!(a.format, Format::Github) {
+        // a baseline asked for and not found: a warning on the run, not a
+        // pass in silence
+        if let Some(why) = &no_baseline {
+            println!("::warning title=sonde check::{}", gh_escape(why));
+        }
         // since when it is past its baseline: said once, on the first row
         // the baseline failed
         let mut since_said = false;
@@ -688,13 +710,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 gh_escape(&format!("breaks under {}: {}", t.scenario, t.line()))
             );
         }
-        for t in trials
-            .iter()
-            .filter(|t| t.standing == sonde_proxy::trial::Standing::Degraded)
-        {
+        for t in &trials {
+            let said = match t.standing {
+                sonde_proxy::trial::Standing::Degraded => "gets through",
+                sonde_proxy::trial::Standing::Refused => "refused by the policy under",
+                _ => continue,
+            };
             println!(
                 "::warning title=sonde check::{}",
-                gh_escape(&format!("gets through {}: {}", t.scenario, t.line()))
+                gh_escape(&format!("{said} {}: {}", t.scenario, t.line()))
             );
         }
         for w in &c.new_warnings {
@@ -724,14 +748,43 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     // a pull request's comment: the verdicts, what is new, and the run's findings
     if matches!(a.format, Format::Markdown) {
+        // the run against its baseline, by kind and by finding
+        let change = base.as_ref().map(|b| {
+            let of = |r: &(
+                sonde_proxy::program::RunPoint,
+                sonde_proxy::profile::Profile,
+                Vec<sonde_proxy::episode::Observation>,
+                SessionHeader,
+            )| sonde_proxy::profile::Run {
+                requests: r.0.requests,
+                errors: r.0.errors,
+                profile: r.1.clone(),
+                observations: r.2.clone(),
+                folders: Default::default(),
+                // (no records here: a finding gone is gone, not measured)
+                traces: Default::default(),
+                asks: Default::default(),
+                counts: Default::default(),
+                measured: false,
+            };
+            sonde_proxy::profile::compare_runs(&of(b), &of(&run)).of_programs(
+                sonde_proxy::program::key_of(&b.3).as_deref(),
+                program.as_deref(),
+            )
+        });
         print!(
             "{}",
-            sonde_proxy::program::check_markdown_with(
+            sonde_proxy::program::check_comment(
                 &c,
-                &run.0.currency,
-                since_text.as_deref(),
-                &run.2,
-                &trials
+                &sonde_proxy::program::Comment {
+                    currency: &run.0.currency,
+                    since: since_text.as_deref(),
+                    findings: &run.2,
+                    trials: &trials,
+                    change: change.as_ref(),
+                    no_baseline: no_baseline.as_deref(),
+                    report_url: a.report_url.as_deref(),
+                }
             )
         );
         println!("\n*{}*", sonde_proxy::program::md_text(&judged));
@@ -778,6 +831,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                     Standing::Degraded => "33",
                     Standing::Untested => "2",
                     Standing::Survived => "32",
+                    Standing::Refused => "33",
                 },
                 color
             ),
@@ -786,6 +840,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 Standing::Degraded => "gets through",
                 Standing::Broke => "breaks under",
                 Standing::Untested => "untested:",
+                Standing::Refused => "refused by the policy under",
             },
             t.asked(),
             if t.line().is_empty() {
@@ -850,7 +905,10 @@ fn no_baseline_text(
 /// A session by name and time, as `sonde check` says which run it judged:
 /// `session 20261110-091555-etl.sonde · recorded 2026-11-10 09:15`, the time
 /// as `sonde sessions` lists it.
-fn session_line(file: &Path, header: Option<&sonde_proxy::session::SessionHeader>) -> String {
+pub(super) fn session_line(
+    file: &Path,
+    header: Option<&sonde_proxy::session::SessionHeader>,
+) -> String {
     let name = file
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -902,6 +960,36 @@ mod tests {
             Some((r"C:\src\x.py".into(), 9))
         );
         assert_eq!(code_place("no line here"), None);
+    }
+
+    #[test]
+    fn since_says_the_runs_and_commits_around_and_never_this_run_as_a_commit() {
+        use sonde_proxy::program::Since;
+        use sonde_proxy::session::GitStamp;
+        let at = |c: &str| {
+            Some(GitStamp {
+                commit: c.into(),
+                branch: None,
+                dirty: false,
+            })
+        };
+        let s = |runs_ago, within: Option<&str>| Since {
+            runs_ago,
+            first_past: "/s/pr2.sonde".into(),
+            first_past_commit: at("a1b2c3d4e5"),
+            last_within: within.map(String::from),
+            last_within_commit: within.and(at("9f8e7d6c5b")),
+        };
+        // this run alone: the verdict says it, nothing more to say
+        assert_eq!(since_line(&s(0, None)), None);
+        assert_eq!(
+            since_line(&s(0, Some("/s/pr1.sonde"))).as_deref(),
+            Some("the run before, at 9f8e7d6, was within it")
+        );
+        assert_eq!(
+            since_line(&s(2, Some("/s/pr1.sonde"))).as_deref(),
+            Some("past the baseline since a1b2c3d, 2 runs ago; within at 9f8e7d6")
+        );
     }
 
     #[test]

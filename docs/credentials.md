@@ -19,7 +19,7 @@ STS calls go to `sts.<region>.amazonaws.com` (`.com.cn` in China regions) or `AW
 
 ## Redaction
 
-Every request record is redacted when created, before the ring buffer, SQLite, exports, the inspector or a probe
+Every request record is redacted when created, before the ring buffer, exports, the inspector or a probe
 report sees it (`crates/reqlog/src/redact.rs`):
 
 | What | Done |

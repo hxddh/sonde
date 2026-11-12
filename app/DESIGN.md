@@ -7,14 +7,30 @@ The app's own decisions on top of Native Shell's Design Guides
 ## The product
 
 One task: see what a program does to S3. Three places — **Run** (start a program and
-watch its requests become operations), **Sessions** (what a run did, what stands out,
-compared and replayed), **Buckets** (what is in a store). The window has two columns
+watch its requests become operations; once it ends, its top findings, what each saves and
+the one figure for acting on them), **Sessions** (what a run did, what stands out and how
+it stands against the run before, grouped, compared and replayed), **Buckets** (the store's side, in one row of sections: objects, size,
+incomplete uploads, versions, layouts, compatibility). The window has two columns
 and no more: the **sidebar** (the places, and under them the current place's own list —
 the commands run before, the sessions, the buckets) and the place; a detail opens
 beside the place as an inspector, and nothing else moves when it does. Everything configured once
 lives in **Settings** (a window); what sonde itself is doing lives in **Activity** (a
 side panel). The core result is *what stands out in a session*: it gets the space, the
 words and the next action; counts and chips support it, they do not replace it.
+
+## One interaction grammar
+
+**Select → inspect → act**, on every screen:
+
+- **Select**: a press, or the arrows and Return, chooses one thing — a row, a finding, a stretch of time, a
+  bucket, a section. It is marked once (`selected:bg-selection`), and what shows it follows: a finding narrows
+  the operations, a stretch on the timeline is what every Time chart is reckoned over. Press it again to let go.
+- **Inspect**: its detail opens in **the one inspector** beside what it details (an operation, a request, an
+  object), from the edge where the pane is narrow. Never a second panel, never a dialog; Escape closes it.
+- **Act**: what can be done with it stands at the end of its row or of the inspector — the primary, the rest
+  behind `⋯` — and every act is also in the palette (⌘K, `:` in a terminal) or on a shortcut: nothing only a
+  pointer reaches. A dialog is for a short decision only. A tool has one door: Buckets' sections are reached
+  from their row (a tile or a finding whose fix is one of them leads to the same section, not to a window).
 
 ## Platforms
 
@@ -122,7 +138,7 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 | Nothing here | `Empty`, whole or `compact` | `[empty]` |
 | Words | Every key in every language with the same placeholders, and every key used: named whole, or a member of a family a template builds (`t(\`trial.${standing}\`)`), the family listed in the lint with its members, key by key — a prefix alone passes nothing | `check-locales.py` |
 | Charts | One frame, one left edge, one row pitch, one legend, one tooltip, one fade, one outline, one time axis, one value scale; bar thickness, tips and heights each a named small set (see Charts) | `lint-charts.py` |
-| Tables | A column's title fits its width, and so does the widest text a formatter can write into it (a day, a date, a size, an age), in English and in Chinese; the bucket's sheets' tables fit the sheet; a column of keys, paths, targets or names is cut in its middle (`ellipsis-middle`) or at its start, never at its end | `lint-layout.py` |
+| Tables | A column's title fits its width, and so does the widest text a formatter can write into it (a day, a date, a size, an age), in English and in Chinese; Buckets' sections' tables fit the page at the least window; a column of keys, paths, targets or names is cut in its middle (`ellipsis-middle`) or at its start, never at its end | `lint-layout.py` |
 
 Sizes (`CONTROL`, `ROW`, `FORM`):
 
@@ -204,7 +220,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   no card inside a card.
 - **Popups** (menus, selects, the endpoint switcher): `POPUP` — the popover surface,
   one border, one radius, one shadow, and glass on macOS.
-- **Side panels** (Activity, a bucket's detail, a narrow window's inspector): `SidePanel`
+- **Side panels** (Activity, a narrow window's inspector): `SidePanel`
   in three widths (narrow 420, default 600, wide 760) with a `PanelHeader`; they start
   below the title bar and close with Escape, the scrim or Close. The endpoint form is a
   card in place over the list, which stays under it (a sheet in the Settings window
@@ -244,9 +260,16 @@ tooltip and axes in `system.tsx`, and a file per family of charts — `traffic`,
 constants): every constant a chart is drawn with is exported from `system.tsx` and defined nowhere else, and
 `scripts/lint-charts.py` counts them.
 
-- **One question per chart**, said in words beside it and in its `accessibilityLabel`: what it shows and what stands
-  out ("Most of the waiting: PutObject, 65%"). A terminal gets the sentence and a table.
-- **One frame** (`Chart`), used by every chart — the Time pane's (the table by operation first, then four titled groups at most: Traffic, Latency, Errors, Where), Capacity's, Compare's, the trends, the
+- **One question per chart**: its title is the question it answers, in both languages ("Where did the time
+  go?", "时间花在了哪里？"); its sentence and `accessibilityLabel` the answer ("Most of the waiting: PutObject,
+  65%"). A terminal gets the sentence and a table.
+- **One reading order** on the Time pane: four titled groups, **Traffic, Latency, Errors, Where**, every chart
+  shown (none behind "more"); Latency opens with the table by operation. Two abreast where there is room, a last
+  one alone takes the row.
+- **One selection**: the stretch picked on the timeline. Charts over time zoom to it; every other chart is
+  reckoned again from the requests that started in it (`sessions.stretch`) and its sentence says which
+  ("in +200 ms – +400 ms"); a shared page, which cannot, says "of the whole session".
+- **One frame** (`Chart`), used by every chart — the Time pane's, Capacity's, Compare's, the trends, the
   waterfall, Run's live panel, the shared page: a card with the question as its title, a sentence that answers it
   (it wraps, never cut), how it is cut at the title's end (`action`), the plot, its `legend`, and `empty` said in
   the plot's room. A card is as high as its content: a chart of two bars is not stretched to its neighbour's
@@ -299,7 +322,8 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **A whole legend**: every colour and every line a chart draws is named under it — the timeline's stack, its
   line of requests in flight, the findings' numbers and a trial's faults; the scatter's outcomes and its p95.
 - **The histogram**: each bar says how many requests it holds; the share done by each time is a dashed line on
-  a scale of its own, never a bar's label; its tail is named by the share it really holds.
+  a scale of its own, never a bar's label; its tail is named by the share it really holds. A bar of none beside
+  one with a count says "0" on a sliver (`ZERO_SLIVER`): a bar of no value is not drawn, nor its label.
 - **Latency's bands**: the median a line, the body (median to p95) and the tail (p95 to p99) two tones of their
   own (`latency-body`, `latency-tail`) that pass 3:1 against each other and against the card, in light and in
   dark (lint-charts computes it). Beside the bands, the same latencies as a grid (slices by buckets of
@@ -316,7 +340,7 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **A trial against its clean run**: on a trial's session the Time pane opens its Traffic with the trial drawn
   over the clean run on one axis (requests a second, then the median latency), and a rule in the injected tone
   at every moment sonde answered in the store's place — on that chart, on the timeline and on the strip.
-- **By operation, first**: the Time pane opens with a table — count, error share, median, p95, p99 — sortable,
+- **By operation**: Latency opens with a table — count, error share, median, p95, p99 — sortable,
   a percentile of fewer than twenty requests marked `~`. It stands on the Time pane, not over the operations:
   the Operations pane lists what the program did in order, and this is a reading of the same requests as
   figures, beside the charts it summarises.
@@ -332,9 +356,19 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **Fewer is the ok tone, more the error's**, in every chart that compares; a throttle is `warn`, a failure
   `status-server`, a retry `info`; the slow tail is `chart-tail`, never an error's color.
 - **Flows and grids**: a Sankey shows few nodes (top operations and prefixes, the rest "other"), outcomes in their
-  status colors, ribbons a gradient from source to target; a heat map ramps from `bar-track` to `chart-1` by the square root of its counts.
+  status colors, ribbons a gradient from source to target; a heat map ramps from `heat-low` to `heat-high`
+  (`HEAT_RAMP`, tones of its own that lint-charts holds apart from the card, so one request reads in dark too) by
+  the square root of its counts.
 - **Annotations over legends**: a chart names its notable point in place (`PlotLabel`), a baseline is a dashed line.
 - Times read from the session's start (`+230 ms`, `2.35 s`); costs to two significant digits under a cent.
+
+## Pictures
+
+The screenshot tour (`scripts/shots.sh`: wide, least, dark, Chinese) gates a merge: CI compares it with the last
+green tour, and a screen that changed or is new must match its approved picture in `app/shots.approved.json`.
+Approving is looking at the difference images and committing that file (`scripts/shots-diff.py approve`).
+Screens that chart what the tour's run measured (its timeline, latencies, a request's timings) move between runs of
+the same code: they are reported with their difference images, not held (`LIVE` in `scripts/shots-diff.py`).
 
 ## Motion
 

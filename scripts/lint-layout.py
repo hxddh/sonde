@@ -12,7 +12,7 @@ in Chinese:
   age, a cost): 15.0 shipped "2026年8月1…" in a column 104 pt wide, and the
   old lint, which only added widths up, said ok;
 - the bucket's details (Incomplete uploads, Versions, Capacity, Layouts)
-  open in the 760 pt side panel: their tables' columns add up to no more
+  open as Buckets' sections, at the least window: their tables' columns add up to no more
   than the panel holds (8.0's incomplete uploads lost Bytes and Cost);
 - a column of keys, paths, targets or names is cut in its middle or at its
   start, never at its end (16.0 shipped "backups/db-2026-08-12.t…"): where
@@ -30,9 +30,10 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
 app = root / "app" / "src"
-PANEL = 760
-# the panel's padding and the table's border
-FITS = PANEL - 2 * 24 - 4
+# Buckets' sections at the least window (900) beside the sidebar as it opens (272): the
+# page's gutter either side (16) and the table's border
+PAGE = 900 - 272
+FITS = PAGE - 2 * 16 - 4
 # a cell's inset either side (TABLE.cell: px-2), and the sort mark beside a title that sorts
 PAD = 16
 SORT = 22
@@ -172,7 +173,7 @@ for path in files:
         if "line-clamp-1" in near and not re.search(r"ellipsis-(?:middle|start)|\bmiddle\(|<Path\b", near):
             say(f"{rel}:{n}", f"[path] {key}: cut at its end (line-clamp-1); a path is cut in its middle (`textOverflow: \"ellipsis-middle\"`) or at its start")
 
-# the bucket's sheets: their tables fit the panel
+# Buckets' sections: their tables fit the page at the least window
 store = (app / "screens" / "StoreArea.tsx").read_text()
 detail = set(re.findall(r"return <(\w+) />", store)) - {"Browse"}
 for name in sorted(detail):
@@ -186,6 +187,6 @@ for name in sorted(detail):
         total = sum(widths)
         checked["tables"] += 1
         if total > FITS:
-            say(f"app/src/screens/{name}.tsx:{src[: m.start()].count(chr(10)) + 1}", f"[sheet] columns {total} pt of {FITS} pt: too wide")
-print(f"layout: {checked['titles']} titles and {checked['cells']} widest cells against their columns' widths (en, zh); {checked['tables']} sheet tables against the panel's {FITS} pt; {checked['paths']} columns of paths cut in their middle: {'failed' if failed else 'ok'}")
+            say(f"app/src/screens/{name}.tsx:{src[: m.start()].count(chr(10)) + 1}", f"[section] columns {total} pt of {FITS} pt: too wide")
+print(f"layout: {checked['titles']} titles and {checked['cells']} widest cells against their columns' widths (en, zh); {checked['tables']} section tables against the least page's {FITS} pt; {checked['paths']} columns of paths cut in their middle: {'failed' if failed else 'ok'}")
 sys.exit(1 if failed else 0)

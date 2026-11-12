@@ -47,9 +47,10 @@ FAMILIES = {
     "scenario.": "slowdown error lost-answer fail-complete cut-body lost-race skew complete-500 slow-first-byte stale-list slow s3-limits",
     "scenario.about.": "slowdown error lost-answer fail-complete cut-body lost-race skew complete-500 slow-first-byte stale-list slow s3-limits",
     "settings.path.": "config exports downloads audit",
-    "trial.": "survived degraded broke untested",
+    "split.by.": "none operation prefix size caller sdk status",
+    "trial.": "survived degraded broke untested refused",
     "verdict.": "pass fail differs unsupported error skipped requests waiting cost errors warnings p95",
-    "why.": "obs.shared obs.unfinished obs.orphans obs.retried obs.small obs.races obs.hot obs.listed obs.headget obs.throttled obs.throttled.rate obs.slow obs.serial obs.prefixrate obs.injected",
+    "why.": "obs.unfinished obs.orphans obs.small obs.hot obs.listed obs.headget obs.throttled obs.throttled.rate obs.serial obs.prefixrate",
 }
 
 # used: the key's own text in the source, or a member of a listed family

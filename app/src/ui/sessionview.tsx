@@ -8,13 +8,13 @@ import { Clipboard, effect, type JSX, List, Scroll, signal, Text, token, untrack
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
 import { change, clock, count, date, duration, middle, transfer } from "../format";
 import { t } from "../i18n";
-import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy } from "../phrases";
+import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say } from "../phrases";
 import { Chart, sessionStory, Sparkline, timed, Waterfall, MARK } from "./plots";
 import { type SignalId, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
-import type { EpisodeRow, LogLine, Observation, RecordSummary, SessionView } from "../types";
+import type { EpisodeRow, FindingChange, LogLine, Observation, RecordSummary, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN } from "./kit";
+import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -25,6 +25,19 @@ export { SessionList, tellApart } from "./sessionlist";
 export { clock };
 
 const time = (iso: string) => new Date(iso).getTime();
+
+/** Where a finding stands against its program's run before (crates/proxy/src/fixloop.rs). */
+export type FindingState = FindingChange["state"];
+const STATE_TONE: Record<FindingState, "pass" | "info" | "warn" | "neutral"> = { fixed: "pass", less: "info", back: "warn", new: "info", open: "neutral" };
+/** A state as the reader's language says it ("Fixed", "又出现"). */
+export const stateLabel = (s: FindingState): string => {
+  const w = say([{ key: "fix." + s, args: {} }], s);
+  return w.charAt(0).toUpperCase() + w.slice(1);
+};
+/** A finding's state, as a badge. */
+export function StateBadge(props: { state: FindingState; testID?: string }) {
+  return <Badge testID={props.testID} label={stateLabel(props.state)} tone={STATE_TONE[props.state]} />;
+}
 
 export type Tone = "ok" | "miss" | "client" | "server" | "refused";
 
@@ -126,7 +139,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
         <Text class="text-muted-foreground" testID="session-summary">
           {line()}
         </Text>
-        <Text class="text-foreground" testID="session-story">{sessionStory(props.view.profile, props.view.observations)}</Text>
+        <Text class="text-foreground" testID="session-story">{sessionStory(props.view.profile)}</Text>
       </View>
     );
   }
@@ -161,11 +174,11 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           <Title mono small lines={2}>
             {command() ? commandLine(command()!) : props.view.header.endpoint}
           </Title>
-          <Text class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git)].filter(Boolean).join(" · ")}</Text>
+          <Text testID="session-meta" class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
           {/* the session in a sentence: where its time went, and the first thing to do. It wraps
               to two lines as the pane narrows; what is past them is cut at the second line's end */}
           <If when={profile()?.groups.length}>
-            <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(profile(), props.view.observations)}</Text>
+            <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(profile())}</Text>
           </If>
         </View>
         {props.actions}
@@ -209,7 +222,20 @@ function ExpectButton(props: { o: Observation; onExpect?: (o: Observation) => vo
 /** A fix's code as written, without the blank lines around it. */
 const sample = (code: string) => code.replace(/^\s*\n|\s+$/g, "");
 
-function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: the pane's own, kept from finding to finding */ sdk: { (): Sdk; set: (s: Sdk) => void }; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
+/** The findings whose fix is a tool of Buckets: the section that acts on it. */
+export const STORE_FIX: Record<string, "multipart"> = { "obs.unfinished": "multipart" };
+export const storeFixOf = (o: Observation) => STORE_FIX[o.phrases?.[0]?.key ?? ""] ?? null;
+
+/** Where a finding's fix is in Buckets (an incomplete upload's: the uploads, to abort them or add a rule): a press goes there. */
+function StoreFixButton(props: { o: Observation; onStore?: (o: Observation) => void }) {
+  return (
+    <If when={props.onStore && storeFixOf(props.o)}>
+      <Button small variant="outline" icon="layers" label={t("fix.openUploads")} onPress={() => props.onStore?.(props.o)} testID="finding-store" />
+    </If>
+  );
+}
+
+function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: the pane's own, kept from finding to finding */ sdk: { (): Sdk; set: (s: Sdk) => void }; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; onStore?: (o: Observation) => void }) {
   const fixSdk = props.sdk;
   const fixes = () => props.o.fixes ?? [];
   // the program's own SDK first, when its requests said which; else the one last chosen
@@ -228,7 +254,8 @@ function FixPanel(props: { o: Observation; /** the SDK the fixes are shown for: 
         <If when={shown() && !terminal()}>
           <Button small variant="ghost" icon="copy" label={t("fix.copy")} onPress={() => shown() && void Clipboard.writeText(sample(shown()!.code)).catch(() => {})} testID="fix-copy" />
         </If>
-        {/* or no change: a habit kept on purpose, which sonde check then expects */}
+        {/* the store's side of the fix, where it has one; or no change: a habit kept on purpose, which sonde check then expects */}
+        <StoreFixButton o={props.o} onStore={props.onStore} />
         <ExpectButton o={props.o} onExpect={props.onExpect} />
       </View>
       {/* why it matters and what it saves, written out */}
@@ -294,7 +321,7 @@ export function whatIfText(v: SessionView): string | null {
 /** What stands out in a session — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void }) {
+export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange>; /** what acting on a finding saves under its words, never beside them (a narrow column: Run's) */ savingUnder?: boolean }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   /** How many operations a finding is about (a view lists the first of them only). */
   const about = (o: Observation) => o.episodesTotal ?? o.episodes?.length ?? 0;
@@ -339,8 +366,13 @@ export function Observations(props: { view: SessionView; filter?: number | null;
     if (props.filter != null) showChosen();
   });
   /** Whether a finding has anything to open: its fixes, or (the app's own) a line for sonde.toml. */
-  const advised = (o: Observation) => !!o.fixes?.length || !!(props.onExpect && o.identity);
+  const advised = (o: Observation) => !!o.fixes?.length || !!(props.onExpect && o.identity) || !!(props.onStore && storeFixOf(o));
   const list = () => props.view.observations.slice(0, props.max ?? props.view.observations.length);
+  /** Its state against the run before, where it tells something: new, back or less (open is left unmarked). */
+  const state = (o: Observation) => {
+    const f = o.identity ? props.states?.[o.identity] : undefined;
+    return f && f.state !== "open" && f.state !== "fixed" ? f.state : null;
+  };
   if (terminal()) {
     return (
       <If when={props.view.observations.length > 0}>
@@ -358,6 +390,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
               >
                 <Text class={o().level === "warn" ? "text-warn" : "text-muted-foreground"}>
                   {o().level === "warn" ? "! " : "· "}
+                  <If when={state(o())}>{(st) => <Text class="text-info">{`[${stateLabel(st())}] `}</Text>}</If>
                   {observationText(o())}
                   <If when={!props.compact && observationSaving(o())}>{(s) => <Text class="text-status-ok">{` — ${s()}`}</Text>}</If>
                 </Text>
@@ -396,7 +429,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       // saves goes first, then the count's words (its chevron stays)
       trailing={
         <>
-          <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
+          <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && !props.savingUnder && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
           <If when={props.onFilter && about(o())}>
             <View class={`${props.narrow ? "" : WIDTH.count} flex-row items-center justify-end gap-1`}>
               <If when={!props.narrow}>
@@ -414,10 +447,20 @@ export function Observations(props: { view: SessionView; filter?: number | null;
         <Text class={`tabular-nums text-caption ${EMPHASIS} ${o().level === "warn" ? "text-warn" : "text-muted-foreground"}`}>{count(i() + 1)}</Text>
       </View>
       <View class="min-w-0 flex-1 gap-1">
-        <Text class={`text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
+        <View class="flex-row items-start gap-2">
+          {/* where it stands against the program's run before: new, back, less */}
+          <If when={state(o())}>
+            {(st) => (
+              <View class="min-h-5 justify-center">
+                <StateBadge state={st()} testID={`observation-state-${i()}`} />
+              </View>
+            )}
+          </If>
+          <Text class={`min-w-0 flex-1 text-body text-foreground ${dense() && props.filter !== i() ? "line-clamp-1" : "line-clamp-2"}`}>{observationText(o())}</Text>
+        </View>
         {/* why it matters and what acting on it saves: here, or (the finding opened, with fixes) once, in its advice */}
         <If when={(!dense() || props.filter === i()) && !opened(o, i) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
-        <If when={(!dense() || props.filter === i()) && !opened(o, i) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
+        <If when={(!dense() || props.filter === i() || props.savingUnder) && !opened(o, i) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
       </View>
     </ListRow>
   );
@@ -440,11 +483,12 @@ export function Observations(props: { view: SessionView; filter?: number | null;
                   else={
                     <View class="flex-row items-center gap-2">
                       <Text class="min-w-0 flex-1 text-small text-muted-foreground">{t("expect.hint")}</Text>
+                      <StoreFixButton o={o()} onStore={props.onStore} />
                       <ExpectButton o={o()} onExpect={props.onExpect} />
                     </View>
                   }
                 >
-                  <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} />
+                  <FixPanel o={o()} sdk={fixSdk} onOpenCode={props.onOpenCode} onExpect={props.onExpect} onStore={props.onStore} />
                 </If>
               </View>
             </If>
@@ -472,11 +516,23 @@ export function Observations(props: { view: SessionView; filter?: number | null;
               <If when={open() && room().shown < list().length}>
                 <Text testID="observations-scroll" class="shrink-0 tabular-nums text-caption text-muted-foreground">{t("obs.scrolls", { n: count(room().shown), of: count(list().length) })}</Text>
               </If>
-              <If when={whatIfText(props.view)}>{(w) => <Text testID="what-if" class="min-w-0 flex-1 tabular-nums text-small text-muted-foreground line-clamp-1">{w()}</Text>}</If>
+              {/* the first few of more: said, so the count beside the heading is not read as theirs */}
+              <If when={list().length < props.view.observations.length}>
+                <Text testID="observations-top" class="shrink-0 tabular-nums text-caption text-muted-foreground">{t("obs.top", { n: count(list().length), of: count(props.view.observations.length) })}</Text>
+              </If>
+              <If when={!props.whatIfUnder && whatIfText(props.view)}>{(w) => <Text testID="what-if" class="min-w-0 flex-1 tabular-nums text-small text-muted-foreground line-clamp-1">{w()}</Text>}</If>
             </>
           }
         >
-          {findings()}
+          <If when={props.whatIfUnder && whatIfText(props.view)} else={findings()}>
+            {(w) => (
+              <View class="gap-2">
+                {findings()}
+                {/* the one figure for acting on them: a line of its own, which wraps rather than being cut */}
+                <Text testID="what-if" class="px-1 tabular-nums text-small text-muted-foreground">{w()}</Text>
+              </View>
+            )}
+          </If>
         </Disclosure>
       </If>
     </If>

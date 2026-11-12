@@ -14,7 +14,6 @@ const LABEL: Record<Section, Key> = {
   probes: "nav.probes",
   settings: "nav.general",
   endpoints: "nav.endpoints",
-  requests: "nav.requests",
   jobs: "nav.jobs",
   audit: "nav.audit",
 };

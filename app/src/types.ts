@@ -33,16 +33,13 @@ export interface Prices {
 }
 
 export interface Settings {
-  "read-only": boolean;
+  /** sonde's own jobs: in config.toml only. */
   concurrency: number;
   "rate-limit": number | null;
   prices: Prices;
-  "reqlog-capacity": number;
-  "reqlog-persist": boolean;
   theme: string;
   "high-contrast"?: boolean;
   language: string;
-  "stale-upload-days": number;
   /** Runs name the place in a Python program's code that sent each request. */
   "name-callers"?: boolean;
   /** What a program recorded by Run may do to the store (no-delete by default). */
@@ -492,6 +489,48 @@ export interface Phrase {
   args: Record<string, string>;
 }
 
+/** What Group by splits the operations table by (crates/proxy/src/split.rs). */
+export type SplitBy = "operation" | "prefix" | "size" | "caller" | "sdk" | "status";
+
+/** One group of a split: the operations table's figures for it. */
+export interface SplitRow {
+  key: string;
+  /** The groups past the table's rows, folded into one. */
+  other?: boolean;
+  requests: number;
+  errors: number;
+  errorShare: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  waitedMs: number;
+  /** Of the session's waiting (the rows add up to 1). */
+  share: number;
+  cost: number;
+  costShare: number;
+  /** Of them, slow (at or over `slowMs`). */
+  slow: number;
+}
+
+/** A session split by one dimension, and where its slow and costly requests are. */
+export interface Split {
+  by: SplitBy;
+  sdk: string | null;
+  slowMs: number;
+  slow: number;
+  cost: number;
+  currency: string;
+  rows: SplitRow[];
+  /** The sentence in English; `phrases` say it in the reader's language. */
+  text: string;
+  phrases: Phrase[];
+}
+
+/** A request of one key, with the operation it belongs to. */
+export interface KeyRequest extends RecordSummary {
+  operationIndex: number | null;
+}
+
 export interface Episode {
   kind: "request" | "multipart" | "retry" | "probe" | "listing" | "step";
   format: "SlateDB" | "Iceberg" | "Delta" | "Lance" | "Hudi" | "Paimon" | null;
@@ -723,7 +762,7 @@ export interface CodeChange {
 export interface Trial {
   scenario: string;
   about: string;
-  standing: "survived" | "degraded" | "broke" | "untested";
+  standing: "survived" | "degraded" | "broke" | "untested" | "refused";
   exit: number;
   cleanExit: number;
   faults: number;
@@ -758,6 +797,8 @@ export interface Trial {
   advice?: { key: string; args?: Record<string, string> } | null;
   /** The trial's own session (an absolute path), when it is still there. */
   session?: string | null;
+  /** The scenario's verdicts for the program, oldest first, up to this one (`at` RFC 3339; `run` a session's file name). */
+  history?: { at: string; standing: Trial["standing"]; run: string }[];
 }
 
 export interface ProgramHistory {
@@ -786,14 +827,51 @@ export interface RunChange {
   currency: string;
   peakInFlight: [number, number];
   groups: { operation: string; missed: boolean; requests: [number, number]; busyMs: [number, number] }[];
+  /** Findings gone at any threshold (fixed). */
   resolved: { text: string; phrases: Phrase[] }[];
   appeared: { text: string; phrases: Phrase[] }[];
+  /** Each finding of either run, where it stands. */
+  findings: FindingChange[];
   /** Both are runs of one program; across programs the findings gone and new are left out. */
   sameProgram: boolean;
   /** Both runs' latency on the same bucket edges. */
   latency?: [{ leMs: number | null; n: number }[], { leMs: number | null; n: number }[]];
   /** The busiest prefixes of either run, each run's requests to them. */
   prefixes?: { prefix: string; requests: [number, number] }[];
+}
+
+/** Requests not sent and time not waited. */
+export interface Saving {
+  requests: number;
+  ms: number;
+}
+
+/** A finding between two runs of a program: fixed (gone at any threshold), less (under its threshold), back (fixed before, here again), new or open. */
+export interface FindingChange {
+  identity: string;
+  state: "fixed" | "less" | "back" | "new" | "open";
+  level: "warn" | "info";
+  text: string;
+  phrases: Phrase[];
+  /** As it read in the run before, when it reads otherwise now (less). */
+  was?: { text: string; phrases: Phrase[] };
+  predicted: Saving;
+  /** Measured between the runs (fixed, less). */
+  measured?: Saving;
+  /** The measured saving against the predicted (`fix.saved`, `fix.savedTime`). */
+  saved?: Phrase;
+  savedText?: string;
+}
+
+/** A run against its program's run before it. */
+export interface SinceLast {
+  program: string;
+  /** The run before, by path; absent for a program's first run. */
+  previous?: string;
+  change?: RunChange;
+  findings: FindingChange[];
+  /** Why the program's kept findings were not read or written. */
+  unsaved?: string;
 }
 
 /** A size bucket of bodies: up to `leBytes` (each twice the last; 0 is the empty body). */
@@ -848,8 +926,6 @@ export interface TrialPlan {
   /** The command names no `{trial}`: the runs write where the clean run wrote. */
   sharesPlace: boolean;
   cleanExit: number;
-  /** sonde is read-only: no trial runs. */
-  readOnly: boolean;
 }
 
 /** A trial as the app hears it run. */
@@ -859,6 +935,8 @@ export interface TrialResult {
   path: string;
   trials: Trial[];
   cancelled: boolean;
+  /** `trialAgain` only: the fresh clean run's exit (no trial when not 0). */
+  cleanExit?: number | null;
 }
 
 export interface SessionView {
@@ -870,6 +948,8 @@ export interface SessionView {
   trials?: Trial[];
   /** The requests a fault scenario answered, by id. */
   injected?: number[];
+  /** The SDK that sent most of its requests, from their user agents ("boto3 1.34"); absent in a share made before 18.0. */
+  sdk?: string | null;
   path: string;
   header: { endpoint: string; url: string; region: string; created: string; command?: string | null; cwd?: string | null; git?: GitStamp | null; /** a trial's session: the scenario its requests met */ scenario?: string | null };
   summary: SessionSummary;
@@ -911,3 +991,7 @@ export interface RunResult {
   exit: number | null;
   path: string;
 }
+
+/** The requests that started in a stretch of a session, reckoned as a session of their own
+ * (`sessions.stretch`): its times are from its own first request, `offsetMs` after the session's. */
+export type Stretch = Pick<SessionView, "summary" | "profile"> & { signals: Signals; offsetMs: number };

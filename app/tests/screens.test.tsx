@@ -3,13 +3,13 @@
 import { expect, open, test } from "nsh/test";
 import { desktop, place, withDemo } from "./helpers";
 
-test("request inspector: records, details, copy as curl without a signature", async () => {
-  const app = await withDemo("demo");
-  await app.waitFor("text:README.md", { timeout: 10000 });
-  await place(app, "requests");
-  await app.waitFor("id:requests");
-  await app.waitFor("text:ListObjectsV2", { timeout: 5000 });
-  await app.press("text:ListObjectsV2 >> nth=0");
+test("a session's request in the inspector: details, copy as curl without a signature", async () => {
+  const app = await open("../App.tsx", desktop);
+  await app.press("id:open-example");
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  await app.press("text:manifest 3 written");
+  await app.waitFor("id:operation-detail");
+  await app.press("id:op-request-0");
   await app.waitFor("id:record-detail");
   expect(app.shows("text:x-amz-request-id")).toBe(true);
   await app.press("id:copy-curl");
@@ -17,9 +17,13 @@ test("request inspector: records, details, copy as curl without a signature", as
   expect(app.clipboard()).not.toContain("Signature=");
   await app.press("id:copy-cli");
   await app.waitUntil(() => (app.clipboard() ?? "").startsWith("aws s3api"));
+  // sonde's own requests are no list of their own: Activity is its jobs and its changes
+  await app.press("id:activity-open");
+  await app.waitFor("id:activity");
+  expect(app.shows("id:activity-tab-requests")).toBe(false);
 });
 
-test("multipart: scan, lifecycle verdict, the guard refuses while read-only", async () => {
+test("multipart: scan, lifecycle verdict, the guard waits for the typed confirmation", async () => {
   const app = await withDemo("demo");
   // the bucket's card says it before the detail opens
   await app.waitFor("text:3 · 172 MiB", { timeout: 10000 });
@@ -30,7 +34,9 @@ test("multipart: scan, lifecycle verdict, the guard refuses while read-only", as
   expect(app.shows("text:Missing")).toBe(true);
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
-  expect(app.shows("text:Read-only mode is on. Turn it off in Settings to run this.")).toBe(true);
+  expect(app.enabled("id:confirm-run")).toBe(false);
+  // what is typed is not the count: still nothing runs
+  await app.type("id:confirm-input", "9");
   expect(app.enabled("id:confirm-run")).toBe(false);
   await app.press("id:confirm-cancel");
   await app.waitFor("id:confirm-dialog", { state: "gone" });
@@ -71,10 +77,7 @@ test("layouts: detects and decodes the real SlateDB sample, with replay", async 
 
 test("compatibility: runs probes on the demo and fills the matrix", async () => {
   const app = await withDemo();
-  // probes write to the scratch bucket: they run with read-only off
-  await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Writes enabled");
+  // probes write to the scratch bucket named: naming it is the consent
   await place(app, "probes");
   // the endpoint in use comes chosen
   await app.type("id:probe-bucket", "demo");
@@ -86,11 +89,6 @@ test("compatibility: runs probes on the demo and fills the matrix", async () => 
   await app.waitFor("id:probe-detail");
   expect(app.shows("text:/^aws behavior$/i")).toBe(true);
   expect(app.shows("text:/^requests and responses$/i")).toBe(true);
-  // read-only again, as the other tests find it
-  await app.window("compat").pressClose();
-  await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Read-only");
 }, 120_000);
 
 test("endpoints: adding never replaces one; a name in another script gets an id of its own", async () => {
@@ -134,7 +132,7 @@ test("browse: an object's detail is its own, never the one chosen before", async
   await app.waitFor("text:images/logo.png", { timeout: 10000 });
 });
 
-test("errors are readable and lead to their request", async () => {
+test("errors are readable: what went wrong, said whole", async () => {
   const app = await withDemo();
   await place(app, "endpoints");
   await app.press("id:add-endpoint");
@@ -145,15 +143,18 @@ test("errors are readable and lead to their request", async () => {
   await app.press("id:test-broken");
   await app.waitFor("id:test-result", { timeout: 15000 });
   expect(app.shows("text:Not reachable")).toBe(true);
-  await app.press("text:Show request");
-  await app.waitFor("id:record-detail");
+  // the error itself, not a way to a list of sonde's own requests
+  expect(app.shows("id:record-detail")).toBe(false);
+  expect(app.texts().some((x) => /connect|refused|error/i.test(x))).toBe(true);
 });
 
-test("settings: read-only off, a confirmed abort, the audit log", async () => {
+test("settings: no read-only switch; a confirmed abort, the audit log", async () => {
   const app = await withDemo("demo");
   await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Writes enabled");
+  // one safety setting: what a recorded program may do
+  expect(app.shows("id:record-policy")).toBe(true);
+  expect(app.shows("id:read-only")).toBe(false);
+  expect(app.shows("id:toolbar-lock")).toBe(false);
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   await app.press("id:plan-abort");
@@ -165,9 +166,6 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   await place(app, "audit");
   await app.waitFor("text:Abort uploads · demo/demo");
   await app.press("id:activity-close");
-  await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Read-only");
 });
 
 test("appearance: higher contrast, kept with the settings", async () => {
@@ -207,6 +205,12 @@ test("sonde:// links keep a stretch of time: a session opens on its Time pane ov
   await app.waitFor("id:time-pane", { timeout: 10000 });
   // the timeline says the stretch it shows, and offers the whole session back
   await app.waitFor("id:zoom-reset", { timeout: 5000 });
+  // the stretch is the pane's selection: a chart not drawn over time is reckoned again from the
+  // requests that started in it, and says so
+  const held = await api.sessions.stretch(example!.path, 0, 200);
+  expect(held.summary.requests).toBeGreaterThan(0);
+  expect(held.summary.requests).toBeLessThan(172);
+  await app.waitFor("text:/ · in \\+.* – \\+200 ms$/", { timeout: 5000 });
 });
 
 test("language: Chinese strings", async () => {
@@ -219,7 +223,10 @@ test("language: Chinese strings", async () => {
   await app.press("id:nav-sessions");
   await app.press("id:open-example");
   await app.waitFor("text:查找最新的 WAL：探测了编号 1…128", { timeout: 10000 });
-  expect(app.shows("text:/27 次 SlateDB 写入都是：条件创建/")).toBe(true);
+  await app.press("text:写入 manifest 3");
+  await app.waitFor("id:operation-detail");
+  expect(app.shows("text:/条件创建（If-None-Match: \\*）/")).toBe(true);
+  await app.press("id:inspector-close");
   await app.press("label:语言");
   await app.press("text:English");
   await app.waitFor("text:General");
@@ -235,9 +242,9 @@ test("reduced motion: the overview's cards are there at once, still", async () =
 test("a number typed in Settings is saved a moment after the last key", async () => {
   const app = await open("../App.tsx", { ...desktop, clock: {} });
   await place(app, "settings");
-  await app.waitFor("id:concurrency");
-  await app.clear("id:concurrency");
-  await app.type("id:concurrency", "12");
+  await app.waitFor("id:price");
+  await app.clear("id:price");
+  await app.type("id:price", "0.02");
   // the clock stands still: nothing saved yet, however long the test takes
   expect(app.shows("text:Settings saved")).toBe(false);
   await app.clock!.runFor(400);

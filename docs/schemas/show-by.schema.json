@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/show-by.schema.json",
+  "title": "sonde show --by DIMENSION -f json",
+  "description": "A session's requests split by one dimension: the operations table's figures for each group, and where the slow and the costly requests concentrate.",
+  "type": "object",
+  "properties": {
+    "session": {
+      "type": "object",
+      "description": "The session's header."
+    },
+    "split": {
+      "type": "object",
+      "properties": {
+        "by": {
+          "enum": ["operation", "prefix", "size", "caller", "sdk", "status"]
+        },
+        "sdk": {
+          "type": ["string", "null"],
+          "description": "The SDK that sent most requests (`boto3 1.44`), from their user agent."
+        },
+        "slowMs": {
+          "type": "number",
+          "description": "A request this slow or slower is slow: the session's p90 (0 with fewer than 3 such requests)."
+        },
+        "slow": {
+          "type": "integer",
+          "description": "Slow requests."
+        },
+        "cost": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "description": "Most waiting first; past 12 groups the rest is one row, `other`, last.",
+          "items": {
+            "$ref": "#/$defs/row"
+          }
+        },
+        "text": {
+          "type": "string",
+          "description": "Where the slow and the costly requests concentrate, in a sentence (empty when nothing can be said)."
+        },
+        "phrases": {
+          "type": "array",
+          "description": "`text` as phrases, for other languages.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "args": {
+                "type": "object"
+              }
+            },
+            "required": ["key", "args"]
+          }
+        }
+      },
+      "required": ["by", "sdk", "slowMs", "slow", "cost", "currency", "rows", "text", "phrases"]
+    }
+  },
+  "required": ["session", "split"],
+  "$defs": {
+    "row": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The operation, prefix, size band (`0 B`, `< 64 KiB`, `64 KiB-1 MiB`, `1-8 MiB`, `8 MiB+`), caller, SDK or status."
+        },
+        "other": {
+          "type": "boolean",
+          "description": "The groups past the table's rows, folded into one."
+        },
+        "requests": {
+          "type": "integer"
+        },
+        "errors": {
+          "type": "integer",
+          "description": "Failed requests (a lookup that found nothing is no failure)."
+        },
+        "errorShare": {
+          "type": "number"
+        },
+        "p50Ms": {
+          "type": "number"
+        },
+        "p95Ms": {
+          "type": "number"
+        },
+        "p99Ms": {
+          "type": "number"
+        },
+        "waitedMs": {
+          "type": "number",
+          "description": "The program's waiting that was theirs."
+        },
+        "share": {
+          "type": "number",
+          "description": "Of the session's waiting; the rows add up to 1."
+        },
+        "cost": {
+          "type": "number"
+        },
+        "costShare": {
+          "type": "number"
+        },
+        "slow": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "key",
+        "requests",
+        "errors",
+        "errorShare",
+        "p50Ms",
+        "p95Ms",
+        "p99Ms",
+        "waitedMs",
+        "share",
+        "cost",
+        "costShare",
+        "slow"
+      ]
+    }
+  }
+}

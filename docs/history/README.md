@@ -16,3 +16,4 @@ Past release comparisons and reviews, kept for reference.
 | [review-14.0.md](review-14.0.md) | 14.0 reviewed, 15.0 proposed |
 | [review-15.0.md](review-15.0.md) | 15.0 reviewed, 16.0 proposed |
 | [review-16.0.md](review-16.0.md) | 16.0 reviewed, 17.0 proposed |
+| [plan-18.0.md](plan-18.0.md) | 18.0 planned |

@@ -153,8 +153,8 @@ pub fn summarize(records: &[Record]) -> Summary {
     s
 }
 
-/// What a session file holds, counted once and kept beside it
-/// (`<name>.summary.json`): listing sessions, and holding a run to an earlier
+/// What a session file holds, counted once and kept in its folder's index
+/// ([`crate::index`]): listing sessions, and holding a run to an earlier
 /// one, read this and never the session whole. It is of one version of the
 /// file (its length and the time it was written, taken before it was read):
 /// another is counted again.
@@ -217,22 +217,14 @@ pub const COUNTED_VERSION: u32 = 2;
 /// raised whenever what they hold changes between versions (a finding, a
 /// warning, how waiting or cost is reckoned). A test reckons the fixtures'
 /// figures and fails, saying so, when they change and this does not.
-pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+1");
+pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+3");
 pub const SHAPE_BINS: usize = 24;
 
-/// Where a session's counts are kept: `<name>.summary.json` beside it.
-pub fn counted_file(session: &std::path::Path) -> std::path::PathBuf {
-    let name = session
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let stem = name.strip_suffix(".sonde").unwrap_or(&name);
-    session.with_file_name(format!("{stem}.summary.json"))
-}
-
-/// Removes a session's counts: when the session is removed.
+/// Removes a session's counts: when the session is removed or replaced.
 pub fn forget(session: &std::path::Path) {
-    let _ = std::fs::remove_file(counted_file(session));
+    crate::index::set(session, crate::index::Change::NoCounted);
+    // (and the file they were kept in before 18.0)
+    let _ = std::fs::remove_file(crate::index::beside(session, "summary.json"));
 }
 
 /// What of a record's line the counts read: the rest of the line is skipped,
@@ -405,30 +397,24 @@ pub fn stamp(path: &std::path::Path) -> Option<(u64, u64)> {
     Some((m.len(), at))
 }
 
-/// The counts kept beside a session, when they are of the file as it is now.
+/// The counts kept of a session, when they are of the file as it is now:
+/// in its folder's index, or (before 18.0) beside it, moved into the index.
 pub fn kept(session: &std::path::Path) -> Option<Counted> {
-    let c: Counted = serde_json::from_slice(&std::fs::read(counted_file(session)).ok()?).ok()?;
+    let c = crate::index::get(session).counted.or_else(|| {
+        crate::index::moved(
+            session,
+            "summary.json",
+            |b| serde_json::from_slice::<Counted>(b).ok(),
+            |c| crate::index::Change::Counted(Box::new(c.clone())),
+        )
+    })?;
     (c.version == COUNTED_VERSION && Some((c.len, c.modified_ns)) == stamp(session)).then_some(c)
 }
 
-/// Keeps a session's counts beside it. A failure to write is no error: they
-/// are counted again next time.
+/// Keeps a session's counts in its folder's index. A failure to write is no
+/// error: they are counted again next time.
 pub fn keep(session: &std::path::Path, c: &Counted) {
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let file = counted_file(session);
-    // a name of its own: the app and the CLI may write at the same time
-    let tmp = file.with_extension(format!(
-        "json.{}.{}.tmp",
-        std::process::id(),
-        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    let written = serde_json::to_vec(c)
-        .ok()
-        .and_then(|b| reqlog::private::write(&tmp, b).ok())
-        .and_then(|_| std::fs::rename(&tmp, &file).ok());
-    if written.is_none() {
-        let _ = std::fs::remove_file(&tmp);
-    }
+    crate::index::set(session, crate::index::Change::Counted(Box::new(c.clone())));
 }
 
 /// A session's counts: those kept beside it, or counted now in one pass over
@@ -659,20 +645,18 @@ mod tests {
     }
 
     #[test]
-    fn counts_are_kept_beside_a_finished_session_and_go_when_it_changes_or_is_forgotten() {
+    fn counts_are_kept_in_the_index_of_a_finished_session_and_go_when_it_changes_or_is_forgotten() {
         let dir = tempfile::tempdir().unwrap();
+        let index = |p: &std::path::Path| crate::index::get(p).counted;
         // a live (uncompressed) session is counted and nothing is kept
         let live = fixture(dir.path(), "slatedb.sonde", false);
         assert_eq!(counted(&live).unwrap().requests, 172);
-        assert!(!counted_file(&live).exists());
+        assert!(index(&live).is_none());
         // a finished one keeps its counts: the next listing reads only those
         crate::session::compress(&live).unwrap();
         let first = counted(&live).unwrap();
-        assert!(counted_file(&live).exists());
-        assert_eq!(
-            counted_file(&live).file_name().unwrap(),
-            "slatedb.summary.json"
-        );
+        assert!(index(&live).is_some());
+        assert!(!dir.path().join("slatedb.summary.json").exists());
         assert_eq!(kept(&live), Some(first.clone()));
         // another file in its place (another length): counted again
         let other = fixture(dir.path(), "delta.sonde", true);
@@ -680,7 +664,15 @@ mod tests {
         assert_eq!(kept(&live), None);
         assert_eq!(counted(&live).unwrap().requests, 49);
         forget(&live);
-        assert!(!counted_file(&live).exists());
+        assert!(index(&live).is_none());
+        // counts kept beside it before 18.0 are read, and moved into the index
+        let c = counted(&live).unwrap();
+        forget(&live);
+        let old = dir.path().join("slatedb.summary.json");
+        std::fs::write(&old, serde_json::to_vec(&c).unwrap()).unwrap();
+        assert_eq!(kept(&live), Some(c));
+        assert!(!old.exists());
+        assert!(index(&live).is_some());
     }
 
     #[test]
@@ -760,7 +752,7 @@ mod tests {
         }
         // (what they hold is there to change: warnings among them)
         assert!(all.contains("\"warnings\":[\""), "{all}");
-        const FIGURES: u64 = 0x1967_8f59_615c_bbe0;
+        const FIGURES: u64 = 0x09fe_be8e_3a36_3461;
         assert_eq!(
             h, FIGURES,
             "the figures a run keeps changed: raise the number in `ANALYSIS` (summary.rs) and set FIGURES to {h:#x}"

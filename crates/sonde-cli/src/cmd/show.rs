@@ -8,6 +8,7 @@ use clap::Args;
 use reqlog::Record;
 use sonde_core::Sonde;
 use sonde_proxy::episode::{Episode, Outcome};
+use sonde_proxy::split::Dimension;
 use sonde_proxy::view::Analysis;
 
 use crate::output::{self, Format};
@@ -18,22 +19,28 @@ use super::record::*;
 pub struct ShowArgs {
     /// A session file (default: the newest in the data directory's sessions/).
     pub(super) file: Option<PathBuf>,
-    /// Only the summary.
+    /// Only the summary: what a table shows by default; with `-f json`,
+    /// the summary without the operations and requests.
     #[arg(long)]
     pub(super) summary: bool,
-    /// Only what failed.
+    /// Only the operations that failed (with --requests, the requests).
     #[arg(long)]
     pub(super) errors: bool,
-    /// One line per request instead of per operation.
+    /// Each request on its line, then the summary.
     #[arg(long)]
     pub(super) requests: bool,
-    /// Every line of a long session: past a few thousand, only the first
-    /// and the last hundred are printed.
+    /// Everything: each operation on its line, then the summary with every
+    /// kind of request, the signals over the run, first byte and cost.
     #[arg(long)]
     pub(super) all: bool,
     /// Open it in the sonde app instead (a sonde:// link).
     #[arg(long)]
     pub(super) app: bool,
+    /// The operations table split by prefix, size, caller, sdk, status or
+    /// operation, and where the slow and the costly requests are.
+    #[arg(long, value_name = "DIMENSION", value_parser = by_arg,
+          conflicts_with_all = ["summary", "errors", "requests", "all", "app"])]
+    pub(super) by: Option<Dimension>,
     /// The format written: table or json.
     #[arg(
         long,
@@ -43,6 +50,93 @@ pub struct ShowArgs {
         hide_possible_values = true
     )]
     pub(super) format: Format,
+}
+
+fn by_arg(text: &str) -> Result<Dimension, String> {
+    Dimension::parse(text).ok_or_else(|| {
+        let all: Vec<&str> = Dimension::ALL.iter().map(|d| d.name()).collect();
+        format!("{text:?} is not one of {}", all.join(", "))
+    })
+}
+
+/// `sonde show --by`: the operations table split by one dimension, and the
+/// sentence that says where the slow and the costly requests are.
+fn print_split(
+    split: &sonde_proxy::split::Split,
+    header: &sonde_proxy::session::SessionHeader,
+    requests: usize,
+    seconds: f64,
+    color: bool,
+) {
+    use sonde_proxy::program::money_text;
+    if let Some(c) = &header.command {
+        println!("{}", paint(&format!("$ {c}"), "1", color));
+    }
+    let from = split
+        .sdk
+        .as_deref()
+        .map(|s| format!(" from {s}"))
+        .unwrap_or_default();
+    println!(
+        "{}",
+        paint(
+            &format!(
+                "{}{from} to {} in {}",
+                output::count(requests, "request"),
+                header.endpoint,
+                output::duration(seconds * 1000.0)
+            ),
+            "1",
+            color
+        )
+    );
+    let rows: Vec<Vec<String>> = split
+        .rows
+        .iter()
+        .map(|r| {
+            vec![
+                if r.other {
+                    format!("other ({})", output::count(r.requests, "request"))
+                } else {
+                    r.key.clone()
+                },
+                output::grouped(r.requests as u64),
+                if r.errors > 0 {
+                    format!(
+                        "{} ({})",
+                        output::grouped(r.errors as u64),
+                        share_text(r.error_share)
+                    )
+                } else {
+                    String::new()
+                },
+                output::duration(r.p50_ms),
+                output::duration(r.p95_ms),
+                output::duration(r.p99_ms),
+                share_text(r.share),
+                money_text(r.cost, &split.currency),
+            ]
+        })
+        .collect();
+    println!(
+        "{}",
+        output::table(
+            &[
+                split.by.name(),
+                "requests",
+                "errors",
+                "p50",
+                "p95",
+                "p99",
+                "waiting",
+                "cost",
+            ],
+            &rows,
+        )
+    );
+    if !split.text.is_empty() {
+        println!("{}", split.text);
+    }
 }
 
 /// One operation on one line: time, format, what happened, size of it, notes.
@@ -148,6 +242,31 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     // what it amounts to, once: every part below reads this
     let analysis = Analysis::of(&session, &prices);
     let eps = &analysis.episodes;
+    if let Some(by) = a.by {
+        let split = sonde_proxy::split::split(all, by, &prices);
+        match a.format {
+            Format::Json => println!(
+                "{}",
+                output::json(&serde_json::json!({
+                    "session": session.header,
+                    "split": split,
+                }))
+            ),
+            _ => print_split(
+                &split,
+                &session.header,
+                all.len(),
+                analysis.summary.seconds,
+                std::io::stdout().is_terminal(),
+            ),
+        }
+        return Ok(0);
+    }
+    // how its program stood under faults, each scenario since when
+    let trials = sonde_proxy::trial::load_with_history(
+        &file,
+        sonde_proxy::program::key_of(&session.header).as_deref(),
+    );
     match a.format {
         // the summary alone: what the table's summary shows, and no more
         Format::Json if a.summary => {
@@ -159,7 +278,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "summary": analysis.summary,
                     "operations": eps.len(),
                     "waiting": {
-                        "busyMs": prof.busy_ms,
+                        "waitingMs": prof.busy_ms,
                         "wallMs": prof.wall_ms,
                         "peakInFlight": prof.peak_in_flight,
                         "p50Ms": prof.p50_ms,
@@ -169,7 +288,8 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     },
                     "cost": prof.cost,
                     "whatIf": analysis.what_if,
-                    "observations": analysis.observations,
+                    "findings": analysis.observations,
+                    "trials": trials,
                 }))
             );
         }
@@ -179,12 +299,13 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             let out = std::io::BufWriter::with_capacity(1 << 16, std::io::stdout().lock());
             let mut w = sonde_proxy::share::JsonOut::new(out, true);
             w.begin_object()?;
+            // one word each (18.0): operations, findings, requests
             w.array(
-                "episodes",
+                "operations",
                 eps.iter().filter(|e| !a.errors || e.outcome != Outcome::Ok),
             )?;
-            w.field("observations", &analysis.observations)?;
-            w.key("records")?;
+            w.field("findings", &analysis.observations)?;
+            w.key("requests")?;
             w.begin_array()?;
             sonde_proxy::share::each_record(&file, &mut all.iter().map(|r| r.id), &mut |r| {
                 if !a.errors || sonde_proxy::summary::is_failure(&r) {
@@ -196,6 +317,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             w.field("session", &session.header)?;
             w.field("summary", &analysis.summary)?;
             w.field("whatIf", &analysis.what_if)?;
+            w.field("trials", &trials)?;
             w.end_object()?;
             let mut out = w.finish()?;
             out.write_all(b"\n")?;
@@ -206,6 +328,8 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             if let Some(c) = &session.header.command {
                 println!("{}", paint(&format!("$ {c}"), "1", color));
             }
+            // a list asked for: the requests (then the summary), or what
+            // failed (alone)
             if !a.summary && a.requests {
                 let shown: Vec<&Record> = all
                     .iter()
@@ -217,7 +341,10 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 print_lines(shown.len(), a.all, "request", &|i| {
                     timeline_line(shown[i], color)
                 });
-            } else if !a.summary {
+                if a.errors {
+                    return Ok(0);
+                }
+            } else if !a.summary && (a.errors || a.all) {
                 let shown: Vec<&Episode> = eps
                     .iter()
                     .filter(|e| !a.errors || e.outcome != Outcome::Ok)
@@ -236,14 +363,27 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 print_lines(shown.len(), a.all, "operation", &|i| {
                     episode_line(shown[i], width, hide, formats, color)
                 });
+                if a.errors {
+                    return Ok(0);
+                }
             }
+            // against the program's run before it, when it has one
+            let since = super::fixloop::since_last(s, &file, &session.header, all, &analysis);
             print_summary_of(
                 &analysis,
                 &session.header,
                 &file,
-                std::io::stdout().is_terminal(),
+                color,
                 true,
+                a.all,
+                since.as_ref(),
             );
+            if !trials.is_empty() {
+                println!("\nUnder faults:");
+                for t in &trials {
+                    println!("{}", super::run::trial_line(t, color));
+                }
+            }
         }
     }
     Ok(0)
@@ -298,6 +438,7 @@ pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
             requests: false,
             all: false,
             app: false,
+            by: None,
             format: Format::Table,
         },
     )

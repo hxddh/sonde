@@ -1,4 +1,4 @@
-//! Recording: what `sonde run`, `proxy`, `watch` and `demo` share (the
+//! Recording: what `sonde run`, `proxy` and `demo` share (the
 //! recording's arguments, the proxy started, a session's summary). Each
 //! command is a module of its own, named here as it was.
 
@@ -21,13 +21,12 @@ use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use crate::output;
 
 pub use super::check::{CheckArgs, check};
-pub use super::compare::{CompareArgs, DiffArgs, compare, diff};
+pub use super::compare::{CompareArgs, DiffArgs, compare, diff_alias};
 pub use super::demo::{DemoArgs, demo};
 pub use super::proxy::{ProxyArgs, proxy};
-pub use super::replay::{ReplayArgs, replay};
 pub use super::run::{RunArgs, run};
 pub use super::show::{ShowArgs, show, show_file};
-pub use super::watch::{WatchArgs, watch};
+pub use super::watch::{WatchArgs, watch_alias};
 
 #[derive(Args, Clone)]
 pub struct Recording {
@@ -43,13 +42,13 @@ pub struct Recording {
     #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
     pub(super) policy: Option<String>,
     /// `--policy allow`: the program may delete and write over what it finds.
-    #[arg(long, conflicts_with_all = ["policy", "no_delete", "read_only"])]
-    pub(super) allow_writes: bool,
-    /// `--policy no-delete`.
-    #[arg(long, conflicts_with_all = ["policy", "read_only"])]
-    pub(super) no_delete: bool,
-    /// `--policy read-only`.
     #[arg(long, conflicts_with = "policy")]
+    pub(super) allow_writes: bool,
+    /// Gone in 18.0 (`--policy no-delete`, the default): said, and refused.
+    #[arg(long, hide = true)]
+    pub(super) no_delete: bool,
+    /// Gone in 18.0 (`--policy read-only`): said, and refused.
+    #[arg(long, hide = true)]
     pub(super) read_only: bool,
     /// The session file (default: a new file in the data directory's sessions/).
     #[arg(long, short = 'o')]
@@ -92,12 +91,21 @@ impl Recording {
     /// The policy asked for: the flags', else `[record] policy` of
     /// sonde.toml, else no-delete. Said when it lets the program delete.
     fn policy(&self) -> anyhow::Result<Policy> {
+        // one way to say it: --policy, and --allow-writes for short
+        for (gone, is) in [(self.no_delete, "no-delete"), (self.read_only, "read-only")] {
+            if gone {
+                return Err(super::usage(format!(
+                    "--{is} is gone in 18.0: say --policy {is}{}",
+                    if is == "no-delete" {
+                        " (the default)"
+                    } else {
+                        ""
+                    }
+                )));
+            }
+        }
         let flag = if self.allow_writes {
             Some(Policy::Allow)
-        } else if self.read_only {
-            Some(Policy::ReadOnly)
-        } else if self.no_delete {
-            Some(Policy::NoDelete)
         } else {
             self.policy.as_deref().and_then(Policy::named)
         };
@@ -136,6 +144,8 @@ pub(super) async fn start_under(
     of: &Of<'_>,
 ) -> anyhow::Result<Started> {
     let under = of.under;
+    // what the flags say is read first: a flag that is gone is said before anything else
+    let policy = r.policy()?;
     let ep = super::endpoint(s, r.endpoint.as_deref())?;
     let client = s.client(&ep)?;
     let cfg = client.config();
@@ -170,10 +180,17 @@ pub(super) async fn start_under(
         header.scenario = Some(u.scenario.name.clone());
         header.trial_of = Some(u.of.clone());
     }
+    // under no-delete a program may write over what its earlier runs wrote:
+    // kept beside its runs (a trial's runs share its clean run's)
+    let written = of.written.clone().unwrap_or_default();
+    if under.is_none()
+        && let Some(program) = sonde_proxy::program::key_of(&header)
+    {
+        written.remember(&runs_dir(&path), &program, cfg.endpoint.as_str());
+    }
     let writer = Arc::new(SessionWriter::create(&path, &header)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
-    let policy = r.policy()?;
     let tls = if r.tls {
         let dir = s.paths().data_dir.join("tls");
         let made = sonde_proxy::tls::Tls::load_or_make(&dir)
@@ -191,7 +208,7 @@ pub(super) async fn start_under(
             allow_remote,
             faults: under.map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario))),
             tls,
-            written: of.written.clone().unwrap_or_default(),
+            written,
             ..Default::default()
         },
     )
@@ -203,6 +220,14 @@ pub(super) async fn start_under(
         writer,
         path,
     })
+}
+
+/// The folder a session is in, where its program's runs are kept.
+pub(super) fn runs_dir(session: &std::path::Path) -> PathBuf {
+    match session.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    }
 }
 
 /// Prints records as they arrive until the task is aborted.
@@ -341,57 +366,73 @@ pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
     }
 }
 
-/// Where the time went: the kinds of request the program waited on most.
-/// `whole` (a run's own summary, which has no cost table and four signal
-/// lines) says the in-flight peak and the cost here; `sonde show` has said
-/// them above, once.
-pub(super) fn print_profile(p: &Profile, color: bool, whole: bool, say: &dyn Fn(String)) {
+/// The kinds of request, in one table: how many, how many failed, how long
+/// 95% took at most, the run's waiting and cost that were theirs. `all`
+/// adds the median and the slowest, and every kind.
+pub(super) fn kinds_table(p: &Profile, all: bool) -> Vec<String> {
+    use sonde_proxy::summary::FEW;
     if p.groups.is_empty() {
-        return;
+        return Vec::new();
     }
-    let mut line = format!(
-        "waiting on S3 {} ({:.0}% of the run)",
-        output::duration(p.busy_ms),
-        p.busy_ms * 100.0 / p.wall_ms.max(1e-9),
-    );
-    if whole {
-        line.push_str(&format!(
-            " · request cost ≈ {}",
-            money_text(p.cost.amount, &p.cost.currency)
-        ));
-    }
-    say(paint(&line, "1", color).to_string());
     const ROWS: usize = 8;
+    let shown = if all { p.groups.len() } else { ROWS };
+    // a percentile of a handful of requests is one of them: marked, when
+    // others are of more
+    let few = |g: &sonde_proxy::profile::Group| g.requests < FEW as usize;
+    let mark = p.groups.iter().any(few) && !p.groups.iter().all(few);
     let rows: Vec<Vec<String>> = p
         .groups
         .iter()
-        .take(ROWS)
+        .take(shown)
         .map(|g| {
-            vec![
+            let star = if mark && few(g) { "*" } else { "" };
+            let mut row = vec![
                 if g.missed {
                     format!("{} (not found)", g.operation)
                 } else {
                     g.operation.clone()
                 },
-                format!("{:.0}%", g.share * 100.0),
-                output::duration(g.waited_ms),
                 output::grouped(g.requests as u64),
-                output::duration(g.p50_ms),
-                output::duration(g.p95_ms),
-            ]
+                if g.errors > 0 && !g.missed {
+                    output::grouped(g.errors as u64)
+                } else {
+                    String::new()
+                },
+                format!("{}{star}", output::duration(g.p95_ms)),
+                format!(
+                    "{} ({:.0}%)",
+                    output::duration(g.waited_ms),
+                    g.share * 100.0
+                ),
+                if p.cost.amount > 0.0 {
+                    share_text(g.cost / p.cost.amount)
+                } else {
+                    String::new()
+                },
+            ];
+            if all {
+                row.push(format!("{}{star}", output::duration(g.p50_ms)));
+                row.push(output::duration(g.max_ms));
+            }
+            row
         })
         .collect();
-    say(output::table(
-        &["waiting on", "share", "time", "requests", "p50", "p95"],
-        &rows,
-    )
-    .to_string());
-    if p.groups.len() > ROWS {
-        say(format!(
-            "  … and {} more kinds of request",
-            p.groups.len() - ROWS
+    let mut heads = vec!["kind", "requests", "errors", "p95", "waiting", "cost"];
+    if all {
+        heads.extend(["p50", "max"]);
+    }
+    let mut out = vec![output::table(&heads, &rows).to_string()];
+    if p.groups.len() > shown {
+        let more = p.groups.len() - shown;
+        out.push(format!(
+            "  … and {more} more {} of request (`--all` lists them)",
+            if more == 1 { "kind" } else { "kinds" }
         ));
     }
+    if mark {
+        out.push(format!("  * of fewer than {FEW} requests"));
+    }
+    out
 }
 
 pub(super) fn print_summary(
@@ -405,19 +446,23 @@ pub(super) fn print_summary(
     // (a run just recorded: its times are its own)
     let header = SessionHeader::new(endpoint, "", "", None);
     let analysis = Analysis::of_records(&header, records, prices);
-    print_summary_of(&analysis, &header, path, color, stdout);
+    print_summary_of(&analysis, &header, path, color, stdout, false, None);
 }
 
-/// What a session amounts to, each fact once: the head line has the
-/// requests, the operations and the time; the signals the rate, the errors,
-/// the latency, the bytes and (for `sonde show`) the cost; then where the
-/// waiting went, and the findings.
+/// What a session amounts to, in one fixed shape for `run`, `show` and
+/// `demo`: the head line (requests, operations, the SDK, the store, the
+/// time, the waiting and the cost), the findings first (each with its
+/// saving, its line of code and its fix), what acting on them would leave,
+/// one table of the kinds of request, and the change since the program's
+/// run before. `all` adds the signals over the run and their tables.
 pub(super) fn print_summary_of(
     a: &Analysis,
     header: &SessionHeader,
     path: &Path,
     color: bool,
     stdout: bool,
+    all: bool,
+    since: Option<&sonde_proxy::fixloop::SinceLast>,
 ) {
     // `sonde show` answers on stdout; run and proxy keep stdout for the program's own output
     let say = |line: String| {
@@ -428,13 +473,29 @@ pub(super) fn print_summary_of(
         }
     };
     let s = &a.summary;
-    let endpoint = &header.endpoint;
+    let p = &a.profile;
     let mut head = format!(
-        "{} ({}) to {endpoint} in {}",
+        "{} ({})",
         output::count(s.requests as usize, "request"),
         output::count(a.episodes.len(), "operation"),
-        output::duration(s.seconds * 1000.0)
     );
+    if let Some(sdk) = &a.sdk {
+        head.push_str(&format!(" from {sdk}"));
+    }
+    head.push_str(&format!(
+        " to {} in {}",
+        header.endpoint,
+        output::duration(s.seconds * 1000.0)
+    ));
+    if p.busy_ms > 0.0 {
+        head.push_str(&format!(", waiting {}", output::duration(p.busy_ms)));
+    }
+    if p.cost.amount > 0.0 {
+        head.push_str(&format!(
+            ", cost ≈ {}",
+            money_text(p.cost.amount, &p.cost.currency)
+        ));
+    }
     if s.errors > 0 {
         head.push_str(&format!(
             " · {}",
@@ -445,107 +506,56 @@ pub(super) fn print_summary_of(
         head.push_str(&format!(" · {} not found", output::grouped(s.misses)));
     }
     say(format!("\n{}", paint(&head, "1", color)));
-    if !s.operations.is_empty() {
-        // a percentile of a handful of requests is one of them: marked
-        let few = s.operations.iter().any(|o| o.few);
-        let ms = |v: f64, o: &sonde_proxy::summary::OpStats| {
-            format!("{}{}", output::duration(v), if o.few { "*" } else { "" })
-        };
-        let rows: Vec<Vec<String>> = s
-            .operations
-            .iter()
-            .map(|o| {
-                vec![
-                    o.operation.clone(),
-                    output::grouped(o.count),
-                    if o.errors > 0 {
-                        format!(
-                            "{} ({})",
-                            output::grouped(o.errors),
-                            share_text(o.error_share)
-                        )
-                    } else {
-                        String::new()
-                    },
-                    if o.misses > 0 {
-                        output::grouped(o.misses)
-                    } else {
-                        String::new()
-                    },
-                    ms(o.p50_ms, o),
-                    ms(o.p95_ms, o),
-                    ms(o.p99_ms, o),
-                    output::duration(o.max_ms),
-                ]
-            })
-            .collect();
-        say(output::table(
-            &[
-                "operation",
-                "requests",
-                "errors",
-                "not found",
-                "p50",
-                "p95",
-                "p99",
-                "max",
-            ],
-            &rows,
-        )
-        .to_string());
-        if few {
-            say(format!(
-                "  * of fewer than {} requests",
-                sonde_proxy::summary::FEW
-            ));
-        }
+    // a trial's faults are sonde's doing: said before the figures they are in
+    if !a.injected.is_empty() {
+        say(format!(
+            "  a trial{}: {} met a fault sonde injected, so the errors and retries here are the trial's, not the store's",
+            header
+                .scenario
+                .as_deref()
+                .map(|s| format!(" under {s}"))
+                .unwrap_or_default(),
+            output::count(a.injected.len(), "request")
+        ));
     }
-    for (what, n) in &s.error_codes {
-        say(format!("  {} × {what}", output::grouped(*n)));
-    }
-    // the four signals, each with its line over the run
-    let mut signals = a.signals.clone();
     if header.whole_seconds {
-        // where in its second a request began is not known: how many were
-        // in flight at once is not said
-        signals.in_flight.peak = 0;
+        // where in its second a request began is not known
         say("  its times are to the second (an imported log): a second's requests are spread over it in the log's order, and how many were in flight at once is not known".into());
     }
-    let signals = sonde_proxy::signals::text(&signals, color);
-    // a run's own summary keeps to the four lines; `sonde show` has the tables too
-    for line in signals.lines().take(if stdout { usize::MAX } else { 4 }) {
-        say(line.to_string());
-    }
-    print_profile(&a.profile, color, !stdout, &say);
     for o in &a.observations {
-        let mark = if o.level == "warn" {
-            paint("!", "33", color)
-        } else {
-            paint("·", "2", color)
-        };
-        say(format!("{mark} {}", o.text));
-        // where in the program, when it says
-        for c in &o.callers {
-            say(paint(
-                &format!(
-                    "    at {} ({})",
-                    c.place,
-                    output::count(c.requests, "request")
-                ),
-                "2",
-                color,
-            ));
+        for line in super::fixloop::finding_lines(o, a.sdk.as_deref(), color) {
+            say(line);
         }
     }
     // acting on all of them, at once
     if let Some(w) = &a.what_if {
         say(paint(&w.line(), "32", color));
     }
+    for line in kinds_table(p, all) {
+        say(line);
+    }
+    for (what, n) in &s.error_codes {
+        say(format!("  {} × {what}", output::grouped(*n)));
+    }
+    if all {
+        let mut signals = a.signals.clone();
+        if header.whole_seconds {
+            signals.in_flight.peak = 0;
+        }
+        for line in sonde_proxy::signals::text(&signals, color).lines() {
+            say(line.to_string());
+        }
+    }
+    if let Some(since) = since {
+        for line in super::fixloop::since_lines(since, color) {
+            say(line);
+        }
+    }
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
 }
 
 /// A share as a percentage: `0.4%`, `12%`.
-fn share_text(share: f64) -> String {
+pub(super) fn share_text(share: f64) -> String {
     let p = share * 100.0;
     if p > 0.0 && p < 0.1 {
         "<0.1%".into()
@@ -593,7 +603,7 @@ pub(super) fn not_drained(grace: std::time::Duration) -> String {
 }
 
 /// The newest session recorded from a program's own requests (`run`,
-/// `proxy`, `watch`): what a bare `sonde show` or `sonde check` is about. A
+/// `proxy`): what a bare `sonde show` or `sonde check` is about. A
 /// replay, an import and a trial are sessions too, and are named to be read.
 pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
     let dir = s.paths().sessions();

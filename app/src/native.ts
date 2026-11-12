@@ -32,7 +32,6 @@ export const api = {
   reloadConfig: () => (Sonde as unknown as { reloadConfig(): void }).reloadConfig(),
   settings: () => Sonde.settings() as T.Settings,
   saveSettings: (s: T.Settings) => Sonde.saveSettings(s),
-  setReadOnly: (on: boolean) => Sonde.setReadOnly(on),
   paths: () => Sonde.paths() as Record<string, string>,
   buckets: async (ep: string) => (await Sonde.buckets(ep)) as T.BucketEntry[],
   objectDetail: async (ep: string, b: string, k: string, v?: string | null) => (await Sonde.objectDetail(ep, b, k, v ?? null)) as T.ObjectDetail,
@@ -41,20 +40,11 @@ export const api = {
   search: (ep: string, b: string, p: string, needle: string) => Sonde.search(ep, b, p, needle),
   jobs: () => Sonde.jobs() as T.JobInfo[],
   cancelJob: (id: string) => Sonde.cancelJob(id),
-  requests: (f: T.RequestFilter, limit: number) => Sonde.requests(f, limit) as T.RecordSummary[],
-  latestRequest: () => Sonde.latestRequest(),
   /** Follows the engine instead of asking it on a timer: `request` with the
    * newest record's id as records come, `jobs` with the number running as
    * jobs change; each at once with the value now. Stops with the view that
    * called it, or with the function it returns. */
-  on: ((event: string, listener: (v: number) => void) => Sonde.on(event, (v) => listener(v as number))) as (event: "request" | "jobs", listener: (v: number) => void) => () => void,
-  request: (id: number) => Sonde.request(id) as T.RequestRecord | null,
-  findRequest: (rid: string) => Sonde.findRequest(rid) as T.RequestRecord | null,
-  requestOperations: () => Sonde.requestOperations() as string[],
-  copyAsAwsCli: (id: number) => Sonde.copyAsAwsCli(id),
-  copyAsCurl: (id: number) => Sonde.copyAsCurl(id),
-  exportRequests: (format: "json" | "har", f: T.RequestFilter) => Sonde.exportRequests(format, f),
-  clearRequests: () => Sonde.clearRequests(),
+  on: ((event: string, listener: (v: number) => void) => Sonde.on(event, (v) => listener(v as number))) as (event: "jobs", listener: (v: number) => void) => () => void,
   mpuScan: (ep: string, b: string, p: string) => Sonde.mpuScan(ep, b, p),
   planAbort: (ep: string, b: string, rows: T.UploadRow[]) => Sonde.planAbort(ep, b, rows) as T.Plan,
   planLifecycle: async (ep: string, b: string, p: string, days: number) => (await Sonde.planLifecycle(ep, b, p, days)) as T.Plan,
@@ -84,10 +74,10 @@ export const api = {
     list: () => Sessions.list() as T.SessionInfo[],
     /** The programs run here, newest first, with their runs' trend. */
     programs: async () => (await Sessions.programs()) as unknown,
-    /** sonde's own requests (browsing, scans, probes) as a session file: its path. */
-    fromRequestLog: (limit = 100000) => Sessions.fromRequestLog(limit) as string,
     /** A session as a window opens it: its totals, signals, profile and findings, and the first page of its operations. Read off the interface's thread. */
     view: async (path: string) => (await Sessions.view(path)) as T.SessionView,
+    /** The requests that started in a stretch of it (ms from its first request's start), reckoned as a session of their own: what the Time pane's charts not drawn over time read while a stretch is chosen. Off the interface's thread. */
+    stretch: async (path: string, fromMs: number, toMs: number) => (await Sessions.stretch(path, fromMs, toMs)) as T.Stretch,
     /** A range of its operations, sorted and narrowed as the table asks. */
     episodes: async (path: string, query: T.EpisodeQuery) => (await Sessions.episodes(path, query)) as T.EpisodePage,
     /** One operation by its index, with every one of its requests' ids. */
@@ -101,6 +91,10 @@ export const api = {
     /** A range of the operations a finding is about (a view lists its first 200). */
     observationEpisodes: (path: string, observation: number, offset: number, limit: number) => Sessions.observationEpisodes(path, observation, offset, limit) as number[],
     records: (path: string, ids: number[]) => Sessions.records(path, ids) as T.RecordSummary[],
+    /** The operations table split by a dimension (Group by), with its sentence. Read off the interface's thread. */
+    split: async (path: string, by: T.SplitBy) => (await Sessions.split(path, by)) as T.Split,
+    /** Every request of one key, whatever its operation, in time order (the inspector's history). */
+    keyHistory: async (path: string, bucket: string, key: string) => (await Sessions.keyHistory(path, bucket, key)) as T.KeyRequest[],
     record: (path: string, id: number) => Sessions.record(path, id) as T.RequestRecord | null,
     copy: (path: string, id: number, kind: "cli" | "curl") => Sessions.copy(path, id, kind) as string | null,
     start: async (endpoint: string, policy: "allow" | "no-delete" | "read-only") => (await Sessions.start(endpoint, policy)) as T.RecordingView,
@@ -131,6 +125,9 @@ export const api = {
     /** The session's command again, once per scenario (`slowdown:3`: its first three attempts at each request), sonde answering in the store's place; `kill` cancels (and nothing is kept). */
     trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent) => void) =>
       Sessions.trial(path, scenarios, policy, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
+    /** Try again what did not survive: the session's command run afresh (a run of its own, its output as `{ data }`), then only the scenarios whose last verdict for its program broke, degraded or was refused; `path` is the fresh run, with no trial when it exited non-zero (`cleanExit`). */
+    trialAgain: (path: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent | T.RunEvent) => void) =>
+      Sessions.trialAgain(path, policy, cols, rows, (e) => onEvent(e as T.TrialEvent | T.RunEvent)) as Promise<T.TrialResult>,
     logLines: (path: string) => Sessions.logLines(path) as T.LogLine[],
     replayPlan: (path: string, endpoint: string) => Sessions.replayPlan(path, endpoint),
     replay: (path: string, endpoint: string, prefix: string) => Sessions.replay(path, endpoint, prefix),
@@ -138,6 +135,8 @@ export const api = {
     history: async (path: string) => (await Sessions.history(path)) as T.ProgramHistory | null,
     setBaseline: (path: string, on: boolean) => Sessions.setBaseline(path, on) as boolean,
     compareRuns: async (before: string, after: string) => (await Sessions.compareRuns(before, after)) as T.RunChange,
+    /** A run against its program's run before it: its findings with their state and measured savings; null for no run of a program. */
+    sinceLast: async (path: string) => (await Sessions.sinceLast(path)) as T.SinceLast | null,
     codeChange: async (before: string, after: string) => (await Sessions.codeChange(before, after)) as T.CodeChange,
   },
 };

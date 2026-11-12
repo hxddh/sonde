@@ -1,15 +1,17 @@
 // The compatibility matrix: probes run on several endpoints in parallel,
 // vendor × probe cells that open on the raw requests and responses, saved
-// runs and the difference between two of them.
+// runs and the difference between two of them. A section of Buckets: a run
+// takes minutes, so it outlives the section (its jobs are in Activity, where
+// they stop); back here, it shows how far it got, then its matrix.
 
-import { cleanup, Scroll, signal, Text, View } from "nsh";
+import { effect, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable } from "nsh/base";
 import { count, date, duration } from "../format";
 import { t } from "../i18n";
 import { core, endpointName } from "../phrases";
 import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
-import { endpoint, endpoints, go, notify, readOnly, report, showRequest } from "../store";
+import { endpoint, endpoints, go, notify, report } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
 import { Back, Badge, Bar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN } from "../ui/kit";
 import { Document } from "../ui/record";
@@ -40,7 +42,6 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
             <View class="flex-row items-center gap-2">
               <StatusMark status={r().status} />
               <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{r().operation}</Text>
-              <Button small variant="ghost" label={t("common.showRequest")} onPress={() => showRequest(r().id)} />
             </View>
             <Text class="font-mono text-caption text-muted-foreground">{`${r().method} ${r().url}`}</Text>
             <If when={r().errorBody}>{(b) => <Document text={b()} mark />}</If>
@@ -123,6 +124,12 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
 
 /** A terminal's matrix: a box of its own to scroll in (its page scrolls too). */
 
+// a run's state is the app's, not the section's: from the press on Run to its last job's end
+// a second press starts nothing; each endpoint's progress; bumped as a run ends (read again)
+const busy = signal(false);
+const running = signal<Record<string, string>>({});
+const ran = signal(0);
+
 export function Probes() {
   // the endpoint in use to start from; the bucket probes write to is chosen on purpose
   const chosen = signal<Record<string, boolean>>(endpoint() ? { [endpoint()!]: true } : {});
@@ -130,9 +137,6 @@ export function Probes() {
   const temp = signal(false);
   const slow = signal(true);
   const only = signal("");
-  // from the press on Run to its last job's end: a second press starts nothing
-  const busy = signal(false);
-  const running = signal<Record<string, string>>({});
   const matrix = signal<Matrix>(api.probeMatrix());
   const runs = signal<RunSummary[]>(api.probeRuns());
   const open = signal<{ probe: ProbeMeta; col: number } | null>(null);
@@ -141,24 +145,26 @@ export function Probes() {
   const diff = signal<Change[] | null>(null);
   // the page's own height: the matrix may take it, not more
   const height = signal(720);
-  const jobs: string[] = [];
-  cleanup(() => {
-    for (const j of jobs) api.cancelJob(j);
-  });
   const refresh = () => {
     matrix.set(api.probeMatrix());
     runs.set(api.probeRuns());
   };
+  // a run that ended while the section was away, or here
+  let seen = untracked(ran);
+  effect(() => {
+    const n = ran();
+    if (n !== seen) untracked(refresh);
+    seen = n;
+  });
   // the endpoints checked that are still there
   const picked = () => endpoints().filter((e) => chosen()[e.id]).map((e) => e.id);
-  const canRun = () => !readOnly() && picked().length > 0 && scratch() !== "" && !busy();
+  const canRun = () => picked().length > 0 && scratch() !== "" && !busy();
   const run = async () => {
     if (!canRun()) return;
     const eps = picked();
     busy.set(true);
     try {
       const ids = await api.runProbes(eps, { bucket: scratch(), allowTempBuckets: temp(), includeSlow: slow(), only: only().split(",").map((s) => s.trim()).filter(Boolean) });
-      jobs.push(...ids);
       await Promise.all(
         ids.map(async (id, i) => {
           try {
@@ -172,11 +178,11 @@ export function Probes() {
           });
         }),
       );
-      refresh();
     } catch (e) {
       report(e);
     }
     busy.set(false);
+    ran.update((n) => n + 1);
   };
   const detail = () => {
     const o = open();
@@ -220,12 +226,6 @@ export function Probes() {
                 ]}
               />
             </PageHeader>
-            {/* probes write: said before Run is tried, with the way to allow it */}
-            <If when={readOnly()}>
-              <Notice tone="warn" text={t("probes.readOnly")} testID="probe-read-only">
-                <Button small label={t("settings.open")} onPress={() => go("settings")} />
-              </Notice>
-            </If>
             <Card>
               {/* one considered head: what the card does, and at its end the one command that does it */}
               <View class="flex-row items-center gap-3">

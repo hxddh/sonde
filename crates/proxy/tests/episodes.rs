@@ -89,12 +89,16 @@ fn slatedb_run_reads_as_slatedb_steps() {
     assert!(manifest.notes.iter().any(|n| n.contains("If-None-Match")));
     assert!(manifest.notes.iter().any(|n| n.starts_with("after ")));
     assert!(eps.iter().all(|e| e.outcome == Outcome::Ok));
-    // steps carry what is particular to them; the shared note is said once
-    let obs = observations(&s.records, &eps);
+    // a format's shared habit is said once, among the operations' notes (no finding)
+    let shared: Vec<(usize, String)> = sonde_proxy::episode::shared_notes(&eps)
+        .into_iter()
+        .map(|(_, n, with, _)| (with, n))
+        .collect();
     assert!(
-        obs.iter()
-            .any(|o| o.text.starts_with("27 SlateDB writes: conditional create")),
-        "{obs:?}"
+        shared
+            .iter()
+            .any(|(n, note)| *n == 27 && note.starts_with("conditional create")),
+        "{shared:?}"
     );
 
     let obs = observations(&s.records, &eps);
@@ -173,12 +177,18 @@ fn delta_rs_run_reads_as_commits() {
             .iter()
             .all(|e| e.format == Some(Format::Delta) && e.outcome == Outcome::Ok)
     );
-    let obs = observations(&s.records, &eps);
+    // a format's shared habit is said once, among the operations' notes (no finding)
+    let shared: Vec<(usize, String)> = sonde_proxy::episode::shared_notes(&eps)
+        .into_iter()
+        .map(|(_, n, with, _)| (with, n))
+        .collect();
     assert!(
-        obs.iter()
-            .any(|o| o.text == "4 Delta writes: conditional create (If-None-Match: *)"),
-        "{obs:?}"
+        shared
+            .iter()
+            .any(|(n, note)| *n == 4 && note.starts_with("conditional create (If-None-Match: *)")),
+        "{shared:?}"
     );
+    let obs = observations(&s.records, &eps);
     assert!(
         obs.iter()
             .any(|o| o.text.ends_with("_delta_log/ was listed 15 times"))
@@ -210,11 +220,16 @@ fn lance_run_reads_as_versions() {
         eps.iter()
             .all(|e| e.format == Some(Format::Lance) && e.outcome == Outcome::Ok)
     );
-    let obs = observations(&s.records, &eps);
+    // a format's shared habit is said once, among the operations' notes (no finding)
+    let shared: Vec<(usize, String)> = sonde_proxy::episode::shared_notes(&eps)
+        .into_iter()
+        .map(|(_, n, with, _)| (with, n))
+        .collect();
     assert!(
-        obs.iter()
-            .any(|o| o.text == "7 Lance writes: conditional create (If-None-Match: *)"),
-        "{obs:?}"
+        shared
+            .iter()
+            .any(|(n, note)| *n == 7 && note.starts_with("conditional create (If-None-Match: *)")),
+        "{shared:?}"
     );
 }
 

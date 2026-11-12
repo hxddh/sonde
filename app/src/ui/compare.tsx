@@ -10,7 +10,9 @@ import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange, SessionInfo, Signals } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN } from "./kit";
+import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH } from "./kit";
+import { changedFindings, savedText } from "./fixloop";
+import { StateBadge } from "./sessionview";
 import { fileName, sessionName } from "./manage";
 import { brief, FEW, handful, signalsOf } from "../signals";
 import { Chart, cost, DistributionCompare, groupName, PrefixChangeMap, RunBars, StoreLatency, MARK, Sparkline } from "./plots";
@@ -94,7 +96,9 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
 export function RunChangeView(props: { change: RunChange; inline?: boolean; /** both runs' signals, when they are read: the tiles' lines and second figures */ signals?: [Signals, Signals] | null }) {
   const c = () => props.change;
   const n = (v: number) => count(Math.round(v));
-  const findings = () => c().resolved.length + c().appeared.length;
+  // each finding that changed between the runs: fixed (with what it saved, measured against the predicted), less, back, new
+  const changed = () => changedFindings(c().findings ?? []);
+  const findings = () => changed().length;
   // the same requests of each kind, the same errors, no finding gone or new
   const unchanged = () => c().requests[0] === c().requests[1] && c().errors[0] === c().errors[1] && c().groups.every((g) => g.requests[0] === g.requests[1]) && findings() === 0;
   return (
@@ -132,17 +136,25 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean; /** 
           <View class="gap-2">
             <Heading>{t("obs.title")}</Heading>
             <Card pad="none">
-              <Each of={[...c().resolved.map((x) => ({ x, gone: true })), ...c().appeared.map((x) => ({ x, gone: false }))]}>
+              <Each of={changed()} key={(f) => f.identity}>
                 {(f, i) => (
-                  <Row top first={i() === 0}>
-                    <View class="min-h-5 shrink-0 justify-center">
-                      <Icon name={f().gone ? "circle-check" : "triangle-alert"} tint={f().gone ? "status-ok" : "warn"} />
+                  <Row top first={i() === 0} testID={`compare-finding-${i()}`}>
+                    <View class={`${WIDTH.badge} min-h-5 shrink-0 flex-row items-center`}>
+                      <StateBadge state={f().state} />
                     </View>
-                    <Text class="min-w-0 flex-1 text-body leading-5 text-foreground">
-                      {/* emphasis: whether the finding is gone or new, before its words */}
-                      <Text class={`${EMPHASIS} ${f().gone ? "text-status-ok" : "text-warn"}`}>{`${f().gone ? t("profile.resolved") : t("profile.appeared")} · `}</Text>
-                      {say(f().x.phrases, f().x.text)}
-                    </Text>
+                    <View class="min-w-0 flex-1 gap-1">
+                      <Text class="text-body leading-5 text-foreground">{say(f().phrases, f().text)}</Text>
+                      {/* less: as it read in the run before */}
+                      <If when={f().state === "less" ? f().was : null}>{(w) => <Text class="text-small text-muted-foreground">{t("fix.was", { text: say(w().phrases, w().text) })}</Text>}</If>
+                      <If when={savedText(f())}>
+                        {(v) => (
+                          <View class="flex-row items-center gap-1">
+                            <Icon name="trending-down" size={ICON.small} tint="status-ok" />
+                            <Text testID={`compare-saved-${i()}`} class="tabular-nums text-small text-status-ok">{v()}</Text>
+                          </View>
+                        )}
+                      </If>
+                    </View>
                   </Row>
                 )}
               </Each>
@@ -156,7 +168,24 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean; /** 
 
 type Answers = { comparison: Comparison; a: string; b: string; latency?: LatencyChange[]; endpoints?: [string, string] };
 
+/** Two sessions side by side, the earlier first: whichever was opened, a run is compared with the
+ * one before it ("before → after"), never the other way round. */
 export function CompareView(props: { a: string; b: string; onClose: () => void }) {
+  const created = (p: string) => {
+    try {
+      return api.sessions.list().find((x) => x.path === p)?.created ?? "";
+    } catch {
+      return "";
+    }
+  };
+  const later = () => {
+    const [a, b] = [created(props.a), created(props.b)];
+    return !!a && !!b && Date.parse(a) > Date.parse(b);
+  };
+  return <ComparePair a={later() ? props.b : props.a} b={later() ? props.a : props.b} onClose={props.onClose} />;
+}
+
+function ComparePair(props: { a: string; b: string; onClose: () => void }) {
   // the sessions there are, read once per pair: their names, and which one is a replay
   const sessions = computed((): SessionInfo[] => {
     props.a;
@@ -297,7 +326,6 @@ interface ReplayPlan {
   prefix: string;
   buckets: string[];
   url: string;
-  readOnly: boolean;
 }
 
 /** One session replayed on several stores: each store's answers and each kind's p95, beside the recording's. */
@@ -447,11 +475,6 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
             <Text class="text-body text-foreground">{t("replay.plan", { n: p().plan.requests, writes: t("replay.writes", { n: p().plan.writes }), deletes: t("replay.deletes", { n: p().plan.deletes }), prefix: p().prefix, buckets: p().buckets.join(", ") })}</Text>
             <Muted class="text-small">{t("replay.cleanup", { prefix: p().prefix })}</Muted>
             <Each of={Object.entries(p().plan.skipped)}>{(e) => <Muted class="text-small">{`${count(e()[1])} × ${e()[0]}`}</Muted>}</Each>
-            <If when={p().readOnly}>
-              <Notice tone="warn" text={t("replay.readOnly")}>
-                <Button small label={t("settings.open")} onPress={() => (props.onClose(), go("settings"))} />
-              </Notice>
-            </If>
           </View>
         )}
       </If>
@@ -466,7 +489,7 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
       >
         <Actions>
           <Button variant="ghost" label={t("common.cancel")} onPress={props.onClose} testID="replay-cancel" />
-          <Button variant="primary" label={busy() ? t("replay.running") : t("replay.run")} onPress={run} disabled={busy() || !plan() || plan()!.readOnly} testID="replay-run" />
+          <Button variant="primary" label={busy() ? t("replay.running") : t("replay.run")} onPress={run} disabled={busy() || !plan()} testID="replay-run" />
         </Actions>
       </If>
     </Modal>

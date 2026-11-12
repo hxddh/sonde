@@ -635,7 +635,7 @@ fn cloudtrail(
     Ok(out)
 }
 
-/// A HAR file's requests to S3 (a browser's, or sonde's own `--log-out`).
+/// A HAR file's requests to S3 (a browser's, say).
 fn har(
     text: &str,
     other_hosts: &mut usize,

@@ -22,7 +22,22 @@ function command(cmd: boolean) {
   // there (a miss) and a bucket that is not (a failure: the errors chart has something to draw)
   // a pause first: a trial of it runs long enough to be seen running
   const pause = cmd ? "ping -n 3 127.0.0.1 >NUL" : "sleep 1.5";
-  return [pause, ...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
+  // its config read ten times (a finding: a key read again and again)
+  const again = cmd ? `(for /L %i in (1,1,10) do @${curl} -o ${sink} ${url}/demo/config/app.yaml)` : `for i in 1 2 3 4 5 6 7 8 9 10; do ${curl} -o ${sink} ${url}/demo/config/app.yaml; done`;
+  // a write whose refusal curl never hears (no -f): under faults it breaks
+  const put = `${curl} -X PUT --data hello -o ${sink} ${url}/demo/tour/notes.txt && echo wrote notes.txt`;
+  return [pause, ...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), again, put, `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
+}
+
+// a long command into a field: pasted where the test runner can paste (quicker than typing it), typed where it
+// cannot yet (Native Shell's runner pastes on macOS, iOS, the web and headless; not on a Windows desktop)
+async function enter(app: any, id: string, text: string) {
+  try {
+    await app.paste(id, { text });
+  } catch (e) {
+    if (!/pasting in tests is not supported/.test(String(e))) throw e;
+    await app.type(id, text);
+  }
 }
 
 interface Variant {
@@ -94,7 +109,7 @@ for (const v of variants) {
     const sure = sample.includes("AWS_ENDPOINT_URL");
     // (the demo left its own first command in the field: typed after it, the two ran as one)
     await app.clear("id:run-command");
-    await app.type("id:run-command", command(cmd));
+    await enter(app, "id:run-command", command(cmd));
     // (the button follows the field a frame later)
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
@@ -102,7 +117,7 @@ for (const v of variants) {
     // (the other shell's form, should the sample not have said and the first have reached no store)
     if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
       await app.clear("id:run-command");
-      await app.type("id:run-command", command(!cmd));
+      await enter(app, "id:run-command", command(!cmd));
       await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
       await app.press("id:run-start");
       await app.waitUntil(() => !app.shows("id:run-no-requests"), { timeout: 20000 });
@@ -112,19 +127,6 @@ for (const v of variants) {
     // the same command under faults: said before it runs, followed as it goes, its verdicts
     await runAction(app, "run-try");
     await app.waitFor("id:trial-plan", { timeout: 10000 });
-    // (a trial runs the program again: where sonde is still read-only, that goes off for it)
-    if (app.shows("id:trial-read-only")) {
-      await app.press("id:trial-close");
-      await app.keyboard.press("mod+,");
-      await app.waitFor("id:screen-settings-area");
-      await app.press("id:tab-settings");
-      await app.waitFor("id:read-only");
-      await app.press("id:read-only");
-      await app.wait(300);
-      await app.window("settings").pressClose();
-      await runAction(app, "run-try");
-      await app.waitFor("id:trial-plan", { timeout: 10000 });
-    }
     await shot("02e-trial-plan");
     await app.press("id:trial-start");
     await app.waitFor("id:trial-progress", { timeout: 10000 });
@@ -132,7 +134,17 @@ for (const v of variants) {
     await app.waitFor("id:trial-elapsed");
     await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 90000 });
     await shot("02g-trial-done");
-    // closed, the run opens on its Runs pane, where the verdicts stay
+    // what broke, tried again on a fresh run (after a change, to see it survive): said first, then run
+    if (app.shows("id:trial-again-here")) {
+      await app.press("id:trial-again-here");
+      await app.waitFor("id:trial-again-plan", { timeout: 10000 });
+      await shot("02ga-again-plan");
+      await app.press("id:trial-start");
+      await app.waitFor("id:trial-progress", { timeout: 10000 });
+      await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 90000 });
+      await shot("02gb-again-done");
+    }
+    // closed, the run opens on its Runs pane, where the verdicts stay, each with its history
     await app.press("id:trial-close");
     await app.waitFor("id:history-trials", { timeout: 10000 });
     await shot("02h-runs-verdicts");
@@ -179,6 +191,12 @@ for (const v of variants) {
     // opens on the example already, and reads it again as the list changes: let that settle)
     await app.wait(900);
     await app.waitFor("id:session-summary", { timeout: 10000 });
+    // a variant after the first has the example in its list already: opened from there when the press kept the run shown
+    const wal = v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128";
+    if (!(await app.waitFor(wal, { timeout: 5000 }).then(() => true, () => false))) {
+      await app.press("text:gen-slatedb >> nth=0");
+      await app.waitFor(wal, { timeout: 10000 });
+    }
     await shot("03-session");
     await app.press(v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128");
     await app.waitFor("id:inspector");
@@ -193,6 +211,14 @@ for (const v of variants) {
     await shot("03d-filtered");
     // a slice of the session's shape: the operations running then
     await app.press("id:clear-filter");
+    // why slow: the operations split by kind of request, and where the slow ones are, in a sentence
+    await app.press(v.lang ? "label:分组" : "label:Group by");
+    await app.press(v.lang ? "text:请求类型" : "text:Kind of request");
+    await app.waitFor("id:split-table", { timeout: 10000 });
+    await shot("03e-group-by");
+    await app.press(v.lang ? "label:分组" : "label:Group by");
+    await app.press(v.lang ? "text:逐个操作" : "text:Each operation");
+    await app.waitFor("id:operations");
     if (app.shows("id:session-shape")) {
       await app.hover("id:session-shape");
       await app.press("id:session-shape");
@@ -273,22 +299,20 @@ for (const v of variants) {
     await shot("04e-confirm");
     await app.press("id:confirm-cancel");
     await app.waitFor("id:confirm-dialog", { state: "gone" });
-    await app.press("id:sheet-close");
-    // a key's versions over time
-    await app.press("id:overview-versions");
+    // a key's versions over time: the next section in Buckets' one row
+    await app.press("id:store-section-versions");
     await app.waitFor("id:screen-versions");
     await app.type("id:version-key", "config/app.yaml");
     await app.press("id:load-versions");
     await app.waitFor("id:timeline", { timeout: 10000 });
     await shot("04f-versions");
-    await app.press("id:sheet-close");
     // why the bucket is this big
-    await app.press("id:overview-capacity");
+    await app.press("id:store-section-capacity");
     await app.waitFor("id:du-findings", { timeout: 15000 });
     await app.wait(600);
     await shot("04g-capacity");
-    await app.press("id:sheet-close");
-    // a table format's layout, decoded
+    // a table format's layout, decoded (from the objects' tile, which says one was recognised)
+    await app.press("id:store-section-browse");
     if (!app.shows("id:bucket-demo-layouts")) await app.keyboard.press("mod+b");
     await app.press("id:bucket-demo-layouts");
     await app.waitFor("id:overview-layouts", { timeout: 15000 });
@@ -297,10 +321,14 @@ for (const v of variants) {
     await app.press("id:analyze-slatedb");
     await app.waitFor("id:layout-report", { timeout: 15000 });
     await shot("04h-layouts");
-    await app.press("id:sheet-close");
+    // the endpoint's compatibility: the last of Buckets' sections
+    await app.press("id:store-section-probes");
+    await app.waitFor("id:screen-probes");
+    await shot("04i-compat");
+    await app.press("id:store-section-browse");
 
     await app.keyboard.press("mod+shift+a");
-    await app.waitFor("id:requests");
+    await app.waitFor("id:activity");
     await shot("05-activity");
     await app.press("id:activity-close");
 
@@ -315,11 +343,6 @@ for (const v of variants) {
     await settings("05b-settings");
     await app.press("id:tab-endpoints");
     await settings("05c-endpoints");
-    await app.press("id:open-compat");
-    await app.waitFor("id:screen-probes");
-    await app.wait(450);
-    await app.window("compat").screenshot(`${dir}/${v.name}-05e-compat.png`);
-    await app.window("compat").pressClose();
     await app.press("id:add-endpoint");
     await app.waitFor("id:endpoint-form");
     // the form is a card in place: there once its foot is

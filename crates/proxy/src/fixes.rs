@@ -177,60 +177,6 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             "config",
             "<LifecycleConfiguration><Rule><ID>abort-incomplete-mpu</ID><Filter><Prefix></Prefix></Filter><Status>Enabled</Status>\n  <AbortIncompleteMultipartUpload><DaysAfterInitiation>7</DaysAfterInitiation></AbortIncompleteMultipartUpload>\n</Rule></LifecycleConfiguration>",
         )],
-        "obs.retried" => vec![
-            f(
-                "python",
-                "# a longer read timeout: retries resend the whole request\nfrom botocore.config import Config\ns3 = boto3.client(\"s3\", config=Config(read_timeout=60, connect_timeout=5))",
-            ),
-            f(
-                "java",
-                "// a longer read timeout: retries resend the whole request\nS3Client.builder().httpClientBuilder(ApacheHttpClient.builder().socketTimeout(Duration.ofSeconds(60))).build();",
-            ),
-            f(
-                "go",
-                "// a longer read timeout: retries resend the whole request\ns3.NewFromConfig(cfg, func(o *s3.Options) { o.HTTPClient = &http.Client{Timeout: 60 * time.Second} })",
-            ),
-            f(
-                "js",
-                "// a longer read timeout: retries resend the whole request\nnew S3Client({ requestHandler: new NodeHttpHandler({ requestTimeout: 60_000 }) })",
-            ),
-        ],
-        "obs.slow" => vec![
-            f(
-                "python",
-                "# large objects in ranges at once, not one long GET\nfrom boto3.s3.transfer import TransferConfig\ns3.download_file(b, k, path, Config=TransferConfig(multipart_chunksize=8 * 2**20, max_concurrency=8))",
-            ),
-            f(
-                "java",
-                "// large objects in ranges at once, not one long GET\nS3TransferManager tm = S3TransferManager.builder().s3Client(S3AsyncClient.crtCreate()).build();\ntm.downloadFile(d -> d.getObjectRequest(r -> r.bucket(b).key(k)).destination(path)).completionFuture().join();",
-            ),
-            f(
-                "go",
-                "// large objects in ranges at once, not one long GET\nd := manager.NewDownloader(s3c, func(d *manager.Downloader) { d.PartSize = 8 << 20; d.Concurrency = 8 })\n_, err := d.Download(ctx, file, &s3.GetObjectInput{Bucket: &b, Key: &k})",
-            ),
-            f(
-                "js",
-                "// large objects in ranges at once, not one long GET\nconst part = (i) => s3.send(new GetObjectCommand({ Bucket: b, Key: k, Range: `bytes=${i * size}-${(i + 1) * size - 1}` }));\nconst parts = await Promise.all([...Array(n).keys()].map(part));",
-            ),
-        ],
-        "obs.races" => vec![
-            f(
-                "python",
-                "# the write lost a race: read what won, never overwrite it blindly\ntry:\n    s3.put_object(Bucket=b, Key=k, Body=body, IfNoneMatch=\"*\")\nexcept s3.exceptions.ClientError as e:\n    if e.response[\"Error\"][\"Code\"] != \"PreconditionFailed\":\n        raise\n    won = s3.get_object(Bucket=b, Key=k)",
-            ),
-            f(
-                "java",
-                "// the write lost a race: read what won, never overwrite it blindly\ntry { s3.putObject(r -> r.bucket(b).key(k).ifNoneMatch(\"*\"), body); }\ncatch (S3Exception e) { if (e.statusCode() != 412) throw e; won = s3.getObject(r -> r.bucket(b).key(k)); }",
-            ),
-            f(
-                "go",
-                "// the write lost a race: read what won, never overwrite it blindly\n_, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: body, IfNoneMatch: aws.String(\"*\")})\nvar re *awshttp.ResponseError\nif errors.As(err, &re) && re.HTTPStatusCode() == 412 { /* read what won */ }",
-            ),
-            f(
-                "js",
-                "// the write lost a race: read what won, never overwrite it blindly\ntry { await s3.send(new PutObjectCommand({ Bucket: b, Key: k, Body: body, IfNoneMatch: \"*\" })); }\ncatch (e) { if (e.$metadata?.httpStatusCode !== 412) throw e; /* read what won */ }",
-            ),
-        ],
         "obs.orphans" => vec![
             f(
                 "python",
@@ -243,6 +189,30 @@ pub fn for_key(key: &str) -> Vec<Fix> {
         ],
         _ => Vec::new(),
     }
+}
+
+/// The language of an SDK as [`crate::callers::sdk`] names it (`boto3
+/// 1.44`): what picks the fix shown for it.
+pub fn language(sdk: &str) -> Option<&'static str> {
+    let name = sdk.split_whitespace().next().unwrap_or("");
+    Some(match name {
+        "boto3" | "botocore" | "aws-cli" | "s3fs" => "python",
+        "aws-sdk-java" | "hadoop-aws" | "hadoop" => "java",
+        "aws-sdk-go" | "aws-sdk-go-v2" => "go",
+        "aws-sdk-js" => "js",
+        _ => return None,
+    })
+}
+
+/// Of a finding's fixes, the one for the SDK that sent its requests: a
+/// store's or an engine's setting whatever the SDK; none for an SDK sonde
+/// has no fix in the language of.
+pub fn for_sdk<'a>(fixes: &'a [Fix], sdk: Option<&str>) -> Option<&'a Fix> {
+    let lang = sdk.and_then(language);
+    fixes
+        .iter()
+        .find(|f| f.sdk == "config")
+        .or_else(|| fixes.iter().find(|f| Some(f.sdk) == lang))
 }
 
 /// A session after acting on the findings that name what they save.
@@ -391,6 +361,24 @@ mod tests {
     use crate::episode::{episodes, observations};
     use crate::profile::{RequestPrices, profile};
     use chrono::DateTime;
+
+    #[test]
+    fn the_fix_shown_is_the_detected_sdks_and_a_setting_for_any() {
+        let head = for_key("obs.headget");
+        let pick = |sdk: Option<&str>| for_sdk(&head, sdk).map(|f| f.sdk);
+        assert_eq!(pick(Some("boto3 1.44")), Some("python"));
+        assert_eq!(pick(Some("aws-sdk-java 2.21")), Some("java"));
+        assert_eq!(pick(Some("aws-sdk-go-v2 1.30")), Some("go"));
+        assert_eq!(pick(Some("aws-sdk-js 3.600")), Some("js"));
+        // an SDK with no fix in its language, or none detected: none shown
+        assert_eq!(pick(Some("object_store 0.14")), None);
+        assert_eq!(pick(None), None);
+        // an engine's setting, whatever sent it
+        assert_eq!(
+            for_sdk(&for_key("obs.rename"), Some("hadoop 3.3")).map(|f| f.sdk),
+            Some("config")
+        );
+    }
 
     #[test]
     fn acting_on_a_hot_key_leaves_one_read_and_shows_how() {

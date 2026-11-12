@@ -97,5 +97,6 @@ A piece of the program's output (escape codes included) and when it arrived. A l
 - A sonde reads every version up to its own and refuses a newer one by name, never partially:
   `written by sonde 18.0.0, format 2; this sonde (17.0.0) reads up to format 1: update sonde to read it`
   (`a newer sonde` when the header has no `sonde`).
-- Files beside a session (`<name>.summary.json`, `<name>.trials.json`, `<name>.exit`) are sonde's caches and state,
+- A sessions folder's `.index.jsonl` (each session's counts, trial verdicts, exit code; before 18.0 the files
+  `<name>.summary.json`, `<name>.trials.json`, `<name>.exit` beside each) is sonde's cache and state,
   not part of this contract; an unreadable cache is rebuilt.

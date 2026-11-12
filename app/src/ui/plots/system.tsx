@@ -374,6 +374,14 @@ export const decades = (lo: number, hi: number) => {
   return out.length >= 2 ? out : [lo, hi];
 };
 
+/** A bar of none that is said ("0" beside a bar with a count): drawn this share of the scale's top, a sliver on
+ * the baseline for its label to stand on (Native Shell draws no bar, and no label, for a row of no value). */
+export const ZERO_SLIVER = 0.006;
+
+/** A heat map's ramp, from a cell of one request to the busiest: its own two tones, so a few
+ * requests read on the card in dark too (bar-track to chart-1 was navy on near-black there). */
+export const HEAT_RAMP = (): [string, string] => [token("heat-low" as never) as unknown as string, token("heat-high" as never) as unknown as string];
+
 /** A stretch of the session's slices (a zoom), or all of them. */
 export const stretch = <T,>(rows: T[], range?: [number, number] | null): T[] => (range ? rows.slice(range[0], range[1] + 1) : rows);
 

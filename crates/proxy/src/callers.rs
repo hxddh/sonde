@@ -109,6 +109,20 @@ pub fn sdk(r: &Record) -> Option<String> {
     Some(format!("{} {version}", name.to_ascii_lowercase()))
 }
 
+/// The SDK that sent most of `records`, by their user agents (a few
+/// thousand of them looked at, spread over the session).
+pub fn sdk_of(records: &[Record]) -> Option<String> {
+    let mut sdks: HashMap<String, usize> = HashMap::new();
+    for r in records.iter().step_by((records.len() / 4096).max(1)) {
+        if let Some(s) = sdk(r) {
+            *sdks.entry(s).or_default() += 1;
+        }
+    }
+    sdks.into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
+        .map(|(s, _)| s)
+}
+
 /// The trace `r` belongs to (W3C `traceparent`'s trace id), when the program
 /// propagates one.
 pub fn trace(r: &Record) -> Option<String> {
@@ -136,7 +150,7 @@ pub const JAVA_CALLER: &[u8] = include_bytes!("hooks/sonde-caller.jar");
 /// hook written into `dir`, which goes first on `PYTHONPATH`.
 pub fn python_env(dir: &std::path::Path) -> std::io::Result<(String, String)> {
     std::fs::create_dir_all(dir)?;
-    std::fs::write(dir.join("sitecustomize.py"), PYTHON_HOOK)?;
+    put(&dir.join("sitecustomize.py"), PYTHON_HOOK.as_bytes())?;
     let sep = if cfg!(windows) { ";" } else { ":" };
     let mut path = dir.to_string_lossy().into_owned();
     if let Ok(rest) = std::env::var("PYTHONPATH")
@@ -145,6 +159,25 @@ pub fn python_env(dir: &std::path::Path) -> std::io::Result<(String, String)> {
         path = format!("{path}{sep}{rest}");
     }
     Ok(("PYTHONPATH".into(), path))
+}
+
+/// Writes a hook unless it is there as it is: whole, by a file of its own
+/// renamed into place, so that a program of another run starting at the
+/// same moment never loads half of it.
+fn put(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    if std::fs::read(path).is_ok_and(|have| have == bytes) {
+        return Ok(());
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tmp = path.with_extension(format!(
+        "{}.{}.tmp",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// A path as one quoted word of `NODE_OPTIONS`. Node reads a backslash
@@ -160,9 +193,9 @@ fn node_quoted(path: &str) -> Option<String> {
 /// without its SDK, runs as it would.
 pub fn caller_env(dir: &std::path::Path) -> std::io::Result<Vec<(String, String)>> {
     let mut env = vec![python_env(dir)?];
-    std::fs::write(dir.join("sonde-caller.cjs"), NODE_HOOK)?;
-    std::fs::write(dir.join("sonde-agent.jar"), JAVA_AGENT)?;
-    std::fs::write(dir.join("sonde-caller.jar"), JAVA_CALLER)?;
+    put(&dir.join("sonde-caller.cjs"), NODE_HOOK.as_bytes())?;
+    put(&dir.join("sonde-agent.jar"), JAVA_AGENT)?;
+    put(&dir.join("sonde-caller.jar"), JAVA_CALLER)?;
     // both read their options split at spaces, a quoted one whole
     let quoted = |p: std::path::PathBuf| {
         let p = p.to_string_lossy().into_owned();
@@ -340,6 +373,66 @@ mod tests {
                 requests: 2
             }
         );
+    }
+
+    /// boto3 under the hook: a request names the line that sent it, and so
+    /// does each part the transfer manager's threads upload. Skipped where
+    /// Python has no boto3.
+    #[test]
+    fn a_python_request_names_its_line_and_so_do_the_transfer_managers_threads() {
+        let has_boto3 = std::process::Command::new("python3")
+            .args(["-c", "import boto3"])
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !has_boto3 {
+            eprintln!("skipped: python3 with boto3 is not here");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (var, value) = python_env(dir.path()).unwrap();
+        // written again as it is: left alone
+        let at = std::fs::metadata(dir.path().join("sitecustomize.py"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        python_env(dir.path()).unwrap();
+        assert_eq!(
+            std::fs::metadata(dir.path().join("sitecustomize.py"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            at
+        );
+        let support = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support");
+        let out = std::process::Command::new("python3")
+            .arg("callers_check.py")
+            .current_dir(&support)
+            .env(var, value)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{text}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 6, "{text}");
+        assert!(lines[0].starts_with("PUT - callers_check.py:"), "{text}");
+        assert!(lines[0].ends_with(" put"), "{text}");
+        // the upload's parts, sent from the pool's threads, name upload()
+        for l in &lines[1..] {
+            assert!(l.ends_with(" upload"), "{text}");
+        }
+        // without the hook nothing is named, and nothing else changes
+        let plain = std::process::Command::new("python3")
+            .arg("callers_check.py")
+            .current_dir(&support)
+            .output()
+            .unwrap();
+        let plain = String::from_utf8_lossy(&plain.stdout);
+        assert_eq!(plain.lines().count(), 6);
+        assert!(plain.lines().all(|l| l.ends_with(" -")), "{plain}");
     }
 
     #[test]

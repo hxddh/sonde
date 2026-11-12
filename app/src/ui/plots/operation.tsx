@@ -4,9 +4,8 @@ import { signal } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { Bar, Plot, PlotAxis } from "nsh/base/plot";
 import { duration } from "../../format";
-import { lang, t } from "../../i18n";
-import type { Observation, Profile, RecordSummary } from "../../types";
-import { observationSaving, observationText } from "../../phrases";
+import { t } from "../../i18n";
+import type { Profile, RecordSummary } from "../../types";
 import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, TICK_ROOM, groupName, pct, rowsHeight, statusTone, tipValue, tones, tail, TimeAxis, BARS, TIP } from "./system";
 import { terminal } from "../kit";
 
@@ -92,23 +91,12 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
 /** Whether a session's requests have times (a CloudTrail file's have none). */
 export const timed = (p: Profile | null | undefined) => p?.timed !== false;
 
-/** A session in a sentence: where its time went and what the first finding would save. */
-export function sessionStory(p: Profile, findings: Observation[]): string {
+/** A session in a sentence: what it did, where its time went. What acting on
+ * its findings would save is said once, with the findings (`whatIfText`), never here too. */
+export function sessionStory(p: Profile): string {
   const top = p.groups[0];
   const busiest = [...p.groups].sort((a, b) => b.requests - a.requests)[0];
   const total = p.groups.reduce((n, g) => n + g.requests, 0) || 1;
-  const parts = !timed(p)
-    ? busiest
-      ? [t("story.untimed", { what: groupName(busiest), pct: pct(busiest.requests / total) })]
-      : []
-    : top
-      ? [t("story.time", { busy: duration(p.busyMs), wall: duration(p.wallMs), what: groupName(top), pct: pct(top.share) })]
-      : [];
-  const first = findings.find((o) => o.saving) ?? findings[0];
-  if (first) {
-    const saving = observationSaving(first);
-    parts.push(saving ? t("story.saving", { saving }) : t("story.finding", { finding: observationText(first) }));
-  }
-  // (Chinese sets no space between two sentences)
-  return parts.join(lang() === "zh" ? "" : " ");
+  if (!timed(p)) return busiest ? t("story.untimed", { what: groupName(busiest), pct: pct(busiest.requests / total) }) : "";
+  return top ? t("story.time", { busy: duration(p.busyMs), wall: duration(p.wallMs), what: groupName(top), pct: pct(top.share) }) : "";
 }

@@ -84,6 +84,8 @@ pub struct Analysis {
     pub profile: Profile,
     pub signals: Signals,
     pub what_if: Option<WhatIf>,
+    /// The SDK that sent most of its requests (`boto3 1.44`).
+    pub sdk: Option<String>,
     /// The requests a fault scenario answered, by id.
     pub injected: Vec<u64>,
     /// Which operation each request belongs to, by request id (sorted: a
@@ -154,6 +156,7 @@ impl Analysis {
             Some((start, end))
         });
         Analysis {
+            sdk: crate::callers::sdk_of(records),
             summary,
             signals,
             injected: records
@@ -372,6 +375,7 @@ impl Analysis {
         v.insert("signals".into(), to(&self.signals));
         v.insert("whatIf".into(), to(&self.what_if));
         v.insert("injected".into(), json!(self.injected));
+        v.insert("sdk".into(), json!(self.sdk));
         v.insert("episodes".into(), Value::Array(first));
         v.insert("episodesTotal".into(), json!(self.episodes.len()));
         v.insert(

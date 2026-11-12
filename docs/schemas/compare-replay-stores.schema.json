@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/replay-stores.schema.json",
-  "title": "sonde replay -e A -e B … -f json",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/compare-replay-stores.schema.json",
+  "title": "sonde compare FILE --replay A --replay B … -f json",
   "description": "A session replayed on several endpoints at once, side by side.",
   "type": "object",
   "properties": {

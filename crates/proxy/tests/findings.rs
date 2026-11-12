@@ -114,17 +114,13 @@ fn throttling_without_load_is_about_the_rate() {
 }
 
 #[test]
-fn a_request_far_slower_than_the_rest_is_named() {
+fn a_request_far_slower_than_the_rest_is_no_finding() {
+    // every run has a tail: the latency charts show it (18.0)
     let mut recs: Vec<Record> = (0..20u64)
         .map(|i| rec(i + 1, i as i64 * 100, "GetObject", Some("k"), 200, 8.0))
         .collect();
     recs.push(rec(21, 5_000, "GetObject", Some("big.bin"), 200, 3_250.0));
-    let obs = findings(&recs);
-    let f = obs.iter().find(|o| key(o) == "obs.slow").expect("slow");
-    assert_eq!(
-        f.text,
-        "1 request took over 1000 ms against a median of 8 ms; the slowest, GetObject big.bin, took 3250 ms"
-    );
+    assert!(findings(&recs).iter().all(|o| key(o) == "obs.hot"));
 }
 
 #[test]
@@ -230,7 +226,35 @@ fn concurrent_uploads_to_one_key_each_get_their_own_create() {
 
 #[test]
 fn a_prefix_near_s3s_rate_per_prefix_is_named() {
-    // 3,000 reads of one folder in a second: 54% of 5,500
+    // 3,000 reads of one folder in a second: 54% of 5,500, no finding
+    let reads = |n: u64| -> Vec<Record> {
+        (0..n)
+            .map(|i| {
+                rec(
+                    i + 1,
+                    (i * 1000 / n) as i64,
+                    "GetObject",
+                    Some(&format!("logs/2026/{i}.json")),
+                    200,
+                    2.0,
+                )
+            })
+            .collect()
+    };
+    assert!(findings(&reads(3000)).is_empty());
+    // 4,500: 81%, a warning
+    let obs = findings(&reads(4500));
+    let f = obs
+        .iter()
+        .find(|o| key(o) == "obs.prefixrate.reads")
+        .expect("a hot prefix");
+    assert_eq!(f.level, "warn");
+    assert!(
+        f.text
+            .starts_with("b/logs/2026/ took up to 4500 reads a second, 81% of the 5500"),
+        "{}",
+        f.text
+    );
     let recs: Vec<Record> = (0..3000u64)
         .map(|i| {
             rec(
@@ -243,18 +267,6 @@ fn a_prefix_near_s3s_rate_per_prefix_is_named() {
             )
         })
         .collect();
-    let obs = findings(&recs);
-    let f = obs
-        .iter()
-        .find(|o| key(o) == "obs.prefixrate.reads")
-        .expect("a hot prefix");
-    assert_eq!(f.level, "info");
-    assert!(
-        f.text
-            .starts_with("b/logs/2026/ took up to 3000 reads a second, 54% of the 5500"),
-        "{}",
-        f.text
-    );
     let p = sonde_proxy::profile::profile(&recs, &Default::default());
     assert_eq!(p.prefixes[0].prefix, "b/logs/2026/");
     assert_eq!(p.prefixes[0].peak_reads, 3000);

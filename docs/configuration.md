@@ -5,7 +5,7 @@ sonde reads `config.toml` from its configuration directory: settings, prices and
 | | Linux | macOS |
 |---|---|---|
 | Configuration | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/.config/sonde` | `$SONDE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/sonde`, else `~/Library/Application Support/sonde` |
-| Data (request log, scans, probe runs, audit log, sessions) | `$SONDE_DATA_DIR`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` |
+| Data (scans, probe runs, audit log, sessions) | `$SONDE_DATA_DIR`, else `~/.local/share/sonde` | `$SONDE_DATA_DIR`, else `~/Library/Application Support/sonde` |
 | Exports | `<data>/exports` unless `exports-dir` | same |
 | Downloads | `~/Downloads/sonde` unless `downloads-dir` | same |
 
@@ -21,20 +21,20 @@ The CLI also takes `--config-dir` and `--data-dir`.
   kept; comments are not.
 - Concurrent saves take turns (`config.toml.lock`).
 
+Before 18.0 there were also `read-only`, `reqlog-capacity`, `reqlog-persist` and `stale-upload-days`: a file with
+them still loads, says on stderr that they are ignored, and loses them at the next save. sonde's own destructive
+acts are each a dry run, done on a typed confirmation and kept in the audit log; uploads are stale past 7 days.
+
 ## Example
 
 ```toml
 [settings]
-read-only = true            # sonde's own destructive operations refused (default)
 record-policy = "no-delete" # what a program Run records may do: no-delete (default), read-only, allow
-concurrency = 16            # requests in flight per job
-rate-limit = 50.0           # requests per second per job; omit for none
-reqlog-capacity = 5000      # records kept in the request log
-reqlog-persist = false      # also keep them in <data>/requests.sqlite
+concurrency = 16            # sonde's own requests in flight per job (not in the app)
+rate-limit = 50.0           # sonde's own requests per second per job; omit for none (not in the app)
 theme = "system"            # system, light, dark
 language = "auto"           # auto, en, zh
-stale-upload-days = 7       # uploads older than this are flagged
-name-callers = false        # runs name the code that sent each request (Python, Node.js, Java)
+name-callers = true         # runs name the code that sent each request (Python, Node.js, Java)
 # exports-dir = "/srv/sonde/exports"
 # downloads-dir = "/srv/sonde/downloads"
 
@@ -43,7 +43,7 @@ default-per-gib-month = 0.023
 currency = "USD"
 per-1000-writes = 0.005     # PUT, COPY, POST, LIST
 per-1000-reads = 0.0004     # GET, HEAD and the rest (DELETE is free)
-[settings.prices.by-class]  # per GiB-month
+[settings.prices.by-class]  # per GiB-month (not in the app)
 STANDARD = 0.023
 STANDARD_IA = 0.0125
 GLACIER = 0.0036

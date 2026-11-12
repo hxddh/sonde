@@ -65,11 +65,13 @@ output chunk; gzipped when finished). Then, in `sonde-proxy`:
 | Module | Does |
 |---|---|
 | `fault.rs` | answers in the store's place (503, 500, slow, lost answer, cut body, lost race), per request's attempts |
-| `trial.rs` | a clean run, then one per scenario, each judged against the clean run (`<name>.trials.json`, `trials/`) |
+| `trial.rs` | a clean run, then one per scenario, each judged against the clean run (verdicts in the index, `trials/`) |
 | `episode.rs` | requests → operations and findings |
 | `signals.rs` | rate, errors, latency, bytes, in flight, in one pass |
 | `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
-| `summary.rs` | counts kept as `<name>.summary.json`, valid while file length, time and cache version match |
+| `fixloop.rs` | a finding across a program's runs: fixed (gone at any threshold, measured saving), less, back, new, open; kept per program in `findings.json` beside its runs |
+| `summary.rs` | counts kept in the folder's index, valid while file length, time and cache version match |
+| `index.rs` | one `.index.jsonl` per sessions folder: counts, verdicts, exit codes; an appended log, compacted |
 | `view.rs` | analysed once, sent in pages (`Sessions.view`, `Sessions.episodes`): what crosses to the UI does not grow |
 | `phrase.rs` | each sentence as a key and arguments beside its English; the app and viewer render them per language (`app/src/phrases.ts`), falling back to English |
 

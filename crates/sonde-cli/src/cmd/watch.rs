@@ -1,4 +1,7 @@
-//! `sonde watch`: a proxy left running, or production read through its logs.
+//! A proxy left running (`sonde proxy --rotate/--alert`), and production
+//! read through its logs (`sonde import s3://bucket/prefix [--follow]`).
+//! `sonde watch`, which did both before 18.0, is kept for one version as an
+//! alias that says which.
 
 use sonde_proxy::program::{money_text, ms_text};
 use std::io::IsTerminal;
@@ -18,29 +21,68 @@ use super::check::url_shown;
 use super::proxy::{ProxyArgs, check_listen, print_env};
 use super::record::*;
 
+/// `sonde watch` (17.0), kept for 18.0: `sonde proxy --rotate` or
+/// `sonde import s3://… --follow`.
 #[derive(Args)]
 pub struct WatchArgs {
     #[command(flatten)]
     proxy: ProxyArgs,
-    /// Start a new session file every this many minutes (the finished one is compressed).
-    #[arg(long, default_value_t = 60)]
-    rotate: u64,
-    /// Post each new warning, and each finished file over sonde.toml's
-    /// budget, to this webhook as `{"text": …}` (Slack, Teams, Mattermost
-    /// and most chat services take it).
-    #[arg(long)]
-    alert: Option<String>,
-    /// Watch production through its logs instead of a proxy: the S3 server
-    /// access logs or CloudTrail files written under this `s3://bucket/prefix`,
-    /// read through the endpoint (read only) as they arrive.
+    /// Watch production through its logs: `sonde import S3_URL --follow`.
     #[arg(long, value_name = "S3_URL")]
     logs: Option<String>,
-    /// With --logs: look for new log files this often ("15m", "1h", "30s").
+    /// With --logs: look for new log files this often.
     #[arg(long, default_value = "15m")]
     every: String,
-    /// With --logs: read what is new once, then exit (for cron or CI).
+    /// With --logs: read what is new once, then exit.
     #[arg(long)]
     once: bool,
+}
+
+/// `sonde watch`, said as its 18.0 form and done as that.
+pub async fn watch_alias(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
+    let mut extra = String::new();
+    if let Some(e) = &a.proxy.rec.endpoint {
+        extra.push_str(&format!(" -e {e}"));
+    }
+    if let Some(u) = &a.proxy.alert {
+        extra.push_str(&format!(" --alert {u}"));
+    }
+    if let Some(src) = &a.logs {
+        let follow = if a.once {
+            String::new()
+        } else {
+            format!(" --follow --every {}", a.every)
+        };
+        super::renamed(
+            "sonde watch --logs",
+            &format!("sonde import {src}{follow}{extra}"),
+        );
+        let logs = Logs {
+            endpoint: a.proxy.rec.endpoint.as_deref(),
+            src,
+            every: &a.every,
+            once: a.once,
+            alert: a.proxy.alert.as_deref(),
+        };
+        return watch_logs(s, &logs).await;
+    }
+    let mut proxy = a.proxy.clone();
+    let rotate = *proxy.rotate.get_or_insert(60);
+    super::renamed(
+        "sonde watch",
+        &format!("sonde proxy --rotate {rotate}{extra}"),
+    );
+    watch(s, &proxy).await
+}
+
+/// `sonde import s3://bucket/prefix`: what to read, from where, how often.
+pub(super) struct Logs<'a> {
+    pub(super) endpoint: Option<&'a str>,
+    pub(super) src: &'a str,
+    pub(super) every: &'a str,
+    /// One pass, then exit (no --follow).
+    pub(super) once: bool,
+    pub(super) alert: Option<&'a str>,
 }
 
 /// Where `watch --logs` got to: the newest log file's time read, and the
@@ -104,7 +146,7 @@ impl LogsMark {
     }
 }
 
-/// What `watch --logs --once` exits with: the listing failed, or files were
+/// What a single pass over the logs exits with: the listing failed, or files were
 /// listed and not one could be downloaded (nothing was read: 70), the pass is
 /// over the budget (1, as `sonde check`), or 0.
 fn once_exit(listing_failed: bool, none_read: bool, over_budget: bool) -> i32 {
@@ -135,25 +177,26 @@ fn every(v: &str) -> anyhow::Result<std::time::Duration> {
     Ok(std::time::Duration::from_secs(secs.max(10)))
 }
 
-/// `sonde watch --logs s3://bucket/prefix`: production seen through its
+/// `sonde import s3://bucket/prefix`: production seen through its
 /// logs. Each pass reads the log files written since the last one (through
 /// the endpoint's credentials, GET and LIST only), keeps their requests as a
 /// session of the program `logs of s3://…`, says each new warning, and holds
 /// the pass to sonde.toml's budget; `--alert` posts both. Where it got to is
 /// kept, so a restart goes on from there.
-async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<i32> {
+pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i32> {
+    let src = a.src;
     use std::collections::HashSet;
     let Some((bucket, prefix)) = src
         .strip_prefix("s3://")
         .map(|r| r.split_once('/').unwrap_or((r, "")))
         .filter(|(b, _)| !b.is_empty())
     else {
-        eprintln!("--logs takes s3://bucket/prefix");
+        eprintln!("sonde: logs are read from s3://bucket/prefix");
         return Ok(64);
     };
-    let ep = super::endpoint(s, a.proxy.rec.endpoint.as_deref())?;
+    let ep = super::endpoint(s, a.endpoint)?;
     let client = s.client(&ep)?;
-    let pause = every(&a.every)?;
+    let pause = every(a.every)?;
     let dir = s.paths().sessions();
     std::fs::create_dir_all(&dir)?;
     let key = format!("{LOGS_OF}s3://{bucket}/{prefix}");
@@ -178,7 +221,9 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
         });
     let mut warned: HashSet<String> = HashSet::new();
     let mut sent = Vec::new();
-    eprintln!("watching {src} every {}s", pause.as_secs());
+    if !a.once {
+        eprintln!("reading {src} every {}s", pause.as_secs());
+    }
     // the last pass's outcome: what `--once` exits with
     let (mut listing_failed, mut none_read, mut over);
     loop {
@@ -322,26 +367,20 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
                         paint("!", "33", std::io::stderr().is_terminal()),
                         o.text
                     );
-                    if let Some(url) = &a.alert {
-                        sent.push(post_alert(
-                            url,
-                            format!("sonde watch ({src}): {}{place}", o.text),
-                        ));
+                    if let Some(url) = a.alert {
+                        sent.push(post_alert(url, format!("sonde ({src}): {}{place}", o.text)));
                     }
                 }
             }
             // said here whether or not anything is told elsewhere
             if let Some(what) = over_budget(s, records) {
                 over = true;
-                let text = format!(
-                    "sonde watch ({src}): {} is over budget: {what}",
-                    path.display()
-                );
+                let text = format!("sonde ({src}): {} is over budget: {what}", path.display());
                 eprintln!(
                     "{} {text}",
                     paint("!", "33", std::io::stderr().is_terminal())
                 );
-                if let Some(url) = &a.alert {
+                if let Some(url) = a.alert {
                     sent.push(post_alert(url, text));
                 }
             }
@@ -430,19 +469,17 @@ fn over_limits(
     (!over.is_empty()).then(|| over.join(", "))
 }
 
-/// How many of a file's newest records `watch` reads for its warnings.
+/// How many of a file's newest records a proxy left running reads for its findings.
 const WATCH_RECENT: usize = 50_000;
 
-/// A proxy left running: one status line for the last minute, each new
-/// warning as it appears, and a new session file every --rotate minutes.
-pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
+/// A proxy left running (`--rotate`, `--alert`): one status line for the
+/// last minute, each new warning finding as it appears, and a new session
+/// file every --rotate minutes.
+pub(super) async fn watch(s: &Arc<Sonde>, a: &ProxyArgs) -> anyhow::Result<i32> {
     use std::collections::{HashSet, VecDeque};
     use std::time::{Duration, Instant};
-    if let Some(src) = &a.logs {
-        return watch_logs(s, a, src).await;
-    }
-    check_listen(&a.proxy)?;
-    let started = start(s, &a.proxy.rec, a.proxy.listen, None, a.proxy.allow_remote).await?;
+    check_listen(a)?;
+    let started = start(s, &a.rec, a.listen, None, a.allow_remote).await?;
     print_env(&started.proxy);
     let header = sonde_proxy::session::read_header(&started.path)
         .ok_or_else(|| anyhow::anyhow!("cannot read {}", started.path.display()))?;
@@ -533,15 +570,15 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                             }
                             eprintln!("{} {}", paint("!", "33", tty), o.text);
                             if let Some(url) = &a.alert {
-                                sent.push(post_alert(url, format!("sonde watch: {}", o.text)));
+                                sent.push(post_alert(url, format!("sonde proxy: {}", o.text)));
                             }
                         }
                     }
                 }
-                if rotated.elapsed() >= Duration::from_secs(a.rotate.max(1) * 60) {
+                if a.rotate.is_some_and(|m| rotated.elapsed() >= Duration::from_secs(m.max(1) * 60)) {
                     let next = sonde_proxy::session::fresh_path(
                         &dir,
-                        &format!("{}-watch", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+                        &format!("{}-proxy", chrono::Local::now().format("%Y%m%d-%H%M%S")),
                     );
                     let mut h = header.clone();
                     h.created = chrono::Utc::now();
@@ -557,7 +594,7 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                     eprintln!("{} {}", paint("·", "2", tty), old_path.display());
                     // said here whether or not anything is told elsewhere
                     if let Some(over) = over(figures.take()) {
-                        let text = format!("sonde watch: {} is over budget: {over}", old_path.display());
+                        let text = format!("sonde proxy: {} is over budget: {over}", old_path.display());
                         eprintln!("{} {text}", paint("!", "33", tty));
                         if let Some(url) = &a.alert {
                             sent.push(post_alert(url, text));
@@ -586,7 +623,7 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
     finish(writer, &path);
     // the last file is held to the budget too
     if let Some(over) = over(figures.take()) {
-        let text = format!("sonde watch: {} is over budget: {over}", path.display());
+        let text = format!("sonde proxy: {} is over budget: {over}", path.display());
         eprintln!("{} {text}", paint("!", "33", tty));
         if let Some(url) = &a.alert {
             sent.push(post_alert(url, text));
@@ -600,6 +637,17 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One pass over the logs at `src` through `endpoint`.
+    fn logs<'a>(endpoint: &'a str, src: &'a str) -> Logs<'a> {
+        Logs {
+            endpoint: Some(endpoint),
+            src,
+            every: "15m",
+            once: true,
+            alert: None,
+        }
+    }
 
     #[test]
     fn a_watched_file_is_held_to_the_budget_by_its_figures() {
@@ -653,27 +701,12 @@ mod tests {
             )
             .await
             .unwrap();
-        let args = WatchArgs {
-            proxy: ProxyArgs {
-                rec: Recording {
-                    endpoint: Some("demo".into()),
-                    policy: None,
-                    allow_writes: false,
-                    no_delete: false,
-                    read_only: true,
-                    out: None,
-                    tls: false,
-                },
-                listen: "127.0.0.1:0".parse().unwrap(),
-                allow_remote: false,
-            },
-            rotate: 60,
-            alert: None,
-            logs: Some("s3://demo/logs/".into()),
-            every: "15m".into(),
-            once: true,
-        };
-        assert_eq!(watch_logs(&s, &args, "s3://demo/logs/").await.unwrap(), 0);
+        assert_eq!(
+            watch_logs(&s, &logs("demo", "s3://demo/logs/"))
+                .await
+                .unwrap(),
+            0
+        );
         let sessions: Vec<_> = std::fs::read_dir(s.paths().sessions())
             .unwrap()
             .flatten()
@@ -688,7 +721,12 @@ mod tests {
             Some("logs of s3://demo/logs/")
         );
         // a second pass has nothing new: no second session
-        assert_eq!(watch_logs(&s, &args, "s3://demo/logs/").await.unwrap(), 0);
+        assert_eq!(
+            watch_logs(&s, &logs("demo", "s3://demo/logs/"))
+                .await
+                .unwrap(),
+            0
+        );
         let count = || {
             std::fs::read_dir(s.paths().sessions())
                 .unwrap()
@@ -709,7 +747,12 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(watch_logs(&s, &args, "s3://demo/logs/").await.unwrap(), 0);
+        assert_eq!(
+            watch_logs(&s, &logs("demo", "s3://demo/logs/"))
+                .await
+                .unwrap(),
+            0
+        );
         assert_eq!(count(), 2);
     }
 
@@ -762,27 +805,7 @@ mod tests {
         let s = Arc::new(Sonde::open(sonde_core::Paths::rooted(dir.path())).unwrap());
         sonde_core::demo::install(&s).await.unwrap();
         let src = "s3://no-such-bucket-of-logs/logs/";
-        let args = WatchArgs {
-            proxy: ProxyArgs {
-                rec: Recording {
-                    endpoint: Some("demo".into()),
-                    policy: None,
-                    allow_writes: false,
-                    no_delete: false,
-                    read_only: true,
-                    out: None,
-                    tls: false,
-                },
-                listen: "127.0.0.1:0".parse().unwrap(),
-                allow_remote: false,
-            },
-            rotate: 60,
-            alert: None,
-            logs: Some(src.into()),
-            every: "15m".into(),
-            once: true,
-        };
-        assert_eq!(watch_logs(&s, &args, src).await.unwrap(), 70);
+        assert_eq!(watch_logs(&s, &logs("demo", src)).await.unwrap(), 70);
     }
 
     /// A store that lists two log files and refuses to hand over either.
@@ -861,26 +884,6 @@ mod tests {
         };
         s.add_transient_endpoint(e).unwrap();
         let src = "s3://lake/logs/";
-        let args = WatchArgs {
-            proxy: ProxyArgs {
-                rec: Recording {
-                    endpoint: Some("refusing".into()),
-                    policy: None,
-                    allow_writes: false,
-                    no_delete: false,
-                    read_only: true,
-                    out: None,
-                    tls: false,
-                },
-                listen: "127.0.0.1:0".parse().unwrap(),
-                allow_remote: false,
-            },
-            rotate: 60,
-            alert: None,
-            logs: Some(src.into()),
-            every: "15m".into(),
-            once: true,
-        };
-        assert_eq!(watch_logs(&s, &args, src).await.unwrap(), 70);
+        assert_eq!(watch_logs(&s, &logs("refusing", src)).await.unwrap(), 70);
     }
 }

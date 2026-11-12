@@ -1,12 +1,12 @@
-// The guard of destructive operations: the dry run, read-only mode, and a
-// typed confirmation (the number of items, or the bucket name).
+// The guard of sonde's own destructive operations: the dry run and a typed
+// confirmation (the number of items, or the bucket name); each is audited.
 
 import { signal, Text, View } from "nsh";
 import { bytes, count } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, asError } from "../native";
-import { go, notify, readOnly, report, showRequest } from "../store";
+import { notify, report } from "../store";
 import type { Outcome, Plan } from "../types";
 import { Actions, Button, Field, Heading, Modal, Muted, Notice, SimpleTable, Title } from "./kit";
 import { Document } from "./record";
@@ -27,8 +27,8 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
     const got = typed().trim();
     return got && !want.startsWith(got) ? t("confirm.mismatch", { value: want }) : null;
   };
-  // what the commit needs: writes allowed, nothing running, and the words typed
-  const ready = () => !readOnly() && !running() && props.plan !== null && typed().trim() === props.plan.confirm;
+  // what the commit needs: nothing running, and the words typed
+  const ready = () => !running() && props.plan !== null && typed().trim() === props.plan.confirm;
   const run = async () => {
     const p = props.plan;
     if (!p || !ready()) return;
@@ -37,16 +37,13 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
       const o = await api.executePlan(p.id, typed());
       if (o.errors.length === 0) notify(t("confirm.done", { ok: count(o.succeeded), failed: count(o.failed) }));
       else {
-        // one toast for all of them: how many failed, and why the first did (its request a press away)
+        // one toast for all of them: how many failed, and why the first did (with the request id to quote)
         const first = asError(o.errors[0]);
-        const record = first.recordId;
         toast({
           id: "error",
           kind: "error",
           title: t("confirm.done", { ok: count(o.succeeded), failed: count(o.failed) }),
-          description: t("confirm.firstError", { reason: first.message }),
-          action: record !== null && record !== undefined ? t("common.showRequest") : undefined,
-          onAction: () => showRequest(record),
+          description: [t("confirm.firstError", { reason: first.message }), first.requestId ? `${t("common.requestId")}: ${first.requestId}` : ""].filter(Boolean).join(" · "),
         });
       }
       running.set(false);
@@ -84,17 +81,8 @@ export function ConfirmPlan(props: { plan: Plan | null; onClose: (outcome: Outco
                 </View>
               )}
             </If>
-            <If
-              when={!readOnly()}
-              else={
-                <Notice tone="warn" text={t("confirm.readOnly")} testID="confirm-read-only">
-                  <Button small label={t("settings.open")} onPress={() => (close(null), go("settings"))} testID="confirm-settings" />
-                </Notice>
-              }
-            >
-              {/* Return commits, once what is typed matches */}
-              <Field label={t("confirm.type", { hint: core(p().confirmHintText, p().confirmHint), value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} onSubmit={run} testID="confirm-input" mono error={mismatch()} />
-            </If>
+            {/* Return commits, once what is typed matches */}
+            <Field label={t("confirm.type", { hint: core(p().confirmHintText, p().confirmHint), value: p().confirm })} value={typed()} onChange={(v) => typed.set(v)} onSubmit={run} testID="confirm-input" mono error={mismatch()} />
             <Actions>
               <Button variant="ghost" label={t("common.cancel")} onPress={() => close(null)} disabled={running()} testID="confirm-cancel" />
               <Button variant="destructive" label={t("confirm.run")} disabled={!ready()} onPress={run} testID="confirm-run" />

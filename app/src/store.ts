@@ -19,15 +19,15 @@ export type StoreTab = "browse" | "multipart" | "versions" | "capacity" | "layou
 /** The tabs of Settings. */
 export type SettingsTab = "settings" | "endpoints";
 /** The tabs of Activity: what sonde itself did. */
-export type ActivityTab = "requests" | "jobs" | "audit";
+export type ActivityTab = "jobs" | "audit";
 /** Where to go: an area, or a tab of one. */
 export type Section = "run" | "sessions" | StoreTab | SettingsTab | ActivityTab;
 
 /** Every place, as a terminal lists them. */
 export const AREAS: Area[] = ["run", "sessions", "store", "activity", "settings"];
-export const STORE_TABS: StoreTab[] = ["browse", "multipart", "versions", "capacity", "layouts", "probes"];
+export const STORE_TABS: StoreTab[] = ["browse", "capacity", "multipart", "versions", "layouts", "probes"];
 export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints"];
-export const ACTIVITY_TABS: ActivityTab[] = ["requests", "jobs", "audit"];
+export const ACTIVITY_TABS: ActivityTab[] = ["jobs", "audit"];
 
 export function areaOf(s: Section): Area {
   if (s === "run" || s === "sessions") return s;
@@ -46,9 +46,8 @@ export const prefix = signal<string>("");
 export const section = signal<Section>("run");
 export const storeTab = signal<StoreTab>("browse");
 /** The detail of a bucket a window shows in a sheet over its objects. */
-export const storeSheet = signal<StoreTab | null>(null);
 export const settingsTab = signal<SettingsTab>("settings");
-export const activityTab = signal<ActivityTab>("requests");
+export const activityTab = signal<ActivityTab>("jobs");
 /** The area on screen. */
 export const area = () => areaOf(section());
 /** The session the Sessions area shows (set by Run when a run ends, by the palette, …). */
@@ -62,10 +61,9 @@ export const reading = (path: string) => void read.add(path);
 export const wasRead = (path: string) => read.has(path) || openSession() === path;
 /** A comparison to open with a session: the run before it (`Run again`). */
 export const compareOnOpen = signal<{ before: string; after: string } | null>(null);
-/** A pane to show a session on when it opens: a program opens on its runs. */
-export const paneOnOpen = signal<{ path: string; pane: "runs" } | null>(null);
-/** The request record the inspector should show. */
-export const focusRecord = signal<number | null>(null);
+/** A pane to show a session on when it opens: a program opens on its runs; a finding
+ * pressed after a run opens on the operations with that finding chosen (its advice open). */
+export const paneOnOpen = signal<{ path: string; pane: "runs" | "operations"; finding?: number } | null>(null);
 /** The key the versions screen shows. */
 export const versionKey = signal<string>("");
 /** What the current place shows, for the toolbar's breadcrumb (a session's command). */
@@ -127,23 +125,14 @@ export function refreshSettings() {
   });
 }
 
-export function readOnly(): boolean {
-  return settings()?.["read-only"] ?? true;
-}
-
-/** Shows `e` as an error toast (its request id, and the request when there is one); returns it. */
+/** Shows `e` as an error toast: what went wrong, then the store's own word for it (its code and
+ * status) and the request id to quote; returns it. */
 export function report(e: unknown): SondeError {
   const err = asError(e);
   if (err.kind !== "cancelled") {
-    const record = err.recordId;
-    toast({
-      id: "error",
-      kind: "error",
-      title: err.message,
-      description: err.requestId ? `${t("common.requestId")}: ${err.requestId}` : undefined,
-      action: record !== null && record !== undefined ? t("common.showRequest") : undefined,
-      onAction: () => showRequest(record),
-    });
+    const code = [err.code, err.status ? `${err.status}` : null].filter(Boolean).join(" ");
+    const said = [code && !err.message.includes(err.code ?? code) ? code : null, err.requestId ? `${t("common.requestId")}: ${err.requestId}` : null].filter(Boolean).join(" · ");
+    toast({ id: "error", kind: "error", title: err.message, description: said || undefined });
   }
   return err;
 }
@@ -156,13 +145,6 @@ export function notify(text: string, options: { kind?: ToastKind; action?: strin
 /** Copies `text` and says so: the one way anything is copied. */
 export function copy(text: string, said: string = t("common.copied")) {
   void Clipboard.writeText(text).then(() => notify(said), report);
-}
-
-/** Opens a request in Activity. */
-export function showRequest(id: number | null | undefined) {
-  if (id === null || id === undefined) return;
-  focusRecord.set(id);
-  go("requests");
 }
 
 /** Where a window shows Settings and Activity instead of a place: set by the

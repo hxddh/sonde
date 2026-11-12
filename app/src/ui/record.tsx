@@ -91,7 +91,7 @@ export function pretty(xml: string): string {
 const headerRows = (h: Header[]): [string, string][] => h.map((x) => [x.name, x.value]);
 
 /** A request in full: status, timing, ids, then its parts: error, query, headers. */
-export function RecordView(props: { record: RequestRecord; onBack?: () => void; actions?: JSX.Element }) {
+export function RecordView(props: { record: RequestRecord; onBack?: () => void; actions?: JSX.Element; /** the app's own, under the actions: the key's other requests */ more?: JSX.Element }) {
   const r = () => props.record;
   const facts = (): [string, string][] =>
     [
@@ -122,6 +122,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
       <If when={props.actions}>
         <View class="flex-row flex-wrap gap-2">{props.actions}</View>
       </If>
+      {props.more}
       {/* sonde answered it in the store's place: the store is not to blame for what it says */}
       <If when={r().injected}>{(name) => <Notice testID="record-injected" icon="flask-conical" text={t("requests.injected", { scenario: scenarioLabel(name()) })} />}</If>
       <If when={r().transportError}>

@@ -44,6 +44,10 @@ pub enum Standing {
     Broke,
     /// The scenario met no request (nothing to complete, nothing to write).
     Untested,
+    /// The recording policy refused what the program did under the
+    /// scenario (and not in its clean run): what it would have done, the
+    /// requests cannot say. Never "broke".
+    Refused,
 }
 
 impl Standing {
@@ -53,6 +57,7 @@ impl Standing {
             Standing::Degraded => "degraded",
             Standing::Broke => "broke",
             Standing::Untested => "untested",
+            Standing::Refused => "refused",
         }
     }
 }
@@ -243,6 +248,10 @@ pub struct Trial {
     /// folder ([`session_path`] gives the path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+    /// The scenario's verdicts for the program, oldest first, up to this
+    /// one ([`with_history`]): given when shown, not kept with the run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<Seen>,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -1421,6 +1430,21 @@ pub fn judge(
             )]
         }));
     }
+    // the recording policy refused what the clean run did not ask for: the
+    // policy's doing, not the fault's, whatever followed
+    let by_policy = |rs: &[Record]| rs.iter().filter(|r| crate::refused_by_policy(r)).count();
+    let blocked = by_policy(run).saturating_sub(by_policy(clean));
+    let first_blocked = run.iter().find(|r| crate::refused_by_policy(r));
+    if blocked > 0 && matches!(standing, Standing::Broke | Standing::Degraded) {
+        standing = Standing::Refused;
+        let policy = first_blocked
+            .and_then(|r| response_header(r, "x-sonde-policy"))
+            .unwrap_or("no-delete")
+            .to_string();
+        let mut args = n_of(blocked);
+        args.push(("policy", policy));
+        why.insert(0, vec![Said::new("trial.why.policy", &args)]);
+    }
     let reasons: Vec<String> = why
         .iter()
         .map(|r| r.iter().map(Said::en).collect())
@@ -1436,6 +1460,7 @@ pub fn judge(
     };
     let turned_on = match standing {
         Standing::Survived | Standing::Untested => None,
+        Standing::Refused => first_blocked,
         _ => at_write
             .or(at_cut)
             .or(at_race)
@@ -1452,28 +1477,32 @@ pub fn judge(
             .flatten()
             .any(|x| x.id == r.id)
     };
-    let advice = turned_on.filter(|r| given_up(r)).map(|r| {
-        let sdk = crate::callers::sdk(r);
-        if cut_body(r) {
-            Said::new("trial.advice.cut", &[])
-        } else if lost_race(r) {
-            Said::new("trial.advice.race", &[])
-        } else if !hidden(r).is_empty() {
-            Said::new("trial.advice.list", &[])
-        } else if at_wait.is_some_and(|w| w.id == r.id) {
-            Said::new("trial.advice.timeout", &[])
-        } else if code_of(r) == Some("RequestTimeTooSkewed") {
-            Said::new("trial.advice.skew", &[])
-        } else {
-            match sdk.as_deref().and_then(|s| Some((s, retry_setting(s)?))) {
-                Some((sdk, setting)) => Said::new(
-                    "trial.advice.retries",
-                    &[("sdk", sdk.to_string()), ("setting", setting.to_string())],
-                ),
-                None => Said::new("trial.advice.retry", &[]),
+    let advice = if standing == Standing::Refused {
+        Some(Said::new("trial.advice.policy", &[]))
+    } else {
+        turned_on.filter(|r| given_up(r)).map(|r| {
+            let sdk = crate::callers::sdk(r);
+            if cut_body(r) {
+                Said::new("trial.advice.cut", &[])
+            } else if lost_race(r) {
+                Said::new("trial.advice.race", &[])
+            } else if !hidden(r).is_empty() {
+                Said::new("trial.advice.list", &[])
+            } else if at_wait.is_some_and(|w| w.id == r.id) {
+                Said::new("trial.advice.timeout", &[])
+            } else if code_of(r) == Some("RequestTimeTooSkewed") {
+                Said::new("trial.advice.skew", &[])
+            } else {
+                match sdk.as_deref().and_then(|s| Some((s, retry_setting(s)?))) {
+                    Some((sdk, setting)) => Said::new(
+                        "trial.advice.retries",
+                        &[("sdk", sdk.to_string()), ("setting", setting.to_string())],
+                    ),
+                    None => Said::new("trial.advice.retry", &[]),
+                }
             }
-        }
-    });
+        })
+    };
     Trial {
         scenario: scenario.name.clone(),
         about: scenario.about.clone(),
@@ -1519,6 +1548,7 @@ pub fn judge(
         at: turned_on.map(where_of),
         advice,
         session: None,
+        history: Vec::new(),
     }
 }
 
@@ -1528,12 +1558,6 @@ fn stem_of(session: &std::path::Path) -> String {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     name.strip_suffix(".sonde").unwrap_or(&name).to_string()
-}
-
-/// Where a run's trials are kept: beside its session, so that the app and
-/// `sonde check` read what the last trial found.
-pub fn file_for(session: &std::path::Path) -> std::path::PathBuf {
-    session.with_file_name(format!("{}.trials.json", stem_of(session)))
 }
 
 /// The folder a run's trial sessions are recorded in, beside its session.
@@ -1581,20 +1605,42 @@ pub fn remove(session: &std::path::Path) {
             let _ = std::fs::remove_file(dir.join(name));
         }
     }
-    let _ = std::fs::remove_file(file_for(session));
+    crate::index::set(session, crate::index::Change::NoTrials);
+    // (and the file they were kept in before 18.0)
+    let _ = std::fs::remove_file(crate::index::beside(session, "trials.json"));
     // (only when nothing else is in it)
     let _ = std::fs::remove_dir(dir);
 }
 
+/// Keeps a run's trials in its folder's index, so that the app and `sonde
+/// check` read what the last trial found.
 pub fn save(session: &std::path::Path, trials: &[Trial]) -> std::io::Result<()> {
-    reqlog::private::write(&file_for(session), serde_json::to_vec_pretty(trials)?)
+    if !session
+        .parent()
+        .is_some_and(|d| d.as_os_str().is_empty() || d.is_dir())
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no folder for {}", session.display()),
+        ));
+    }
+    crate::index::set(session, crate::index::Change::Trials(trials.to_vec()));
+    Ok(())
 }
 
-/// A run's trials; none when it was never tried (or the file is damaged).
+/// A run's trials; none when it was never tried. Kept beside it before
+/// 18.0 (`<run>.trials.json`): read, and moved into the index.
 pub fn load(session: &std::path::Path) -> Vec<Trial> {
-    std::fs::read(file_for(session))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
+    crate::index::get(session)
+        .trials
+        .or_else(|| {
+            crate::index::moved(
+                session,
+                "trials.json",
+                |b| serde_json::from_slice::<Vec<Trial>>(b).ok(),
+                |t| crate::index::Change::Trials(t.clone()),
+            )
+        })
         .unwrap_or_default()
 }
 
@@ -1604,6 +1650,7 @@ pub fn worst(trials: &[Trial]) -> Option<Standing> {
     [
         Standing::Broke,
         Standing::Degraded,
+        Standing::Refused,
         Standing::Survived,
         Standing::Untested,
     ]
@@ -1611,7 +1658,181 @@ pub fn worst(trials: &[Trial]) -> Option<Standing> {
     .find(|s| trials.iter().any(|t| t.standing == *s))
 }
 
+/// The places a command gives a run of a trial named `name` (`clean`, or
+/// the scenario's): each word with `{trial}`, up to its last `{trial}` and
+/// past any `=` and `scheme://` (`--out=s3://b/etl-{trial}/` is
+/// `b/etl-clean`). Keys under them are that run's own ([`crate::Written::own_place`]).
+pub fn places(command: &[String], name: &str) -> Vec<String> {
+    command
+        .iter()
+        .filter_map(|w| {
+            let at = w.rfind(PLACE)?;
+            let mut place = format!("{}{name}", w[..at].replace(PLACE, name));
+            if let Some(eq) = place.rfind('=') {
+                place = place[eq + 1..].to_string();
+            }
+            if let Some(scheme) = place.find("://") {
+                place = place[scheme + 3..].to_string();
+            }
+            Some(place)
+        })
+        .collect()
+}
+
+/// A scenario's verdict as its program keeps it: when, how it stood, and
+/// the run (its session's file name).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Seen {
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub standing: Standing,
+    pub run: String,
+}
+
+/// Program → scenario as asked (`slowdown:3`) → its verdicts, oldest first.
+pub type Verdicts = BTreeMap<String, BTreeMap<String, Vec<Seen>>>;
+
+/// The most verdicts kept per scenario of a program.
+pub const HISTORY_KEPT: usize = 50;
+
+/// The file beside a program's runs that keeps each program's verdicts:
+/// kept when a run is recorded again or deleted.
+pub fn verdicts_file(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("verdicts.json")
+}
+
+/// Every program's verdicts kept in `dir`: none when there is no file (or
+/// it is damaged).
+pub fn read_verdicts(dir: &std::path::Path) -> Verdicts {
+    std::fs::read(verdicts_file(dir))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Adds a trial's verdicts to its program's, in `dir`.
+pub fn record(
+    dir: &std::path::Path,
+    program: &str,
+    run: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    trials: &[Trial],
+) -> std::io::Result<()> {
+    if trials.is_empty() {
+        return Ok(());
+    }
+    let mut all = read_verdicts(dir);
+    let mine = all.entry(program.to_string()).or_default();
+    for t in trials {
+        let seen = mine.entry(t.asked()).or_default();
+        seen.push(Seen {
+            at,
+            standing: t.standing,
+            run: run.to_string(),
+        });
+        let over = seen.len().saturating_sub(HISTORY_KEPT);
+        seen.drain(..over);
+    }
+    // a name of its own: the app and the CLI may write at the same time
+    let tmp = dir.join(format!(
+        "verdicts.json.{}.{}.tmp",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    reqlog::private::write(&tmp, serde_json::to_vec_pretty(&all)?)?;
+    std::fs::rename(&tmp, verdicts_file(dir))
+}
+
+/// Gives each of a run's trials its scenario's history, up to this run's
+/// verdict (`run`: the session's file name): none for a run the program's
+/// verdicts do not name.
+pub fn with_history(dir: &std::path::Path, program: &str, run: &str, trials: &mut [Trial]) {
+    let all = read_verdicts(dir);
+    let Some(mine) = all.get(program) else {
+        return;
+    };
+    for t in trials {
+        if let Some(seen) = mine.get(&t.asked())
+            && let Some(at) = seen.iter().rposition(|s| s.run == run)
+        {
+            t.history = seen[..=at].to_vec();
+        }
+    }
+}
+
+/// A run's trials as `check` and `show` say them: each with its
+/// scenario's history for `program`, kept in the run's folder.
+pub fn load_with_history(session: &std::path::Path, program: Option<&str>) -> Vec<Trial> {
+    let mut trials = load(session);
+    if let (Some(p), Some(name)) = (program, session.file_name()) {
+        let dir = session
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        with_history(dir, p, &name.to_string_lossy(), &mut trials);
+    }
+    trials
+}
+
+/// The scenarios (as asked) whose last verdict for `program` was not
+/// "survived" nor "untested": what to try again.
+pub fn to_try_again(dir: &std::path::Path, program: &str) -> Vec<String> {
+    read_verdicts(dir)
+        .remove(program)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, seen)| {
+            seen.last().is_some_and(|s| {
+                matches!(
+                    s.standing,
+                    Standing::Broke | Standing::Degraded | Standing::Refused
+                )
+            })
+        })
+        .map(|(asked, _)| asked)
+        .collect()
+}
+
+/// A day as the history says it: `12 Nov`, with the year when not this one's.
+fn day(at: chrono::DateTime<chrono::Utc>) -> String {
+    use chrono::Datelike;
+    let local = at.with_timezone(&chrono::Local);
+    if local.year() == chrono::Local::now().year() {
+        local.format("%-d %b").to_string()
+    } else {
+        local.format("%-d %b %Y").to_string()
+    }
+}
+
 impl Trial {
+    /// The scenario's history in a few words, when there is one: `broke on
+    /// 12 Nov, survived since`, or `survived since 10 Nov`.
+    pub fn since(&self) -> Option<String> {
+        let last = self.history.last()?;
+        if self.history.len() < 2 {
+            return None;
+        }
+        Some(
+            match self
+                .history
+                .iter()
+                .rposition(|s| s.standing != last.standing)
+            {
+                Some(i) => format!(
+                    "{} on {}, {} since",
+                    self.history[i].standing.label(),
+                    day(self.history[i].at),
+                    last.standing.label()
+                ),
+                None => format!(
+                    "{} since {}",
+                    last.standing.label(),
+                    day(self.history[0].at)
+                ),
+            },
+        )
+    }
+
     /// The scenario as it was asked for: its name, and how hard it pressed
     /// when that was more than once (`slowdown:3`).
     pub fn asked(&self) -> String {
@@ -1624,7 +1845,7 @@ impl Trial {
     /// What happened, in a line: the figures behind the standing, then why
     /// it is not "survived", the request it turns on and what to change.
     pub fn line(&self) -> String {
-        let mut parts = Vec::new();
+        let mut parts: Vec<String> = self.since().into_iter().collect();
         let owed = self.faults.saturating_sub(self.not_retryable);
         if self.faults > 0 {
             let n = format!("{} fault{}", self.faults, plural(self.faults));
@@ -1780,8 +2001,19 @@ impl Trial {
     }
 }
 
+/// Whether an SDK (as [`crate::callers::sdk`] names it) sends a request
+/// answered 403 RequestTimeTooSkewed again, signed by the answer's clock:
+/// the AWS SDKs for Java and JavaScript. botocore (boto3, the AWS CLI) does
+/// not.
+pub fn retries_skew(sdk: &str) -> bool {
+    matches!(
+        sdk.split(' ').next().unwrap_or(""),
+        "aws-sdk-java" | "aws-sdk-js"
+    )
+}
+
 /// The scenarios worth a program's time, from what its clean run did: the
-/// two every program meets; the skewed clock if it signs its requests; the
+/// two every program meets; the skewed clock if its SDK retries it; the
 /// lost answer if it writes; the failed completion and the completion
 /// answered 500 if it uploads in parts; the body cut short if it downloads
 /// one large enough to cut, and the late first byte if it downloads at all;
@@ -1792,13 +2024,22 @@ pub fn choose(clean: &[Record]) -> Vec<crate::fault::Scenario> {
     let mut names = vec!["slowdown", "error"];
     // signed by the program as it sent it: every request sonde let in was,
     // but a presigned URL, signed once by someone else (and a lean reading
-    // has no Authorization to look at)
-    if has(&|r| {
-        let presigned = r.request_headers.iter().any(|h| {
-            h.name.eq_ignore_ascii_case("x-sonde-note") && h.value.starts_with("presigned")
-        });
-        !presigned && response_header(r, "x-sonde-proxy").is_none()
-    }) {
+    // has no Authorization to look at). Offered only to an SDK known to
+    // sign again and retry: to any other it is a "broke" no code can change
+    let signed: Vec<&Record> = clean
+        .iter()
+        .filter(|r| {
+            let presigned = r.request_headers.iter().any(|h| {
+                h.name.eq_ignore_ascii_case("x-sonde-note") && h.value.starts_with("presigned")
+            });
+            !presigned && response_header(r, "x-sonde-proxy").is_none()
+        })
+        .collect();
+    if !signed.is_empty()
+        && signed
+            .iter()
+            .all(|r| crate::callers::sdk(r).is_some_and(|sdk| retries_skew(&sdk)))
+    {
         names.push("skew");
     }
     if has(&|r| r.method == "PUT" || r.method == "POST" || r.method == "DELETE") {
@@ -2322,7 +2563,7 @@ mod tests {
         assert!(outside.exists());
         assert!(!trials.join("run.slowdown.sonde").exists());
         assert!(!trials.join("run.error-2.sonde").exists());
-        assert!(!file_for(&session).exists());
+        assert!(load(&session).is_empty());
         assert!(
             trials.join("run-2.slowdown.sonde").exists(),
             "another run's"
@@ -2341,8 +2582,19 @@ mod tests {
         let clean = vec![rec(1, 0, "GET", "GetObject", "a", 200)];
         let t = judge(&s, &clean, 0, &clean, 0);
         assert_eq!(t.standing, Standing::Untested);
-        let names =
-            |c: &[Record]| -> Vec<String> { choose(c).into_iter().map(|s| s.name).collect() };
+        // (sent by an SDK that signs again and retries a skewed clock)
+        let names = |c: &[Record]| -> Vec<String> {
+            let java: Vec<Record> = c
+                .iter()
+                .cloned()
+                .map(|mut r| {
+                    r.request_headers
+                        .push(Header::new("user-agent", "aws-sdk-java/2.25.1 ua/2.0"));
+                    r
+                })
+                .collect();
+            choose(&java).into_iter().map(|s| s.name).collect()
+        };
         assert_eq!(names(&clean[..0]), ["slowdown", "error"]);
         // a download: its first byte may come late
         assert_eq!(
@@ -3568,5 +3820,122 @@ mod tests {
         let run = vec![fault(put(1, 0, "state", 503), "slowdown")];
         let t = judge(&slowdown(), &clean, 0, &run, 0);
         assert_eq!(t.advice.unwrap().key, "trial.advice.retry");
+    }
+
+    #[test]
+    fn a_skewed_clock_is_offered_only_to_an_sdk_that_retries_it() {
+        let sent_by = |agent: &str| {
+            let mut r = get(1, 0, "a", 200);
+            r.request_headers.push(Header::new("User-Agent", agent));
+            r
+        };
+        let skew = |c: &[Record]| choose(c).iter().any(|s| s.name == "skew");
+        assert!(skew(&[sent_by("aws-sdk-java/2.25.1 ua/2.0 os/linux")]));
+        assert!(skew(&[sent_by("aws-sdk-js/3.600.0 ua/2.1 os/linux")]));
+        // botocore does not retry it: a "broke" no code can change
+        let boto = sent_by("Boto3/1.34.0 md/Botocore#1.34.0 ua/2.0 Botocore/1.34.0");
+        assert!(!skew(std::slice::from_ref(&boto)));
+        assert!(!skew(&[get(1, 0, "a", 200)]), "an SDK not known");
+        assert!(
+            !skew(&[sent_by("aws-sdk-java/2.25.1"), boto]),
+            "one request by boto3 among them"
+        );
+    }
+
+    #[test]
+    fn a_refusal_by_the_policy_is_its_own_outcome_never_broke() {
+        let clean = vec![put(1, 0, "etl-clean/state", 200)];
+        let mut refused = put(1, 0, "etl-slowdown/state", 403);
+        refused.error_body = Some("sonde refused PutObject".into());
+        refused
+            .response_headers
+            .push(Header::new("x-sonde-proxy", "refused"));
+        refused
+            .response_headers
+            .push(Header::new("x-sonde-policy", "no-delete"));
+        let run = vec![refused];
+        let t = judge(&slowdown(), &clean, 0, &run, 1);
+        assert_eq!(t.standing, Standing::Refused);
+        assert_eq!(t.standing.label(), "refused");
+        assert_eq!(
+            t.reasons[0],
+            "refused by the recording policy (no-delete): 1 request more than in the clean run, so what the program does under the fault cannot be told"
+        );
+        assert_eq!(t.advice.as_ref().unwrap().key, "trial.advice.policy");
+        assert_eq!(t.at.as_ref().unwrap().key, "b/etl-slowdown/state");
+        assert_eq!(worst(std::slice::from_ref(&t)), Some(Standing::Refused));
+        // refused in the clean run as well: the program's own, judged as ever
+        let t = judge(&slowdown(), &run, 0, &run, 1);
+        assert_eq!(t.standing, Standing::Broke);
+    }
+
+    #[test]
+    fn a_commands_trial_places_are_read_from_its_words() {
+        let w = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            places(&w(&["python3", "etl.py", "t{trial}/"]), "clean"),
+            ["tclean"]
+        );
+        assert_eq!(
+            places(&w(&["--out=s3://b/etl-{trial}/x"]), "slowdown"),
+            ["b/etl-slowdown"]
+        );
+        assert_eq!(
+            places(&w(&["{trial}/{trial}.json"]), "error"),
+            ["error/error"]
+        );
+        assert!(places(&w(&["etl.py", "out/"]), "clean").is_empty());
+    }
+
+    #[test]
+    fn verdicts_are_kept_per_program_and_say_what_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        let at = |day: i64| DateTime::from_timestamp(1_700_000_000 + day * 86_400, 0).unwrap();
+        let clean = vec![put(1, 0, "state", 200)];
+        let run = vec![fault(put(1, 0, "state", 503), "slowdown")];
+        let broke = judge(&slowdown(), &clean, 0, &run, 0);
+        assert_eq!(broke.standing, Standing::Broke);
+        let mut fixed = broke.clone();
+        fixed.standing = Standing::Survived;
+        assert!(to_try_again(dir, "p").is_empty(), "nothing kept yet");
+        record(dir, "p", "r1.sonde", at(0), std::slice::from_ref(&broke)).unwrap();
+        assert_eq!(to_try_again(dir, "p"), ["slowdown"]);
+        assert!(to_try_again(dir, "q").is_empty(), "another program's");
+        record(dir, "p", "r2.sonde", at(1), std::slice::from_ref(&fixed)).unwrap();
+        assert!(to_try_again(dir, "p").is_empty());
+        let shown = |run: &str, t: &Trial| {
+            let mut v = vec![t.clone()];
+            with_history(dir, "p", run, &mut v);
+            v.remove(0)
+        };
+        let now = shown("r2.sonde", &fixed);
+        assert_eq!(now.history.len(), 2);
+        let said = format!("broke on {}, survived since", day(at(0)));
+        assert_eq!(now.since().as_deref(), Some(said.as_str()));
+        assert!(now.line().starts_with(&said), "{}", now.line());
+        // an older run: its history up to its own verdict, nothing to say
+        let then = shown("r1.sonde", &broke);
+        assert_eq!(then.history.len(), 1);
+        assert_eq!(then.since(), None);
+        // survived again: still since the change
+        record(dir, "p", "r3.sonde", at(2), std::slice::from_ref(&fixed)).unwrap();
+        assert_eq!(
+            shown("r3.sonde", &fixed).since().as_deref(),
+            Some(said.as_str())
+        );
+        // a run the verdicts do not name has none
+        assert!(shown("other.sonde", &fixed).history.is_empty());
+        // only ever survived: since when
+        record(dir, "q", "q1.sonde", at(0), std::slice::from_ref(&fixed)).unwrap();
+        record(dir, "q", "q2.sonde", at(3), std::slice::from_ref(&fixed)).unwrap();
+        let mut v = vec![fixed.clone()];
+        with_history(dir, "q", "q2.sonde", &mut v);
+        assert_eq!(v[0].since(), Some(format!("survived since {}", day(at(0)))));
+        // kept: at most HISTORY_KEPT a scenario
+        for _ in 0..HISTORY_KEPT + 3 {
+            record(dir, "q", "q.sonde", at(4), std::slice::from_ref(&fixed)).unwrap();
+        }
+        assert_eq!(read_verdicts(dir)["q"]["slowdown"].len(), HISTORY_KEPT);
     }
 }

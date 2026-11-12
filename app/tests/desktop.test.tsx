@@ -546,3 +546,23 @@ test("a trial's load: so many times the clean run's where it sent more, the two 
   expect(trialText({ ...base, requests: 1, cleanRequests: 7 })).toBe("1 fault, 0 retried · 1 of the clean run's 7 requests");
   expect(trialText({ ...base, requests: 14, cleanRequests: 7 })).toBe("1 fault, 0 retried · 2.0× the requests");
 });
+
+test("a scenario's verdicts over the program's runs read in a few words; the refused have a tone of their own", async () => {
+  const { trialSince, STANDING, toTryAgain } = await import("../src/ui/history");
+  const { day } = await import("../src/format");
+  const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 1, faults: 1, retried: 0, requests: 1, cleanRequests: 1, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
+  const at = ["2026-11-10T09:00:00Z", "2026-11-11T09:00:00Z", "2026-11-12T09:00:00Z"];
+  // one verdict has no history to tell
+  expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }] })).toBe(null);
+  // broke, then survived: when it last broke, and that it has survived since
+  const fixed = { ...base, standing: "survived" as const, history: [{ at: at[0], standing: "broke" as const, run: "a" }, { at: at[1], standing: "broke" as const, run: "b" }, { at: at[2], standing: "survived" as const, run: "c" }] };
+  expect(trialSince(fixed)).toBe(`Broke on ${day(at[1])}, survived since`);
+  // the same all along: since when
+  expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }, { at: at[1], standing: "broke", run: "b" }] })).toBe(`Broke since ${day(at[0])}`);
+  // a refusal by the policy is never a failure's red, nor a degraded run's amber
+  expect(STANDING.refused).toBe("refused");
+  expect(([STANDING.degraded, STANDING.broke] as string[]).includes(STANDING.refused)).toBe(false);
+  // "Try again what broke" takes up what did not survive, the refused with it
+  const verdicts = (["survived", "degraded", "broke", "untested", "refused"] as const).map((standing) => ({ ...base, scenario: standing, standing }));
+  expect(toTryAgain(verdicts).map((x) => x.scenario)).toEqual(["degraded", "broke", "refused"]);
+});

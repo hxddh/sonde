@@ -1,13 +1,14 @@
-// Settings: how sonde behaves. Grouped by what they are about — appearance,
-// safety, requests, costs, the request log, updates, files — and saved as
-// they change: a toast says so, with Undo.
+// Settings: how sonde behaves, the few a user needs — what a recorded program
+// may do, how the app looks, naming the code, prices — then updates and
+// where the files are. Saved as they change: a toast says so, with Undo. The
+// rest (sonde's own pace, prices by class) are config.toml's.
 
 import { cleanup, effect, signal, Text, untracked, View } from "nsh";
 import { language, t } from "../i18n";
 import { api, asError } from "../native";
 import { notify, refreshEndpoints, refreshSettings, report, settings } from "../store";
 import type { Settings } from "../types";
-import { Button, Card, Choice, Disclosure, Field, FORM, KeyValue, Labeled, Notice, NumberField, Options, Page, Row, Section, terminal, SwitchRow, WIDTH } from "../ui/kit";
+import { Button, Choice, Field, FORM, KeyValue, Labeled, Notice, NumberField, Options, Page, Section, terminal, SwitchRow } from "../ui/kit";
 import { Updates } from "../ui/updates";
 
 /** A form's fields, two to a row (one where there is no room), every label above its control. */
@@ -92,7 +93,7 @@ export function SettingsScreen() {
     const changed = Object.fromEntries(Object.entries(draftNext).filter(([k, v]) => !was || JSON.stringify(v) !== JSON.stringify((was as unknown as Record<string, unknown>)[k])));
     const next = base ? ({ ...copyOf(base), ...changed } as Settings) : draftNext;
     try {
-      api.saveSettings({ ...next, "read-only": settings()?.["read-only"] ?? true });
+      api.saveSettings(next);
       refreshSettings();
       saved = copyOf(next);
       draft.set(copyOf(next));
@@ -132,21 +133,8 @@ export function SettingsScreen() {
         {(d) => (
           <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
             <ConfigNotice />
+            {/* the one safety setting: what a recorded program may do (sonde's own deletes each ask for a typed confirmation) */}
             <Section title={t("settings.safety")}>
-              <SwitchRow
-                testID="read-only"
-                label={t("settings.readOnly")}
-                hint={t("settings.readOnlyHint")}
-                checked={settings()?.["read-only"] ?? true}
-                onChange={(v) => {
-                  try {
-                    api.setReadOnly(v);
-                    refreshSettings();
-                  } catch (e) {
-                    report(e);
-                  }
-                }}
-              />
               <Choice
                 testID="record-policy"
                 label={t("settings.recordPolicy")}
@@ -199,45 +187,17 @@ export function SettingsScreen() {
               </View>
             </Section>
 
-            <Section title={t("settings.requests")} description={t("settings.requestsHint")}>
-              <View class={GRID}>
-                <NumberField class={CELL} label={t("settings.concurrency")} value={d().concurrency} min={1} max={256} onChange={(v) => change({ ...d(), concurrency: v ?? d().concurrency })} testID="concurrency" />
-                <NumberField class={CELL} label={t("settings.rate")} value={d()["rate-limit"]} min={0} step={10} onChange={(v) => change({ ...d(), "rate-limit": v })} />
-                <NumberField class={CELL} label={t("settings.staleDays")} value={d()["stale-upload-days"]} min={1} max={3650} onChange={(v) => change({ ...d(), "stale-upload-days": v ?? 7 })} />
-                <View class={CELL} />
-              </View>
+            <Section title={t("settings.findings")}>
               {/* findings then say where in the program: the place to change */}
               <SwitchRow testID="name-callers" label={t("settings.callers")} hint={t("settings.callersHint")} checked={d()["name-callers"] ?? false} onChange={(v) => change({ ...d(), "name-callers": v }, true)} />
             </Section>
 
-            <View class="gap-3">
-              <Section title={t("settings.costs")} description={t("settings.costsHint")}>
-                <View class={GRID}>
-                  <NumberField class={CELL} label={t("settings.price")} value={d().prices["default-per-gib-month"]} min={0} step={0.001} onChange={(v) => change({ ...d(), prices: { ...d().prices, "default-per-gib-month": v ?? 0.023 } })} />
-                  <Field class={CELL} label={t("settings.currency")} value={d().prices.currency} onChange={(v) => change({ ...d(), prices: { ...d().prices, currency: v } })} />
-                </View>
-              </Section>
-              {/* a list of its own under the group: a card is never inside another */}
-              <Disclosure title={t("settings.byClass")} count={Object.keys(d().prices["by-class"]).length} open={false}>
-                <Card pad="none">
-                  <Each of={Object.entries(d().prices["by-class"])}>
-                    {(e, i) => (
-                      <Row first={i() === 0}>
-                        <Text class="min-w-0 flex-1 font-mono text-small text-foreground line-clamp-1">{e()[0]}</Text>
-                        <NumberField bare class={WIDTH.field} label={e()[0]} suffix={t("settings.perGibMonth", { cur: d().prices.currency })} value={e()[1]} min={0} step={0.001} onChange={(v) => change({ ...d(), prices: { ...d().prices, "by-class": { ...d().prices["by-class"], [e()[0]]: v ?? e()[1] } } })} />
-                      </Row>
-                    )}
-                  </Each>
-                </Card>
-              </Disclosure>
-            </View>
-
-            <Section title={t("settings.log")}>
+            {/* prices by storage class are config.toml's: the default is the one most stores need */}
+            <Section title={t("settings.costs")} description={t("settings.costsHint")}>
               <View class={GRID}>
-                <NumberField class={CELL} label={t("settings.reqlog")} value={d()["reqlog-capacity"]} min={100} step={1000} onChange={(v) => change({ ...d(), "reqlog-capacity": v ?? 5000 })} />
-                <View class={CELL} />
+                <NumberField class={CELL} testID="price" label={t("settings.price")} value={d().prices["default-per-gib-month"]} min={0} step={0.001} onChange={(v) => change({ ...d(), prices: { ...d().prices, "default-per-gib-month": v ?? 0.023 } })} />
+                <Field class={CELL} label={t("settings.currency")} value={d().prices.currency} onChange={(v) => change({ ...d(), prices: { ...d().prices, currency: v } })} />
               </View>
-              <SwitchRow label={t("settings.persist")} checked={d()["reqlog-persist"]} onChange={(v) => change({ ...d(), "reqlog-persist": v }, true)} />
             </Section>
 
             <Updates />

@@ -4,6 +4,58 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+## [18.0.0] - 2026-11-12
+
+Fewer things, each finished: three loops closed, "why slow" answered, and what a user never needed removed. The
+plan: [docs/history/plan-18.0.md](docs/history/plan-18.0.md).
+
+### Added
+
+- **The fix loop.** A finding keeps its identity across a program's runs. Run again, and each reads **fixed**
+  (with the saving measured beside the one predicted), **less**, **back** or **new**; `run` and `show` end with what
+  changed since the run before. `compare` with no runs takes the last two. In the app: Run shows the top findings
+  after a run, and a session says what changed.
+- **The trial loop.** `sonde run --trial --again` (and "Try again what broke" in the app) runs only the scenarios
+  that broke, degraded or were refused; each says its history ("broke on 12 Nov, survived since").
+- **The CI loop.** A GitHub Action, `uses: hxddh/sonde@v18` ([ci.md](docs/ci.md)): records, checks against the
+  base branch's baseline, keeps one PR comment (verdict, what changed, new findings first, one link) and the HTML
+  report. `share --html BEFORE AFTER` shows the comparison.
+- **Why slow, why costly.** `show --by operation|prefix|size|caller|sdk|status` and **Group by** in the app: the
+  table split, and one sentence on where the slow and costly requests are. A request's inspector lists its key's
+  history. The SDK is named in every summary.
+- Each finding prints its saving, the fix for the detected SDK and its line of code.
+- A verdict of its own, `refused`, when the recording policy, not the program, stopped a trial.
+
+### Changed
+
+- **Fewer commands** (19 → 13, 14 with the terminal UI): `diff` and `replay` are `compare`; `watch` is `proxy`
+  (and `import --follow`); `export` is `share --otlp`; `du` and `mpu` are `bucket`. The old names work for this
+  version and print their new form.
+- **One safety model**: the recording policy. Read-only mode, its lock and badge are gone; sonde's own destructive
+  acts keep their dry run, typed confirmation and audit log. One flag: `--policy` (`--allow-writes` for short).
+- **Settings 15 → 7; findings 16 → 11**; `show` is short (findings first, one table; the rest behind `--all`).
+- **Code lines are named by default** (`--no-callers` to stop); the Python hook costs ~20 ms, was ~170.
+- **One set of words** in the CLI, the app, JSON and Chinese: waiting, run, operation, request, finding.
+- **The app**: the Time pane keeps every chart, in one order (Traffic, Latency, Errors, Where), each titled by its
+  question and following the stretch picked; Buckets holds the store's tools as sections; one interaction grammar
+  (select → inspect → act); heat maps that read in dark; a bar of 0 says 0. **The screenshot tour gates merges**
+  (`app/shots.approved.json`).
+- One index per sessions folder (`.index.jsonl`) instead of files beside each session (read once and moved in).
+- `skew` is offered only to SDKs that retry it (Java, JavaScript), or when named.
+
+### Fixed
+
+- **A second `sonde run` failed under `no-delete`**, and so did a second trial: a program may now write over what
+  its earlier runs wrote (per program), and a trial over its `{trial}` place.
+- `compare` called a finding fixed when it only fell under its threshold.
+- `check --baseline auto` with no baseline passed in silence in CI; its "since" line was garbled.
+- Compare read runs backwards when opened from the later one.
+
+### Removed
+
+- `share --json` (`show -f json`), `--log-out`, `--no-delete`, `--read-only`, read-only mode, Activity › Requests,
+  the request log's SQLite file, the Compatibility window.
+
 ## [17.0.0] - 2026-11-12
 
 A verdict without exceptions, a declared contract, safe defaults, and the reach of a lake. The review this came

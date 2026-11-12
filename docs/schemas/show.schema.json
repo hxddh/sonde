@@ -5,21 +5,21 @@
   "description": "A session whole: its operations, findings and requests. `--errors` keeps the failed ones only.",
   "type": "object",
   "properties": {
-    "episodes": {
+    "operations": {
       "type": "array",
       "description": "The operations, in order.",
       "items": {
         "$ref": "#/$defs/episode"
       }
     },
-    "observations": {
+    "findings": {
       "type": "array",
       "description": "The findings.",
       "items": {
         "$ref": "#/$defs/observation"
       }
     },
-    "records": {
+    "requests": {
       "type": "array",
       "description": "Every request, as the file has it.",
       "items": {
@@ -34,15 +34,23 @@
     },
     "whatIf": {
       "$ref": "#/$defs/whatIf"
+    },
+    "trials": {
+      "type": "array",
+      "description": "The run's last trial, scenario by scenario, each with its history (`sonde run --trial`).",
+      "items": {
+        "$ref": "#/$defs/trial"
+      }
     }
   },
   "required": [
-    "episodes",
-    "observations",
-    "records",
+    "operations",
+    "findings",
+    "requests",
     "session",
     "summary",
-    "whatIf"
+    "whatIf",
+    "trials"
   ],
   "$defs": {
     "episode": {
@@ -712,6 +720,87 @@
         "findings",
         "ofFindings",
         "counted"
+      ]
+    },
+    "trial": {
+      "type": "object",
+      "description": "A trial's verdict (docs/trials.md).",
+      "properties": {
+        "scenario": {
+          "type": "string"
+        },
+        "about": {
+          "type": "string"
+        },
+        "times": {
+          "type": "integer"
+        },
+        "standing": {
+          "type": "string",
+          "enum": [
+            "survived",
+            "degraded",
+            "broke",
+            "untested",
+            "refused"
+          ],
+          "description": "`refused`: the recording policy refused what the program did under the scenario (and not in its clean run): not judged, never `broke`."
+        },
+        "exit": {
+          "type": "integer"
+        },
+        "cleanExit": {
+          "type": "integer"
+        },
+        "faults": {
+          "type": "integer"
+        },
+        "retried": {
+          "type": "integer"
+        },
+        "attempts": {
+          "type": "integer"
+        },
+        "history": {
+          "type": "array",
+          "description": "The scenario's verdicts for the program, oldest first, up to this one (`verdicts.json` beside its runs).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "string",
+                "description": "When (RFC 3339)."
+              },
+              "standing": {
+                "type": "string",
+                "enum": [
+                  "survived",
+                  "degraded",
+                  "broke",
+                  "untested",
+                  "refused"
+                ]
+              },
+              "run": {
+                "type": "string",
+                "description": "The run's session file name."
+              }
+            },
+            "required": [
+              "at",
+              "standing",
+              "run"
+            ]
+          }
+        }
+      },
+      "required": [
+        "scenario",
+        "standing",
+        "exit",
+        "cleanExit",
+        "faults",
+        "retried"
       ]
     }
   }

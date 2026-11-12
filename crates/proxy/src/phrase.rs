@@ -158,10 +158,6 @@ fn template(key: &str) -> &'static str {
         "loose.misses" => "{n} lookup{s} that found nothing",
         "loose.reads" => "{n} reads",
         "loose.deletes" => "{n} file{s} deleted",
-        "obs.shared" => "{n} {format} writes: ",
-        "obs.injected" => {
-            "{n} request{s} met a fault sonde injected (scenario {scenario}): the errors and retries here are the trial's, not the store's"
-        }
         "obs.unfinished" => {
             "{n} multipart upload{s} never completed or aborted: the parts stay billed until a lifecycle rule removes them"
         }
@@ -171,7 +167,6 @@ fn template(key: &str) -> &'static str {
         "obs.orphans" => {
             "{n} times files were written with no commit after them: orphans unless a later commit adds them"
         }
-        "obs.retried" => "{n} request{s} repeated after a retryable failure",
         "obs.small" => {
             "{n} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do"
         }
@@ -181,7 +176,6 @@ fn template(key: &str) -> &'static str {
         "obs.markers" => {
             "{n} directory marker{s} written (empty objects named …/), {m} delete requests of markers: s3a keeps them with fs.s3a.directory.marker.retention=keep"
         }
-        "obs.races" => "{n} conditional write{s} lost a race (412): another writer got there first",
         "obs.hot" => "{key} was read {n} times ({pct}% of all requests)",
         "obs.listed" => "{prefix} was listed {n} times",
         "obs.headget" => {
@@ -192,9 +186,6 @@ fn template(key: &str) -> &'static str {
         }
         "obs.throttled.rate" => {
             "{n} request{s} throttled (503 SlowDown or 429): the store asked for fewer requests per second"
-        }
-        "obs.slow" => {
-            "{n} request{s} took over {ms} ms against a median of {median} ms; the slowest, {op}, took {max} ms"
         }
         "obs.prefixrate.reads" => {
             "{prefix} took up to {n} reads a second, {pct}% of the {limit} S3 serves one prefix: spread its keys over more prefixes before it throttles"
@@ -207,6 +198,29 @@ fn template(key: &str) -> &'static str {
         }
         "obs.savesTime" => "about {time} sooner ({pct}% of the time waiting)",
         "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
+        "split.slow" => "{pct}% of the slow requests (over {ms}) are ",
+        "split.spread" => "the slow requests are spread: no one group holds half of them",
+        "split.cost.first" => "{pct}% of the cost is ",
+        "split.cost" => "; {pct}% of the cost is ",
+        "split.and" => ", ",
+        "split.end" => ".",
+        "split.operation" => "{v}",
+        "split.prefix" => "under {v}",
+        "split.caller" => "from {v}",
+        "split.sdk" => "from {v}",
+        "split.status" => "answered {v}",
+        "split.status.none" => "without an answer",
+        "split.size.none" => "without a body",
+        "split.size.under" => "under {hi}",
+        "split.size.between" => "of {lo} to {hi}",
+        "split.size.over" => "over {lo}",
+        "fix.fixed" => "fixed",
+        "fix.less" => "less",
+        "fix.back" => "back",
+        "fix.new" => "new",
+        "fix.open" => "open",
+        "fix.saved" => "saved {n} request{s} (predicted {p})",
+        "fix.savedTime" => "{time} less waiting (predicted {p})",
         "trial.advice.retries" => "{sdk} did not send it again: turn its retries on ({setting})",
         "trial.advice.retry" => {
             "send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry, and so is S3's SlowDown, RequestTimeout or RequestTimeTooSkewed"
@@ -273,6 +287,12 @@ fn template(key: &str) -> &'static str {
         "trial.why.exit" => "exited {exit} (the clean run exited {clean})",
         "trial.why.refused.completed" => {
             "the retried {op} was answered {answer}: the upload had completed"
+        }
+        "trial.why.policy" => {
+            "refused by the recording policy ({policy}): {n} request{s} more than in the clean run, so what the program does under the fault cannot be told"
+        }
+        "trial.advice.policy" => {
+            "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program write over what it finds (--allow-writes)"
         }
         "trial.why.refused.made" => {
             "the retried {op} was answered {answer}: the store had made the first attempt"
@@ -394,6 +414,8 @@ mod tests {
             "why.exit",
             "why.refused.completed",
             "why.refused.made",
+            "why.policy",
+            "advice.policy",
         ] {
             let key = format!("trial.{key}");
             let en = template(&key);
@@ -408,6 +430,63 @@ mod tests {
                 lines.iter().any(|l| l.contains(&quoted)),
                 "{key}: the app's English is not this file's"
             );
+        }
+    }
+
+    /// Group by's sentence is said by the app in both languages too.
+    #[test]
+    fn the_split_sentences_have_their_templates_in_the_app() {
+        let ts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/src/phrases.ts");
+        let ts = std::fs::read_to_string(ts).unwrap();
+        let src = include_str!("phrase.rs");
+        let keys: Vec<&str> = src
+            .lines()
+            .filter_map(|l| l.trim_start().strip_prefix("\"split."))
+            .filter_map(|l| l.split('"').next())
+            .collect();
+        assert!(keys.len() >= 16, "{keys:?}");
+        for k in keys {
+            let key = format!("split.{k}");
+            let quoted = serde_json::to_string(template(&key)).unwrap();
+            let lines: Vec<&str> = ts
+                .lines()
+                .filter(|l| l.trim_start().starts_with(&format!("\"{key}\": ")))
+                .collect();
+            assert_eq!(lines.len(), 2, "{key}: a line in each language");
+            assert!(lines.iter().any(|l| l.contains(&quoted)), "{key}");
+        }
+    }
+
+    /// The fix loop's words, said by the app in both languages.
+    #[test]
+    fn the_fix_loops_words_have_their_templates_in_the_app() {
+        let ts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/src/phrases.ts");
+        let ts = std::fs::read_to_string(ts).unwrap();
+        for state in [
+            crate::fixloop::State::Fixed,
+            crate::fixloop::State::Less,
+            crate::fixloop::State::Back,
+            crate::fixloop::State::New,
+            crate::fixloop::State::Open,
+        ] {
+            assert_eq!(state.phrase().en(), state.label());
+        }
+        for key in [
+            "fix.fixed",
+            "fix.less",
+            "fix.back",
+            "fix.new",
+            "fix.open",
+            "fix.saved",
+            "fix.savedTime",
+        ] {
+            let quoted = serde_json::to_string(template(key)).unwrap();
+            let lines: Vec<&str> = ts
+                .lines()
+                .filter(|l| l.trim_start().starts_with(&format!("\"{key}\": ")))
+                .collect();
+            assert_eq!(lines.len(), 2, "{key}: a line in each language");
+            assert!(lines.iter().any(|l| l.contains(&quoted)), "{key}");
         }
     }
 

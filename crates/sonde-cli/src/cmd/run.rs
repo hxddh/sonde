@@ -20,10 +20,15 @@ pub struct RunArgs {
     /// Print each request on stderr as it happens.
     #[arg(long)]
     live: bool,
-    /// Name the place in a program's code that sent each request (Python's
-    /// boto3, the AWS SDK for JavaScript v3, the AWS SDK for Java 2):
-    /// findings then say where to change it. Also the `name-callers` setting.
-    #[arg(long)]
+    /// Do not name the place in the program's code that sent each request.
+    /// It is named by default for Python's boto3, the AWS SDK for
+    /// JavaScript v3 and the AWS SDK for Java 2 (hooks loaded with
+    /// PYTHONPATH, NODE_OPTIONS, JAVA_TOOL_OPTIONS), so that each finding
+    /// says its line. Also `name-callers = false` in the settings.
+    #[arg(long, conflicts_with = "callers")]
+    no_callers: bool,
+    /// Name callers even where the settings say not to.
+    #[arg(long, hide = true)]
     callers: bool,
     /// Then run the command again under faults chosen from what it did (a
     /// 503 on each request's first attempt, a skewed clock if it signs, a
@@ -43,6 +48,11 @@ pub struct RunArgs {
     /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
     faults: Vec<String>,
+    /// With --trial: try again only what did not survive. A fresh clean
+    /// run, then the scenarios that broke, degraded or were refused by the
+    /// policy in this program's last trials (`sonde run --trial --again -- …`).
+    #[arg(long, requires = "trial", conflicts_with = "faults")]
+    again: bool,
     /// The program's name: its runs and its baseline go by it, whatever the
     /// command's arguments are this time (default: `name` under `[program]`
     /// in sonde.toml, else the command itself).
@@ -238,24 +248,71 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     // anything runs
     let project = load_project(None)?;
     let mut asked: Vec<sonde_proxy::fault::Scenario> = Vec::new();
-    let mut specs: Vec<&str> = Vec::new();
+    let mut specs: Vec<String> = Vec::new();
     for name in &a.faults {
         let scenario = named_scenario(name, &project.scenarios)?;
         // named twice, run once: the second run would write over the first
         match asked.iter().position(|s| s.name == scenario.name) {
             None => {
                 asked.push(scenario);
-                specs.push(name);
+                specs.push(name.clone());
             }
             // one scenario at two strengths has one file to go to: refused,
             // not silently run at the first
-            Some(at) if specs[at] != name.as_str() => {
+            Some(at) if specs[at] != *name => {
                 return Err(super::usage(format!(
                     "--fault {} and --fault {name} are one scenario and would write one session: name it once",
                     specs[at]
                 )));
             }
             Some(_) => {}
+        }
+    }
+    // what to try again is known before anything runs
+    if a.again {
+        let program = a
+            .name
+            .clone()
+            .or(project.file.program.name.clone())
+            .filter(|n| !n.trim().is_empty())
+            .or_else(|| {
+                sonde_proxy::program::program_key(Some(&sonde_proxy::program::shell_join(
+                    &a.command,
+                )))
+            })
+            .unwrap_or_default();
+        let dir = match &a.rec.out {
+            Some(out) => runs_dir(out),
+            None => s.paths().sessions(),
+        };
+        let names = sonde_proxy::trial::to_try_again(&dir, &program);
+        if names.is_empty() {
+            let tried = sonde_proxy::trial::read_verdicts(&dir).contains_key(&program);
+            if tried {
+                eprintln!(
+                    "Nothing to try again: every scenario of `{program}` survived its last trial, or met nothing."
+                );
+                return Ok(0);
+            }
+            return Err(super::usage(format!(
+                "--again: `{program}` has no trial in {} yet (`sonde run --trial`)",
+                dir.display()
+            )));
+        }
+        for name in &names {
+            match named_scenario(name, &project.scenarios) {
+                // (one scenario at two strengths has one session: once)
+                Ok(scenario) if asked.iter().any(|s| s.name == scenario.name) => {}
+                Ok(scenario) => {
+                    asked.push(scenario);
+                    specs.push(name.clone());
+                }
+                // a project's scenario since taken out of sonde.toml
+                Err(e) => eprintln!("warning: not tried again: {e}"),
+            }
+        }
+        if asked.is_empty() {
+            return Ok(64);
         }
     }
     let trying = a.trial || !asked.is_empty();
@@ -309,8 +366,10 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         .unwrap_or_default();
     // trials are kept in a folder of their own: they are not runs of the
     // program (no trend, baseline or "newest" counts them)
-    let dir = sonde_proxy::trial::folder_for(&file);
-    std::fs::create_dir_all(&dir)?;
+    let folder = sonde_proxy::trial::folder_for(&file);
+    std::fs::create_dir_all(&folder)?;
+    // where the program's runs are, and its verdicts kept
+    let dir = runs_dir(&file);
     let color = std::io::stderr().is_terminal();
     eprintln!(
         "\nTrial: the command runs {} more time{}, each under one scenario.",
@@ -319,11 +378,19 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     );
     let mut trials = Vec::new();
     let mut interrupted = None;
+    // the program's verdicts before this trial, and this one's time: each
+    // row says what changed ("broke on 12 Nov, survived since")
+    let program = sonde_proxy::program::key_of(&clean_session.header);
+    let kept = program
+        .as_deref()
+        .and_then(|p| sonde_proxy::trial::read_verdicts(&dir).remove(p))
+        .unwrap_or_default();
+    let now = chrono::Utc::now();
     for scenario in scenarios {
         let under = Under {
             // (the run's last trials were removed when it was recorded: the
             // name is free, and is the one the verdict keeps)
-            path: dir.join(format!(
+            path: folder.join(format!(
                 "{}.sonde",
                 sonde_proxy::trial::session_stem(&file, &scenario.name)
             )),
@@ -351,13 +418,28 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
             .file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned());
+        if program.is_some() {
+            t.history = kept.get(&t.asked()).cloned().unwrap_or_default();
+            t.history.push(sonde_proxy::trial::Seen {
+                at: now,
+                standing: t.standing,
+                run: of.clone(),
+            });
+        }
         eprintln!("{}", trial_line(&t, color));
+        // (the history is the program's, not the run's: kept apart)
+        t.history.clear();
         trials.push(t);
     }
     if trials.is_empty() {
-        let _ = std::fs::remove_dir(&dir);
+        let _ = std::fs::remove_dir(&folder);
     } else {
         sonde_proxy::trial::save(&file, &trials)?;
+        if let Some(p) = &program
+            && let Err(e) = sonde_proxy::trial::record(&dir, p, &of, now, &trials)
+        {
+            eprintln!("warning: the program's verdicts could not be kept: {e}");
+        }
     }
     if let Some((signal, scenario)) = interrupted {
         eprintln!(
@@ -390,7 +472,38 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
             eprintln!("  sonde show {}", path.display());
         }
     }
+    if program.is_some()
+        && trials.iter().any(|t| {
+            matches!(
+                t.standing,
+                Standing::Broke | Standing::Degraded | Standing::Refused
+            )
+        })
+    {
+        eprintln!("Once changed, try again what did not survive:");
+        eprintln!("  {}", again_command(a));
+    }
     Ok(if broke > 0 { 1 } else { 0 })
+}
+
+/// The command that tries a program again under what did not survive.
+fn again_command(a: &RunArgs) -> String {
+    let mut words = vec!["sonde run --trial --again".to_string()];
+    if let Some(n) = &a.name {
+        words.push(format!(
+            "--name {}",
+            sonde_proxy::program::shell_join(std::slice::from_ref(n))
+        ));
+    }
+    if let Some(out) = &a.rec.out {
+        words.push(format!(
+            "-o {}",
+            sonde_proxy::program::shell_join(&[out.to_string_lossy().into_owned()])
+        ));
+    }
+    words.push("--".into());
+    words.push(sonde_proxy::program::shell_join(&a.command));
+    words.join(" ")
 }
 
 /// A trial's line: its standing, the scenario, what happened.
@@ -401,6 +514,7 @@ pub fn trial_line(t: &sonde_proxy::trial::Trial, color: bool) -> String {
         Standing::Degraded => "33",
         Standing::Broke => "31",
         Standing::Untested => "2",
+        Standing::Refused => "33",
     };
     format!(
         "  {}  {:<14} {}",
@@ -456,13 +570,19 @@ async fn run_once(
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
-    if a.callers || s.settings().name_callers {
+    if a.callers || (!a.no_callers && s.settings().name_callers) {
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
     // each run a place of its own, if the command asks for one: `{trial}`
     // in the command (and SONDE_TRIAL) is "clean", then the scenario's name.
     // A run that no trial follows is left as it was written.
     let trial = under.map_or("clean", |u| u.scenario.name.as_str());
+    // keys under the run's own place are its own to write over
+    if ctx.trying {
+        for place in sonde_proxy::trial::places(&a.command, trial) {
+            ctx.written.own_place(&place);
+        }
+    }
     let placed = |word: &String| {
         if ctx.trying {
             word.replace("{trial}", trial)
@@ -620,19 +740,34 @@ async fn run_once(
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
     started.writer.flush()?;
     if under.is_none() {
-        let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
+        let session = Session::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
         let color = std::io::stderr().is_terminal();
-        print_summary(
+        let prices = request_prices_for(s, &session.header.endpoint);
+        let analysis = sonde_proxy::view::Analysis::of(&session, &prices);
+        // against the program's run before: what the change did
+        let since = super::fixloop::since_last(
+            s,
+            &started.path,
+            &session.header,
             &session.records,
-            &session.header.endpoint,
+            &analysis,
+        );
+        print_summary_of(
+            &analysis,
+            &session.header,
             &started.path,
             color,
-            &request_prices_for(s, &session.header.endpoint),
             false,
+            false,
+            since.as_ref(),
         );
         if session.records.is_empty() {
             eprintln!("{}", NO_REQUESTS);
         }
+    }
+    // what it wrote is the program's to write over next time
+    if let Err(e) = ctx.written.keep() {
+        eprintln!("warning: what the program wrote could not be kept for its next run: {e}");
     }
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();

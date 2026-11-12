@@ -152,9 +152,9 @@ impl Sonde {
         disk: Option<Config>,
         error: Option<String>,
     ) -> Arc<Sonde> {
-        let log = RequestLog::new(config.settings.reqlog_capacity);
+        let log = RequestLog::new(reqlog::DEFAULT_CAPACITY);
         let guard = Guard::new(paths.audit_log());
-        let s = Arc::new(Sonde {
+        Arc::new(Sonde {
             paths,
             state: RwLock::new(State {
                 effective: config.clone(),
@@ -169,23 +169,7 @@ impl Sonde {
             jobs: JobManager::new(),
             guard,
             clients: RwLock::new(HashMap::new()),
-        });
-        s.apply_log_settings();
-        s
-    }
-
-    fn apply_log_settings(&self) {
-        let settings = self.settings();
-        self.log.set_capacity(settings.reqlog_capacity);
-        if settings.reqlog_persist {
-            let _ = std::fs::create_dir_all(&self.paths.data_dir);
-            match reqlog::sqlite::SqliteSink::open(&self.paths.reqlog_db()) {
-                Ok(s) => self.log.set_sink(Some(Arc::new(s))),
-                Err(e) => tracing::warn!("request log database: {e}"),
-            }
-        } else {
-            self.log.set_sink(None);
-        }
+        })
     }
 
     pub fn paths(&self) -> &Paths {
@@ -203,10 +187,6 @@ impl Sonde {
     pub fn settings(&self) -> Settings {
         self.state.read().effective.settings.clone()
     }
-    pub fn read_only(&self) -> bool {
-        self.state.read().effective.settings.read_only
-    }
-
     pub fn config(&self) -> Config {
         self.state.read().effective.clone()
     }
@@ -238,7 +218,6 @@ impl Sonde {
             }
         }
         self.clients.write().clear();
-        self.apply_log_settings();
         Ok(())
     }
 
@@ -332,7 +311,6 @@ impl Sonde {
             st.overrides = o;
             st.refresh();
         }
-        self.apply_log_settings();
         Ok(())
     }
 
@@ -729,10 +707,14 @@ mod tests {
         assert!(s.config_error().unwrap().contains("CA file"));
         assert!(s.endpoints().is_empty());
         let mut st = s.settings();
-        st.read_only = false;
+        st.theme = "dark".into();
         let e = s.set_settings(st).unwrap_err();
         assert!(e.contains("not loaded"), "{e}");
-        assert!(s.read_only(), "a refused save changes nothing");
+        assert_eq!(
+            s.settings().theme,
+            "system",
+            "a refused save changes nothing"
+        );
         assert!(s.upsert_endpoint(ep("a")).is_err());
         assert!(s.remove_endpoint("prod").is_err());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
@@ -777,16 +759,16 @@ mod tests {
         let other = Sonde::open(paths).unwrap();
         other.upsert_endpoint(ep("by-hand")).unwrap();
         let mut st = other.settings();
-        st.stale_upload_days = 30;
+        st.language = "zh".into();
         other.set_settings(st).unwrap();
         // this one changes one setting: only that is applied to the file
         let mut st = s.settings();
-        st.read_only = false;
+        st.theme = "dark".into();
         s.set_settings(st).unwrap();
         let on_disk = Config::load(&file).unwrap();
         assert!(on_disk.endpoint("by-hand").is_some());
-        assert_eq!(on_disk.settings.stale_upload_days, 30);
-        assert!(!on_disk.settings.read_only);
+        assert_eq!(on_disk.settings.language, "zh");
+        assert_eq!(on_disk.settings.theme, "dark");
         assert!(s.endpoint_config("by-hand").is_some(), "and it is in use");
         // a file that no longer loads is left alone
         std::fs::write(&file, "not toml [").unwrap();
@@ -828,7 +810,7 @@ mod tests {
         assert_eq!(s.endpoints().len(), 1);
         // any save keeps the configured one in the file
         let mut st = s.settings();
-        st.read_only = false;
+        st.theme = "dark".into();
         s.set_settings(st).unwrap();
         s.upsert_endpoint(ep("other")).unwrap();
         let on_disk = Config::load(&paths.config_file()).unwrap();
@@ -853,13 +835,13 @@ mod tests {
         .unwrap();
         assert_eq!(s.settings().concurrency, 2);
         let mut st = s.settings();
-        st.read_only = false;
+        st.theme = "dark".into();
         s.set_settings(st).unwrap();
         let on_disk = Config::load(&paths.config_file()).unwrap();
         assert!(on_disk.endpoints.is_empty());
         assert_eq!(on_disk.settings.concurrency, 16);
         assert_eq!(on_disk.settings.rate_limit, None);
-        assert!(!on_disk.settings.read_only);
+        assert_eq!(on_disk.settings.theme, "dark");
         assert_eq!(s.settings().concurrency, 2, "still in force here");
         // a value the user sets is theirs: saved, and the override ends
         let mut st = s.settings();

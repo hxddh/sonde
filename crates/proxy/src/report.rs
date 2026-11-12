@@ -162,9 +162,21 @@ impl Redactor {
 /// layout's own names and file types are kept), and headers, bodies,
 /// request ids, URLs, the program's output and its arguments are dropped.
 pub fn redact(s: &mut Session) {
+    redact_all(&mut [s]);
+}
+
+/// [`redact`] of sessions shown together (a run and its baseline): the same
+/// name, the same token, in each, so what they share still compares.
+pub fn redact_all(sessions: &mut [&mut Session]) {
     let r = Redactor {
         salt: rand::random(),
     };
+    for s in sessions {
+        redact_with(s, &r);
+    }
+}
+
+fn redact_with(s: &mut Session, r: &Redactor) {
     s.header.url = String::new();
     s.header.endpoint = "endpoint".into();
     s.header.region = String::new();
@@ -257,7 +269,8 @@ svg{display:block;width:100%;height:auto}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:500;font-size:12px}td.r,th.r{text-align:right}
 tr:target{background:color-mix(in srgb,var(--accent) 14%,transparent)}
-a{color:var(--accent);text-decoration:none}.bad{color:var(--bad)}.muted{color:var(--muted)}
+a{color:var(--accent);text-decoration:none}.bad{color:var(--bad)}.good{color:var(--ok)}.muted{color:var(--muted)}
+.dot.good{background:var(--ok)}.new{font-size:11px;padding:1px 6px;border-radius:8px;background:var(--warn);color:var(--panel);margin-left:4px}
 .wrap{overflow-x:auto}footer{margin-top:40px;color:var(--muted);font-size:12px}
 "#;
 
@@ -265,8 +278,21 @@ a{color:var(--accent);text-decoration:none}.bad{color:var(--bad)}.muted{color:va
 /// name, wherever they are): past it the page says how many it left out.
 pub const PAGE_OPERATIONS: usize = 2000;
 
+/// The run a page compares its session with: what changed, and which run
+/// that was (`session x.sonde · recorded …`).
+pub struct Against<'a> {
+    pub change: &'a crate::profile::RunChange,
+    pub name: String,
+}
+
 /// The page.
 pub fn html(s: &Session, prices: &RequestPrices) -> String {
+    html_against(s, prices, None)
+}
+
+/// The page of a run against another (its baseline, the run before): what
+/// changed first, then the run itself, its new findings first.
+pub fn html_against(s: &Session, prices: &RequestPrices, against: Option<&Against>) -> String {
     let recs = &s.records;
     let eps = episodes(recs);
     let obs = crate::episode::observations_of(&s.header, recs, &eps);
@@ -308,6 +334,10 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
     let stat = |o: &mut String, v: String, l: &str| {
         let _ = write!(o, "<div class=\"stat\"><b>{v}</b><span>{l}</span></div>");
     };
+    if let Some(a) = against {
+        o.push_str(&compared(a));
+        o.push_str("<h2>This run</h2>");
+    }
     o.push_str("<div class=\"stats\">");
     stat(&mut o, sonde_fmt::count(sum.requests), "requests");
     stat(&mut o, sonde_fmt::count(eps.len() as u64), "operations");
@@ -325,6 +355,12 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
     );
     o.push_str("</div>");
 
+    // new against the other run first, marked
+    let new: Vec<&str> = against
+        .map(|a| a.change.appeared.iter().map(|f| f.text.as_str()).collect())
+        .unwrap_or_default();
+    let mut obs: Vec<&crate::episode::Observation> = obs.iter().collect();
+    obs.sort_by_key(|f| !new.contains(&f.text.as_str()));
     if !obs.is_empty() {
         o.push_str("<h2>Findings</h2><div class=\"card\">");
         for f in &obs {
@@ -334,6 +370,9 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
                 if f.level == "warn" { "warn" } else { "" },
                 esc(&f.text)
             );
+            if new.contains(&f.text.as_str()) {
+                o.push_str(" <span class=\"new\">new</span>");
+            }
             if let Some(sv) = &f.saving_text {
                 let _ = write!(o, "<div class=\"saving\">{}</div>", esc(sv));
             }
@@ -425,6 +464,102 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
         o.push_str(t);
     }
     o.push_str("<footer>Recorded with sonde.</footer></main></body></html>\n");
+    o
+}
+
+/// What changed against the other run: the figures before and after, the
+/// kinds of request that moved, the findings gone.
+fn compared(a: &Against) -> String {
+    let c = a.change;
+    let mut o = format!("<h2>Against {}</h2><div class=\"stats\">", esc(&a.name));
+    let cell = |o: &mut String, label: &str, before: String, after: String, up: Option<f64>| {
+        let pct = up
+            .filter(|p| p.is_finite() && p.abs() >= 0.5)
+            .map(|p| {
+                format!(
+                    " <span class=\"{}\">{p:+.0}%</span>",
+                    if p > 0.0 { "bad" } else { "good" }
+                )
+            })
+            .unwrap_or_default();
+        let _ = write!(
+            o,
+            "<div class=\"stat\"><b>{after}</b><span>{label}: {before} before{pct}</span></div>"
+        );
+    };
+    let pct = |a: f64, b: f64| (a > 0.0).then(|| (b - a) * 100.0 / a);
+    let n = |v: usize| sonde_fmt::count(v as u64);
+    cell(
+        &mut o,
+        "requests",
+        n(c.requests.0),
+        n(c.requests.1),
+        pct(c.requests.0 as f64, c.requests.1 as f64),
+    );
+    cell(
+        &mut o,
+        "waiting",
+        ms(c.busy_ms.0),
+        ms(c.busy_ms.1),
+        crate::program::waiting_moved(c.busy_ms.0, c.busy_ms.1)
+            .then(|| pct(c.busy_ms.0, c.busy_ms.1))
+            .flatten(),
+    );
+    cell(
+        &mut o,
+        "cost",
+        crate::program::money_text(c.cost.0, &c.currency),
+        crate::program::money_text(c.cost.1, &c.currency),
+        pct(c.cost.0, c.cost.1),
+    );
+    cell(
+        &mut o,
+        "errors",
+        n(c.errors.0),
+        n(c.errors.1),
+        pct(c.errors.0 as f64, c.errors.1 as f64),
+    );
+    o.push_str("</div>");
+    let kinds: Vec<_> = c
+        .groups
+        .iter()
+        .filter(|g| {
+            g.requests.0 != g.requests.1 || crate::program::waiting_moved(g.busy_ms.0, g.busy_ms.1)
+        })
+        .collect();
+    if kinds.is_empty() {
+        o.push_str("<p class=\"muted\">The same kinds of request, as many of each.</p>");
+    } else {
+        o.push_str("<div class=\"card wrap\"><table><thead><tr><th>kind</th><th class=\"r\">requests</th><th class=\"r\">waiting</th></tr></thead><tbody>");
+        for g in kinds {
+            let name = if g.missed {
+                format!("{} (not found)", g.operation)
+            } else {
+                g.operation.clone()
+            };
+            let _ = write!(
+                o,
+                "<tr><td>{}</td><td class=\"r\">{} → {}</td><td class=\"r\">{} → {}</td></tr>",
+                esc(&name),
+                n(g.requests.0),
+                n(g.requests.1),
+                ms(g.busy_ms.0),
+                ms(g.busy_ms.1)
+            );
+        }
+        o.push_str("</tbody></table></div>");
+    }
+    if !c.resolved.is_empty() {
+        o.push_str("<h2>Gone</h2><div class=\"card\">");
+        for f in &c.resolved {
+            let _ = write!(
+                o,
+                "<div class=\"finding\"><span class=\"dot good\"></span><div>{}</div></div>",
+                esc(&f.text)
+            );
+        }
+        o.push_str("</div>");
+    }
     o
 }
 

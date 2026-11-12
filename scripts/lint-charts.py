@@ -32,7 +32,9 @@ a chart bypasses the system:
   `TREEMAP`, `FLOWS`): a literal `paddingInner:`, `cornerRadii={…}` or `h-N`
   outside system.tsx fails, in a chart file and on a chart in a page;
 - latency's two tones (`latency-body`, `latency-tail` in theme.json) pass a
-  contrast check of 3:1 against each other and against the card, light and dark.
+  contrast check of 3:1 against each other and against the card, light and dark;
+  a heat map's ramp (`heat-low` to `heat-high`) has its busiest end 3:1 from the
+  card and its quietest end seen on it (1.4:1), light and dark.
 Run by lint-kit.py, so CI's lint step covers it.
 """
 import json
@@ -220,5 +222,10 @@ for mode in ("light", "dark"):
     for k, v in pairs.items():
         if v < 3:
             say(root / "app" / "theme.json", 1, f"latency's tones, {mode}: {k} is {v:.2f}:1, under 3:1")
+    heat = {"heat-high/card": (contrast(t["heat-high"], t["card"]), 3), "heat-low/card": (contrast(t["heat-low"], t["card"]), 1.4)}
+    tones.append(f"{mode} heat " + " ".join(f"{k} {v:.1f}" for k, (v, _) in heat.items()))
+    for k, (v, least) in heat.items():
+        if v < least:
+            say(root / "app" / "theme.json", 1, f"the heat ramp, {mode}: {k} is {v:.2f}:1, under {least}:1")
 print(f"charts: {counts['plots']} plots in {len(CHARTS)} charts and {len(MARKS)} marks; {counts['frames']} frames used; row pitch {'/'.join(pitch)}; left edge {'/'.join(sorted(edges))}; {counts['legends']} uses of the one legend; {counts['tooltips']} of the one tooltip; {counts['time']} uses of the one time axis over {len(OVER_TIME)} charts; {counts['value']} of the one value scale over {len(COUNTS)}; latency's tones {'; '.join(tones)}: {'failed' if failed else 'ok'}")
 sys.exit(1 if failed else 0)

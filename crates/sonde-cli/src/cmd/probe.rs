@@ -141,8 +141,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
         }
         None => {}
     }
-    // not held to read-only mode as the app's window is: naming the scratch
-    // bucket on the command line is the consent (as `replay` is); the run is audited
+    // naming the scratch bucket on the command line is the consent; the run is audited
     let endpoints = if a.endpoints.is_empty() {
         vec![super::endpoint(s, None)?]
     } else {

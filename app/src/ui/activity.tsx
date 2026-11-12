@@ -1,21 +1,16 @@
-// Activity: what sonde itself did — its requests, its jobs, the changes it
+// Activity: what sonde itself does — its jobs, and the changes it
 // made (Changes). One place for "what is sonde doing, what did it
 // do": a sheet from the window's edge, opened from the toolbar; a place of
 // its own in a terminal.
 
-import { batch, cleanup, computed, effect, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
-import { DataTable } from "nsh/base";
-import { isAvailable, Menu } from "nsh/desktop";
-import { clock, count, date, middle, duration, since } from "../format";
+import { cleanup, effect, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
+import { count, date, duration, since } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api } from "../native";
-import { RecordDetail } from "../screens/Requests";
-import { ACTIVITY_TABS, type ActivityTab, activityTab, focusRecord, go, notify, openSession, report, sessionsChanged } from "../store";
-import type { AuditEntry, JobInfo, RecordSummary, RequestFilter } from "../types";
-import { iconSvg } from "./icon";
-import { Badge, Bar, Button, Card, Empty, IconButton, Options, PanelHeader, terminal, Row, ROW, rowHeight, SearchField, Segmented, type Tone, TYPE, TABLE, confirmAlert, COLUMN } from "./kit";
-import { StatusMark } from "./sessionview";
+import { ACTIVITY_TABS, type ActivityTab, activityTab } from "../store";
+import type { AuditEntry, JobInfo } from "../types";
+import { Badge, Bar, Button, Card, Empty, IconButton, PanelHeader, terminal, Row, Segmented, type Tone } from "./kit";
 
 export const activityOpen = signal(false);
 
@@ -49,164 +44,7 @@ function throttled(f: () => void, ms: number): () => void {
   };
 }
 
-const TAB_LABEL: Record<ActivityTab, () => string> = { requests: () => t("activity.requests"), jobs: () => t("activity.jobs"), audit: () => t("activity.changes") };
-
-/** The least room a request's target has in the table. */
-const TARGET = 120;
-
-function Requests() {
-  const text = signal("");
-  const errors = signal(false);
-  const latest = signal(api.latestRequest());
-  const selected = signal<number | null>(focusRecord());
-  effect(() => {
-    const f = focusRecord();
-    if (f !== null) batch(() => (selected.set(f), focusRecord.set(null)));
-  });
-  // new records refresh the list, a few times a second at most
-  const refresh = throttled(() => {
-    const l = api.latestRequest();
-    if (l !== latest()) latest.set(l);
-  }, 300);
-  cleanup(api.on("request", refresh));
-  const filter = (): RequestFilter => ({ status: errors() ? { kind: "errors" } : null, text: text() || null });
-  // asked of the engine once per change of the log or the filter, not once per cell drawn
-  const rows = computed((): RecordSummary[] => {
-    latest();
-    try {
-      return api.requests(filter(), 5000);
-    } catch (e) {
-      // said after this pass: a toast is not shown from inside a derivation
-      queueMicrotask(() => report(e));
-      return [];
-    }
-  });
-  const record = computed(() => {
-    const id = selected();
-    return id === null ? null : api.request(id);
-  });
-  // the log is gone for good: asked first, and what was open in it closes
-  const clear = async () => {
-    if (!(await confirmAlert({ title: t("requests.clearTitle"), text: t("requests.clearText"), commit: t("common.clear") }))) return;
-    try {
-      api.clearRequests();
-      batch(() => {
-        selected.set(null);
-        latest.set(api.latestRequest());
-      });
-    } catch (e) {
-      report(e);
-    }
-  };
-  const asSession = () => {
-    try {
-      const path = api.sessions.fromRequestLog();
-      sessionsChanged();
-      batch(() => {
-        openSession.set(path);
-        activityOpen.set(false);
-        go("sessions");
-      });
-    } catch (e) {
-      report(e);
-    }
-  };
-  const more = () => {
-    if (!isAvailable) return;
-    const exportAs = (f: "json" | "har") => {
-      try {
-        notify(t("common.exportedTo", { path: api.exportRequests(f, filter()) }));
-      } catch (e) {
-        report(e);
-      }
-    };
-    void Menu.popup([
-      { label: t("requests.exportJson"), icon: iconSvg("download"), onSelect: () => exportAs("json") },
-      { label: t("requests.exportHar"), icon: iconSvg("download"), onSelect: () => exportAs("har") },
-      { type: "separator" },
-      { label: t("requests.clear"), icon: iconSvg("trash"), onSelect: () => void clear() },
-    ]);
-  };
-  // the table's own width: its target column takes what the others leave
-  const tableWidth = signal(0);
-  // the operation's column as wide as its longest name here (at the body's size, with the cell's inset),
-  // and in a narrow panel no wider than half the room the figures leave: the target has the other half
-  const rest = () => tableWidth() - (terminal() ? 0 : COLUMN.status) - COLUMN.took - COLUMN.clock - 2;
-  const opWidth = () => Math.min(COLUMN.operation, Math.ceil(Math.max(0, ...rows().map((r) => r.operation.length)) * TYPE.body * 0.6) + 16, tableWidth() > 0 ? Math.max(COLUMN.operationLeast, Math.floor(rest() / 2)) : COLUMN.operation);
-  const targetWidth = () => (tableWidth() > 0 ? Math.max(TARGET, tableWidth() - (terminal() ? 0 : COLUMN.status) - opWidth() - COLUMN.took - COLUMN.clock - 2) : TARGET);
-  const list = () => (
-    <View class="min-h-0 flex-1 gap-2">
-      <View class="flex-row items-center gap-2">
-        <SearchField small class="min-w-0 flex-1" value={text()} placeholder={t("activity.search")} label={t("common.search")} onChange={(v) => text.set(v)} />
-        <Options
-          testID="requests-filter"
-          value={errors() ? "errors" : "all"}
-          items={[
-            { value: "all", title: t("requests.all") },
-            { value: "errors", title: t("requests.errors") },
-          ]}
-          onChange={(v) => errors.set(v === "errors")}
-        />
-        {/* sonde's own requests read as any program's: findings, time, compared */}
-        <Button small variant="outline" icon="list-clock" label={t("requests.asSession")} onPress={asSession} testID="requests-as-session" />
-        <If when={isAvailable}>
-          <IconButton icon="ellipsis" label={t("common.more")} onPress={more} testID="requests-more" />
-        </If>
-      </View>
-      <Card pad="none" class="min-h-0 flex-1" onWidth={(w) => tableWidth.set(w)}>
-      <DataTable
-        testID="requests"
-        accessibilityLabel={t("activity.requests")}
-        class="min-h-0 flex-1"
-        columns={[
-          // a dot and the code, as StatusMark draws them
-          ...(terminal() ? [] : [{ key: "status", title: "", width: COLUMN.status, resizable: false }]),
-          // fits the panel: the figures keep what they need, the operation the room its longest
-          // name in these rows takes (never more than S3's longest), and the target all the rest
-          // (the table measures itself)
-          { key: "operation", title: t("requests.operation"), width: opWidth() },
-          { key: "target", title: t("activity.target"), width: targetWidth(), minWidth: COLUMN.targetLeast },
-          { key: "latency", title: t("sessions.took"), width: COLUMN.took, align: "end" as const },
-          // to the millisecond, as operations show theirs
-          { key: "time", title: t("column.time"), width: COLUMN.clock },
-        ]}
-        data={rows().map((r) => ({ status: r.status === null ? "—" : `${r.status}`, operation: r.operation, target: terminal() ? middle(r.target, 30) : r.target, latency: duration(r.latencyMs), time: clock(r.time, "ms") }))}
-        fontSize={TYPE.body}
-        rowHeight={rowHeight(ROW.table)}
-        classes={terminal() ? undefined : TABLE}
-        renderCell={
-          terminal()
-            ? undefined
-            : (c) => {
-                const r = rows()[c.row];
-                if (c.key === "status" && r) return <StatusMark status={r.status} />;
-                if (c.key === "latency") return <View class="flex-1 items-end justify-center"><Text class="text-small tabular-nums text-foreground">{c.text}</Text></View>;
-                // a long name or key is cut in its middle, by the text itself: both its ends tell two apart
-                if (c.key === "time") return <Text class="font-mono text-caption text-muted-foreground">{c.text}</Text>;
-                return (
-                  <Text class={`line-clamp-1 ${c.key === "operation" ? "text-body text-foreground" : "font-mono text-caption text-muted-foreground"}`} style={{ textOverflow: "ellipsis-middle" }}>
-                    {c.text}
-                  </Text>
-                );
-              }
-        }
-        rowSelectable
-        onRowPress={({ row }) => selected.set(rows()[row]?.id ?? null)}
-        empty={<Empty icon="activity" text={t("activity.noRequests")} />}
-      />
-      </Card>
-    </View>
-  );
-  return (
-    <If when={record()} else={list()}>
-      {(r) => (
-        <Scroll class="flex-1" contentClass="pb-4">
-          <RecordDetail record={r()} onBack={() => selected.set(null)} />
-        </Scroll>
-      )}
-    </If>
-  );
-}
+const TAB_LABEL: Record<ActivityTab, () => string> = { jobs: () => t("activity.jobs"), audit: () => t("activity.changes") };
 
 const JOB_TONE: Record<JobInfo["state"], Tone> = { running: "primary", finished: "pass", failed: "fail", cancelled: "neutral" };
 
@@ -305,7 +143,7 @@ function Changes() {
 /** Activity's content: its three kinds as a segmented control. In a window
  * it fills a side panel, under the panel's header. */
 export function Activity(props: { onClose?: () => void }) {
-  const body = (tab: ActivityTab) => (tab === "requests" ? <Requests /> : tab === "jobs" ? <Jobs /> : <Changes />);
+  const body = (tab: ActivityTab) => (tab === "jobs" ? <Jobs /> : <Changes />);
   const tabs = () => <Segmented class="self-center" testID="activity-tab" value={activityTab()} items={ACTIVITY_TABS.map((x) => ({ value: x, title: TAB_LABEL[x]() }))} onChange={(v) => activityTab.set(v as ActivityTab)} />;
   // rebuilt per tab: each owns its timers
   const content = () => (

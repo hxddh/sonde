@@ -143,23 +143,10 @@ export const SIZES = {
  * cell fit): what a column holds decides its width, the column that takes the
  * rest has a least. */
 export const COLUMN = {
-  /** a status's dot and code */
-  status: 52,
-  /** an S3 operation's longest name */
-  operation: 196,
-  /** an operation's name, as narrow as it goes when names are short */
-  operationLeast: 96,
-  /** how long a request took */
-  took: 92,
-  /** a clock time to the millisecond */
-  clock: 104,
-  /** a request's target, a key, an object's name: the least they keep */
-  targetLeast: 100,
+  /** a key, an object's name: the least they keep */
   keyLeast: 120,
   /** an upload's mark (an icon) */
   flag: 24,
-  /** a day in full ("2026年12月30日") */
-  day: 124,
   /** a date and time in full ("Sep 30, 2026, 12:59 PM") */
   date: 172,
   /** an age ("9,999 d") */
@@ -864,10 +851,11 @@ export function Disclosure(props: { title: string; count?: number; open?: boolea
   );
 }
 
-export type Tone = "neutral" | "pass" | "fail" | "differs" | "unsupported" | "warn" | "info" | "primary";
+export type Tone = "neutral" | "refused" | "pass" | "fail" | "differs" | "unsupported" | "warn" | "info" | "primary";
 
 const toneClass: Record<Tone, string> = {
   neutral: "bg-muted text-muted-foreground",
+  refused: "bg-status-refused/15 text-status-refused",
   pass: "bg-pass/15 text-pass",
   fail: "bg-fail/15 text-fail",
   differs: "bg-differs/15 text-differs",
@@ -1107,10 +1095,10 @@ export function Check(props: { label: string; checked: boolean; onChange: (v: bo
   );
 }
 
-export function Choice(props: { label?: string; value: string | null; items: { value: string; title: string }[]; onChange: (v: string) => void; placeholder?: string; testID?: string; class?: string }) {
+export function Choice(props: { label?: string; value: string | null; items: { value: string; title: string }[]; onChange: (v: string) => void; placeholder?: string; testID?: string; class?: string; /** the label beside the choice, not over it (a control in a toolbar's row) */ inline?: boolean }) {
   const title = () => props.items.find((i) => i.value === props.value)?.title ?? props.placeholder ?? "";
   return (
-    <View class={`gap-1 ${props.class ?? ""}`}>
+    <View class={`${props.inline ? "flex-row items-center gap-2" : "gap-1"} ${props.class ?? ""}`}>
       <If when={props.label}>
         <Text class="text-small text-muted-foreground">{props.label}</Text>
       </If>
@@ -1127,7 +1115,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         popupStyle={glass}
         itemClass="rounded-sm px-2 py-1 text-body text-popover-foreground focus:bg-accent selected:font-bold"
         trigger={
-          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${FOCUS}`}>
+          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${props.inline ? WIDTH.choice : ""} ${FOCUS}`}>
             <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">
               {title()}
             </Text>

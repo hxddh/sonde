@@ -73,18 +73,6 @@ test("capacity in a terminal: tables and a sentence, no canvas", async () => {
   expect(app.texts().some((t) => /^GLACIER: [\d.]+% of/.test(t))).toBe(true);
 });
 
-test("request inspector: list and detail in one column", async () => {
-  const app = await demo();
-  await place(app, "browse");
-  await chooseBucket(app, "demo");
-  await app.waitFor("text:README.md", { timeout: 10000 });
-  await place(app, "requests");
-  await app.waitFor("text:ListObjectsV2", { timeout: 5000 });
-  await app.press("text:ListObjectsV2 >> nth=0");
-  await app.waitFor("id:record-detail");
-  expect(app.shows("id:requests")).toBe(false);
-});
-
 test("multipart and the guard", async () => {
   const app = await demo();
   await place(app, "multipart");
