@@ -13,6 +13,7 @@ pub mod episode;
 pub mod fault;
 pub mod fixes;
 pub mod import;
+pub mod index;
 pub mod jvm;
 pub mod logs;
 pub mod op;

@@ -13,11 +13,11 @@ import { endForQuit, followNotifications, running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, readOnly, report, section, shellHeight, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, report, section, shellHeight, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
-import { Back, Badge, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, Title, WIDTH } from "./src/ui/kit";
+import { Back, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, Title, WIDTH } from "./src/ui/kit";
 import { count } from "./src/format";
 import { rememberedSize } from "./src/ui/sizes";
 import { Palette, paletteOpen } from "./src/ui/palette";
@@ -49,10 +49,6 @@ function screen(a: Area) {
     case "activity":
       return <Activity />;
   }
-}
-
-function StatusChip() {
-  return <Badge label={readOnly() ? t("common.readOnlyOn") : t("common.readOnlyOff")} tone={readOnly() ? "info" : "warn"} />;
 }
 
 function Context() {
@@ -167,7 +163,6 @@ function TermHeader(props: { title: string }) {
       <View class="flex-1">
         <Context />
       </View>
-      <StatusChip />
     </View>
   );
 }

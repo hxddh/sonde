@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/du.schema.json",
-  "title": "sonde du -f json",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/bucket-size.schema.json",
+  "title": "sonde bucket size -f json",
   "description": "What a bucket (or prefix) holds, by class, prefix and size.",
   "type": "object",
   "properties": {

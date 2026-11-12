@@ -35,7 +35,6 @@ pub fn targets() -> Vec<Target> {
             };
             let mut config = Config::default();
             config.endpoints.push(e);
-            config.settings.read_only = false;
             let dir = tempfile::tempdir().unwrap();
             Target {
                 name: name.into(),

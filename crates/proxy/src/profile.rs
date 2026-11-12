@@ -1392,21 +1392,10 @@ fn identity(o: &Observation) -> String {
         .trim_end_matches(".one")
         .trim_end_matches(".reads")
         .trim_end_matches(".writes");
-    let mut about: Vec<String> = match key {
-        // which request was the slowest is a detail, not another finding
-        "obs.slow" => Vec::new(),
-        _ => ["key", "prefix", "format"]
-            .iter()
-            .filter_map(|k| p.args.get(k).map(|v| v.to_string()))
-            .collect(),
-    };
-    // a format's shared habit is the note it shares
-    if key == "obs.shared"
-        && let Some(note) = o.phrases.get(1)
-    {
-        about.push(note.key.to_string());
-        about.extend(note.args.values().map(|v| v.to_string()));
-    }
+    let about: Vec<String> = ["key", "prefix", "format"]
+        .iter()
+        .filter_map(|k| p.args.get(k).map(|v| v.to_string()))
+        .collect();
     format!("{key}|{}", about.join("|"))
 }
 

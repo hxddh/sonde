@@ -177,60 +177,6 @@ pub fn for_key(key: &str) -> Vec<Fix> {
             "config",
             "<LifecycleConfiguration><Rule><ID>abort-incomplete-mpu</ID><Filter><Prefix></Prefix></Filter><Status>Enabled</Status>\n  <AbortIncompleteMultipartUpload><DaysAfterInitiation>7</DaysAfterInitiation></AbortIncompleteMultipartUpload>\n</Rule></LifecycleConfiguration>",
         )],
-        "obs.retried" => vec![
-            f(
-                "python",
-                "# a longer read timeout: retries resend the whole request\nfrom botocore.config import Config\ns3 = boto3.client(\"s3\", config=Config(read_timeout=60, connect_timeout=5))",
-            ),
-            f(
-                "java",
-                "// a longer read timeout: retries resend the whole request\nS3Client.builder().httpClientBuilder(ApacheHttpClient.builder().socketTimeout(Duration.ofSeconds(60))).build();",
-            ),
-            f(
-                "go",
-                "// a longer read timeout: retries resend the whole request\ns3.NewFromConfig(cfg, func(o *s3.Options) { o.HTTPClient = &http.Client{Timeout: 60 * time.Second} })",
-            ),
-            f(
-                "js",
-                "// a longer read timeout: retries resend the whole request\nnew S3Client({ requestHandler: new NodeHttpHandler({ requestTimeout: 60_000 }) })",
-            ),
-        ],
-        "obs.slow" => vec![
-            f(
-                "python",
-                "# large objects in ranges at once, not one long GET\nfrom boto3.s3.transfer import TransferConfig\ns3.download_file(b, k, path, Config=TransferConfig(multipart_chunksize=8 * 2**20, max_concurrency=8))",
-            ),
-            f(
-                "java",
-                "// large objects in ranges at once, not one long GET\nS3TransferManager tm = S3TransferManager.builder().s3Client(S3AsyncClient.crtCreate()).build();\ntm.downloadFile(d -> d.getObjectRequest(r -> r.bucket(b).key(k)).destination(path)).completionFuture().join();",
-            ),
-            f(
-                "go",
-                "// large objects in ranges at once, not one long GET\nd := manager.NewDownloader(s3c, func(d *manager.Downloader) { d.PartSize = 8 << 20; d.Concurrency = 8 })\n_, err := d.Download(ctx, file, &s3.GetObjectInput{Bucket: &b, Key: &k})",
-            ),
-            f(
-                "js",
-                "// large objects in ranges at once, not one long GET\nconst part = (i) => s3.send(new GetObjectCommand({ Bucket: b, Key: k, Range: `bytes=${i * size}-${(i + 1) * size - 1}` }));\nconst parts = await Promise.all([...Array(n).keys()].map(part));",
-            ),
-        ],
-        "obs.races" => vec![
-            f(
-                "python",
-                "# the write lost a race: read what won, never overwrite it blindly\ntry:\n    s3.put_object(Bucket=b, Key=k, Body=body, IfNoneMatch=\"*\")\nexcept s3.exceptions.ClientError as e:\n    if e.response[\"Error\"][\"Code\"] != \"PreconditionFailed\":\n        raise\n    won = s3.get_object(Bucket=b, Key=k)",
-            ),
-            f(
-                "java",
-                "// the write lost a race: read what won, never overwrite it blindly\ntry { s3.putObject(r -> r.bucket(b).key(k).ifNoneMatch(\"*\"), body); }\ncatch (S3Exception e) { if (e.statusCode() != 412) throw e; won = s3.getObject(r -> r.bucket(b).key(k)); }",
-            ),
-            f(
-                "go",
-                "// the write lost a race: read what won, never overwrite it blindly\n_, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &b, Key: &k, Body: body, IfNoneMatch: aws.String(\"*\")})\nvar re *awshttp.ResponseError\nif errors.As(err, &re) && re.HTTPStatusCode() == 412 { /* read what won */ }",
-            ),
-            f(
-                "js",
-                "// the write lost a race: read what won, never overwrite it blindly\ntry { await s3.send(new PutObjectCommand({ Bucket: b, Key: k, Body: body, IfNoneMatch: \"*\" })); }\ncatch (e) { if (e.$metadata?.httpStatusCode !== 412) throw e; /* read what won */ }",
-            ),
-        ],
         "obs.orphans" => vec![
             f(
                 "python",

@@ -204,12 +204,8 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
                     <Options testID="trial-limit" value={limit()} items={LIMITS()} onChange={(v) => limit.set(v as Policy)} />
                   </Labeled>
                 </View>
-                {/* nothing runs while sonde is read-only: that is said alone (both notices are taller than the least window) */}
-                <If when={p().sharesPlace && !p().readOnly}>
+                <If when={p().sharesPlace}>
                   <Notice testID="trial-shares" tone="warn" text={t("trial.sharesPlace")} />
-                </If>
-                <If when={p().readOnly}>
-                  <Notice testID="trial-read-only" tone="warn" text={t("trial.readOnly")} />
                 </If>
                 <If when={!!running()}>
                   <Notice tone="info" text={t("trial.busy")} />
@@ -241,7 +237,7 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
             <>
               <Button variant={steps() || refused() ? "outline" : "ghost"} label={steps() || refused() ? t("common.close") : t("common.cancel")} onPress={props.onClose} testID="trial-close" />
               <If when={the() && !steps()}>
-                <Button variant="primary" icon="play" label={t("trial.run", { n: chosen().length })} disabled={!chosen().length || !!the()?.readOnly || !!running() || trying()} onPress={start} testID="trial-start" />
+                <Button variant="primary" icon="play" label={t("trial.run", { n: chosen().length })} disabled={!chosen().length || !!running() || trying()} onPress={start} testID="trial-start" />
               </If>
             </>
           }

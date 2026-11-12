@@ -13,13 +13,13 @@
     },
     "operations": {
       "type": "integer",
-      "description": "How many operations (`episodes` in `show -f json`)."
+      "description": "How many operations (`operations` in `show -f json`)."
     },
     "waiting": {
       "type": "object",
       "description": "How long the program waited on the store.",
       "properties": {
-        "busyMs": {
+        "waitingMs": {
           "type": "number",
           "description": "Time with any request in flight."
         },
@@ -48,7 +48,7 @@
         }
       },
       "required": [
-        "busyMs",
+        "waitingMs",
         "wallMs",
         "peakInFlight",
         "p50Ms",
@@ -63,7 +63,7 @@
     "whatIf": {
       "$ref": "#/$defs/whatIf"
     },
-    "observations": {
+    "findings": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/observation"
@@ -77,7 +77,7 @@
     "waiting",
     "cost",
     "whatIf",
-    "observations"
+    "findings"
   ],
   "$defs": {
     "cost": {

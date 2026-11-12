@@ -465,14 +465,10 @@ fn the_program_command() -> Vec<String> {
 }
 
 fn trials(session: &Path) -> Vec<serde_json::Value> {
-    let file = session.with_file_name(format!(
-        "{}.trials.json",
-        session.file_stem().unwrap().to_string_lossy()
-    ));
-    std::fs::read(&file)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    sonde_proxy::trial::load(session)
+        .iter()
+        .map(|t| serde_json::to_value(t).unwrap())
+        .collect()
 }
 
 fn trial<'a>(all: &'a [serde_json::Value], scenario: &str) -> &'a serde_json::Value {
@@ -544,7 +540,8 @@ async fn a_program_that_retries_survives_every_scenario() {
         )
         .await;
     let doc: serde_json::Value = serde_json::from_str(&shown.stdout).expect(&shown.stdout);
-    assert_eq!(doc["observations"][0]["phrases"][0]["key"], "obs.injected");
+    // the trial's faults are the trial's notice, no finding (18.0)
+    assert!(!shown.stdout.contains("obs.injected"), "{}", shown.stdout);
     assert!(
         !shown.stdout.contains("obs.throttled"),
         "the store asked for nothing: {}",
@@ -1697,7 +1694,7 @@ async fn a_body_cut_short_is_read_again_or_taken_for_the_whole() {
         )
         .await;
     let doc: serde_json::Value = serde_json::from_str(&shown.stdout).expect(&shown.stdout);
-    let cut = doc["records"]
+    let cut = doc["requests"]
         .as_array()
         .unwrap()
         .iter()
@@ -1888,7 +1885,6 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
             ],
         )
         .await;
-    assert!(shown.stdout.contains("obs.injected"), "{}", shown.stdout);
     assert!(!shown.stdout.contains("obs.races"), "{}", shown.stdout);
 
     // takes the 412 for an answer and exits 0: the commit was never made

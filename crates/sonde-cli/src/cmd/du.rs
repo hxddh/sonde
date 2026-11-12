@@ -1,3 +1,6 @@
+//! `sonde bucket size` (`sonde du` before 18.0, kept for one version): why a
+//! bucket is so big.
+
 use std::sync::Arc;
 
 use clap::Args;
@@ -9,6 +12,7 @@ use crate::output::{self, Format};
 
 #[derive(Args)]
 pub struct DuArgs {
+    /// The endpoint (default: --url, or the only one configured).
     #[arg(long, short = 'e')]
     endpoint: Option<String>,
     #[arg(long, short = 'b')]
@@ -33,9 +37,11 @@ pub struct DuArgs {
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> {
-    if let Some(why) =
-        output::unsupported(a.format, "du", &[Format::Table, Format::Json, Format::Csv])
-    {
+    if let Some(why) = output::unsupported(
+        a.format,
+        "bucket size",
+        &[Format::Table, Format::Json, Format::Csv],
+    ) {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
@@ -147,7 +153,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
             );
             println!("\nWhy so big:");
             for f in &r.findings {
-                println!("  • {}", super::said(s, f));
+                println!("  • {}", super::said(f));
             }
         }
     }

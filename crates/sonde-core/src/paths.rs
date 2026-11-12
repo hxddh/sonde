@@ -48,9 +48,6 @@ impl Paths {
     pub fn audit_log(&self) -> PathBuf {
         self.data_dir.join("audit.jsonl")
     }
-    pub fn reqlog_db(&self) -> PathBuf {
-        self.data_dir.join("requests.sqlite")
-    }
     pub fn scan_cache(&self) -> PathBuf {
         self.data_dir.join("scans")
     }

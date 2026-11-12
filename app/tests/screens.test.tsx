@@ -19,7 +19,7 @@ test("request inspector: records, details, copy as curl without a signature", as
   await app.waitUntil(() => (app.clipboard() ?? "").startsWith("aws s3api"));
 });
 
-test("multipart: scan, lifecycle verdict, the guard refuses while read-only", async () => {
+test("multipart: scan, lifecycle verdict, the guard waits for the typed confirmation", async () => {
   const app = await withDemo("demo");
   // the bucket's card says it before the detail opens
   await app.waitFor("text:3 · 172 MiB", { timeout: 10000 });
@@ -30,7 +30,9 @@ test("multipart: scan, lifecycle verdict, the guard refuses while read-only", as
   expect(app.shows("text:Missing")).toBe(true);
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
-  expect(app.shows("text:Read-only mode is on. Turn it off in Settings to run this.")).toBe(true);
+  expect(app.enabled("id:confirm-run")).toBe(false);
+  // what is typed is not the count: still nothing runs
+  await app.type("id:confirm-input", "9");
   expect(app.enabled("id:confirm-run")).toBe(false);
   await app.press("id:confirm-cancel");
   await app.waitFor("id:confirm-dialog", { state: "gone" });
@@ -71,10 +73,7 @@ test("layouts: detects and decodes the real SlateDB sample, with replay", async 
 
 test("compatibility: runs probes on the demo and fills the matrix", async () => {
   const app = await withDemo();
-  // probes write to the scratch bucket: they run with read-only off
-  await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Writes enabled");
+  // probes write to the scratch bucket named: naming it is the consent
   await place(app, "probes");
   // the endpoint in use comes chosen
   await app.type("id:probe-bucket", "demo");
@@ -86,11 +85,7 @@ test("compatibility: runs probes on the demo and fills the matrix", async () => 
   await app.waitFor("id:probe-detail");
   expect(app.shows("text:/^aws behavior$/i")).toBe(true);
   expect(app.shows("text:/^requests and responses$/i")).toBe(true);
-  // read-only again, as the other tests find it
   await app.window("compat").pressClose();
-  await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Read-only");
 }, 120_000);
 
 test("endpoints: adding never replaces one; a name in another script gets an id of its own", async () => {
@@ -149,11 +144,13 @@ test("errors are readable and lead to their request", async () => {
   await app.waitFor("id:record-detail");
 });
 
-test("settings: read-only off, a confirmed abort, the audit log", async () => {
+test("settings: no read-only switch; a confirmed abort, the audit log", async () => {
   const app = await withDemo("demo");
   await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Writes enabled");
+  // one safety setting: what a recorded program may do
+  expect(app.shows("id:record-policy")).toBe(true);
+  expect(app.shows("id:read-only")).toBe(false);
+  expect(app.shows("id:toolbar-lock")).toBe(false);
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   await app.press("id:plan-abort");
@@ -165,9 +162,6 @@ test("settings: read-only off, a confirmed abort, the audit log", async () => {
   await place(app, "audit");
   await app.waitFor("text:Abort uploads · demo/demo");
   await app.press("id:activity-close");
-  await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Read-only");
 });
 
 test("appearance: higher contrast, kept with the settings", async () => {
@@ -235,9 +229,9 @@ test("reduced motion: the overview's cards are there at once, still", async () =
 test("a number typed in Settings is saved a moment after the last key", async () => {
   const app = await open("../App.tsx", { ...desktop, clock: {} });
   await place(app, "settings");
-  await app.waitFor("id:concurrency");
-  await app.clear("id:concurrency");
-  await app.type("id:concurrency", "12");
+  await app.waitFor("id:price");
+  await app.clear("id:price");
+  await app.type("id:price", "0.02");
   // the clock stands still: nothing saved yet, however long the test takes
   expect(app.shows("text:Settings saved")).toBe(false);
   await app.clock!.runFor(400);

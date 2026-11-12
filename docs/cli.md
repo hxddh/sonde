@@ -7,14 +7,14 @@
 | | |
 |---|---|
 | Global options | `--config-dir` (`$SONDE_CONFIG_DIR`), `--data-dir` (`$SONDE_DATA_DIR`) |
-| Store options | `--url` (an ad hoc endpoint, `adhoc`), `--region` (us-east-1), `--path-style`, `--ca-file`, `--rate` (requests/s per job), `--concurrency` (in flight per job), `--log-out FILE.har\|.json` (sonde's own requests, redacted; refused on `run`, `proxy`, `watch`). Not on commands that only read files. |
+| Store options | `--url` (an ad hoc endpoint, `adhoc`), `--region` (us-east-1), `--path-style`, `--ca-file`. Not on commands that only read files. sonde's own pace is `concurrency` and `rate-limit` in `config.toml` (`--concurrency`, `--rate` still taken, not listed). |
 | `-f`, `--format` | `table` (default), `json`, `markdown`, `csv`, `github` where a command writes them (help lists which). Another is a usage error (64). |
 | Streams | The answer on stdout; hints, progress and `run`'s summary on stderr. Ctrl+C cancels the running job. |
 | A session argument | A path or a name, resolved in order: a file; `sessions/<name>[.sonde]`; `sessions/trials/<name>` (e.g. `20261108-073328-etl.slowdown`). Not found: usage error naming where it looked. |
-| The newest session | The default for `show`, `check`, `share`, `export`: newest from `run`, `proxy` or `watch` (never a replay, import or trial). |
+| The newest session | The default for `show`, `check`, `share`: newest from `run` or `proxy` (never a replay, import or trial). |
 | A program | `[program] name` in `sonde.toml`, or `--name`; else the whole command line. Runs are grouped and baselines kept by it. |
-| Size | Sessions are streamed and analysed once. A million requests: under 15 s and 1.5 GB; `compare`/`diff` read one session at a time, so two cost what one does ([performance](performance.md)). |
-| `<name>.summary.json` | Beside each session: requests, time, errors, program, figures once checked. Read by `sessions`, the app and `check`'s history. Rebuilt when missing, when the session's length or mtime (ns) changed, or the analysis changed; removed with the session. A session with a bad middle line is listed with `!` (`unreadable` in JSON). |
+| Size | Sessions are streamed and analysed once. A million requests: under 15 s and 1.5 GB; `compare` reads one session at a time, so two cost what one does ([performance](performance.md)). |
+| `.index.jsonl` | One per sessions folder: each session's counts (requests, time, errors, program, figures once checked), its trials' verdicts and its exit code. Read by `sessions`, the app and `check`'s history. Counted again when missing, when the session's length or mtime (ns) changed, or the analysis changed; forgotten with the session. The files kept beside each session before 18.0 (`<name>.summary.json`, `.trials.json`, `.exit`) are read once and moved in. A session with a bad middle line is listed with `!` (`unreadable` in JSON). |
 
 ## Record
 
@@ -22,7 +22,7 @@
 |---|---|
 | `sonde demo [--app]` | A tour on the built-in store; `--app` opens the session in the app. |
 | `sonde run [-e E] [--policy P] [--tls] [--live] [--callers] [--name N] [-o FILE] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary (and how to point each SDK at sonde when nothing was sent). Exits with the command's status (128 + signal). |
-| ↳ `--policy no-delete\|read-only\|allow` | Default `[record] policy` in `sonde.toml`, else `no-delete` ([what it refuses](recording.md#what-a-recorded-program-may-do)). Short forms `--no-delete`, `--read-only`, `--allow-writes`. |
+| ↳ `--policy no-delete\|read-only\|allow` | Default `[record] policy` in `sonde.toml`, else `no-delete` ([what it refuses](recording.md#what-a-recorded-program-may-do)). One short form: `--allow-writes`. |
 | ↳ `--tls` | Also serve TLS, with a certificate the program is told to trust (`[record] tls = true`). |
 | ↳ `--live` | Each request on stderr as it happens. |
 | ↳ `--callers` | Name the code line that sent each request ([below](#which-code-sent-a-request)). |
@@ -30,11 +30,11 @@
 | `sonde run --trial [--fault S …] -- CMD…` | The clean run, then one per fault scenario, each with a verdict ([trials](trials.md)). `{trial}` in the command and `SONDE_TRIAL` are `clean`, then the scenario's name. A failed or interrupted clean run is not tried. Ctrl-C / SIGTERM ends the trial (130 / 143), no verdict for the interrupted scenario. Exit: the command's status if not 0, else 1 if a trial broke. A run to a session path first removes that session's earlier verdicts and trials. |
 | ↳ `--fault S` | Repeatable: `slowdown`, `error`, `skew`, `lost-answer`, `fail-complete`, `complete-500`, `cut-body`, `slow-first-byte`, `lost-race`, `stale-list`, `slow`, `s3-limits`, or a `sonde.toml` scenario. `slowdown:N` / `error:N` (1–5) fail the first N attempts. |
 | `sonde proxy [--listen ADDR] [--allow-remote] [--policy P] [--tls] [-o FILE]` | The same endpoint, standing (default `127.0.0.1:9000`): prints the variables to set, then each request; its summary at Ctrl-C. Loopback only unless `--allow-remote`. |
-| `sonde watch [--listen ADDR] [--rotate MIN] [--alert URL] …` | A proxy left running: a status line for the last minute (rate, errors, p95), each new warning, a new session file every `--rotate` minutes (60; the finished one gzipped). A file over `sonde.toml`'s budget is said on stderr. `--alert` posts warnings and over-budget files to a webhook as `{"text": …}` (Slack, Teams, Mattermost). |
-| `sonde watch --logs s3://B/PREFIX [-e E] [--every 15m] [--once] [--alert URL]` | Production from its S3 access logs or CloudTrail files, read as they arrive (GET and LIST only, no proxy). Each pass is a session of program `logs of s3://…` (history, baseline, `check`), held to the budget; position is kept. `--once` reads what is new and exits: 1 over budget, 70 when the logs cannot be listed or none read. |
+| ↳ `--rotate MIN`, `--alert URL` | Left running: a status line for the last minute (rate, errors, p95) instead of each request, each new warning finding, a new session file every `--rotate` minutes (the finished one gzipped). A file over `sonde.toml`'s budget is said on stderr. `--alert` posts warnings and over-budget files to a webhook as `{"text": …}` (Slack, Teams, Mattermost). |
+| `sonde import s3://B/PREFIX [-e E] [--follow [--every 15m]] [--alert URL]` | Production from its S3 access logs or CloudTrail files (GET and LIST only, no proxy): what arrived since the last import of that prefix, a session of program `logs of s3://…` (history, baseline, `check`) held to the budget; `--follow` keeps reading, a session a pass, until Ctrl-C. Position is kept. One pass exits 1 over budget, 70 when the logs cannot be listed or none read. |
 | `sonde import FILE\|FOLDER [-o FILE]` | An S3 access log, CloudTrail (`{"Records": …}` or one event a line) or HAR, gzipped or not, as a session. A folder is every file under it, in name order, as one session. Skipped lines (not requests, unreadable, a HAR's other hosts) are counted on stderr. Named by the store's host. Whole-second log times are spread evenly over their second (`wholeSeconds` in the header, a line in `show`), so in-flight counts, "one after another" and a throttling finding's in-flight figure are not given. A HAR's `timings.wait` is the first byte. |
 
-## Read a session
+## Read a run
 
 | Command | Does |
 |---|---|
@@ -42,13 +42,14 @@
 | `sonde sessions prune --keep N [--yes]` | Delete all but the newest N (baselines kept); a dry run without `--yes`. |
 | `sonde show [FILE] [--requests] [--errors] [--summary] [--all] [--app] [-f json]` | Operations (or `--requests`) and findings, then the summary: head line (requests, operations, duration, errors, not found); per-operation table (requests, errors and share, not found, p50, p95, p99, max; `*` under 20 requests); the four signals (rate with peak in flight, errors, latency, bytes) and cost; waiting by kind; findings. |
 | ↳ long sessions | Past 2,000 lines: the first and last hundred and a count (`--all` prints all). The summary is always printed. |
-| ↳ `--errors` | Only what failed (JSON too: `episodes`, `records`); the summary stays the session's. |
+| ↳ `--errors` | Only what failed (JSON too: `operations`, `requests`); the summary stays the session's. |
 | ↳ "Acting on N findings" | The session recomputed without the requests those findings name (findings naming none are left out, and the line says so). |
-| ↳ `-f json` | Streamed. Each finding's fixes by SDK; `summary.operations[]` has `errorShare`, `p50Ms`, `p95Ms`, `p99Ms`, `maxMs`, `few`. `--summary -f json`: `summary`, `waiting` (`byKind`), `p95Ms`, `peakInFlight`, `cost`, `whatIf`, `observations`, no requests. |
-| `sonde compare BEFORE AFTER [-f json]` | Two runs: requests, waiting, time, errors and cost by kind of request; findings gone and new. Unchanged kinds are counted, not listed. Different programs compare by figures only (said). |
+| ↳ `-f json` | Streamed: `operations`, `findings`, `requests`, `session`, `summary`, `whatIf`. Each finding's fixes by SDK; `summary.operations[]` has `errorShare`, `p50Ms`, `p95Ms`, `p99Ms`, `maxMs`, `few`. `--summary -f json`: `summary`, `waiting` (`waitingMs`, `byKind`, `p95Ms`, `peakInFlight`), `cost`, `whatIf`, `findings`, no requests. A trial's run says first that its faults were sonde's. |
+| `sonde compare BEFORE AFTER [-f json]` | Two runs: requests, waiting, time, errors and cost by kind of request; findings gone and new. Unchanged kinds are counted, not listed. Different programs compare by figures only (said). A session and its replay (either order): every answer compared, with each kind's p50 and p95 on both stores. |
+| `sonde compare FILE --replay E [--replay E2 …] [--bucket A=B] [--prefix P \| --in-place] [--keep] [--yes] [-o FILE]` | Re-enacts a session on another endpoint, compares every answer, then removes what it wrote under its prefix (objects, and on a versioned bucket every version and delete marker; exit 70 if anything remains). Several: replayed on each at once, side by side (differing answers, each kind's p95 against the recording; `-f markdown\|csv` too); exit 70 for a store it could not replay on. [Recording](recording.md#replay-on-another-endpoint). |
 | `sonde check [FILE] [options] [-f json\|markdown\|github]` | A run against a budget, a baseline and its trials. Exit 1 when over budget, past the baseline, or a trial broke. [Details](#sonde-check). |
-| `sonde share [FILE] [-o DIR] [--serve [--port N]] [--json] [--html] [--redact]` | A static site: the viewer and `session.json` (default `./<session>-share/`). `--serve`: on 127.0.0.1 until Ctrl-C. `--json`: the document only, streamed. `--html`: one self-contained file (findings, time, timeline, operations at `#op-N`; past 2,000 operations, the first 2,000 and every one a finding links to, with a count). Titled by the program. `--redact`: bucket and key names become tokens (same name, same token; layout names, numbers, extensions kept); headers, bodies, URLs, request ids, output and arguments dropped. |
-| `sonde export [FILE] [-o FILE \| --to URL]` | OTLP/JSON traces (`--otlp`, the default): a span per operation, its requests under it; `service.name` is the program. `--to` posts to a collector (e.g. `http://localhost:4318/v1/traces`) in parts of about 3 MiB, an operation's spans kept together. |
+| `sonde share [FILE] [-o DIR] [--serve [--port N]] [--html] [--redact]` | A static site: the viewer and `session.json` (default `./<session>-share/`). `--serve`: on 127.0.0.1 until Ctrl-C. `--html`: one self-contained file (findings, time, timeline, operations at `#op-N`; past 2,000 operations, the first 2,000 and every one a finding links to, with a count). Titled by the program. `--redact`: bucket and key names become tokens (same name, same token; layout names, numbers, extensions kept); headers, bodies, URLs, request ids, output and arguments dropped. |
+| `sonde share --otlp [FILE] [-o FILE \| --to URL]` | OTLP/JSON traces: a span per operation, its requests under it; `service.name` is the program. `--to` posts to a collector (e.g. `http://localhost:4318/v1/traces`) in parts of about 3 MiB, an operation's spans kept together. |
 
 ### sonde check
 
@@ -70,23 +71,16 @@
 - `--baseline auto` with none set and no budget: nothing checked, exit 0. Usage error (64): nothing to check (no
   budget, baseline or trials); `--tolerance` or `--no-new-warnings` without a baseline; a `sonde.toml` that does not parse or has an unknown key; an unreadable `baselines.json` (for `auto`, `--set-baseline`, `sessions prune`; never treated as empty).
 
-## Replay on another store
+## Buckets
 
 | Command | Does |
 |---|---|
-| `sonde replay FILE -e E [-e E2 …] [--bucket A=B] [--prefix P \| --in-place] [--keep] [--yes] [-o FILE]` | Re-enacts a session on another endpoint, compares every answer, then removes what it wrote under its prefix (objects, and on a versioned bucket every version and delete marker; exit 70 if anything remains). Several `-e`: replayed on each at once, side by side (differing answers, each kind's p95 against the recording; `-f markdown\|csv` too); exit 70 for a store it could not replay on. [Recording](recording.md#replay-on-another-endpoint). |
-| `sonde diff ORIGINAL REPLAY [-f json]` | A session against its replay, with each kind's p50 and p95 on both stores. Two ordinary runs: usage error (use `compare`). |
-
-## The store itself
-
-| Command | Does |
-|---|---|
-| `sonde probe -e A -e B -b BUCKET [--only checksum.] [--temp-buckets] [--no-slow] [-f json\|markdown\|csv] [-o FILE]` | Probes each endpoint in parallel, saves the run. Writes and deletes under `sonde-probe/` in the named bucket (naming it is consent; read-only mode applies to the app, not this command); audited. |
+| `sonde probe -e A -e B -b BUCKET [--only checksum.] [--temp-buckets] [--no-slow] [-f json\|markdown\|csv] [-o FILE]` | Probes each endpoint in parallel, saves the run. Writes and deletes under `sonde-probe/` in the named bucket (naming it is consent); audited. |
 | `sonde probe list` / `runs` / `diff RUN:EP RUN:EP` | The catalog; saved runs; changes between two. |
-| `sonde mpu scan -e E -b B [-p PREFIX]` | Incomplete uploads: bytes, age, cost; the lifecycle verdict. |
-| `sonde mpu abort -e E -b B [--older-than-days N] [--confirm COUNT]` | A dry run; with `--confirm` (read-only off) aborts. |
-| `sonde mpu lifecycle -e E -b B [--days 7] [--confirm BUCKET]` | Adds an AbortIncompleteMultipartUpload rule: dry run, then `--confirm`. |
-| `sonde du -e E -b B [-p PREFIX] [--no-multipart] [--cached]` | Capacity breakdown and findings. |
+| `sonde bucket size -e E -b B [-p PREFIX] [--no-multipart] [--cached]` | What a bucket holds and why it is so big: versions, classes, prefixes, sizes. |
+| `sonde bucket uploads -e E -b B [-p PREFIX]` | Incomplete uploads: bytes, age, cost (stale past 7 days); the lifecycle verdict. |
+| `sonde bucket abort-uploads -e E -b B [--older-than-days N] [--confirm COUNT]` | A dry run; with `--confirm` aborts (audited). |
+| `sonde bucket lifecycle -e E -b B [--days 7] [--confirm BUCKET]` | Adds an AbortIncompleteMultipartUpload rule: dry run, then `--confirm` (audited). |
 | `sonde layout inspect -e E -b B [-p PREFIX] [--kind K] [--at RFC3339]` / `--dir PATH` | Detects and decodes a layout (`slatedb`, `iceberg`, `lakefs`, `woodpecker`, `turbopuffer`, `warpstream`, `generic`); `--at` gives the state at a time. |
 | `sonde endpoints list` / `test [ID]` / `import [PROFILES…]` / `add ID URL [--profile P]` | Endpoints. `import` takes `~/.aws/config` profiles not yet configured. `add` takes `--region`, `--path-style`, `--ca-file`; credentials from a profile or the default chain, never the command line. |
 
@@ -101,14 +95,14 @@
 | Code | Meaning |
 |---|---|
 | 0 | Done; nothing to report |
-| 1 | A probe failed (a guarantee broke), or a layout has errors; `check` (or a `watch --logs --once` pass) is over its budget or baseline, or the run broke under a trial; `run --trial` when a trial broke |
+| 1 | A probe failed (a guarantee broke), or a layout has errors; `check` (or one `import s3://…` pass) is over its budget or baseline, or the run broke under a trial; `run --trial` when a trial broke |
 | 2 | Probes behaved differently from AWS (and none failed); a replay answered differently |
 | 3 | Probes could not run (errors only) |
 | 4 | Findings worth attention: stale uploads or no abort rule, layout warnings, a changed probe diff, a dry run |
 | 64 | Usage or configuration error (an unknown command or option too, and a `-f` format the command does not write; `--help` and `--version` exit 0) |
 | 65 | Bad data: not a session (no header, a newer format, a bad line in its middle). A torn last line or a cut gzip stream is read up to the cut (said on stderr) |
 | 70 | The operation failed (connection, credentials, permission); a replay could not remove what it wrote |
-| 77 | Refused: read-only mode (`read-only = false` under `[settings]` in `config.toml` turns it off), the confirmation did not match, or a replay without `--yes` and no terminal to ask |
+| 77 | Refused: the confirmation did not match, or a replay without `--yes` and no terminal to ask |
 | 130, 143 | `run --trial` interrupted by Ctrl-C or SIGTERM (`run` otherwise exits as its command did) |
 
 A failed request prints its error, request id and the request line from the log.
@@ -173,3 +167,20 @@ before signing, naming the program's first own frame:
 
 The Java hook's sources are in `hooks/java` (`build.sh` rebuilds its jars). Other SDKs can add the header with their
 own request hook.
+
+## Folded in 18.0
+
+Each still runs for 18.0, says its new form on stderr, and goes in 19.0.
+
+| Was | Now |
+|---|---|
+| `sonde diff ORIGINAL REPLAY` | `sonde compare ORIGINAL REPLAY` |
+| `sonde replay FILE -e E` | `sonde compare FILE --replay E` |
+| `sonde watch` | `sonde proxy --rotate 60` |
+| `sonde watch --logs s3://…` | `sonde import s3://… --follow` (`--once`: without `--follow`) |
+| `sonde export` | `sonde share --otlp` |
+| `sonde du` | `sonde bucket size` |
+| `sonde mpu scan` / `abort` / `lifecycle` | `sonde bucket uploads` / `abort-uploads` / `lifecycle` |
+
+Gone, refused with what to say instead: `share --json` (`show -f json`), `--log-out` (the session is what a program
+sent), `--no-delete` and `--read-only` (`--policy no-delete`, `--policy read-only`).

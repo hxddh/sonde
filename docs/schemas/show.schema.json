@@ -5,21 +5,21 @@
   "description": "A session whole: its operations, findings and requests. `--errors` keeps the failed ones only.",
   "type": "object",
   "properties": {
-    "episodes": {
+    "operations": {
       "type": "array",
       "description": "The operations, in order.",
       "items": {
         "$ref": "#/$defs/episode"
       }
     },
-    "observations": {
+    "findings": {
       "type": "array",
       "description": "The findings.",
       "items": {
         "$ref": "#/$defs/observation"
       }
     },
-    "records": {
+    "requests": {
       "type": "array",
       "description": "Every request, as the file has it.",
       "items": {
@@ -37,9 +37,9 @@
     }
   },
   "required": [
-    "episodes",
-    "observations",
-    "records",
+    "operations",
+    "findings",
+    "requests",
     "session",
     "summary",
     "whatIf"

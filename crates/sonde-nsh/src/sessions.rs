@@ -614,31 +614,26 @@ fn own_session_in(dir: &Path, path: &str) -> Result<String, String> {
     Ok(name)
 }
 
-/// Where a run's exit code is kept, beside its session (`<run>.exit`): a
-/// trial judges the program's exit under faults against it.
-fn exit_file(session: &Path) -> PathBuf {
-    let verdicts = sonde_proxy::trial::file_for(session);
-    let name = verdicts
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    verdicts.with_file_name(format!("{}.exit", name.trim_end_matches(".trials.json")))
-}
-
+/// Keeps the exit code a run ended with, in its folder's index: a trial
+/// judges the program's exit under faults against it.
 fn write_exit(session: &Path, code: Option<i32>) {
     if let Some(c) = code {
-        let _ = reqlog::private::write(&exit_file(session), c.to_string());
+        sonde_proxy::index::set(session, sonde_proxy::index::Change::Exit(c));
     }
 }
 
 /// The exit code the run ended with; `None` when it was not kept (a run of
-/// the CLI's, or of before 15).
+/// the CLI's, or of before 15). Kept beside the run before 18.0
+/// (`<run>.exit`): read, and moved into the index.
 fn read_exit(session: &Path) -> Option<i32> {
-    std::fs::read_to_string(exit_file(session))
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
+    sonde_proxy::index::get(session).exit.or_else(|| {
+        sonde_proxy::index::moved(
+            session,
+            "exit",
+            |b| std::str::from_utf8(b).ok()?.trim().parse().ok(),
+            |c| sonde_proxy::index::Change::Exit(*c),
+        )
+    })
 }
 
 /// A run's verdicts for the app: each with the path of its trial's session
@@ -1089,7 +1084,7 @@ fn run_point(path: &Path) -> Option<sonde_proxy::program::RunPoint> {
     {
         return Some(p.clone());
     }
-    // kept on disk too, beside the session (`<name>.summary.json`): a
+    // kept on disk too, in the folder's index: a
     // program's history reads 30 runs, and a finished run does not change
     let h = header_of(path)?;
     let (_, figures) =
@@ -1537,7 +1532,7 @@ impl Sessions {
 
     /// What trying a session's program under faults would run, said before
     /// it runs: `{ command, cwd, scenarios: [{ name, about, maxTimes }], project,
-    /// sharesPlace, cleanExit, readOnly }`. `project`: the scenarios are the
+    /// sharesPlace, cleanExit }`. `project`: the scenarios are the
     /// `sonde.toml`'s own; `sharesPlace`: the command has no `{trial}` (or
     /// `SONDE_TRIAL`), so every run writes where the clean run wrote;
     /// `cleanExit` null when the run's exit code was not kept (0 is assumed).
@@ -1562,7 +1557,6 @@ impl Sessions {
             "project": plan.project,
             "sharesPlace": plan.shares_place,
             "cleanExit": read_exit(Path::new(&path)),
-            "readOnly": sonde().settings().read_only,
         }))
     }
 
@@ -1575,8 +1569,7 @@ impl Sessions {
     /// `{ data, scenario }`, then `{ scenario, state: "done", trial }`.
     /// Resolves with `{ path, trials, cancelled }`; [`Sessions::kill`]
     /// cancels, and a cancelled trial keeps nothing. The run's earlier
-    /// verdicts are replaced. Refused while sonde is read-only, as a replay
-    /// is: the program writes again.
+    /// verdicts are replaced. What the program may do is `policy`'s.
     pub async fn trial(
         path: String,
         scenarios: Vec<String>,
@@ -1586,12 +1579,6 @@ impl Sessions {
         #[args(event)] output: Callback<JsonValue>,
     ) -> Result<JsonValue, String> {
         use std::sync::atomic::Ordering::SeqCst;
-        if sonde().settings().read_only {
-            return Err(crate::state::err(sonde_core::S3Error::new(
-                s3raw::ErrorKind::Refused,
-                "read-only mode is on: turn it off in Settings to try a program under faults (it runs, and writes, again)",
-            )));
-        }
         // a run of the sessions directory: its trials are kept beside it
         let (file, of) = own_session(&path)?;
         let clean = open_session(&path)?;
@@ -1672,7 +1659,7 @@ impl Sessions {
     }
 
     /// What replaying a session on `endpoint` would send: the plan, the
-    /// prefix it would write under, the buckets, whether sonde is read-only.
+    /// prefix it would write under, the buckets.
     pub fn replay_plan(path: String, endpoint: String) -> Result<JsonValue, String> {
         let original = full_session(&path)?;
         let s = sonde();
@@ -1687,25 +1674,18 @@ impl Sessions {
             "buckets": replay::buckets_of(&original.records, &opts),
             "endpoint": endpoint,
             "url": base.config().endpoint.as_str(),
-            "readOnly": s.settings().read_only,
         }))
     }
 
     /// Replays a session on `endpoint` under `prefix`, cleans up, and
-    /// compares: `{ path, plan, comparison, removed }`. Refused while sonde is
-    /// read-only, as every write it makes.
+    /// compares: `{ path, plan, comparison, removed }`. Everything it wrote
+    /// under `prefix` is removed after.
     pub async fn replay(
         path: String,
         endpoint: String,
         prefix: String,
     ) -> Result<JsonValue, String> {
         let s = sonde();
-        if s.settings().read_only {
-            return Err(crate::state::err(sonde_core::S3Error::new(
-                s3raw::ErrorKind::Refused,
-                "read-only mode is on: turn it off in Settings to replay (a replay writes under its prefix)",
-            )));
-        }
         let original = full_session(&path)?;
         let base = s.client(&endpoint).map_err(crate::state::err)?;
         let out = sonde_proxy::session::fresh_path(
@@ -2197,10 +2177,11 @@ impl Sessions {
             }
             std::fs::remove_file(&p).map_err(err_msg)?;
         }
-        // its trials go with it, and the exit code kept for them
+        // its trials go with it, and all its index kept of it
         sonde_proxy::trial::remove(&p);
-        let _ = std::fs::remove_file(exit_file(&p));
         forget(&p);
+        sonde_proxy::index::set(&p, sonde_proxy::index::Change::Gone);
+        let _ = std::fs::remove_file(sonde_proxy::index::beside(&p, "exit"));
         // the session is gone either way; a titles file that does not read stays
         if let Ok(mut t) = map_to_change(&sonde().paths().sessions().join("titles.json"))
             && t.remove(&name).is_some()
@@ -2863,21 +2844,21 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_session_is_listed_from_the_counts_kept_beside_it() {
+    fn a_finished_session_is_listed_from_the_counts_kept_in_its_folders_index() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("listed.sonde");
         many(&path, 120);
         // live: counted as it grows, nothing kept
         assert_eq!(count_records(&path), 120);
-        assert!(!sonde_proxy::summary::counted_file(&path).exists());
+        assert!(sonde_proxy::index::get(&path).counted.is_none());
         sonde_proxy::session::compress(&path).unwrap();
         assert_eq!(count_records(&path), 120);
         assert_eq!(shape_of(&path).iter().sum::<u32>(), 120);
-        let kept = sonde_proxy::summary::kept(&path).expect("kept beside it");
+        let kept = sonde_proxy::summary::kept(&path).expect("kept in the index");
         assert_eq!((kept.requests, kept.errors), (120, 3));
         // gone with the session
         forget(&path);
-        assert!(!sonde_proxy::summary::counted_file(&path).exists());
+        assert!(sonde_proxy::index::get(&path).counted.is_none());
     }
 
     #[test]
@@ -3288,7 +3269,7 @@ mod tests {
     }
 
     #[test]
-    fn a_runs_exit_code_is_kept_beside_it_for_a_later_trial() {
+    fn a_runs_exit_code_is_kept_in_the_index_for_a_later_trial() {
         let dir = tempfile::tempdir().unwrap();
         let (clean, _, _) = run_and_trial(dir.path(), "python job.py", None);
         let p = Path::new(&clean);
@@ -3297,11 +3278,11 @@ mod tests {
         assert_eq!(read_exit(p), None, "a killed program has no code to keep");
         write_exit(p, Some(3));
         assert_eq!(read_exit(p), Some(3));
-        assert_eq!(
-            exit_file(p),
-            dir.path().join("20260101-000000-job.exit"),
-            "beside the session, and not a .sonde file a list would read"
-        );
+        assert!(!dir.path().join("20260101-000000-job.exit").exists());
+        // one kept beside it before 18.0 is read
+        sonde_proxy::index::set(p, sonde_proxy::index::Change::Gone);
+        std::fs::write(dir.path().join("20260101-000000-job.exit"), "4").unwrap();
+        assert_eq!(read_exit(p), Some(4));
     }
 
     #[test]

@@ -1,12 +1,12 @@
-//! The read-only guard, dry-run plans and the audit log.
+//! The guard of sonde's own destructive acts: dry-run plans, the typed
+//! confirmation, and the audit log.
 //!
 //! A destructive operation (abort uploads, delete versions or delete
 //! markers, delete objects, change lifecycle) is never executed directly.
 //! It is first *planned*: the plan lists exactly what would change (the
 //! dry run) and names the confirmation the user must type: the number of
 //! items, or the bucket name. [`Guard::take`] hands the plan back for
-//! execution only when read-only mode is off, the plan is fresh, and the
-//! confirmation matches. Every execution is appended to the audit log.
+//! execution only when the plan is fresh and the confirmation matches. Every execution is appended to the audit log.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -203,12 +203,7 @@ impl Guard {
     }
 
     /// The plan, if it may run now. Removes it (a plan runs once).
-    pub fn take(&self, id: &str, read_only: bool, confirmation: &str) -> Result<Plan, S3Error> {
-        if read_only {
-            return Err(S3Error::refused(
-                "read-only mode is on: turn it off in Settings to run destructive operations",
-            ));
-        }
+    pub fn take(&self, id: &str, confirmation: &str) -> Result<Plan, S3Error> {
         let mut plans = self.plans.lock();
         let plan = plans
             .get(id)
@@ -335,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn three_conditions() {
+    fn a_plan_runs_once_fresh_and_confirmed() {
         let dir = tempfile::tempdir().unwrap();
         let g = Guard::new(dir.path().join("audit.jsonl"));
         let p = g.plan(Action::AbortUploads, "e", "bucket", items(3), None, None);
@@ -344,23 +339,16 @@ mod tests {
             p.summary,
             "Abort multipart uploads 3 item(s) in bucket (3.0 KiB)"
         );
-        // read-only refuses
-        assert!(
-            g.take(&p.id, true, "3")
-                .unwrap_err()
-                .message
-                .contains("read-only")
-        );
         // wrong confirmation refuses and keeps the plan
         assert!(
-            g.take(&p.id, false, "2")
+            g.take(&p.id, "2")
                 .unwrap_err()
                 .message
                 .contains("number of items")
         );
         // right one passes once
-        assert_eq!(g.take(&p.id, false, " 3 ").unwrap().items.len(), 3);
-        assert!(g.take(&p.id, false, "3").is_err());
+        assert_eq!(g.take(&p.id, " 3 ").unwrap().items.len(), 3);
+        assert!(g.take(&p.id, "3").is_err());
         let one = g.plan(Action::DeleteVersions, "e", "bucket", items(1), None, None);
         assert_eq!(one.confirm, "bucket");
         let lc = g.plan(

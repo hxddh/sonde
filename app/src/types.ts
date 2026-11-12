@@ -33,16 +33,13 @@ export interface Prices {
 }
 
 export interface Settings {
-  "read-only": boolean;
+  /** sonde's own jobs: in config.toml only. */
   concurrency: number;
   "rate-limit": number | null;
   prices: Prices;
-  "reqlog-capacity": number;
-  "reqlog-persist": boolean;
   theme: string;
   "high-contrast"?: boolean;
   language: string;
-  "stale-upload-days": number;
   /** Runs name the place in a Python program's code that sent each request. */
   "name-callers"?: boolean;
   /** What a program recorded by Run may do to the store (no-delete by default). */
@@ -848,8 +845,6 @@ export interface TrialPlan {
   /** The command names no `{trial}`: the runs write where the clean run wrote. */
   sharesPlace: boolean;
   cleanExit: number;
-  /** sonde is read-only: no trial runs. */
-  readOnly: boolean;
 }
 
 /** A trial as the app hears it run. */

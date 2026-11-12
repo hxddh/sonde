@@ -32,7 +32,6 @@ export const api = {
   reloadConfig: () => (Sonde as unknown as { reloadConfig(): void }).reloadConfig(),
   settings: () => Sonde.settings() as T.Settings,
   saveSettings: (s: T.Settings) => Sonde.saveSettings(s),
-  setReadOnly: (on: boolean) => Sonde.setReadOnly(on),
   paths: () => Sonde.paths() as Record<string, string>,
   buckets: async (ep: string) => (await Sonde.buckets(ep)) as T.BucketEntry[],
   objectDetail: async (ep: string, b: string, k: string, v?: string | null) => (await Sonde.objectDetail(ep, b, k, v ?? null)) as T.ObjectDetail,

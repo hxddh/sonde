@@ -1,3 +1,4 @@
+pub mod bucket;
 pub mod check;
 pub mod compare;
 pub mod demo;
@@ -59,16 +60,15 @@ pub fn bad_data(msg: impl Into<String>) -> anyhow::Error {
 }
 
 /// An error as the CLI says it: where sonde's own text points at the app
-/// (its Settings, its Multipart place), what to do from a terminal.
-pub fn said(s: &Sonde, text: &str) -> String {
-    text.replace(
-        "turn it off in Settings",
-        &format!(
-            "set `read-only = false` under [settings] in {}",
-            s.paths().config_file().display()
-        ),
-    )
-    .replace("See Multipart.", "See `sonde mpu scan`.")
+/// (its Incomplete uploads), what to do from a terminal.
+pub fn said(text: &str) -> String {
+    text.replace("See Multipart.", "See `sonde bucket uploads`.")
+}
+
+/// A command folded into another in 18.0 still runs, for one version, and
+/// says what it is now (on stderr: its output is the new command's).
+pub fn renamed(old: &str, new: &str) {
+    eprintln!("note: `{old}` is now `{new}`; the old form goes in 19.0");
 }
 
 /// The endpoint id `--url` registers for one run.
@@ -87,6 +87,10 @@ pub fn paths(cli: &Cli) -> Paths {
 
 pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
     let s = Sonde::open(paths(cli))?;
+    // an older config.toml still loads: what it says that is no longer read is said
+    for gone in s.settings().gone() {
+        eprintln!("note: {}: {gone}", s.paths().config_file().display());
+    }
     // of this run only: neither the endpoint nor the limits are ever saved
     if let Some(url) = &cli.url {
         let vendor = Vendor::guess(url);
@@ -223,25 +227,9 @@ mod tests {
 
     #[test]
     fn what_points_at_the_app_is_said_for_a_terminal() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = Sonde::open(Paths {
-            config_dir: dir.path().join("c"),
-            data_dir: dir.path().join("d"),
-        })
-        .unwrap();
-        let refusal = said(
-            &s,
-            "read-only mode is on: turn it off in Settings to run destructive operations",
-        );
-        assert!(
-            refusal.contains("`read-only = false` under [settings]")
-                && refusal.contains("config.toml"),
-            "{refusal}"
-        );
-        assert!(!refusal.contains("in Settings"), "{refusal}");
         assert_eq!(
-            said(&s, "billed but not listed as objects. See Multipart."),
-            "billed but not listed as objects. See `sonde mpu scan`."
+            said("billed but not listed as objects. See Multipart."),
+            "billed but not listed as objects. See `sonde bucket uploads`."
         );
     }
 

@@ -12,10 +12,6 @@ yanked = "deny"
 # the git on PATH fetches the database: it follows the machine's proxy
 git-fetch-with-cli = true
 ignore = [
-    # sonde opens only its own request log (reqlog's SQLite, in sonde's data
-    # directory), never a database another party wrote; rusqlite's bundled
-    # SQLite goes with the bump of rusqlite past 0.38
-    { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys: only sonde's own database files are opened; goes with the rusqlite bump" },
     # Native Shell's tree (the terminal UI and the app), not sonde's code:
     # raised upstream, gone when the pin moves past them
     { id = "RUSTSEC-2023-0071", reason = "rsa in quickjs-jit-stdlib (Native Shell): sonde does no RSA" },

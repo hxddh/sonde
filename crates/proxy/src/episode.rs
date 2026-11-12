@@ -1781,37 +1781,6 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .collect()
     };
     let mut out = Vec::new();
-    for (f, note, with, _) in shared_notes(episodes) {
-        // the note as a phrase: from an episode that has it
-        let note_phrase = episodes.iter().find_map(|e| {
-            e.notes
-                .iter()
-                .position(|n| *n == note)
-                .and_then(|i| e.notes_text.get(i).cloned())
-        });
-        let mut phrases = vec![p(
-            "obs.shared",
-            &[("n", with.to_string()), ("format", f.name().to_string())],
-        )];
-        phrases.extend(note_phrase);
-        out.push(Observation {
-            level: "info",
-            text: format!("{with} {} writes: {note}", f.name()),
-            phrases,
-            episodes: of_episodes(&|e| e.format == Some(f) && e.notes.contains(&note)),
-            impact: 0,
-            saving: None,
-            saving_text: None,
-            saves_requests: 0,
-            saves_ms: 0.0,
-            saved_ids: Vec::new(),
-            timed_ids: Vec::new(),
-            fixes: Vec::new(),
-            callers: Vec::new(),
-            sdk: None,
-            identity: String::new(),
-        });
-    }
     let warn = |t: Phrase, episodes: Vec<usize>| Observation {
         level: "warn",
         text: t.en(),
@@ -1861,26 +1830,6 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .weigh(impact, 0, total),
         );
     }
-    // a trial's faults are sonde's doing: said first among the notes, so
-    // that the errors and retries below are not read as the store's
-    let injected: Vec<&Record> = records.iter().filter(|r| r.injected.is_some()).collect();
-    if let Some(first) = injected.first() {
-        let n = injected.len();
-        out.push(
-            info(
-                p(
-                    "obs.injected",
-                    &[
-                        ("n", n.to_string()),
-                        ("s", plural(n)),
-                        ("scenario", first.injected.clone().unwrap_or_default()),
-                    ],
-                ),
-                of_records(&mut injected.iter().map(|r| r.id)),
-            )
-            .weigh(n, 0, total),
-        );
-    }
     let orphans = of_episodes(&|e| e.title().contains("no commit followed"));
     if !orphans.is_empty() {
         let n = orphans.len();
@@ -1895,36 +1844,6 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 orphans,
             )
             .weigh(impact, 0, total),
-        );
-    }
-    // a retry after a fault sonde injected is the trial's doing, said by the
-    // finding above: only what followed the store's own failures is the store's
-    let own_failure: std::collections::HashSet<u64> = records
-        .iter()
-        .filter(|r| retryable(r) && !sondes_fault(r))
-        .map(|r| r.id)
-        .collect();
-    let injected_ids: std::collections::HashSet<u64> = records
-        .iter()
-        .filter(|r| sondes_fault(r))
-        .map(|r| r.id)
-        .collect();
-    let retries = of_episodes(&|e| {
-        e.kind == Kind::Retry
-            && (e.records.iter().any(|id| own_failure.contains(id))
-                || !e.records.iter().any(|id| injected_ids.contains(id)))
-    });
-    let retried: usize = retries.iter().map(|&i| episodes[i].requests() - 1).sum();
-    if retried > 0 {
-        out.push(
-            warn(
-                p(
-                    "obs.retried",
-                    &[("n", retried.to_string()), ("s", plural(retried))],
-                ),
-                retries,
-            )
-            .weigh(retried, 0, total),
         );
     }
     // small files uploaded in parts: 3 requests where 1 PUT would do
@@ -2009,24 +1928,6 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                     .filter(|id| by_id.get(id).is_some_and(|r| r.operation != "UploadPart"))
                     .collect(),
             ),
-        );
-    }
-    let races: Vec<u64> = records
-        .iter()
-        // a 412 sonde answered itself (a trial's lost race) is not the store's
-        .filter(|r| r.status == Some(412) && !sondes_fault(r))
-        .map(|r| r.id)
-        .collect();
-    if !races.is_empty() {
-        out.push(
-            info(
-                p(
-                    "obs.races",
-                    &[("n", races.len().to_string()), ("s", plural(races.len()))],
-                ),
-                of_records(&mut races.iter().copied()),
-            )
-            .weigh(races.len(), 0, total),
         );
     }
     // the same key read again and again (counted by the records' own
@@ -2270,14 +2171,16 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             } else {
                 (pw, WRITES_PER_PREFIX, false)
             };
-            if n * 2 >= limit {
+            // near the limit (four fifths of it), or past half of it and
+            // throttled already: half of it alone is no finding (18.0)
+            if n * 5 >= limit * 4 || (n * 2 >= limit && throttled > 0) {
                 let prefix = prefix_named(prefix.0, prefix.1);
                 hot.push((prefix, n, limit, read, ids, throttled));
             }
         }
         // nearest its limit first: n/limit, compared without dividing
         hot.sort_by(|a, b| (b.1 * a.2).cmp(&(a.1 * b.2)).then(a.0.cmp(&b.0)));
-        for (prefix, n, limit, read, ids, throttled) in hot.into_iter().take(3) {
+        for (prefix, n, limit, read, ids, _) in hot.into_iter().take(3) {
             let pct = n * 100 / limit;
             let phrase = p(
                 if read {
@@ -2293,12 +2196,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 ],
             );
             let impact = ids.len();
-            let o = if pct >= 80 || throttled > 0 {
-                warn(phrase, of_records(&mut ids.into_iter()))
-            } else {
-                info(phrase, of_records(&mut ids.into_iter()))
-            };
-            out.push(o.weigh(impact, 0, total));
+            out.push(warn(phrase, of_records(&mut ids.into_iter())).weigh(impact, 0, total));
         }
     }
     // requests one after another, each waiting for the one before
@@ -2351,48 +2249,10 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             out.push(o);
         }
     }
-    // far slower than the rest: a second or more, and ten times the median
-    if records.len() >= 10 {
-        let mut lat: Vec<f64> = records.iter().map(|r| r.latency_ms).collect();
-        lat.sort_by(f64::total_cmp);
-        let median = lat[lat.len() / 2];
-        let over = (median * 10.0).max(1_000.0);
-        let slow: Vec<&Record> = records.iter().filter(|r| r.latency_ms >= over).collect();
-        if let Some(worst) = slow
-            .iter()
-            .max_by(|a, b| a.latency_ms.total_cmp(&b.latency_ms))
-        {
-            let n = slow.len();
-            let what = match &worst.key {
-                Some(k) => format!("{} {k}", worst.operation),
-                None => worst.operation.to_string(),
-            };
-            out.push(
-                info(
-                    p(
-                        "obs.slow",
-                        &[
-                            ("n", n.to_string()),
-                            ("s", plural(n)),
-                            ("ms", format!("{over:.0}")),
-                            ("median", format!("{median:.0}")),
-                            ("op", what),
-                            ("max", format!("{:.0}", worst.latency_ms)),
-                        ],
-                    ),
-                    of_records(&mut slow.iter().map(|r| r.id)),
-                )
-                .weigh(n, 0, total),
-            );
-        }
-    }
     // the most telling first: warnings, then by the requests they bear on
-    // (a trial's faults before all: what follows is read in their light)
-    let injects = |o: &Observation| o.phrases.first().is_some_and(|p| p.key == "obs.injected");
     out.sort_by(|a, b| {
-        injects(b)
-            .cmp(&injects(a))
-            .then((b.level == "warn").cmp(&(a.level == "warn")))
+        (b.level == "warn")
+            .cmp(&(a.level == "warn"))
             .then(b.impact.cmp(&a.impact))
     });
     for o in &mut out {
@@ -2619,15 +2479,12 @@ mod tests {
         assert_eq!(retry.records, vec![1, 2, 3]);
         assert_eq!(retry.title(), "GetObject k retried 2× after 503 SlowDown");
         assert_eq!(retry.outcome, Outcome::Ok);
-        let obs = observations(&[], &eps);
-        assert!(
-            obs.iter()
-                .any(|o| o.text == "2 requests repeated after a retryable failure")
-        );
+        // retrying is right: no finding of its own (18.0)
+        assert!(observations(&[], &eps).is_empty());
     }
 
     #[test]
-    fn a_trials_fault_is_said_first_and_its_503s_are_not_the_stores() {
+    fn a_trials_503s_are_not_the_stores() {
         let fault = |mut r: Record| {
             r.injected = Some("slowdown".into());
             r.response_headers
@@ -2656,12 +2513,9 @@ mod tests {
             ));
         }
         let obs = observations(&rs, &episodes(&rs));
-        assert_eq!(obs[0].phrases[0].key, "obs.injected", "{obs:#?}");
         let keys: Vec<&str> = obs.iter().map(|o| o.phrases[0].key).collect();
         assert!(
-            !keys
-                .iter()
-                .any(|k| k.starts_with("obs.throttled") || *k == "obs.retried"),
+            !keys.iter().any(|k| k.starts_with("obs.throttled")),
             "the store asked for nothing: {keys:?}"
         );
         // a 503 of the store's own, in the same session, is still the store's
@@ -2670,16 +2524,11 @@ mod tests {
         rs.push(own);
         rs.push(rec(91, 5200, "GET", "GetObject", Some("z"), 200));
         let obs = observations(&rs, &episodes(&rs));
-        assert_eq!(obs[0].phrases[0].key, "obs.injected");
         let throttled = obs
             .iter()
             .find(|o| o.phrases[0].key.starts_with("obs.throttled"))
             .expect("the store's own 503");
         assert_eq!(throttled.phrases[0].args["n"], "1");
-        assert!(
-            obs.iter()
-                .any(|o| o.text == "1 request repeated after a retryable failure")
-        );
     }
 
     #[test]
@@ -2936,11 +2785,8 @@ mod tests {
         );
         assert!(eps[1].notes.iter().any(|n| n.starts_with("lost a race")));
         assert_eq!(eps[2].outcome, Outcome::Refused);
-        assert!(
-            observations(&records, &eps)
-                .iter()
-                .any(|o| o.text.starts_with("1 conditional write lost a race"))
-        );
+        // the operation says the race; a writer that lost one is no finding (18.0)
+        assert!(observations(&records, &eps).is_empty());
     }
 
     #[test]

@@ -47,13 +47,12 @@ fn help_lists_the_commands_by_what_they_are_for() {
     // each heading, then its commands, each with its own line
     for (heading, first, last) in [
         ("Record:", "\n  run ", "\n  import "),
-        ("Read a session:", "\n  sessions ", "\n  export "),
-        ("Replay on another store:", "\n  replay ", "\n  diff "),
-        ("The store itself:", "\n  probe ", "\n  endpoints "),
+        ("Read a run:", "\n  sessions ", "\n  share "),
+        ("Buckets:", "\n  bucket ", "\n  endpoints "),
     ] {
         assert!(at(heading) < at(first) && at(first) < at(last), "{help}");
     }
-    assert!(at("\n  import ") < at("Read a session:"), "{help}");
+    assert!(at("\n  import ") < at("Read a run:"), "{help}");
     assert!(
         help.contains("run        Run a command with its S3 requests recorded"),
         "{help}"
@@ -92,8 +91,8 @@ fn the_demo_records_a_session_that_every_command_reads() {
 
     let json = sonde(t.path(), &["show", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(v["records"].as_array().unwrap().len(), 28);
-    assert!(v["observations"].as_array().unwrap().len() >= 2, "{v}");
+    assert_eq!(v["requests"].as_array().unwrap().len(), 28);
+    assert!(v["findings"].as_array().unwrap().len() >= 2, "{v}");
 
     let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
     let mut lines = csv.lines();
@@ -112,8 +111,8 @@ fn the_demo_records_a_session_that_every_command_reads() {
     assert_eq!(by_name.status.code(), Some(0));
     assert!(stdout(&by_name).contains("28 requests"));
 
-    // the same run against itself is no session and its replay: diff says
-    // so and names the command that compares two runs, which says "no change"
+    // the same run against itself is no session and its replay: `diff`
+    // (kept for 18.0) says its new form, and that this is no replay
     let path = t.path().join("data/sessions").join(&name);
     let p = path.to_str().unwrap();
     for format in ["table", "json"] {
@@ -122,7 +121,7 @@ fn the_demo_records_a_session_that_every_command_reads() {
         assert_eq!(diff.status.code(), Some(64), "{err}");
         assert!(diff.stdout.is_empty(), "{}", stdout(&diff));
         assert!(
-            err.contains("not a session and its replay") && err.contains("sonde compare "),
+            err.contains("`sonde diff` is now `sonde compare ") && err.contains("is not a replay"),
             "{err}"
         );
     }
@@ -150,7 +149,7 @@ fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
     }
     // and at least two findings to act on
     for finding in [
-        "1 request repeated after a retryable failure",
+        "1 request throttled (503 SlowDown or 429)",
         "3 objects were checked with HEAD and then read with GET",
     ] {
         assert!(out.contains(finding), "no {finding:?} in:\n{out}");
@@ -545,9 +544,10 @@ fn every_command_refuses_a_format_it_does_not_write() {
     let t = tempfile::tempdir().unwrap();
     // before anything is asked of a store: none of these has one to ask
     for args in [
-        &["du", "-b", "b", "-f", "markdown"][..],
-        &["mpu", "scan", "-b", "b", "-f", "github"],
-        &["mpu", "abort", "-b", "b", "-f", "json"],
+        &["bucket", "size", "-b", "b", "-f", "markdown"][..],
+        &["bucket", "uploads", "-b", "b", "-f", "github"],
+        &["bucket", "abort-uploads", "-b", "b", "-f", "json"],
+        &["du", "-b", "b", "-f", "markdown"],
         &["probe", "list", "-f", "csv"],
         &["probe", "-b", "scratch", "-f", "github"],
         &["layout", "inspect", "-b", "b", "-f", "csv"],
@@ -684,7 +684,22 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
     let d = sonde(t.path(), &["diff", &name, &name]);
     assert_eq!(d.status.code(), Some(64), "two runs are not a replay");
     assert!(stderr(&d).contains("sonde compare"), "{}", stderr(&d));
-    // replay opens it too (and stops at the confirmation: nothing is sent)
+    // a replay opens it too (and stops at the confirmation: nothing is sent)
+    let r = sonde(
+        t.path(),
+        &[
+            "--url",
+            "http://127.0.0.1:9",
+            "--path-style",
+            "compare",
+            &name,
+            "--replay",
+            "adhoc",
+        ],
+    );
+    assert_eq!(r.status.code(), Some(77), "{}", stderr(&r));
+    assert!(stderr(&r).contains("Replay 28 requests"), "{}", stderr(&r));
+    // and `replay`, kept for 18.0, says what it is now and does the same
     let r = sonde(
         t.path(),
         &[
@@ -696,7 +711,12 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
         ],
     );
     assert_eq!(r.status.code(), Some(77), "{}", stderr(&r));
-    assert!(stderr(&r).contains("Replay 28 requests"), "{}", stderr(&r));
+    assert!(
+        stderr(&r).contains("`sonde replay` is now `sonde compare ")
+            && stderr(&r).contains("Replay 28 requests"),
+        "{}",
+        stderr(&r)
+    );
     // a name that is no session is said, with where it was looked for
     for args in [
         vec!["compare", "nosuch", name.as_str()],
@@ -705,6 +725,7 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
         vec!["show", "nosuch"],
         vec!["check", "nosuch", "--max-requests", "1"],
         vec!["export", "nosuch"],
+        vec!["share", "--otlp", "nosuch"],
     ] {
         let o = sonde(t.path(), &args);
         assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
@@ -755,16 +776,31 @@ fn the_newest_session_is_the_newest_recording_not_an_import() {
 #[test]
 fn what_a_command_cannot_do_is_said_with_what_does_it() {
     let t = tempfile::tempdir().unwrap();
-    // --log-out would be written empty: refused, with where the requests are
+    // --log-out is gone (18.0): refused, with where the requests are
     for args in [
         vec!["--log-out", "x.har", "run", "--", "true"],
-        vec!["--log-out", "x.har", "proxy"],
-        vec!["--log-out", "x.har", "watch"],
+        vec!["--log-out", "x.har", "endpoints", "list"],
     ] {
         let o = sonde(t.path(), &args);
         assert_eq!(o.status.code(), Some(64), "{args:?}");
-        assert!(stderr(&o).contains("session file"), "{}", stderr(&o));
+        assert!(
+            stderr(&o).contains("--log-out is gone") && stderr(&o).contains("show FILE -f json"),
+            "{}",
+            stderr(&o)
+        );
         assert!(!Path::new("x.har").exists());
+    }
+    // one way to say the recording policy: --policy, --allow-writes for short
+    for (flag, is) in [
+        ("--no-delete", "--policy no-delete"),
+        ("--read-only", "--policy read-only"),
+    ] {
+        let o = sonde(
+            t.path(),
+            &["--url", "http://127.0.0.1:9", "run", flag, "--", "true"],
+        );
+        assert_eq!(o.status.code(), Some(64), "{flag}: {}", stderr(&o));
+        assert!(stderr(&o).contains(is), "{flag}: {}", stderr(&o));
     }
     // no endpoint: how to add one, both ways
     let o = sonde(t.path(), &["run", "--", "true"]);
@@ -787,10 +823,24 @@ fn what_a_command_cannot_do_is_said_with_what_does_it() {
             .code(),
         Some(64)
     );
-    // export has one form: it needs no flag to say so
-    let o = sonde(t.path(), &["export"]);
+    // traces are a form of sharing a run
+    let o = sonde(t.path(), &["share", "--otlp"]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     assert!(stdout(&o).contains("resourceSpans"), "{}", stdout(&o));
+    // and `export`, kept for 18.0, says so and writes the same
+    let o = sonde(t.path(), &["export"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("`sonde export` is now `sonde share --otlp`"),
+        "{}",
+        stderr(&o)
+    );
+    assert!(stdout(&o).contains("resourceSpans"), "{}", stdout(&o));
+    // share --json is gone: `show -f json` is the session as data
+    assert_eq!(
+        sonde(t.path(), &["share", "--json"]).status.code(),
+        Some(64)
+    );
     // a session without a failure says so, when only failures are asked for
     let o = sonde(t.path(), &["show", "--errors", "--requests"]);
     let shown = stdout(&o);
@@ -836,7 +886,7 @@ fn a_commands_help_lists_the_formats_it_writes_and_the_options_it_uses() {
     assert!(show.contains("The format written: table or json"), "{show}");
     assert!(!show.contains("csv") && !show.contains("github"), "{show}");
     assert!(help(&["check"]).contains("markdown") && help(&["check"]).contains("github"));
-    assert!(help(&["du"]).contains("table, json or csv"));
+    assert!(help(&["bucket", "size"]).contains("table, json or csv"));
     // the options of every command under their own heading
     let run = help(&["run"]);
     let at = |text: &str, what: &str| {
@@ -849,9 +899,7 @@ fn a_commands_help_lists_the_formats_it_writes_and_the_options_it_uses() {
     );
     assert!(at(&run, "--trial") < at(&run, "Global options:"), "{run}");
     // and a command that reads a file is not offered a store
-    for cmd in [
-        "show", "sessions", "compare", "check", "diff", "share", "export", "import",
-    ] {
+    for cmd in ["show", "sessions", "check", "share"] {
         let h = help(&[cmd]);
         assert!(h.contains("--data-dir"), "{cmd}: {h}");
         assert!(
@@ -927,24 +975,28 @@ fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::pat
 }
 
 #[test]
-fn sessions_are_listed_from_what_was_counted_beside_them() {
+fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     let t = tempfile::tempdir().unwrap();
     let file = demo_file(t.path());
-    // counted when it was recorded: a small file beside it
-    let counted = file.with_file_name(format!(
-        "{}.summary.json",
-        file.file_stem().unwrap().to_string_lossy()
-    ));
-    assert!(counted.is_file(), "{}", counted.display());
+    // counted when it was recorded: in the folder's one index, no file beside it
+    let counted = || sonde_proxy::index::get(&file).counted.is_some();
+    assert!(counted());
+    let beside: Vec<String> = std::fs::read_dir(file.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.starts_with('.') && !n.ends_with(".sonde"))
+        .collect();
+    assert!(beside.is_empty(), "{beside:?}");
     let listed: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
     assert_eq!(listed[0]["requests"], 28, "{listed}");
     assert_eq!(listed[0]["program"], "sonde demo");
     assert!(listed[0]["seconds"].as_f64().unwrap() > 0.0);
     // one that is missing is made by the listing (a session of before 16)
-    std::fs::remove_file(&counted).unwrap();
+    sonde_proxy::index::set(&file, sonde_proxy::index::Change::NoCounted);
+    assert!(!counted());
     assert!(stdout(&sonde(t.path(), &["sessions"])).contains("sonde demo"));
-    assert!(counted.is_file());
+    assert!(counted());
     // nothing past the newest five: said, not silence
     let kept = sonde(t.path(), &["sessions", "prune", "--keep", "5", "--yes"]);
     assert!(
@@ -956,7 +1008,7 @@ fn sessions_are_listed_from_what_was_counted_beside_them() {
     // removed, and what was counted of it with it
     let gone = sonde(t.path(), &["sessions", "prune", "--keep", "0", "--yes"]);
     assert!(stdout(&gone).contains("deleted "), "{}", stdout(&gone));
-    assert!(!file.exists() && !counted.exists());
+    assert!(!file.exists() && !counted());
 }
 
 #[test]
@@ -1161,16 +1213,16 @@ fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
         &["show", out, "--errors", "-f", "json"],
     )))
     .unwrap();
-    assert_eq!(failed["records"].as_array().unwrap().len(), 24);
-    assert_eq!(failed["episodes"].as_array().unwrap().len(), 24);
+    assert_eq!(failed["requests"].as_array().unwrap().len(), 24);
+    assert_eq!(failed["operations"].as_array().unwrap().len(), 24);
     assert_eq!(
         failed["summary"]["requests"], 2400,
         "the summary is of the session"
     );
     let all: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["show", out, "-f", "json"]))).unwrap();
-    assert_eq!(all["records"].as_array().unwrap().len(), 2400);
-    assert_eq!(all["records"][7]["status"], 403);
+    assert_eq!(all["requests"].as_array().unwrap().len(), 2400);
+    assert_eq!(all["requests"][7]["status"], 403);
     // a long session: its first and last hundred, and how many are between
     let shown = stdout(&sonde(t.path(), &["show", out]));
     assert!(
@@ -1298,7 +1350,7 @@ fn a_check_of_trials_alone_has_no_failed_budget_inside_it() {
         "python etl.py",
         "2026-11-09T02:00:00Z",
     );
-    // a verdict beside the run: it broke under a scenario
+    // a verdict kept beside the run before 18.0: read, and moved into the index
     let verdicts = file.with_file_name("run.trials.json");
     std::fs::write(
         &verdicts,
@@ -1382,5 +1434,54 @@ fn spark_submit_is_given_s3as_endpoint_and_tls_its_certificate() {
     assert_eq!(
         std::fs::metadata(key).unwrap().permissions().mode() & 0o777,
         0o600
+    );
+}
+
+#[test]
+fn the_help_lists_fourteen_commands_at_most_and_the_folded_ones_say_their_new_form() {
+    let t = tempfile::tempdir().unwrap();
+    let help = stdout(&sonde(t.path(), &["--help"]));
+    let listed: Vec<&str> = help
+        .lines()
+        .filter(|l| l.starts_with("  ") && !l.trim_start().starts_with('-'))
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|n| *n != "help")
+        .collect();
+    assert!(listed.len() <= 14, "{listed:?}");
+    for gone in ["watch", "export", "replay", "diff", "mpu", "du"] {
+        assert!(!listed.contains(&gone), "{gone} is listed: {listed:?}");
+    }
+    for (old, new) in [
+        (
+            vec!["du", "-b", "b"],
+            "`sonde du` is now `sonde bucket size`",
+        ),
+        (
+            vec!["mpu", "scan", "-b", "b"],
+            "`sonde mpu scan` is now `sonde bucket uploads`",
+        ),
+    ] {
+        let o = sonde(t.path(), &old);
+        assert!(stderr(&o).contains(new), "{old:?}: {}", stderr(&o));
+    }
+}
+
+#[test]
+fn a_config_of_17_still_loads_and_says_what_is_gone() {
+    let t = tempfile::tempdir().unwrap();
+    let config = t.path().join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("config.toml"),
+        "[settings]\nread-only = true\nreqlog-capacity = 100\n",
+    )
+    .unwrap();
+    let o = sonde(t.path(), &["endpoints", "list"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("`read-only` is no longer a setting")
+            && stderr(&o).contains("`reqlog-capacity` is no longer read"),
+        "{}",
+        stderr(&o)
     );
 }

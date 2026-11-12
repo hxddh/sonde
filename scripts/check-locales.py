@@ -49,7 +49,7 @@ FAMILIES = {
     "settings.path.": "config exports downloads audit",
     "trial.": "survived degraded broke untested",
     "verdict.": "pass fail differs unsupported error skipped requests waiting cost errors warnings p95",
-    "why.": "obs.shared obs.unfinished obs.orphans obs.retried obs.small obs.races obs.hot obs.listed obs.headget obs.throttled obs.throttled.rate obs.slow obs.serial obs.prefixrate obs.injected",
+    "why.": "obs.unfinished obs.orphans obs.small obs.hot obs.listed obs.headget obs.throttled obs.throttled.rate obs.serial obs.prefixrate",
 }
 
 # used: the key's own text in the source, or a member of a listed family

@@ -979,7 +979,7 @@ pub fn check_markdown_with(
     }
     let findings: Vec<_> = findings.iter().take(5).collect();
     if !findings.is_empty() {
-        md.push_str("\n<details><summary>What stands out</summary>\n\n");
+        md.push_str("\n<details><summary>Findings</summary>\n\n");
         for f in findings {
             md.push_str(&format!("- {}", md_text(&f.text)));
             if let Some(c) = f.callers.first() {

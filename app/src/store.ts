@@ -127,10 +127,6 @@ export function refreshSettings() {
   });
 }
 
-export function readOnly(): boolean {
-  return settings()?.["read-only"] ?? true;
-}
-
 /** Shows `e` as an error toast (its request id, and the request when there is one); returns it. */
 export function report(e: unknown): SondeError {
   const err = asError(e);

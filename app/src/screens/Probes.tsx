@@ -9,7 +9,7 @@ import { t } from "../i18n";
 import { core, endpointName } from "../phrases";
 import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
-import { endpoint, endpoints, go, notify, readOnly, report, showRequest } from "../store";
+import { endpoint, endpoints, go, notify, report, showRequest } from "../store";
 import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
 import { Back, Badge, Bar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN } from "../ui/kit";
 import { Document } from "../ui/record";
@@ -151,7 +151,7 @@ export function Probes() {
   };
   // the endpoints checked that are still there
   const picked = () => endpoints().filter((e) => chosen()[e.id]).map((e) => e.id);
-  const canRun = () => !readOnly() && picked().length > 0 && scratch() !== "" && !busy();
+  const canRun = () => picked().length > 0 && scratch() !== "" && !busy();
   const run = async () => {
     if (!canRun()) return;
     const eps = picked();
@@ -220,12 +220,6 @@ export function Probes() {
                 ]}
               />
             </PageHeader>
-            {/* probes write: said before Run is tried, with the way to allow it */}
-            <If when={readOnly()}>
-              <Notice tone="warn" text={t("probes.readOnly")} testID="probe-read-only">
-                <Button small label={t("settings.open")} onPress={() => go("settings")} />
-              </Notice>
-            </If>
             <Card>
               {/* one considered head: what the card does, and at its end the one command that does it */}
               <View class="flex-row items-center gap-3">

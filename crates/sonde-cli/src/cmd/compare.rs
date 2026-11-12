@@ -1,4 +1,5 @@
-//! `sonde diff` and `sonde compare`: a session and its replay, two runs.
+//! `sonde compare`: two runs of a program, a session and its replay, or a
+//! session replayed on another endpoint (`--replay`).
 
 use sonde_proxy::program::{money_text, ms_text};
 use std::io::IsTerminal;
@@ -16,10 +17,35 @@ use super::record::*;
 
 #[derive(Args)]
 pub struct CompareArgs {
-    /// The run before a change.
-    before: PathBuf,
-    /// The run after it.
-    after: PathBuf,
+    /// The run before a change (with --replay: the session to replay).
+    pub(super) before: PathBuf,
+    /// The run after it, or the replay of BEFORE.
+    #[arg(required_unless_present = "replay")]
+    pub(super) after: Option<PathBuf>,
+    /// Replay BEFORE on this endpoint and compare the answers. Several
+    /// (`--replay a --replay b`) replay on each at once, side by side.
+    #[arg(long, value_name = "ENDPOINT", conflicts_with = "after")]
+    pub(super) replay: Vec<String>,
+    #[command(flatten)]
+    pub(super) how: super::replay::ReplayOpts,
+    /// The format written: table or json; replayed on several, markdown and csv too.
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
+    pub(super) format: Format,
+}
+
+/// `sonde diff` (17.0), kept for 18.0: `sonde compare ORIGINAL REPLAY`.
+#[derive(Args)]
+pub struct DiffArgs {
+    /// The original session.
+    original: PathBuf,
+    /// Its replay.
+    replay: PathBuf,
     /// The format written: table or json.
     #[arg(
         long,
@@ -31,21 +57,17 @@ pub struct CompareArgs {
     format: Format,
 }
 
-#[derive(Args)]
-pub struct DiffArgs {
-    /// The original session.
-    original: PathBuf,
-    /// Its replay (`sonde replay -o`).
-    replay: PathBuf,
-    /// The format written: table or json.
-    #[arg(
-        long,
-        short = 'f',
-        value_enum,
-        default_value_t,
-        hide_possible_values = true
-    )]
-    format: Format,
+/// `sonde diff`, said as its 18.0 form and done as that.
+pub async fn diff_alias(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
+    super::renamed(
+        "sonde diff",
+        &format!(
+            "sonde compare {} {}",
+            a.original.display(),
+            a.replay.display()
+        ),
+    );
+    diff(s, &a.original, &a.replay, a.format).await
 }
 
 pub(super) fn print_comparison(c: &sonde_proxy::replay::Comparison, color: bool) {
@@ -137,19 +159,25 @@ fn print_latency_of(changes: &[sonde_proxy::profile::LatencyChange], names: (&st
     );
 }
 
-pub async fn diff(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
-    if let Some(why) = output::unsupported(a.format, "diff", &[Format::Table, Format::Json]) {
+/// A session and its replay: the answers that differ, and each kind's latency on the two stores.
+async fn diff(
+    s: &Arc<Sonde>,
+    original: &PathBuf,
+    replay: &PathBuf,
+    format: Format,
+) -> anyhow::Result<i32> {
+    if let Some(why) = output::unsupported(format, "compare", &[Format::Table, Format::Json]) {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
     // read one after the other, each for what it amounts to: the replay
     // kept as its answers and its profile, then the session read against them
-    let original_file = super::sessions::resolve(s, &a.original);
+    let original_file = super::sessions::resolve(s, original);
     let prices = sonde_proxy::session::read_header(&original_file)
         .map(|h| request_prices_for(s, &h.endpoint))
         .unwrap_or_default();
     let (replay_header, answers, is_replay, replay_profile) = {
-        let (_, replay) = super::sessions::open_lean(s, &a.replay)?;
+        let (_, replay) = super::sessions::open_lean(s, replay)?;
         (
             replay.header,
             sonde_proxy::replay::answers(&replay.records),
@@ -157,23 +185,21 @@ pub async fn diff(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
             profile(&replay.records, &prices),
         )
     };
-    let (_, original) = super::sessions::open_lean(s, &a.original)?;
-    // two ordinary runs pair no request: "0 compared: 0 the same" would read as agreement
-    // (a replay that sent nothing is still one: its header says what it is)
-    let named_replay = replay_header
-        .command
-        .as_deref()
-        .is_some_and(|c| c.starts_with("replay of "));
-    if !named_replay && !is_replay {
-        eprintln!("sonde: {}", not_a_replay(a, &original.records));
-        return Ok(64);
+    let (_, original) = super::sessions::open_lean(s, original)?;
+    // a replay that sent nothing is still one: its header says what it is
+    if !named_replay(&replay_header) && !is_replay {
+        return Err(super::usage(format!(
+            "{} is not a replay of {}",
+            replay.display(),
+            original_file.display()
+        )));
     }
     let c = sonde_proxy::replay::compare_answers(&original.records, &answers, &[]);
     let latency = sonde_proxy::profile::latency_changes(
         &profile(&original.records, &prices),
         &replay_profile,
     );
-    match a.format {
+    match format {
         Format::Json => println!(
             "{}",
             output::json(&serde_json::json!({
@@ -192,18 +218,10 @@ pub async fn diff(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
     Ok(if c.differ() > 0 { 2 } else { 0 })
 }
 
-/// What `sonde diff` says of two sessions that are not a session and its
-/// replay, and what compares them instead.
-fn not_a_replay(a: &DiffArgs, original: &[reqlog::Record]) -> String {
-    let (first, second) = (a.original.display(), a.replay.display());
-    if sonde_proxy::replay::is_replay(original) {
-        return format!(
-            "{second} is not a replay, {first} is: the session comes first (sonde diff {second} {first})"
-        );
-    }
-    format!(
-        "these are not a session and its replay: {second} was not made by `sonde replay`. Two runs of a program are compared with `sonde compare {first} {second}`"
-    )
+fn named_replay(h: &sonde_proxy::session::SessionHeader) -> bool {
+    h.command
+        .as_deref()
+        .is_some_and(|c| c.starts_with("replay of "))
 }
 
 /// A figure before and after, with how much it moved: `28 (no change)`,
@@ -243,8 +261,25 @@ fn more_kinds(cut: usize, same: usize) -> Option<String> {
     }
 }
 
-/// `sonde compare`: two runs of a program, before and after a change.
+/// `sonde compare`: two runs of a program, before and after a change; a
+/// session and its replay; or a session replayed on another endpoint now.
 pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
+    if !a.replay.is_empty() {
+        return super::replay::replay(s, &a.before, &a.replay, &a.how, a.format).await;
+    }
+    if a.how != super::replay::ReplayOpts::default() {
+        return Err(super::usage(
+            "--bucket, --prefix, --in-place, --keep, --yes and -o are for --replay ENDPOINT",
+        ));
+    }
+    let after = a.after.as_ref().expect("clap: AFTER or --replay");
+    let header = |f: &PathBuf| sonde_proxy::session::read_header(&super::sessions::resolve(s, f));
+    // a session and its replay, in either order: their answers compared
+    match (header(&a.before), header(after)) {
+        (_, Some(h)) if named_replay(&h) => return diff(s, &a.before, after, a.format).await,
+        (Some(h), _) if named_replay(&h) => return diff(s, after, &a.before, a.format).await,
+        _ => {}
+    }
     if let Some(why) = output::unsupported(a.format, "compare", &[Format::Table, Format::Json]) {
         eprintln!("sonde: {why}");
         return Ok(64);
@@ -258,7 +293,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         Ok((session.header, run))
     };
     let (ha, ra) = run(&a.before)?;
-    let (hb, rb) = run(&a.after)?;
+    let (hb, rb) = run(after)?;
     let c = sonde_proxy::profile::compare_runs(&ra, &rb).of_programs(
         sonde_proxy::program::key_of(&ha).as_deref(),
         sonde_proxy::program::key_of(&hb).as_deref(),

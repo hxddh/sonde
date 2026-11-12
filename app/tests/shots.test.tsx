@@ -112,19 +112,6 @@ for (const v of variants) {
     // the same command under faults: said before it runs, followed as it goes, its verdicts
     await runAction(app, "run-try");
     await app.waitFor("id:trial-plan", { timeout: 10000 });
-    // (a trial runs the program again: where sonde is still read-only, that goes off for it)
-    if (app.shows("id:trial-read-only")) {
-      await app.press("id:trial-close");
-      await app.keyboard.press("mod+,");
-      await app.waitFor("id:screen-settings-area");
-      await app.press("id:tab-settings");
-      await app.waitFor("id:read-only");
-      await app.press("id:read-only");
-      await app.wait(300);
-      await app.window("settings").pressClose();
-      await runAction(app, "run-try");
-      await app.waitFor("id:trial-plan", { timeout: 10000 });
-    }
     await shot("02e-trial-plan");
     await app.press("id:trial-start");
     await app.waitFor("id:trial-progress", { timeout: 10000 });

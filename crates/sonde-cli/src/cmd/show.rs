@@ -159,7 +159,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "summary": analysis.summary,
                     "operations": eps.len(),
                     "waiting": {
-                        "busyMs": prof.busy_ms,
+                        "waitingMs": prof.busy_ms,
                         "wallMs": prof.wall_ms,
                         "peakInFlight": prof.peak_in_flight,
                         "p50Ms": prof.p50_ms,
@@ -169,7 +169,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     },
                     "cost": prof.cost,
                     "whatIf": analysis.what_if,
-                    "observations": analysis.observations,
+                    "findings": analysis.observations,
                 }))
             );
         }
@@ -179,12 +179,13 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             let out = std::io::BufWriter::with_capacity(1 << 16, std::io::stdout().lock());
             let mut w = sonde_proxy::share::JsonOut::new(out, true);
             w.begin_object()?;
+            // one word each (18.0): operations, findings, requests
             w.array(
-                "episodes",
+                "operations",
                 eps.iter().filter(|e| !a.errors || e.outcome != Outcome::Ok),
             )?;
-            w.field("observations", &analysis.observations)?;
-            w.key("records")?;
+            w.field("findings", &analysis.observations)?;
+            w.key("requests")?;
             w.begin_array()?;
             sonde_proxy::share::each_record(&file, &mut all.iter().map(|r| r.id), &mut |r| {
                 if !a.errors || sonde_proxy::summary::is_failure(&r) {

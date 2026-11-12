@@ -9,7 +9,7 @@ sonde run -- python etl.py                  # record a command
 sonde run --live -- ./my-service            # print requests as they happen
 sonde run --allow-writes -- python etl.py   # allow deletes and overwrites
 sonde proxy --listen 127.0.0.1:9000         # a standing endpoint for a program started elsewhere
-sonde watch                                 # a long-running proxy: status line, warnings, rotated files
+sonde proxy --rotate 60                     # left running: status line, warnings, a file an hour
 ```
 
 The endpoint is `-e <id>`, `--url <url>`, or the only one configured; credentials as for every command
@@ -114,7 +114,8 @@ ids, the error body, **latency** (the whole exchange, until the body is through 
 
 ## What a recorded program may do
 
-For `sonde run`, `proxy`, `watch` and the app's Run.
+For `sonde run`, `proxy` and the app's Run (and its trials). It is the only answer to "what may a program do";
+sonde's own destructive acts are each a dry run and a typed confirmation ([security](security.md#one-safety-model)).
 
 | Policy | Allows | Refuses |
 |---|---|---|
@@ -131,11 +132,9 @@ How `no-delete` finds an existing object:
 - A recording may rewrite what it wrote, including a trial's runs after its clean run; a rerun over a previous run's
   output needs `--allow-writes`.
 
-Which applies, first match: the flag (`--policy allow|no-delete|read-only`, `--allow-writes`, `--no-delete`,
-`--read-only`); `[record] policy` in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app,
-Run starts at the `record-policy` setting, which `[record] policy` may narrow, never widen. The `read-only`
-*setting* governs sonde's own actions (aborts, deletes, lifecycle, probes, replays, app trials), not a recorded
-program.
+Which applies, first match: the flag (`--policy allow|no-delete|read-only`, or `--allow-writes`); `[record] policy`
+in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app, Run starts at the
+`record-policy` setting, which `[record] policy` may narrow, never widen.
 
 ## Session files
 
@@ -143,8 +142,8 @@ program.
   loses at most a torn last line, which is skipped.
 - In `<data>/sessions/`, or `-o FILE`. Gzipped in place when finished (about a tenth; still `.sonde`); a live one
   stays plain (the app reads only what was appended).
-- `sonde sessions prune --keep N --yes` keeps the newest N and every baseline. `sonde watch` starts a new file every
-  `--rotate` minutes.
+- `sonde sessions prune --keep N --yes` keeps the newest N and every baseline. `sonde proxy --rotate M` starts a new
+  file every M minutes.
 
 ```
 172 requests to rustfs in 0.5 s · 116 not found · ↑36.5 KiB ↓22.7 KiB
@@ -157,7 +156,8 @@ GET and HEAD answered 404 are **not found**, not errors. Errors: other 4xx/5xx, 
 ```sh
 sonde import access.log      # S3 server access log
 sonde import trail.json      # CloudTrail data events ({"Records": …} or one per line)
-sonde import browser.har     # a HAR (a browser's, or sonde's --log-out); gzip read directly
+sonde import browser.har     # a HAR; gzip read directly
+sonde import s3://logs/s3/ --follow   # where a store writes its logs, as they arrive
 ```
 
 Each becomes a session, read like a recording; the app opens them too (Open, or drop the file).
@@ -203,9 +203,10 @@ Each becomes a session, read like a recording; the app opens them too (Open, or 
 - Lookups across numbered files (SlateDB's newest WAL) are their own step.
 - Files with no commit within 2 s are reported as written without one.
 
-**Observations** follow: uploads never completed, files written without a commit, retries, conditional writes that
-lost a race (412), keys read repeatedly, prefixes listed repeatedly, small files sent as multipart, and notes common
-to nearly every step of a format (said once).
+**Findings** follow: uploads never completed, files written without a commit, keys read repeatedly, prefixes
+listed repeatedly, HEAD before GET, small files sent as multipart, throttling, prefixes near S3's rate, requests one
+after another, commits by rename, directory markers. Notes common to nearly every step of a format are said once
+among the operations; a retry, a lost race (412) and a slow request are in the operation and the charts, not findings.
 
 Fixtures (`crates/proxy/tests/fixtures`): SlateDB 0.18 (172 requests → 34 operations), pyiceberg 0.9.1 (116 → 6),
 delta-rs 1.6 (49 → 5), boto3, the Java SDK.
@@ -213,9 +214,9 @@ delta-rs 1.6 (49 → 5), boto3, the Java SDK.
 ## Replay on another endpoint
 
 ```sh
-sonde replay session.sonde -e ceph                         # plan, confirm, replay, clean up, compare
-sonde replay session.sonde -e r2 --bucket data=scratch --yes
-sonde diff session.sonde replay.sonde                      # compare two files later
+sonde compare session.sonde --replay ceph                  # plan, confirm, replay, clean up, compare
+sonde compare session.sonde --replay r2 --bucket data=scratch --yes
+sonde compare session.sonde replay.sonde                   # a session and its replay, later
 ```
 
 Re-enacted (a session holds no object data):
@@ -261,6 +262,6 @@ records, output); nothing runs server-side. It holds what the session holds: sha
   `501 NotImplemented`, never forwarded.
 - One target endpoint per proxy.
 - No overall time limit per exchange; 60 s without a byte cuts it. Connecting gives up after 10 s.
-- `run`, `proxy` and `watch` wait up to 5 s at exit for requests in flight.
+- `run` and `proxy` wait up to 5 s at exit for requests in flight.
 - Replay is sequential: concurrency and timing are not reproduced.
 - Signed `aws-chunked` and length-less bodies are read whole: up to 1 GiB each, 2 GiB at once (more waits).

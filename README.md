@@ -12,10 +12,10 @@ out, what it cost, and whether the program survives when the store misbehaves.
 |---|---|
 | **Record** | `sonde run -- <command>` records every S3 request the program makes. |
 | **Read** | Requests become operations: multipart uploads, retries, listings, the commits of Iceberg, Delta, Hudi, Paimon, SlateDB and Lance. A table per operation (count, errors, p50/p95/p99) and charts over time. |
-| **Find** | Hot keys, HEAD before GET, throttling, orphaned files, rename-based commits, slow requests — each with what fixing it saves, a code fix, and (`--callers`) the line that sent it. |
+| **Find** | Hot keys, HEAD before GET, throttling, orphaned files, rename-based commits, requests one after another — each with what fixing it saves, a code fix, and (`--callers`) the line that sent it. |
 | **Try under faults** | `--trial` runs the program again while sonde answers 503s, lost answers, cut downloads, clock skew, stale listings… and says whether it **survived**, **degraded** or **broke**, and what to change. |
 | **Gate CI** | `sonde check` fails a job over its budget (requests, waiting, cost, errors, p95) or past its baseline. |
-| **Compare and replay** | `compare` two runs; `replay` a session on another store and see where answers differ. |
+| **Compare and replay** | `compare` two runs, or a session replayed on another store (`--replay`) to see where answers differ. |
 | **Import** | S3 access logs, CloudTrail and HAR files read the same way. |
 | **Look at stores** | Browse buckets, find incomplete uploads, run 40 compatibility probes across endpoints, decode table layouts. |
 
@@ -84,12 +84,12 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 ## Good to know
 
 - **What a recorded program may do**: by default `no-delete` — no deletes, no overwriting objects it did not write,
-  no bucket policy or versioning changes. `--allow-writes` lifts it, `--read-only` allows only reads
-  ([recording](docs/recording.md)). On a store that ignores `If-None-Match`, use `--read-only`.
+  no bucket policy or versioning changes. `--allow-writes` lifts it, `--policy read-only` allows only reads
+  ([recording](docs/recording.md)). On a store that ignores `If-None-Match`, use `--policy read-only`.
 - **A trial runs the program again**, once per scenario: point it at scratch paths with `{trial}` in a key, or
   every run writes over the last ([trials](docs/trials.md)).
-- sonde's own destructive actions (aborting uploads, deleting versions) need read-only mode off, a dry run and a
-  typed confirmation, and are written to an audit log.
+- sonde's own destructive actions (aborting uploads, deleting versions) are each a dry run and a typed
+  confirmation, and are written to an audit log.
 - Not supported yet: S3 Express One Zone (refused with a reason), SigV4a, HTTP/2 to the endpoint.
 - Memory grows with a session's requests: about a million in 2 GB ([performance](docs/performance.md)).
 - No telemetry. Credentials stay in sonde; logs and shared pages can be redacted.
