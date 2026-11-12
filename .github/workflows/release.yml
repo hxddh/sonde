@@ -42,7 +42,7 @@ jobs:
         # the binaries and the app (not the viewer's site, which is inside them)
         with: { path: dist, pattern: "sonde-[lmdw]*", merge-multiple: true }
       - name: Checksums
-        run: cd dist && cat *.sha256 > SHA256SUMS && cat SHA256SUMS
+        run: cd dist && cat ./*.sha256 > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
         run: scripts/changelog-section.sh "$VERSION" > notes.md
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable

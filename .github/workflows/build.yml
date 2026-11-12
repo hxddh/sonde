@@ -78,7 +78,7 @@ jobs:
         run: |
           # a static binary has no dynamic libraries to list
           (ldd target/${{ matrix.target }}/release/sonde || true) | tee ldd.txt
-          ! grep -Ei "gtk|gdk|glib|cairo|pango|webkit|x11|wayland" ldd.txt
+          if grep -Ei "gtk|gdk|glib|cairo|pango|webkit|x11|wayland" ldd.txt; then echo "::error::the terminal binary links GUI libraries"; exit 1; fi
           image=${{ contains(matrix.target, 'musl') && 'alpine:3.20' || 'debian:bookworm-slim' }}
           docker run --rm -v "$PWD/target/${{ matrix.target }}/release/sonde:/sonde:ro" $image /sonde --version
       - name: Check the binary on macOS
