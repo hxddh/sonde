@@ -69,6 +69,7 @@ output chunk; gzipped when finished). Then, in `sonde-proxy`:
 | `episode.rs` | requests → operations and findings |
 | `signals.rs` | rate, errors, latency, bytes, in flight, in one pass |
 | `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
+| `fixloop.rs` | a finding across a program's runs: fixed (gone at any threshold, measured saving), less, back, new, open; kept in `findings.json` |
 | `summary.rs` | counts kept as `<name>.summary.json`, valid while file length, time and cache version match |
 | `view.rs` | analysed once, sent in pages (`Sessions.view`, `Sessions.episodes`): what crosses to the UI does not grow |
 | `phrase.rs` | each sentence as a key and arguments beside its English; the app and viewer render them per language (`app/src/phrases.ts`), falling back to English |

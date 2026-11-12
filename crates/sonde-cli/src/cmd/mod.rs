@@ -3,6 +3,7 @@ pub mod compare;
 pub mod demo;
 pub mod du;
 pub mod endpoints;
+pub mod fixloop;
 pub mod layout;
 pub mod mpu;
 pub mod probe;

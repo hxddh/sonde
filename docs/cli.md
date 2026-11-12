@@ -21,11 +21,11 @@
 | Command | Does |
 |---|---|
 | `sonde demo [--app]` | A tour on the built-in store; `--app` opens the session in the app. |
-| `sonde run [-e E] [--policy P] [--tls] [--live] [--callers] [--name N] [-o FILE] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary (and how to point each SDK at sonde when nothing was sent). Exits with the command's status (128 + signal). |
+| `sonde run [-e E] [--policy P] [--tls] [--live] [--no-callers] [--name N] [-o FILE] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary as `show` does, ending with the change since the program's run before ([fix loop](#the-fix-loop)); how to point each SDK at sonde when nothing was sent. Exits with the command's status (128 + signal). |
 | ↳ `--policy no-delete\|read-only\|allow` | Default `[record] policy` in `sonde.toml`, else `no-delete` ([what it refuses](recording.md#what-a-recorded-program-may-do)). Short forms `--no-delete`, `--read-only`, `--allow-writes`. |
 | ↳ `--tls` | Also serve TLS, with a certificate the program is told to trust (`[record] tls = true`). |
 | ↳ `--live` | Each request on stderr as it happens. |
-| ↳ `--callers` | Name the code line that sent each request ([below](#which-code-sent-a-request)). |
+| ↳ `--no-callers` | Do not name the code line that sent each request (named by default where the language allows, [below](#which-code-sent-a-request)). |
 | ↳ `spark-submit`, `flink run` | Given s3a's endpoint on their command line. |
 | `sonde run --trial [--fault S …] -- CMD…` | The clean run, then one per fault scenario, each with a verdict ([trials](trials.md)). `{trial}` in the command and `SONDE_TRIAL` are `clean`, then the scenario's name. A failed or interrupted clean run is not tried. Ctrl-C / SIGTERM ends the trial (130 / 143), no verdict for the interrupted scenario. Exit: the command's status if not 0, else 1 if a trial broke. A run to a session path first removes that session's earlier verdicts and trials. |
 | ↳ `--fault S` | Repeatable: `slowdown`, `error`, `skew`, `lost-answer`, `fail-complete`, `complete-500`, `cut-body`, `slow-first-byte`, `lost-race`, `stale-list`, `slow`, `s3-limits`, or a `sonde.toml` scenario. `slowdown:N` / `error:N` (1–5) fail the first N attempts. |
@@ -40,12 +40,13 @@
 |---|---|
 | `sonde sessions [list] [-f json\|csv\|markdown]` | Sessions, newest first: program (name, else command; cut in the middle to the terminal's width), requests, duration, errors, worst trial verdict. |
 | `sonde sessions prune --keep N [--yes]` | Delete all but the newest N (baselines kept); a dry run without `--yes`. |
-| `sonde show [FILE] [--requests] [--errors] [--summary] [--all] [--app] [-f json]` | Operations (or `--requests`) and findings, then the summary: head line (requests, operations, duration, errors, not found); per-operation table (requests, errors and share, not found, p50, p95, p99, max; `*` under 20 requests); the four signals (rate with peak in flight, errors, latency, bytes) and cost; waiting by kind; findings. |
-| ↳ long sessions | Past 2,000 lines: the first and last hundred and a count (`--all` prints all). The summary is always printed. |
-| ↳ `--errors` | Only what failed (JSON too: `episodes`, `records`); the summary stays the session's. |
+| `sonde show [FILE] [--requests] [--errors] [--summary] [--all] [--app] [-f json]` | The summary, one shape for `run`, `show` and `demo`: head line (requests, operations, SDK, endpoint, duration, waiting, cost, errors, not found); the findings, each with its saving, code lines (`at file:line`) and the fix for the detected SDK; "Acting on N findings"; one table by kind of request (requests, errors, p95, waiting and its share, cost share; `*` under 20 requests when others have more); the change since the program's run before. |
+| ↳ `--all` | Each operation on its line first; the table with p50 and max and every kind; the four signals (rate, errors, latency, bytes), first byte, cost and busy prefixes. |
+| ↳ `--requests` | Each request on its line, then the summary. Past 2,000 lines: the first and last hundred and a count (`--all` prints all). |
+| ↳ `--errors` | Only the operations (or `--requests`) that failed, no summary (JSON: `episodes`, `records`; the summary stays the session's). |
 | ↳ "Acting on N findings" | The session recomputed without the requests those findings name (findings naming none are left out, and the line says so). |
 | ↳ `-f json` | Streamed. Each finding's fixes by SDK; `summary.operations[]` has `errorShare`, `p50Ms`, `p95Ms`, `p99Ms`, `maxMs`, `few`. `--summary -f json`: `summary`, `waiting` (`byKind`), `p95Ms`, `peakInFlight`, `cost`, `whatIf`, `observations`, no requests. |
-| `sonde compare BEFORE AFTER [-f json]` | Two runs: requests, waiting, time, errors and cost by kind of request; findings gone and new. Unchanged kinds are counted, not listed. Different programs compare by figures only (said). |
+| `sonde compare [RUN [RUN]] [-f json]` | Two runs: requests, waiting, time, errors and cost by kind of request; each finding fixed, less, back or new ([fix loop](#the-fix-loop)). One run: it and its program's run before; none: the newest run and the one before. Unchanged kinds are counted, not listed. Different programs compare by figures only (said). |
 | `sonde check [FILE] [options] [-f json\|markdown\|github]` | A run against a budget, a baseline and its trials. Exit 1 when over budget, past the baseline, or a trial broke. [Details](#sonde-check). |
 | `sonde share [FILE] [-o DIR] [--serve [--port N]] [--json] [--html] [--redact]` | A static site: the viewer and `session.json` (default `./<session>-share/`). `--serve`: on 127.0.0.1 until Ctrl-C. `--json`: the document only, streamed. `--html`: one self-contained file (findings, time, timeline, operations at `#op-N`; past 2,000 operations, the first 2,000 and every one a finding links to, with a count). Titled by the program. `--redact`: bucket and key names become tokens (same name, same token; layout names, numbers, extensions kept); headers, bodies, URLs, request ids, output and arguments dropped. |
 | `sonde export [FILE] [-o FILE \| --to URL]` | OTLP/JSON traces (`--otlp`, the default): a span per operation, its requests under it; `service.name` is the program. `--to` posts to a collector (e.g. `http://localhost:4318/v1/traces`) in parts of about 3 MiB, an operation's spans kept together. |
@@ -162,14 +163,33 @@ exit ${status:-0}
 ## Which code sent a request
 
 sonde reads an `x-sonde-caller: file:line function` header (never forwarded), the SDK and version from the user
-agent, and the trace from `traceparent`. `sonde run --callers` (or the "Name the code" setting) adds the header
-before signing, naming the program's first own frame:
+agent, and the trace from `traceparent`. `sonde run` adds the header before signing (off: `--no-callers`, or
+`name-callers = false`), naming the program's first own frame; work handed to a thread pool (boto3's transfer
+manager) is named by the line that handed it:
 
 | Language | SDK | How |
 |---|---|---|
-| Python | boto3 / botocore | a `sitecustomize` first on `PYTHONPATH` (a program's own still runs) |
+| Python | boto3 / botocore | a `sitecustomize` first on `PYTHONPATH` (a program's own still runs); it imports nothing until the program imports botocore |
 | Node.js | AWS SDK for JavaScript v3 | `NODE_OPTIONS=--require …/sonde-caller.cjs`: a middleware on each client |
 | Java | AWS SDK for Java 2 | `JAVA_TOOL_OPTIONS=-javaagent:…/sonde-agent.jar`: a global `ExecutionInterceptor`, only when the SDK is on the class path (not a Spring Boot jar's own loader) |
 
 The Java hook's sources are in `hooks/java` (`build.sh` rebuilds its jars). Other SDKs can add the header with their
-own request hook.
+own request hook. The hooks are written whole (a file renamed into place) and only when changed, so runs at once
+never load half of one.
+
+## The fix loop
+
+A finding keeps one identity across a program's runs: its kind and what it is about (key, prefix), never counts or
+ids. Between a run and the program's run before it:
+
+| State | When | Says |
+|---|---|---|
+| fixed | gone at any threshold | what it saved, measured, against the predicted: `saved 20 requests (predicted 20)` |
+| less | still there, under its threshold | what it saved so far |
+| back | fixed in an earlier run, here again | |
+| new | not in the run before | |
+| open | in both | counted: `2 still open` |
+
+Measured: of the requests the finding named, those the later run no longer sends (by kind and key); for a finding
+of time, the fall in waiting. Each program's findings (open, fixed with its saving, back) are kept in
+`sessions/findings.json`, brought up to date by `run`, `show` and the app when they read the program's newest run.

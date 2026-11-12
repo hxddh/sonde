@@ -1322,10 +1322,14 @@ pub struct RunChange {
     pub peak_in_flight: (usize, usize),
     /// Kinds of request, the largest change first.
     pub groups: Vec<GroupChange>,
-    /// Findings of the first run the second no longer has.
+    /// Findings of the first run the second no longer has at any
+    /// threshold (fixed).
     pub resolved: Vec<FindingText>,
     /// Findings only the second run has.
     pub appeared: Vec<FindingText>,
+    /// Each finding of either run, where it stands: fixed (with what it
+    /// saved, measured, and what was predicted), less, new, back or open.
+    pub findings: Vec<crate::fixloop::FindingChange>,
     /// Both are runs of one program. Two programs' figures still compare,
     /// but their findings do not: one's are not "gone" because the other
     /// never had them.
@@ -1359,6 +1363,7 @@ impl RunChange {
         if !self.same_program {
             self.resolved.clear();
             self.appeared.clear();
+            self.findings.clear();
         }
         self
     }
@@ -1423,11 +1428,43 @@ pub struct Run {
     /// Its requests by folder ([`folder_of`]): what the prefixes both runs
     /// are shown by are chosen from.
     pub folders: HashMap<String, usize>,
+    /// Its findings at any threshold, by identity: a finding of the run
+    /// before that is only among these is less, not fixed.
+    pub traces: BTreeMap<String, FindingText>,
+    /// What its findings would save, by what their requests asked.
+    pub asks: crate::fixloop::Asks,
+    /// How often it asked what the run before's findings would save
+    /// ([`Run::measure`]), and whether that was counted.
+    pub counts: HashMap<String, usize>,
+    pub measured: bool,
 }
 
 impl Run {
     /// A run of `records`, its profile and findings reckoned already.
     pub fn of(records: &[Record], profile: Profile, observations: Vec<Observation>) -> Run {
+        let traces = crate::episode::traces(records, &crate::episode::episodes(records));
+        Run::with(records, profile, observations, traces)
+    }
+
+    /// Counts what `records` (this run's) asked of what `before`'s findings
+    /// would save: what a fixed finding saved is measured by it.
+    pub fn measure(&mut self, records: &[Record], before: &Run) {
+        let wanted: std::collections::HashSet<&str> = before
+            .asks
+            .values()
+            .flatten()
+            .map(|(a, _, _)| a.as_str())
+            .collect();
+        self.counts = crate::fixloop::count(records, &wanted);
+        self.measured = true;
+    }
+
+    fn with(
+        records: &[Record],
+        profile: Profile,
+        observations: Vec<Observation>,
+        traces: Vec<Observation>,
+    ) -> Run {
         let mut folders: HashMap<String, usize> = HashMap::new();
         let mut name = String::new();
         for r in records {
@@ -1452,6 +1489,19 @@ impl Run {
                 }
             }
         }
+        let asks = crate::fixloop::asks_of(records, &observations);
+        let traces = traces
+            .into_iter()
+            .map(|o| {
+                (
+                    finding_identity(&o),
+                    FindingText {
+                        text: o.text,
+                        phrases: o.phrases,
+                    },
+                )
+            })
+            .collect();
         Run {
             requests: records.len(),
             errors: records
@@ -1461,6 +1511,10 @@ impl Run {
             profile,
             observations,
             folders,
+            traces,
+            asks,
+            counts: HashMap::new(),
+            measured: false,
         }
     }
 
@@ -1471,17 +1525,18 @@ impl Run {
         records: &[Record],
         prices: &RequestPrices,
     ) -> Run {
-        let (profile, observations) = std::thread::scope(|scope| {
+        let (profile, observations, traces) = std::thread::scope(|scope| {
             let p = scope.spawn(|| profile(records, prices));
             let episodes = crate::episode::episodes(records);
             let o = crate::episode::observations_of(header, records, &episodes);
+            let t = crate::episode::traces_of(header, records, &episodes);
             drop(episodes);
             match p.join() {
-                Ok(p) => (p, o),
+                Ok(p) => (p, o, t),
                 Err(panic) => std::panic::resume_unwind(panic),
             }
         });
-        Run::of(records, profile, observations)
+        Run::with(records, profile, observations, traces)
     }
 }
 
@@ -1522,21 +1577,18 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
                 .cmp(&(x.requests.1 as i64 - x.requests.0 as i64).abs()),
         )
     });
-    let ids = |o: &[Observation]| -> BTreeMap<String, FindingText> {
-        o.iter()
-            .filter(|o| !o.phrases.is_empty())
-            .map(|o| {
-                (
-                    identity(o),
-                    FindingText {
-                        text: o.text.clone(),
-                        phrases: o.phrases.clone(),
-                    },
-                )
+    let findings = crate::fixloop::changes(a, b);
+    let said = |states: &[crate::fixloop::State]| -> Vec<FindingText> {
+        findings
+            .iter()
+            .filter(|f| states.contains(&f.state))
+            .map(|f| FindingText {
+                text: f.text.clone(),
+                phrases: f.phrases.clone(),
             })
             .collect()
     };
-    let (ia, ib) = (ids(&a.observations), ids(&b.observations));
+    use crate::fixloop::State;
     // each prefix either run counted (its busiest, not the rest's "other")
     // one set of prefixes for both runs, chosen from the folders of both:
     // each run's own choice would name the same folder at two depths
@@ -1571,16 +1623,9 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         peak_in_flight: (pa.peak_in_flight, pb.peak_in_flight),
         groups,
         latency: (pa.latency.clone(), pb.latency.clone()),
-        resolved: ia
-            .iter()
-            .filter(|(k, _)| !ib.contains_key(*k))
-            .map(|(_, t)| t.clone())
-            .collect(),
-        appeared: ib
-            .iter()
-            .filter(|(k, _)| !ia.contains_key(*k))
-            .map(|(_, t)| t.clone())
-            .collect(),
+        resolved: said(&[State::Fixed]),
+        appeared: said(&[State::New, State::Back]),
+        findings,
         same_program: true,
     }
 }

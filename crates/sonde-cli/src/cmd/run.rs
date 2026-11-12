@@ -20,10 +20,15 @@ pub struct RunArgs {
     /// Print each request on stderr as it happens.
     #[arg(long)]
     live: bool,
-    /// Name the place in a program's code that sent each request (Python's
-    /// boto3, the AWS SDK for JavaScript v3, the AWS SDK for Java 2):
-    /// findings then say where to change it. Also the `name-callers` setting.
-    #[arg(long)]
+    /// Do not name the place in the program's code that sent each request.
+    /// It is named by default for Python's boto3, the AWS SDK for
+    /// JavaScript v3 and the AWS SDK for Java 2 (hooks loaded with
+    /// PYTHONPATH, NODE_OPTIONS, JAVA_TOOL_OPTIONS), so that each finding
+    /// says its line. Also `name-callers = false` in the settings.
+    #[arg(long, conflicts_with = "callers")]
+    no_callers: bool,
+    /// Name callers even where the settings say not to.
+    #[arg(long, hide = true)]
     callers: bool,
     /// Then run the command again under faults chosen from what it did (a
     /// 503 on each request's first attempt, a skewed clock if it signs, a
@@ -456,7 +461,7 @@ async fn run_once(
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
-    if a.callers || s.settings().name_callers {
+    if a.callers || (!a.no_callers && s.settings().name_callers) {
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
     // each run a place of its own, if the command asks for one: `{trial}`
@@ -620,15 +625,26 @@ async fn run_once(
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
     started.writer.flush()?;
     if under.is_none() {
-        let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
+        let session = Session::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
         let color = std::io::stderr().is_terminal();
-        print_summary(
+        let prices = request_prices_for(s, &session.header.endpoint);
+        let analysis = sonde_proxy::view::Analysis::of(&session, &prices);
+        // against the program's run before: what the change did
+        let since = super::fixloop::since_last(
+            s,
+            &started.path,
+            &session.header,
             &session.records,
-            &session.header.endpoint,
+            &analysis,
+        );
+        print_summary_of(
+            &analysis,
+            &session.header,
             &started.path,
             color,
-            &request_prices_for(s, &session.header.endpoint),
             false,
+            false,
+            since.as_ref(),
         );
         if session.records.is_empty() {
             eprintln!("{}", NO_REQUESTS);

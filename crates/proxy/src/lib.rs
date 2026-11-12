@@ -12,6 +12,7 @@ pub mod chunked;
 pub mod episode;
 pub mod fault;
 pub mod fixes;
+pub mod fixloop;
 pub mod import;
 pub mod jvm;
 pub mod logs;

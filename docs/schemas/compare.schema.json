@@ -127,7 +127,7 @@
     },
     "resolved": {
       "type": "array",
-      "description": "Findings the second run no longer has.",
+      "description": "Findings the second run no longer has at any threshold (fixed).",
       "items": {
         "type": "object",
         "properties": {
@@ -166,6 +166,86 @@
         "required": [
           "text",
           "phrases"
+        ]
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "Each finding of either run, where it stands: fixed first, then less, back, new, open.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "identity": {
+            "type": "string",
+            "description": "The same finding across runs: its kind and what it is about."
+          },
+          "state": {
+            "enum": [
+              "fixed",
+              "less",
+              "back",
+              "new",
+              "open"
+            ],
+            "description": "fixed: gone at any threshold; less: under its threshold; back: fixed in an earlier run, here again."
+          },
+          "level": {
+            "enum": [
+              "warn",
+              "info"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "phrases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/phrase"
+            }
+          },
+          "was": {
+            "type": "object",
+            "description": "As it read in the run before (less).",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "phrases": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/phrase"
+                }
+              }
+            },
+            "required": [
+              "text",
+              "phrases"
+            ]
+          },
+          "predicted": {
+            "$ref": "#/$defs/saving",
+            "description": "What acting on it was predicted to save."
+          },
+          "measured": {
+            "$ref": "#/$defs/saving",
+            "description": "What it saved, measured between the runs (fixed, less)."
+          },
+          "saved": {
+            "$ref": "#/$defs/phrase"
+          },
+          "savedText": {
+            "type": "string",
+            "description": "The measured saving against the predicted."
+          }
+        },
+        "required": [
+          "identity",
+          "state",
+          "level",
+          "text",
+          "phrases",
+          "predicted"
         ]
       }
     },
@@ -258,6 +338,7 @@
     "groups",
     "resolved",
     "appeared",
+    "findings",
     "sameProgram",
     "latency",
     "prefixes"
@@ -281,6 +362,22 @@
       },
       "required": [
         "key"
+      ]
+    },
+    "saving": {
+      "type": "object",
+      "description": "Requests not sent and time not waited, in ms.",
+      "properties": {
+        "requests": {
+          "type": "integer"
+        },
+        "ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "requests",
+        "ms"
       ]
     }
   }

@@ -136,7 +136,7 @@ fn the_demo_records_a_session_that_every_command_reads() {
 fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
     let t = tempfile::tempdir().unwrap();
     assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
-    let out = stdout(&sonde(t.path(), &["show"]));
+    let out = stdout(&sonde(t.path(), &["show", "--all"]));
     // what sonde reads from requests, each once in the tour
     for line in [
         "4 lookups in demo/tour/, none found",
@@ -1172,13 +1172,18 @@ fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
     assert_eq!(all["records"].as_array().unwrap().len(), 2400);
     assert_eq!(all["records"][7]["status"], 403);
     // a long session: its first and last hundred, and how many are between
-    let shown = stdout(&sonde(t.path(), &["show", out]));
+    let shown = stdout(&sonde(t.path(), &["show", out, "--requests"]));
     assert!(
-        shown.contains("… 2,200 operations between these: `--all` prints them"),
+        shown.contains("… 2,200 requests between these: `--all` prints them"),
         "{}",
         &shown[..shown.len().min(2000)]
     );
-    assert!(shown.contains("t/k99 ") && shown.contains("t/k2300 ") && !shown.contains("t/k1200 "));
+    let has = |k: &str| {
+        shown
+            .lines()
+            .any(|l| l.split_whitespace().any(|w| w.ends_with(k)))
+    };
+    assert!(has("t/k99") && has("t/k2300") && !has("t/k1200"), "{shown}");
     // the summary is always there, each figure once
     assert_eq!(shown.matches("2,400 requests").count(), 1, "{shown}");
     assert!(shown.contains("PutObject"));
@@ -1382,5 +1387,100 @@ fn spark_submit_is_given_s3as_endpoint_and_tls_its_certificate() {
     assert_eq!(
         std::fs::metadata(key).unwrap().permissions().mode() & 0o777,
         0o600
+    );
+}
+
+/// The fix loop on recorded runs of one boto3 program: `show` says each
+/// finding's saving, line and fix, and the change since the run before;
+/// `compare` alone takes the last two runs.
+#[test]
+fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("data/sessions");
+    std::fs::create_dir_all(&dir).unwrap();
+    let runs = [
+        "etl-1-base",
+        "etl-2-again",
+        "etl-3-no-head",
+        "etl-4-no-small",
+        "etl-5-undone",
+    ];
+    for r in runs {
+        let from = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../proxy/tests/fixtures")
+            .join(format!("{r}.sonde"));
+        std::fs::copy(from, dir.join(format!("{r}.sonde"))).unwrap();
+    }
+    let shown: Vec<String> = runs
+        .iter()
+        .map(|r| stdout(&sonde(t.path(), &["show", r])))
+        .collect();
+    // the head line names the SDK; each finding its saving, line and fix
+    let first = &shown[0];
+    assert!(
+        first.contains("91 requests (73 operations) from boto3 1.44 to moto"),
+        "{first}"
+    );
+    for said in [
+        "    saving: 20 fewer requests (21% of the session)",
+        "    at etl.py:19 <module> (20 requests)",
+        "    fix for boto3:",
+        "      obj = s3.get_object(Bucket=b, Key=k)",
+        "    at etl.py:33 <module> (18 requests)",
+    ] {
+        assert!(first.contains(said), "no {said:?} in:\n{first}");
+    }
+    // findings first, then one table: no other table by default
+    assert!(first.find("saving:").unwrap() < first.find("kind ").unwrap());
+    assert!(
+        !first.contains("first byte") && !first.contains("waiting on"),
+        "{first}"
+    );
+    assert!(!first.contains("since the run before"), "{first}");
+    assert!(shown[1].contains("since the run before (etl-1-base)"));
+    let third = &shown[2];
+    assert!(
+        third.contains("✓ fixed  20 objects were checked with HEAD and then read with GET: the GET alone answers both · saved 20 requests (predicted 20)"),
+        "{third}"
+    );
+    assert!(third.contains("  requests 91 → 71 (-22%)"), "{third}");
+    assert!(
+        shown[3].contains("✓ fixed  6 files under 5 MiB"),
+        "{}",
+        shown[3]
+    );
+    assert!(
+        shown[4].contains("! back   20 objects were checked"),
+        "{}",
+        shown[4]
+    );
+
+    // compare alone: the last two runs, an undone fix back
+    let c = stdout(&sonde(t.path(), &["compare"]));
+    assert!(
+        c.contains("etl-4-no-small.sonde → etl-5-undone.sonde"),
+        "{c}"
+    );
+    assert!(c.contains("! back   6 files under 5 MiB"), "{c}");
+    // one run: it and the run before it
+    let c = stdout(&sonde(t.path(), &["compare", "etl-3-no-head"]));
+    assert!(c.contains("etl-2-again.sonde → etl-3-no-head.sonde"), "{c}");
+    assert!(c.contains("✓ fixed  20 objects"), "{c}");
+    let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["compare", "etl-3-no-head", "-f", "json"],
+    )))
+    .unwrap();
+    let fixed = &j["findings"][0];
+    assert_eq!(fixed["state"], "fixed", "{j}");
+    assert_eq!(fixed["predicted"]["requests"], 20);
+    assert_eq!(fixed["measured"]["requests"], 20);
+    // a program's first run has nothing before it
+    let none = sonde(t.path(), &["compare", "etl-1-base"]);
+    assert_eq!(none.status.code(), Some(64));
+    assert!(
+        stderr(&none).contains("the first run of `etl`"),
+        "{}",
+        stderr(&none)
     );
 }

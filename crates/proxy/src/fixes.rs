@@ -245,6 +245,30 @@ pub fn for_key(key: &str) -> Vec<Fix> {
     }
 }
 
+/// The language of an SDK as [`crate::callers::sdk`] names it (`boto3
+/// 1.44`): what picks the fix shown for it.
+pub fn language(sdk: &str) -> Option<&'static str> {
+    let name = sdk.split_whitespace().next().unwrap_or("");
+    Some(match name {
+        "boto3" | "botocore" | "aws-cli" | "s3fs" => "python",
+        "aws-sdk-java" | "hadoop-aws" | "hadoop" => "java",
+        "aws-sdk-go" | "aws-sdk-go-v2" => "go",
+        "aws-sdk-js" => "js",
+        _ => return None,
+    })
+}
+
+/// Of a finding's fixes, the one for the SDK that sent its requests: a
+/// store's or an engine's setting whatever the SDK; none for an SDK sonde
+/// has no fix in the language of.
+pub fn for_sdk<'a>(fixes: &'a [Fix], sdk: Option<&str>) -> Option<&'a Fix> {
+    let lang = sdk.and_then(language);
+    fixes
+        .iter()
+        .find(|f| f.sdk == "config")
+        .or_else(|| fixes.iter().find(|f| Some(f.sdk) == lang))
+}
+
 /// A session after acting on the findings that name what they save.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -391,6 +415,24 @@ mod tests {
     use crate::episode::{episodes, observations};
     use crate::profile::{RequestPrices, profile};
     use chrono::DateTime;
+
+    #[test]
+    fn the_fix_shown_is_the_detected_sdks_and_a_setting_for_any() {
+        let head = for_key("obs.headget");
+        let pick = |sdk: Option<&str>| for_sdk(&head, sdk).map(|f| f.sdk);
+        assert_eq!(pick(Some("boto3 1.44")), Some("python"));
+        assert_eq!(pick(Some("aws-sdk-java 2.21")), Some("java"));
+        assert_eq!(pick(Some("aws-sdk-go-v2 1.30")), Some("go"));
+        assert_eq!(pick(Some("aws-sdk-js 3.600")), Some("js"));
+        // an SDK with no fix in its language, or none detected: none shown
+        assert_eq!(pick(Some("object_store 0.14")), None);
+        assert_eq!(pick(None), None);
+        // an engine's setting, whatever sent it
+        assert_eq!(
+            for_sdk(&for_key("obs.rename"), Some("hadoop 3.3")).map(|f| f.sdk),
+            Some("config")
+        );
+    }
 
     #[test]
     fn acting_on_a_hot_key_leaves_one_read_and_shows_how() {

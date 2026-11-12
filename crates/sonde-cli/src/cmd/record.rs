@@ -341,57 +341,73 @@ pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
     }
 }
 
-/// Where the time went: the kinds of request the program waited on most.
-/// `whole` (a run's own summary, which has no cost table and four signal
-/// lines) says the in-flight peak and the cost here; `sonde show` has said
-/// them above, once.
-pub(super) fn print_profile(p: &Profile, color: bool, whole: bool, say: &dyn Fn(String)) {
+/// The kinds of request, in one table: how many, how many failed, how long
+/// 95% took at most, the run's waiting and cost that were theirs. `all`
+/// adds the median and the slowest, and every kind.
+pub(super) fn kinds_table(p: &Profile, all: bool) -> Vec<String> {
+    use sonde_proxy::summary::FEW;
     if p.groups.is_empty() {
-        return;
+        return Vec::new();
     }
-    let mut line = format!(
-        "waiting on S3 {} ({:.0}% of the run)",
-        output::duration(p.busy_ms),
-        p.busy_ms * 100.0 / p.wall_ms.max(1e-9),
-    );
-    if whole {
-        line.push_str(&format!(
-            " · request cost ≈ {}",
-            money_text(p.cost.amount, &p.cost.currency)
-        ));
-    }
-    say(paint(&line, "1", color).to_string());
     const ROWS: usize = 8;
+    let shown = if all { p.groups.len() } else { ROWS };
+    // a percentile of a handful of requests is one of them: marked, when
+    // others are of more
+    let few = |g: &sonde_proxy::profile::Group| g.requests < FEW as usize;
+    let mark = p.groups.iter().any(few) && !p.groups.iter().all(few);
     let rows: Vec<Vec<String>> = p
         .groups
         .iter()
-        .take(ROWS)
+        .take(shown)
         .map(|g| {
-            vec![
+            let star = if mark && few(g) { "*" } else { "" };
+            let mut row = vec![
                 if g.missed {
                     format!("{} (not found)", g.operation)
                 } else {
                     g.operation.clone()
                 },
-                format!("{:.0}%", g.share * 100.0),
-                output::duration(g.waited_ms),
                 output::grouped(g.requests as u64),
-                output::duration(g.p50_ms),
-                output::duration(g.p95_ms),
-            ]
+                if g.errors > 0 && !g.missed {
+                    output::grouped(g.errors as u64)
+                } else {
+                    String::new()
+                },
+                format!("{}{star}", output::duration(g.p95_ms)),
+                format!(
+                    "{} ({:.0}%)",
+                    output::duration(g.waited_ms),
+                    g.share * 100.0
+                ),
+                if p.cost.amount > 0.0 {
+                    share_text(g.cost / p.cost.amount)
+                } else {
+                    String::new()
+                },
+            ];
+            if all {
+                row.push(format!("{}{star}", output::duration(g.p50_ms)));
+                row.push(output::duration(g.max_ms));
+            }
+            row
         })
         .collect();
-    say(output::table(
-        &["waiting on", "share", "time", "requests", "p50", "p95"],
-        &rows,
-    )
-    .to_string());
-    if p.groups.len() > ROWS {
-        say(format!(
-            "  … and {} more kinds of request",
-            p.groups.len() - ROWS
+    let mut heads = vec!["kind", "requests", "errors", "p95", "waiting", "cost"];
+    if all {
+        heads.extend(["p50", "max"]);
+    }
+    let mut out = vec![output::table(&heads, &rows).to_string()];
+    if p.groups.len() > shown {
+        let more = p.groups.len() - shown;
+        out.push(format!(
+            "  … and {more} more {} of request (`--all` lists them)",
+            if more == 1 { "kind" } else { "kinds" }
         ));
     }
+    if mark {
+        out.push(format!("  * of fewer than {FEW} requests"));
+    }
+    out
 }
 
 pub(super) fn print_summary(
@@ -405,19 +421,23 @@ pub(super) fn print_summary(
     // (a run just recorded: its times are its own)
     let header = SessionHeader::new(endpoint, "", "", None);
     let analysis = Analysis::of_records(&header, records, prices);
-    print_summary_of(&analysis, &header, path, color, stdout);
+    print_summary_of(&analysis, &header, path, color, stdout, false, None);
 }
 
-/// What a session amounts to, each fact once: the head line has the
-/// requests, the operations and the time; the signals the rate, the errors,
-/// the latency, the bytes and (for `sonde show`) the cost; then where the
-/// waiting went, and the findings.
+/// What a session amounts to, in one fixed shape for `run`, `show` and
+/// `demo`: the head line (requests, operations, the SDK, the store, the
+/// time, the waiting and the cost), the findings first (each with its
+/// saving, its line of code and its fix), what acting on them would leave,
+/// one table of the kinds of request, and the change since the program's
+/// run before. `all` adds the signals over the run and their tables.
 pub(super) fn print_summary_of(
     a: &Analysis,
     header: &SessionHeader,
     path: &Path,
     color: bool,
     stdout: bool,
+    all: bool,
+    since: Option<&sonde_proxy::fixloop::SinceLast>,
 ) {
     // `sonde show` answers on stdout; run and proxy keep stdout for the program's own output
     let say = |line: String| {
@@ -428,13 +448,29 @@ pub(super) fn print_summary_of(
         }
     };
     let s = &a.summary;
-    let endpoint = &header.endpoint;
+    let p = &a.profile;
     let mut head = format!(
-        "{} ({}) to {endpoint} in {}",
+        "{} ({})",
         output::count(s.requests as usize, "request"),
         output::count(a.episodes.len(), "operation"),
-        output::duration(s.seconds * 1000.0)
     );
+    if let Some(sdk) = &a.sdk {
+        head.push_str(&format!(" from {sdk}"));
+    }
+    head.push_str(&format!(
+        " to {} in {}",
+        header.endpoint,
+        output::duration(s.seconds * 1000.0)
+    ));
+    if p.busy_ms > 0.0 {
+        head.push_str(&format!(", waiting {}", output::duration(p.busy_ms)));
+    }
+    if p.cost.amount > 0.0 {
+        head.push_str(&format!(
+            ", cost ≈ {}",
+            money_text(p.cost.amount, &p.cost.currency)
+        ));
+    }
     if s.errors > 0 {
         head.push_str(&format!(
             " · {}",
@@ -445,101 +481,38 @@ pub(super) fn print_summary_of(
         head.push_str(&format!(" · {} not found", output::grouped(s.misses)));
     }
     say(format!("\n{}", paint(&head, "1", color)));
-    if !s.operations.is_empty() {
-        // a percentile of a handful of requests is one of them: marked
-        let few = s.operations.iter().any(|o| o.few);
-        let ms = |v: f64, o: &sonde_proxy::summary::OpStats| {
-            format!("{}{}", output::duration(v), if o.few { "*" } else { "" })
-        };
-        let rows: Vec<Vec<String>> = s
-            .operations
-            .iter()
-            .map(|o| {
-                vec![
-                    o.operation.clone(),
-                    output::grouped(o.count),
-                    if o.errors > 0 {
-                        format!(
-                            "{} ({})",
-                            output::grouped(o.errors),
-                            share_text(o.error_share)
-                        )
-                    } else {
-                        String::new()
-                    },
-                    if o.misses > 0 {
-                        output::grouped(o.misses)
-                    } else {
-                        String::new()
-                    },
-                    ms(o.p50_ms, o),
-                    ms(o.p95_ms, o),
-                    ms(o.p99_ms, o),
-                    output::duration(o.max_ms),
-                ]
-            })
-            .collect();
-        say(output::table(
-            &[
-                "operation",
-                "requests",
-                "errors",
-                "not found",
-                "p50",
-                "p95",
-                "p99",
-                "max",
-            ],
-            &rows,
-        )
-        .to_string());
-        if few {
-            say(format!(
-                "  * of fewer than {} requests",
-                sonde_proxy::summary::FEW
-            ));
-        }
-    }
-    for (what, n) in &s.error_codes {
-        say(format!("  {} × {what}", output::grouped(*n)));
-    }
-    // the four signals, each with its line over the run
-    let mut signals = a.signals.clone();
     if header.whole_seconds {
-        // where in its second a request began is not known: how many were
-        // in flight at once is not said
-        signals.in_flight.peak = 0;
+        // where in its second a request began is not known
         say("  its times are to the second (an imported log): a second's requests are spread over it in the log's order, and how many were in flight at once is not known".into());
     }
-    let signals = sonde_proxy::signals::text(&signals, color);
-    // a run's own summary keeps to the four lines; `sonde show` has the tables too
-    for line in signals.lines().take(if stdout { usize::MAX } else { 4 }) {
-        say(line.to_string());
-    }
-    print_profile(&a.profile, color, !stdout, &say);
     for o in &a.observations {
-        let mark = if o.level == "warn" {
-            paint("!", "33", color)
-        } else {
-            paint("·", "2", color)
-        };
-        say(format!("{mark} {}", o.text));
-        // where in the program, when it says
-        for c in &o.callers {
-            say(paint(
-                &format!(
-                    "    at {} ({})",
-                    c.place,
-                    output::count(c.requests, "request")
-                ),
-                "2",
-                color,
-            ));
+        for line in super::fixloop::finding_lines(o, a.sdk.as_deref(), color) {
+            say(line);
         }
     }
     // acting on all of them, at once
     if let Some(w) = &a.what_if {
         say(paint(&w.line(), "32", color));
+    }
+    for line in kinds_table(p, all) {
+        say(line);
+    }
+    for (what, n) in &s.error_codes {
+        say(format!("  {} × {what}", output::grouped(*n)));
+    }
+    if all {
+        let mut signals = a.signals.clone();
+        if header.whole_seconds {
+            signals.in_flight.peak = 0;
+        }
+        for line in sonde_proxy::signals::text(&signals, color).lines() {
+            say(line.to_string());
+        }
+    }
+    if let Some(since) = since {
+        for line in super::fixloop::since_lines(since, color) {
+            say(line);
+        }
     }
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
 }

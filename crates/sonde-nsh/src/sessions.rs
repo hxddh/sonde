@@ -1755,18 +1755,49 @@ impl Sessions {
     pub async fn compare_runs(before: String, after: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
             // one reckoned before the other is opened: a run of either
-            // size is held with what the other amounts to, not with it
-            let run = |path: &str| -> Result<_, String> {
+            // size is held with what the other amounts to, not with it (the
+            // later counted against what the earlier's findings would save)
+            let run = |path: &str, against: Option<&sonde_proxy::profile::Run>| {
                 let s = open_session(path)?;
                 let prices = crate::state::request_prices_for(&s.header.endpoint);
-                let run = sonde_proxy::profile::Run::analysed(&s.header, &s.records, &prices);
-                Ok((s.header.command.clone(), run))
+                let mut run = sonde_proxy::profile::Run::analysed(&s.header, &s.records, &prices);
+                if let Some(a) = against {
+                    run.measure(&s.records, a);
+                }
+                Ok::<_, String>((s.header.command.clone(), run))
             };
-            let ((ca, a), (cb, b)) = (run(&before)?, run(&after)?);
+            let (ca, a) = run(&before, None)?;
+            let (cb, b) = run(&after, Some(&a))?;
             Ok(to_json(
                 sonde_proxy::profile::compare_runs(&a, &b)
                     .of_programs(ca.as_deref(), cb.as_deref()),
             ))
+        })
+        .await
+        .map_err(err_msg)?
+    }
+
+    /// A run against its program's run before it (the fix loop): `{ program,
+    /// previous, change, findings, unsaved }`. `findings` are the run's and
+    /// those of the run before it no longer has, each with its `state`
+    /// (fixed, less, back, new, open), `predicted` and, when fixed or less,
+    /// `measured` (`{ requests, ms }`) and `saved` (a phrase). `change` is
+    /// `compareRuns`'s, none for a program's first run. Null for a session
+    /// that is no run of a program. Its findings are kept with the
+    /// program's when it is the program's newest run.
+    pub async fn since_last(path: String) -> Result<JsonValue, String> {
+        tokio::task::spawn_blocking(move || {
+            let s = open_session(&path)?;
+            let prices = crate::state::request_prices_for(&s.header.endpoint);
+            let run = sonde_proxy::profile::Run::analysed(&s.header, &s.records, &prices);
+            Ok(to_json(sonde_proxy::fixloop::since_last(
+                &sonde().paths().sessions(),
+                Path::new(&path),
+                &s.header,
+                &s.records,
+                run,
+                &crate::state::request_prices_for,
+            )))
         })
         .await
         .map_err(err_msg)?

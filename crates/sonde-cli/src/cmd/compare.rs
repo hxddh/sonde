@@ -16,10 +16,10 @@ use super::record::*;
 
 #[derive(Args)]
 pub struct CompareArgs {
-    /// The run before a change.
-    before: PathBuf,
-    /// The run after it.
-    after: PathBuf,
+    /// The run before a change and the run after it. One run: it and its
+    /// program's run before it. None: the newest run and the one before it.
+    #[arg(value_name = "RUN", num_args = 0..=2)]
+    runs: Vec<PathBuf>,
     /// The format written: table or json.
     #[arg(
         long,
@@ -206,24 +206,6 @@ fn not_a_replay(a: &DiffArgs, original: &[reqlog::Record]) -> String {
     )
 }
 
-/// A figure before and after, with how much it moved: `28 (no change)`,
-/// `28 → 31 (+11%)`. A move too small to show as a percent is not `+0%`.
-fn change(a: f64, b: f64, text: impl Fn(f64) -> String) -> String {
-    let (before, after) = (text(a), text(b));
-    if a == b || before == after {
-        return format!("{before} (no change)");
-    }
-    let pct = (b - a) * 100.0 / a;
-    let pct = if a <= 0.0 {
-        String::new()
-    } else if pct.abs() < 0.5 {
-        " (under 1%)".to_string()
-    } else {
-        format!(" ({pct:+.0}%)")
-    };
-    format!("{before} → {after}{pct}")
-}
-
 /// What `compare`'s table of kinds leaves out: `cut` that changed past its
 /// rows, `same` that did not change. `show` says its own rest the same way.
 fn more_kinds(cut: usize, same: usize) -> Option<String> {
@@ -249,26 +231,45 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
+    let (before, after) = runs_compared(s, &a.runs)?;
     // one run read, reckoned and let go before the other is read: two runs
-    // cost what the larger does, not both at once
-    let run = |f: &PathBuf| -> anyhow::Result<_> {
+    // cost what the larger does, not both at once (the later counted
+    // against what the earlier's findings would save)
+    let run = |f: &PathBuf, against: Option<&sonde_proxy::profile::Run>| -> anyhow::Result<_> {
         let (_, session) = super::sessions::open_lean(s, f)?;
         let prices = request_prices_for(s, &session.header.endpoint);
-        let run = sonde_proxy::profile::Run::analysed(&session.header, &session.records, &prices);
+        let mut run =
+            sonde_proxy::profile::Run::analysed(&session.header, &session.records, &prices);
+        if let Some(a) = against {
+            run.measure(&session.records, a);
+        }
         Ok((session.header, run))
     };
-    let (ha, ra) = run(&a.before)?;
-    let (hb, rb) = run(&a.after)?;
-    let c = sonde_proxy::profile::compare_runs(&ra, &rb).of_programs(
-        sonde_proxy::program::key_of(&ha).as_deref(),
-        sonde_proxy::program::key_of(&hb).as_deref(),
+    let (ha, ra) = run(&before, None)?;
+    let (hb, rb) = run(&after, Some(&ra))?;
+    let (ka, kb) = (
+        sonde_proxy::program::key_of(&ha),
+        sonde_proxy::program::key_of(&hb),
     );
+    let mut c = sonde_proxy::profile::compare_runs(&ra, &rb);
+    c.same_program = ka.is_some() && ka == kb;
+    if c.same_program {
+        // a finding fixed in an earlier run of the program is back, not new
+        if let (Some(k), Ok(kept)) = (&ka, sonde_proxy::fixloop::read(&s.paths().sessions()))
+            && let Some(program) = kept.get(k)
+        {
+            program.mark_back(&mut c.findings);
+        }
+    } else {
+        c = c.of_programs(None, None);
+    }
     if matches!(a.format, Format::Json) {
         println!("{}", output::json(&c));
         return Ok(0);
     }
     let color = std::io::stdout().is_terminal();
     let n = |v: f64| format!("{v:.0}");
+    use super::fixloop::moved as change;
     if !c.same_program {
         println!(
             "{}",
@@ -297,7 +298,14 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
             )
         );
     }
-    println!("{}", paint("before → after", "1", color));
+    println!(
+        "{}",
+        paint(
+            &format!("{} → {}", file_name(&before), file_name(&after)),
+            "1",
+            color
+        )
+    );
     println!(
         "  requests   {}",
         change(c.requests.0 as f64, c.requests.1 as f64, n)
@@ -340,13 +348,49 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
             println!("{more}");
         }
     }
-    for f in &c.resolved {
-        println!("{} {}", paint("✓", "32", color), f.text);
-    }
-    for f in &c.appeared {
-        println!("{} {}", paint("!", "33", color), f.text);
+    for line in super::fixloop::change_lines(&c.findings, color) {
+        println!("{line}");
     }
     Ok(0)
+}
+
+fn file_name(p: &std::path::Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The two runs `sonde compare` compares: the two given; one given and its
+/// program's run before it; none, the newest run and the one before it.
+fn runs_compared(s: &Sonde, runs: &[PathBuf]) -> anyhow::Result<(PathBuf, PathBuf)> {
+    match runs {
+        [before, after] => Ok((
+            super::sessions::resolve(s, before),
+            super::sessions::resolve(s, after),
+        )),
+        [one] => before_of(s, &super::sessions::resolve(s, one)),
+        _ => before_of(s, &newest_session(s)?),
+    }
+}
+
+/// A run and its program's run before it.
+fn before_of(s: &Sonde, after: &std::path::Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+    let h = sonde_proxy::session::read_header(after)
+        .ok_or_else(|| super::usage(format!("{} is not a sonde session", after.display())))?;
+    let key = sonde_proxy::program::key_of(&h).ok_or_else(|| {
+        super::usage(format!(
+            "{} is no run of a program (a replay or an import): name the two runs to compare",
+            after.display()
+        ))
+    })?;
+    let before = sonde_proxy::fixloop::previous_run(&s.paths().sessions(), &key, h.created, after)
+        .ok_or_else(|| {
+            super::usage(format!(
+                "{} is the first run of `{key}`: run it again after a change, then compare",
+                file_name(after)
+            ))
+        })?;
+    Ok((before, after.to_path_buf()))
 }
 
 #[cfg(test)]
@@ -368,19 +412,5 @@ mod tests {
             more_kinds(2, 5).as_deref(),
             Some("  … and 7 more kinds of request, 5 of them unchanged")
         );
-    }
-
-    #[test]
-    fn a_figure_that_did_not_move_says_no_change_not_plus_zero_percent() {
-        let n = |v: f64| format!("{v:.0}");
-        assert_eq!(change(28.0, 28.0, n), "28 (no change)");
-        assert_eq!(change(28.0, 31.0, n), "28 → 31 (+11%)");
-        assert_eq!(change(31.0, 28.0, n), "31 → 28 (-10%)");
-        // moved, by less than shows: neither +0% nor -0%
-        assert_eq!(change(1000.0, 1001.0, n), "1000 → 1001 (under 1%)");
-        assert_eq!(change(1001.0, 1000.0, n), "1001 → 1000 (under 1%)");
-        // the same once written: 435.2 ms and 435.4 ms
-        assert_eq!(change(435.2, 435.4, ms_text), "435 ms (no change)");
-        assert_eq!(change(0.0, 3.0, n), "0 → 3");
     }
 }

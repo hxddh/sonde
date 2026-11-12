@@ -18,17 +18,18 @@ use super::record::*;
 pub struct ShowArgs {
     /// A session file (default: the newest in the data directory's sessions/).
     pub(super) file: Option<PathBuf>,
-    /// Only the summary.
+    /// Only the summary: what a table shows by default; with `-f json`,
+    /// the summary without the operations and requests.
     #[arg(long)]
     pub(super) summary: bool,
-    /// Only what failed.
+    /// Only the operations that failed (with --requests, the requests).
     #[arg(long)]
     pub(super) errors: bool,
-    /// One line per request instead of per operation.
+    /// Each request on its line, then the summary.
     #[arg(long)]
     pub(super) requests: bool,
-    /// Every line of a long session: past a few thousand, only the first
-    /// and the last hundred are printed.
+    /// Everything: each operation on its line, then the summary with every
+    /// kind of request, the signals over the run, first byte and cost.
     #[arg(long)]
     pub(super) all: bool,
     /// Open it in the sonde app instead (a sonde:// link).
@@ -206,6 +207,8 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             if let Some(c) = &session.header.command {
                 println!("{}", paint(&format!("$ {c}"), "1", color));
             }
+            // a list asked for: the requests (then the summary), or what
+            // failed (alone)
             if !a.summary && a.requests {
                 let shown: Vec<&Record> = all
                     .iter()
@@ -217,7 +220,10 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 print_lines(shown.len(), a.all, "request", &|i| {
                     timeline_line(shown[i], color)
                 });
-            } else if !a.summary {
+                if a.errors {
+                    return Ok(0);
+                }
+            } else if !a.summary && (a.errors || a.all) {
                 let shown: Vec<&Episode> = eps
                     .iter()
                     .filter(|e| !a.errors || e.outcome != Outcome::Ok)
@@ -236,13 +242,20 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 print_lines(shown.len(), a.all, "operation", &|i| {
                     episode_line(shown[i], width, hide, formats, color)
                 });
+                if a.errors {
+                    return Ok(0);
+                }
             }
+            // against the program's run before it, when it has one
+            let since = super::fixloop::since_last(s, &file, &session.header, all, &analysis);
             print_summary_of(
                 &analysis,
                 &session.header,
                 &file,
-                std::io::stdout().is_terminal(),
+                color,
                 true,
+                a.all,
+                since.as_ref(),
             );
         }
     }
