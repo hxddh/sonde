@@ -28,8 +28,8 @@ destructive actions are gated, and a recorded program is limited by a policy.
 
 - The app declares no `fs` capability: TSX cannot read or write files. Rust writes exports to the exports directory,
   downloads to the downloads directory, and state under the data directory.
-- On Unix, files holding a program's traffic are `0600` regardless of umask: sessions, `*.summary.json`, trial
-  verdicts, baselines, titles, the request log's SQLite file, `du`'s cache, `audit.jsonl`. Files from earlier
+- On Unix, files holding a program's traffic are `0600` regardless of umask: sessions, each sessions folder's
+  `.index.jsonl` (counts, trial verdicts), baselines, titles, `bucket size`'s cache, `audit.jsonl`. Files from earlier
   versions keep their mode.
 - Files the user asks for elsewhere (`-o`, `sonde share`, exports) get normal permissions.
 - A `sonde://open` link opens only a `.sonde` or `.sonde.gz` file, never a network path (`\\host\share`,
@@ -37,24 +37,21 @@ destructive actions are gated, and a recorded program is limited by a policy.
 - A code location in a session opens only a source or text file (allow-listed extensions) inside the session's run
   folder; anything else is shown in the file manager; a network path opens nothing.
 
-## Read-only by default
+## One safety model
 
-`read-only = true` until the user turns it off. It covers sonde's own actions; a recorded program is governed by the
-recording policy ([Run](#run)).
-
-Destructive operations (aborting uploads, deleting versions, delete markers or objects, replacing a lifecycle
-configuration) are plans (`sonde-core::guard`):
+What a recorded program may do is the recording policy ([Run](#run)), and nothing else. sonde's own destructive
+operations (aborting uploads, deleting versions, delete markers or objects, replacing a lifecycle configuration) are
+never a switch away: each is a plan (`sonde-core::guard`):
 
 1. A plan is a dry run listing exactly what would change (for lifecycle, old and new documents).
-2. It runs only with read-only mode off,
-3. and only with its typed confirmation: the item count or the bucket name.
-4. Plans expire after 10 minutes and run once.
-5. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
+2. It runs only with its typed confirmation: the item count or the bucket name.
+3. Plans expire after 10 minutes and run once.
+4. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
    be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors).
 
 Probes write too (under `sonde-probe/` in the scratch bucket, and their own buckets when allowed):
 
-- The app refuses probe runs while read-only; `sonde probe` (scratch bucket named on the command line) runs.
+- They run only on the scratch bucket the user names (in the app or on the command line): naming it is the consent.
 - Each run is audited (`runProbes`: started, then the outcome, with anything cleanup could not remove).
 - A cancelled run still cleans up after the probe it stopped in.
 

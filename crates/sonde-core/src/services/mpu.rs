@@ -283,7 +283,7 @@ pub async fn scan_inner(
                     ph!("progress.listParts", n = n, total = total),
                 ));
                 UploadRow {
-                    stale: age_days.is_some_and(|a| a > settings.stale_upload_days as f64),
+                    stale: age_days.is_some_and(|a| a > crate::config::STALE_UPLOAD_DAYS as f64),
                     cost_so_far: gib * price * age_days.unwrap_or(0.0) / 30.0,
                     cost_per_month: gib * price,
                     key: u.key,
@@ -309,14 +309,18 @@ pub async fn scan_inner(
     });
     // 3. lifecycle
     let lifecycle = match c.lifecycle_raw(b).await {
-        Ok(None) => judge_lifecycle(None, p, settings.stale_upload_days),
+        Ok(None) => judge_lifecycle(None, p, crate::config::STALE_UPLOAD_DAYS),
         Ok(Some(text)) => match xml::lifecycle(&text) {
-            Ok(lc) => judge_lifecycle(Some(&lc), p, settings.stale_upload_days),
+            Ok(lc) => judge_lifecycle(Some(&lc), p, crate::config::STALE_UPLOAD_DAYS),
             Err(e) => LifecycleVerdict::say(
                 LifecycleStatus::Unknown,
                 vec![],
                 ph!("lifecycle.unreadable", error = e),
-                xml::abort_rule_xml("sonde-abort-incomplete-mpu", p, settings.stale_upload_days),
+                xml::abort_rule_xml(
+                    "sonde-abort-incomplete-mpu",
+                    p,
+                    crate::config::STALE_UPLOAD_DAYS,
+                ),
                 Some(e),
             ),
         },
@@ -324,7 +328,11 @@ pub async fn scan_inner(
             LifecycleStatus::Unknown,
             vec![],
             ph!("lifecycle.failed", error = e),
-            xml::abort_rule_xml("sonde-abort-incomplete-mpu", p, settings.stale_upload_days),
+            xml::abort_rule_xml(
+                "sonde-abort-incomplete-mpu",
+                p,
+                crate::config::STALE_UPLOAD_DAYS,
+            ),
             Some(e),
         ),
     };
@@ -333,7 +341,7 @@ pub async fn scan_inner(
         endpoint: ep.into(),
         bucket: b.into(),
         prefix: p.into(),
-        threshold_days: settings.stale_upload_days,
+        threshold_days: crate::config::STALE_UPLOAD_DAYS,
         total_uploads: rows.len(),
         stale_uploads: stale.len(),
         total_bytes: rows.iter().map(|r| r.bytes).sum(),

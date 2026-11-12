@@ -12,7 +12,7 @@
 //! | 64 | usage error |
 //! | 65 | a session (or another file given to read) is not what it should be |
 //! | 70 | the operation failed (connection, credentials, permissions) |
-//! | 77 | refused: read-only mode or a confirmation mismatch |
+//! | 77 | refused: a confirmation missing or mismatched |
 
 mod cmd;
 mod output;
@@ -33,7 +33,7 @@ pub struct Cli {
         help_heading = "Global options"
     )]
     config_dir: Option<std::path::PathBuf>,
-    /// Data directory (sessions, request log, scans, probe runs, audit log).
+    /// Data directory (sessions, scans, probe runs, audit log).
     #[arg(
         long,
         global = true,
@@ -58,15 +58,14 @@ pub struct Cli {
     /// A PEM CA bundle for --url.
     #[arg(long, global = true, help_heading = "Global options")]
     pub ca_file: Option<std::path::PathBuf>,
-    /// Requests per second per job.
-    #[arg(long, global = true, help_heading = "Global options")]
+    /// Requests per second per job (`rate-limit` in config.toml).
+    #[arg(long, global = true, hide = true)]
     rate: Option<f64>,
-    /// Requests in flight per job.
-    #[arg(long, global = true, help_heading = "Global options")]
+    /// Requests in flight per job (`concurrency` in config.toml).
+    #[arg(long, global = true, hide = true)]
     concurrency: Option<usize>,
-    /// Write sonde's own requests of this run (redacted) to a file: .har or
-    /// .json. Not for run, proxy and watch: what they record is the session.
-    #[arg(long, global = true, help_heading = "Global options")]
+    /// Removed in 18.0: said, and refused.
+    #[arg(long, global = true, hide = true)]
     log_out: Option<std::path::PathBuf>,
     #[command(subcommand)]
     command: Command,
@@ -78,34 +77,24 @@ enum Command {
     Demo(cmd::record::DemoArgs),
     /// Run a command with its S3 requests recorded: sonde run -- <command>.
     Run(cmd::record::RunArgs),
-    /// A local S3 endpoint that records what talks to it: each request as it arrives, one session, its summary at Ctrl-C.
+    /// A local S3 endpoint that records what talks to it until Ctrl-C; left running with --rotate.
     Proxy(cmd::record::ProxyArgs),
+    /// Production traffic as a session: an S3 server access log, CloudTrail events or a HAR, a file or s3://.
+    Import(cmd::sessions::ImportArgs),
     /// The recorded sessions, newest first; prune old ones.
     Sessions(cmd::sessions::SessionsArgs),
-    /// A proxy left running: a live status line, each new warning, rotating session files.
-    Watch(cmd::record::WatchArgs),
-    /// Production traffic as a session: an S3 server access log, CloudTrail events or a HAR.
-    Import(cmd::sessions::ImportArgs),
-    /// A session for other tools: OpenTelemetry traces, to a file or a collector.
-    Export(cmd::sessions::ExportArgs),
-    /// Print a recorded session.
+    /// Print a recorded run: its operations, findings and figures.
     Show(cmd::record::ShowArgs),
-    /// Replay a recorded session on another endpoint and compare the answers.
-    Replay(cmd::record::ReplayArgs),
-    /// Compare a session with its replay.
-    Diff(cmd::record::DiffArgs),
-    /// Two runs of a program, before and after a change: requests, time, cost, findings.
+    /// Two runs before and after a change, a session and its replay, or a session replayed elsewhere (--replay).
     Compare(cmd::record::CompareArgs),
     /// A run against a budget or a baseline run: exit 1 when it is over (for CI).
     Check(cmd::record::CheckArgs),
-    /// A session as a web page anyone opens in a browser.
+    /// A run as a web page anyone opens in a browser, or as OpenTelemetry traces (--otlp).
     Share(cmd::share::ShareArgs),
     /// Compatibility probes.
     Probe(cmd::probe::ProbeArgs),
-    /// Incomplete multipart uploads.
-    Mpu(cmd::mpu::MpuArgs),
-    /// Capacity breakdown: why is this bucket so big?
-    Du(cmd::du::DuArgs),
+    /// A bucket's size and why, and its incomplete uploads.
+    Bucket(cmd::bucket::BucketArgs),
     /// What a prefix holds, decoded: SlateDB, Iceberg, lakeFS, Woodpecker, turbopuffer, WarpStream, or any prefix's write cadence.
     Layout(cmd::layout::LayoutArgs),
     /// Configured endpoints.
@@ -113,21 +102,36 @@ enum Command {
     /// The terminal UI.
     #[cfg(feature = "tui")]
     Tui(cmd::tui::TuiArgs),
+    // folded in 18.0, each kept for one version: it says its new form
+    /// `sonde proxy --rotate`, or `sonde import s3://… --follow`.
+    #[command(hide = true)]
+    Watch(cmd::record::WatchArgs),
+    /// `sonde share --otlp`.
+    #[command(hide = true)]
+    Export(cmd::sessions::ExportArgs),
+    /// `sonde compare FILE --replay ENDPOINT`.
+    #[command(hide = true)]
+    Replay(cmd::replay::ReplayArgs),
+    /// `sonde compare ORIGINAL REPLAY`.
+    #[command(hide = true)]
+    Diff(cmd::record::DiffArgs),
+    /// `sonde bucket uploads`.
+    #[command(hide = true)]
+    Mpu(cmd::mpu::MpuArgs),
+    /// `sonde bucket size`.
+    #[command(hide = true)]
+    Du(cmd::du::DuArgs),
 }
 
 /// The commands as `sonde --help` lists them: by what they are for, not in
-/// one list of eighteen.
+/// one list of fourteen.
 const GROUPS: &[(&str, &[&str])] = &[
-    ("Record", &["demo", "run", "proxy", "watch", "import"]),
+    ("Record", &["demo", "run", "proxy", "import"]),
     (
-        "Read a session",
-        &["sessions", "show", "compare", "check", "share", "export"],
+        "Read a run",
+        &["sessions", "show", "compare", "check", "share"],
     ),
-    ("Replay on another store", &["replay", "diff"]),
-    (
-        "The store itself",
-        &["probe", "mpu", "du", "layout", "endpoints"],
-    ),
+    ("Buckets", &["bucket", "layout", "probe", "endpoints"]),
     ("More", &["tui"]),
 ];
 
@@ -170,22 +174,12 @@ fn grouped(cmd: clap::Command) -> clap::Command {
 /// The commands that only read what is on this machine: a session's file,
 /// the configuration. The options that say which store to talk to, and how
 /// fast, are not theirs.
-const READS_FILES: &[&str] = &[
-    "sessions", "show", "compare", "check", "diff", "share", "export", "import",
-];
+const READS_FILES: &[&str] = &["sessions", "show", "check", "share"];
 
 /// The options of the endpoint and of the pace, which a command that reads
 /// files has no use for: left out of its help (they are still taken, as
 /// every global option is).
-const OF_THE_STORE: &[&str] = &[
-    "url",
-    "region",
-    "path_style",
-    "ca_file",
-    "rate",
-    "concurrency",
-    "log_out",
-];
+const OF_THE_STORE: &[&str] = &["url", "region", "path_style", "ca_file"];
 
 /// The command tree with each command's help showing the global options
 /// it can use.
@@ -238,20 +232,9 @@ fn main() -> ExitCode {
         .build()
         .expect("tokio runtime");
     let code = rt.block_on(async {
-        // run, proxy and watch record the program's requests, not sonde's: the
-        // file would be written empty
-        if let (Some(path), Some(what)) = (
-            &cli.log_out,
-            match &cli.command {
-                Command::Run(_) => Some("run"),
-                Command::Proxy(_) => Some("proxy"),
-                Command::Watch(_) => Some("watch"),
-                _ => None,
-            },
-        ) {
+        if cli.log_out.is_some() {
             eprintln!(
-                "sonde: --log-out {} is not for `sonde {what}`: it writes sonde's own requests, and {what} sends none. What the program sent is the session file (-o FILE, or the one named when it ends); `sonde show FILE -f json` has every request, `sonde export FILE` its traces.",
-                path.display()
+                "sonde: --log-out is gone in 18.0. What a program sent is its session: `sonde show FILE -f json` has every request, `sonde share --otlp FILE` its traces."
             );
             return 64;
         }
@@ -267,24 +250,28 @@ fn main() -> ExitCode {
             Command::Run(a) => cmd::record::run(&sonde, &cli, a).await,
             Command::Proxy(a) => cmd::record::proxy(&sonde, &cli, a).await,
             Command::Sessions(a) => cmd::sessions::run(&sonde, a).await,
-            Command::Watch(a) => cmd::record::watch(&sonde, a).await,
             Command::Import(a) => cmd::sessions::import(&sonde, a).await,
-            Command::Export(a) => cmd::sessions::export(&sonde, a).await,
             Command::Show(a) => cmd::record::show(&sonde, a).await,
-            Command::Replay(a) => cmd::record::replay(&sonde, &cli, a).await,
-            Command::Diff(a) => cmd::record::diff(&sonde, a).await,
             Command::Share(a) => cmd::share::run(&sonde, a).await,
             Command::Compare(a) => cmd::record::compare(&sonde, a).await,
             Command::Check(a) => cmd::record::check(&sonde, a).await,
             Command::Probe(a) => cmd::probe::run(&sonde, &cli, a).await,
-            Command::Mpu(a) => cmd::mpu::run(&sonde, &cli, a).await,
-            Command::Du(a) => cmd::du::run(&sonde, &cli, a).await,
+            Command::Bucket(a) => cmd::bucket::run(&sonde, &cli, a).await,
             Command::Layout(a) => cmd::layout::run(&sonde, &cli, a).await,
+            Command::Watch(a) => cmd::record::watch_alias(&sonde, a).await,
+            Command::Export(a) => cmd::sessions::export(&sonde, a).await,
+            Command::Replay(a) => cmd::replay::replay_alias(&sonde, &cli, a).await,
+            Command::Diff(a) => cmd::record::diff_alias(&sonde, a).await,
+            Command::Mpu(a) => cmd::mpu::run(&sonde, &cli, a).await,
+            Command::Du(a) => {
+                cmd::renamed("sonde du", "sonde bucket size");
+                cmd::du::run(&sonde, &cli, a).await
+            }
             Command::Endpoints(a) => cmd::endpoints::run(&sonde, &cli, a).await,
             #[cfg(feature = "tui")]
             Command::Tui(_) => unreachable!(),
         };
-        let code = match code {
+        match code {
             Ok(c) => c,
             // a mistake in the command or in sonde.toml: 64, as the docs say
             Err(e) if e.downcast_ref::<cmd::Usage>().is_some() => {
@@ -296,7 +283,7 @@ fn main() -> ExitCode {
                 65
             }
             Err(e) => {
-                eprintln!("sonde: {}", cmd::said(&sonde, &format!("{e:#}")));
+                eprintln!("sonde: {}", cmd::said(&format!("{e:#}")));
                 if let Some(s3) = e.downcast_ref::<s3raw::S3Error>() {
                     if let Some(id) = s3.record_id
                         && let Some(r) = sonde.log().get(id)
@@ -319,21 +306,7 @@ fn main() -> ExitCode {
                     70
                 }
             }
-        };
-        if let Some(path) = &cli.log_out {
-            let records = sonde.log().snapshot();
-            let doc = if path.extension().is_some_and(|e| e == "har") {
-                reqlog::export::to_har(&records)
-            } else {
-                reqlog::export::to_json(&records)
-            };
-            if let Err(e) =
-                std::fs::write(path, serde_json::to_vec_pretty(&doc).unwrap_or_default())
-            {
-                eprintln!("sonde: --log-out {}: {e}", path.display());
-            }
         }
-        code
     });
     // an exit status past what a process can return (Windows' are 32-bit)
     // still says it failed: 1, not its low byte (256 would read as 0)

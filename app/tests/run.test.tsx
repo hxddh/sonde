@@ -112,10 +112,6 @@ test("an example session reads as operations, each opening on its requests", asy
 
 test("a session as a timeline, replayed from the app, and the answers compared", async () => {
   const app = await demo();
-  // a replay writes: sonde must not be read-only
-  await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Writes enabled");
   await place(app, "run");
   await app.type("id:run-command", "curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY -X PUT --data hello $AWS_ENDPOINT_URL/demo/t.txt -o /dev/null; curl -s --aws-sigv4 aws:amz:us-east-1:s3 -u $AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY $AWS_ENDPOINT_URL/demo/t.txt");
   // (the button follows the field a frame later)
@@ -353,13 +349,6 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
   await app.waitFor("id:run-ended", { timeout: 20000 });
-  // read-only: the plan is said, and nothing runs
-  if (app.shows("label:Writes enabled")) {
-    await place(app, "settings");
-    await app.press("id:read-only");
-    await app.waitFor("label:Read-only");
-    await place(app, "run");
-  }
   await runAction(app, "run-try");
   await app.waitFor("id:trial-plan", { timeout: 10000 });
   // what the run did chooses the scenarios: the two every program meets, and (it writes) the lost answer
@@ -368,21 +357,8 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   expect(app.shows("id:trial-scenario-skew")).toBe(true);
   expect(app.shows("id:trial-scenario-lost-answer")).toBe(true);
   expect(app.shows("id:trial-scenario-fail-complete")).toBe(false);
-  // read-only is said alone: nothing runs, so where the runs would write waits its turn
-  expect(app.shows("id:trial-shares")).toBe(false);
-  expect(app.shows("id:trial-read-only")).toBe(true);
   expect(app.shows("label:Run 4 trials")).toBe(true);
-  await app.press("id:trial-start").catch(() => {});
-  expect(app.shows("id:trial-progress")).toBe(false);
-  await app.press("id:trial-close");
-  // writes allowed: one scenario taken off, the others run
-  await place(app, "settings");
-  await app.press("id:read-only");
-  await app.waitFor("label:Writes enabled");
-  await place(app, "run");
-  await runAction(app, "run-try");
-  await app.waitFor("id:trial-plan", { timeout: 10000 });
-  expect(app.shows("id:trial-read-only")).toBe(false);
+  // one scenario taken off, the others run (the recording policy is the only limit)
   // the command names no {trial}: the runs write where the clean run wrote
   expect(app.shows("id:trial-shares")).toBe(true);
   await app.press("id:trial-scenario-error");

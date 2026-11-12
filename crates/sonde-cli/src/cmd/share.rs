@@ -1,6 +1,6 @@
 //! `sonde share`: a session as a web page anyone opens in a browser — the
-//! same views as the app (operations, observations, output lined up,
-//! requests), with nothing to install. The page is a static site: sonde's
+//! same views as the app (operations, findings, output lined up, requests),
+//! with nothing to install — or as OpenTelemetry traces (`--otlp`). The page is a static site: sonde's
 //! viewer (built with Native Shell's web target, embedded in this binary)
 //! and the session's `session.json`, everything already computed.
 
@@ -31,12 +31,20 @@ pub struct ShareArgs {
     /// The port for --serve (default: a free one).
     #[arg(long, default_value_t = 0)]
     port: u16,
-    /// Write only session.json (to --out, or stdout).
-    #[arg(long)]
-    json: bool,
     /// One HTML file instead of a site: findings, time, timeline, operations (to --out, or stdout).
-    #[arg(long, conflicts_with_all = ["json", "serve"])]
+    #[arg(long, conflicts_with = "serve")]
     html: bool,
+    /// For a tracing stack: OpenTelemetry traces (OTLP/JSON), each operation
+    /// a span with its requests under it (to --out, or stdout).
+    #[arg(long, conflicts_with_all = ["html", "serve", "redact", "baseline"])]
+    otlp: bool,
+    /// With --otlp: send them to an OTLP/HTTP collector instead, e.g.
+    /// http://localhost:4318/v1/traces.
+    #[arg(long, value_name = "URL", requires = "otlp", conflicts_with = "out")]
+    to: Option<String>,
+    /// Gone in 18.0 (`sonde show FILE -f json`): said, and refused.
+    #[arg(long, hide = true)]
+    json: bool,
     /// Replace bucket and key names with tokens and drop headers, bodies, URLs,
     /// the program's output and arguments: safe to send outside.
     #[arg(long)]
@@ -93,7 +101,16 @@ async fn baseline_of(
 }
 
 pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
+    if a.json {
+        return Err(super::usage(
+            "share --json is gone in 18.0: `sonde show FILE -f json` writes the session as data",
+        ));
+    }
     let compared = a.files.len() == 2 || a.baseline.is_some();
+    if compared && a.otlp {
+        eprintln!("--otlp takes one session");
+        return Ok(64);
+    }
     if compared && !a.html {
         eprintln!("a run compared with another is a page: add --html");
         return Ok(64);
@@ -112,6 +129,9 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
             file.display(),
             s.paths().sessions().display()
         )));
+    }
+    if a.otlp {
+        return super::sessions::otlp(s, &file, a.out.as_deref(), a.to.as_deref()).await;
     }
     // redacting changes every record, so all are read in full; otherwise
     // the session is read for what it amounts to, and each request is
@@ -174,23 +194,6 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
                 eprintln!("{}", p.display());
             }
             None => print!("{page}"),
-        }
-        return Ok(0);
-    }
-    if a.json {
-        use std::io::Write;
-        // written as it is made, to the file or to stdout
-        match &a.out {
-            Some(p) => {
-                let out = std::io::BufWriter::new(std::fs::File::create(p)?);
-                share::write_session_json(&session, full, &prices, out)?;
-            }
-            None => {
-                let mut out = std::io::BufWriter::new(std::io::stdout().lock());
-                share::write_session_json(&session, full, &prices, &mut out)?;
-                out.write_all(b"\n")?;
-                out.flush()?;
-            }
         }
         return Ok(0);
     }

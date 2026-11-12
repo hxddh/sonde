@@ -241,7 +241,7 @@ impl Sonde {
 
     // --- settings ------------------------------------------------------------
 
-    /// The settings (`read-only`, limits, prices, request log, theme, language).
+    /// The settings (recording policy, limits, prices, theme, language).
     pub fn settings() -> JsonValue {
         to_json(sonde().settings())
     }
@@ -250,14 +250,6 @@ impl Sonde {
     pub fn save_settings(settings: JsonValue) -> Result<(), String> {
         let s: sonde_core::Settings = parse(settings, "settings")?;
         sonde().set_settings(s).map_err(err_msg)
-    }
-
-    /// Turns read-only mode on or off.
-    pub fn set_read_only(on: bool) -> Result<(), String> {
-        let s = sonde();
-        let mut st = s.settings();
-        st.read_only = on;
-        s.set_settings(st).map_err(err_msg)
     }
 
     /// Where the configuration, data, exports and downloads go.
@@ -669,8 +661,8 @@ impl Sonde {
 
     // --- destructive operations ------------------------------------------------------------
 
-    /// Runs a dry-run plan: refused while read-only mode is on or when
-    /// `confirmation` is not what the plan asks for. Audited.
+    /// Runs a dry-run plan: refused when `confirmation` is not what the
+    /// plan asks for. Audited.
     pub async fn execute_plan(plan: String, confirmation: String) -> Result<JsonValue, String> {
         run(async move { exec::execute(&sonde(), &plan, &confirmation).await }).await
     }
@@ -728,14 +720,12 @@ impl Sonde {
 
     /// Runs probes on several endpoints in parallel: `options` is
     /// `{ bucket, allowTempBuckets, includeSlow, only }`. The job ids, in
-    /// order. Refused (kind `refused`) while read-only mode is on, as every
-    /// write is; each run is in the audit log.
+    /// order. Each run is in the audit log.
     pub async fn run_probes(
         endpoints: Vec<String>,
         options: JsonValue,
     ) -> Result<Vec<String>, String> {
         let o: probes::runner::RunOptions = parse(options, "options")?;
-        probes::runner::allowed(&sonde()).map_err(err)?;
         match background(async move { probes::runner::spawn(&sonde(), &endpoints, o) }).await {
             Ok(ids) => Ok(ids),
             Err(e) => Err(err_msg(e)),

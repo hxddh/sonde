@@ -158,10 +158,6 @@ fn template(key: &str) -> &'static str {
         "loose.misses" => "{n} lookup{s} that found nothing",
         "loose.reads" => "{n} reads",
         "loose.deletes" => "{n} file{s} deleted",
-        "obs.shared" => "{n} {format} writes: ",
-        "obs.injected" => {
-            "{n} request{s} met a fault sonde injected (scenario {scenario}): the errors and retries here are the trial's, not the store's"
-        }
         "obs.unfinished" => {
             "{n} multipart upload{s} never completed or aborted: the parts stay billed until a lifecycle rule removes them"
         }
@@ -171,7 +167,6 @@ fn template(key: &str) -> &'static str {
         "obs.orphans" => {
             "{n} times files were written with no commit after them: orphans unless a later commit adds them"
         }
-        "obs.retried" => "{n} request{s} repeated after a retryable failure",
         "obs.small" => {
             "{n} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do"
         }
@@ -181,7 +176,6 @@ fn template(key: &str) -> &'static str {
         "obs.markers" => {
             "{n} directory marker{s} written (empty objects named …/), {m} delete requests of markers: s3a keeps them with fs.s3a.directory.marker.retention=keep"
         }
-        "obs.races" => "{n} conditional write{s} lost a race (412): another writer got there first",
         "obs.hot" => "{key} was read {n} times ({pct}% of all requests)",
         "obs.listed" => "{prefix} was listed {n} times",
         "obs.headget" => {
@@ -192,9 +186,6 @@ fn template(key: &str) -> &'static str {
         }
         "obs.throttled.rate" => {
             "{n} request{s} throttled (503 SlowDown or 429): the store asked for fewer requests per second"
-        }
-        "obs.slow" => {
-            "{n} request{s} took over {ms} ms against a median of {median} ms; the slowest, {op}, took {max} ms"
         }
         "obs.prefixrate.reads" => {
             "{prefix} took up to {n} reads a second, {pct}% of the {limit} S3 serves one prefix: spread its keys over more prefixes before it throttles"

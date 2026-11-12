@@ -1,55 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/replay.schema.json",
-  "title": "sonde replay -e ENDPOINT -f json",
-  "description": "A session replayed on one endpoint, cleaned up and compared. Exit 2 when answers differ.",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/compare-answers.schema.json",
+  "title": "sonde compare ORIGINAL REPLAY -f json",
+  "description": "A recording and its replay: every answer compared.",
   "type": "object",
   "properties": {
-    "plan": {
-      "$ref": "#/$defs/plan"
-    },
-    "session": {
-      "type": "string",
-      "description": "The replay's own session."
-    },
     "comparison": {
       "$ref": "#/$defs/comparison"
     },
-    "removed": {
-      "type": "integer",
-      "description": "Objects the cleanup removed."
-    },
-    "removedVersions": {
-      "type": "integer"
-    },
-    "remaining": {
-      "type": "integer",
-      "description": "What the cleanup could not remove."
-    },
-    "remainingObjects": {
-      "type": "integer"
-    },
-    "remainingVersions": {
-      "type": "integer"
-    },
-    "remainingMarkers": {
-      "type": "integer"
-    },
-    "unabortedUploads": {
-      "type": "integer"
+    "latency": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/latencyChange"
+      }
     }
   },
   "required": [
-    "plan",
-    "session",
     "comparison",
-    "removed",
-    "removedVersions",
-    "remaining",
-    "remainingObjects",
-    "remainingVersions",
-    "remainingMarkers",
-    "unabortedUploads"
+    "latency"
   ],
   "$defs": {
     "comparison": {
@@ -124,32 +92,72 @@
         "conditions"
       ]
     },
-    "plan": {
+    "latencyChange": {
       "type": "object",
-      "description": "What a replay sends.",
+      "description": "A kind of request in two runs: each figure a pair (first, second).",
       "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "missed": {
+          "type": "boolean"
+        },
         "requests": {
-          "type": "integer"
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
         },
-        "writes": {
-          "type": "integer"
+        "p50Ms": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
         },
-        "deletes": {
-          "type": "integer"
+        "p95Ms": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
         },
-        "skipped": {
-          "type": "object",
-          "description": "Requests not replayed, by why.",
-          "additionalProperties": {
-            "type": "integer"
-          }
+        "busyMs": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
         }
       },
       "required": [
+        "operation",
+        "missed",
         "requests",
-        "writes",
-        "deletes",
-        "skipped"
+        "p50Ms",
+        "p95Ms",
+        "busyMs"
       ]
     }
   }

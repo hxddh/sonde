@@ -63,8 +63,8 @@ struct Row {
 }
 
 /// The sessions in the data directory, newest first: each from the counts
-/// kept beside it (`<name>.summary.json`, made the first time it is listed
-/// and when it is recorded), never from the session read whole.
+/// kept in the folder's index (made the first time it is listed and when it
+/// is recorded), never from the session read whole.
 fn rows(s: &Sonde) -> Vec<Row> {
     let dir = s.paths().sessions();
     let mut out: Vec<Row> = std::fs::read_dir(&dir)
@@ -368,17 +368,55 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
 pub struct ImportArgs {
     /// An S3 server access log, a CloudTrail file (`{"Records": …}` or one
     /// event a line), or a HAR; or a folder of them (gzip or plain, folders
-    /// within too), read in the order of their names into one session.
-    #[arg(value_name = "FILE|FOLDER")]
+    /// within too), read in the order of their names into one session. Or
+    /// `s3://bucket/prefix` where a store writes its access logs or
+    /// CloudTrail files: what arrived since the last import of it, read
+    /// through the endpoint (GET and LIST only), one session a pass.
+    #[arg(value_name = "FILE|FOLDER|S3_URL")]
     file: PathBuf,
     /// The session file (default: a new one in the data directory's sessions/).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
+    /// With s3://: keep reading as new log files arrive, each pass its
+    /// session, until Ctrl-C.
+    #[arg(long)]
+    follow: bool,
+    /// With --follow: look for new log files this often ("15m", "1h", "30s").
+    #[arg(long, default_value = "15m", requires = "follow")]
+    every: String,
+    /// With s3://: the endpoint the logs are read through.
+    #[arg(long, short = 'e')]
+    endpoint: Option<String>,
+    /// With s3://: post each new warning finding, and each pass over
+    /// sonde.toml's budget, to this webhook as `{"text": …}`.
+    #[arg(long, value_name = "URL")]
+    alert: Option<String>,
 }
 
 /// Production traffic as a session: the same operations, findings and
 /// figures as a recording, with no proxy in front of the program.
 pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
+    let given = a.file.to_string_lossy();
+    if given.starts_with("s3://") {
+        if a.out.is_some() {
+            return Err(super::usage(
+                "-o is for a file or folder: logs read from s3:// make a session a pass, in the sessions folder",
+            ));
+        }
+        let logs = super::watch::Logs {
+            endpoint: a.endpoint.as_deref(),
+            src: &given,
+            every: &a.every,
+            once: !a.follow,
+            alert: a.alert.as_deref(),
+        };
+        return super::watch::watch_logs(s, &logs).await;
+    }
+    if a.follow || a.endpoint.is_some() || a.alert.is_some() {
+        return Err(super::usage(
+            "--follow, --endpoint and --alert are for logs read from s3://bucket/prefix",
+        ));
+    }
     // a folder is every file in it: S3 delivers logs as thousands of small ones
     let is_dir = a.file.is_dir();
     let name = if is_dir {
@@ -478,31 +516,54 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     super::record::show_file(s, &path).await
 }
 
+/// `sonde export` (17.0), kept for 18.0: `sonde share --otlp`.
 #[derive(Args)]
 pub struct ExportArgs {
     /// The session (default: the newest).
     file: Option<PathBuf>,
-    /// OpenTelemetry traces (OTLP/JSON): each operation a span, its requests
-    /// under it. The only form there is, and so the default.
+    /// OpenTelemetry traces: the only form there is.
     #[arg(long)]
     otlp: bool,
     /// Write it here (default: stdout).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
-    /// Send it to an OTLP/HTTP collector instead, e.g. http://localhost:4318/v1/traces.
+    /// Send it to an OTLP/HTTP collector instead.
     #[arg(long, conflicts_with = "out")]
     to: Option<String>,
 }
 
+/// `sonde export`, said as its 18.0 form and done as that.
 pub async fn export(s: &Arc<Sonde>, a: &ExportArgs) -> anyhow::Result<i32> {
+    let _ = a.otlp;
+    let mut new = String::from("sonde share --otlp");
+    if let Some(f) = &a.file {
+        new.push_str(&format!(" {}", f.display()));
+    }
+    if let Some(u) = &a.to {
+        new.push_str(&format!(" --to {u}"));
+    }
+    if let Some(o) = &a.out {
+        new.push_str(&format!(" -o {}", o.display()));
+    }
+    super::renamed("sonde export", &new);
     let file = match &a.file {
         Some(f) => resolve(s, f),
         None => super::record::newest_session(s)?,
     };
+    otlp(s, &file, a.out.as_deref(), a.to.as_deref()).await
+}
+
+/// A session as OpenTelemetry traces (OTLP/JSON: each operation a span, its
+/// requests under it), to a file, stdout or a collector.
+pub async fn otlp(
+    s: &Arc<Sonde>,
+    file: &std::path::Path,
+    out: Option<&std::path::Path>,
+    to: Option<&str>,
+) -> anyhow::Result<i32> {
     // spans are made of what the analysis reads: nothing else is kept
-    let (_, session) = open_lean(s, &file)?;
-    let _ = a.otlp;
-    match (&a.to, &a.out) {
+    let (_, session) = open_lean(s, &file.to_path_buf())?;
+    match (to, out) {
         (Some(url), _) => {
             // a collector takes a request of a few MiB (4 MiB is the usual
             // limit), not a session's worth: sent in batches under it

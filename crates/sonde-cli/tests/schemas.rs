@@ -270,7 +270,7 @@ async fn every_json_output_is_as_its_schema_says() {
     std::fs::write(
         b.path("config/config.toml"),
         format!(
-            "[settings]\nread-only = false\n\n{}{}",
+            "{}{}",
             endpoint("a", &b.store.url),
             endpoint("b", &other.url)
         ),
@@ -338,18 +338,17 @@ async fn every_json_output_is_as_its_schema_says() {
         &b.json(&["compare", s, s, "-f", "json"], 0).await,
     );
     holds("sessions", &b.json(&["sessions", "-f", "json"], 0).await);
-    holds("share", &b.json(&["share", s, "--json"], 0).await);
 
     // replaying it on the small store, and the two compared
     let replayed = b.path("replay.sonde");
     let r = replayed.to_str().unwrap();
     holds(
-        "replay",
+        "compare-replay",
         &b.json(
             &[
-                "replay",
+                "compare",
                 s,
-                "-e",
+                "--replay",
                 "a",
                 "--bucket",
                 "demo=data",
@@ -363,16 +362,19 @@ async fn every_json_output_is_as_its_schema_says() {
         )
         .await,
     );
-    holds("diff", &b.json(&["diff", s, r, "-f", "json"], 2).await);
     holds(
-        "replay-stores",
+        "compare-answers",
+        &b.json(&["compare", s, r, "-f", "json"], 2).await,
+    );
+    holds(
+        "compare-replay-stores",
         &b.json(
             &[
-                "replay",
+                "compare",
                 s,
-                "-e",
+                "--replay",
                 "a",
-                "-e",
+                "--replay",
                 "b",
                 "--bucket",
                 "demo=data",
@@ -395,14 +397,20 @@ async fn every_json_output_is_as_its_schema_says() {
         &b.json(&["endpoints", "test", "a", "-f", "json"], 0).await,
     );
     holds(
-        "du",
-        &b.json(&["du", "-e", "a", "-b", "data", "-f", "json"], 0)
-            .await,
+        "bucket-size",
+        &b.json(
+            &["bucket", "size", "-e", "a", "-b", "data", "-f", "json"],
+            0,
+        )
+        .await,
     );
     holds(
-        "mpu-scan",
-        &b.json(&["mpu", "scan", "-e", "a", "-b", "data", "-f", "json"], 4)
-            .await,
+        "bucket-uploads",
+        &b.json(
+            &["bucket", "uploads", "-e", "a", "-b", "data", "-f", "json"],
+            4,
+        )
+        .await,
     );
     holds(
         "layout-inspect",
@@ -482,14 +490,13 @@ fn every_schema_is_checked_and_documented() {
         "check",
         "compare",
         "sessions",
-        "share",
-        "replay",
-        "replay-stores",
-        "diff",
+        "compare-replay",
+        "compare-replay-stores",
+        "compare-answers",
         "endpoints-list",
         "endpoints-test",
-        "du",
-        "mpu-scan",
+        "bucket-size",
+        "bucket-uploads",
         "layout-inspect",
         "probe-list",
         "probe",

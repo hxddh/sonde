@@ -297,7 +297,6 @@ interface ReplayPlan {
   prefix: string;
   buckets: string[];
   url: string;
-  readOnly: boolean;
 }
 
 /** One session replayed on several stores: each store's answers and each kind's p95, beside the recording's. */
@@ -447,11 +446,6 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
             <Text class="text-body text-foreground">{t("replay.plan", { n: p().plan.requests, writes: t("replay.writes", { n: p().plan.writes }), deletes: t("replay.deletes", { n: p().plan.deletes }), prefix: p().prefix, buckets: p().buckets.join(", ") })}</Text>
             <Muted class="text-small">{t("replay.cleanup", { prefix: p().prefix })}</Muted>
             <Each of={Object.entries(p().plan.skipped)}>{(e) => <Muted class="text-small">{`${count(e()[1])} × ${e()[0]}`}</Muted>}</Each>
-            <If when={p().readOnly}>
-              <Notice tone="warn" text={t("replay.readOnly")}>
-                <Button small label={t("settings.open")} onPress={() => (props.onClose(), go("settings"))} />
-              </Notice>
-            </If>
           </View>
         )}
       </If>
@@ -466,7 +460,7 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
       >
         <Actions>
           <Button variant="ghost" label={t("common.cancel")} onPress={props.onClose} testID="replay-cancel" />
-          <Button variant="primary" label={busy() ? t("replay.running") : t("replay.run")} onPress={run} disabled={busy() || !plan() || plan()!.readOnly} testID="replay-run" />
+          <Button variant="primary" label={busy() ? t("replay.running") : t("replay.run")} onPress={run} disabled={busy() || !plan()} testID="replay-run" />
         </Actions>
       </If>
     </Modal>

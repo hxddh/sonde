@@ -40,7 +40,7 @@ export function Multipart() {
   // why the first scan gave nothing: said in place, with Try again
   const failure = signal<string | null>(null);
   const plan = signal<Plan | null>(null);
-  const days_ = signal<number | null>(settings()?.["stale-upload-days"] ?? 7);
+  const days_ = signal<number | null>(7);
   // the oldest first; a press on a title sorts by its column's values, not their text
   const uploadSort = signal<DataTableSort | null>({ key: "age", direction: "descending" });
   // the uploads' table measures itself: the key takes what the figures leave

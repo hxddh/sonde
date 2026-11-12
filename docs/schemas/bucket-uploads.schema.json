@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/mpu-scan.schema.json",
-  "title": "sonde mpu scan -f json",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/bucket-uploads.schema.json",
+  "title": "sonde bucket uploads -f json",
   "description": "Incomplete multipart uploads and the lifecycle rule that would abort them. Exit 4 when any is stale or no rule aborts them.",
   "type": "object",
   "properties": {

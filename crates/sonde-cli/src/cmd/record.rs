@@ -1,4 +1,4 @@
-//! Recording: what `sonde run`, `proxy`, `watch` and `demo` share (the
+//! Recording: what `sonde run`, `proxy` and `demo` share (the
 //! recording's arguments, the proxy started, a session's summary). Each
 //! command is a module of its own, named here as it was.
 
@@ -21,13 +21,12 @@ use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use crate::output;
 
 pub use super::check::{CheckArgs, check};
-pub use super::compare::{CompareArgs, DiffArgs, compare, diff};
+pub use super::compare::{CompareArgs, DiffArgs, compare, diff_alias};
 pub use super::demo::{DemoArgs, demo};
 pub use super::proxy::{ProxyArgs, proxy};
-pub use super::replay::{ReplayArgs, replay};
 pub use super::run::{RunArgs, run};
 pub use super::show::{ShowArgs, show, show_file};
-pub use super::watch::{WatchArgs, watch};
+pub use super::watch::{WatchArgs, watch_alias};
 
 #[derive(Args, Clone)]
 pub struct Recording {
@@ -43,13 +42,13 @@ pub struct Recording {
     #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
     pub(super) policy: Option<String>,
     /// `--policy allow`: the program may delete and write over what it finds.
-    #[arg(long, conflicts_with_all = ["policy", "no_delete", "read_only"])]
-    pub(super) allow_writes: bool,
-    /// `--policy no-delete`.
-    #[arg(long, conflicts_with_all = ["policy", "read_only"])]
-    pub(super) no_delete: bool,
-    /// `--policy read-only`.
     #[arg(long, conflicts_with = "policy")]
+    pub(super) allow_writes: bool,
+    /// Gone in 18.0 (`--policy no-delete`, the default): said, and refused.
+    #[arg(long, hide = true)]
+    pub(super) no_delete: bool,
+    /// Gone in 18.0 (`--policy read-only`): said, and refused.
+    #[arg(long, hide = true)]
     pub(super) read_only: bool,
     /// The session file (default: a new file in the data directory's sessions/).
     #[arg(long, short = 'o')]
@@ -92,12 +91,21 @@ impl Recording {
     /// The policy asked for: the flags', else `[record] policy` of
     /// sonde.toml, else no-delete. Said when it lets the program delete.
     fn policy(&self) -> anyhow::Result<Policy> {
+        // one way to say it: --policy, and --allow-writes for short
+        for (gone, is) in [(self.no_delete, "no-delete"), (self.read_only, "read-only")] {
+            if gone {
+                return Err(super::usage(format!(
+                    "--{is} is gone in 18.0: say --policy {is}{}",
+                    if is == "no-delete" {
+                        " (the default)"
+                    } else {
+                        ""
+                    }
+                )));
+            }
+        }
         let flag = if self.allow_writes {
             Some(Policy::Allow)
-        } else if self.read_only {
-            Some(Policy::ReadOnly)
-        } else if self.no_delete {
-            Some(Policy::NoDelete)
         } else {
             self.policy.as_deref().and_then(Policy::named)
         };
@@ -136,6 +144,8 @@ pub(super) async fn start_under(
     of: &Of<'_>,
 ) -> anyhow::Result<Started> {
     let under = of.under;
+    // what the flags say is read first: a flag that is gone is said before anything else
+    let policy = r.policy()?;
     let ep = super::endpoint(s, r.endpoint.as_deref())?;
     let client = s.client(&ep)?;
     let cfg = client.config();
@@ -181,7 +191,6 @@ pub(super) async fn start_under(
     let writer = Arc::new(SessionWriter::create(&path, &header)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
-    let policy = r.policy()?;
     let tls = if r.tls {
         let dir = s.paths().data_dir.join("tls");
         let made = sonde_proxy::tls::Tls::load_or_make(&dir)
@@ -467,6 +476,18 @@ pub(super) fn print_summary_of(
         head.push_str(&format!(" · {} not found", output::grouped(s.misses)));
     }
     say(format!("\n{}", paint(&head, "1", color)));
+    // a trial's faults are sonde's doing: said before the figures they are in
+    if !a.injected.is_empty() {
+        say(format!(
+            "  a trial{}: {} met a fault sonde injected, so the errors and retries here are the trial's, not the store's",
+            header
+                .scenario
+                .as_deref()
+                .map(|s| format!(" under {s}"))
+                .unwrap_or_default(),
+            output::count(a.injected.len(), "request")
+        ));
+    }
     if !s.operations.is_empty() {
         // a percentile of a handful of requests is one of them: marked
         let few = s.operations.iter().any(|o| o.few);
@@ -615,7 +636,7 @@ pub(super) fn not_drained(grace: std::time::Duration) -> String {
 }
 
 /// The newest session recorded from a program's own requests (`run`,
-/// `proxy`, `watch`): what a bare `sonde show` or `sonde check` is about. A
+/// `proxy`): what a bare `sonde show` or `sonde check` is about. A
 /// replay, an import and a trial are sessions too, and are named to be read.
 pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
     let dir = s.paths().sessions();

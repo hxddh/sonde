@@ -83,7 +83,7 @@ Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
 | Against the baseline | Requests, cost and errors that changed, waiting that moved past 10% and 50 ms; a figure past the baseline in bold with its limit. Kinds of request that changed. |
 | New findings, Gone | Against the baseline; new first, with the code line that sent them. |
 | Trials | Those that broke or degraded; the survived counted. |
-| What stands out | Without a baseline: the run's first five findings, folded. |
+| Findings | Without a baseline: the run's first five findings, folded. |
 | The report | With `--report-url`. |
 
 ## Elsewhere

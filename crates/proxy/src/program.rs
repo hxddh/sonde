@@ -1154,7 +1154,7 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
     // without a baseline, what the run has: its first findings
     let findings: Vec<_> = m.findings.iter().take(5).collect();
     if m.change.is_none() && !findings.is_empty() {
-        md.push_str("\n<details><summary>What stands out</summary>\n\n");
+        md.push_str("\n<details><summary>Findings</summary>\n\n");
         for f in findings {
             md.push_str(&format!("- {}{}\n", md_text(&f.text), place(&f.text)));
         }
@@ -1686,7 +1686,7 @@ mod tests {
         assert!(squeezed(&md).contains("| HeadObject | 0 → 20 |"), "{md}");
         let new = md.find("**New findings**").expect("new findings");
         assert!(md[new..].contains("HEAD"), "{md}");
-        assert!(!md.contains("What stands out"), "{md}");
+        assert!(!md.contains("<summary>Findings</summary>"), "{md}");
         assert_eq!(md.matches("](").count(), 1, "one link: {md}");
         assert!(md.contains("[The report](https://example.com/r%281%29)"));
         // no baseline: said, and nothing compared

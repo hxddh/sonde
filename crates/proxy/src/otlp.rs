@@ -271,7 +271,7 @@ mod tests {
                 .clone()
         };
         assert_eq!(spans(&whole).len(), 600);
-        // pretty, as `sonde export` writes it: the same document
+        // pretty, as `sonde share --otlp` writes it: the same document
         let mut text = Vec::new();
         write_traces(&unnamed, &mut text, true).unwrap();
         assert_eq!(

@@ -7,7 +7,7 @@ What is listed under **Stable** changes only in a major release; everything else
 | | What | Documented in | Tested by |
 |---|---|---|---|
 | Session files | The `.sonde` format: header, records, log lines, versioning | [session-format.md](session-format.md) | `the_format_as_its_spec_says` (`crates/proxy/src/session.rs`) |
-| JSON outputs | Every `-f json` output (and `share --json`): required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas) |
+| JSON outputs | Every `-f json` output: required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas) |
 | `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-cost`, `max-errors`, `max-p95`, `expect`, `tolerance`, `no-new-warnings`, `baseline`), `[program]` (`name`), `[record]` (`policy`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/proxy/src/project.rs` (one reader for CLI and app) |
 | Exit codes | Each code's meaning | [cli.md](cli.md#exit-codes) | `crates/sonde-cli/tests/cli.rs` |
 | Commands and flags | Subcommands, flags, arguments, `-f` formats, the environment a recorded program gets | [cli.md](cli.md), [recording.md](recording.md) | `crates/sonde-cli/tests/cli.rs` |
@@ -20,21 +20,20 @@ What is listed under **Stable** changes only in a major release; everything else
 | `sonde check -f json` | [check](schemas/check.schema.json) |
 | `sonde compare -f json` | [compare](schemas/compare.schema.json) |
 | `sonde sessions -f json` | [sessions](schemas/sessions.schema.json) |
-| `sonde share --json` | [share](schemas/share.schema.json) (`profile` and `signals` not stable) |
-| `sonde replay -e E -f json` | [replay](schemas/replay.schema.json) |
-| `sonde replay -e A -e B … -f json` | [replay-stores](schemas/replay-stores.schema.json) |
-| `sonde diff -f json` | [diff](schemas/diff.schema.json) |
+| `sonde compare FILE --replay E -f json` | [compare-replay](schemas/compare-replay.schema.json) |
+| `sonde compare FILE --replay A --replay B … -f json` | [compare-replay-stores](schemas/compare-replay-stores.schema.json) |
+| `sonde compare ORIGINAL REPLAY -f json` | [compare-answers](schemas/compare-answers.schema.json) |
 | `sonde endpoints list -f json` | [endpoints-list](schemas/endpoints-list.schema.json) |
 | `sonde endpoints test -f json` | [endpoints-test](schemas/endpoints-test.schema.json) |
-| `sonde du -f json` | [du](schemas/du.schema.json) |
-| `sonde mpu scan -f json` | [mpu-scan](schemas/mpu-scan.schema.json) |
+| `sonde bucket size -f json` | [bucket-size](schemas/bucket-size.schema.json) |
+| `sonde bucket uploads -f json` | [bucket-uploads](schemas/bucket-uploads.schema.json) |
 | `sonde layout inspect -f json` | [layout-inspect](schemas/layout-inspect.schema.json) |
 | `sonde probe list -f json` | [probe-list](schemas/probe-list.schema.json) |
 | `sonde probe -f json` | [probe](schemas/probe.schema.json) |
 | `sonde probe runs -f json` | [probe-runs](schemas/probe-runs.schema.json) |
 | `sonde probe diff -f json` | [probe-diff](schemas/probe-diff.schema.json) |
 
-`sonde export` writes OpenTelemetry OTLP/JSON; that contract is OpenTelemetry's.
+`sonde share --otlp` writes OpenTelemetry OTLP/JSON; that contract is OpenTelemetry's.
 
 ## Not stable
 
@@ -44,6 +43,24 @@ What is listed under **Stable** changes only in a major release; everything else
   cache is rebuilt.
 - The Rust crates' APIs.
 - A finding's text. Its `identity` (what `[check] expect` names) is stable.
+
+## Removed in 18.0
+
+A major (D-138). Each folded command still runs for 18.0 and says its new form ([cli.md](cli.md#folded-in-180)).
+
+- Commands: `diff`, `replay` (→ `compare`), `watch` (→ `proxy --rotate`, `import s3://… --follow`), `export`
+  (→ `share --otlp`), `du`, `mpu` (→ `bucket size`, `bucket uploads`).
+- Flags: `share --json` (`show -f json`), `--log-out`, `run`/`proxy` `--no-delete` and `--read-only` (`--policy`).
+  `--rate` and `--concurrency` are no longer listed (still taken).
+- JSON: `show -f json`'s `episodes`, `observations`, `records` are `operations`, `findings`, `requests`;
+  `show --summary`'s `observations` is `findings` and `waiting.busyMs` is `waiting.waitingMs`. Fields inside a
+  finding or an operation keep their names. The schemas `share`, `replay`, `replay-stores`, `diff`, `du`, `mpu-scan`
+  are `compare-replay`, `compare-replay-stores`, `compare-answers`, `bucket-size`, `bucket-uploads` (`share`: none).
+- Exit 77 no longer means read-only mode: there is none.
+- Findings `obs.retried`, `obs.slow`, `obs.races`, `obs.injected`, `obs.shared` and the 50% level of `obs.prefixrate`:
+  an `expect` naming them matches nothing.
+- `config.toml`: `read-only`, `reqlog-capacity`, `reqlog-persist`, `stale-upload-days` are read and ignored (said
+  on stderr), and dropped at the next save.
 
 ## Versions
 

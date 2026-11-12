@@ -53,18 +53,6 @@ impl RunOptions {
     }
 }
 
-/// Refuses while read-only mode is on: a run writes and deletes objects
-/// under `sonde-probe/` (and, when allowed, creates and removes buckets).
-/// What a UI calls before [`spawn`].
-pub fn allowed(s: &Sonde) -> Result<(), S3Error> {
-    if s.read_only() {
-        return Err(S3Error::refused(
-            "read-only mode is on: turn it off in Settings (`read-only`) to run probes (a run writes and deletes objects under sonde-probe/ in the scratch bucket, and buckets of its own when allowed)",
-        ));
-    }
-    Ok(())
-}
-
 /// Starts one job per endpoint; their ids, in order.
 pub fn spawn(s: &Arc<Sonde>, endpoints: &[String], opts: RunOptions) -> Vec<String> {
     endpoints
@@ -652,19 +640,6 @@ mod tests {
             only: vec!["consistency.read-after-overwrite".into()],
             ..Default::default()
         }
-    }
-
-    #[tokio::test]
-    async fn probes_are_refused_while_read_only_is_on() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = Sonde::open(sonde_core::Paths::rooted(dir.path())).unwrap();
-        let e = allowed(&s).unwrap_err();
-        assert_eq!(e.kind, s3raw::ErrorKind::Refused);
-        assert!(e.message.contains("read-only"), "{e}");
-        let mut st = s.settings();
-        st.read_only = false;
-        s.set_settings(st).unwrap();
-        assert!(allowed(&s).is_ok());
     }
 
     #[tokio::test(flavor = "multi_thread")]

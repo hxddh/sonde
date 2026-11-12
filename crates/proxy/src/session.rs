@@ -959,8 +959,7 @@ mod tests {
         crate::trial::save(&path, &[]).unwrap();
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&path), 0o600);
-        assert_eq!(mode(&crate::summary::counted_file(&path)), 0o600);
-        assert_eq!(mode(&crate::trial::file_for(&path)), 0o600);
+        assert_eq!(mode(&path.with_file_name(crate::index::FILE)), 0o600);
     }
 
     /// docs/session-format.md's promises: the fewest fields a line needs,
@@ -1352,10 +1351,10 @@ mod tests {
         assert_eq!((kept.requests, kept.errors), (40, 0));
         assert_eq!(kept.shape.iter().sum::<u32>(), 40);
         assert_eq!(kept.program.as_deref(), Some("app"));
-        // one written elsewhere (`-o`) gets no file beside it
+        // one written elsewhere (`-o`) gets no index beside it
         let other = data.path().join("out.sonde");
         recorded(&other, 2);
         compress(&other).unwrap();
-        assert!(!crate::summary::counted_file(&other).exists());
+        assert!(!data.path().join(crate::index::FILE).exists());
     }
 }

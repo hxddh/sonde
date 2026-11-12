@@ -1560,12 +1560,6 @@ fn stem_of(session: &std::path::Path) -> String {
     name.strip_suffix(".sonde").unwrap_or(&name).to_string()
 }
 
-/// Where a run's trials are kept: beside its session, so that the app and
-/// `sonde check` read what the last trial found.
-pub fn file_for(session: &std::path::Path) -> std::path::PathBuf {
-    session.with_file_name(format!("{}.trials.json", stem_of(session)))
-}
-
 /// The folder a run's trial sessions are recorded in, beside its session.
 pub fn folder_for(session: &std::path::Path) -> std::path::PathBuf {
     session.with_file_name("trials")
@@ -1611,20 +1605,42 @@ pub fn remove(session: &std::path::Path) {
             let _ = std::fs::remove_file(dir.join(name));
         }
     }
-    let _ = std::fs::remove_file(file_for(session));
+    crate::index::set(session, crate::index::Change::NoTrials);
+    // (and the file they were kept in before 18.0)
+    let _ = std::fs::remove_file(crate::index::beside(session, "trials.json"));
     // (only when nothing else is in it)
     let _ = std::fs::remove_dir(dir);
 }
 
+/// Keeps a run's trials in its folder's index, so that the app and `sonde
+/// check` read what the last trial found.
 pub fn save(session: &std::path::Path, trials: &[Trial]) -> std::io::Result<()> {
-    reqlog::private::write(&file_for(session), serde_json::to_vec_pretty(trials)?)
+    if !session
+        .parent()
+        .is_some_and(|d| d.as_os_str().is_empty() || d.is_dir())
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no folder for {}", session.display()),
+        ));
+    }
+    crate::index::set(session, crate::index::Change::Trials(trials.to_vec()));
+    Ok(())
 }
 
-/// A run's trials; none when it was never tried (or the file is damaged).
+/// A run's trials; none when it was never tried. Kept beside it before
+/// 18.0 (`<run>.trials.json`): read, and moved into the index.
 pub fn load(session: &std::path::Path) -> Vec<Trial> {
-    std::fs::read(file_for(session))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
+    crate::index::get(session)
+        .trials
+        .or_else(|| {
+            crate::index::moved(
+                session,
+                "trials.json",
+                |b| serde_json::from_slice::<Vec<Trial>>(b).ok(),
+                |t| crate::index::Change::Trials(t.clone()),
+            )
+        })
         .unwrap_or_default()
 }
 
@@ -2547,7 +2563,7 @@ mod tests {
         assert!(outside.exists());
         assert!(!trials.join("run.slowdown.sonde").exists());
         assert!(!trials.join("run.error-2.sonde").exists());
-        assert!(!file_for(&session).exists());
+        assert!(load(&session).is_empty());
         assert!(
             trials.join("run-2.slowdown.sonde").exists(),
             "another run's"

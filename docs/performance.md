@@ -56,7 +56,7 @@ About 1.1 KB a request (8 GB holds about seven million), mostly the record's 472
 | --- | --- | --- | --- |
 | `sonde check --baseline` | 0.2 s, 36 MiB | 1.5 s, 236 MiB | 17 s, 2.0 GiB |
 | `sonde show -f json` | 0.3 s, 33 MiB | 3.5 s, 212 MiB | 34 s, 1.8 GiB |
-| `sonde share --json`, `sonde export` | 0.3 s, 33 MiB | 3 s, 187 MiB | 32 s, 1.7 GiB |
+| `sonde share --otlp` | 0.3 s, 33 MiB | 3 s, 187 MiB | 32 s, 1.7 GiB |
 | `sonde share --html` | 0.1 s, 0.85 MB page | 0.9 s, 0.85 MB page | 9.9 s, 0.85 MB page |
 | `sonde sessions`, one such file | at once | at once | at once (5.7 s once, when first counted) |
 | The app's first view | 610 KiB | 640 KiB | 634 KiB |
@@ -74,7 +74,7 @@ Budgets (`crates/proxy/tests/budgets.rs`, run optimised in CI):
 How: the file is streamed and parsed on every core; records keep only the headers an analysis reads, with repeated
 text shared; operations, signals and profile are computed once, in parallel; JSON is written as it is made; the app
 gets a page of operations at a time; `compare` and `diff` read one session at a time. The app also caches each
-finished run's figures in `sessions/<name>.summary.json` and reads a live recording incrementally.
+finished run's figures in `sessions/.index.jsonl` and reads a live recording incrementally.
 
 ## Terminal binary
 

@@ -175,16 +175,16 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 
 | | |
 |---|---|
-| Sessions | `trials/<run>.<scenario>.sonde` beside the run. Records carry `injected`; the first finding counts requests that met a fault (sonde's 503s are not the store's); replay skips injected requests. Not runs: excluded from "newest", trend, baseline. |
-| Verdicts | `<run>.trials.json` beside the run; sessions named by file name, never path. `where` (`operation`, `key`, `caller`) and `advice` (`key`, `args`). |
+| Sessions | `trials/<run>.<scenario>.sonde` beside the run. Records carry `injected`; the session says first how many requests met a fault (sonde's 503s are not the store's); replay skips injected requests. Not runs: excluded from "newest", trend, baseline. |
+| Verdicts | in the sessions folder's `.index.jsonl` (`<run>.trials.json` beside the run before 18.0, moved in when read); sessions named by file name, never path. `where` (`operation`, `key`, `caller`) and `advice` (`key`, `args`). |
 | `sonde check` | rows `pass` / `warn` (degraded, refused) / `FAIL` / `skip`; **fails when the program broke**, budget or not. JSON: `trials`, `passed`, `verdict`. |
 | `sonde show` | *Under faults*: the run's verdicts with their history. JSON: `trials`. |
 | `sonde sessions` | each run's worst verdict |
-| Deleting a run | removes its verdicts and its own `trials/` files; `.trials.json` paths are never followed |
+| Deleting a run | removes its verdicts and its own `trials/` files; a verdict's session name is never followed as a path |
 | Exit | the command's status if the clean run failed; 130 / 143 interrupted; 1 if a trial broke; else 0 |
 
 **In the app**: *Try under faults…* on Run (after a run) and on a session's Runs pane. The dialog lists the
-scenarios with a box to leave each out, warns without `{trial}`, refuses while read-only; Cancel keeps nothing.
+scenarios with a box to leave each out, warns without `{trial}`; what the program may do is the dialog's policy; Cancel keeps nothing.
 Verdicts stay on the Runs pane; a row opens its trial session (cannot be run again, renamed or made a baseline).
 Injected requests are marked "Injected by sonde"; the sessions list marks runs whose trial broke.
 

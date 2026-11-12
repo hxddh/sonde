@@ -16,7 +16,7 @@ pub enum ErrorKind {
     Decode,
     /// The job was cancelled.
     Cancelled,
-    /// Refused locally: read-only mode, missing confirmation.
+    /// Refused locally: a confirmation missing or mismatched.
     Refused,
 }
 

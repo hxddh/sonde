@@ -215,25 +215,17 @@ impl Prices {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct Settings {
-    /// Destructive operations are refused while on (the default).
-    pub read_only: bool,
     /// Requests in flight per job.
     pub concurrency: usize,
     /// Requests per second per job (`None`: unlimited).
     pub rate_limit: Option<f64>,
     pub prices: Prices,
-    /// Records kept in the request log.
-    pub reqlog_capacity: usize,
-    /// Also keep the request log in SQLite.
-    pub reqlog_persist: bool,
     /// `system`, `light` or `dark`.
     pub theme: String,
     /// Stronger borders and text: the theme's high-contrast variant.
     pub high_contrast: bool,
     /// `auto`, `en` or `zh`.
     pub language: String,
-    /// Multipart uploads older than this are flagged.
-    pub stale_upload_days: u32,
     /// Runs name the place in a program's code that sent each request (hooks
     /// that add `x-sonde-caller`: Python's boto3 on PYTHONPATH, the AWS SDK
     /// for JavaScript v3 with NODE_OPTIONS, the AWS SDK for Java 2 with
@@ -241,29 +233,75 @@ pub struct Settings {
     pub name_callers: bool,
     /// What a program recorded by Run may do to the store: `no-delete`
     /// (the default: nothing removed, nothing there before written over),
-    /// `read-only` or `allow`. sonde's own acts are `read_only`'s.
+    /// `read-only` or `allow`. sonde's own destructive acts are each a dry
+    /// run first, done on a typed confirmation, and kept in the audit log.
     pub record_policy: String,
     pub exports_dir: Option<PathBuf>,
     pub downloads_dir: Option<PathBuf>,
+    /// Settings gone in 18.0, still read so that an older file loads:
+    /// never written back, and said by [`Settings::gone`].
+    #[serde(rename = "read-only", skip_serializing)]
+    pub gone_read_only: Option<serde::de::IgnoredAny>,
+    #[serde(rename = "reqlog-capacity", skip_serializing)]
+    pub gone_reqlog_capacity: Option<serde::de::IgnoredAny>,
+    #[serde(rename = "reqlog-persist", skip_serializing)]
+    pub gone_reqlog_persist: Option<serde::de::IgnoredAny>,
+    #[serde(rename = "stale-upload-days", skip_serializing)]
+    pub gone_stale_upload_days: Option<serde::de::IgnoredAny>,
+}
+
+/// How old an incomplete upload is before it is stale: a week, as the
+/// lifecycle rule sonde adds aborts them.
+pub const STALE_UPLOAD_DAYS: u32 = 7;
+
+impl Settings {
+    /// What an older config.toml says that sonde no longer reads (18.0):
+    /// each a line for the user, the file left as it is until it is saved.
+    pub fn gone(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.gone_read_only.is_some() {
+            out.push("`read-only` is no longer a setting (18.0) and is ignored: sonde's own deletes are each a dry run, done on a typed confirmation and kept in the audit log; what a recorded program may do is `record-policy`".to_string());
+        }
+        let others: Vec<&str> = [
+            (self.gone_reqlog_capacity.is_some(), "`reqlog-capacity`"),
+            (self.gone_reqlog_persist.is_some(), "`reqlog-persist`"),
+            (
+                self.gone_stale_upload_days.is_some(),
+                "`stale-upload-days` (a week)",
+            ),
+        ]
+        .iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, k)| *k)
+        .collect();
+        if !others.is_empty() {
+            out.push(format!(
+                "{} {} no longer read (18.0) and ignored",
+                others.join(", "),
+                if others.len() == 1 { "is" } else { "are" }
+            ));
+        }
+        out
+    }
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            read_only: true,
             concurrency: 16,
             rate_limit: None,
             prices: Prices::default(),
-            reqlog_capacity: reqlog::DEFAULT_CAPACITY,
-            reqlog_persist: false,
             theme: "system".into(),
             high_contrast: false,
             language: "auto".into(),
-            stale_upload_days: 7,
             name_callers: false,
             record_policy: "no-delete".into(),
             exports_dir: None,
             downloads_dir: None,
+            gone_read_only: None,
+            gone_reqlog_capacity: None,
+            gone_reqlog_persist: None,
+            gone_stale_upload_days: None,
         }
     }
 }
@@ -390,7 +428,6 @@ mod tests {
 
     const SAMPLE: &str = r#"
 [settings]
-read-only = true
 concurrency = 8
 rate-limit = 50.0
 
@@ -419,7 +456,6 @@ credentials = { kind = "profile", name = "prod" }
     fn parse_and_round_trip() {
         let c = Config::parse(SAMPLE).unwrap();
         assert_eq!(c.endpoints.len(), 2);
-        assert!(c.settings.read_only);
         assert_eq!(c.settings.concurrency, 8);
         assert_eq!(
             c.settings.prices.per_gib_month(Some("STANDARD")),
@@ -441,10 +477,36 @@ credentials = { kind = "profile", name = "prod" }
     #[test]
     fn defaults_are_safe() {
         let c = Config::default();
-        assert!(c.settings.read_only);
         assert_eq!(c.settings.record_policy, "no-delete");
-        assert_eq!(c.settings.reqlog_capacity, 5000);
-        assert_eq!(c.settings.stale_upload_days, 7);
+        assert!(c.settings.gone().is_empty());
+    }
+
+    #[test]
+    fn a_setting_gone_in_18_is_read_said_and_not_written_back() {
+        let c = Config::parse(
+            "[settings]\nread-only = false\nreqlog-capacity = 100\nreqlog-persist = true\nstale-upload-days = 30\ntheme = 'dark'\n",
+        )
+        .unwrap();
+        assert_eq!(c.settings.theme, "dark");
+        let said = c.settings.gone();
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert!(
+            said[0].contains("`read-only` is no longer a setting"),
+            "{said:?}"
+        );
+        assert!(
+            said[1].contains("`reqlog-capacity`, `reqlog-persist`, `stale-upload-days`"),
+            "{said:?}"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.toml");
+        c.save(&p).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(
+            !text.contains("read-only") && !text.contains("reqlog"),
+            "{text}"
+        );
+        assert!(Config::load(&p).unwrap().settings.gone().is_empty());
     }
 
     #[test]

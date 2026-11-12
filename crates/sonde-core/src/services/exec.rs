@@ -7,9 +7,9 @@ use serde_json::json;
 use crate::Sonde;
 use crate::guard::{Action, AuditEntry, Outcome};
 
-/// Runs plan `id` if read-only is off and `confirmation` matches.
+/// Runs plan `id` if `confirmation` matches.
 pub async fn execute(s: &Sonde, id: &str, confirmation: &str) -> Result<Outcome, S3Error> {
-    let plan = s.guard().take(id, s.read_only(), confirmation)?;
+    let plan = s.guard().take(id, confirmation)?;
     let c = s.client(&plan.endpoint)?;
     let mut entry = AuditEntry {
         time: Utc::now(),
@@ -140,9 +140,6 @@ mod tests {
         e.credentials = crate::CredentialSource::Anonymous;
         e.path_style = true;
         s.add_transient_endpoint(e).unwrap();
-        let mut st = s.settings();
-        st.read_only = false;
-        s.set_settings(st).unwrap();
         // a directory where the log file should be
         std::fs::create_dir_all(s.paths().audit_log()).unwrap();
         let item = PlanItem::new("k", Some("v".into()), None, vec![]);
@@ -167,9 +164,6 @@ mod tests {
         );
         e.credentials = crate::CredentialSource::Anonymous;
         s.add_transient_endpoint(e).unwrap();
-        let mut st = s.settings();
-        st.read_only = false;
-        s.set_settings(st).unwrap();
         let item = PlanItem::new("k", Some("v".into()), None, vec![]);
         let plan = s
             .guard()

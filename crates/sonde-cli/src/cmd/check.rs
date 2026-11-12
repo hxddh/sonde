@@ -256,9 +256,8 @@ fn program_runs(
     // the run checked is the newest, wherever its file is
     found.retain(|(_, p)| p.canonicalize().ok() != upto.canonicalize().ok());
     let from = found.len().saturating_sub(29);
-    // an earlier run's figures are kept beside it once reckoned
-    // (`<name>.summary.json`): thirty runs are thirty small files, not
-    // thirty sessions read whole
+    // an earlier run's figures are kept in its folder's index once
+    // reckoned: thirty runs are thirty entries, not thirty sessions read whole
     let mut runs: Vec<_> = found[from..]
         .iter()
         .filter_map(|(_, p)| {
