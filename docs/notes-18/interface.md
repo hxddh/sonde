@@ -60,6 +60,10 @@ part of §1), for the release's changelog and decision log. The second UI wave w
 - **A request's key history** in the inspector: every request of its key in the session, the one shown marked,
   another a press away.
 - The SDK that sent a run's requests, in its header ("from boto3 1.34").
+- A narrow session header keeps the command's room: Try, Replay and Compare by their icons (their words in their
+  tooltips). Run says what acting on a finding saves under its words, so the words are never cut to nothing.
+- The tour's program makes a finding (its config read ten times) and breaks under faults (a write curl never
+  retries); the tour tries again what broke and groups the operations.
 
 ### Removed
 
@@ -73,6 +77,10 @@ part of §1), for the release's changelog and decision log. The second UI wave w
   over the objects.
 
 ### Fixed
+
+- A shared note (a conditional create on every SlateDB write) was said nowhere once it stopped being a finding:
+  it is each operation's own note again.
+- Compare read a run against the run before it backwards when opened from the later run (Run again).
 
 - The middle of a name cut in its middle shows a gap on Linux: a Native Shell limit, recorded as FINDINGS 24.
 
