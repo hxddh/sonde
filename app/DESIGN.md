@@ -162,11 +162,9 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
     as fit, the rest behind `⋯`; they never wrap to a second line;
   - a finding's advice opens inside its own row, under its title, which comes to the top of the findings' room;
-    in a short pane that room is bounded so the operations under it keep rows, and rounded down to whole
-    findings (never a row cut through its text), the heading saying how many are in view and that the rest
-    scroll;
-  - the column that takes a table's free width is the one that would be cut (a request's target, an upload's
-    key, an object's name); a column of names is as wide as its longest name here, no wider;
+    in a short pane that room is bounded so the operations under it keep rows, ending on a whole finding, and
+    says how many are in view;
+  - free width goes to the column that would be cut (a target, a key, a name);
   - a chart's sentence wraps and is never cut; a row's name that does not fit its gutter is cut in its middle
     (`axisName`), a path at its start (`tail`); an operation's name in a table is cut in its middle by the text
     itself (`ellipsis-middle`), never at its end.
@@ -294,16 +292,10 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   writes zero alone. A second quantity has its tick at the far edge (in
   flight on the timeline, the share done on the histogram). Latencies on a log scale are drawn as logs, the
   ticks saying times.
-- **A budget on its chart**: where the session's program has a `[check]` in its `sonde.toml`, its `max-p95` is a
-  dashed line in the warning's tone on latency over time, `max-errors` on the error rate (as that share of the
-  run's requests), `max-waiting` on the program's waiting over its runs, each with a chip ("budget 50 ms") at the
-  far edge (`Budget`, `budgetTop`); the chart's sentence says how far the run is from it.
-- **A chart's rows out**: a chart on the Time pane that has rows gives them as CSV from a button at its title's
-  end, a column per figure in one unit, named in its title; written where exports go (Native Shell has no save
-  dialog). A shared page has no such button.
-- **A stretch kept in a link**: the two slices chosen on the timeline are kept as milliseconds from the session's
-  start, in a `sonde://` link ("Copy link to this stretch of time", `?range=a-b`) and in a shared page's address
-  (`#range=a-b`); opened, the session shows its Time pane over that stretch. Still chosen by two presses (D-123).
+- **A budget on its chart**: `sonde.toml`'s `max-p95`, `max-errors` (as a share of the run) and `max-waiting`
+  (over the runs) are dashed lines with a chip ("budget 50 ms"); the sentence says how far the run is.
+- **Out and kept**: a Time chart's rows go out as CSV (its title's button, to the exports folder); the stretch
+  chosen goes into a `sonde://` link and a shared page's `#range=` (D-123: still two presses).
 - **A whole legend**: every colour and every line a chart draws is named under it — the timeline's stack, its
   line of requests in flight, the findings' numbers and a trial's faults; the scatter's outcomes and its p95.
 - **The histogram**: each bar says how many requests it holds; the share done by each time is a dashed line on
@@ -364,7 +356,6 @@ for places (Run, Sessions, Buckets, Activity), verbs for commands. Chinese is wr
 not translated: `桶`, `会话`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of
 their own (运行 the place, 启动 its button, 各次运行 and 历次运行 the runs in the list and on the tab; 操作 what
 a program did, 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create; 未通过 a
-trial the program broke under, 失败 a request, a job or a budget that failed: a sidebar of trials never reads like a
-list of failed requests). What sonde says about a session comes from
+broke trial, 失败 a failed request, job or budget). What sonde says about a session comes from
 phrases (`src/phrases.ts`) in both languages: English from Rust's own templates, which `check-locales.py`
 holds the app's to, letter for letter.
