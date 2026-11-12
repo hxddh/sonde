@@ -29,6 +29,17 @@ function command(cmd: boolean) {
   return [pause, ...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), again, put, `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
 }
 
+// a long command into a field: pasted where the test runner can paste (quicker than typing it), typed where it
+// cannot yet (Native Shell's runner pastes on macOS, iOS, the web and headless; not on a Windows desktop)
+async function enter(app: any, id: string, text: string) {
+  try {
+    await app.paste(id, { text });
+  } catch (e) {
+    if (!/pasting in tests is not supported/.test(String(e))) throw e;
+    await app.type(id, text);
+  }
+}
+
 interface Variant {
   name: string;
   width: number;
@@ -98,7 +109,7 @@ for (const v of variants) {
     const sure = sample.includes("AWS_ENDPOINT_URL");
     // (the demo left its own first command in the field: typed after it, the two ran as one)
     await app.clear("id:run-command");
-    await app.paste("id:run-command", { text: command(cmd) });
+    await enter(app, "id:run-command", command(cmd));
     // (the button follows the field a frame later)
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
@@ -106,7 +117,7 @@ for (const v of variants) {
     // (the other shell's form, should the sample not have said and the first have reached no store)
     if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
       await app.clear("id:run-command");
-      await app.paste("id:run-command", { text: command(!cmd) });
+      await enter(app, "id:run-command", command(!cmd));
       await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
       await app.press("id:run-start");
       await app.waitUntil(() => !app.shows("id:run-no-requests"), { timeout: 20000 });
