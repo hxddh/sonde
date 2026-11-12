@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use clap::Args;
 use sonde_core::Sonde;
-use sonde_proxy::session::Session;
 use sonde_proxy::share;
 
 #[derive(Args)]
@@ -67,12 +66,12 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     // the session is read for what it amounts to, and each request is
     // written from the file as its turn comes
     let (session, full) = if a.redact {
-        let mut session = Session::open(&file).map_err(|e| anyhow::anyhow!(e))?;
+        let mut session = super::sessions::read(&file, sonde_proxy::session::Keep::All)?;
         let prices = super::record::request_prices_for(s, &session.header.endpoint);
         sonde_proxy::report::redact(&mut session);
         ((session, prices), None)
     } else {
-        let session = Session::open_lean(&file).map_err(|e| anyhow::anyhow!(e))?;
+        let session = super::sessions::read(&file, sonde_proxy::session::Keep::Analysis)?;
         // priced before redaction hides the endpoint
         let prices = super::record::request_prices_for(s, &session.header.endpoint);
         ((session, prices), Some(file.as_path()))

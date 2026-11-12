@@ -197,7 +197,7 @@ impl Parts {
             .unwrap_or_else(|| name.to_string());
         for (i, r) in records.iter_mut().enumerate() {
             r.id = i as u64 + 1;
-            r.endpoint = endpoint.clone();
+            r.endpoint = endpoint.as_str().into();
         }
         let mut header = SessionHeader::new(
             &endpoint,
@@ -383,11 +383,11 @@ fn record(
     let operation = crate::op::classify(method, bucket.as_deref(), key.as_deref(), &query, &[]);
     Record {
         time,
-        method: method.to_string(),
-        operation,
-        bucket,
-        key,
-        query,
+        method: method.into(),
+        operation: operation.into(),
+        bucket: bucket.map(Into::into),
+        key: key.map(Into::into),
+        query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
         status: Some(status),
         latency_ms,
         ..Default::default()
@@ -610,10 +610,10 @@ fn cloudtrail(
             *hosts
                 .entry(format!("s3.{region}.amazonaws.com"))
                 .or_default() += 1;
-            r.region = Some(region.to_string());
+            r.region = Some(region.into());
         }
         // CloudTrail names the operation itself
-        r.operation = name.to_string();
+        r.operation = name.into();
         r.request_id = e["requestID"].as_str().map(String::from);
         let who = &e["userIdentity"];
         r.requester = who["arn"]
@@ -736,7 +736,8 @@ fn har(
             r.key.as_deref(),
             &r.query,
             &headers,
-        );
+        )
+        .into();
         // what the request carried: the SDK it names, its conditions, its
         // range (secrets masked here, as on every record)
         r.request_headers = headers
@@ -746,7 +747,7 @@ fn har(
             .collect();
         // sonde's own HAR names the operation
         if let Some(op) = e["_sonde"]["operation"].as_str() {
-            r.operation = op.to_string();
+            r.operation = op.into();
         }
         // a presigned URL's signature, key and token never reach the session
         let mut shown = url.clone();

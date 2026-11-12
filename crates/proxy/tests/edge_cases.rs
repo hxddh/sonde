@@ -23,10 +23,7 @@ fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u
 }
 
 fn q(mut r: Record, q: &[(&str, &str)]) -> Record {
-    r.query = q
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+    r.query = q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
     r
 }
 
@@ -68,9 +65,9 @@ fn a_retried_commit_is_still_a_commit() {
     let eps = episodes(&recs);
     let obs = observations(&recs, &eps);
     assert!(
-        !eps.iter().any(|e| e.title.contains("no commit followed")),
+        !eps.iter().any(|e| e.title().contains("no commit followed")),
         "{:#?}",
-        eps.iter().map(|e| &e.title).collect::<Vec<_>>()
+        eps.iter().map(|e| e.title()).collect::<Vec<_>>()
     );
     assert!(
         !obs.iter().any(|o| o.text.contains("no commit after them")),
@@ -105,13 +102,13 @@ fn a_retried_create_does_not_leave_an_upload_open() {
         1,
         "{:#?}",
         eps.iter()
-            .map(|e| (&e.records, &e.title))
+            .map(|e| (&e.records, e.title()))
             .collect::<Vec<_>>()
     );
     assert!(
-        !uploads[0].title.contains("not completed"),
+        !uploads[0].title().contains("not completed"),
         "{}",
-        uploads[0].title
+        uploads[0].title()
     );
     assert!(
         !obs.iter().any(|o| o.text.contains("never completed")),

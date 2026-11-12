@@ -25,6 +25,12 @@ fn alone(first: bool) -> std::sync::MutexGuard<'static, ()> {
     ONE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Starts the count of [`peak_mib`] again from what is held now (Linux):
+/// a test's peak is then its own, not the one before it.
+fn peak_from_now() {
+    let _ = std::fs::write("/proc/self/clear_refs", "5");
+}
+
 /// The most memory this process has held at once, in MiB (Linux; none elsewhere).
 fn peak_mib() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -55,9 +61,14 @@ fn read_as_show(path: &std::path::Path) -> (Duration, usize, Analysis) {
     (took, s.records.len(), a)
 }
 
+/// What a million requests of the lake job may hold at once: what is
+/// measured (1.1 GiB in 17.0, two runs compared 1.2; 1.75 GiB in 16.0) and
+/// room for another allocator's habits, not for a request held whole again.
+const MILLION_MIB: u64 = 1500;
+
 #[test]
 #[ignore = "a million requests: run in release, as CI does"]
-fn a_million_requests_are_read_in_fifteen_seconds_and_two_gigabytes() {
+fn a_million_requests_are_read_in_fifteen_seconds_and_a_gigabyte_and_a_half() {
     let _alone = alone(true);
     let dir = tempfile::tempdir().expect("a folder");
     let path = dir.path().join("million.sonde");
@@ -78,7 +89,41 @@ fn a_million_requests_are_read_in_fifteen_seconds_and_two_gigabytes() {
     assert!(took < Duration::from_secs(15), "took {took:?}");
     // (the generator writes as it goes: it holds a few thousand records)
     if let Some(peak) = peak_mib() {
-        assert!(peak < 2048, "peak memory {peak} MiB");
+        assert!(peak < MILLION_MIB, "peak memory {peak} MiB");
+    }
+}
+
+/// What `sonde compare` does with two runs: each read (lean), reckoned and
+/// let go before the other is read ([`Run::analysed`]), then compared.
+#[test]
+#[ignore = "two runs of a million requests: run in release, as CI does"]
+fn two_runs_of_a_million_requests_compare_in_what_one_costs() {
+    use sonde_proxy::profile::{Run, compare_runs};
+    let _alone = alone(false);
+    let dir = tempfile::tempdir().expect("a folder");
+    let (a, b) = (dir.path().join("a.sonde"), dir.path().join("b.sonde"));
+    support::lake(1_000_000, &a, 1);
+    support::lake(1_000_000, &b, 2);
+    peak_from_now();
+    let started = Instant::now();
+    let run = |p: &std::path::Path| {
+        let s = Session::open_lean(p).expect("the session opens");
+        Run::analysed(&s.header, &s.records, &RequestPrices::default())
+    };
+    let (ra, rb) = (run(&a), run(&b));
+    let c = compare_runs(&ra, &rb);
+    let took = started.elapsed();
+    eprintln!(
+        "two runs of a million compared: {:.1} s, peak {:?} MiB",
+        took.as_secs_f64(),
+        peak_mib()
+    );
+    assert!(c.requests.0 >= 1_000_000 && c.requests.1 >= 1_000_000);
+    assert!(!c.groups.is_empty() && !c.prefixes.is_empty());
+    assert!(took < Duration::from_secs(40), "took {took:?}");
+    // the second run is read once the first is let go: one run's memory
+    if let Some(peak) = peak_mib() {
+        assert!(peak < MILLION_MIB, "peak memory {peak} MiB");
     }
 }
 

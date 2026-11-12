@@ -23,7 +23,7 @@ fn slatedb_run_reads_as_slatedb_steps() {
             "{:>3}  {:?}  {}  {:?}",
             e.requests(),
             e.format,
-            e.title,
+            e.title(),
             e.notes
         );
     }
@@ -43,7 +43,7 @@ fn slatedb_run_reads_as_slatedb_steps() {
         .iter()
         .filter(|e| e.format == Some(Format::SlateDB))
         .collect();
-    let titles: Vec<&str> = slate.iter().map(|e| e.title.as_str()).collect();
+    let titles: Vec<String> = slate.iter().map(|e| e.title()).collect();
     assert_eq!(
         titles
             .iter()
@@ -52,7 +52,9 @@ fn slatedb_run_reads_as_slatedb_steps() {
         12
     );
     assert!(
-        titles.contains(&"WAL 1 written empty (fencing marker)"),
+        titles
+            .iter()
+            .any(|t| t == "WAL 1 written empty (fencing marker)"),
         "{titles:?}"
     );
     assert!(
@@ -82,7 +84,7 @@ fn slatedb_run_reads_as_slatedb_steps() {
     );
     let manifest = slate
         .iter()
-        .find(|e| e.title == "manifest 3 written")
+        .find(|e| e.title() == "manifest 3 written")
         .unwrap();
     assert!(manifest.notes.iter().any(|n| n.contains("If-None-Match")));
     assert!(manifest.notes.iter().any(|n| n.starts_with("after ")));
@@ -111,11 +113,11 @@ fn sdk_runs_show_one_multipart_upload() {
         let mpu: Vec<_> = eps.iter().filter(|e| e.kind == Kind::Multipart).collect();
         assert_eq!(mpu.len(), 1, "{name}: {eps:#?}");
         assert!(
-            mpu[0].title.contains("3 parts · 12.0 MiB"),
+            mpu[0].title().contains("3 parts · 12.0 MiB"),
             "{}",
-            mpu[0].title
+            mpu[0].title()
         );
-        assert!(!mpu[0].title.contains("not completed"));
+        assert!(!mpu[0].title().contains("not completed"));
         assert_eq!(mpu[0].requests(), 5);
         assert_eq!(eps.len(), s.records.len() - 4, "{name}");
         assert!(observations(&s.records, &eps).is_empty(), "{name}");
@@ -126,7 +128,7 @@ fn sdk_runs_show_one_multipart_upload() {
 fn pyiceberg_run_reads_as_table_commits() {
     let s = load("iceberg.sonde");
     let eps = episodes(&s.records);
-    let titles: Vec<&str> = eps.iter().map(|e| e.title.as_str()).collect();
+    let titles: Vec<String> = eps.iter().map(|e| e.title()).collect();
     // create, append, append, overwrite, delete — then a file nothing commits
     assert_eq!(eps.len(), 6, "{titles:#?}");
     assert!(titles[0].starts_with("commit: table metadata v0"));
@@ -156,7 +158,7 @@ fn pyiceberg_run_reads_as_table_commits() {
 fn delta_rs_run_reads_as_commits() {
     let s = load("delta.sonde");
     let eps = episodes(&s.records);
-    let titles: Vec<&str> = eps.iter().map(|e| e.title.as_str()).collect();
+    let titles: Vec<String> = eps.iter().map(|e| e.title()).collect();
     assert_eq!(
         &titles[..4],
         [
@@ -190,7 +192,7 @@ fn lance_run_reads_as_versions() {
     let s = load("lance.sonde");
     assert_eq!(s.records.len(), 63);
     let eps = episodes(&s.records);
-    let titles: Vec<&str> = eps.iter().map(|e| e.title.as_str()).collect();
+    let titles: Vec<String> = eps.iter().map(|e| e.title()).collect();
     assert_eq!(
         titles,
         [
@@ -233,9 +235,9 @@ fn every_text_is_phrases() {
         let s = load(name);
         let eps = episodes(&s.records);
         for e in &eps {
-            assert!(!e.title_text.is_empty(), "{name}: {}", e.title);
-            assert_eq!(en(&e.title_text), e.title, "{name}");
-            assert_eq!(e.notes_text.len(), e.notes.len(), "{name}: {}", e.title);
+            assert!(!e.title_text.is_empty(), "{name}: {}", e.title());
+            assert_eq!(en(&e.title_text), e.title(), "{name}");
+            assert_eq!(e.notes_text.len(), e.notes.len(), "{name}: {}", e.title());
             for (n, t) in e.notes.iter().zip(&e.notes_text) {
                 assert_eq!(&t.en(), n, "{name}");
             }

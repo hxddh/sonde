@@ -1,11 +1,13 @@
-# Trials: a program against an S3 that misbehaves
+# Trials
 
-`sonde run` shows what a program does to its store. `sonde run --trial` shows what the program does when the store
-fails: sonde, which is already in every request's path, answers some requests in the store's place, and reads from
-the requests that follow whether the program retried, how long it waited, what it left behind and how it exited.
+`sonde run --trial` runs a program once normally (the **clean run**), then once per fault scenario. In each
+scenario sonde answers chosen requests in the store's place, then reads from the requests that follow whether the
+program retried, how long it waited, what it left behind and how it exited. Each scenario gets a verdict:
+**survived**, **degraded**, **broke** or **untested**.
 
 ```sh
 sonde run --trial -- python etl.py 's3://scratch/etl-{trial}/'
+sonde run --fault slowdown:3 --fault cut-body -- python etl.py 's3://scratch/etl-{trial}/'
 ```
 
 ```text
@@ -13,227 +15,198 @@ Trial: the command runs 3 more times, each under one scenario.
   survived  slowdown       35 faults, all retried · after 101 ms to 105 ms (in step) · 1.5× the requests
   survived  error          35 faults, all retried · after 102 ms to 105 ms (in step) · 1.5× the requests
   survived  lost-answer    23 faults, all retried · after 102 ms to 104 ms (in step) · 1.4× the requests · 23 written twice
-
-The program did not break.
-Each trial is a session:
-  sonde show …/sessions/trials/20261110-091555-python.slowdown.sonde
-  …
-```
-
-(pylance 14 writing, indexing, compacting and reading a dataset; `tools/gen_lance.py`.) And the two scenarios that
-are not an error in the store's place, on the same program:
-
-```text
   survived  cut-body       11 faults, all retried · 11 bodies cut: 11 resumed from the cut · after 101 ms to 104 ms (in step) · 1.2× the requests
   survived  lost-race      1 fault, 0 retried · 1 lost write read back and not written again: the store has it (sonde let it through), so no commit is missing
 ```
 
+(pylance writing, indexing, compacting and reading a dataset; `tools/gen_lance.py`.)
+
 ## What runs
 
-The command runs once as always (the clean run, an ordinary session), then once per scenario. **The command runs
-several times, so it must be safe to run again**: `{trial}` in the command (its first word too), and the variable
-`SONDE_TRIAL`, are `clean` for the first run and the scenario's name for each of the others, so each run can have a
-place of its own. A command with neither `{trial}` nor a mention of `SONDE_TRIAL` is warned of once: its runs share
-a place. Without `--trial` or `--fault`, `{trial}` is left as written and `SONDE_TRIAL` is not set.
+- **The command must be safe to run again.** `{trial}` anywhere in the command (the first word too) and the
+  variable `SONDE_TRIAL` are `clean` in the clean run and the scenario's name in each other run. Use them to give
+  each run its own place. A command with neither is warned about once: its runs share a place.
+- Without `--trial` or `--fault`, `{trial}` is left as written and `SONDE_TRIAL` is unset.
+- A clean run that exits non-zero or is interrupted runs no trial, and says so.
+- **Input**: when sonde's stdin is not a terminal, every run gets the same bytes (in memory up to 8 MiB, then a
+  temporary file). At a terminal, trial runs read `/dev/null`.
+- **Ctrl-C / SIGTERM** ends the whole trial: the running command and its process group are killed, the interrupted
+  scenario and later ones get no verdict, its partial session is removed, and sonde exits 130 / 143. Finished
+  verdicts are kept. (The clean run at a terminal stays in the terminal's group so it can read the keyboard.)
+- Every `sonde run` to a session path first removes the earlier recording's verdicts and trial sessions.
 
-**A trial's request is matched to the clean run's where only the run's name differs.** The clean run writes
-`etl-clean/state` and the trial `etl-slowdown/state`: the same request. A trial's request is the clean run's when
-the two are the same with the scenario's name, in some of the places it stands as a whole word (no letter or digit
-on either side), in place of `clean`, and nothing else differs: its bucket, key, query's values and control body
-(`DeleteObjects`). So `etl-slowdown/clean/state` is `etl-clean/clean/state` (the second `clean` is the program's
-own folder, in both runs), `etl-error/error.json` under the scenario `error` is `etl-clean/error.json`, and
-`etl-slowdown/state` is never `etl-clean/raw`. `cleaned/x` and, under `error`, `errors/x` are words of their own.
-A request the same as written in both runs (`error/log` under `error`, a key without `{trial}`) is matched as
-written first. Which places the program filled from `{trial}` or `SONDE_TRIAL` is read from the keys, not from the
-command: a program may build a key from `SONDE_TRIAL` any way it likes. What this cannot see: a run's name folded
-into something else (a hash of it, upper case): those keys differ between the runs, and each request is then read
-as one the clean run never sent.
+### Matching a trial's requests to the clean run's
 
-- **A trial is read against a clean run that worked.** A clean run that exits non-zero, or is interrupted, runs no
-  trial, and says so.
-- **Input.** When sonde's input is not a terminal, the clean run's input is kept and every run is fed the same
-  bytes (in memory up to 8 MiB, in an unnamed temporary file past it); at a terminal, the trial runs read from `/dev/null`.
-- **Ctrl-C or SIGTERM** during a trial ends the whole trial: the running command is killed, with every process it
-  started (each run is a process group of its own), no verdict is written for the interrupted scenario or for any
-  after it, its half-written session is removed, and sonde exits 130 or 143. Verdicts of the scenarios that
-  finished before it are kept. (The clean run at a terminal stays in the terminal's group, so that its program can
-  read the keyboard; Ctrl-C reaches it there by itself.)
-- **Every `sonde run` to a session's path starts clean**: the verdicts and trial sessions of an earlier recording
-  of that file are removed first, with `--trial` or without.
+A trial request matches a clean-run request when they differ only by the run's name standing in for `clean`, as a
+whole word (no letter or digit beside it), in bucket, key, query values or control body (`DeleteObjects`).
 
-Without `--fault`, the scenarios are `sonde.toml`'s if it has any, else chosen from what the clean run did:
+| Trial (scenario) | Matches clean run |
+|---|---|
+| `etl-slowdown/state` | `etl-clean/state` |
+| `etl-slowdown/clean/state` | `etl-clean/clean/state` |
+| `etl-error/error.json` (`error`) | `etl-clean/error.json` |
+| `etl-slowdown/state` | never `etl-clean/raw` |
+| `cleaned/x`, `errors/x` (`error`) | themselves (not whole words) |
+
+- A request identical in both runs (`error/log` under `error`, a key without `{trial}`) is matched as written first.
+- Which places carry the run's name is read from the keys, so a program may build keys from `SONDE_TRIAL` freely.
+- A name transformed (hashed, upper-cased) is not seen: such requests read as ones the clean run never sent.
+
+## Scenarios
+
+Without `--fault`, the scenarios are `sonde.toml`'s if it has any, else chosen from what the clean run did.
+`--fault NAME` (repeatable; duplicates run once) runs the named ones.
 
 | Scenario | What sonde does | Chosen when |
 |---|---|---|
 | `slowdown` | 503 SlowDown on each request's first attempt | always |
 | `error` | 500 InternalError on each request's first attempt | always |
-| `skew` | 403 RequestTimeTooSkewed on each request's first attempt, as S3 answers a clock too far out | it signs its requests: any request but one by a presigned URL, which someone else signed once |
-| `lost-answer` | each write reaches the store, and its first answer is replaced by a 500: the write happened and the program is not told | the program writes |
-| `fail-complete` | CompleteMultipartUpload fails once | it uploads in parts |
-| `complete-500` | each CompleteMultipartUpload reaches the store and completes, and its first answer is a 500 InternalError | it uploads in parts |
-| `cut-body` | each download's first answer goes out with its status and its whole `Content-Length`; the body stops at its half and the connection drops | it downloaded a body of 64 bytes or more |
-| `slow-first-byte` | the first download is held 10 s before it is sent on: nothing comes back until then. One download in all, so the trial takes 10 s more at most | it downloaded |
-| `lost-race` | each commit's first conditional write (`If-None-Match: *` or `If-Match`) is answered 412 though it would have won | it commits on a condition: a create in a table's log, or a write with `If-Match`. A create of a key of its own (`_SUCCESS`, a lock) is not offered it: a 412 there loses nothing |
-| `stale-list` | a listing (`ListObjects`, `ListObjectsV2`) answered by the store leaves out the keys this run wrote, each key once: the next listing shows it | it listed, after a write, the folder it wrote in |
-| `slow` | every request waits 300 ms more | `--fault slow` |
-| `s3-limits` | past 5,500 reads or 3,500 writes a second under one prefix, 503 SlowDown (S3's documented rate) | `--fault s3-limits` |
+| `skew` | 403 RequestTimeTooSkewed on each request's first attempt | it signs requests (any but a presigned URL) |
+| `lost-answer` | each write reaches the store; its first answer is replaced by a 500 | it writes |
+| `fail-complete` | CompleteMultipartUpload fails once (500) | it uploads in parts |
+| `complete-500` | each CompleteMultipartUpload completes in the store; its first answer is a 500 | it uploads in parts |
+| `cut-body` | each download's first answer sends its status and full `Content-Length`, then the body stops at half and the connection drops | it downloaded a body ≥ 64 bytes |
+| `slow-first-byte` | the first download is held 10 s before being forwarded (one download in all) | it downloaded |
+| `lost-race` | each commit's first conditional write (`If-None-Match: *` or `If-Match`) is answered 412 though it would have won | it commits on a condition: a create in a table's log, or a write with `If-Match`. Not a create of a key of its own (`_SUCCESS`, a lock) |
+| `stale-list` | a listing (`ListObjects`, `ListObjectsV2`) leaves out the keys this run wrote, each key once | it listed, after a write, the folder it wrote in |
+| `slow` | every request waits 300 ms more | only with `--fault slow` |
+| `s3-limits` | 503 SlowDown past 5,500 reads or 3,500 writes a second per prefix | only with `--fault s3-limits` |
 
-`--fault NAME` (repeatable) runs the named ones instead; a name given twice runs once.
+### Fault details
 
-**How hard a scenario presses.** `slowdown` and `error` fail each request's first attempt. `--fault slowdown:3`
-fails its first three (1 to 5), so a program that retries once or twice is seen to give up: the one number that
-means one thing, and only for these two. The verdict's row then reads `slowdown:3`; the trial's session and
-`{trial}` keep the name `slowdown`. The others have no such number (a lost race's next commit and a cut body's
-resume are not "the same request again"), and a scenario of the project's own says its `times` in `sonde.toml`.
-In the app the dialog offers the same count for the same two.
+- **Pressure**: `--fault slowdown:N` / `error:N` (N = 1 to 5) fail each request's first N attempts, to see a
+  program give up. The verdict row reads `slowdown:3`; the session and `{trial}` keep `slowdown`. No other built-in
+  scenario takes a number; project scenarios set `times`. The app's dialog offers the same count.
+- **One request** is method, operation, bucket, key and part number. Upload id is not part of it (an upload
+  restarted under a new id retries the first one's parts). Key-less requests are told apart by `prefix`,
+  `delimiter`, `start-after`, `continuation-token`, `marker`, `key-marker`, `upload-id-marker`,
+  `version-id-marker`, `versions`, `uploads` and a hash of the body (two `DeleteObjects` batches are two requests).
+- Rules match by operation and key and count attempts per request, so concurrency does not change which attempts fail.
+- **cut-body**: only a 2xx `GetObject` with `Content-Length` ≥ 64 is cut, at half; anything else passes and is not
+  counted as met. `Range` is not part of a request's identity, so the resuming read is the second attempt and is not
+  cut. The record keeps the store's 200/206, `injected`, `x-sonde-fault`, `x-sonde-cut-at`, and the bytes sent as
+  its size.
+- **lost-race**: an `If-None-Match: *` write **is sent to the store**, then answered 412 (the object there is the
+  program's own; sonde invents no competitor). An `If-Match` write is answered 412 without being sent. Attempts are
+  counted per commit family, not key, so the next-numbered write is the retry and goes through. Families: SlateDB
+  `manifest/`, `wal/`, compaction states; Iceberg `metadata/*.metadata.json`; Delta `_delta_log/*.json`; Lance
+  `_versions/`. Any other key is its own family. A 412 from the store itself is not a fault; sonde's 412s are not
+  counted among the store's races.
+- **s3-limits**: a sliding one-second window per prefix (bucket plus up to three folder levels of the key), the same
+  prefix as the "near S3's rate for one prefix" finding.
 
-A rule matches by **operation and key**, and counts the attempts at one request. "Each request's first attempt" is
-therefore the same in a program that sends one request at a time and in one that sends fifty at once: there is no
-"the third UploadPart", which would be a race.
+## How results are read
 
-**What one request is** (the faults and the verdict use the same definition): its method, operation, bucket, key
-and part number. An upload's id is not part of it, so an upload started again under a new id retries the parts of
-the first. A request without a key is told apart by its paging and listing parameters (`prefix`, `delimiter`,
-`start-after`, `continuation-token`, `marker`, `key-marker`, `upload-id-marker`, `version-id-marker`, `versions`,
-`uploads`) and by a hash of its body: two `DeleteObjects` batches are two requests, each failed once, each owed a
-retry.
+### Retries
 
-**A body cut short.** Only a `GetObject` answered 2xx with a `Content-Length` of 64 bytes or more is cut (at its
-half); an error, a body too small or one without a length goes through as it is and was no attempt met. `Range` is
-no part of what one request is, so the read that resumes a cut download is that download's second attempt and is
-not cut again. The record keeps the store's 200 (or 206), `injected`, `x-sonde-fault`, and where the body stopped
-(`x-sonde-cut-at`, and the bytes that went out as its size).
-
-**A lost race.** A write with `If-None-Match: *` **is sent to the store** and then answered 412: the object there
-is the program's own, and sonde writes nothing of its own (no competitor is made up). A write with `If-Match` is
-answered 412 without being sent. Attempts are counted **by commit, not by key**: a table's log names each commit by
-the next number, so the write after a lost one has another key and is still its retry, and is let through. One
-commit family is one folder of SlateDB manifests (`manifest/`), WAL (`wal/`) or compaction states, of Iceberg table
-metadata (`metadata/*.metadata.json`), of a Delta log (`_delta_log/*.json`) or of Lance versions (`_versions/`,
-whichever way they count); any other key is a family of its own. A write the store itself refuses is the store's
-answer and no fault. A 412 sonde answered is not counted among the store's own races in the trial's session.
-
-`s3-limits` counts the requests of the second that ends now (a sliding window, not the clock's seconds) for each
-prefix, a prefix being the bucket and the key's folder, three levels at most: the same prefix the "near S3's rate
-for one prefix" finding uses. S3 partitions by load and does not say where; the folder is the reading sonde keeps
-to in both.
-
-## What is read
-
-**A retry is counted against the clean run.** The clean run says how many times the program means to send each
-request. A failed **write** was retried only if the trial run got at least that many answers for it: a program that
-writes `state`, polls, and writes `state` again did not retry its lost first write because a second write
-followed, and its own sleep is not a backoff. A failed **read** was made good by any answer after it, however many
-the clean run got: a loop that polls for a fixed time gets fewer answers when backoff uses the time, and gave up
-on nothing. An answer is the store's own and not one that asks for another attempt.
-
-**Which answers ask for another attempt** is one rule, one function, the trial's and the one retries are read by in
-any session and in the signals: no answer, a 408, 429, 500, 502, 503 or 504, or S3's code `SlowDown`,
-`RequestTimeout` or `RequestTimeTooSkewed` whatever the status (S3 sends `RequestTimeout` as a 400, a skewed clock
-as a 403). A 404, a 412, a 501 or a 403 `AccessDenied` is an answer, however often it is asked for. **What the clean run itself never got an answer for is not owed**: a store
-without `DeleteObjects` answers 501 in the clean run and in the trial, and the program did not break.
+- The clean run says how many times the program sends each request.
+- A failed **write** counts as retried only if the trial run got at least as many answers for it as the clean run did.
+- A failed **read** is made good by any later answer.
+- An answer is the store's own, and not one that asks for another attempt.
+- **Retryable** (one rule for trials, retries in any session and signals): no answer; 408, 429, 500, 502, 503, 504;
+  S3 codes `SlowDown`, `RequestTimeout`, `RequestTimeTooSkewed` at any status. A 404, 412, 501 or 403
+  `AccessDenied` is an answer.
+- A request the clean run never got an answer for is not owed a retry (e.g. a store answering `DeleteObjects` with
+  501 in both runs).
 
 | Case | Read as |
 |---|---|
-| A key written twice on purpose | two answers are meant; one is one write never sent again |
-| A key read again and again (a poll) | a failed read answered later was made good. It is *retried* when the answer came sooner than half the shortest wait the clean run ever left between two reads of it, and *read again later* otherwise: a retry or the loop's next round, which the requests do not tell apart. A failed read nothing answered after was given up (degraded) |
-| A scenario with `times = 2` | two failures in a row then an answer: two retries; one retry then nothing: one retried, one request dropped |
-| An upload started again under a new id | its parts and its completion are the same requests, retried |
-| A request the clean run never sent (a key named by the clock) | meant once: retried by an answer after its failure, never by one before it |
-| A failure nothing followed | not retried, whatever the count |
-| A body cut short | *resumed* when later downloads of the object carry every byte from the cut to the end of what was asked for; *read again whole* when one carries all of it. A key the clean run reads twice must be read twice here too. Nothing after it carrying the rest, and the clean run's exit: the half was taken as the whole (broke). Later reads that start past the cut leave a hole (broke) |
-| A lost race | run again when the trial makes as many commits in that log as the clean run did: a conditional write in the same family, answered 2xx, after the 412 |
-| A lost race on a create of a key of its own (`_SUCCESS`, a lock), which the store made | owed nothing: a 412 to `If-None-Match: *` says "it is there", and it is. Taken so, or tried again (the store's own 412), it *survived* by the exit; written over without the condition, *broke* (as any race) |
-| A lost answer not sent again, the key then read | a write whose answer was lost and which the program did not send again, but whose key it then read (more often than the clean run reads it): it asked the store, which had it. Neither retried nor dropped |
-| A CompleteMultipartUpload answered 500 though it completed (`complete-500`, `lost-answer`) | retried, and answered 404 NoSuchUpload: the upload had completed, so taking that as done (or reading the object) and exiting as the clean run is *survived*, and reporting a failure is *broke* by the exit, with the reason said. Not retried, and the object read: *survived*. Not retried, not read, and exit 0: *broke* (it was told of a failure and said all was well). Started again from `CreateMultipartUpload`: *degraded*, every part sent twice for an object the store had |
-| A stall (`slow-first-byte`, or a delay of 5 s or more of the project's) | cut short when the program closed its connection while sonde held it (the record says `x-sonde-given-up`), or sent the request again while it was held: its retry is read as any failure's. Waited out: *degraded*, with the wait. A delay under 5 s (`slow`) only slows |
-| A listing that left out keys the run wrote (`stale-list`) | for each key, what the program did with it after, against what the clean run did with it: read it as often (it listed again, or kept its own list) is *survived*; read it less often is *broke* (it went on without what it wrote, whatever its exit); wrote it again is *degraded* (it took the key for missing). Nothing done with the key in either run, and no listing again: *untested*, for what the listing was used for is not in the requests |
+| A key written twice on purpose | two answers expected; one is a write never sent again |
+| A key read repeatedly (a poll) | a failed read answered later is made good: *retried* if answered sooner than half the shortest gap the clean run left between reads of it, else *read again later*. A failed read never answered after is given up (degraded) |
+| A project scenario with `times = 2` | two failures then an answer: two retries; one retry then nothing: one retried, one dropped |
+| An upload restarted under a new id | its parts and completion are the same requests, retried |
+| A request the clean run never sent | expected once; retried only by an answer after its failure |
+| A failure nothing followed | not retried |
+| A body cut short | *resumed* if later downloads cover every byte from the cut to the end asked for; *read again whole* if one carries all of it. A key read twice in the clean run must be read twice here. Nothing covers the rest and the exit matches the clean run: half taken as whole (broke). Later reads starting past the cut leave a hole (broke) |
+| A lost race | run again if the trial makes as many commits in that log as the clean run: a 2xx conditional write in the same family after the 412 |
+| A lost race on a create of the program's own key the store made | owed nothing. Taken as made or tried again: *survived* by the exit. Written over without the condition: *broke* |
+| A lost answer not sent again, then the key read (more often than the clean run reads it) | neither retried nor dropped: it asked the store |
+| CompleteMultipartUpload answered 500 though it completed (`complete-500`, `lost-answer`) | retried and answered 404 NoSuchUpload: taking it as done (or reading the object) with the clean exit is *survived*; reporting failure is *broke*, with the reason. Not retried but the object read: *survived*. Not retried, not read, exit 0: *broke*. Restarted from `CreateMultipartUpload`: *degraded* |
+| A stall (`slow-first-byte`, or a project delay ≥ 5 s) | cut short if the program closed the connection while held (`x-sonde-given-up`) or resent the request; its retry is read as any failure's. Waited out: *degraded*. A delay under 5 s (`slow`) only slows |
+| A key left out of a listing (`stale-list`) | compared per key with the clean run: read as often is *survived*; read less often is *broke*; written again is *degraded*. Nothing done with it in either run and no relisting: *untested* |
 
-| | |
+### What the verdict line reports
+
+| Term | Meaning |
 |---|---|
-| **faults, retried** | the requests sonde failed, and how many of them the program sent again (as above) |
-| **read again later** | failed reads of a key the program reads repeatedly, answered later: not called retries (above) |
-| **after … to …** | the wait from a failed answer to the attempt that is its retry: shortest and longest, as they read (waits that round to the same figure print as one). **Within one sender only**: a request that several senders had in flight at once (sixteen threads writing one key), here or in the clean run, gives no wait, and neither does a retry sent from another line of code when callers are named; whose attempt follows whose cannot be seen. *Jittered* or *in step* is judged among the waits before one attempt number, so a backoff of 1 s, 2 s, 4 s is in step and a randomized one is jittered; with fewer than four waits before the same attempt it is not said, and of waits under 50 ms it says *too short to tell jitter* (the machine's timing is as large as the wait) |
-| **none a retry is owed for** | the scenario's fault is a status no retry is owed for (a 404, a 403, a 501), or the clean run never got an answer for the request either: nothing is counted as retried or given up, and the verdict is the exit's and the state's |
-| **N delayed · took … (the clean run …)** | a delay scenario (`slow`): the command's wall time under it against the clean run's |
-| **× the requests** | the run's requests against the clean run's |
-| **written twice** | writes the store made, whose answer was lost, and which the store made again. Not a delete (made twice, it removed once), not a create sent with `If-None-Match: *` (the store was asked not to), and not a retry the store refused (a CompleteMultipartUpload answered 404 NoSuchUpload because the upload had completed; a conditional write answered 412) |
-| **answered 500 and not retried; the store has them** | writes whose answer was lost and which the program never asked about again: the data is there, the program was told it is not |
-| **left unfinished** | multipart uploads neither completed nor aborted, beyond the clean run's. An upload whose completion the store made (its answer lost) is complete |
-| **N bodies cut: … resumed from the cut, … read again whole** | downloads sonde cut, and how each was made good |
-| **fenced** | a SlateDB writer answered 412 that stopped (a non-zero exit) and wrote nothing after: what the format asks of a writer that lost. Its exit is not held against it |
-| **N more objects left than the clean run leaves** | after a lost race: objects written without a condition and not removed, beyond the clean run's. They are the lost commit's files unless the commit that followed names them, which sonde does not read (degraded) |
-| **sent again with the same If-Match** | the write was run again with the ETag that had just lost: nothing was read in between, and a real writer's new ETag would refuse it again (degraded) |
-| **N creates answered 412 and taken as made** | races on a create of a key of its own that the store made, which the program did not write over: among those "none a retry is owed for" |
+| **faults, retried** | requests sonde failed, and how many the program sent again |
+| **read again later** | failed reads of a polled key answered later; not called retries |
+| **after … to …** | shortest and longest wait from a failed answer to its retry (equal when they round the same). Only within one sender: no wait is given when several senders had the request in flight, or callers show the retry came from another line. *Jittered* or *in step* is judged among waits before the same attempt number (1 s, 2 s, 4 s is in step); not said with fewer than four such waits; under 50 ms it says *too short to tell jitter* |
+| **none a retry is owed for** | the fault was a non-retryable status, or the clean run never got an answer either; the verdict is the exit's and the state's |
+| **N delayed · took … (the clean run …)** | `slow`: wall time against the clean run's |
+| **× the requests** | requests against the clean run's |
+| **written twice** | writes the store made, whose answer was lost, made again. Excludes deletes, creates sent with `If-None-Match: *`, and retries the store refused (404 NoSuchUpload, 412) |
+| **answered 500 and not retried; the store has them** | lost-answer writes never asked about again: stored, but the program was told otherwise |
+| **left unfinished** | multipart uploads neither completed nor aborted, beyond the clean run's |
+| **N bodies cut: … resumed from the cut, … read again whole** | cut downloads and how each was made good |
+| **fenced** | a SlateDB writer answered 412 that exited non-zero and wrote nothing after; its exit is not held against it |
+| **N more objects left than the clean run leaves** | after a lost race, unconditional writes not removed beyond the clean run's (degraded) |
+| **sent again with the same If-Match** | the write resent with the ETag that just lost, nothing read in between (degraded) |
+| **N creates answered 412 and taken as made** | races on a create of the program's own key, not written over |
 | **N lost answers not sent again but read back** | see the cases above |
-| **N held before their first byte: N cut short and sent again** | requests a stall held, and the ones the program gave up on and sent again |
-| **waited out N stalls of 10.0 s** | requests a stall held that the program waited for (degraded) |
-| **N keys this run wrote left out of a listing: N listed again** | keys a stale listing left out, and the ones a later listing of their folder showed |
-| **never read as the clean run read them** | keys a stale listing left out that the program then read less often than its clean run did (broke) |
-| **written again: the program took them for missing** | keys a stale listing left out that the program wrote again (degraded) |
-| **made again from its first part** | an upload whose completion the store made (its answer lost) started again (degraded) |
-| **read back and not written again** | after a 412 to a write sonde had let through (`If-None-Match: *`), the program read that key, did not write the commit again, made every other commit the clean run made, wrote the key no other way and exited as its clean run did. The store then holds exactly the clean run's commits and nothing more, so this is **survived**: nothing is missing and nothing is to be changed. It is what a writer that knows its own commit does (Lance reads the manifest back and carries on). What the requests do not show is whether the program knew the write for its own; a program that reads back another writer's commit and carries on the same would read the same here |
+| **N held before their first byte: N cut short and sent again** | stalled requests, and those the program gave up on and resent |
+| **waited out N stalls of 10.0 s** | stalls the program waited through (degraded) |
+| **N keys this run wrote left out of a listing: N listed again** | keys a stale listing hid, and those a later listing showed |
+| **never read as the clean run read them** | hidden keys read less often than in the clean run (broke) |
+| **written again: the program took them for missing** | hidden keys written again (degraded) |
+| **made again from its first part** | an upload the store had completed, started again (degraded) |
+| **read back and not written again** | after a 412 to a write sonde let through, the program read the key, did not rewrite it, made every other clean-run commit and exited as the clean run: **survived** (Lance does this) |
 
-And the standing:
+### Verdicts
 
-- **survived**: every failed request that is owed a retry was sent again, every cut body read to its end, every
-  lost race run again (or its write, which the store has, read back; or the writer fenced; or, for a key of its
-  own, taken as made), every stall cut short, every key a listing left out still read, nothing more was left than a
-  clean run leaves, and the program exited as its clean run did.
-- **degraded**: it finished, but gave up on a read, left an upload unfinished, waited out a stall, uploaded again
-  what the store had completed, wrote again a key a listing left out, or after a lost race left more objects than
-  the clean run or sent the same `If-Match` again.
-- **broke**: it exited differently from its clean run; or a write failed, was never sent again, and it exited 0;
-  or half a body was taken as the whole; or a lost race was never run again and it exited as its clean run did; or
-  the contested key was written over without a condition (the other writer's commit would be gone); or it never
-  read a key it wrote that a listing left out.
-  When the exit differs and a retried write was refused by the store, the reason says so: *the retried
-  CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*.
-- **untested**: the scenario met none of its requests, or a listing left out keys that nothing after turned on. It is neither a pass nor a failure: `--trial` with only
-  untested scenarios exits 0 and says *Nothing was tried*.
+| Verdict | When |
+|---|---|
+| **survived** | every owed retry was sent; every cut body read to its end; every lost race run again (or read back, fenced, or taken as made); every stall cut short; every hidden key still read; nothing left beyond the clean run; same exit as the clean run |
+| **degraded** | finished, but gave up a read, left an upload unfinished, waited out a stall, re-uploaded a completed upload, rewrote a hidden key, or after a lost race left extra objects or resent the same `If-Match` |
+| **broke** | a different exit from the clean run; a write failed, never resent, and exit 0; half a body taken as whole; a lost race never run again with the clean exit; the contested key written over without a condition; a hidden key never read |
+| **untested** | the scenario met none of its requests, or hidden keys mattered to nothing after. `--trial` with only untested scenarios exits 0 with *Nothing was tried* |
 
-**A verdict that is not "survived" says where.** After the reasons the line names the request it turns on, the line
-of code when the run named callers (`sonde run --callers`), and what to change:
+When the exit differs and a retried write was refused by the store, the reason says so (*the retried
+CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*).
+
+"Survived" claims only what the requests show; sonde does not read the program's data back.
+
+### Where it broke, and what to change
+
+A verdict other than survived names the request, the line of code (with `sonde run --callers`) and advice:
 
 ```text
   broke     slowdown       2 faults, 0 retried · 1 write failed and was never sent again, and the program exited 0 · at PutObject scratch/etl-slowdown/state (etl.py:12 save) · boto3 1.43 did not send it again: turn its retries on (boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5})))
 ```
 
-The request is the first write never sent again; else the first body taken cut; else the first race not run again;
-else the first listing that left out a key gone on without (or written again); else the first read given up; else
-the first stall waited out; else, when only the exit differs, the last request that failed. The advice is the
-retry setting's, or for a skewed clock to sign again by the answer's `Date`, for a stall a timeout for each attempt,
-for a stale listing to keep the keys written or list again. The setting is the
-SDK's own, for boto3, the AWS SDKs for Java, Go and JavaScript (the setting that turns retries on, and
-nothing else); for another client the rule itself is said. `sonde check` prints the same line in every format, and the
-verdicts' file carries `where` (`operation`, `key`, `caller`) and `advice` (a phrase: `key` and `args`).
-
-"Survived" claims only what can be seen from the requests: sonde does not read the program's data back.
+- The request named, first that applies: a write never resent; a body taken cut; a race not run again; a listing
+  gone on without (or rewritten); a read given up; a stall waited out; else (only the exit differs) the last failed
+  request.
+- Advice: the SDK's retry setting (boto3, AWS SDKs for Java, Go, JavaScript); for a skewed clock, sign again using
+  the answer's `Date`; for a stall, a per-attempt timeout; for a stale listing, keep the written keys or list again.
+  Other clients get the rule itself.
+- `sonde check` prints the same line in every format; the verdicts file carries `where` (`operation`, `key`,
+  `caller`) and `advice` (`key`, `args`).
 
 ## Where the results go
 
-- Each trial is a session of its own, `trials/<run>.<scenario>.sonde` beside the run's session: `sonde show` reads
-  it like any other, and `sonde run --trial` ends by naming each file. Its **first** finding says how many requests
-  met a fault sonde injected; the 503s sonde answered and the retries after them are not reported as the store's
-  ("the store asked for fewer requests" is said only of the store's own 503s). Records carry `injected` (the
-  scenario's name); a replay skips the ones sonde failed. Trials are not runs of the program: "the newest session",
-  the trend and the baseline pass them over.
-- The verdicts are kept beside the run (`<run>.trials.json`); each names its session by file name, never by path.
-  `sonde check` prints them as rows (`pass` survived, `warn` degraded, `FAIL` broke, `skip` untested) and **fails
-  when the program broke, with a budget or without one**; `-f json` carries them as `trials`, with `passed` and
-  `verdict` for the whole. `sonde sessions` shows the worst standing of each run's trials.
-- In the app a trial starts from **Try under faults…** — on Run once a run has ended, and on a session's **Runs**
-  pane. A dialog says first what will run: the scenarios the run's own requests call for (or the project's), each
-  with a box to leave it out; that every run writes where the clean run wrote when the command names no `{trial}`;
-  and that nothing runs while sonde is read-only. Then it follows the trial scenario by scenario, and Cancel ends
-  it and keeps nothing. The verdicts stay on the run's Runs pane, each with why it is not "survived"; a row opens
-  that trial's session, which says under its title that it is a trial (and of which run, with the way back), has no
-  Runs of its own and is not run again, renamed or set as a baseline. Requests sonde answered are marked "Injected
-  by sonde" wherever requests are listed and on the charts; the sessions list marks a run whose trial broke.
-- Deleting a run (`sonde sessions prune`, the app) removes its verdicts and the files in its `trials/` folder that
-  are named for it, and nothing else: what a `.trials.json` says is never used as a path.
-- `sonde run --trial` exits with the command's own status when the clean run failed (and tries nothing), 130 or 143
-  when interrupted, else 1 when a trial broke, else 0.
+- Each scenario's session: `trials/<run>.<scenario>.sonde` beside the run's session; `sonde run --trial` lists them.
+  - Its first finding counts the requests that met an injected fault; sonde's 503s and their retries are not
+    reported as the store's.
+  - Records carry `injected` (the scenario name); a replay skips the requests sonde failed.
+  - Trials are not runs: "newest session", trend and baseline skip them.
+- Verdicts: `<run>.trials.json` beside the run; each names its session by file name, never path.
+- `sonde check` prints them as rows (`pass` survived, `warn` degraded, `FAIL` broke, `skip` untested) and **fails
+  when the program broke**, with or without a budget. `-f json` has `trials`, plus `passed` and `verdict`.
+- `sonde sessions` shows each run's worst verdict.
+- Deleting a run (`sonde sessions prune`, the app) removes its verdicts and its own files in `trials/`; paths in a
+  `.trials.json` are never followed.
+- Exit: the command's own status if the clean run failed; 130 / 143 if interrupted; 1 if a trial broke; else 0.
+
+### In the app
+
+- **Try under faults…** on Run (after a run ends) and on a session's **Runs** pane.
+- The dialog lists the scenarios the run calls for (or the project's), each with a box to leave it out; warns when
+  the command has no `{trial}`; and refuses while sonde is read-only. Cancel ends the trial and keeps nothing.
+- Verdicts stay on the Runs pane with their reasons; a row opens that trial's session, marked as a trial of its run
+  (cannot be run again, renamed or made a baseline).
+- Requests sonde answered are marked "Injected by sonde" in lists and charts; the sessions list marks runs whose
+  trial broke.
 
 ## A project's own scenarios
 
@@ -242,46 +215,37 @@ verdicts' file carries `where` (`operation`, `key`, `caller`) and `advice` (a ph
 [[scenario]]
 name = "flaky-wal"
 fault = "503 SlowDown"     # or "500", "404 NoSuchKey", "lost-answer", "cut-body", "lost-race", "stale-list", "delay 200ms"
-on = ["PutObject"]         # S3 operation names; "Put*" matches by its start; all when left out
-prefix = "db/wal/"         # keys under it; all when left out
-times = 2                  # attempts at each request that meet it (1; 0 is every attempt)
+on = ["PutObject"]         # S3 operation names; "Put*" matches a prefix; all when omitted
+prefix = "db/wal/"         # keys under it; all when omitted
+times = 2                  # attempts per request that fail (default 1; 0 = every attempt)
 ```
 
-With scenarios in `sonde.toml`, `--trial` runs those; `--fault flaky-wal` runs one.
-
-`sonde.toml` is checked before anything runs, and what it says wrongly is a configuration error (exit 64), not
-passed over: an operation name in `on` that no request can have (`PutObjekt`), a `[[scenarios]]` table or any other
-unknown key, a scenario named as one of sonde's own (`slowdown`, `error`, …) or `clean` (the name of the run without
-faults), a name used twice, a fault with a word too many (`503 Slow Down`: a status and one code), a
-`[program] name = ""`.
+- With scenarios in `sonde.toml`, `--trial` runs those; `--fault flaky-wal` runs one.
+- A status fault is 400–599 with at most one code; `delay` takes `200ms` or `2s` (seconds up to 3600).
+- `sonde.toml` is checked before anything runs. These are configuration errors (exit 64): an `on` name no request
+  can have (`PutObjekt`); `[[scenarios]]` or any unknown key; a name that is built-in or `clean`; a duplicate name;
+  a fault with an extra word (`503 Slow Down`); `[program] name = ""`.
 
 ## Limits
 
-- The faults are the proxy's: a program that reaches its store some other way is not tried.
-- A trial's runs are recorded under the run's policy (`no-delete` unless told otherwise): each may write again
-  what the clean run wrote, and a program that deletes, or writes over what an earlier run left, needs
-  `--allow-writes` (see [recording.md](recording.md#what-a-recorded-program-may-do)).
-- **A cut body.** sonde sees which bytes were asked for again, not what the program did with the ones it had. A
-  program that reads the half, fails its own checksum and stops with its clean run's exit code reads as "took the
-  half as whole". A body sent without `Content-Length` (chunked) is not cut. The cut is at the half, once for each
-  object: a program that fails only on a cut in its last bytes, or on a second cut, is not found out.
-- **A lost race.** There is no other writer. With `If-None-Match: *` the store holds the program's own write and
-  the program is told it lost: a program that then commits the next number has made its commit twice (as it would
-  not against a real writer), and one that reads the key back and carries on reads as survived whether or not it
-  knew the write for its own. sonde does not read a commit's content, so whether a retry rebased on what it lost
-  to, and whether the files a lost commit wrote are named by the next, is not known: only that more objects were
-  left. A commit protocol sonde has no family for (numbered keys under another folder name) is read key by key:
-  the next number is then a new commit, failed once itself.
-- A wait is read only where one sender is seen; with several senders on one request no backoff is printed.
-- **A skewed clock.** sonde answers 403 RequestTimeTooSkewed; it does not move the program's clock. A client that
-  sends the request again without signing it anew passes here and would not against a store whose clock is truly
-  apart. The AWS SDKs for Java 2 and JavaScript 3 set their clock by the answer and sign again; botocore (boto3,
-  the AWS CLI) counts neither the code nor a 403 among its retries, and is seen not to send it again.
-- **A stall.** One download in all is held, the first to come: which one is the order of arrival, the one place a
-  scenario counts it. A program that waits 10 s and would not wait a minute reads the same as one that waits for
-  ever. A delay is before the request is sent on: a store that stalls mid-body is not tried.
-- **A stale listing.** sonde sees the requests a key had after the listing, not what the program did with the
-  listing itself: a listing used for a count it prints, or a manifest it writes, is *untested* or read by the keys'
-  reads alone. A program that deletes what a listing did not show (a clean-up of "orphans") deletes other keys,
-  which are not counted. S3 has listed after a write since December 2020; other stores, and caches in front of S3,
-  have not always.
+- Only traffic through the proxy is tried.
+- Trial runs use the run's policy (`no-delete` by default): each may rewrite what the clean run wrote; a program that
+  deletes or overwrites an earlier run's output needs `--allow-writes`
+  ([recording](recording.md#what-a-recorded-program-may-do)).
+- **cut-body**: sonde sees which bytes are requested again, not what the program did with the half. A program that
+  fails its own checksum and exits with the clean run's code reads as "took the half as whole". Chunked bodies
+  (no `Content-Length`) are not cut. One cut, at half, per object.
+- **lost-race**: there is no other writer. With `If-None-Match: *` the store holds the program's write, so a program
+  that then commits the next number has committed twice, and one that reads back and carries on reads as survived
+  whether or not it knew the write was its own. sonde does not read commit contents (rebase, file references); it
+  sees only extra objects. Commit protocols outside the known families are read key by key.
+- Waits are reported only for a single sender per request.
+- **skew**: sonde answers 403 RequestTimeTooSkewed but does not move the clock; a client that resends without
+  re-signing passes here but would fail on a truly skewed store. AWS SDKs for Java 2 and JavaScript 3 correct their
+  clock and re-sign; botocore (boto3, AWS CLI) does not retry it.
+- **slow-first-byte**: one download, the first to arrive. A program that waits 10 s reads the same as one that waits
+  forever. Delays are before forwarding; a mid-body stall is not tried.
+- **stale-list**: sonde sees later requests for each key, not what the listing was used for (a printed count, a
+  manifest): those read as *untested* or by key reads alone. A program deleting what a listing did not show
+  (orphan clean-up) deletes other keys, which are not counted. S3 has been strongly consistent since December 2020;
+  other stores and caches may not be.

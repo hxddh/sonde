@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use chrono::Utc;
-use reqlog::{Header, Record, RequestLog};
+use reqlog::{Header, Record, RequestLog, Text};
 use serde::{Deserialize, Serialize};
 
 use crate::credentials::{Credentials, CredentialsProvider};
@@ -494,7 +494,7 @@ impl S3Client {
         record.query = url::Url::parse(url)
             .map(|u| {
                 u.query_pairs()
-                    .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                    .map(|(k, v)| (Text::new(&k), Text::new(&v)))
                     .collect()
             })
             .unwrap_or_default();
@@ -794,13 +794,17 @@ impl S3Client {
         Record {
             id: 0,
             time: Utc::now(),
-            endpoint: self.cfg.endpoint_id.clone(),
-            operation: req.operation.clone(),
-            method: req.method.to_string(),
+            endpoint: self.cfg.endpoint_id.as_str().into(),
+            operation: req.operation.as_str().into(),
+            method: req.method.as_str().into(),
             url: url.to_string(),
-            bucket: req.bucket.clone(),
-            key: req.key.clone(),
-            query: req.query.clone(),
+            bucket: req.bucket.as_deref().map(Into::into),
+            key: req.key.as_deref().map(Into::into),
+            query: req
+                .query
+                .iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
             status: None,
             latency_ms: latency.as_secs_f64() * 1000.0,
             retries: attempt,
@@ -819,7 +823,7 @@ impl S3Client {
             },
             request_body_truncated: false,
             transport_error: None,
-            region: Some(self.cfg.region.clone()),
+            region: Some(self.cfg.region.as_str().into()),
             job: self.job.clone(),
             first_byte_ms: None,
             requester: None,

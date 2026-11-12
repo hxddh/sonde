@@ -7,7 +7,7 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 ## [16.0.0] - 2026-11-11
 
 A verdict to trust, sessions of any size, charts that can be read. The review this came from is
-[docs/review-15.0.md](docs/review-15.0.md); every row of it is in this version.
+[docs/review-15.0.md](docs/history/review-15.0.md); every row of it is in this version.
 
 ### Added
 
@@ -82,7 +82,7 @@ A verdict to trust, sessions of any size, charts that can be read. The review th
 ## [15.0.0] - 2026-11-11
 
 One reading of a run: four signals, one chart system, one way to draw each thing — and a verdict that is right.
-No new place and no new command. The review this came from is [docs/review-14.0.md](docs/review-14.0.md); every
+No new place and no new command. The review this came from is [docs/review-14.0.md](docs/history/review-14.0.md); every
 row of it is in this version.
 
 ### Added
@@ -165,7 +165,7 @@ row of it is in this version.
 ## [14.0.0] - 2026-11-10
 
 Run your program against an S3 that misbehaves, and sonde says whether it survived. Thirteen versions observed;
-this one makes the failures happen. The review this came from is [docs/review-13.0.md](docs/review-13.0.md).
+this one makes the failures happen. The review this came from is [docs/review-13.0.md](docs/history/review-13.0.md).
 
 ### Added
 
@@ -230,7 +230,7 @@ this one makes the failures happen. The review this came from is [docs/review-13
 ## [13.0.0] - 2026-11-10
 
 Still and true. Every state says what it is, nothing moves under the hand, each thing is drawn one way — and a
-session's time is seen request by request. The review this came from is [docs/review-12.0.md](docs/review-12.0.md).
+session's time is seen request by request. The review this came from is [docs/review-12.0.md](docs/history/review-12.0.md).
 
 ### Added
 

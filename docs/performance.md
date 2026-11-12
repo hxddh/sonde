@@ -140,6 +140,25 @@ a million requests read and analysed in 15 s and 2 GiB of peak memory (8 s and
 1.75 GiB here), an outage and small uploads of 300 thousand each in 10 s (2 s),
 the app's first view of 100 thousand in 2 s (0.9 s).
 
+## Memory, not only output (17.0.0)
+
+Same generator and machine, release build. 17.0 times were taken with other builds running (load 3–7).
+
+| | 16.0 | 17.0 |
+| --- | --- | --- |
+| `show`, 1 million | 7.6 s, 1.74 GiB | 12 s, 1.11 GiB |
+| `show`, 2 million | 14.9 s, 3.4 GiB | 26 s, 2.16 GiB |
+| `compare`, 2 × 1 million | 23.8 s, 4.74 GiB | 24 s, 1.16 GiB |
+| `compare`, 2 × 2 million | 65 s, 9.4 GiB | 39 s, 2.25 GiB |
+| `show`, 300 thousand, 1 000-character keys | 4.5 KB a request | 2.4 s, 0.40 GiB (1.4 KB) |
+
+About 1.1 KB a request: 8 GB holds about seven million. How: headers kept by name (only those an analysis
+reads); repeated text (operation, method, endpoint, bucket, region, query, key) shared; titles said from their
+phrases; `compare` and `diff` read one session at a time. What is left is mostly the record's 472 bytes of fields.
+
+Budgets test: a million in 15 s and 1.5 GiB (measured 11 s, 1.1 GiB); two runs of a million compared in 40 s and
+1.5 GiB (28 s, 1.2 GiB).
+
 ## Opening the Time pane
 
 The Time pane builds its charts when it is opened. Measured headless with `nsh test --trace` on the example

@@ -5,7 +5,7 @@ released binary against a fake store and small programs; the CLI used as a newco
 ten thousand to two million requests measured; every picture looked at and the interface counted against its own
 standard; and the whole looked at for its health — structure, tests, CI, security, dependencies, process — and
 for what its users would expect that it does not do. Then what 17.0 should be. 16.0's own review is
-[review-15.0.md](review-15.0.md).
+[review-15.0.md](history/review-15.0.md).
 
 Marked **confirmed** where it was run and seen, **read** where it is from the code only. The app was not run (no
 `nsh` here): its findings are from the 16.0 pictures in `docs/images` and from the code.

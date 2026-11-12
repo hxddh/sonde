@@ -282,6 +282,9 @@ pub struct Lines {
     end: usize,
     done: bool,
     read: u64,
+    /// Compressed: a stream that stops short is read up to where it stops.
+    gz: bool,
+    cut: Option<String>,
 }
 
 impl Lines {
@@ -290,7 +293,8 @@ impl Lines {
         let mut magic = [0u8; 2];
         let n = f.read(&mut magic)?;
         f.seek(SeekFrom::Start(0))?;
-        let from: Box<dyn Read + Send> = if n == 2 && magic == [0x1f, 0x8b] {
+        let gz = n == 2 && magic == [0x1f, 0x8b];
+        let from: Box<dyn Read + Send> = if gz {
             Box::new(flate2::read::MultiGzDecoder::new(BufReader::with_capacity(
                 1 << 16,
                 f,
@@ -298,7 +302,10 @@ impl Lines {
         } else {
             Box::new(f)
         };
-        Ok(Lines::of(from))
+        Ok(Lines {
+            gz,
+            ..Lines::of(from)
+        })
     }
 
     /// The lines of any reader (already decompressed).
@@ -310,7 +317,16 @@ impl Lines {
             end: 0,
             done: false,
             read: 0,
+            gz: false,
+            cut: None,
         }
+    }
+
+    /// Why a compressed file's text ended before its end (a partial copy, a
+    /// disk that filled while it was written), when it did: what came
+    /// before was read, its last line torn as a killed recorder's is.
+    pub fn cut(&self) -> Option<&str> {
+        self.cut.as_deref()
     }
 
     /// Reads more into the buffer, making room first. False at the end.
@@ -326,10 +342,10 @@ impl Lines {
         if self.end == self.buf.len() {
             // one line fills the buffer: it may grow, to a point
             if self.buf.len() >= MAX_LINE {
-                return Err(std::io::Error::other(format!(
-                    "a line longer than {} MiB: not a session's",
-                    MAX_LINE >> 20
-                )));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("a line longer than {} MiB: not a session's", MAX_LINE >> 20),
+                ));
             }
             self.buf.resize(self.buf.len() * 2, 0);
         }
@@ -337,16 +353,20 @@ impl Lines {
             match self.from.read(&mut self.buf[self.end..]) {
                 Ok(n) => break n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) if self.gz => {
+                    self.cut = Some(e.to_string());
+                    break 0;
+                }
                 Err(e) => return Err(e),
             }
         };
         self.end += n;
         self.read += n as u64;
         if self.read > MAX_TEXT {
-            return Err(std::io::Error::other(format!(
-                "it holds more than {} GiB",
-                MAX_TEXT >> 30
-            )));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("it holds more than {} GiB", MAX_TEXT >> 30),
+            ));
         }
         self.done = n == 0;
         Ok(n > 0)
@@ -454,7 +474,9 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
     }
     std::fs::rename(&tmp, path)?;
     if let Some((header, counter)) = tally.and_then(Tally::finish) {
-        crate::summary::keep(path, &counter.finish(path, &header));
+        // (the file is ours, just written: its stamp is of what was counted)
+        let at = crate::summary::stamp(path);
+        crate::summary::keep(path, &counter.finish(at, &header));
     }
     Ok(())
 }
@@ -604,15 +626,28 @@ impl Session {
     /// Reads a session file as a stream: the file is never held as text, its
     /// lines are parsed as they are decompressed, on the cores there are.
     pub fn read(path: &Path, keep: Keep) -> Result<Session, String> {
-        let mut lines = Lines::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Session::read_said(path, keep)
+            .map(|r| r.session)
+            .map_err(|e| e.to_string())
+    }
+
+    /// [`Session::read`], saying what it could not read: a file that is no
+    /// session apart from one that could not be read at all, and a
+    /// compressed file cut short (read up to its cut) apart from a whole one.
+    pub fn read_said(path: &Path, keep: Keep) -> Result<Opened, ReadError> {
+        let io = |e: std::io::Error| match e.kind() {
+            std::io::ErrorKind::InvalidData => ReadError::Bad(e.to_string()),
+            _ => ReadError::Io(format!("{}: {e}", path.display())),
+        };
+        let mut lines = Lines::open(path).map_err(io)?;
         let first = lines
             .line()
-            .map_err(|e| e.to_string())?
-            .ok_or("empty session file")?;
+            .map_err(io)?
+            .ok_or(ReadError::Bad("empty session file".into()))?;
         let first = String::from_utf8_lossy(first);
         let header: SessionHeader = serde_json::from_str(first.trim_end_matches('\r'))
-            .map_err(|e| format!("not a sonde session: {e}"))?;
-        header.readable()?;
+            .map_err(|e| ReadError::Bad(format!("not a sonde session: {e}")))?;
+        header.readable().map_err(ReadError::Bad)?;
         let small = std::fs::metadata(path).is_ok_and(|m| m.len() < 256 * 1024);
         let workers = if small {
             1
@@ -620,13 +655,14 @@ impl Session {
             std::thread::available_parallelism().map_or(1, |n| n.get().min(8))
         };
         let mut all = Gathered::default();
-        if workers == 1 {
-            while let Some(b) = lines.block().map_err(|e| e.to_string())? {
-                all.add(parse_block(b, keep))?;
+        let cut = if workers == 1 {
+            while let Some(b) = lines.block().map_err(io)? {
+                all.add(parse_block(b, keep)).map_err(ReadError::Bad)?;
             }
+            lines.cut().map(String::from)
         } else {
-            read_blocks(lines, keep, workers, &mut all)?;
-        }
+            read_blocks(lines, keep, workers, &mut all)?
+        };
         let Gathered {
             mut records, logs, ..
         } = all;
@@ -638,13 +674,50 @@ impl Session {
                 r.id = i as u64 + 1;
             }
         }
-        Ok(Session {
-            header,
-            records,
-            logs,
+        let cut = cut.map(|why| {
+            format!(
+                "its compressed text stops short ({why}): read up to there, {} requests",
+                records.len()
+            )
+        });
+        Ok(Opened {
+            session: Session {
+                header,
+                records,
+                logs,
+            },
+            cut,
         })
     }
 }
+
+/// A session read, and what of its file was not.
+pub struct Opened {
+    pub session: Session,
+    /// The file is compressed and its text stops short of its end: what is
+    /// read is what came before (said, not refused, as a torn last line is).
+    pub cut: Option<String>,
+}
+
+/// Why a session file was not read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadError {
+    /// It could not be read (not there, not allowed, a disk's error).
+    Io(String),
+    /// It was read, and it is not a session: no header, a line no record
+    /// could be in the middle of it, a newer format.
+    Bad(String),
+}
+
+impl std::fmt::Display for ReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReadError::Io(e) | ReadError::Bad(e) => f.write_str(e),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {}
 
 /// What of each record a reading keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -652,54 +725,33 @@ pub enum Keep {
     /// Everything the file has.
     All,
     /// What the analyses read: the URL (the bucket, key and query are kept
-    /// apart), the store's ids and the headers no finding looks at are
-    /// dropped. A session of a million requests is then a third of the size.
+    /// apart), the store's host id and the headers no analysis reads
+    /// ([`read_by_analysis`]) are dropped.
     Analysis,
 }
 
-/// Headers no analysis reads, and most of a record's size: signing, the
-/// connection, ids the record has as fields of its own.
-const UNREAD_HEADERS: &[&str] = &[
-    "accept",
-    "accept-encoding",
-    "accept-ranges",
-    "amz-sdk-invocation-id",
-    "amz-sdk-request",
-    "authorization",
-    "cache-control",
-    "connection",
-    "content-encoding",
-    "content-md5",
-    "content-type",
-    "date",
-    "expect",
-    "host",
-    "keep-alive",
-    "last-modified",
-    "server",
-    "transfer-encoding",
-    "vary",
-    "x-amz-content-sha256",
-    "x-amz-date",
-    "x-amz-decoded-content-length",
-    "x-amz-id-2",
-    "x-amz-request-id",
-    "x-amz-sdk-checksum-algorithm",
-    "x-amz-security-token",
-    "x-amz-server-side-encryption",
-    "x-amz-trailer",
-    "x-amz-user-agent",
-];
+/// Whether an analysis reads a header (an operation, a finding, a signal,
+/// the code that sent it, `show --requests`' conditions): what
+/// [`Keep::Analysis`] keeps of a record's headers. Every other header is
+/// let go, whatever it is: signing, ids, lengths and ETags the record has as
+/// fields or no finding looks at, and checksums and metadata no list could
+/// foresee.
+pub fn read_by_analysis(name: &str) -> bool {
+    const READ: &[&str] = &["user-agent", "range", "content-range", "traceparent"];
+    let has = |p: &str| {
+        name.get(..p.len())
+            .is_some_and(|n| n.eq_ignore_ascii_case(p))
+    };
+    READ.iter().any(|n| name.eq_ignore_ascii_case(n))
+        || has("if-")
+        || has("x-sonde-")
+        || has("x-amz-copy-source")
+}
 
 /// A record as [`Keep::Analysis`] keeps it.
 pub fn lean(r: &mut Record) {
-    let unread = |h: &reqlog::Header| {
-        UNREAD_HEADERS
-            .iter()
-            .any(|n| h.name.eq_ignore_ascii_case(n))
-    };
-    r.request_headers.retain(|h| !unread(h));
-    r.response_headers.retain(|h| !unread(h));
+    r.request_headers.retain(|h| read_by_analysis(&h.name));
+    r.response_headers.retain(|h| read_by_analysis(&h.name));
     r.request_headers.shrink_to_fit();
     r.response_headers.shrink_to_fit();
     r.query.shrink_to_fit();
@@ -768,6 +820,9 @@ fn parse_block(bytes: &[u8], keep: Keep) -> Block {
 struct Gathered {
     records: Vec<Record>,
     logs: Vec<LogChunk>,
+    /// Each key read so far, once: the records that name it share it (a
+    /// key a thousand characters long, read a thousand times, is held once).
+    keys: std::collections::HashSet<reqlog::Text>,
     /// Lines read so far, and a bad last line of the block before: a torn
     /// last line of the file is the recorder killed mid-write, a bad line
     /// anywhere else is not a session.
@@ -789,7 +844,17 @@ impl Gathered {
             self.torn = Some(e);
         }
         self.lines += b.lines;
-        self.records.extend(b.records);
+        for mut r in b.records {
+            if let Some(k) = &mut r.key {
+                match self.keys.get(k.as_str()) {
+                    Some(same) => *k = same.clone(),
+                    None => {
+                        self.keys.insert(k.clone());
+                    }
+                }
+            }
+            self.records.push(r);
+        }
         self.logs.extend(b.logs);
         Ok(())
     }
@@ -802,7 +867,7 @@ fn read_blocks(
     keep: Keep,
     workers: usize,
     all: &mut Gathered,
-) -> Result<(), String> {
+) -> Result<Option<String>, ReadError> {
     use std::sync::mpsc;
     let (work, jobs) = mpsc::sync_channel::<(usize, Vec<u8>)>(workers * 2);
     // the workers hold the jobs' end between them: when they are gone the
@@ -831,12 +896,12 @@ fn read_blocks(
                 match lines.block() {
                     Ok(Some(b)) => {
                         if work.send((seq, b.to_vec())).is_err() {
-                            return Ok(());
+                            return Ok(None);
                         }
                         seq += 1;
                     }
-                    Ok(None) => return Ok(()),
-                    Err(e) => return Err(e.to_string()),
+                    Ok(None) => return Ok(lines.cut().map(String::from)),
+                    Err(e) => return Err(e),
                 }
             }
         });
@@ -860,8 +925,13 @@ fn read_blocks(
         }
         let read = reader
             .join()
-            .unwrap_or_else(|_| Err("reading failed".into()));
-        gathered.and(read)
+            .unwrap_or_else(|_| Err(std::io::Error::other("reading failed")));
+        // a line no record could be names its place; failing that, the read
+        gathered.map_err(ReadError::Bad)?;
+        read.map_err(|e| match e.kind() {
+            std::io::ErrorKind::InvalidData => ReadError::Bad(e.to_string()),
+            _ => ReadError::Io(e.to_string()),
+        })
     })
 }
 
@@ -986,7 +1056,7 @@ mod tests {
                 operation: "GetObject".into(),
                 method: "GET".into(),
                 url: format!("https://x.r2.dev/b/k{i}"),
-                key: Some(format!("k{i}")),
+                key: Some(format!("k{i}").into()),
                 host_id: Some("host".into()),
                 status: Some(200),
                 request_headers: vec![
@@ -1057,6 +1127,67 @@ mod tests {
     }
 
     #[test]
+    fn a_compressed_session_cut_short_is_read_up_to_its_cut_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cut.sonde");
+        recorded(&path, 6000);
+        compress(&path).unwrap();
+        let whole = Session::read_said(&path, Keep::All).unwrap();
+        assert_eq!((whole.session.records.len(), whole.cut), (6000, None));
+        // a partial copy: the gzip stream stops in its middle
+        let bytes = std::fs::read(&path).unwrap();
+        for keep in [bytes.len() / 3, bytes.len() * 2 / 3, bytes.len() - 4] {
+            std::fs::write(&path, &bytes[..keep]).unwrap();
+            let r = Session::read_said(&path, Keep::Analysis).unwrap();
+            let n = r.session.records.len();
+            assert!(n > 0 && n <= 6000, "{n}");
+            assert!(
+                r.session
+                    .records
+                    .iter()
+                    .enumerate()
+                    .all(|(i, r)| r.id == i as u64 + 1)
+            );
+            let said = r.cut.expect("said");
+            assert!(
+                said.contains(&format!("read up to there, {n} requests")),
+                "{said}"
+            );
+            // and every reader of it agrees: opened, counted
+            assert_eq!(Session::open(&path).unwrap().records.len(), n);
+            assert_eq!(crate::summary::counted(&path).unwrap().requests, n as u64);
+        }
+    }
+
+    #[test]
+    fn a_file_that_is_no_session_is_told_from_one_that_could_not_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.sonde");
+        let bad = |e: Result<Opened, ReadError>| match e {
+            Err(ReadError::Bad(why)) => why,
+            Err(other) => panic!("{other:?}"),
+            Ok(_) => panic!("read"),
+        };
+        assert!(matches!(
+            Session::read_said(&path, Keep::All),
+            Err(ReadError::Io(_))
+        ));
+        std::fs::write(&path, b"").unwrap();
+        assert_eq!(
+            bad(Session::read_said(&path, Keep::All)),
+            "empty session file"
+        );
+        std::fs::write(&path, b"hello\n").unwrap();
+        assert!(bad(Session::read_said(&path, Keep::All)).starts_with("not a sonde session"));
+        recorded(&path, 10);
+        let mut text = std::fs::read(&path).unwrap();
+        let at = text.iter().position(|b| *b == b'\n').unwrap() + 1;
+        text.splice(at..at, b"garbage\n".iter().copied());
+        std::fs::write(&path, &text).unwrap();
+        assert!(bad(Session::read_said(&path, Keep::All)).starts_with("line 2: "));
+    }
+
+    #[test]
     fn a_line_no_record_could_be_is_refused_with_a_message_not_read_into_memory() {
         use std::io::Write;
         let dir = tempfile::tempdir().unwrap();
@@ -1097,7 +1228,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(names(&full.records[0]).len(), 5);
-        assert_eq!(names(&lean.records[0]), ["user-agent", "Range", "ETag"]);
+        assert_eq!(names(&lean.records[0]), ["user-agent", "Range"]);
         assert!(lean.records[0].url.is_empty() && lean.records[0].host_id.is_none());
         // and nothing an operation or a finding is made of
         let mut same = full.records[0].clone();
@@ -1107,6 +1238,106 @@ mod tests {
             crate::episode::episodes(&full.records),
             crate::episode::episodes(&lean.records)
         );
+    }
+
+    /// Every header an analysis asks for by name is one a lean reading
+    /// keeps: read from the sources, so a new one cannot be missed.
+    #[test]
+    fn a_lean_reading_keeps_every_header_an_analysis_asks_for() {
+        let sources = [
+            include_str!("episode.rs"),
+            include_str!("profile.rs"),
+            include_str!("signals.rs"),
+            include_str!("summary.rs"),
+            include_str!("fixes.rs"),
+            include_str!("fault.rs"),
+            include_str!("callers.rs"),
+            include_str!("view.rs"),
+            include_str!("program.rs"),
+            include_str!("replay.rs"),
+        ];
+        let mut asked = Vec::new();
+        for src in sources {
+            for line in src.lines().filter(|l| !l.trim_start().starts_with("//")) {
+                for pat in [
+                    "header(r, \"",
+                    "response_header(r, \"",
+                    "eq_ignore_ascii_case(\"",
+                    "has(\"",
+                    "const CALLER_HEADER: &str = \"",
+                    "const BODY_HASH_HEADER: &str = \"",
+                ] {
+                    for (i, _) in line.match_indices(pat) {
+                        let rest = &line[i + pat.len()..];
+                        if let Some(end) = rest.find('"') {
+                            asked.push(rest[..end].to_string());
+                        }
+                    }
+                }
+            }
+        }
+        // (names of operations and values are asked for the same way)
+        let headers: Vec<&String> = asked
+            .iter()
+            .filter(|n| n.contains('-') || *n == "range" || *n == "authorization")
+            .filter(|n| !n.chars().next().is_some_and(char::is_uppercase))
+            .collect();
+        assert!(headers.len() >= 8, "{headers:?}");
+        for h in headers {
+            assert!(
+                read_by_analysis(h) || h == "authorization" || h == "aws-chunked",
+                "an analysis reads {h}, a lean reading drops it"
+            );
+        }
+        for dropped in [
+            "etag",
+            "content-length",
+            "x-amz-checksum-crc32",
+            "x-amz-meta-a",
+        ] {
+            assert!(!read_by_analysis(dropped));
+        }
+    }
+
+    #[test]
+    fn a_key_read_a_thousand_times_is_held_once_and_its_operations_share_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hot.sonde");
+        let w =
+            SessionWriter::create(&path, &SessionHeader::new("e", "https://e", "r", None)).unwrap();
+        // a key past what text is looked for when it is read (512 bytes)
+        let long = "segment/".repeat(100);
+        for i in 0..30_000u64 {
+            w.write(&Record {
+                id: i + 1,
+                time: DateTime::from_timestamp_micros(1_700_000_000_000_000 + i as i64 * 20_000)
+                    .unwrap(),
+                operation: "GetObject".into(),
+                method: "GET".into(),
+                bucket: Some("b".into()),
+                key: Some(format!("{long}{}", i % 3).into()),
+                status: Some(200),
+                ..Default::default()
+            });
+        }
+        w.flush().unwrap();
+        let s = Session::open_lean(&path).unwrap();
+        let at = |t: &reqlog::Text| t.as_ptr() as usize;
+        let keys: std::collections::HashSet<usize> = s
+            .records
+            .iter()
+            .filter_map(|r| r.key.as_ref().map(at))
+            .collect();
+        assert_eq!(keys.len(), 3);
+        let eps = crate::episode::episodes(&s.records);
+        assert_eq!(eps.len(), 30_000);
+        let targets: std::collections::HashSet<usize> = eps
+            .iter()
+            .map(|e| at(&e.title_text[0].args["target"]))
+            .collect();
+        // (one each in each batch, on each core it was made on)
+        assert!(targets.len() < 100, "{}", targets.len());
+        assert_eq!(eps[0].title(), format!("GetObject b/{long}0"));
     }
 
     #[test]

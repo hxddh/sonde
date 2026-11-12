@@ -56,6 +56,10 @@ struct Row {
     /// `survived`, `untested`. None when it was never tried.
     #[serde(skip_serializing_if = "Option::is_none")]
     trials: Option<&'static str>,
+    /// Its first line in the middle that is no record: `show` refuses the
+    /// file, so it is not listed as a session that reads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unreadable: Option<String>,
 }
 
 /// The sessions in the data directory, newest first: each from the counts
@@ -85,6 +89,7 @@ fn rows(s: &Sonde) -> Vec<Row> {
                 seconds: c.seconds,
                 errors: c.errors,
                 trials: sonde_proxy::trial::worst(&sonde_proxy::trial::load(&p)).map(|s| s.label()),
+                unreadable: c.unreadable,
             })
         })
         .collect();
@@ -165,9 +170,28 @@ pub fn open(s: &Sonde, f: &PathBuf) -> anyhow::Result<(PathBuf, sonde_proxy::ses
             s.paths().sessions().display()
         )));
     }
-    let session = sonde_proxy::session::Session::open(&file)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    let session = read(&file, sonde_proxy::session::Keep::All)?;
     Ok((file, session))
+}
+
+/// A session file read: one that is not a session is bad data (65), one
+/// that could not be read an operation that failed (70), and one cut short
+/// is read up to its cut and said on stderr.
+pub fn read(
+    file: &std::path::Path,
+    keep: sonde_proxy::session::Keep,
+) -> anyhow::Result<sonde_proxy::session::Session> {
+    use sonde_proxy::session::{ReadError, Session};
+    match Session::read_said(file, keep) {
+        Ok(r) => {
+            if let Some(cut) = r.cut {
+                eprintln!("sonde: {}: {cut}", file.display());
+            }
+            Ok(r.session)
+        }
+        Err(ReadError::Bad(e)) => Err(super::bad_data(format!("{}: {e}", file.display()))),
+        Err(ReadError::Io(e)) => Err(anyhow::anyhow!(e)),
+    }
 }
 
 /// [`open`] for what a session amounts to (its operations, findings,
@@ -184,8 +208,7 @@ pub fn open_lean(
             s.paths().sessions().display()
         )));
     }
-    let session = sonde_proxy::session::Session::open_lean(&file)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    let session = read(&file, sonde_proxy::session::Keep::Analysis)?;
     Ok((file, session))
 }
 
@@ -232,7 +255,11 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                         // its name, when it has one; else its command
                         r.named.clone().or(r.program.clone()).unwrap_or_default(),
                         r.endpoint.clone(),
-                        output::grouped(r.requests),
+                        if r.unreadable.is_some() {
+                            format!("{} !", output::grouped(r.requests))
+                        } else {
+                            output::grouped(r.requests)
+                        },
                         output::duration(r.seconds * 1000.0),
                         output::grouped(r.errors),
                         r.trials.unwrap_or("").to_string(),
@@ -274,6 +301,13 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 ],
                 &rows,
             );
+            for r in all.iter().filter(|r| r.unreadable.is_some()) {
+                eprintln!(
+                    "sonde: {} is not a session: {} (`sonde show` refuses it; its other lines are counted)",
+                    r.name,
+                    r.unreadable.as_deref().unwrap_or_default()
+                );
+            }
             Ok(0)
         }
         Some(Action::Prune { keep, yes }) => {

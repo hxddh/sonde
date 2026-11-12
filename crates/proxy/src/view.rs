@@ -3,7 +3,6 @@
 //! the first page of operations; the rest are asked for in ranges, sorted
 //! and narrowed here. What is sent does not grow with the session.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -87,8 +86,9 @@ pub struct Analysis {
     pub what_if: Option<WhatIf>,
     /// The requests a fault scenario answered, by id.
     pub injected: Vec<u64>,
-    /// Which operation each request belongs to.
-    owner: HashMap<u64, u32>,
+    /// Which operation each request belongs to, by request id (sorted: a
+    /// map's buckets would cost twice as much a request).
+    owner: Vec<(u64, u32)>,
     /// The first operation's start and the last end.
     span: Option<(DateTime<Utc>, DateTime<Utc>)>,
     /// The order last asked for: the next page of it does not sort again.
@@ -140,12 +140,15 @@ impl Analysis {
             .map(|(_, n, _, _)| n)
             .collect();
         let what_if = crate::fixes::what_if(records, &profile, &observations);
-        let mut owner = HashMap::with_capacity(records.len());
+        let mut owner = Vec::with_capacity(records.len());
         for (i, e) in episodes.iter().enumerate() {
             for id in &e.records {
-                owner.insert(*id, i as u32);
+                owner.push((*id, i as u32));
             }
         }
+        // (a request two operations claim is the later's)
+        owner.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+        owner.dedup_by_key(|(id, _)| *id);
         let span = episodes.iter().map(|e| e.start).min().and_then(|start| {
             let end = episodes.iter().map(|e| e.end).max()?;
             Some((start, end))
@@ -184,7 +187,7 @@ impl Analysis {
         }
         o.insert("index".into(), json!(index));
         o.insert("requests".into(), json!(e.records.len()));
-        if e.kind == Kind::Probe || e.title.contains("found nothing") {
+        if e.kind == Kind::Probe || e.title().contains("found nothing") {
             o.insert("miss".into(), json!(true));
         }
         Some(v)
@@ -197,7 +200,11 @@ impl Analysis {
 
     /// The operation a request belongs to.
     pub fn episode_of(&self, record: u64) -> Option<usize> {
-        self.owner.get(&record).map(|i| *i as usize)
+        let at = self
+            .owner
+            .binary_search_by_key(&record, |(id, _)| *id)
+            .ok()?;
+        Some(self.owner[at].1 as usize)
     }
 
     /// The operations a query shows, in its order.
@@ -222,7 +229,7 @@ impl Analysis {
             }
             if let Some(text) = &key.text {
                 let holds = |t: &str| t.to_lowercase().contains(text.as_str());
-                if !holds(&e.title) && !e.notes.iter().any(|n| holds(n)) {
+                if !holds(&e.title()) && !e.notes.iter().any(|n| holds(n)) {
                     return false;
                 }
             }
@@ -402,7 +409,7 @@ mod tests {
                 method: if i % 7 == 0 { "PUT" } else { "GET" }.into(),
                 operation: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
                 bucket: Some("b".into()),
-                key: Some(format!("data/k{i:05}")),
+                key: Some(format!("data/k{i:05}").into()),
                 status: Some(if i % 50 == 3 { 500 } else { 200 }),
                 // the later, the quicker: sorting by time taken is not the order they came in
                 latency_ms: 1.0 + (n - i) as f64 / 10.0,
