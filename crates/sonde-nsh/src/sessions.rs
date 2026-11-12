@@ -26,6 +26,8 @@ struct Recording {
     writer: Arc<SessionWriter>,
     /// The runtime it began on: where it is finished, from a handler that is in none.
     runtime: tokio::runtime::Handle,
+    /// What it wrote, kept for its program's next run when it has one.
+    written: Arc<sonde_proxy::Written>,
 }
 
 /// How long a stopping recording waits for the requests in flight (the
@@ -46,6 +48,7 @@ impl Recording {
         // writing would write to a file nobody reads
         self.proxy.shutdown(grace).await;
         let _ = self.writer.flush();
+        let _ = self.written.keep();
         let file = self.path.clone();
         drop(self);
         // finished: a tenth of its size; still a .sonde file every reader opens
@@ -301,11 +304,18 @@ async fn begin(
         .as_ref()
         .map(|u| u.written.clone())
         .unwrap_or_default();
+    // under no-delete a program may write over what its earlier runs wrote
+    if under.is_none()
+        && let Some(program) = sonde_proxy::program::key_of(&header)
+    {
+        written.remember(&dir, &program, cfg.endpoint.as_str());
+    }
     let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
     let started = background({
         let log = log.clone();
+        let written = written.clone();
         async move {
             Proxy::start(
                 client,
@@ -338,6 +348,7 @@ async fn begin(
         log,
         writer,
         runtime: tokio::runtime::Handle::current(),
+        written,
     });
     Ok(view)
 }
@@ -644,7 +655,8 @@ fn read_exit(session: &Path) -> Option<i32> {
 /// A run's verdicts for the app: each with the path of its trial's session
 /// (the file keeps a name, which only this run's folder resolves).
 fn trials_of(session: &Path) -> Vec<sonde_proxy::trial::Trial> {
-    let mut trials = sonde_proxy::trial::load(session);
+    let program = header_of(session).and_then(|h| sonde_proxy::program::key_of(&h));
+    let mut trials = sonde_proxy::trial::load_with_history(session, program.as_deref());
     for t in &mut trials {
         t.session = sonde_proxy::trial::session_path(session, t)
             .filter(|p| p.is_file())
@@ -1293,6 +1305,121 @@ fn shell_exports(set: &[(String, String)], unset: &[String]) -> String {
     s
 }
 
+/// Runs a trial of `clean` (the run in `file`, named `of`) under each of
+/// `chosen`, as [`Sessions::trial`] says; its verdicts replace the run's
+/// last, and are added to its program's.
+#[allow(clippy::too_many_arguments)]
+async fn try_under(
+    file: &Path,
+    of: &str,
+    clean: &Session,
+    clean_exit: i32,
+    plan: &TrialPlan,
+    chosen: Vec<sonde_proxy::fault::Scenario>,
+    policy: &str,
+    cols: f64,
+    rows: f64,
+    output: &Callback<JsonValue>,
+) -> Result<JsonValue, String> {
+    use std::sync::atomic::Ordering::SeqCst;
+    if RUNNING.lock().is_some() || RECORDING.lock().is_some() {
+        return Err(err_msg("a program is running: stop it first"));
+    }
+    if TRYING.swap(true, SeqCst) {
+        return Err(err_msg("a trial is running: stop it first"));
+    }
+    struct Trying;
+    impl Drop for Trying {
+        fn drop(&mut self) {
+            TRYING.store(false, std::sync::atomic::Ordering::SeqCst);
+            TRIAL_OF.lock().take();
+        }
+    }
+    let _trying = Trying;
+    TRIAL_STOPPED.store(false, SeqCst);
+    *TRIAL_OF.lock() = Some(file.to_path_buf());
+    let path = file.to_string_lossy().into_owned();
+    let file = file.to_path_buf();
+    let of = of.to_string();
+    let policy = policy.to_string();
+    // each run may write again what the clean run and the program's earlier
+    // runs wrote, and what is under its own `{trial}` place
+    let written = Arc::new(sonde_proxy::Written::of(&clean.records));
+    let runs = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let program = sonde_proxy::program::key_of(&clean.header);
+    if let Some(p) = &program {
+        written.remember(&runs, p, &clean.header.url);
+    }
+    let words: Vec<String> = plan
+        .command
+        .split_whitespace()
+        .map(|w| w.trim_matches(['"', '\'']).to_string())
+        .collect();
+    for name in std::iter::once("clean").chain(chosen.iter().map(|s| s.name.as_str())) {
+        for place in sonde_proxy::trial::places(&words, name) {
+            written.own_place(&place);
+        }
+    }
+    // a new trial replaces the last one's verdicts and sessions
+    sonde_proxy::trial::remove(&file);
+    let dir = sonde_proxy::trial::folder_for(&file);
+    std::fs::create_dir_all(&dir).map_err(err_msg)?;
+    let mut trials = Vec::new();
+    for scenario in chosen {
+        output.post(trial_event(&scenario.name, None));
+        let under = Under {
+            path: sonde_proxy::session::fresh_path(
+                &dir,
+                &sonde_proxy::trial::session_stem(&file, &scenario.name),
+            ),
+            of: of.clone(),
+            scenario: scenario.clone(),
+            written: written.clone(),
+        };
+        let ran = run_recorded(
+            &plan.command,
+            plan.cwd.as_deref(),
+            clean.header.endpoint.clone(),
+            policy.clone(),
+            cols,
+            rows,
+            output,
+            Some(under),
+        )
+        .await;
+        let stopped = TRIAL_STOPPED.load(SeqCst);
+        let (exit, run_path) = match ran {
+            Ok(x) if !stopped => x,
+            other => {
+                // cut short: a verdict on half a trial would be read as one
+                sonde_proxy::trial::remove(&file);
+                return match other {
+                    Err(e) if !stopped => Err(e),
+                    _ => Ok(json!({ "path": path, "trials": [], "cancelled": true })),
+                };
+            }
+        };
+        let run = open_session(&run_path)?;
+        let mut t = sonde_proxy::trial::judge(
+            &scenario,
+            &clean.records,
+            clean_exit,
+            &run.records,
+            exit.unwrap_or(1),
+        );
+        t.session = Some(run_path);
+        output.post(trial_event(&scenario.name, Some(&t)));
+        trials.push(t);
+    }
+    sonde_proxy::trial::save(&file, &trials).map_err(err_msg)?;
+    if let Some(p) = &program {
+        let _ = sonde_proxy::trial::record(&runs, p, &of, chrono::Utc::now(), &trials);
+    }
+    // each with what it was before ("broke on 12 Nov, survived since")
+    let trials = trials_of(&file);
+    Ok(json!({ "path": path, "trials": trials, "cancelled": false }))
+}
+
 /// Recorded sessions and the live recording, as TSX calls them.
 #[module]
 pub struct Sessions;
@@ -1585,7 +1712,6 @@ impl Sessions {
         rows: f64,
         #[args(event)] output: Callback<JsonValue>,
     ) -> Result<JsonValue, String> {
-        use std::sync::atomic::Ordering::SeqCst;
         if sonde().settings().read_only {
             return Err(crate::state::err(sonde_core::S3Error::new(
                 s3raw::ErrorKind::Refused,
@@ -1598,77 +1724,73 @@ impl Sessions {
         let plan = trial_plan_of(&clean)?;
         let chosen = scenarios_named(&plan, &scenarios)?;
         policy_of(&policy)?;
-        if RUNNING.lock().is_some() || RECORDING.lock().is_some() {
-            return Err(err_msg("a program is running: stop it first"));
-        }
-        if TRYING.swap(true, SeqCst) {
-            return Err(err_msg("a trial is running: stop it first"));
-        }
-        struct Trying;
-        impl Drop for Trying {
-            fn drop(&mut self) {
-                TRYING.store(false, std::sync::atomic::Ordering::SeqCst);
-                TRIAL_OF.lock().take();
-            }
-        }
-        let _trying = Trying;
-        TRIAL_STOPPED.store(false, SeqCst);
-        *TRIAL_OF.lock() = Some(file.clone());
         let clean_exit = read_exit(&file).unwrap_or(0);
-        let written = Arc::new(sonde_proxy::Written::of(&clean.records));
-        // a new trial replaces the last one's verdicts and sessions
-        sonde_proxy::trial::remove(&file);
-        let dir = sonde_proxy::trial::folder_for(&file);
-        std::fs::create_dir_all(&dir).map_err(err_msg)?;
-        let mut trials = Vec::new();
-        for scenario in chosen {
-            output.post(trial_event(&scenario.name, None));
-            let under = Under {
-                path: sonde_proxy::session::fresh_path(
-                    &dir,
-                    &sonde_proxy::trial::session_stem(&file, &scenario.name),
-                ),
-                of: of.clone(),
-                scenario: scenario.clone(),
-                written: written.clone(),
-            };
-            let ran = run_recorded(
-                &plan.command,
-                plan.cwd.as_deref(),
-                clean.header.endpoint.clone(),
-                policy.clone(),
-                cols,
-                rows,
-                &output,
-                Some(under),
-            )
-            .await;
-            let stopped = TRIAL_STOPPED.load(SeqCst);
-            let (exit, run_path) = match ran {
-                Ok(x) if !stopped => x,
-                other => {
-                    // cut short: a verdict on half a trial would be read as one
-                    sonde_proxy::trial::remove(&file);
-                    return match other {
-                        Err(e) if !stopped => Err(e),
-                        _ => Ok(json!({ "path": path, "trials": [], "cancelled": true })),
-                    };
-                }
-            };
-            let run = open_session(&run_path)?;
-            let mut t = sonde_proxy::trial::judge(
-                &scenario,
-                &clean.records,
-                clean_exit,
-                &run.records,
-                exit.unwrap_or(1),
-            );
-            t.session = Some(run_path);
-            output.post(trial_event(&scenario.name, Some(&t)));
-            trials.push(t);
+        try_under(
+            &file, &of, &clean, clean_exit, &plan, chosen, &policy, cols, rows, &output,
+        )
+        .await
+    }
+
+    /// Tries a run's program again under what did not survive: its command
+    /// runs anew (a fresh clean run, recorded as a run of its own and judged
+    /// against), then only the scenarios whose last verdict for the program
+    /// was broke, degraded or refused by the policy. Events as
+    /// [`Sessions::trial`]'s, the clean run's output first (`{ data }`).
+    /// Resolves with `{ path, trials, cancelled, cleanExit }`: `path` the
+    /// fresh run; no trial when it exited non-zero.
+    pub async fn trial_again(
+        path: String,
+        policy: String,
+        cols: f64,
+        rows: f64,
+        #[args(event)] output: Callback<JsonValue>,
+    ) -> Result<JsonValue, String> {
+        if sonde().settings().read_only {
+            return Err(crate::state::err(sonde_core::S3Error::new(
+                s3raw::ErrorKind::Refused,
+                "read-only mode is on: turn it off in Settings to try a program under faults (it runs, and writes, again)",
+            )));
         }
-        sonde_proxy::trial::save(&file, &trials).map_err(err_msg)?;
-        Ok(json!({ "path": path, "trials": trials, "cancelled": false }))
+        let (file, _) = own_session(&path)?;
+        let last = open_session(&path)?;
+        let plan = trial_plan_of(&last)?;
+        let program = sonde_proxy::program::key_of(&last.header)
+            .ok_or_else(|| err_msg("only a run of a command can be tried again"))?;
+        let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let names = sonde_proxy::trial::to_try_again(&dir, &program);
+        if names.is_empty() {
+            return Err(err_msg(
+                "nothing to try again: every scenario survived the program's last trial",
+            ));
+        }
+        let chosen = scenarios_named(&plan, &names)?;
+        policy_of(&policy)?;
+        // the clean run, afresh
+        let (code, fresh) = run_recorded(
+            &plan.command,
+            plan.cwd.as_deref(),
+            last.header.endpoint.clone(),
+            policy.clone(),
+            cols,
+            rows,
+            &output,
+            None,
+        )
+        .await?;
+        write_exit(Path::new(&fresh), code);
+        if code != Some(0) {
+            return Ok(
+                json!({ "path": fresh, "trials": [], "cancelled": false, "cleanExit": code }),
+            );
+        }
+        let (file, of) = own_session(&fresh)?;
+        let clean = open_session(&fresh)?;
+        let mut done = try_under(
+            &file, &of, &clean, 0, &plan, chosen, &policy, cols, rows, &output,
+        )
+        .await?;
+        done["cleanExit"] = json!(code);
+        Ok(done)
     }
 
     /// What replaying a session on `endpoint` would send: the plan, the
@@ -2710,6 +2832,7 @@ mod tests {
             log,
             writer,
             runtime: tokio::runtime::Handle::current(),
+            written: Arc::default(),
         };
         let file = recording.finish().await;
         assert_eq!(Path::new(&file), path);
@@ -3026,6 +3149,34 @@ mod tests {
             trial_marks(Path::new(&clean))[0]["session"],
             JsonValue::Null
         );
+    }
+
+    #[test]
+    fn a_runs_verdicts_carry_their_programs_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let (clean, _, verdict) = run_and_trial(dir.path(), "python job.py", None);
+        sonde_proxy::trial::save(Path::new(&clean), std::slice::from_ref(&verdict)).unwrap();
+        let mut before = verdict.clone();
+        before.standing = sonde_proxy::trial::Standing::Broke;
+        let day = chrono::Utc::now() - chrono::Duration::days(1);
+        for (run, t, at) in [
+            ("earlier.sonde", &before, day),
+            ("20260101-000000-job.sonde", &verdict, chrono::Utc::now()),
+        ] {
+            sonde_proxy::trial::record(
+                dir.path(),
+                "python job.py",
+                run,
+                at,
+                std::slice::from_ref(t),
+            )
+            .unwrap();
+        }
+        let view = view_of(&clean).unwrap();
+        let history = view["trials"][0]["history"].as_array().unwrap();
+        assert_eq!(history.len(), 2, "{history:?}");
+        assert_eq!(history[0]["standing"], "broke");
+        assert_eq!(history[1]["run"], "20260101-000000-job.sonde");
     }
 
     #[test]

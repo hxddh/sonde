@@ -7,6 +7,7 @@ answering chosen requests in the store's place. From the requests that follow it
 ```sh
 sonde run --trial -- python etl.py 's3://scratch/etl-{trial}/'
 sonde run --fault slowdown:3 --fault cut-body -- python etl.py 's3://scratch/etl-{trial}/'
+sonde run --trial --again -- python etl.py 's3://scratch/etl-{trial}/'   # only what did not survive
 ```
 
 ```text
@@ -28,7 +29,10 @@ Trial: the command runs 3 more times, each under one scenario.
 - **Ctrl-C / SIGTERM**: kills the command's process group, removes the interrupted scenario's partial session, gives
   it and later ones no verdict, exits 130 / 143. Finished verdicts are kept. (The clean run at a terminal stays in
   the terminal's group, to read the keyboard.)
-- Every `sonde run` to a session path first removes the earlier recording's verdicts and trial sessions.
+- Every `sonde run` to a session path first removes the earlier recording's verdicts and trial sessions. The
+  program's verdict history is kept.
+- Under `no-delete`, every run may write over what the program wrote before and over keys under its `{trial}` places
+  ([recording](recording.md#what-a-recorded-program-may-do)): a trial can be run again as it is.
 
 **Matching a trial's requests to the clean run's**: they match when they differ only by the scenario's name in place
 of `clean`, as a whole word (no letter or digit beside it), in bucket, key, query values or control body.
@@ -52,7 +56,7 @@ repeatable; duplicates run once.
 |---|---|---|
 | `slowdown` | 503 SlowDown on each request's first attempt | always |
 | `error` | 500 InternalError on each request's first attempt | always |
-| `skew` | 403 RequestTimeTooSkewed on each request's first attempt | it signs (not presigned) |
+| `skew` | 403 RequestTimeTooSkewed on each request's first attempt | every signed request's SDK (user agent) retries it: the AWS SDKs for Java, JavaScript. Never botocore (boto3, AWS CLI): only `--fault skew` |
 | `lost-answer` | each write reaches the store; its first answer becomes 500 | it writes |
 | `fail-complete` | CompleteMultipartUpload fails once (500) | it uploads in parts |
 | `complete-500` | each CompleteMultipartUpload completes; its first answer is 500 | it uploads in parts |
@@ -142,6 +146,7 @@ repeatable; duplicates run once.
 | **degraded** | finished, but gave up a read, left an upload unfinished, waited out a stall, re-uploaded a completed upload, rewrote a hidden key, or after a lost race left extra objects or resent the same `If-Match` |
 | **broke** | another exit; a failed write never resent with exit 0; half a body taken as whole; a lost race never run again with the clean exit; the contested key overwritten unconditionally; a hidden key never read |
 | **untested** | no request met the fault, or hidden keys mattered to nothing. Only untested: exit 0, *Nothing was tried* |
+| **refused** | the recording policy refused more of the trial's requests than of the clean run's, and the verdict would be degraded or broke: *refused by the recording policy*, advice to give each run its place or `--allow-writes`. Not judged; never broke |
 
 When the exit differs after the store refused a retried write, the reason says so (*the retried
 CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*). "Survived" claims only what the
@@ -157,13 +162,23 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
   broke     slowdown       2 faults, 0 retried · 1 write failed and was never sent again, and the program exited 0 · at PutObject scratch/etl-slowdown/state (etl.py:12 save) · boto3 1.43 did not send it again: turn its retries on (boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5})))
 ```
 
+## Trying again
+
+| | |
+|---|---|
+| History | Each verdict is added to its program's in `verdicts.json` beside its runs: per scenario as asked (`slowdown:3`), when, standing, run; the newest 50. Kept when a run is recorded again or deleted. |
+| The line | Once a scenario has two verdicts: `broke on 12 Nov, survived since`, or `survived since 10 Nov` when it never changed. In `run`, `check`, `show` (*Under faults*), Markdown and GitHub output. JSON: `history` on each trial. |
+| `--again` | `sonde run --trial --again -- CMD`: a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command. |
+| App | `Sessions.trialAgain(path, …)`: the same, from a run of the program. |
+
 ## Where the results go
 
 | | |
 |---|---|
 | Sessions | `trials/<run>.<scenario>.sonde` beside the run. Records carry `injected`; the first finding counts requests that met a fault (sonde's 503s are not the store's); replay skips injected requests. Not runs: excluded from "newest", trend, baseline. |
 | Verdicts | `<run>.trials.json` beside the run; sessions named by file name, never path. `where` (`operation`, `key`, `caller`) and `advice` (`key`, `args`). |
-| `sonde check` | rows `pass` / `warn` / `FAIL` / `skip`; **fails when the program broke**, budget or not. JSON: `trials`, `passed`, `verdict`. |
+| `sonde check` | rows `pass` / `warn` (degraded, refused) / `FAIL` / `skip`; **fails when the program broke**, budget or not. JSON: `trials`, `passed`, `verdict`. |
+| `sonde show` | *Under faults*: the run's verdicts with their history. JSON: `trials`. |
 | `sonde sessions` | each run's worst verdict |
 | Deleting a run | removes its verdicts and its own `trials/` files; `.trials.json` paths are never followed |
 | Exit | the command's status if the clean run failed; 130 / 143 interrupted; 1 if a trial broke; else 0 |
@@ -194,15 +209,16 @@ times = 2                  # attempts per request that fail (default 1; 0 = ever
 ## Limits
 
 - Only traffic through the proxy is tried.
-- Trials use the run's policy (`no-delete` by default); a program that deletes or overwrites an earlier run's output
-  needs `--allow-writes` ([recording](recording.md#what-a-recorded-program-may-do)).
+- Trials use the run's policy (`no-delete` by default); a program that deletes, or writes over what another program
+  wrote, needs `--allow-writes` ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no
+  place sonde can read: use `{trial}`.
 - **cut-body**: sonde sees which bytes are asked for again, not what the program did with the half (a checksum
   failure with the clean exit reads as "took the half as whole"). Chunked bodies are not cut. One cut per object.
 - **lost-race**: no other writer exists; with `If-None-Match: *` the store holds the program's write. Commit contents
   are not read, only extra objects counted. Unknown commit protocols are read key by key.
 - Waits are reported only for a single sender per request.
 - **skew**: the clock is not moved; a client resending without re-signing passes here but would fail on a skewed
-  store. Java 2 and JavaScript 3 SDKs re-sign; botocore (boto3, AWS CLI) does not retry it.
+  store. Java and JavaScript SDKs re-sign; botocore (boto3, AWS CLI) does not retry it, so it is not offered to it.
 - **slow-first-byte**: one download, the first; waiting 10 s reads the same as waiting forever. No mid-body stall.
 - **stale-list**: what a listing was used for (a count, a manifest) is not seen; deletes of what a listing hid are not
   counted. S3 is strongly consistent (since December 2020); other stores and caches may not be.

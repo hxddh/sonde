@@ -131,6 +131,9 @@ export const api = {
     /** The session's command again, once per scenario (`slowdown:3`: its first three attempts at each request), sonde answering in the store's place; `kill` cancels (and nothing is kept). */
     trial: (path: string, scenarios: string[], policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent) => void) =>
       Sessions.trial(path, scenarios, policy, cols, rows, (e) => onEvent(e as T.TrialEvent)) as Promise<T.TrialResult>,
+    /** Try again what did not survive: the session's command run afresh (a run of its own, its output as `{ data }`), then only the scenarios whose last verdict for its program broke, degraded or was refused; `path` is the fresh run, with no trial when it exited non-zero (`cleanExit`). */
+    trialAgain: (path: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.TrialEvent | T.RunEvent) => void) =>
+      Sessions.trialAgain(path, policy, cols, rows, (e) => onEvent(e as T.TrialEvent | T.RunEvent)) as Promise<T.TrialResult>,
     logLines: (path: string) => Sessions.logLines(path) as T.LogLine[],
     replayPlan: (path: string, endpoint: string) => Sessions.replayPlan(path, endpoint),
     replay: (path: string, endpoint: string, prefix: string) => Sessions.replay(path, endpoint, prefix),

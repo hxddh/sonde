@@ -148,6 +148,11 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     // what it amounts to, once: every part below reads this
     let analysis = Analysis::of(&session, &prices);
     let eps = &analysis.episodes;
+    // how its program stood under faults, each scenario since when
+    let trials = sonde_proxy::trial::load_with_history(
+        &file,
+        sonde_proxy::program::key_of(&session.header).as_deref(),
+    );
     match a.format {
         // the summary alone: what the table's summary shows, and no more
         Format::Json if a.summary => {
@@ -170,6 +175,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "cost": prof.cost,
                     "whatIf": analysis.what_if,
                     "observations": analysis.observations,
+                    "trials": trials,
                 }))
             );
         }
@@ -196,6 +202,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             w.field("session", &session.header)?;
             w.field("summary", &analysis.summary)?;
             w.field("whatIf", &analysis.what_if)?;
+            w.field("trials", &trials)?;
             w.end_object()?;
             let mut out = w.finish()?;
             out.write_all(b"\n")?;
@@ -244,6 +251,12 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 std::io::stdout().is_terminal(),
                 true,
             );
+            if !trials.is_empty() {
+                println!("\nUnder faults:");
+                for t in &trials {
+                    println!("{}", super::run::trial_line(t, color));
+                }
+            }
         }
     }
     Ok(0)

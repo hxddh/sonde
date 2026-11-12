@@ -170,6 +170,14 @@ pub(super) async fn start_under(
         header.scenario = Some(u.scenario.name.clone());
         header.trial_of = Some(u.of.clone());
     }
+    // under no-delete a program may write over what its earlier runs wrote:
+    // kept beside its runs (a trial's runs share its clean run's)
+    let written = of.written.clone().unwrap_or_default();
+    if under.is_none()
+        && let Some(program) = sonde_proxy::program::key_of(&header)
+    {
+        written.remember(&runs_dir(&path), &program, cfg.endpoint.as_str());
+    }
     let writer = Arc::new(SessionWriter::create(&path, &header)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
@@ -191,7 +199,7 @@ pub(super) async fn start_under(
             allow_remote,
             faults: under.map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario))),
             tls,
-            written: of.written.clone().unwrap_or_default(),
+            written,
             ..Default::default()
         },
     )
@@ -203,6 +211,14 @@ pub(super) async fn start_under(
         writer,
         path,
     })
+}
+
+/// The folder a session is in, where its program's runs are kept.
+pub(super) fn runs_dir(session: &std::path::Path) -> PathBuf {
+    match session.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    }
 }
 
 /// Prints records as they arrive until the task is aborted.

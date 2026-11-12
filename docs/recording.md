@@ -118,7 +118,7 @@ For `sonde run`, `proxy`, `watch` and the app's Run.
 
 | Policy | Allows | Refuses |
 |---|---|---|
-| `no-delete` (default) | reads, listings, new objects, writes over objects this recording wrote; multipart uploads; tags, ACLs, retention; turning versioning on | every delete (`DELETE`, `POST ?delete`), `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning, a write (`PutObject`, `CompleteMultipartUpload`, `CopyObject`) over an object that existed before the recording, a write with `If-Match`, any write sonde cannot name |
+| `no-delete` (default) | reads, listings, new objects, writes over objects this program wrote (below); multipart uploads; tags, ACLs, retention; turning versioning on | every delete (`DELETE`, `POST ?delete`), `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning, a write (`PutObject`, `CompleteMultipartUpload`, `CopyObject`) over an object that existed before the recording, a write with `If-Match`, any write sonde cannot name |
 | `read-only` | GET and HEAD | everything else |
 | `allow` | everything | nothing |
 
@@ -128,8 +128,11 @@ How `no-delete` finds an existing object:
   `412` becomes `403` naming the key.
 - `CopyObject`'s target is checked with an unrecorded `HEAD`; any answer but found / not found refuses the copy.
 - A store that ignores `If-None-Match` (older MinIO and Ceph, some gateways) overwrites anyway: use `read-only`.
-- A recording may rewrite what it wrote, including a trial's runs after its clean run; a rerun over a previous run's
-  output needs `--allow-writes`.
+- A program may write over what it wrote: in this recording, in its earlier recordings (kept per
+  [program](cli.md) and endpoint in `written.json` beside its runs, the newest 100,000 objects), and, during a trial,
+  anything under a `{trial}` place of its command (`t{trial}/` → keys under `tclean`, `tslowdown`, …). A refused write
+  names the key; `--allow-writes` lets it through.
+- `sonde proxy` and `watch` record no program: only what the recording itself wrote.
 
 Which applies, first match: the flag (`--policy allow|no-delete|read-only`, `--allow-writes`, `--no-delete`,
 `--read-only`); `[record] policy` in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app,

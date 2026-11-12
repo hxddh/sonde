@@ -274,6 +274,12 @@ fn template(key: &str) -> &'static str {
         "trial.why.refused.completed" => {
             "the retried {op} was answered {answer}: the upload had completed"
         }
+        "trial.why.policy" => {
+            "refused by the recording policy ({policy}): {n} request{s} more than in the clean run, so what the program does under the fault cannot be told"
+        }
+        "trial.advice.policy" => {
+            "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program write over what it finds (--allow-writes)"
+        }
         "trial.why.refused.made" => {
             "the retried {op} was answered {answer}: the store had made the first attempt"
         }
@@ -394,6 +400,8 @@ mod tests {
             "why.exit",
             "why.refused.completed",
             "why.refused.made",
+            "why.policy",
+            "advice.policy",
         ] {
             let key = format!("trial.{key}");
             let en = template(&key);

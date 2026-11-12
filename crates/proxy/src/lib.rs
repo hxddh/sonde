@@ -131,11 +131,43 @@ pub fn writes_object(op: &str) -> bool {
     matches!(op, "PutObject" | "CompleteMultipartUpload" | "CopyObject")
 }
 
-/// The objects a recording wrote (bucket, key): under no-delete it may write
-/// them again, and of the objects already there only them. A program that
-/// writes a key twice, and a trial's runs after its clean run, share one.
+/// The objects a recording may write over under no-delete (bucket, key):
+/// what it wrote, what earlier recordings of the same program wrote
+/// ([`Written::remember`]), and what is under a trial's own place
+/// ([`Written::own_place`]). A program that writes a key twice, a run that
+/// rewrites its last run's outputs, and a trial's runs after its clean run
+/// all write over only their own.
 #[derive(Debug, Default)]
-pub struct Written(parking_lot::Mutex<std::collections::HashSet<(String, String)>>);
+pub struct Written {
+    keys: parking_lot::Mutex<std::collections::HashSet<(String, String)>>,
+    /// What this recording wrote, in order, once each: what
+    /// [`Written::keep`] adds to the program's.
+    fresh: parking_lot::Mutex<(Vec<String>, std::collections::HashSet<String>)>,
+    /// Prefixes of `key` or `bucket/key` that are a trial's own place.
+    places: parking_lot::Mutex<Vec<String>>,
+    /// Where the program's set is kept: the folder, the program, the endpoint.
+    kept: parking_lot::Mutex<Option<(std::path::PathBuf, String, String)>>,
+}
+
+/// The most objects kept per program and endpoint: past it, the ones
+/// written longest ago are forgotten (and refused again).
+pub const WRITTEN_KEPT: usize = 100_000;
+
+/// The file beside a program's runs that keeps what each program wrote.
+pub fn written_file(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("written.json")
+}
+
+/// Program → endpoint → `bucket/key`, the newest last.
+type WrittenMap =
+    std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<String>>>;
+
+fn read_written(dir: &std::path::Path) -> WrittenMap {
+    std::fs::read(written_file(dir))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
 
 impl Written {
     /// What `records` wrote: a trial's runs may write again what its clean
@@ -153,14 +185,87 @@ impl Written {
         w
     }
 
+    /// Takes in what earlier recordings of `program` on `endpoint` wrote,
+    /// kept in `dir` (beside its runs), and keeps there what this one
+    /// writes ([`Written::keep`]). A file that does not read is taken as
+    /// none, and written anew.
+    pub fn remember(&self, dir: &std::path::Path, program: &str, endpoint: &str) {
+        let all = read_written(dir);
+        if let Some(keys) = all.get(program).and_then(|e| e.get(endpoint)) {
+            let mut set = self.keys.lock();
+            for bk in keys {
+                if let Some((b, k)) = bk.split_once('/') {
+                    set.insert((b.to_string(), k.to_string()));
+                }
+            }
+        }
+        *self.kept.lock() = Some((dir.to_path_buf(), program.into(), endpoint.into()));
+    }
+
+    /// Adds what this recording wrote to its program's, when it has one
+    /// ([`Written::remember`]): the newest last, at most [`WRITTEN_KEPT`].
+    pub fn keep(&self) -> std::io::Result<()> {
+        let Some((dir, program, endpoint)) = self.kept.lock().clone() else {
+            return Ok(());
+        };
+        let fresh = self.fresh.lock();
+        let (order, set) = &*fresh;
+        if order.is_empty() {
+            return Ok(());
+        }
+        let mut all = read_written(&dir);
+        let keys = all.entry(program).or_default().entry(endpoint).or_default();
+        keys.retain(|k| !set.contains(k));
+        keys.extend(order.iter().cloned());
+        let over = keys.len().saturating_sub(WRITTEN_KEPT);
+        keys.drain(..over);
+        // a name of its own: two programs may end at once
+        let tmp = dir.join(format!(
+            "written.json.{}.{}.tmp",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        reqlog::private::write(&tmp, serde_json::to_vec(&all)?)?;
+        std::fs::rename(&tmp, written_file(&dir))
+    }
+
+    /// Keys under `place` (a prefix of the key, or of `bucket/key`, ending
+    /// where a word ends) are the recording's own: a trial's `{trial}`
+    /// place, which only that trial's run writes.
+    pub fn own_place(&self, place: &str) {
+        if !place.is_empty() {
+            self.places.lock().push(place.to_string());
+        }
+    }
+
     pub fn has(&self, bucket: &str, key: &str) -> bool {
-        self.0
+        if self
+            .keys
             .lock()
             .contains(&(bucket.to_string(), key.to_string()))
+        {
+            return true;
+        }
+        let full = format!("{bucket}/{key}");
+        let under = |text: &str, place: &str| {
+            text.strip_prefix(place)
+                .is_some_and(|rest| !rest.starts_with(char::is_alphanumeric))
+        };
+        self.places
+            .lock()
+            .iter()
+            .any(|p| under(key, p) || under(&full, p))
     }
 
     fn add(&self, bucket: &str, key: &str) {
-        self.0.lock().insert((bucket.to_string(), key.to_string()));
+        self.keys
+            .lock()
+            .insert((bucket.to_string(), key.to_string()));
+        let bk = format!("{bucket}/{key}");
+        let (order, set) = &mut *self.fresh.lock();
+        if set.insert(bk.clone()) {
+            order.push(bk);
+        }
     }
 }
 
@@ -955,8 +1060,18 @@ fn refuse(shared: &Shared, mut record: Record, msg: String) -> Response<Out> {
     record
         .response_headers
         .push(Header::new("x-sonde-proxy", "refused"));
+    record
+        .response_headers
+        .push(Header::new("x-sonde-policy", shared.cfg.policy.name()));
     shared.log.push(record);
     xml_error(403, "AccessDenied", &msg)
+}
+
+/// Whether the recording policy refused `r` (not the store, not a fault).
+pub fn refused_by_policy(r: &Record) -> bool {
+    r.response_headers
+        .iter()
+        .any(|h| h.name.eq_ignore_ascii_case("x-sonde-policy"))
 }
 
 /// Whether `bucket/key` is in the store: a HEAD of sonde's own, signed
@@ -2146,5 +2261,42 @@ mod budget_tests {
             ..ProxyConfig::default()
         };
         assert_eq!(buffer_share(&small, None), 100);
+    }
+
+    #[test]
+    fn a_program_writes_over_what_its_earlier_runs_and_its_trial_places_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        let first = Written::default();
+        first.remember(dir, "python etl.py", "http://s");
+        first.add("data", "out/1");
+        first.keep().unwrap();
+        let next = Written::default();
+        next.remember(dir, "python etl.py", "http://s");
+        assert!(next.has("data", "out/1"), "the program's last run wrote it");
+        assert!(!next.has("data", "out/2"));
+        for (program, endpoint) in [
+            ("python other.py", "http://s"),
+            ("python etl.py", "http://t"),
+        ] {
+            let other = Written::default();
+            other.remember(dir, program, endpoint);
+            assert!(!other.has("data", "out/1"), "{program} on {endpoint}");
+        }
+        // what it writes this time is kept beside what it wrote before
+        next.add("data", "out/2");
+        next.keep().unwrap();
+        let third = Written::default();
+        third.remember(dir, "python etl.py", "http://s");
+        assert!(third.has("data", "out/1") && third.has("data", "out/2"));
+        // a trial's place is its own, to a word's end
+        let w = Written::default();
+        w.own_place("tclean");
+        w.own_place("b/etl-slowdown");
+        assert!(w.has("data", "tclean/x") && w.has("data", "tclean"));
+        assert!(!w.has("data", "tcleanup/x"));
+        assert!(w.has("b", "etl-slowdown/k") && !w.has("c", "etl-slowdown/k"));
+        // nothing remembered: nothing kept
+        Written::default().keep().unwrap();
     }
 }
