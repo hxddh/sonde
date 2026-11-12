@@ -799,7 +799,7 @@ impl S3Client {
             method: req.method.as_str().into(),
             url: url.to_string(),
             bucket: req.bucket.as_deref().map(Into::into),
-            key: req.key.clone(),
+            key: req.key.as_deref().map(Into::into),
             query: req
                 .query
                 .iter()

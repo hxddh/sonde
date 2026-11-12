@@ -2662,7 +2662,7 @@ mod tests {
                 operation: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
                 url: format!("http://s3/b/data/k{i:05}"),
                 bucket: Some("b".into()),
-                key: Some(format!("data/k{i:05}")),
+                key: Some(format!("data/k{i:05}").into()),
                 status: Some(if i % 50 == 3 { 500 } else { 200 }),
                 latency_ms: 1.0 + (n - i) as f64 / 10.0,
                 request_headers: vec![
@@ -2791,7 +2791,7 @@ mod tests {
             method: "GET".into(),
             operation: "GetObject".into(),
             bucket: Some("b".into()),
-            key: Some(format!("k{id}")),
+            key: Some(format!("k{id}").into()),
             status: Some(200),
             ..Default::default()
         };
@@ -2828,7 +2828,7 @@ mod tests {
             method: method.into(),
             operation: op.into(),
             bucket: Some("b".into()),
-            key: Some(format!("k{id}")),
+            key: Some(format!("k{id}").into()),
             status: Some(if injected.is_some() { 503 } else { 200 }),
             injected: injected.map(String::from),
             ..Default::default()

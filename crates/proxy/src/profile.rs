@@ -1397,7 +1397,7 @@ fn identity(o: &Observation) -> String {
         "obs.slow" => Vec::new(),
         _ => ["key", "prefix", "format"]
             .iter()
-            .filter_map(|k| p.args.get(k).cloned())
+            .filter_map(|k| p.args.get(k).map(|v| v.to_string()))
             .collect(),
     };
     // a format's shared habit is the note it shares
@@ -1405,7 +1405,7 @@ fn identity(o: &Observation) -> String {
         && let Some(note) = o.phrases.get(1)
     {
         about.push(note.key.to_string());
-        about.extend(note.args.values().cloned());
+        about.extend(note.args.values().map(|v| v.to_string()));
     }
     format!("{key}|{}", about.join("|"))
 }
@@ -1617,7 +1617,7 @@ mod tests {
             for i in 0..reads {
                 let mut r = rec(i + 2, i as i64 * 100, "GetObject", 200, 100.0);
                 r.bucket = Some("b".into());
-                r.key = Some(format!("t/{}/f", i % 3));
+                r.key = Some(format!("t/{}/f", i % 3).into());
                 rs.push(r);
             }
             let p = profile(&rs, &RequestPrices::default());
@@ -2071,7 +2071,7 @@ mod tests {
     fn a_prefix_one_run_counts_under_other_is_still_counted_in_the_comparison() {
         let at = |id: u64, key: String| Record {
             bucket: Some("b".into()),
-            key: Some(key),
+            key: Some(key.into()),
             ..rec(id, id as i64, "GetObject", 200, 1.0)
         };
         // before: ten prefixes, p0/ the quietest of them (so under "other")

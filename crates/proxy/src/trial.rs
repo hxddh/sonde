@@ -865,9 +865,9 @@ pub fn judge(
             };
             match r.operation.as_str() {
                 "PutObject" | "CopyObject" | "CompleteMultipartUpload" => {
-                    stands.insert((bucket, r.key.clone().unwrap_or_default()));
+                    stands.insert((bucket, r.key.as_deref().unwrap_or_default().to_string()));
                 }
-                "DeleteObject" => remove(r.key.clone().unwrap_or_default()),
+                "DeleteObject" => remove(r.key.as_deref().unwrap_or_default().to_string()),
                 "DeleteObjects" => {
                     let body = r.request_body.as_deref().unwrap_or("");
                     let mut keys: BTreeSet<&str> = body

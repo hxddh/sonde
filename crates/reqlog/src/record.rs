@@ -205,7 +205,7 @@ pub struct Record {
     /// The full URL, with presign / signature query parameters masked.
     pub url: String,
     pub bucket: Option<Text>,
-    pub key: Option<String>,
+    pub key: Option<Text>,
     /// Query parameters, masked like the URL.
     pub query: Vec<(Text, Text)>,
     /// `None` when no response arrived (a transport error).

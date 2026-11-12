@@ -852,7 +852,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         method: method.as_str().into(),
         url: url.clone(),
         bucket: bucket.as_deref().map(Into::into),
-        key: key.clone(),
+        key: key.as_deref().map(Into::into),
         query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
         status: None,
         latency_ms: 0.0,

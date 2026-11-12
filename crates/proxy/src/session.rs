@@ -800,6 +800,9 @@ fn parse_block(bytes: &[u8], keep: Keep) -> Block {
 struct Gathered {
     records: Vec<Record>,
     logs: Vec<LogChunk>,
+    /// Each key read so far, once: the records that name it share it (a
+    /// key a thousand characters long, read a thousand times, is held once).
+    keys: std::collections::HashSet<reqlog::Text>,
     /// Lines read so far, and a bad last line of the block before: a torn
     /// last line of the file is the recorder killed mid-write, a bad line
     /// anywhere else is not a session.
@@ -821,7 +824,17 @@ impl Gathered {
             self.torn = Some(e);
         }
         self.lines += b.lines;
-        self.records.extend(b.records);
+        for mut r in b.records {
+            if let Some(k) = &mut r.key {
+                match self.keys.get(k.as_str()) {
+                    Some(same) => *k = same.clone(),
+                    None => {
+                        self.keys.insert(k.clone());
+                    }
+                }
+            }
+            self.records.push(r);
+        }
         self.logs.extend(b.logs);
         Ok(())
     }
@@ -950,7 +963,7 @@ mod tests {
                 operation: "GetObject".into(),
                 method: "GET".into(),
                 url: format!("https://x.r2.dev/b/k{i}"),
-                key: Some(format!("k{i}")),
+                key: Some(format!("k{i}").into()),
                 host_id: Some("host".into()),
                 status: Some(200),
                 request_headers: vec![
@@ -1191,6 +1204,47 @@ mod tests {
         ] {
             assert!(!read_by_analysis(dropped));
         }
+    }
+
+    #[test]
+    fn a_key_read_a_thousand_times_is_held_once_and_its_operations_share_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hot.sonde");
+        let w =
+            SessionWriter::create(&path, &SessionHeader::new("e", "https://e", "r", None)).unwrap();
+        // a key past what text is looked for when it is read (512 bytes)
+        let long = "segment/".repeat(100);
+        for i in 0..30_000u64 {
+            w.write(&Record {
+                id: i + 1,
+                time: DateTime::from_timestamp_micros(1_700_000_000_000_000 + i as i64 * 20_000)
+                    .unwrap(),
+                operation: "GetObject".into(),
+                method: "GET".into(),
+                bucket: Some("b".into()),
+                key: Some(format!("{long}{}", i % 3).into()),
+                status: Some(200),
+                ..Default::default()
+            });
+        }
+        w.flush().unwrap();
+        let s = Session::open_lean(&path).unwrap();
+        let at = |t: &reqlog::Text| t.as_ptr() as usize;
+        let keys: std::collections::HashSet<usize> = s
+            .records
+            .iter()
+            .filter_map(|r| r.key.as_ref().map(at))
+            .collect();
+        assert_eq!(keys.len(), 3);
+        let eps = crate::episode::episodes(&s.records);
+        assert_eq!(eps.len(), 30_000);
+        let targets: std::collections::HashSet<usize> = eps
+            .iter()
+            .map(|e| at(&e.title_text[0].args["target"]))
+            .collect();
+        // (one each in each batch, on each core it was made on)
+        assert!(targets.len() < 100, "{}", targets.len());
+        assert_eq!(eps[0].title(), format!("GetObject b/{long}0"));
     }
 
     #[test]

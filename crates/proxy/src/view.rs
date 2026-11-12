@@ -409,7 +409,7 @@ mod tests {
                 method: if i % 7 == 0 { "PUT" } else { "GET" }.into(),
                 operation: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
                 bucket: Some("b".into()),
-                key: Some(format!("data/k{i:05}")),
+                key: Some(format!("data/k{i:05}").into()),
                 status: Some(if i % 50 == 3 { 500 } else { 200 }),
                 // the later, the quicker: sorting by time taken is not the order they came in
                 latency_ms: 1.0 + (n - i) as f64 / 10.0,

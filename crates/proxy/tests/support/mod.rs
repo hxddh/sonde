@@ -147,7 +147,7 @@ fn record(
         method: method.into(),
         url,
         bucket: Some(BUCKET.into()),
-        key: key.map(String::from),
+        key: key.map(Into::into),
         query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
         status: Some(status),
         latency_ms: (ms * 1000.0).round() / 1000.0,

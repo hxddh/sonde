@@ -386,7 +386,7 @@ fn record(
         method: method.into(),
         operation: operation.into(),
         bucket: bucket.map(Into::into),
-        key,
+        key: key.map(Into::into),
         query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
         status: Some(status),
         latency_ms,

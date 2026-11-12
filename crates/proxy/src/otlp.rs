@@ -252,7 +252,7 @@ mod tests {
             method: "GET".into(),
             operation: "GetObject".into(),
             bucket: Some("b".into()),
-            key: Some(format!("k{id}")),
+            key: Some(format!("k{id}").into()),
             status: Some(200),
             latency_ms: 4.0,
             ..Default::default()

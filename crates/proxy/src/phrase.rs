@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use reqlog::Text;
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -15,12 +16,13 @@ pub struct Phrase {
 
 /// A phrase's arguments by name, in the order of their names: a map as it is
 /// written and read, kept as the two or three pairs it is. Every operation
-/// of a session has a title, and a session may have a million.
+/// of a session has a title, and a session may have a million: its values
+/// are shared text (an operation's name, a key its requests name already).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Args(Vec<(&'static str, String)>);
+pub struct Args(Vec<(&'static str, Text)>);
 
 impl Args {
-    pub fn get(&self, name: &str) -> Option<&String> {
+    pub fn get(&self, name: &str) -> Option<&Text> {
         self.0.iter().find(|(k, _)| *k == name).map(|(_, v)| v)
     }
 
@@ -28,11 +30,11 @@ impl Args {
         self.get(name).is_some()
     }
 
-    pub fn values(&self) -> impl Iterator<Item = &String> {
+    pub fn values(&self) -> impl Iterator<Item = &Text> {
         self.0.iter().map(|(_, v)| v)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &String)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &Text)> {
         self.0.iter().map(|(k, v)| (*k, v))
     }
 
@@ -46,17 +48,18 @@ impl Args {
 }
 
 impl std::ops::Index<&str> for Args {
-    type Output = String;
-    fn index(&self, name: &str) -> &String {
+    type Output = Text;
+    fn index(&self, name: &str) -> &Text {
         self.get(name).expect("an argument of that name")
     }
 }
 
-impl FromIterator<(&'static str, String)> for Args {
+impl<V: Into<Text>> FromIterator<(&'static str, V)> for Args {
     /// A name given twice keeps its last value, as a map would.
-    fn from_iter<I: IntoIterator<Item = (&'static str, String)>>(pairs: I) -> Self {
-        let mut all: Vec<(&'static str, String)> = Vec::new();
+    fn from_iter<I: IntoIterator<Item = (&'static str, V)>>(pairs: I) -> Self {
+        let mut all: Vec<(&'static str, Text)> = Vec::new();
         for (k, v) in pairs {
+            let v = v.into();
             match all.iter_mut().find(|(have, _)| *have == k) {
                 Some(slot) => slot.1 = v,
                 None => all.push((k, v)),
@@ -76,6 +79,15 @@ impl Serialize for Args {
 
 /// A phrase: `key`'s template with `args`.
 pub fn p(key: &'static str, args: &[(&'static str, String)]) -> Phrase {
+    Phrase {
+        key,
+        args: args.iter().cloned().collect(),
+    }
+}
+
+/// [`p`] of text shared already (an operation's name, a target its
+/// requests' key is in): a million operations hold it once.
+pub fn p_shared(key: &'static str, args: &[(&'static str, Text)]) -> Phrase {
     Phrase {
         key,
         args: args.iter().cloned().collect(),

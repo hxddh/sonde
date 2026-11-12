@@ -14,7 +14,7 @@ use chrono::{DateTime, Duration, Utc};
 use reqlog::Record;
 use serde::Serialize;
 
-use crate::phrase::{Phrase, p, plural};
+use crate::phrase::{Phrase, p, p_shared, plural};
 use crate::summary::is_miss;
 
 /// A storage format sonde recognizes from keys.
@@ -671,13 +671,21 @@ fn singles(rs: &[&Record]) -> Vec<Episode> {
     const WORTH: usize = 20_000;
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
     if threads < 2 || rs.len() < WORTH {
-        return rs.iter().map(|r| single(r)).collect();
+        let mut targets = Targets::default();
+        return rs.iter().map(|r| single(r, &mut targets)).collect();
     }
     let each = rs.len().div_ceil(threads);
     std::thread::scope(|scope| {
         let parts: Vec<_> = rs
             .chunks(each)
-            .map(|part| scope.spawn(move || part.iter().map(|r| single(r)).collect::<Vec<_>>()))
+            .map(|part| {
+                scope.spawn(move || {
+                    let mut targets = Targets::default();
+                    part.iter()
+                        .map(|r| single(r, &mut targets))
+                        .collect::<Vec<_>>()
+                })
+            })
             .collect();
         let mut out = Vec::with_capacity(rs.len());
         for part in parts {
@@ -690,15 +698,34 @@ fn singles(rs: &[&Record]) -> Vec<Episode> {
     })
 }
 
-fn single(r: &Record) -> Episode {
-    let target = match (&r.bucket, &r.key) {
-        (Some(b), Some(k)) => format!("{b}/{k}"),
-        (Some(b), None) => format!("{b}/"),
-        _ => "/".into(),
-    };
-    let mut title = vec![p(
+/// Each request's target as text its operations share, by its bucket and
+/// key (the key is held once for the session, [`crate::session`], and
+/// told by where it is): a key read a thousand times is one title's
+/// target, not a thousand.
+#[derive(Default)]
+struct Targets(std::collections::HashMap<(Option<reqlog::Text>, usize), reqlog::Text>);
+
+impl Targets {
+    fn of(&mut self, r: &Record) -> reqlog::Text {
+        let key = r.key.as_ref().map_or(0, |k| k.as_ptr() as usize);
+        self.0
+            .entry((r.bucket.clone(), key))
+            .or_insert_with(|| {
+                match (&r.bucket, &r.key) {
+                    (Some(b), Some(k)) => format!("{b}/{k}"),
+                    (Some(b), None) => format!("{b}/"),
+                    _ => "/".into(),
+                }
+                .into()
+            })
+            .clone()
+    }
+}
+
+fn single(r: &Record, targets: &mut Targets) -> Episode {
+    let mut title = vec![p_shared(
         "request",
-        &[("op", r.operation.to_string()), ("target", target)],
+        &[("op", r.operation.clone()), ("target", targets.of(r))],
     )];
     if let Some(x) = query(r, "prefix").filter(|x| !x.is_empty()) {
         title.push(p("request.prefix", &[("prefix", x.to_string())]));
@@ -727,7 +754,8 @@ fn conditional_note(e: &mut Episode, rs: &[&Record]) {
 
 fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
     if rs.len() < 3 {
-        return rs.into_iter().map(single).collect();
+        let mut targets = Targets::default();
+        return rs.into_iter().map(|r| single(r, &mut targets)).collect();
     }
     let bucket = rs[0].bucket.clone().unwrap_or_default();
     let dirs: Vec<&str> = rs
@@ -750,7 +778,7 @@ fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
 
 fn flush_listing(rs: Vec<&Record>) -> Episode {
     if rs.len() == 1 {
-        return single(rs[0]);
+        return single(rs[0], &mut Targets::default());
     }
     let prefix = query(rs[0], "prefix").unwrap_or("");
     let bucket = rs[0].bucket.as_deref().unwrap_or_default().to_string();
@@ -1008,7 +1036,7 @@ fn retries<'a>(
             }
             let first = failure(rs[0]).unwrap_or_default();
             let n = rs.len() - 1;
-            let target = rs[0].key.clone().unwrap_or_default();
+            let target = rs[0].key.as_deref().unwrap_or_default().to_string();
             let mut e = build(
                 Kind::Retry,
                 None,
@@ -1138,7 +1166,7 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
             "step.other",
             &[
                 ("op", commit.operation.to_string()),
-                ("key", commit.key.clone().unwrap_or_default()),
+                ("key", commit.key.as_deref().unwrap_or_default().to_string()),
             ],
         ),
     }];
@@ -2116,8 +2144,20 @@ pub fn observations_of(
             let phrase = p(
                 "obs.throttled.rate",
                 &[
-                    ("n", said.args.get("n").cloned().unwrap_or_default()),
-                    ("s", said.args.get("s").cloned().unwrap_or_default()),
+                    (
+                        "n",
+                        said.args
+                            .get("n")
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                    ),
+                    (
+                        "s",
+                        said.args
+                            .get("s")
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                    ),
                 ],
             );
             o.text = phrase.en();

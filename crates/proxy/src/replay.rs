@@ -325,7 +325,7 @@ impl State {
                         None => {
                             let key = (
                                 bucket.clone().unwrap_or_default(),
-                                r.key.clone().unwrap_or_default(),
+                                r.key.as_deref().unwrap_or_default().to_string(),
                             );
                             let n = self
                                 .pending
@@ -419,7 +419,7 @@ impl State {
             "CreateMultipartUpload" => {
                 if let Some(id) = tags(&resp.text(), "UploadId").first() {
                     self.pending
-                        .entry((bucket, r.key.clone().unwrap_or_default()))
+                        .entry((bucket, r.key.as_deref().unwrap_or_default().to_string()))
                         .or_default()
                         .push_back(id.to_string());
                 }

@@ -193,7 +193,7 @@ pub fn redact(s: &mut Session) {
             .bucket
             .as_deref()
             .map(|b| format!("bucket-{}", r.token(b)).into());
-        rec.key = rec.key.as_deref().map(|k| r.path(k));
+        rec.key = rec.key.as_deref().map(|k| r.path(k).into());
         for (k, v) in &mut rec.query {
             if matches!(
                 k.as_str(),
@@ -603,7 +603,7 @@ mod tests {
                 operation: if i < 2600 { "PutObject" } else { "GetObject" }.into(),
                 bucket: Some("b".into()),
                 key: Some(if i < 2600 {
-                    format!("out/{i}")
+                    format!("out/{i}").into()
                 } else {
                     "conf.json".into()
                 }),
