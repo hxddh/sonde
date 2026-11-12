@@ -120,6 +120,12 @@ fn template(key: &str) -> &'static str {
         "lance.read.v" => "read version {v}",
         "lance.read" => "read the dataset",
         "lance.ranges" => " · {n} ranges of {files} file{s} ({size})",
+        "hudi.instant" => "{action} {instant}",
+        "hudi.metadata" => "metadata table: {action} {instant}",
+        "hudi.properties" => "table properties written (hoodie.properties)",
+        "paimon.snapshot" => "snapshot {n}",
+        "paimon.schema" => "schema {n} written",
+        "paimon.hint" => "{file} hint updated",
         "delta.checkpoint" => "checkpoint written",
         "delta.last" => "_last_checkpoint updated",
         "step.other" => "{op} {key}",
@@ -139,6 +145,7 @@ fn template(key: &str) -> &'static str {
         "loose.listed" => "listed {dir}/",
         "loose.misses" => "{n} lookup{s} that found nothing",
         "loose.reads" => "{n} reads",
+        "loose.deletes" => "{n} file{s} deleted",
         "obs.shared" => "{n} {format} writes: ",
         "obs.injected" => {
             "{n} request{s} met a fault sonde injected (scenario {scenario}): the errors and retries here are the trial's, not the store's"
@@ -155,6 +162,12 @@ fn template(key: &str) -> &'static str {
         "obs.retried" => "{n} request{s} repeated after a retryable failure",
         "obs.small" => {
             "{n} files under 5 MiB were uploaded as multipart uploads: 3 requests each where one PUT would do"
+        }
+        "obs.rename" => {
+            "{n} object{s} copied out of _temporary/ and deleted: a commit by rename (Hadoop's FileOutputCommitter) writes each output file again on S3; an S3A committer writes it once"
+        }
+        "obs.markers" => {
+            "{n} directory marker{s} written (empty objects named …/), {m} delete requests of markers: s3a keeps them with fs.s3a.directory.marker.retention=keep"
         }
         "obs.races" => "{n} conditional write{s} lost a race (412): another writer got there first",
         "obs.hot" => "{key} was read {n} times ({pct}% of all requests)",

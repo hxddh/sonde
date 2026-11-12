@@ -35,7 +35,7 @@ which program it judged and whether that is its name or its command.
 | Command | Does |
 |---|---|
 | `sonde demo [--app]` | A tour: a small program's requests to the built-in store, recorded and explained (`--app` opens it in the app). |
-| `sonde run [--no-delete\|--read-only] [--live] [--callers] [-o FILE] -- COMMAND…` | Runs a command against a local endpoint that re-signs and records its S3 requests; prints the session's summary (and, when the program sent nothing, how each common SDK is pointed at sonde); exits with the command's status (128 + the signal's number when a signal ended it, as a shell says it). `--callers` names the code that sent each request in a Python, Node.js or Java program (see below). |
+| `sonde run [--no-delete\|--read-only] [--tls] [--live] [--callers] [-o FILE] -- COMMAND…` | Runs a command against a local endpoint that re-signs and records its S3 requests (`--tls`: in TLS too, with a certificate the program is told to trust; `spark-submit` and `flink run` are given s3a's endpoint on their command line: [recording.md](recording.md)); prints the session's summary (and, when the program sent nothing, how each common SDK is pointed at sonde); exits with the command's status (128 + the signal's number when a signal ended it, as a shell says it). `--callers` names the code that sent each request in a Python, Node.js or Java program (see below). |
 | `sonde run --trial [--fault SCENARIO …] [--name NAME] -- COMMAND…` | The clean run, then the command again under each fault scenario (chosen from what it did, or `sonde.toml`'s `[[scenario]]`, or the ones named), and whether it survived each: see [trials.md](trials.md). `{trial}` in the command (and `SONDE_TRIAL`) is `clean`, then the scenario's name; only when a trial runs. A clean run that fails or is interrupted is not tried. Ctrl-C or SIGTERM ends the whole trial (130, 143) and writes no verdict for the scenario it interrupted. Exits with the command's status when that is not 0, else 1 when a trial broke. Every `sonde run` to a session path first removes that session's earlier verdicts and trial sessions. `--fault slowdown:3` (or `error:3`) fails each request's first three attempts, 1 to 5. |
 | `sonde proxy [--listen ADDR] [--allow-remote] [--no-delete\|--read-only] [-o FILE]` | The same endpoint, standing: prints the variables to set, then every request. It listens on loopback only unless `--allow-remote`. |
 | `sonde watch [--listen ADDR] [--rotate MIN] [--alert URL] …` | A proxy left running: one status line for the last minute (requests a second, errors, p95), each new warning as it appears, and a new session file every `--rotate` minutes (60), the finished one compressed. A finished file over `sonde.toml`'s budget is said on stderr (the last one at Ctrl-C too); `--alert` posts each new warning, and each such file, to a webhook as `{"text": …}` (Slack, Teams, Mattermost). |
@@ -125,8 +125,8 @@ Or as annotations on the pull request's diff, each finding on the line of code t
       - run: sonde check -f github
 ```
 
-`sonde.toml` has three tables, `[program]`, `[check]` and `[[scenario]]` ([trials.md](trials.md)); any other key
-is an error. `sonde check --init` writes a first `sonde.toml` from a run (its counts with 10% of room, its times
+`sonde.toml` has four tables, `[program]`, `[check]`, `[[scenario]]` ([trials.md](trials.md)) and `[record]`
+(`tls = true`: as `--tls`); any other key is an error. `sonde check --init` writes a first `sonde.toml` from a run (its counts with 10% of room, its times
 commented out for a person to set, a `[program] name` when the program has none) and prints these steps. With
 `baseline = "auto"` the first run in CI passes or fails by the budget alone and says there is no baseline yet.
 Past its baseline, `sonde check` says since which run, and the commits of that run and the last one within: each
