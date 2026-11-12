@@ -36,6 +36,11 @@ pub fn sample(sub: &str) -> &'static Vec<(String, Vec<u8>)> {
 
 /// The Iceberg sample with each file `swap` picks given `data` instead.
 pub fn iceberg_with(data: &[u8], swap: impl Fn(&str) -> bool) {
+    // the decoder catches apache-avro's panics on a malformed schema; the
+    // fuzzer's hook would abort on them first. A panic it does not catch
+    // still ends the run, and is a crash.
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| drop(std::panic::take_hook()));
     let mut src = MemSource::default();
     for (k, v) in sample("iceberg") {
         let body = if swap(k) { data.to_vec() } else { v.clone() };

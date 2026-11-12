@@ -33,10 +33,8 @@ reqlog ← s3raw ← sonde-proxy
 sonde-core, probes, decoders, sonde-proxy ← sonde-nsh, sonde-cli
 ```
 
-`sonde-proxy` does not depend on `sonde-core`: a recording needs no configuration of sonde's, only an endpoint.
-Only `sonde-nsh` and `sonde-cli` (feature `tui`) depend on Native Shell. Replacing the UI framework keeps every crate
-but `sonde-nsh` and `app/`; the CLI's commands are in `sonde-cli` and the TSX views are the app's, so those are the
-other part of the code that is about presentation.
+`sonde-proxy` needs no sonde configuration, only an endpoint. Only `sonde-nsh` and `sonde-cli` (feature `tui`)
+depend on Native Shell; replacing the UI framework keeps every crate but `sonde-nsh` and `app/`.
 
 ## Threads
 
@@ -101,33 +99,21 @@ per endpoint, bucket and prefix, shared with the sheets it opens, which reuse th
 
 ## A recording, and what is read from it
 
-`sonde-proxy` is the endpoint a program is pointed at (`AWS_ENDPOINT_URL`, with throwaway keys): each request is
-checked against the proxy's own secret, re-signed with the real credentials, forwarded and written to the session
-file (`.sonde`: a header line, then a JSON line per request and per chunk of the program's output, gzipped once it
-is finished).
+The proxy re-signs each request with the real credentials and appends it to the `.sonde` file (a header line, a
+JSON line per request or output chunk; gzipped when finished). Then, in `sonde-proxy`:
 
-- **Faults** (`fault.rs`): rules that answer in the store's place — a 503, a 500, a slow answer, a lost answer to a
-  write that did happen, a body cut short, a lost race on a conditional write — matched by operation and key, and
-  counted per request's attempts, so a rule fails a first attempt and lets its retry through.
-- **Trials** (`trial.rs`): `sonde run --trial` and the app's Trial run the program once clean, then once per
-  scenario chosen from what the clean run did, and judge each run against the clean one: every failed request sent
-  again, nothing more left behind, the same exit. The verdicts are kept beside the session
-  (`<name>.trials.json`) and each scenario's run under `trials/`.
-- **Operations and findings** (`episode.rs`): requests grouped into operations (a multipart upload, a paged
-  listing, an Iceberg or Delta commit, a SlateDB manifest write) and the observations made of them.
-- **Signals** (`signals.rs`): rate, errors, latency, bytes and requests in flight, each a figure with its line over
-  the run, in one pass over the records.
-- **Programs** (`program.rs`): a run reduced to the figures that move when a program changes, checked against a
-  budget (`sonde.toml`) or a baseline run: what `sonde check` gates CI on and what the app's history shows.
-- **The summary cache** (`summary.rs`): a session's counts, kept beside it as `<name>.summary.json` and used while
-  the file's length and time and the cache's version are the same, so a list of sessions reads no session whole.
-- **The paged view** (`view.rs`): a session as a window shows it, analysed once and then sent in pages. The view
-  carries the totals, signals, profile, findings and the first page of operations; the bridge (`Sessions.view`,
-  `Sessions.episodes`) keeps the analysis until the file changes, and asks for later ranges sorted and narrowed in
-  Rust, so what crosses to the interface does not grow with the session.
+| Module | Does |
+|---|---|
+| `fault.rs` | answers in the store's place (503, 500, slow, lost answer, cut body, lost race), per request's attempts |
+| `trial.rs` | a clean run, then one per scenario, each judged against the clean run (`<name>.trials.json`, `trials/`) |
+| `episode.rs` | requests → operations and findings |
+| `signals.rs` | rate, errors, latency, bytes, in flight, in one pass |
+| `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
+| `summary.rs` | counts kept as `<name>.summary.json`, valid while file length, time and cache version match |
+| `view.rs` | analysed once, sent in pages (`Sessions.view`, `Sessions.episodes`): what crosses to the UI does not grow |
 
-Every figure in text — a size, a count, a length of time — is written by `sonde-fmt`, the same as the app's
-`format.ts` writes it (`crates/fmt/cases.json` is the table both are tested against).
+Every size, count and duration in text comes from `sonde-fmt`, tested with the app's `format.ts` against
+`crates/fmt/cases.json`.
 
 ## Phrases
 
