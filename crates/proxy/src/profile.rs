@@ -598,7 +598,7 @@ pub fn busy_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
 /// Each kind's part of the waiting, in microseconds: every stretch of time
 /// split evenly among the requests in flight then, so that requests at once
 /// count once and the kinds add up to the time with a request in flight.
-fn waited_us<K: Ord + Clone>(by: &BTreeMap<K, Vec<&Record>>) -> BTreeMap<K, f64> {
+pub(crate) fn waited_us<K: Ord + Clone>(by: &BTreeMap<K, Vec<&Record>>) -> BTreeMap<K, f64> {
     let keys: Vec<&K> = by.keys().collect();
     let mut events: Vec<(i64, i32, usize)> = Vec::new();
     for (k, rs) in by.values().enumerate() {

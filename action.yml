@@ -1,0 +1,150 @@
+name: sonde check
+description: Record a program's S3 requests, check them against the base branch's run, and keep one comment on the pull request up to date.
+author: hxddh
+branding:
+  icon: activity
+  color: blue
+
+inputs:
+  run:
+    description: The program's command, as you would type it (`python etl.py --day 2`).
+    required: true
+  run-args:
+    description: Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--callers`, `--allow-writes`).
+    default: ""
+  name:
+    description: The program's name (default `[program] name` in sonde.toml, else its command).
+    default: ""
+  check-args:
+    description: Flags for `sonde check` (`--no-new-warnings`, `--tolerance 5`, `--max-requests 5000`).
+    default: ""
+  config:
+    description: The project's sonde.toml (default found from the working directory up).
+    default: ""
+  baseline:
+    description: "`auto`: the session the latest earlier run of this workflow kept on the base branch (on this branch for a push). `none`, or a session path or https URL."
+    default: auto
+  artifact:
+    description: The name the run is kept under, and the baseline fetched by. One per job.
+    default: sonde
+  comment:
+    description: "Keep one comment on the pull request (needs `pull-requests: write`)."
+    default: "true"
+  redact:
+    description: Bucket and key names in the HTML report become tokens.
+    default: "false"
+  fail:
+    description: Fail the step when the check fails.
+    default: "true"
+  version:
+    description: "The sonde to install: `18.0.0`, `latest`, or `path` (the one on PATH). Default: this action's tag when it is a version, else `latest`."
+    default: ""
+  working-directory:
+    description: Where the command runs.
+    default: "."
+  github-token:
+    description: Fetches the baseline, checks the binary's provenance and writes the comment.
+    default: ${{ github.token }}
+
+outputs:
+  passed:
+    description: "`true` when the run is within its budget and baseline and no trial broke."
+    value: ${{ steps.check.outputs.passed }}
+  session:
+    description: The run's session file.
+    value: ${{ steps.record.outputs.session }}
+  report-url:
+    description: The HTML report (an artifact).
+    value: ${{ steps.report-upload.outputs.artifact-url }}
+  comment-url:
+    description: The pull request's comment.
+    value: ${{ steps.comment.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install sonde
+      shell: bash
+      env:
+        SONDE_VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" install
+
+    - name: Record
+      id: record
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SONDE_RUN: ${{ inputs.run }}
+        SONDE_RUN_ARGS: ${{ inputs.run-args }}
+        SONDE_NAME: ${{ inputs.name }}
+      run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" record
+
+    - name: Baseline
+      id: baseline
+      shell: bash
+      env:
+        SONDE_BASELINE: ${{ inputs.baseline }}
+        SONDE_ARTIFACT: ${{ inputs.artifact }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" baseline
+
+    - name: Check
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SONDE_SESSION: ${{ steps.record.outputs.session }}
+        SONDE_BASELINE: ${{ steps.baseline.outputs.baseline }}
+        SONDE_CONFIG: ${{ inputs.config }}
+        SONDE_CHECK_ARGS: ${{ inputs.check-args }}
+      run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" check
+
+    - name: Report
+      id: report
+      shell: bash
+      env:
+        SONDE_SESSION: ${{ steps.record.outputs.session }}
+        SONDE_BASELINE: ${{ steps.baseline.outputs.baseline }}
+        SONDE_REDACT: ${{ inputs.redact }}
+      run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" report
+
+    - name: Keep the report
+      id: report-upload
+      if: steps.report.outputs.file != ''
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ inputs.artifact }}-report
+        path: ${{ steps.report.outputs.file }}
+        overwrite: true
+
+    - name: Keep the run (the baseline of the pull requests that follow)
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ steps.record.outputs.session }}
+        overwrite: true
+
+    - name: Comment
+      id: comment
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SONDE_SESSION: ${{ steps.record.outputs.session }}
+        SONDE_BASELINE: ${{ steps.baseline.outputs.baseline }}
+        SONDE_CONFIG: ${{ inputs.config }}
+        SONDE_CHECK_ARGS: ${{ inputs.check-args }}
+        SONDE_ARTIFACT: ${{ inputs.artifact }}
+        SONDE_COMMENT: ${{ inputs.comment }}
+        SONDE_REPORT_URL: ${{ steps.report-upload.outputs.artifact-url }}
+        SONDE_PR: ${{ github.event.pull_request.number }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" comment
+
+    - name: Verdict
+      shell: bash
+      env:
+        SONDE_EXIT: ${{ steps.record.outputs.exit }}
+        SONDE_PASSED: ${{ steps.check.outputs.passed }}
+        SONDE_FAIL: ${{ inputs.fail }}
+      run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" verdict

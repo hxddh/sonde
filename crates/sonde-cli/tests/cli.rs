@@ -216,6 +216,25 @@ fn check_holds_a_run_to_its_programs_baseline() {
         "{}",
         stdout(&over)
     );
+    // said in every format: a comment, an annotation, a field
+    let md = sonde(t.path(), &["check", "--baseline", "auto", "-f", "markdown"]);
+    assert_eq!(md.status.code(), Some(0));
+    assert!(
+        stdout(&md).contains("> ⚠️ no baseline yet for program"),
+        "{}",
+        stdout(&md)
+    );
+    let gh = sonde(t.path(), &["check", "--baseline", "auto", "-f", "github"]);
+    assert_eq!(gh.status.code(), Some(0));
+    assert!(
+        stdout(&gh).starts_with("::warning title=sonde check::no baseline yet"),
+        "{}",
+        stdout(&gh)
+    );
+    let json = sonde(t.path(), &["check", "--baseline", "auto", "-f", "json"]);
+    let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert!(v["noBaseline"].is_string(), "{v}");
+    assert_eq!(v["verdict"], "nothing checked (no baseline yet)");
     // nothing at all to hold it to is still a mistake in the command
     assert_eq!(sonde(t.path(), &["check"]).status.code(), Some(64));
     let set = sonde(
@@ -268,6 +287,131 @@ fn check_holds_a_run_to_its_programs_baseline() {
             .count(),
         2
     );
+}
+
+#[test]
+fn show_by_splits_the_operations_table_and_names_the_sdk() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    let o = sonde(t.path(), &["show", "--by", "operation"]);
+    assert_eq!(o.status.code(), Some(0));
+    let out = stdout(&o);
+    let lines: Vec<&str> = out.lines().collect();
+    // the head line names the SDK; then one table, split
+    assert!(lines[1].contains(" from sonde "), "{out}");
+    assert!(
+        lines[2].starts_with("operation") && lines[2].contains("p99") && lines[2].contains("cost"),
+        "{out}"
+    );
+    assert!(lines.iter().any(|l| l.starts_with("HeadObject")), "{out}");
+    // the summary's head line names it too
+    let summary = stdout(&sonde(t.path(), &["show", "--summary"]));
+    assert!(summary.contains(" from sonde "), "{summary}");
+    // a dimension it does not know, and a flag it would ignore
+    assert_eq!(
+        sonde(t.path(), &["show", "--by", "bucket"]).status.code(),
+        Some(64)
+    );
+    assert_eq!(
+        sonde(t.path(), &["show", "--by", "size", "--requests"])
+            .status
+            .code(),
+        Some(64)
+    );
+}
+
+#[test]
+fn a_shared_page_of_two_runs_is_their_comparison() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert_eq!(sonde(t.path(), &["demo"]).status.code(), Some(0));
+    let mut names: Vec<String> = std::fs::read_dir(t.path().join("data/sessions"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".sonde"))
+        .collect();
+    names.sort();
+    let page = t.path().join("page.html");
+    let o = sonde(
+        t.path(),
+        &[
+            "share",
+            "--html",
+            &names[0],
+            &names[1],
+            "-o",
+            page.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let html = std::fs::read_to_string(&page).unwrap();
+    let against = html.find("<h2>Against session ").expect("the comparison");
+    assert!(against < html.find("<h2>This run</h2>").unwrap());
+    // the same as --baseline FILE
+    let o = sonde(
+        t.path(),
+        &["share", "--html", &names[1], "--baseline", &names[0]],
+    );
+    assert!(stdout(&o).contains("<h2>Against session "));
+    // a comparison is a page; and two runs or a baseline, not both
+    assert_eq!(
+        sonde(t.path(), &["share", &names[0], &names[1]])
+            .status
+            .code(),
+        Some(64)
+    );
+    assert_eq!(
+        sonde(
+            t.path(),
+            &[
+                "share",
+                "--html",
+                &names[0],
+                &names[1],
+                "--baseline",
+                "auto"
+            ]
+        )
+        .status
+        .code(),
+        Some(64)
+    );
+    // a link in a comment is a comment's
+    let o = sonde(
+        t.path(),
+        &[
+            "check",
+            "--max-requests",
+            "1000",
+            "--report-url",
+            "https://x",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(64));
+    let o = sonde(
+        t.path(),
+        &[
+            "check",
+            &names[1],
+            "--baseline",
+            &names[0],
+            "-f",
+            "markdown",
+            "--report-url",
+            "https://x.test/r",
+        ],
+    );
+    let md = stdout(&o);
+    assert_eq!(o.status.code(), Some(0), "{md}");
+    assert!(md.contains("**Against the baseline**"), "{md}");
+    assert!(md.contains("[The report](https://x.test/r)"), "{md}");
 }
 
 #[test]
@@ -371,7 +515,8 @@ fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
         cells.contains("| **FAIL** +2700% | requests | 28 | ≤ 1 |"),
         "{md}"
     );
-    assert!(cells.contains("| pass | waiting |"), "{md}");
+    // a row that passed is not repeated in a comment
+    assert!(!cells.contains("| pass |"), "{md}");
     // a flag still wins over the file
     let c = sonde(
         t.path(),

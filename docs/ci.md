@@ -1,0 +1,97 @@
+# CI
+
+A pull request gets one comment: the verdict, what changed against the base branch's run, and one link to the
+report. The budget and the baseline are `sonde check`'s ([cli](cli.md#sonde-check)).
+
+## The GitHub Action
+
+```yaml
+on:
+  push: { branches: [main] }
+  pull_request:
+permissions: { contents: read, actions: read, pull-requests: write }
+jobs:
+  s3:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hxddh/sonde@v18
+        with:
+          run: python etl.py --day 2
+          run-args: --url ${{ vars.S3_URL }} --callers
+```
+
+Runs on Linux and macOS runners. Each push to `main` keeps its run as an artifact; a pull request is checked against
+the newest one.
+
+| Step | Does |
+|---|---|
+| Install | The release binary (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. |
+| Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`. The program's exit status fails the job, after the steps below. |
+| Baseline | `auto`: of the newest 5 completed push runs of the same workflow on the base branch (a push: on its own branch, not itself), the first that kept the artifact `artifact` (`gh run list`, `gh run download`). None: a warning, and `check --baseline auto` says `no baseline yet` in every format. |
+| Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them (`--callers`). |
+| Report | `sonde share --html RUN --baseline BASE` (`--redact` with `redact: true`): the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
+| Keep | The session, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
+| Comment | `sonde check -f markdown --report-url URL`: the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
+| Verdict | Fails when the program failed, else when the check failed (`fail: false` keeps the job green). |
+
+| Input | Default | |
+|---|---|---|
+| `run` | (required) | The command, as typed. |
+| `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--callers`, `--allow-writes`. |
+| `name` | | The program's name (else `[program] name` in `sonde.toml`, else the command). |
+| `check-args` | | `sonde check` flags: `--tolerance 5`, `--no-new-warnings`, `--max-requests N`. |
+| `config` | found upward | `sonde.toml`. |
+| `baseline` | `auto` | `none`, a session path, or an https URL. |
+| `artifact` | `sonde` | One per job (a matrix names each). |
+| `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
+| `redact` | `false` | Bucket and key names in the report become tokens. |
+| `fail` | `true` | |
+| `version` | the action's tag, else `latest` | `18.0.0`, `latest`, `path`. |
+| `working-directory` | `.` | |
+| `github-token` | `github.token` | Needs `actions: read` for the baseline. |
+
+Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
+
+## The comment
+
+```markdown
+### sonde: past its baseline ❌
+
+**Against the baseline**
+
+- **requests 52 → 72 (+38%)**, past the 57 it may use
+- cost 0.00021 USD → 0.00022 USD (+5%)
+
+| kind       | requests | waiting       |
+| ---------- | -------: | ------------: |
+| HeadObject |  0 → 20  | 0 ms → 118 ms |
+
+**New findings**
+
+- 20 objects were checked with HEAD and then read with GET: the GET alone answers both — `etl.py:19 load`
+
+[The report](https://github.com/o/r/actions/runs/1/artifacts/2)
+```
+
+| Part | When |
+|---|---|
+| Heading | Always: the verdict, as every format closes. |
+| Since | Past the baseline over several runs (needs the runs, so local history; not in a fresh runner). |
+| `> ⚠️ no baseline yet` | A baseline asked for and none found. |
+| Failed rows | Budget rows that failed; never a row that passed. Without a baseline, its failed rows too. |
+| Against the baseline | Requests, cost and errors that changed, waiting that moved past 10% and 50 ms; a figure past the baseline in bold with its limit. Kinds of request that changed. |
+| New findings, Gone | Against the baseline; new first, with the code line that sent them. |
+| Trials | Those that broke or degraded; the survived counted. |
+| What stands out | Without a baseline: the run's first five findings, folded. |
+| The report | With `--report-url`. |
+
+## Elsewhere
+
+```sh
+sonde run -o run.sonde -- python etl.py
+sonde check run.sonde --baseline main.sonde -f markdown --report-url "$URL" > comment.md
+sonde share --html run.sonde --baseline main.sonde -o report.html
+```
+
+Keep `run.sonde` from the main branch (an artifact, a bucket) and give it, or its https URL, as `--baseline`.

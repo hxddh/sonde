@@ -492,6 +492,48 @@ export interface Phrase {
   args: Record<string, string>;
 }
 
+/** What Group by splits the operations table by (crates/proxy/src/split.rs). */
+export type SplitBy = "operation" | "prefix" | "size" | "caller" | "sdk" | "status";
+
+/** One group of a split: the operations table's figures for it. */
+export interface SplitRow {
+  key: string;
+  /** The groups past the table's rows, folded into one. */
+  other?: boolean;
+  requests: number;
+  errors: number;
+  errorShare: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  waitedMs: number;
+  /** Of the session's waiting (the rows add up to 1). */
+  share: number;
+  cost: number;
+  costShare: number;
+  /** Of them, slow (at or over `slowMs`). */
+  slow: number;
+}
+
+/** A session split by one dimension, and where its slow and costly requests are. */
+export interface Split {
+  by: SplitBy;
+  sdk: string | null;
+  slowMs: number;
+  slow: number;
+  cost: number;
+  currency: string;
+  rows: SplitRow[];
+  /** The sentence in English; `phrases` say it in the reader's language. */
+  text: string;
+  phrases: Phrase[];
+}
+
+/** A request of one key, with the operation it belongs to. */
+export interface KeyRequest extends RecordSummary {
+  operationIndex: number | null;
+}
+
 export interface Episode {
   kind: "request" | "multipart" | "retry" | "probe" | "listing" | "step";
   format: "SlateDB" | "Iceberg" | "Delta" | "Lance" | "Hudi" | "Paimon" | null;

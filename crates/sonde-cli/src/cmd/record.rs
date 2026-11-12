@@ -429,8 +429,14 @@ pub(super) fn print_summary_of(
     };
     let s = &a.summary;
     let endpoint = &header.endpoint;
+    // which SDK sent them, when its user agent says
+    let from = a
+        .sdk
+        .as_deref()
+        .map(|sdk| format!(" from {sdk}"))
+        .unwrap_or_default();
     let mut head = format!(
-        "{} ({}) to {endpoint} in {}",
+        "{} ({}){from} to {endpoint} in {}",
         output::count(s.requests as usize, "request"),
         output::count(a.episodes.len(), "operation"),
         output::duration(s.seconds * 1000.0)
@@ -545,7 +551,7 @@ pub(super) fn print_summary_of(
 }
 
 /// A share as a percentage: `0.4%`, `12%`.
-fn share_text(share: f64) -> String {
+pub(super) fn share_text(share: f64) -> String {
     let p = share * 100.0;
     if p > 0.0 && p < 0.1 {
         "<0.1%".into()

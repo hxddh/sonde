@@ -86,6 +86,8 @@ pub struct Analysis {
     pub what_if: Option<WhatIf>,
     /// The requests a fault scenario answered, by id.
     pub injected: Vec<u64>,
+    /// The SDK that sent most of the requests (`boto3 1.44`).
+    pub sdk: Option<String>,
     /// Which operation each request belongs to, by request id (sorted: a
     /// map's buckets would cost twice as much a request).
     owner: Vec<(u64, u32)>,
@@ -154,6 +156,7 @@ impl Analysis {
             Some((start, end))
         });
         Analysis {
+            sdk: crate::split::sdk_of(records),
             summary,
             signals,
             injected: records
@@ -372,6 +375,7 @@ impl Analysis {
         v.insert("signals".into(), to(&self.signals));
         v.insert("whatIf".into(), to(&self.what_if));
         v.insert("injected".into(), json!(self.injected));
+        v.insert("sdk".into(), json!(self.sdk));
         v.insert("episodes".into(), Value::Array(first));
         v.insert("episodesTotal".into(), json!(self.episodes.len()));
         v.insert(

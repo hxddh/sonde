@@ -40,14 +40,15 @@
 |---|---|
 | `sonde sessions [list] [-f json\|csv\|markdown]` | Sessions, newest first: program (name, else command; cut in the middle to the terminal's width), requests, duration, errors, worst trial verdict. |
 | `sonde sessions prune --keep N [--yes]` | Delete all but the newest N (baselines kept); a dry run without `--yes`. |
-| `sonde show [FILE] [--requests] [--errors] [--summary] [--all] [--app] [-f json]` | Operations (or `--requests`) and findings, then the summary: head line (requests, operations, duration, errors, not found); per-operation table (requests, errors and share, not found, p50, p95, p99, max; `*` under 20 requests); the four signals (rate with peak in flight, errors, latency, bytes) and cost; waiting by kind; findings. |
+| `sonde show [FILE] [--requests] [--errors] [--summary] [--all] [--by DIM] [--app] [-f json]` | Operations (or `--requests`) and findings, then the summary: head line (requests, operations, the SDK from the user agent, duration, errors, not found); per-operation table (requests, errors and share, not found, p50, p95, p99, max; `*` under 20 requests); the four signals (rate with peak in flight, errors, latency, bytes) and cost; waiting by kind; findings. |
 | ↳ long sessions | Past 2,000 lines: the first and last hundred and a count (`--all` prints all). The summary is always printed. |
 | ↳ `--errors` | Only what failed (JSON too: `episodes`, `records`); the summary stays the session's. |
+| ↳ `--by operation\|prefix\|size\|caller\|sdk\|status` | The operations table split instead: requests, errors and share, p50, p95, p99, waiting share, cost per group (most waiting first; past 12, `other`). Size bands: `0 B`, `< 64 KiB`, `64 KiB-1 MiB`, `1-8 MiB`, `8 MiB+` (the larger of sent and received). Then one sentence: where the slow requests (the slowest tenth, at or over p90; 3 at least) concentrate, narrowed by prefix, size or operation when one holds most of them, and where the cost does (`80% of the slow requests (over 120 ms) are under b/wal/, over 8 MiB.`). A group is named when it holds half of them and 1.5× its share of the requests. `-f json`: [show-by](schemas/show-by.schema.json). |
 | ↳ "Acting on N findings" | The session recomputed without the requests those findings name (findings naming none are left out, and the line says so). |
 | ↳ `-f json` | Streamed. Each finding's fixes by SDK; `summary.operations[]` has `errorShare`, `p50Ms`, `p95Ms`, `p99Ms`, `maxMs`, `few`. `--summary -f json`: `summary`, `waiting` (`byKind`), `p95Ms`, `peakInFlight`, `cost`, `whatIf`, `observations`, no requests. |
 | `sonde compare BEFORE AFTER [-f json]` | Two runs: requests, waiting, time, errors and cost by kind of request; findings gone and new. Unchanged kinds are counted, not listed. Different programs compare by figures only (said). |
 | `sonde check [FILE] [options] [-f json\|markdown\|github]` | A run against a budget, a baseline and its trials. Exit 1 when over budget, past the baseline, or a trial broke. [Details](#sonde-check). |
-| `sonde share [FILE] [-o DIR] [--serve [--port N]] [--json] [--html] [--redact]` | A static site: the viewer and `session.json` (default `./<session>-share/`). `--serve`: on 127.0.0.1 until Ctrl-C. `--json`: the document only, streamed. `--html`: one self-contained file (findings, time, timeline, operations at `#op-N`; past 2,000 operations, the first 2,000 and every one a finding links to, with a count). Titled by the program. `--redact`: bucket and key names become tokens (same name, same token; layout names, numbers, extensions kept); headers, bodies, URLs, request ids, output and arguments dropped. |
+| `sonde share [[BEFORE] FILE] [-o DIR] [--serve [--port N]] [--json] [--html [--baseline FILE\|auto\|URL]] [--redact]` | A static site: the viewer and `session.json` (default `./<session>-share/`). `--serve`: on 127.0.0.1 until Ctrl-C. `--json`: the document only, streamed. `--html`: one self-contained file (findings, time, timeline, operations at `#op-N`; past 2,000 operations, the first 2,000 and every one a finding links to, with a count). Titled by the program. Two runs, or `--baseline` (as `check` takes it): the comparison first (requests, waiting, cost, errors before and after; kinds that changed; findings gone), then the run, its new findings first and marked; two runs without `--html` is a usage error. `--redact`: bucket and key names become tokens (same name, same token; layout names, numbers, extensions kept); headers, bodies, URLs, request ids, output and arguments dropped. |
 | `sonde export [FILE] [-o FILE \| --to URL]` | OTLP/JSON traces (`--otlp`, the default): a span per operation, its requests under it; `service.name` is the program. `--to` posts to a collector (e.g. `http://localhost:4318/v1/traces`) in parts of about 3 MiB, an operation's spans kept together. |
 
 ### sonde check
@@ -60,13 +61,14 @@
 | `--tolerance PCT` | Growth allowed over the baseline (10). |
 | `--no-new-warnings` | Fail on a warning the baseline did not have. |
 | `--config FILE` | Default: `sonde.toml` here or in a folder above, up to the repository root. Flags win. |
+| `--report-url URL` | `-f markdown` only: the link the comment ends with (the HTML report). |
 | `--init` | Write a `sonde.toml` this run passes: counts with 10% room, times commented out beside their measured values, a `[program] name` from the command when there is none (`etl` for `python etl.py --day 2`). No trials. |
 
 - Output names the session and program first. A trial row is `pass` / `warn` / `FAIL` / `skip` (survived / degraded / broke / untested). A failed row says by how much (`+23%`) over its limit or the baseline's figure.
 - Closing verdict, in every format: `within budget` / `over budget`, `within its baseline` / `past its baseline` (joined with `and`), then `, and broke under a trial`; trials alone: `broke under a trial` / `did not break under its trials`.
-- No baseline set yet: the budget alone decides; `no baseline yet` on stderr, in the verdict and as `noBaseline` in JSON, naming a baseline of the same program under other arguments if there is one. A baseline of another program is named on stderr.
-- Past a baseline: since which run, and the commits around it (`git`, else `GITHUB_SHA`), once.
-- `-f json`: `trials`, `passed` (whole check), `verdict`, `check` (rows, each with `passed`). `-f markdown`: a pull-request comment. `-f github`: Actions annotations, findings on the line that sent their requests.
+- No baseline set yet: the budget alone decides; said in every format: `no baseline yet` on stderr and in the verdict, `noBaseline` in JSON, a quoted line in markdown, a `::warning` with `-f github`. It names a baseline of the same program under other arguments if there is one. A baseline of another program is named on stderr.
+- Past a baseline over several runs: since which run, and the commits around it (`git`, else `GITHUB_SHA`), once (`past the baseline since a1b2c3d, 2 runs ago; within at 9f8e7d6`; this run the first past: `the run before, at 9f8e7d6, was within it`).
+- `-f json`: `trials`, `passed` (whole check), `verdict`, `check` (rows, each with `passed`). `-f markdown`: a pull-request comment ([what it says](ci.md#the-comment)). `-f github`: Actions annotations, findings on the line that sent their requests.
 - `--baseline auto` with none set and no budget: nothing checked, exit 0. Usage error (64): nothing to check (no
   budget, baseline or trials); `--tolerance` or `--no-new-warnings` without a baseline; a `sonde.toml` that does not parse or has an unknown key; an unreadable `baselines.json` (for `auto`, `--set-baseline`, `sessions prune`; never treated as empty).
 
@@ -115,11 +117,13 @@ A failed request prints its error, request id and the request line from the log.
 
 ## In CI
 
+[The GitHub Action and the comment](ci.md). By hand:
+
 ```sh
 sonde run -- python etl.py                                       # into the data directory's sessions/
 sonde check --baseline auto --no-new-warnings                    # exit 1 when it grew or warns anew
 sonde check --max-requests 5000 --max-cost 0.05 -f json > check.json
-sonde share --html --redact -o run.html                          # an artifact anyone can open
+sonde share --html --redact --baseline auto -o run.html          # the run against its baseline, a page anyone opens
 ```
 
 Set a baseline with `sonde check --set-baseline` (or in the app) and keep the data directory between jobs (a cache),
@@ -146,18 +150,6 @@ baseline = "auto"         # or a session's path, or an https URL
 expect = ["obs.hot|slate/db/gc/manifest.boundary", "obs.listed"]
 ```
 
-A pull-request comment, or annotations on the diff:
-
-```sh
-sonde check -f markdown > comment.md || status=$?
-gh pr comment "$PR" --body-file comment.md
-exit ${status:-0}
-```
-
-```yaml
-      - run: sonde run -- python etl.py
-      - run: sonde check -f github
-```
 
 ## Which code sent a request
 

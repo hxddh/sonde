@@ -101,6 +101,10 @@ export const api = {
     /** A range of the operations a finding is about (a view lists its first 200). */
     observationEpisodes: (path: string, observation: number, offset: number, limit: number) => Sessions.observationEpisodes(path, observation, offset, limit) as number[],
     records: (path: string, ids: number[]) => Sessions.records(path, ids) as T.RecordSummary[],
+    /** The operations table split by a dimension (Group by), with its sentence. Read off the interface's thread. */
+    split: async (path: string, by: T.SplitBy) => (await Sessions.split(path, by)) as T.Split,
+    /** Every request of one key, whatever its operation, in time order (the inspector's history). */
+    keyHistory: async (path: string, bucket: string, key: string) => (await Sessions.keyHistory(path, bucket, key)) as T.KeyRequest[],
     record: (path: string, id: number) => Sessions.record(path, id) as T.RequestRecord | null,
     copy: (path: string, id: number, kind: "cli" | "curl") => Sessions.copy(path, id, kind) as string | null,
     start: async (endpoint: string, policy: "allow" | "no-delete" | "read-only") => (await Sessions.start(endpoint, policy)) as T.RecordingView,
