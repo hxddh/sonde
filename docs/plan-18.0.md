@@ -59,7 +59,6 @@ A PR comment a reviewer can act on, with one link to the report.
 |---|---|---|
 | CLI commands | 19 | 14 |
 | Places and panes a newcomer meets | 22 | 14 |
-| Time pane charts shown | 19 | 8 (the rest under "More") |
 | App settings | 15 | 8 |
 | Finding kinds shown | 16 | 11 |
 
@@ -67,8 +66,7 @@ A PR comment a reviewer can act on, with one link to the report.
   `du` and `mpu` into `bucket`. Each old command prints its new form for one version.
 - **One safety model**: the recording policy only. Read-only mode, the toolbar lock and the "Writes enabled" badge
   go; sonde's own destructive acts keep their dry run and typed confirmation.
-- **Charts removed**: Flows, the latency heat map, Kinds over time. Shown by default: by operation, over the
-  session, latency, where the time went, errors, by prefix, cost, and against the clean run on a trial.
+- **The Time pane keeps every chart, all shown by default.** 18.0 refines them (below), it does not cut them.
 - **Findings folded**: `obs.retried` (retrying is right), `obs.slow`, `obs.races`, `obs.shared`, `obs.injected`.
 - **Store tools in one place**: buckets, capacity, uploads, versions, layouts and compatibility under Buckets,
   reached from a finding; not five entries.
@@ -85,6 +83,8 @@ One word each, in the CLI, the app, the docs and Chinese: *waiting* (not busy), 
 - **One interaction grammar** in DESIGN.md: select → inspect → act; one inspector; every action by keyboard.
 - `show` is short and fixed: head line with the SDK, findings first, one table.
 - Known flaws: the gap in middle-ellipsised names, the dark prefix heat map, bars of zero.
+- The Time pane, every chart kept: one reading order (traffic, latency, errors, where), each chart's title a
+  question it answers, and every chart tied to the selection and to Group by.
 
 ## Not in 18.0
 
