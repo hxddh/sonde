@@ -804,7 +804,9 @@ pub fn check_markdown(
 pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     use crate::trial::Standing;
     let broke = trials.iter().any(|t| t.standing == Standing::Broke);
-    let tried = trials.iter().any(|t| t.standing != Standing::Untested);
+    let tried = trials
+        .iter()
+        .any(|t| !matches!(t.standing, Standing::Untested | Standing::Refused));
     let of = |against: &str| {
         let mut rows = c
             .verdicts
@@ -843,7 +845,8 @@ pub fn check_passed(c: &Check, trials: &[crate::trial::Trial]) -> bool {
 }
 
 /// A trial's mark in a check: `pass` survived, `warn` degraded (it got
-/// through, and not cleanly), `FAIL` broke, `skip` untested.
+/// through, and not cleanly) or refused by the policy (not judged), `FAIL`
+/// broke, `skip` untested.
 pub fn trial_mark(s: crate::trial::Standing) -> &'static str {
     use crate::trial::Standing;
     match s {
@@ -851,6 +854,7 @@ pub fn trial_mark(s: crate::trial::Standing) -> &'static str {
         Standing::Degraded => "warn",
         Standing::Broke => "FAIL",
         Standing::Untested => "skip",
+        Standing::Refused => "warn",
     }
 }
 

@@ -589,6 +589,7 @@
  "trial.degraded": "Degraded",
  "trial.broke": "Broke",
  "trial.untested": "Not met",
+ "trial.refused": "Refused by the policy",
  "trial.allRetried": "%{n} faults, all retried",
  "trial.retried": "%{n} faults, %{m} retried",
  "trial.after": "after %{t}",

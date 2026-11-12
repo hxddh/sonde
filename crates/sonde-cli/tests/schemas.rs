@@ -291,6 +291,22 @@ async fn every_json_output_is_as_its_schema_says() {
         .find(|p| p.extension().is_some_and(|e| e == "sonde"))
         .unwrap();
     let s = session.to_str().unwrap();
+    // the run tried under a fault, and its program tried before: a verdict
+    // with its history
+    {
+        use sonde_proxy::trial;
+        let clean = sonde_proxy::session::Session::open(&session).unwrap();
+        let slowdown = sonde_proxy::fault::scenario("slowdown").unwrap();
+        let now = trial::judge(&slowdown, &clean.records, 0, &clean.records, 0);
+        trial::save(&session, std::slice::from_ref(&now)).unwrap();
+        let mut then = now.clone();
+        then.standing = trial::Standing::Broke;
+        let dir = session.parent().unwrap();
+        let day = chrono::Utc::now() - chrono::Duration::days(1);
+        trial::record(dir, "sonde demo", "earlier.sonde", day, &[then]).unwrap();
+        let name = session.file_name().unwrap().to_string_lossy();
+        trial::record(dir, "sonde demo", &name, chrono::Utc::now(), &[now]).unwrap();
+    }
 
     // reading a session
     holds("show", &b.json(&["show", s, "-f", "json"], 0).await);
@@ -298,10 +314,9 @@ async fn every_json_output_is_as_its_schema_says() {
         "show",
         &b.json(&["show", s, "--errors", "-f", "json"], 0).await,
     );
-    holds(
-        "show-summary",
-        &b.json(&["show", s, "--summary", "-f", "json"], 0).await,
-    );
+    let summary = b.json(&["show", s, "--summary", "-f", "json"], 0).await;
+    assert_eq!(summary["trials"][0]["history"].as_array().unwrap().len(), 2);
+    holds("show-summary", &summary);
     for by in ["operation", "prefix", "size", "caller", "sdk", "status"] {
         holds(
             "show-by",

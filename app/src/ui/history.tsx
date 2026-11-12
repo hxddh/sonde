@@ -18,7 +18,7 @@ import { programOf, scrubCommand } from "./sessionview";
 export { scenarioLabel };
 
 
-export const STANDING = { survived: "pass", degraded: "warn", broke: "fail", untested: "neutral" } as const;
+export const STANDING = { survived: "pass", degraded: "warn", broke: "fail", untested: "neutral", refused: "warn" } as const;
 
 /** What a trial found, in figures: the faults and their retries (and those
  * no retry was owed for), the wait before a retry, what it did to the load

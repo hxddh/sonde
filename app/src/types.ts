@@ -765,7 +765,7 @@ export interface CodeChange {
 export interface Trial {
   scenario: string;
   about: string;
-  standing: "survived" | "degraded" | "broke" | "untested";
+  standing: "survived" | "degraded" | "broke" | "untested" | "refused";
   exit: number;
   cleanExit: number;
   faults: number;
@@ -800,6 +800,8 @@ export interface Trial {
   advice?: { key: string; args?: Record<string, string> } | null;
   /** The trial's own session (an absolute path), when it is still there. */
   session?: string | null;
+  /** The scenario's verdicts for the program, oldest first, up to this one (`at` RFC 3339; `run` a session's file name). */
+  history?: { at: string; standing: Trial["standing"]; run: string }[];
 }
 
 export interface ProgramHistory {
@@ -901,6 +903,8 @@ export interface TrialResult {
   path: string;
   trials: Trial[];
   cancelled: boolean;
+  /** `trialAgain` only: the fresh clean run's exit (no trial when not 0). */
+  cleanExit?: number | null;
 }
 
 export interface SessionView {

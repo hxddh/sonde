@@ -597,7 +597,8 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // what the run's last trial found: a program that broke fails the
     // check, with a budget or without one
     use sonde_proxy::program::{check_closing, check_passed, trial_mark};
-    let trials = sonde_proxy::trial::load(&file);
+    // each scenario with what it was before ("broke on 12 Nov, survived since")
+    let trials = sonde_proxy::trial::load_with_history(&file, program.as_deref());
     // `c.passed` is of its rows; the whole check also fails on a trial that broke
     let passed = check_passed(&c, &trials);
     let closing = match &no_baseline {
@@ -710,13 +711,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 gh_escape(&format!("breaks under {}: {}", t.scenario, t.line()))
             );
         }
-        for t in trials
-            .iter()
-            .filter(|t| t.standing == sonde_proxy::trial::Standing::Degraded)
-        {
+        for t in &trials {
+            let said = match t.standing {
+                sonde_proxy::trial::Standing::Degraded => "gets through",
+                sonde_proxy::trial::Standing::Refused => "refused by the policy under",
+                _ => continue,
+            };
             println!(
                 "::warning title=sonde check::{}",
-                gh_escape(&format!("gets through {}: {}", t.scenario, t.line()))
+                gh_escape(&format!("{said} {}: {}", t.scenario, t.line()))
             );
         }
         for w in &c.new_warnings {
@@ -824,6 +827,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                     Standing::Degraded => "33",
                     Standing::Untested => "2",
                     Standing::Survived => "32",
+                    Standing::Refused => "33",
                 },
                 color
             ),
@@ -832,6 +836,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 Standing::Degraded => "gets through",
                 Standing::Broke => "breaks under",
                 Standing::Untested => "untested:",
+                Standing::Refused => "refused by the policy under",
             },
             t.asked(),
             if t.line().is_empty() {

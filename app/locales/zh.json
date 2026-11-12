@@ -589,6 +589,7 @@
  "trial.degraded": "降级",
  "trial.broke": "未通过",
  "trial.untested": "未触发",
+ "trial.refused": "被策略拒绝",
  "trial.allRetried": "%{n} 次故障，全部重试",
  "trial.retried": "%{n} 次故障，重试了 %{m} 次",
  "trial.after": "等待 %{t} 后",

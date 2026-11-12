@@ -66,6 +66,11 @@ async fn program(what: &str) -> i32 {
     if !what.starts_with("patient") {
         cfg.timeout = std::time::Duration::from_secs(2);
     }
+    // it says it is an SDK that signs a skewed request again (as the AWS
+    // SDK for Java does), so that `skew` is offered to it
+    if what == "retrying" {
+        cfg.user_agent = "aws-sdk-java/2.25.1 sonde-e2e".into();
+    }
     let retries = !what.starts_with("never");
     cfg.retry = if retries {
         RetryPolicy {
@@ -2119,10 +2124,19 @@ async fn by_default_a_run_writes_again_only_what_it_wrote_and_deletes_nothing() 
         .await;
     assert_eq!(o.code, Some(0), "{}", o.stderr);
     assert!(o.stderr.contains("did not break"), "{}", o.stderr);
-    // run again: what the last run wrote was there before this one
+    // run again: the program writes over what its last run wrote
     let again = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
-    assert_eq!(again.code, Some(1), "{}", again.stderr);
-    let s = sonde_proxy::session::Session::open(&b.path("again.sonde")).unwrap();
+    assert_eq!(again.code, Some(0), "{}", again.stderr);
+    assert!(b.path("written.json").is_file(), "kept beside its runs");
+    // another program may not: what is there is not its own
+    let other = b
+        .run(
+            Some("retrying"),
+            &["run", "--name", "other", "-o", "other.sonde"],
+        )
+        .await;
+    assert_eq!(other.code, Some(1), "{}", other.stderr);
+    let s = sonde_proxy::session::Session::open(&b.path("other.sonde")).unwrap();
     let refused = s.records.iter().find(|r| r.status == Some(403)).unwrap();
     assert!(
         refused
@@ -2134,7 +2148,12 @@ async fn by_default_a_run_writes_again_only_what_it_wrote_and_deletes_nothing() 
     assert_eq!(b.store.state.lock().buckets["data"]["a"].0, b"1");
     // the project may let it, and sonde says so; a flag is over the file
     std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"allow\"\n").unwrap();
-    let allowed = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
+    let allowed = b
+        .run(
+            Some("retrying"),
+            &["run", "--name", "other", "-o", "o.sonde"],
+        )
+        .await;
     assert_eq!(allowed.code, Some(0), "{}", allowed.stderr);
     assert!(
         allowed.stderr.contains("[record] policy"),
@@ -2144,7 +2163,15 @@ async fn by_default_a_run_writes_again_only_what_it_wrote_and_deletes_nothing() 
     let flag = b
         .run(
             Some("retrying"),
-            &["run", "--policy", "no-delete", "-o", "again.sonde"],
+            &[
+                "run",
+                "--policy",
+                "no-delete",
+                "--name",
+                "third",
+                "-o",
+                "again.sonde",
+            ],
         )
         .await;
     assert_eq!(flag.code, Some(1), "{}", flag.stderr);
@@ -2158,4 +2185,198 @@ async fn by_default_a_run_writes_again_only_what_it_wrote_and_deletes_nothing() 
     let wrong = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
     assert_eq!(wrong.code, Some(64), "{}", wrong.stderr);
     assert!(wrong.stderr.contains("one of allow"), "{}", wrong.stderr);
+}
+
+/// The newcomer's walk: a program that rewrites its own outputs is run
+/// again, and a trial is tried again, under the default policy.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_program_rewrites_its_own_outputs_and_a_trial_is_tried_again_under_no_delete() {
+    let b = Bench::new().await;
+    // a plain second run of a program that writes the same key
+    for n in 0..2 {
+        let o = run_keyed(&b, "key", "out/state", &["run"]).await;
+        assert_eq!(o.code, Some(0), "run {n}: {}", o.stderr);
+    }
+    // a trial, then the same trial again: `{trial}` keys are the same each
+    // time, and the second trial's clean run is not refused
+    for n in 0..2 {
+        let o = run_keyed(&b, "key", "t{trial}/x", &["run", "--trial"]).await;
+        assert_eq!(o.code, Some(0), "trial {n}: {}", o.stderr);
+        assert!(o.stderr.contains("did not break"), "{}", o.stderr);
+    }
+    // with nothing remembered (a trial of before), the `{trial}` place
+    // alone is the trial's own
+    std::fs::remove_file(b.path("data/sessions/written.json")).unwrap();
+    let o = run_keyed(&b, "key", "t{trial}/x", &["run", "--trial"]).await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    // but not a key outside it, which this program never wrote
+    b.store
+        .state
+        .lock()
+        .buckets
+        .entry("data".into())
+        .or_default()
+        .insert("theirs".into(), (b"keep".to_vec(), "\"t\"".into()));
+    let o = run_keyed(&b, "key", "theirs", &["run"]).await;
+    assert_eq!(o.code, Some(1), "{}", o.stderr);
+    assert_eq!(b.store.state.lock().buckets["data"]["theirs"].0, b"keep");
+}
+
+/// A scenario the policy refused is "refused", never "broke", and is tried
+/// again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refusal_by_the_policy_under_a_trial_is_its_own_outcome() {
+    let b = Bench::new().await;
+    // what the trial's run will write is there, and not the program's
+    b.store
+        .state
+        .lock()
+        .buckets
+        .entry("data".into())
+        .or_default()
+        .insert("etl-slowdown/state".into(), (b"x".to_vec(), "\"x\"".into()));
+    let o = b
+        .run(
+            Some("placed"),
+            &["run", "--fault", "slowdown", "-o", "run.sonde"],
+        )
+        .await;
+    assert_eq!(o.code, Some(0), "not broke: {}", o.stderr);
+    let all = trials(&b.path("run.sonde"));
+    let t = trial(&all, "slowdown");
+    assert_eq!(t["standing"], "refused", "{t:#}");
+    assert_eq!(t["advice"]["key"], "trial.advice.policy");
+    assert!(o.stderr.contains("refused   slowdown"), "{}", o.stderr);
+    assert!(
+        o.stderr
+            .contains("refused by the recording policy (no-delete)"),
+        "{}",
+        o.stderr
+    );
+    let c = b.run(None, &["check", "run.sonde"]).await;
+    assert_eq!(c.code, Some(0), "{}", c.stdout);
+    assert!(
+        c.stdout
+            .contains("warn  refused by the policy under slowdown"),
+        "{}",
+        c.stdout
+    );
+}
+
+/// Broke, changed, tried again: only what broke runs, and each verdict says
+/// what it was ("broke on …, survived since"), in `check` and `show` too.
+#[tokio::test(flavor = "multi_thread")]
+async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
+    let b = Bench::new().await;
+    let o = b
+        .run(
+            Some("never-twice"),
+            &["run", "--trial", "--name", "etl", "-o", "run.sonde"],
+        )
+        .await;
+    assert_eq!(o.code, Some(1), "{}", o.stderr);
+    assert!(
+        o.stderr
+            .contains("sonde run --trial --again --name etl -o run.sonde -- "),
+        "the way to try again is said: {}",
+        o.stderr
+    );
+    let first = trials(&b.path("run.sonde"));
+    let broke: Vec<String> = first
+        .iter()
+        .filter(|t| t["standing"] != "survived" && t["standing"] != "untested")
+        .map(|t| t["scenario"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        !broke.is_empty() && broke.len() < first.len() + 1,
+        "{first:#?}"
+    );
+    // the program changed: it retries now
+    let again = b
+        .run(
+            Some("retrying"),
+            &[
+                "run",
+                "--trial",
+                "--again",
+                "--name",
+                "etl",
+                "-o",
+                "run.sonde",
+            ],
+        )
+        .await;
+    assert_eq!(again.code, Some(0), "{}", again.stderr);
+    let now = trials(&b.path("run.sonde"));
+    let mut tried: Vec<String> = now
+        .iter()
+        .map(|t| t["scenario"].as_str().unwrap().to_string())
+        .collect();
+    tried.sort();
+    let mut want = broke.clone();
+    want.sort();
+    assert_eq!(tried, want, "only what broke: {}", again.stderr);
+    assert!(
+        again.stderr.contains(", survived since"),
+        "{}",
+        again.stderr
+    );
+    // check and show say it, and their JSON has the history
+    let c = b.run(None, &["check", "run.sonde"]).await;
+    assert_eq!(c.code, Some(0), "{}{}", c.stdout, c.stderr);
+    assert!(c.stdout.contains(", survived since"), "{}", c.stdout);
+    let j = b.run(None, &["check", "run.sonde", "-f", "json"]).await;
+    let doc: serde_json::Value = serde_json::from_str(&j.stdout).expect(&j.stdout);
+    let history = doc["trials"][0]["history"].as_array().unwrap();
+    assert_eq!(history.len(), 2, "{history:#?}");
+    assert_eq!(history[1]["standing"], "survived");
+    assert_eq!(history[1]["run"], "run.sonde");
+    let s = b.run(None, &["show", "run.sonde", "--summary"]).await;
+    assert!(s.stdout.contains("Under faults:"), "{}", s.stdout);
+    assert!(s.stdout.contains(", survived since"), "{}", s.stdout);
+    let j = b
+        .run(None, &["show", "run.sonde", "--summary", "-f", "json"])
+        .await;
+    let doc: serde_json::Value = serde_json::from_str(&j.stdout).expect(&j.stdout);
+    assert_eq!(doc["trials"][0]["history"].as_array().unwrap().len(), 2);
+    // recorded again to the same file: the verdicts are the program's, kept
+    let plain = b
+        .run(
+            Some("retrying"),
+            &["run", "--name", "etl", "-o", "run.sonde"],
+        )
+        .await;
+    assert_eq!(plain.code, Some(0), "{}", plain.stderr);
+    assert!(b.path("verdicts.json").is_file());
+    // nothing left to try
+    let none = b
+        .run(
+            Some("retrying"),
+            &[
+                "run",
+                "--trial",
+                "--again",
+                "--name",
+                "etl",
+                "-o",
+                "run.sonde",
+            ],
+        )
+        .await;
+    assert_eq!(none.code, Some(0), "{}", none.stderr);
+    assert!(
+        none.stderr.contains("Nothing to try again"),
+        "{}",
+        none.stderr
+    );
+    // a program never tried: a usage error
+    let never = b
+        .run(
+            Some("retrying"),
+            &[
+                "run", "--trial", "--again", "--name", "new", "-o", "n.sonde",
+            ],
+        )
+        .await;
+    assert_eq!(never.code, Some(64), "{}", never.stderr);
 }
