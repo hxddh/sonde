@@ -203,6 +203,9 @@ mod tests {
         assert_eq!(d.push(&[0xff, b'a']), "\u{fffd}a");
     }
 
+    // a POSIX shell's words; on Windows the pseudo-console's output does not
+    // end with the program (FINDINGS 16), which `Sessions::run` handles
+    #[cfg(unix)]
     #[tokio::test]
     async fn runs_in_a_terminal_with_the_environment() {
         let (mut rx, exit, _r) = spawn(

@@ -122,7 +122,14 @@ fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     let root = dir
         .canonicalize()
         .map_err(|e| err_msg(format!("{}: {e}", dir.display())))?;
-    let candidate = Path::new(file);
+    // a canonical root on Windows is verbatim (`\\?\C:\…`), where `/` is no
+    // separator: a place written `etl/load.py` is joined as `etl\load.py`
+    let file = if cfg!(windows) {
+        std::borrow::Cow::Owned(file.replace('/', "\\"))
+    } else {
+        std::borrow::Cow::Borrowed(file)
+    };
+    let candidate = Path::new(file.as_ref());
     let joined = if candidate.is_absolute() {
         candidate.to_path_buf()
     } else {
@@ -2359,7 +2366,7 @@ mod tests {
         let outside = tempfile::NamedTempFile::new().unwrap();
         assert_eq!(
             code_target(&root, "etl/load.py:212 read").unwrap(),
-            CodeTarget::Open(root.join("etl/load.py"))
+            CodeTarget::Open(root.join("etl").join("load.py"))
         );
         assert_eq!(
             code_target(&root, "run.sh:1 main").unwrap(),
