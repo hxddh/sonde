@@ -98,7 +98,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: The action's metadata, scripts and the workflows that use it
         run: |
-          pip install shellcheck-py==0.11.0.1 actionlint-py==1.7.12
+          pip install shellcheck-py==0.11.0.1 actionlint-py==1.7.12.25
           python3 -c "import yaml; a = yaml.safe_load(open('action.yml')); assert a['runs']['using'] == 'composite'"
           shellcheck action/*.sh install.sh
           actionlint
