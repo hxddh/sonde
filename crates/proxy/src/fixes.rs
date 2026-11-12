@@ -57,6 +57,14 @@ pub fn for_key(key: &str) -> Vec<Fix> {
                 "// GET alone: its response carries what HEAD would\nconst obj = await s3.send(new GetObjectCommand({ Bucket: b, Key: k }));\nconst size = obj.ContentLength;",
             ),
         ],
+        "obs.rename" => vec![f(
+            "config",
+            "# Spark: the S3A magic committer (Hadoop 3.3+), no rename\nspark.hadoop.fs.s3a.committer.name=magic\nspark.sql.sources.commitProtocolClass=org.apache.spark.internal.io.cloud.PathOutputCommitProtocol\nspark.sql.parquet.output.committer.class=org.apache.spark.internal.io.cloud.BindingParquetOutputCommitter",
+        )],
+        "obs.markers" => vec![f(
+            "config",
+            "# keep markers: no delete after each file written beneath one (Hadoop 3.3.1+)\nspark.hadoop.fs.s3a.directory.marker.retention=keep",
+        )],
         "obs.hot" => vec![
             f(
                 "python",
@@ -367,6 +375,8 @@ impl WhatIf {
 fn kind_name(key: &str) -> &'static str {
     match key {
         "obs.hot" => "a key read again and again",
+        "obs.rename" => "a commit by rename",
+        "obs.markers" => "directory markers deleted",
         "obs.listed" => "a prefix listed again and again",
         "obs.headget" => "HEAD before GET",
         "obs.small" => "small files uploaded in parts",

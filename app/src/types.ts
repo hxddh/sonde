@@ -492,7 +492,7 @@ export interface Phrase {
 
 export interface Episode {
   kind: "request" | "multipart" | "retry" | "probe" | "listing" | "step";
-  format: "SlateDB" | "Iceberg" | "Delta" | "Lance" | null;
+  format: "SlateDB" | "Iceberg" | "Delta" | "Lance" | "Hudi" | "Paimon" | null;
   title: string;
   start: string;
   end: string;

@@ -13,6 +13,7 @@ pub mod episode;
 pub mod fault;
 pub mod fixes;
 pub mod import;
+pub mod jvm;
 pub mod logs;
 pub mod op;
 pub mod otlp;
@@ -25,6 +26,7 @@ pub mod session;
 pub mod share;
 pub mod signals;
 pub mod summary;
+pub mod tls;
 pub mod trial;
 pub mod view;
 
@@ -109,6 +111,9 @@ pub struct ProxyConfig {
     pub allow_remote: bool,
     /// The faults this proxy answers with (a trial run's scenario).
     pub faults: Option<Arc<fault::Faults>>,
+    /// TLS as well as plain HTTP, on the same port (a connection that opens
+    /// with a TLS handshake is answered in TLS).
+    pub tls: Option<Arc<tls::Tls>>,
 }
 
 /// A fresh client key and secret: the key names the proxy, the secret is 32
@@ -143,6 +148,7 @@ impl Default for ProxyConfig {
             client_secret: secret,
             allow_remote: false,
             faults: None,
+            tls: None,
         }
     }
 }
@@ -170,6 +176,7 @@ pub struct Proxy {
     addr: SocketAddr,
     region: String,
     keys: (String, String),
+    tls: Option<Arc<tls::Tls>>,
     task: tokio::task::JoinHandle<()>,
     /// Tells every connection to finish the request it is on and close.
     stop: tokio::sync::watch::Sender<bool>,
@@ -194,6 +201,10 @@ impl Proxy {
         let addr = listener.local_addr()?;
         let region = client.config().region.clone();
         let keys = (cfg.client_key.clone(), cfg.client_secret.clone());
+        let tls = cfg.tls.clone();
+        let acceptor = tls
+            .as_ref()
+            .map(|t| tokio_rustls::TlsAcceptor::from(t.config.clone()));
         let buffered = Arc::new(tokio::sync::Semaphore::new(
             (cfg.max_buffered_total / MIB).max(1),
         ));
@@ -211,21 +222,21 @@ impl Proxy {
                     continue;
                 };
                 let shared = shared.clone();
-                let mut stopping = stopping.clone();
+                let stopping = stopping.clone();
                 let alive = alive.clone();
+                let acceptor = acceptor.clone();
                 tokio::spawn(async move {
-                    let svc = service_fn(move |req| handle(shared.clone(), req));
-                    let conn = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(TokioIo::new(stream), svc);
-                    tokio::pin!(conn);
-                    tokio::select! {
-                        _ = conn.as_mut() => {}
-                        // (a proxy dropped without a shutdown leaves them be)
-                        Ok(()) = stopping.changed() => {
-                            // the request it is on is answered and recorded
-                            conn.as_mut().graceful_shutdown();
-                            let _ = conn.await;
+                    // a TLS connection opens with a handshake record (22)
+                    let mut first = [0u8; 1];
+                    let handshake = acceptor.is_some()
+                        && matches!(stream.peek(&mut first).await, Ok(1) if first[0] == 0x16);
+                    match acceptor.filter(|_| handshake) {
+                        Some(a) => {
+                            if let Ok(tls) = a.accept(stream).await {
+                                serve(shared, tls, stopping).await;
+                            }
                         }
+                        None => serve(shared, stream, stopping).await,
                     }
                     drop(alive);
                 });
@@ -235,6 +246,7 @@ impl Proxy {
             addr,
             region,
             keys,
+            tls,
             task,
             stop,
             open,
@@ -261,7 +273,17 @@ impl Proxy {
         (&self.keys.0, &self.keys.1)
     }
 
+    /// The endpoint's URL: https when it serves TLS.
     pub fn url(&self) -> String {
+        match self.tls {
+            Some(_) => format!("https://{}", self.addr),
+            None => self.plain_url(),
+        }
+    }
+
+    /// The endpoint in plain HTTP, which it always serves (the JVM engines
+    /// take it: they trust no bundle a variable names).
+    pub fn plain_url(&self) -> String {
         format!("http://{}", self.addr)
     }
 
@@ -289,7 +311,11 @@ impl Proxy {
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+        .collect::<Vec<_>>();
+        let mut set = set;
+        if let Some(t) = &self.tls {
+            set.extend(t.env());
+        }
         let unset = [
             "AWS_SESSION_TOKEN",
             "AWS_SECURITY_TOKEN",
@@ -305,6 +331,25 @@ impl Proxy {
         .map(|s| s.to_string())
         .collect();
         (set, unset)
+    }
+}
+
+/// Serves one connection until it closes, or until the proxy stops: then
+/// the request it is on is answered and recorded first.
+async fn serve<I>(shared: Arc<Shared>, io: I, mut stopping: tokio::sync::watch::Receiver<bool>)
+where
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let svc = service_fn(move |req| handle(shared.clone(), req));
+    let conn = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(io), svc);
+    tokio::pin!(conn);
+    tokio::select! {
+        _ = conn.as_mut() => {}
+        // (a proxy dropped without a shutdown leaves them be)
+        Ok(()) = stopping.changed() => {
+            conn.as_mut().graceful_shutdown();
+            let _ = conn.await;
+        }
     }
 }
 
@@ -461,6 +506,32 @@ pub fn admit(cfg: &ProxyConfig, parts: &http::request::Parts, host: &str) -> Res
     } else {
         Err("its signature does not match the secret sonde gave the program".into())
     }
+}
+
+/// Whether a request is S3 Express One Zone's, which sonde does not record:
+/// a directory bucket (`name--azid--x-s3`), its CreateSession, or a request
+/// signed with a session's credentials (`x-amz-s3session-token`). The
+/// session's credentials are the store's, made for the keys that asked, and
+/// a zonal endpoint takes nothing else; sonde would have to hold a session
+/// of its own for each bucket and sign with it.
+pub fn express(bucket: Option<&str>, operation: &str, headers: &http::HeaderMap) -> Option<String> {
+    let directory = bucket.is_some_and(is_directory_bucket);
+    if !directory && operation != "CreateSession" && !headers.contains_key("x-amz-s3session-token")
+    {
+        return None;
+    }
+    Some(format!(
+        "{} is S3 Express One Zone (a directory bucket), which sonde does not record yet: its CreateSession credentials cannot be re-signed. Record against a general purpose bucket",
+        bucket.unwrap_or("the bucket")
+    ))
+}
+
+/// A directory bucket's name: `<name>--<zone id>--x-s3`.
+pub fn is_directory_bucket(bucket: &str) -> bool {
+    bucket
+        .strip_suffix("--x-s3")
+        .and_then(|rest| rest.rsplit_once("--"))
+        .is_some_and(|(name, zone)| !name.is_empty() && !zone.is_empty())
 }
 
 /// How far a signature's time may be from the clock, as S3 allows.
@@ -883,6 +954,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             "x-sonde-note",
             "presigned URL, re-signed by sonde",
         ));
+    }
+
+    // S3 Express One Zone is not recorded: said plainly, before its session
+    // credentials would be refused as a key sonde did not give
+    if let Some(why) = express(bucket.as_deref(), &operation, &parts.headers) {
+        let msg = format!("sonde refused the request: {why}");
+        record.status = Some(501);
+        record.error_body = Some(msg.clone());
+        record
+            .response_headers
+            .push(Header::new("x-sonde-proxy", "refused"));
+        shared.log.push(record);
+        return Ok(xml_error(501, "NotImplemented", &msg));
     }
 
     // only the program sonde gave its keys to, from this machine

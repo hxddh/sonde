@@ -1310,3 +1310,82 @@ async fn a_lost_race_is_a_412_to_a_write_the_store_made_or_never_saw() {
         "{obs:?}"
     );
 }
+
+#[tokio::test]
+async fn tls_and_plain_http_are_served_on_one_port() {
+    let (url, up) = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let tls = sonde_proxy::tls::Tls::load_or_make(&dir.path().join("tls")).unwrap();
+    let ca = std::fs::read(&tls.ca).unwrap();
+    let log = RequestLog::default();
+    let target = client(&url, REAL_KEY, REAL_SECRET, RequestLog::default());
+    let proxy = Proxy::start(
+        target,
+        log.clone(),
+        ProxyConfig {
+            tls: Some(Arc::new(tls)),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(proxy.url().starts_with("https://127.0.0.1:"));
+    assert!(proxy.plain_url().starts_with("http://127.0.0.1:"));
+    let (set, _) = proxy.env();
+    let var = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    assert_eq!(var("AWS_ENDPOINT_URL"), Some(proxy.url()));
+    assert!(var("AWS_CA_BUNDLE").is_some() && var("NODE_EXTRA_CA_CERTS").is_some());
+
+    let trusting = reqwest::Client::builder()
+        .add_root_certificate(reqwest::Certificate::from_pem(&ca).unwrap())
+        .build()
+        .unwrap();
+    let plain = reqwest::Client::new();
+    for (http, base) in [(&trusting, proxy.url()), (&plain, proxy.plain_url())] {
+        let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
+        let resp = http
+            .get(format!("{base}/data/k"))
+            .header("x-amz-date", date)
+            .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+            .header("authorization", auth)
+            .send()
+            .await
+            .unwrap();
+        // forwarded and re-signed: the upstream has no such object
+        assert_eq!(resp.status(), 404, "{base}");
+    }
+    assert_eq!(up.calls.lock().len(), 2);
+    assert_eq!(log.list(&reqlog::Filter::default(), 10).len(), 2);
+    // a client that does not trust the certificate is not answered
+    assert!(
+        reqwest::Client::new()
+            .get(format!("{}/data/k", proxy.url()))
+            .send()
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn s3_express_is_refused_with_its_reason() {
+    let (proxy, _app, log, up) = setup(Policy::Allow).await;
+    let bucket = "/logs--usw2-az1--x-s3";
+    let q = vec![("session".to_string(), String::new())];
+    let (date, auth) = signed(&proxy, "GET", bucket, &q, &[], "UNSIGNED-PAYLOAD");
+    let resp = reqwest::Client::new()
+        .get(format!("{}{bucket}?session", proxy.url()))
+        .header("x-amz-date", date)
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+        .header("authorization", auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 501);
+    assert!(resp.text().await.unwrap().contains("S3 Express One Zone"));
+    let r = &log.list(&reqlog::Filter::default(), 1)[0];
+    assert_eq!(r.operation, "CreateSession");
+    assert!(up.calls.lock().is_empty());
+    assert!(sonde_proxy::is_directory_bucket("logs--usw2-az1--x-s3"));
+    assert!(!sonde_proxy::is_directory_bucket("logs--x-s3"));
+    assert!(!sonde_proxy::is_directory_bucket("plain-bucket"));
+}

@@ -53,6 +53,77 @@ addressing, or a `<bucket>.localhost` host for virtual-hosted style.
 Checked with boto3, the AWS SDKs for JavaScript v3, Go v2 and Java v2, and
 object_store (Rust) — `scripts/sdk-smoke.sh` runs them in CI.
 
+### TLS
+
+`--tls` (or `tls = true` under `[record]` in `sonde.toml`) serves TLS as well,
+on the same port: a connection that opens with a TLS handshake is answered in
+TLS, any other in plain HTTP. `AWS_ENDPOINT_URL` is then `https://127.0.0.1:<port>`,
+and the program is told to trust sonde's certificate:
+
+| Variable | Value |
+|---|---|
+| `AWS_CA_BUNDLE`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` | `tls/bundle.pem` in the data directory: the machine's roots and sonde's authority, so other hosts are trusted as before |
+| `NODE_EXTRA_CA_CERTS` | `tls/ca.pem`: the authority alone |
+
+The first run makes an authority, issues one certificate with it (`localhost`,
+`*.localhost`, `127.0.0.1`, `::1`) and does not keep the authority's key:
+nothing else can be issued in its name. The certificate's key is kept in
+`tls/key.pem` (0600) and both are made again after about two years. HTTP/1.1
+only.
+
+### Spark, Flink, Trino and Hadoop's s3a
+
+The JVM engines read their endpoint from their own configuration, not from
+`AWS_ENDPOINT_URL`, and a `-Dfs.s3a.*` system property (`JAVA_TOOL_OPTIONS`,
+`HADOOP_OPTS`) is not Hadoop's configuration. `sonde run` writes it on the
+command line of the engines it knows, before the command's own arguments
+(which still have the last word: it warns when they name another endpoint):
+
+| Command | sonde adds |
+|---|---|
+| `spark-submit`, `spark-shell`, `pyspark`, `spark-sql`, `sparkR` | `--conf spark.hadoop.fs.s3a.endpoint=http://127.0.0.1:<port>`, `…endpoint.region`, `…path.style.access=true`, `…connection.ssl.enabled=false`, `…aws.credentials.provider=com.amazonaws.auth.EnvironmentVariableCredentialsProvider` |
+| `flink run`, `flink run-application` | the same as `-Ds3.endpoint=…`, `-Ds3.path.style.access=true`, … (flink-s3-fs-hadoop and -presto read `s3.*`) |
+| any command | `PYSPARK_SUBMIT_ARGS` with the same `--conf`s, for a Python program that starts Spark itself (what it said before is kept after them) |
+
+No key is on a command line, where every user of the machine can read it: the
+credentials provider reads `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+from the environment. The engines get the plain HTTP endpoint even with
+`--tls` (a JVM trusts no bundle a variable names). Only a driver on this
+machine reaches 127.0.0.1: Spark in `local[*]` or client mode, Flink's local
+or session cluster on this machine.
+
+By hand, for what `sonde run` does not start (a cluster, a server, an
+application that embeds Spark), with the port and keys `sonde proxy` prints
+(`sonde proxy --listen 127.0.0.1:9000` keeps the port; the keys are new each
+time):
+
+- **Spark** (`spark-defaults.conf` or the session builder): the `spark.hadoop.fs.s3a.*` settings above. Paths
+  written `s3://` also need `spark.hadoop.fs.s3.impl=org.apache.hadoop.fs.s3a.S3AFileSystem`. A bucket's
+  own `fs.s3a.bucket.<name>.endpoint` wins over the global one. An Iceberg catalog with `S3FileIO` reads
+  `AWS_ENDPOINT_URL` (Java SDK 2.21+) but needs `spark.sql.catalog.<name>.s3.path-style-access=true`.
+- **Hadoop** (`core-site.xml`, for Hive, `hadoop fs`, Flink's hadoop file system):
+
+  ```xml
+  <property><name>fs.s3a.endpoint</name><value>http://127.0.0.1:9000</value></property>
+  <property><name>fs.s3a.path.style.access</name><value>true</value></property>
+  <property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>
+  <property><name>fs.s3a.aws.credentials.provider</name>
+            <value>com.amazonaws.auth.EnvironmentVariableCredentialsProvider</value></property>
+  ```
+- **Flink** (`flink-conf.yaml` / `config.yaml`): `s3.endpoint: http://127.0.0.1:9000`,
+  `s3.path.style.access: true`, `s3.access-key` and `s3.secret-key` (or the environment as above).
+- **Trino**: the `trino` command is a client; the server reads S3. In the catalog's properties, native S3
+  (`fs.native-s3.enabled=true`): `s3.endpoint=http://127.0.0.1:9000`, `s3.path-style-access=true`,
+  `s3.region=…`, `s3.aws-access-key=SONDE…`, `s3.aws-secret-key=…`; the legacy file system:
+  `hive.s3.endpoint`, `hive.s3.path-style-access=true`, `hive.s3.ssl.enabled=false`,
+  `hive.s3.aws-access-key`, `hive.s3.aws-secret-key`. Start the server after `sonde proxy`.
+
+What s3a does on S3 is read as such: a rename is a copy and a delete, so a job
+committed by Hadoop's FileOutputCommitter copies every output file out of
+`_temporary/` and deletes it — a warning, with the S3A committer settings
+that write each file once; empty `…/` objects are s3a's directory markers,
+said with how many delete requests they cost.
+
 ## How a request is handled
 
 1. The bucket and key come from the path (`/bucket/key`) or from a
@@ -169,7 +240,12 @@ one line per request instead.
 **Storage formats** are recognized from keys. Some writes are *commit points*:
 a SlateDB manifest, WAL, SST or compaction-state file; an Iceberg
 `*.metadata.json`; a Delta `_delta_log/<n>.json`; a Lance
-`_versions/<n>.manifest`. The format's other requests —
+`_versions/<n>.manifest`; a completed Hudi instant (`.hoodie/<instant>.commit`,
+`.deltacommit`, `.replacecommit`, …, or 1.x's `.hoodie/timeline/`; its
+`.requested` and `.inflight` states and its markers under `.hoodie/.temp/`
+are folded into it, and the step counts its base and log files); a Paimon
+`snapshot/snapshot-<n>`, `LATEST` / `EARLIEST` and `schema/schema-<n>`
+(manifests and `bucket-<n>/` files are folded in). The format's other requests —
 reads, listings, data files, Iceberg manifests — are folded into the next
 commit point (a completed multipart upload counts as one write). Lookups
 across several numbered files, like SlateDB searching for its newest WAL, are
@@ -282,8 +358,12 @@ failures, and requests sonde refused.
 
 ## Limits
 
-- HTTP/1.1 between the application and sonde; plain HTTP on the loopback
-  interface (no TLS listener yet).
+- HTTP/1.1 between the application and sonde; TLS with `--tls`.
+- S3 Express One Zone (directory buckets, `<name>--<zone>--x-s3`) is not
+  recorded: its `CreateSession` and every request to a directory bucket are
+  answered `501 NotImplemented` and never reach the store. The session's
+  credentials are the store's, made for the keys that asked; sonde would have
+  to hold a session of its own per bucket and sign with it.
 - One target endpoint per proxy.
 - No time limit on an exchange as a whole (a large body takes what it takes); one that stops moving for 60 s is cut,
   and connecting gives up after 10 s.

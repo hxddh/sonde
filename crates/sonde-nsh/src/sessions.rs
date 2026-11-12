@@ -941,6 +941,20 @@ async fn run_recorded(
             "SONDE_TRIAL".into(),
             trial.clone().unwrap_or_else(|| "clean".into()),
         ));
+        // a Python program that starts Spark reads s3a's endpoint from here
+        let region = set
+            .iter()
+            .find(|(k, _)| k == "AWS_REGION")
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
+        set.push((
+            "PYSPARK_SUBMIT_ARGS".into(),
+            sonde_proxy::jvm::pyspark_submit_args(
+                std::env::var("PYSPARK_SUBMIT_ARGS").ok().as_deref(),
+                &r.proxy.plain_url(),
+                &region,
+            ),
+        ));
         (
             set,
             unset,

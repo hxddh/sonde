@@ -20,7 +20,7 @@ use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use crate::Cli;
 use crate::output::{self, Format};
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 pub struct Recording {
     /// The endpoint requests go to (default: --url, or the only one configured).
     #[arg(long, short = 'e')]
@@ -34,6 +34,12 @@ pub struct Recording {
     /// The session file (default: a new file in the data directory's sessions/).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
+    /// Serve TLS too, for SDKs that require it: AWS_ENDPOINT_URL is https,
+    /// and the program is given a certificate made on the first run to trust
+    /// (AWS_CA_BUNDLE, SSL_CERT_FILE, NODE_EXTRA_CA_CERTS). Also `tls` under
+    /// `[record]` in sonde.toml.
+    #[arg(long)]
+    tls: bool,
 }
 
 #[derive(Args)]
@@ -279,6 +285,14 @@ async fn start_under(
     } else {
         Policy::Allow
     };
+    let tls = if r.tls {
+        let dir = s.paths().data_dir.join("tls");
+        let made = sonde_proxy::tls::Tls::load_or_make(&dir)
+            .map_err(|e| anyhow::anyhow!("cannot make the endpoint's certificate: {e}"))?;
+        Some(Arc::new(made))
+    } else {
+        None
+    };
     let proxy = Proxy::start(
         client,
         log.clone(),
@@ -287,6 +301,7 @@ async fn start_under(
             policy,
             allow_remote,
             faults: under.map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario))),
+            tls,
             ..Default::default()
         },
     )
@@ -766,6 +781,8 @@ struct RunCtx {
     /// and a trial follows: every run is fed the same.
     input: Option<Arc<std::sync::Mutex<KeptInput>>>,
     stop: Stop,
+    /// How it is recorded: the command line's, and sonde.toml's `[record]`.
+    rec: Recording,
 }
 
 /// The most of a clean run's input kept in memory for the runs after it:
@@ -907,6 +924,10 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         name: a.name.clone().or(project.file.program.name.clone()),
         input: (trying && !std::io::stdin().is_terminal()).then(Default::default),
         stop: Stop::listen(),
+        rec: Recording {
+            tls: a.rec.tls || project.file.record.tls,
+            ..a.rec.clone()
+        },
     };
     if trying && !names_its_place(&a.command) {
         eprintln!(
@@ -1119,7 +1140,7 @@ async fn run_once(
     let command = sonde_proxy::program::shell_join(&a.command);
     let mut started = start_under(
         s,
-        &a.rec,
+        &ctx.rec,
         SocketAddr::from(([127, 0, 0, 1], 0)),
         Some(command),
         false,
@@ -1144,9 +1165,36 @@ async fn run_once(
             word.clone()
         }
     };
-    let program = placed(&a.command[0]);
+    let words: Vec<String> = a.command.iter().map(placed).collect();
+    // the JVM engines read s3a's endpoint from their command line, not
+    // from AWS_ENDPOINT_URL (a Python program that starts Spark, from
+    // PYSPARK_SUBMIT_ARGS)
+    let plain = started.proxy.plain_url();
+    let region = set
+        .iter()
+        .find(|(k, _)| k == "AWS_REGION")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    set.push((
+        "PYSPARK_SUBMIT_ARGS".into(),
+        sonde_proxy::jvm::pyspark_submit_args(
+            std::env::var("PYSPARK_SUBMIT_ARGS").ok().as_deref(),
+            &plain,
+            &region,
+        ),
+    ));
+    let words = match sonde_proxy::jvm::with_settings(&words, &plain, &region) {
+        Some((engine, argv)) => {
+            if under.is_none() {
+                eprintln!("{}", engine_note(engine, &words));
+            }
+            argv
+        }
+        None => words,
+    };
+    let program = words[0].clone();
     let mut child = tokio::process::Command::new(&program);
-    child.args(a.command[1..].iter().map(placed));
+    child.args(&words[1..]);
     if ctx.trying {
         child.env("SONDE_TRIAL", trial);
     }
@@ -1293,6 +1341,22 @@ async fn run_once(
     })
 }
 
+/// What sonde wrote on an engine's command line, and whether the program's
+/// own arguments overrule it.
+fn engine_note(engine: sonde_proxy::jvm::Engine, command: &[String]) -> String {
+    let how = match engine {
+        sonde_proxy::jvm::Engine::Spark => "--conf spark.hadoop.fs.s3a.*",
+        sonde_proxy::jvm::Engine::Flink => "-Ds3.*",
+    };
+    match sonde_proxy::jvm::own_endpoint(command) {
+        Some(own) => format!(
+            "warning: sonde gave {} its endpoint ({how}), but the command names its own ({own}): those requests go there, not through sonde",
+            command[0]
+        ),
+        None => format!("sonde: {} is given its endpoint with {how}", command[0]),
+    }
+}
+
 /// Signals the process group `child` leads: an interrupt, or (`kill`) its
 /// end. Whether it was sent.
 #[cfg(unix)]
@@ -1347,7 +1411,9 @@ const NO_REQUESTS: &str = "\nThe program sent sonde no requests. sonde set AWS_E
   boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])
   AWS CLI             v2.13 or newer, or --endpoint-url \"$AWS_ENDPOINT_URL\"
   Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)
-  Java SDK v2         2.21 or newer; Hadoop s3a: -Dfs.s3a.endpoint=$AWS_ENDPOINT_URL -Dfs.s3a.path.style.access=true
+  Java SDK v2         2.21 or newer
+  Hadoop s3a          its configuration, not -D: fs.s3a.endpoint, fs.s3a.path.style.access=true (sonde writes them for spark-submit and flink run)
+  Trino               the server reads S3, not the trino client: s3.endpoint in the catalog's properties (docs/recording.md)
   DuckDB              SET s3_endpoint='127.0.0.1:PORT'; SET s3_url_style='path'; SET s3_use_ssl=false
   Node (@aws-sdk/*)   3.4xx or newer, or new S3Client({ endpoint: process.env.AWS_ENDPOINT_URL, forcePathStyle: true })
 Credentials must be the ones sonde set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY): a profile or a role bypasses them.";
@@ -2333,6 +2399,17 @@ struct ProjectFile {
     program: ProjectProgram,
     #[serde(default)]
     scenario: Vec<ProjectScenario>,
+    #[serde(default)]
+    record: ProjectRecord,
+}
+
+/// How a project's programs are recorded: `tls = true` serves the endpoint
+/// in TLS too, as `--tls`.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct ProjectRecord {
+    #[serde(default)]
+    tls: bool,
 }
 
 /// `sonde.toml` here or in a folder above (to the repository's root).
@@ -3259,6 +3336,7 @@ pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
         no_delete: false,
         read_only: false,
         out: None,
+        tls: false,
     };
     let started = start(
         s,
@@ -4136,6 +4214,7 @@ mod tests {
                     no_delete: false,
                     read_only: true,
                     out: None,
+                    tls: false,
                 },
                 listen: "127.0.0.1:0".parse().unwrap(),
                 allow_remote: false,
@@ -4262,6 +4341,7 @@ mod tests {
                     no_delete: false,
                     read_only: true,
                     out: None,
+                    tls: false,
                 },
                 listen: "127.0.0.1:0".parse().unwrap(),
                 allow_remote: false,
@@ -4411,6 +4491,7 @@ mod tests {
                     no_delete: false,
                     read_only: true,
                     out: None,
+                    tls: false,
                 },
                 listen: "127.0.0.1:0".parse().unwrap(),
                 allow_remote: false,
