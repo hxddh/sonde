@@ -111,8 +111,9 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 | Rows | `ListRow` for every row a press opens, `Row` for every row only read; `ROW_STATE` stays in the kit, no hairline row by hand | `[row]` |
 | Base controls | A page takes from `nsh/base` only what has structure and no look (a table, a split, a tree, a terminal, an editor, a diff); a control comes from the kit. The shared pieces that draw one of their own are listed in the lint, each with why | `[base]` |
 | Open and close | `Disclosure` (with `trailing` for what stands beside its title): the findings use it | `[heading]` (its title is the kit's) |
-| Layout thresholds | The four `BREAK` names and no number compared with a width or a height anywhere else; a key nothing uses fails. A size a page needs (a tile's least width, a dialog's scrolling height) is a `SIZES` name: none under a name of its own | `[threshold]` |
-| Sizes | No `w-N` and no arbitrary `[…]` size in a page: a field's or a column's width is a `WIDTH` name, a surface's a `SURFACE` name; a name nothing uses fails | `[width]`, `[size]` |
+| Layout thresholds | The four `BREAK` names and no number compared with a width or a height anywhere else; a key nothing uses fails. A size a page needs (a tile's least width, a dialog's scrolling height, the findings' bound) is a `SIZES` name: none under a name of its own; a literal `maxHeight` fails, and a split's `minSize`/`maxSize` is a `PANE` name. `App.tsx` is read like every page | `[threshold]` |
+| Sizes | No `w-N` and no arbitrary `[…]` size in a page: a field's or a column's width is a `WIDTH` name, a surface's a `SURFACE` name, a table column's a `COLUMN` name (no number in a column object); a name nothing uses fails | `[width]`, `[size]`, `[column]` |
+| Presses | Nothing pressable by hand: no `role="button"` on a `Text` or a `View` (it has no focus ring); `Button`, `ListRow` or `Back` | `[press]` |
 | Duration | `duration()` in `format.ts`, under that name only: no alias, no milliseconds written by hand, no other function that writes one (`elapsed`, `days` and `ago` are gone: an age and a counter are forms of `duration`), an age's words used nowhere else | `[duration]` |
 | Numbers | Every count through `count()`, every share through `percent()`/`pct()`, a ratio through `factor()`, a rate through `rate()`: no `String(` and no `.toFixed(` in `src/ui`, `src/screens` or `viewer` | `[number]` |
 | Spacing | 4, 8, 12, 16, 24 (`gap-1 2 3 4 6`, and `p-`, `m-` alike), every value checked, not two; in the kit an off-scale inset carries an `off-scale:` comment | `[spacing]` |
@@ -121,7 +122,7 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 | Nothing here | `Empty`, whole or `compact` | `[empty]` |
 | Words | Every key in every language with the same placeholders, and every key used: named whole, or a member of a family a template builds (`t(\`trial.${standing}\`)`), the family listed in the lint with its members, key by key — a prefix alone passes nothing | `check-locales.py` |
 | Charts | One frame, one left edge, one row pitch, one legend, one tooltip, one fade, one outline, one time axis, one value scale; bar thickness, tips and heights each a named small set (see Charts) | `lint-charts.py` |
-| Tables | A column's title fits its width, and so does the widest text a formatter can write into it (a day, a date, a size, an age), in English and in Chinese; the bucket's sheets' tables fit the sheet | `lint-layout.py` |
+| Tables | A column's title fits its width, and so does the widest text a formatter can write into it (a day, a date, a size, an age), in English and in Chinese; the bucket's sheets' tables fit the sheet; a column of keys, paths, targets or names is cut in its middle (`ellipsis-middle`) or at its start, never at its end | `lint-layout.py` |
 
 Sizes (`CONTROL`, `ROW`, `FORM`):
 
@@ -161,7 +162,11 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
     as fit, the rest behind `⋯`; they never wrap to a second line;
   - a finding's advice opens inside its own row, under its title, which comes to the top of the findings' room;
-    in a short pane that room is bounded so the operations under it keep rows;
+    in a short pane that room is bounded so the operations under it keep rows, and rounded down to whole
+    findings (never a row cut through its text), the heading saying how many are in view and that the rest
+    scroll;
+  - the column that takes a table's free width is the one that would be cut (a request's target, an upload's
+    key, an object's name); a column of names is as wide as its longest name here, no wider;
   - a chart's sentence wraps and is never cut; a row's name that does not fit its gutter is cut in its middle
     (`axisName`), a path at its start (`tail`); an operation's name in a table is cut in its middle by the text
     itself (`ellipsis-middle`), never at its end.
@@ -289,6 +294,16 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   writes zero alone. A second quantity has its tick at the far edge (in
   flight on the timeline, the share done on the histogram). Latencies on a log scale are drawn as logs, the
   ticks saying times.
+- **A budget on its chart**: where the session's program has a `[check]` in its `sonde.toml`, its `max-p95` is a
+  dashed line in the warning's tone on latency over time, `max-errors` on the error rate (as that share of the
+  run's requests), `max-waiting` on the program's waiting over its runs, each with a chip ("budget 50 ms") at the
+  far edge (`Budget`, `budgetTop`); the chart's sentence says how far the run is from it.
+- **A chart's rows out**: a chart on the Time pane that has rows gives them as CSV from a button at its title's
+  end, a column per figure in one unit, named in its title; written where exports go (Native Shell has no save
+  dialog). A shared page has no such button.
+- **A stretch kept in a link**: the two slices chosen on the timeline are kept as milliseconds from the session's
+  start, in a `sonde://` link ("Copy link to this stretch of time", `?range=a-b`) and in a shared page's address
+  (`#range=a-b`); opened, the session shows its Time pane over that stretch. Still chosen by two presses (D-123).
 - **A whole legend**: every colour and every line a chart draws is named under it — the timeline's stack, its
   line of requests in flight, the findings' numbers and a trial's faults; the scatter's outcomes and its p95.
 - **The histogram**: each bar says how many requests it holds; the share done by each time is a dashed line on
