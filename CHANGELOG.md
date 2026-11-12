@@ -4,6 +4,10 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## [Unreleased]
 
+### Fixed
+
+- `uses: hxddh/sonde@v18` found no tag: each release now moves its major tag (`action-tag.yml`).
+
 ## [18.0.0] - 2026-11-12
 
 Fewer things, each finished: three loops closed, "why slow" answered, and what a user never needed removed. The
