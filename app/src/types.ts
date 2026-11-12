@@ -45,6 +45,8 @@ export interface Settings {
   "stale-upload-days": number;
   /** Runs name the place in a Python program's code that sent each request. */
   "name-callers"?: boolean;
+  /** What a program recorded by Run may do to the store (no-delete by default). */
+  "record-policy"?: "allow" | "no-delete" | "read-only";
   "exports-dir": string | null;
   "downloads-dir": string | null;
 }

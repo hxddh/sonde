@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/mpu-scan.schema.json",
+  "title": "sonde mpu scan -f json",
+  "description": "Incomplete multipart uploads and the lifecycle rule that would abort them. Exit 4 when any is stale or no rule aborts them.",
+  "type": "object",
+  "properties": {
+    "endpoint": {
+      "type": "string"
+    },
+    "bucket": {
+      "type": "string"
+    },
+    "prefix": {
+      "type": "string"
+    },
+    "thresholdDays": {
+      "type": "integer"
+    },
+    "uploads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "uploadId": {
+            "type": "string"
+          },
+          "initiated": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ageDays": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "parts": {
+            "type": "integer"
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "storageClass": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "costSoFar": {
+            "type": "number"
+          },
+          "costPerMonth": {
+            "type": "number"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "partsError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "uploadId",
+          "initiated",
+          "ageDays",
+          "parts",
+          "bytes",
+          "storageClass",
+          "costSoFar",
+          "costPerMonth",
+          "stale",
+          "partsError"
+        ]
+      }
+    },
+    "totalUploads": {
+      "type": "integer"
+    },
+    "staleUploads": {
+      "type": "integer"
+    },
+    "totalBytes": {
+      "type": "integer"
+    },
+    "staleBytes": {
+      "type": "integer"
+    },
+    "costPerMonth": {
+      "type": "number"
+    },
+    "costSoFar": {
+      "type": "number"
+    },
+    "currency": {
+      "type": "string"
+    },
+    "lifecycle": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "`ok`, `partial`, `missing` or `unknown`."
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prefix": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "days": {
+                "type": "integer"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "prefix",
+              "days",
+              "enabled"
+            ]
+          }
+        },
+        "message": {
+          "type": "string"
+        },
+        "messageText": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "suggestedRule": {
+          "type": "string"
+        },
+        "error": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "anyOf": [
+            {
+              "$ref": "#/$defs/s3Error"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "rules",
+        "message",
+        "suggestedRule",
+        "error"
+      ]
+    },
+    "scannedAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "endpoint",
+    "bucket",
+    "prefix",
+    "thresholdDays",
+    "uploads",
+    "totalUploads",
+    "staleUploads",
+    "totalBytes",
+    "staleBytes",
+    "costPerMonth",
+    "costSoFar",
+    "currency",
+    "lifecycle",
+    "scannedAt"
+  ],
+  "$defs": {
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The phrase's key in the app's locales (en, zh)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Its arguments, as text.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "s3Error": {
+      "type": "object",
+      "description": "An error from the store.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "status": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recordId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "body": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ]
+    }
+  }
+}

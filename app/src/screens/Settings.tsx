@@ -147,6 +147,18 @@ export function SettingsScreen() {
                   }
                 }}
               />
+              <Choice
+                testID="record-policy"
+                label={t("settings.recordPolicy")}
+                value={d()["record-policy"] ?? "no-delete"}
+                items={[
+                  { value: "no-delete", title: t("timeline.noDelete") },
+                  { value: "read-only", title: t("timeline.readOnly") },
+                  { value: "allow", title: t("timeline.allow") },
+                ]}
+                onChange={(v) => change({ ...d(), "record-policy": v as Settings["record-policy"] }, true)}
+              />
+              <Text class="text-small text-muted-foreground">{t("settings.recordPolicyHint")}</Text>
             </Section>
 
             <Section title={t("settings.appearance")}>

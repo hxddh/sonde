@@ -4688,7 +4688,6 @@ dependencies = [
  "sonde-proxy",
  "tempfile",
  "tokio",
- "toml",
 ]
 
 [[package]]
@@ -4744,7 +4743,6 @@ dependencies = [
  "sonde-proxy",
  "tempfile",
  "tokio",
- "toml",
 ]
 
 [[package]]
@@ -4772,6 +4770,7 @@ dependencies = [
  "sha1 0.10.7",
  "tempfile",
  "tokio",
+ "toml",
  "tracing",
 ]
 

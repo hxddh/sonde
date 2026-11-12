@@ -6,7 +6,7 @@ import { announce, batch, effect, lifecycle, Notifications, platform, signal, St
 import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { area, compareOnOpen, endpoint, go, notify, openSession, report, sessionsChanged, wasRead } from "./store";
+import { area, compareOnOpen, endpoint, go, notify, openSession, report, sessionsChanged, settings, wasRead } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
 import { programOf, scrubCommand } from "./ui/sessionview";
@@ -84,7 +84,13 @@ if (isAvailable && platform.idiom !== "terminal") {
 }
 
 export const cwd = signal("");
-export const policy = signal<Policy>("allow");
+/** What the program may do to the store: the setting's (no-delete unless
+ * changed), and Run's choice for a run until the setting changes. */
+export const policy = signal<Policy>("no-delete");
+effect(() => {
+  const p = settings()?.["record-policy"];
+  if (p) policy.set(p);
+});
 
 const MAX = 2 * 1024 * 1024;
 let buffer = "";

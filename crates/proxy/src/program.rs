@@ -302,7 +302,7 @@ pub fn write_baselines(
             .map(|d| d.as_nanos())
             .unwrap_or_default()
     ));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(all)?)?;
+    reqlog::private::write(&tmp, serde_json::to_vec_pretty(all)?)?;
     std::fs::rename(&tmp, dir.join("baselines.json"))
 }
 

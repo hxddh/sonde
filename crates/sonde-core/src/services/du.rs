@@ -560,7 +560,7 @@ fn cache_file(s: &Sonde, ep: &str, b: &str, p: &str) -> PathBuf {
 pub fn save_cache(s: &Sonde, r: &DuReport) -> Result<PathBuf, String> {
     let f = cache_file(s, &r.endpoint, &r.bucket, &r.prefix);
     std::fs::create_dir_all(f.parent().unwrap()).map_err(|e| e.to_string())?;
-    std::fs::write(&f, serde_json::to_vec_pretty(r).map_err(|e| e.to_string())?)
+    reqlog::private::write(&f, serde_json::to_vec_pretty(r).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     Ok(f)
 }

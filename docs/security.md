@@ -26,9 +26,17 @@
 The app declares no `fs` capability: TSX cannot read or write files. Rust writes exports to the exports directory,
 downloads to the downloads directory, and its state under the data directory.
 
+What holds a program's traffic is its user's alone: on Unix, sessions, their counts (`*.summary.json`), trial
+verdicts, baselines and titles, the request log's SQLite file, `du`'s cache and `audit.jsonl` are made `0600`,
+whatever the umask (`config.toml` was already). A file made by an earlier version keeps its mode. What the user asks
+to be written somewhere (`-o`, `sonde share`, an export) is made as any file is. A `sonde://open` link opens only a
+`.sonde` or `.sonde.gz` file, and never a path on another machine (`\\host\share`, `//host/share`), which Windows
+would reach, with the user's credentials, before anything is read.
+
 ## Read-only by default
 
-`read-only = true` until the user turns it off. Destructive operations — aborting uploads, deleting versions or
+`read-only = true` until the user turns it off. It covers what sonde does itself; what a program recorded through
+sonde may do is the recording's policy ([Run](#run)). Destructive operations — aborting uploads, deleting versions or
 delete markers, deleting objects, replacing a lifecycle configuration — are plans (`sonde-core::guard`):
 
 1. the plan is a dry run listing exactly what would change (and, for lifecycle, the old and new documents);
@@ -51,7 +59,17 @@ session ran in; anything else is shown in the file manager, and a session naming
 
 Run starts the command the user typed, through their shell, with the user's rights — as a terminal would. The
 command receives a local endpoint and throwaway keys, never sonde's credentials (`AWS_SESSION_TOKEN`, `AWS_PROFILE`
-and the like are removed from its environment). Its output is kept in the session file as printed, so a command
+and the like are removed from its environment).
+
+What it may do with them is the recording's policy, not read-only mode (which covers sonde's own acts). By default
+(`no-delete`, in `sonde run`, `sonde proxy`, `sonde watch` and the app's Run) nothing is removed and nothing that was
+there before is replaced: deletes, aborted uploads, lifecycle rules, bucket policies, versioning suspended and a
+write over an object the recording did not write itself are refused ([recording.md](recording.md#what-a-recorded-program-may-do)
+lists each). Overwrites are refused by the store, through `If-None-Match: *` sonde adds; a store that ignores the
+header writes over the object all the same, so with such a store `read-only` is the safe policy. `read-only` lets
+only GET and HEAD through; `allow` (`--allow-writes`, `[record] policy = "allow"`) lets everything through. A
+project's `sonde.toml` may set the policy for a recording when no flag does (sonde says so on stderr when it lets a
+program delete); in the app it may only narrow the one chosen. Its output is kept in the session file as printed, so a command
 that prints secrets puts them there; records stay redacted. Only the app process can start commands: there is no
 listening socket for it, and the TSX VM reaches it through `sonde/native` only.
 

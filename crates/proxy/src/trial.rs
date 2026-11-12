@@ -1190,7 +1190,7 @@ pub fn remove(session: &std::path::Path) {
 }
 
 pub fn save(session: &std::path::Path, trials: &[Trial]) -> std::io::Result<()> {
-    std::fs::write(file_for(session), serde_json::to_vec_pretty(trials)?)
+    reqlog::private::write(&file_for(session), serde_json::to_vec_pretty(trials)?)
 }
 
 /// A run's trials; none when it was never tried (or the file is damaged).

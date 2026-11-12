@@ -31,7 +31,8 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 **Record and understand**
 
 - `sonde run -- <command>` (or **Run** in the app) records every S3 request through a local endpoint. sonde signs
-  with the real credentials, which never reach the program; `--no-delete` and `--read-only` limit what it may do.
+  with the real credentials, which never reach the program; by default it may not delete through them, nor write
+  over an object it did not write (`--read-only` limits it to reads, `--allow-writes` lets it do anything).
 - Requests are read as **operations**: multipart uploads, retries, listings, and the steps of SlateDB, Iceberg,
   Delta Lake and Lance.
 - **Findings** say what deserves a look (hot keys, HEAD before GET, throttling, unfinished uploads, orphaned files,
@@ -80,8 +81,11 @@ sonde replay session.sonde -e ceph       # the same traffic on another store: wh
 - 40 compatibility probes across endpoints (AWS, R2, MinIO, Ceph, OSS, …) as one matrix.
 - Decode SlateDB, Iceberg, lakeFS and Woodpecker layouts.
 
-**Safe by default**: read-only until you turn it off; anything destructive needs a dry run and a typed
-confirmation, and goes to an audit log. Credentials stay in Rust, logs are redacted, and there is no telemetry.
+**Safe by default**: sonde's own deletes and changes wait until you turn read-only mode off, and each needs a dry
+run and a typed confirmation and goes to an audit log. A program recorded through sonde may not delete, nor write over
+an object that was there before, until you allow it (overwrites are refused by the store through `If-None-Match`:
+see [what a recorded program may do](docs/recording.md#what-a-recorded-program-may-do)). Credentials stay in Rust,
+logs are redacted, sessions are readable by you alone, and there is no telemetry.
 
 One codebase, three forms: a **desktop app** (macOS, Linux, Windows), a **terminal UI** in one static binary, and a
 **CLI** for scripts and CI. The UI is [Native Shell](https://github.com/longbridge/nsh); everything else is Rust.
@@ -153,6 +157,7 @@ sonde --url http://127.0.0.1:9000 --path-style probe -b scratch --only checksum.
 | [Recording](docs/recording.md) | Run, `sonde run`, `sonde proxy`, `sonde show`, `sonde share`, session files |
 | [Trials](docs/trials.md) | `sonde run --trial`: fault scenarios, what is read from a run under them, `[[scenario]]` |
 | [CLI](docs/cli.md) | Subcommands, formats, exit codes |
+| [Contract](docs/contract.md) | What is stable between versions: session files, JSON outputs, `sonde.toml`, flags, exit codes |
 | [Probes](docs/probes.md) | Every probe and the AWS behavior it checks |
 | [Decoders](docs/decoders.md) | The layouts and format versions each lens decodes |
 | [Security model](docs/security.md) | Credential isolation, read-only mode, what runs where |

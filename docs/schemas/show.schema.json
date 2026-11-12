@@ -1,0 +1,718 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/show.schema.json",
+  "title": "sonde show -f json",
+  "description": "A session whole: its operations, findings and requests. `--errors` keeps the failed ones only.",
+  "type": "object",
+  "properties": {
+    "episodes": {
+      "type": "array",
+      "description": "The operations, in order.",
+      "items": {
+        "$ref": "#/$defs/episode"
+      }
+    },
+    "observations": {
+      "type": "array",
+      "description": "The findings.",
+      "items": {
+        "$ref": "#/$defs/observation"
+      }
+    },
+    "records": {
+      "type": "array",
+      "description": "Every request, as the file has it.",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    "session": {
+      "$ref": "#/$defs/sessionHeader"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "whatIf": {
+      "$ref": "#/$defs/whatIf"
+    }
+  },
+  "required": [
+    "episodes",
+    "observations",
+    "records",
+    "session",
+    "summary",
+    "whatIf"
+  ],
+  "$defs": {
+    "episode": {
+      "type": "object",
+      "description": "An operation: requests that belong together.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "What the requests are together.",
+          "enum": [
+            "request",
+            "multipart",
+            "retry",
+            "probe",
+            "listing",
+            "step"
+          ]
+        },
+        "format": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The storage format a step is of (`iceberg`, `delta`, …)."
+        },
+        "title": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string"
+        },
+        "end": {
+          "type": "string"
+        },
+        "records": {
+          "type": "array",
+          "description": "Its requests' ids.",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "bytesUp": {
+          "type": "integer"
+        },
+        "bytesDown": {
+          "type": "integer"
+        },
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notFound": {
+          "type": "integer"
+        },
+        "titleText": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "notesText": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "format",
+        "title",
+        "start",
+        "end",
+        "records",
+        "bytesUp",
+        "bytesDown",
+        "outcome",
+        "notes"
+      ]
+    },
+    "git": {
+      "type": "object",
+      "description": "The commit the program's code was at.",
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "dirty": {
+          "type": "boolean",
+          "description": "Changes not committed yet."
+        }
+      },
+      "required": [
+        "commit",
+        "dirty"
+      ]
+    },
+    "header": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "observation": {
+      "type": "object",
+      "description": "A finding.",
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "`warn` (likely a problem) or `info`.",
+          "enum": [
+            "warn",
+            "info"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "description": "In English."
+        },
+        "phrases": {
+          "type": "array",
+          "description": "The same, as phrases.",
+          "items": {
+            "$ref": "#/$defs/phrase"
+          }
+        },
+        "episodes": {
+          "type": "array",
+          "description": "The operations it is about (their places in `episodes`).",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "impact": {
+          "type": "integer",
+          "description": "Requests it is about."
+        },
+        "identity": {
+          "type": "string",
+          "description": "The same finding across runs: what `[check] expect` names."
+        },
+        "saving": {
+          "$ref": "#/$defs/phrase"
+        },
+        "savingText": {
+          "type": "string"
+        },
+        "savesRequests": {
+          "type": "integer"
+        },
+        "savesMs": {
+          "type": "number"
+        },
+        "fixes": {
+          "type": "array",
+          "description": "How to fix it.",
+          "items": {
+            "type": "object",
+            "description": "A change to the program's code, for an SDK."
+          }
+        },
+        "callers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "A place in the program's code."
+          }
+        },
+        "sdk": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "text",
+        "phrases",
+        "episodes",
+        "impact"
+      ]
+    },
+    "operationSummary": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "errors": {
+          "type": "integer"
+        },
+        "misses": {
+          "type": "integer",
+          "description": "404s that answer a lookup."
+        },
+        "errorShare": {
+          "type": "number"
+        },
+        "p50Ms": {
+          "type": "number"
+        },
+        "p95Ms": {
+          "type": "number"
+        },
+        "p99Ms": {
+          "type": "number"
+        },
+        "maxMs": {
+          "type": "number"
+        },
+        "bytesUp": {
+          "type": "integer"
+        },
+        "bytesDown": {
+          "type": "integer"
+        },
+        "few": {
+          "type": "boolean",
+          "description": "Too few requests for its percentiles to say much."
+        }
+      },
+      "required": [
+        "operation",
+        "count",
+        "errors",
+        "misses",
+        "errorShare",
+        "p50Ms",
+        "p95Ms",
+        "p99Ms",
+        "maxMs",
+        "bytesUp",
+        "bytesDown",
+        "few"
+      ]
+    },
+    "outcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "failed",
+            "refused"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "description": "A failure's status and S3 code."
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The phrase's key in the app's locales (en, zh)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Its arguments, as text.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "record": {
+      "type": "object",
+      "description": "One request: a line of the session file (docs/session-format.md).",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Unique within the session."
+        },
+        "time": {
+          "type": "string",
+          "description": "When the request began (RFC 3339)."
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string",
+          "description": "The S3 operation (`GetObject`, `Unknown`)."
+        },
+        "method": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "description": "The URL, signatures masked."
+        },
+        "bucket": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "type": "array",
+          "description": "The query's pairs, signatures masked.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "items": false
+          }
+        },
+        "status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The HTTP status; null when no answer came."
+        },
+        "latencyMs": {
+          "type": "number"
+        },
+        "retries": {
+          "type": "integer"
+        },
+        "requestId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requestHeaders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/header"
+          }
+        },
+        "responseHeaders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/header"
+          }
+        },
+        "requestBytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "responseBytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "errorBody": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The error's body, up to 64 KiB."
+        },
+        "requestBody": {
+          "type": "string",
+          "description": "A control request's body (DeleteObjects, a lifecycle rule)."
+        },
+        "requestBodyTruncated": {
+          "type": "boolean"
+        },
+        "transportError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "region": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "firstByteMs": {
+          "type": "number"
+        },
+        "requester": {
+          "type": "string"
+        },
+        "injected": {
+          "type": "string",
+          "description": "The fault scenario that answered or changed it (a trial)."
+        }
+      },
+      "required": [
+        "id",
+        "time",
+        "endpoint",
+        "operation",
+        "method",
+        "url",
+        "bucket",
+        "key",
+        "query",
+        "status",
+        "latencyMs",
+        "retries",
+        "requestId",
+        "hostId",
+        "requestHeaders",
+        "responseHeaders",
+        "requestBytes",
+        "responseBytes",
+        "errorBody",
+        "transportError",
+        "region",
+        "job"
+      ]
+    },
+    "sessionHeader": {
+      "type": "object",
+      "description": "The session's first line: docs/session-format.md.",
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "Always `sonde-session`.",
+          "const": "sonde-session"
+        },
+        "version": {
+          "type": "integer",
+          "description": "The session format's version (docs/session-format.md)."
+        },
+        "sonde": {
+          "type": "string",
+          "description": "The sonde that wrote the file (its version)."
+        },
+        "created": {
+          "type": "string",
+          "description": "When the recording began (RFC 3339)."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "The endpoint's id."
+        },
+        "url": {
+          "type": "string",
+          "description": "The endpoint's URL."
+        },
+        "region": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string",
+          "description": "The command sonde ran, when it ran one."
+        },
+        "name": {
+          "type": "string",
+          "description": "The program's name (`[program] name`, `--name`)."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "The folder the command ran in."
+        },
+        "git": {
+          "$ref": "#/$defs/git"
+        },
+        "scenario": {
+          "type": "string",
+          "description": "A trial's fault scenario."
+        },
+        "trialOf": {
+          "type": "string",
+          "description": "The clean run a trial is of (its file name)."
+        },
+        "wholeSeconds": {
+          "type": "boolean",
+          "description": "Request times are to the second (an imported log)."
+        }
+      },
+      "required": [
+        "format",
+        "version",
+        "created",
+        "endpoint",
+        "url",
+        "region"
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "description": "The session in figures.",
+      "properties": {
+        "requests": {
+          "type": "integer"
+        },
+        "errors": {
+          "type": "integer"
+        },
+        "misses": {
+          "type": "integer"
+        },
+        "refused": {
+          "type": "integer",
+          "description": "Refused by the recording's policy."
+        },
+        "seconds": {
+          "type": "number",
+          "description": "From the first request's start to the last one's end."
+        },
+        "bytesUp": {
+          "type": "integer"
+        },
+        "bytesDown": {
+          "type": "integer"
+        },
+        "operations": {
+          "type": "array",
+          "description": "Each kind of request.",
+          "items": {
+            "$ref": "#/$defs/operationSummary"
+          }
+        },
+        "errorCodes": {
+          "type": "array",
+          "description": "Each error's status or code and its count.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": [
+                  "integer",
+                  "string"
+                ]
+              },
+              {
+                "type": [
+                  "integer",
+                  "string"
+                ]
+              }
+            ],
+            "items": false
+          }
+        }
+      },
+      "required": [
+        "requests",
+        "errors",
+        "misses",
+        "refused",
+        "seconds",
+        "bytesUp",
+        "bytesDown",
+        "operations",
+        "errorCodes"
+      ]
+    },
+    "whatIf": {
+      "type": "object",
+      "description": "The run as it is and as it would be with every finding's fix: each a pair.",
+      "properties": {
+        "requests": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "items": false
+        },
+        "waitingMs": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "cost": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        },
+        "currency": {
+          "type": "string"
+        },
+        "findings": {
+          "type": "integer",
+          "description": "Findings whose fix is counted."
+        },
+        "ofFindings": {
+          "type": "integer"
+        },
+        "counted": {
+          "type": "array",
+          "description": "The findings counted.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "requests",
+        "waitingMs",
+        "cost",
+        "currency",
+        "findings",
+        "ofFindings",
+        "counted"
+      ]
+    }
+  }
+}

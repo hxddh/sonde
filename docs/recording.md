@@ -7,7 +7,8 @@ credentials, forwards it, streams the response back, and writes a session file.
 
 ```sh
 sonde run -- python etl.py                     # run a command with its S3 traffic recorded
-sonde run --live --no-delete -- ./my-service   # print requests as they happen; refuse deletes
+sonde run --live -- ./my-service               # print requests as they happen
+sonde run --allow-writes -- python etl.py      # let it delete and write over what it finds
 sonde proxy --listen 127.0.0.1:9000            # a standing endpoint for an app started elsewhere
 sonde show ~/…/sessions/20261107-002225-etl.py.sonde --errors
 ```
@@ -20,7 +21,8 @@ IRSA, …) and stay in sonde; the application never receives them.
 
 The app's home does what `sonde run` does, with the program in a terminal:
 type a command (and a working directory if it is not your home), choose the
-endpoint and a policy (no deletes, read-only), press Return. The command runs
+endpoint and a policy (Settings › Safety sets the one it starts with:
+block deletes unless changed), press Return. The command runs
 through your shell in a pseudo-terminal (ConPTY on Windows) — colours,
 progress bars and prompts work, and you can type into it. Its requests appear
 beside it as operations while it runs; Stop ends it. When it ends, a
@@ -68,11 +70,9 @@ object_store (Rust) — `scripts/sdk-smoke.sh` runs them in CI.
    SignatureDoesNotMatch`, is recorded as refused, and never reaches the store.
    `sonde proxy` listens on loopback only; `--allow-remote` opens it to other
    machines, for whoever holds the keys it prints.
-4. The policy may refuse it: `--no-delete` refuses deletes, aborts and
-   lifecycle changes — by the request's method as well as its name: every
-   DELETE, `POST ?delete`, `PUT ?lifecycle`, and any write sonde cannot name;
-   `--read-only` lets only GET and HEAD through. A refused
-   request gets an S3 `AccessDenied` error and never leaves the machine.
+4. The recording's policy may refuse it ([below](#what-a-recorded-program-may-do)).
+   A refused request gets an S3 `403 AccessDenied` error naming the policy,
+   and is recorded as refused.
    Under every policy, a path that starts with an empty segment (`//bucket/key`)
    is answered `400 InvalidURI`: it names no bucket.
 5. The client's signature headers are dropped and the request is signed again
@@ -102,11 +102,51 @@ way, request ids, the error body, and two times:
 The overhead measured against a local RustFS: +0.2 ms at p50 for a 1 KiB GET
 (`cargo run --release -p sonde-proxy --example overhead`; docs/performance.md).
 
+## What a recorded program may do
+
+The program reaches the store with sonde's credentials, so the recording
+decides what it may do there. `sonde run`, `sonde proxy`, `sonde watch` and
+the app's Run take one of three policies:
+
+| Policy | Lets through | Refuses |
+|---|---|---|
+| `no-delete` (the default) | reads, listings, new objects, and writes over an object this recording wrote itself; uploads in parts; tags, ACLs, retention, versioning turned on | every delete (`DELETE`, `POST ?delete`, `DeleteObjects`), `AbortMultipartUpload`, lifecycle rules (`PUT ?lifecycle`), bucket policies (`PUT`/`DELETE ?policy`), versioning suspended, a write (`PutObject`, `CompleteMultipartUpload`, `CopyObject`) over an object that was there before the recording and that it did not write, a write on `If-Match`, and any write sonde cannot name |
+| `read-only` | GET and HEAD | everything else |
+| `allow` | everything | nothing |
+
+An object already there is found by the store itself: a `PutObject` or a
+`CompleteMultipartUpload` that says no condition is sent with
+`If-None-Match: *` (not on the record: the program did not ask it), and the
+store's `412` comes back as sonde's `403` naming the key. A `CopyObject`'s
+target is looked for first with a `HEAD` of sonde's own (not recorded, not
+timed); an answer other than found or not found refuses the copy. A store that
+ignores `If-None-Match` (older MinIO and Ceph releases, some gateways) writes
+over the object all the same: with such a store use `read-only`.
+
+What the recording wrote, it may write again: a program that writes a key
+twice, and a trial's runs after its clean run (the runs of `--trial` share
+what they wrote; the app's trial takes what the clean run's session wrote).
+A program run again writes over what its last run wrote: that object was
+there before this recording, so it is refused under `no-delete` —
+`--allow-writes` (or `[record] policy = "allow"`) is for a program that does.
+
+The policy is, the first that says one: the flag (`--policy allow|no-delete|read-only`,
+or `--allow-writes`, `--no-delete`, `--read-only`), then `[record] policy` in
+the project's `sonde.toml`, then `no-delete`. sonde says on stderr when
+`sonde.toml` lets a program delete. In the app the policy is Run's choice,
+which starts at the `record-policy` setting (Settings › Safety); a project's
+`[record] policy` may narrow it there, never widen it.
+
+`read-only` mode (the setting) is about what sonde does itself — aborts,
+deletes, lifecycle rules, probes, replays, trials from the app — not what a
+recorded program does: that is the policy's.
+
 ## Session files
 
 `.sonde` files are JSON lines: a header (`format: "sonde-session"`, version,
 creation time, endpoint id and URL, region, the command) and then one record
-per line, appended as requests complete — a session survives a crash, and a
+per line, appended as requests complete ([session-format.md](session-format.md)
+says each field, and what a reader may expect of a later version) — a session survives a crash, and a
 torn last line is skipped on reading. They hold no secrets: records are
 redacted before they are written. Without `-o`, sessions go to the data
 directory's `sessions/`. A finished session is gzip-compressed in place (a

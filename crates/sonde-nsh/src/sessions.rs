@@ -144,16 +144,31 @@ fn code_target(dir: &Path, place: &str) -> Result<CodeTarget, String> {
     })
 }
 
-/// A recording policy by its name; an unknown one is refused, never "allow".
+/// A recording policy by its name, none the default (no-delete); an
+/// unknown one is refused, never "allow".
 fn policy_of(name: &str) -> Result<Policy, String> {
-    match name {
-        "allow" | "" => Ok(Policy::Allow),
-        "no-delete" => Ok(Policy::NoDelete),
-        "read-only" => Ok(Policy::ReadOnly),
-        other => Err(err_msg(format!(
-            "unknown recording policy \"{other}\": allow, no-delete or read-only"
-        ))),
+    if name.is_empty() {
+        return Ok(Policy::default());
     }
+    Policy::named(name).ok_or_else(|| {
+        err_msg(format!(
+            "unknown recording policy \"{name}\": allow, no-delete or read-only"
+        ))
+    })
+}
+
+/// The policy a run in `dir` is recorded under: the one asked (the app's
+/// setting, or Run's choice), narrowed by its project's `[record] policy`.
+/// A project's file may narrow what the person chose, never widen it.
+fn run_policy(asked: Policy, dir: Option<&Path>) -> Result<Policy, String> {
+    let project = match dir {
+        Some(d) => sonde_proxy::project::of(d).map_err(err_msg)?,
+        None => None,
+    };
+    Ok(match project.and_then(|p| p.policy) {
+        Some(p) => asked.stricter(p),
+        None => asked,
+    })
 }
 
 /// A JSON map beside the sessions (`titles.json`, `baselines.json`,
@@ -198,7 +213,7 @@ fn write_imports(dir: &Path, all: &std::collections::BTreeMap<String, String>) {
     ));
     if serde_json::to_vec(all)
         .ok()
-        .is_some_and(|b| std::fs::write(&tmp, b).is_ok())
+        .is_some_and(|b| reqlog::private::write(&tmp, b).is_ok())
     {
         let _ = std::fs::rename(&tmp, dir.join("imports.json"));
     }
@@ -216,6 +231,8 @@ struct Under {
     scenario: sonde_proxy::fault::Scenario,
     of: String,
     path: PathBuf,
+    /// What the clean run wrote: no-delete lets the trial write it again.
+    written: Arc<sonde_proxy::Written>,
 }
 
 /// Starts a recording: a local endpoint forwarding to `endpoint`; `under`
@@ -242,7 +259,12 @@ async fn begin(
     let _starting = Starting;
     let s = sonde();
     let client = s.client(&endpoint).map_err(crate::state::err)?;
-    let policy = policy_of(&policy)?;
+    // none asked: the setting's
+    let asked = match policy.as_str() {
+        "" => policy_of(&s.settings().record_policy)?,
+        p => policy_of(p)?,
+    };
+    let policy = run_policy(asked, cwd.as_deref())?;
     let dir = s.paths().sessions();
     std::fs::create_dir_all(&dir).map_err(err_msg)?;
     let name = command
@@ -268,6 +290,10 @@ async fn begin(
     let faults = under
         .as_ref()
         .map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario)));
+    let written = under
+        .as_ref()
+        .map(|u| u.written.clone())
+        .unwrap_or_default();
     let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
@@ -280,6 +306,7 @@ async fn begin(
                 ProxyConfig {
                     policy,
                     faults,
+                    written,
                     ..Default::default()
                 },
             )
@@ -544,7 +571,8 @@ fn save_titles(t: &std::collections::BTreeMap<String, String>) -> Result<(), Str
         std::process::id(),
         N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(t).map_err(err_msg)?).map_err(err_msg)?;
+    reqlog::private::write(&tmp, serde_json::to_vec_pretty(t).map_err(err_msg)?)
+        .map_err(err_msg)?;
     std::fs::rename(&tmp, dir.join("titles.json")).map_err(err_msg)
 }
 
@@ -592,7 +620,7 @@ fn exit_file(session: &Path) -> PathBuf {
 
 fn write_exit(session: &Path, code: Option<i32>) {
     if let Some(c) = code {
-        let _ = std::fs::write(exit_file(session), c.to_string());
+        let _ = reqlog::private::write(&exit_file(session), c.to_string());
     }
 }
 
@@ -675,73 +703,14 @@ fn with_trials(mut v: JsonValue, path: &str) -> JsonValue {
 
 /// The scenarios a project names: the `[[scenario]]` tables of the
 /// `sonde.toml` found from `dir` upwards (to the repository's root), as
-/// `sonde run --trial` reads them. None when there is no such file.
+/// The scenarios a project names: the `[[scenario]]` tables of the
+/// `sonde.toml` found from `dir` upwards (to the repository's root), read
+/// as `sonde run --trial` reads them ([`sonde_proxy::project`]). None when
+/// there is no such file.
 fn project_scenarios(dir: &Path) -> Result<Vec<sonde_proxy::fault::Scenario>, String> {
-    let mut at = dir.to_path_buf();
-    let file = loop {
-        let f = at.join("sonde.toml");
-        if f.is_file() {
-            break f;
-        }
-        if at.join(".git").exists() || !at.pop() {
-            return Ok(Vec::new());
-        }
-    };
-    let said = |e: String| format!("{}: {e}", file.display());
-    let text = std::fs::read_to_string(&file).map_err(|e| said(e.to_string()))?;
-    let doc: toml::Table = toml::from_str(&text).map_err(|e| said(e.to_string()))?;
-    // (checked where the command line's are: one reading of sonde.toml)
-    let name = doc
-        .get("program")
-        .and_then(|p| p.get("name"))
-        .and_then(|n| n.as_str());
-    sonde_proxy::fault::project_program_name(name).map_err(said)?;
-    let Some(list) = doc.get("scenario") else {
-        return Ok(Vec::new());
-    };
-    let list = list
-        .as_array()
-        .ok_or_else(|| said("scenario is written [[scenario]]".into()))?;
-    sonde_proxy::fault::project_scenarios(list.iter().map(scenario_of)).map_err(said)
-}
-
-/// One `[[scenario]]`: `name`, `fault` ("503 SlowDown", "500", "lost-answer",
-/// "delay 200ms"), `on` the operations, `prefix` the keys, `times` the
-/// attempts at each request that meet it (1 unless said; 0 is every one).
-fn scenario_of(t: &toml::Value) -> Result<sonde_proxy::fault::Scenario, String> {
-    let t = t.as_table().ok_or("a scenario is a table")?;
-    if let Some(k) = t
-        .keys()
-        .find(|k| !["name", "fault", "on", "prefix", "times"].contains(&k.as_str()))
-    {
-        return Err(format!("scenario: unknown key {k}"));
-    }
-    let name = t.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-    let fault = t
-        .get("fault")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("scenario {name}: no fault"))?;
-    let on: Vec<String> = match t.get("on") {
-        None => vec![],
-        Some(v) => v
-            .as_array()
-            .and_then(|a| a.iter().map(|x| x.as_str().map(String::from)).collect())
-            .ok_or_else(|| format!("scenario {name}: on is a list of operations"))?,
-    };
-    let prefix = t
-        .get("prefix")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let times = match t.get("times") {
-        None => None,
-        Some(v) => Some(
-            v.as_integer()
-                .and_then(|n| u32::try_from(n).ok())
-                .ok_or_else(|| format!("scenario {name}: times is a count"))?,
-        ),
-    };
-    sonde_proxy::fault::project_scenario(name, fault, &on, &prefix, times)
+    Ok(sonde_proxy::project::of(dir)?
+        .map(|p| p.scenarios)
+        .unwrap_or_default())
 }
 
 /// What a trial of a session would run: the project's scenarios when its
@@ -1425,8 +1394,9 @@ impl Sessions {
     }
 
     /// Starts recording: a local endpoint forwarding to `endpoint`, refusing
-    /// what `policy` (`allow`, `no-delete`, `read-only`) forbids. What to
-    /// point an application at, and the session file.
+    /// what `policy` (`allow`, `no-delete`, `read-only`; empty: the
+    /// `record-policy` setting) forbids, and a run's project's `[record]
+    /// policy` too. What to point an application at, and the session file.
     pub async fn start(endpoint: String, policy: String) -> Result<JsonValue, String> {
         begin(endpoint, policy, None, None, None).await
     }
@@ -1565,6 +1535,7 @@ impl Sessions {
         TRIAL_STOPPED.store(false, SeqCst);
         *TRIAL_OF.lock() = Some(file.clone());
         let clean_exit = read_exit(&file).unwrap_or(0);
+        let written = Arc::new(sonde_proxy::Written::of(&clean.records));
         // a new trial replaces the last one's verdicts and sessions
         sonde_proxy::trial::remove(&file);
         let dir = sonde_proxy::trial::folder_for(&file);
@@ -1579,6 +1550,7 @@ impl Sessions {
                 ),
                 of: of.clone(),
                 scenario: scenario.clone(),
+                written: written.clone(),
             };
             let ran = run_recorded(
                 &plan.command,
@@ -1982,7 +1954,7 @@ impl Sessions {
                 "\"command\":\"gen-slatedb s3://slate\"",
             )
             .replace("\"endpoint\":\"adhoc\"", "\"endpoint\":\"rustfs\"");
-        std::fs::write(&path, text).map_err(err_msg)?;
+        reqlog::private::write(&path, text).map_err(err_msg)?;
         // a finished session, kept as every other is: compressed, so the
         // list reads its shape (an open file being written has none)
         sonde_proxy::session::compress(&path).map_err(err_msg)?;
@@ -2031,7 +2003,7 @@ impl Sessions {
             let (_, session) = sonde_proxy::import::import(&text, &stem)?;
             sonde_proxy::import::save(&session, &path).map_err(err_msg)?;
         } else {
-            std::fs::write(&path, text).map_err(err_msg)?;
+            reqlog::private::write(&path, text).map_err(err_msg)?;
             if let Err(e) = Session::open(&path) {
                 let _ = std::fs::remove_file(&path);
                 return Err(format!("{name}: {e}"));
@@ -2356,10 +2328,28 @@ mod tests {
     #[test]
     fn an_unknown_recording_policy_is_refused_not_allowed() {
         assert_eq!(policy_of("allow").unwrap(), Policy::Allow);
+        assert_eq!(policy_of("").unwrap(), Policy::NoDelete, "safe by default");
         assert_eq!(policy_of("no-delete").unwrap(), Policy::NoDelete);
         assert_eq!(policy_of("read-only").unwrap(), Policy::ReadOnly);
         assert!(policy_of("readonly").unwrap_err().contains("readonly"));
         assert!(policy_of("no_delete").is_err());
+    }
+
+    #[test]
+    fn a_projects_policy_narrows_the_one_asked_and_never_widens_it() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(t.path().join(".git")).unwrap();
+        let at = |asked| run_policy(asked, Some(t.path()));
+        assert_eq!(at(Policy::Allow).unwrap(), Policy::Allow);
+        let file = t.path().join("sonde.toml");
+        std::fs::write(&file, "[record]\npolicy = \"read-only\"\n").unwrap();
+        assert_eq!(at(Policy::Allow).unwrap(), Policy::ReadOnly);
+        std::fs::write(&file, "[record]\npolicy = \"allow\"\n").unwrap();
+        assert_eq!(at(Policy::NoDelete).unwrap(), Policy::NoDelete);
+        // what the command line refuses, the app refuses
+        std::fs::write(&file, "[record]\npolicy = \"all\"\n").unwrap();
+        assert!(at(Policy::Allow).unwrap_err().contains("one of allow"));
+        assert_eq!(run_policy(Policy::Allow, None).unwrap(), Policy::Allow);
     }
 
     #[test]
@@ -3139,7 +3129,7 @@ mod tests {
         assert!(
             project_scenarios(&sub)
                 .unwrap_err()
-                .contains("unknown key when")
+                .contains("unknown field `when`")
         );
         // and no file above the repository's root is read
         let outside = tempfile::tempdir().unwrap();

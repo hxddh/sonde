@@ -1,5 +1,9 @@
 //! Session files (`.sonde`): one JSON header line, then one redacted record
 //! per line. Written as requests happen, so a crash keeps what came before.
+//! The format is a contract (docs/session-format.md): a field may be added
+//! within a version, and readers pass over fields they do not know; a change
+//! that would mislead an older reader is a new [`VERSION`], which that reader
+//! refuses by name ([`SessionHeader::readable`]).
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -11,6 +15,7 @@ use reqlog::{Record, Sink};
 use serde::{Deserialize, Serialize};
 
 pub const FORMAT: &str = "sonde-session";
+/// The format's version: what this sonde writes, and the newest it reads.
 pub const VERSION: u32 = 1;
 
 /// The first line of a session file.
@@ -19,6 +24,10 @@ pub const VERSION: u32 = 1;
 pub struct SessionHeader {
     pub format: String,
     pub version: u32,
+    /// The sonde that wrote it (its version): a reader that cannot read the
+    /// file names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sonde: Option<String>,
     pub created: DateTime<Utc>,
     /// The endpoint the requests went to (its id and URL, never credentials).
     pub endpoint: String,
@@ -120,6 +129,7 @@ impl SessionHeader {
         SessionHeader {
             format: FORMAT.into(),
             version: VERSION,
+            sonde: Some(env!("CARGO_PKG_VERSION").into()),
             created: Utc::now(),
             endpoint: endpoint.into(),
             url: url.into(),
@@ -132,6 +142,27 @@ impl SessionHeader {
             trial_of: None,
             whole_seconds: false,
         }
+    }
+
+    /// Whether this sonde reads the file: a sonde session of a version it
+    /// knows. A newer one is refused by name, never read as far as it goes:
+    /// a field whose meaning changed would be read in its old one.
+    pub fn readable(&self) -> Result<(), String> {
+        if self.format != FORMAT {
+            return Err(format!("not a sonde session (format {:?})", self.format));
+        }
+        if self.version > VERSION {
+            let by = self
+                .sonde
+                .as_deref()
+                .map_or("a newer sonde".to_string(), |v| format!("sonde {v}"));
+            return Err(format!(
+                "written by {by}, format {}; this sonde ({}) reads up to format {VERSION}: update sonde to read it",
+                self.version,
+                env!("CARGO_PKG_VERSION")
+            ));
+        }
+        Ok(())
     }
 
     /// Whether the session was recorded from a program's own requests
@@ -189,7 +220,7 @@ pub fn fresh_path(dir: &Path, stem: &str) -> std::path::PathBuf {
 
 impl SessionWriter {
     pub fn create(path: &Path, header: &SessionHeader) -> std::io::Result<SessionWriter> {
-        let mut out = BufWriter::new(File::create(path)?);
+        let mut out = BufWriter::new(reqlog::private::create(path)?);
         serde_json::to_writer(&mut out, header)?;
         out.write_all(b"\n")?;
         out.flush()?;
@@ -403,7 +434,7 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
     let mut tally = listed.then(Tally::default);
     {
         let mut src = File::open(path)?;
-        let out = File::create(&tmp)?;
+        let out = reqlog::private::create(&tmp)?;
         let mut gz =
             flate2::write::GzEncoder::new(BufWriter::new(out), flate2::Compression::new(6));
         let mut buf = vec![0u8; 1 << 16];
@@ -581,15 +612,7 @@ impl Session {
         let first = String::from_utf8_lossy(first);
         let header: SessionHeader = serde_json::from_str(first.trim_end_matches('\r'))
             .map_err(|e| format!("not a sonde session: {e}"))?;
-        if header.format != FORMAT {
-            return Err(format!("not a sonde session (format {:?})", header.format));
-        }
-        if header.version > VERSION {
-            return Err(format!(
-                "session version {} is newer than this sonde reads ({VERSION})",
-                header.version
-            ));
-        }
+        header.readable()?;
         let small = std::fs::metadata(path).is_ok_and(|m| m.len() < 256 * 1024);
         let workers = if small {
             1
@@ -845,6 +868,79 @@ fn read_blocks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A session, its counts and its verdicts are their user's alone.
+    #[cfg(unix)]
+    #[test]
+    fn what_a_recording_leaves_is_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions").join("s.sonde");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let w = SessionWriter::create(&path, &SessionHeader::new("e", "u", "r", None)).unwrap();
+        w.write(&Record {
+            id: 1,
+            operation: "GetObject".into(),
+            ..Default::default()
+        });
+        w.flush().unwrap();
+        drop(w);
+        compress(&path).unwrap();
+        crate::trial::save(&path, &[]).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&crate::summary::counted_file(&path)), 0o600);
+        assert_eq!(mode(&crate::trial::file_for(&path)), 0o600);
+    }
+
+    /// docs/session-format.md's promises: the fewest fields a line needs,
+    /// fields not known passed over, a newer format refused by name.
+    #[test]
+    fn the_format_as_its_spec_says() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sonde");
+        let least = concat!(
+            r#"{"format":"sonde-session","version":1,"created":"2026-11-12T10:00:00Z","endpoint":"e","url":"","region":"","later":{"x":1}}"#,
+            "\n",
+            r#"{"id":1,"time":"2026-11-12T10:00:00.001Z","endpoint":"e","operation":"GetObject","method":"GET","url":"","query":[],"latencyMs":3.5,"retries":0,"requestHeaders":[],"responseHeaders":[],"later":true}"#,
+            "\n",
+            r#"{"log":{"time":"2026-11-12T10:00:00.002Z","text":"hi\n"},"later":1}"#,
+            "\n",
+        );
+        std::fs::write(&path, least).unwrap();
+        let s = Session::open(&path).unwrap();
+        assert_eq!(s.records.len(), 1);
+        assert_eq!(
+            (s.records[0].status, s.records[0].bucket.as_ref()),
+            (None, None)
+        );
+        assert_eq!(s.logs.len(), 1);
+        assert_eq!(s.header.sonde, None);
+        // a line short of a required field is not a record
+        std::fs::write(&path, least.replace(r#""latencyMs":3.5,"#, "")).unwrap();
+        assert!(Session::open(&path).is_err());
+        // what this sonde writes names it
+        let h = SessionHeader::new("e", "u", "r", None);
+        assert_eq!(h.sonde.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(h.version, VERSION);
+        // newer: refused, by name
+        let newer = least.replacen(r#""version":1,"#, r#""version":2,"sonde":"18.0.0","#, 1);
+        std::fs::write(&path, &newer).unwrap();
+        let e = Session::open(&path).unwrap_err();
+        assert!(
+            e.contains("written by sonde 18.0.0, format 2;") && e.contains("reads up to format 1"),
+            "{e}"
+        );
+        std::fs::write(&path, least.replacen(r#""version":1"#, r#""version":3"#, 1)).unwrap();
+        let e = Session::open(&path).unwrap_err();
+        assert!(e.contains("written by a newer sonde, format 3"), "{e}");
+        std::fs::write(&path, least.replacen("sonde-session", "har", 1)).unwrap();
+        assert!(
+            Session::open(&path)
+                .unwrap_err()
+                .contains("not a sonde session")
+        );
+    }
 
     #[test]
     fn round_trip_and_torn_tail() {
