@@ -278,7 +278,7 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 }
 
 /** The Runs pane of a session: its program over its runs. */
-export function HistoryPane(props: { path: string; onOpen?: (path: string) => void; /** "Try under faults…": the app's own (a shared page runs nothing) */ onTry?: () => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
+export function HistoryPane(props: { path: string; onOpen?: (path: string) => void; /** "Try again what broke": a fresh run, then the scenarios that did not survive */ onTryAgain?: (trials: Trial[]) => void }) {
   // the program's own budget, where its project gives one
   const budget = () => {
     try {
@@ -361,10 +361,6 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                     </View>
                   }
                 />
-              </If>
-              {/* the same command again, sonde answering in the store's place: asked first what will run */}
-              <If when={props.onTry && !terminal()}>
-                <Button small variant="outline" icon="flask-conical" label={t("trial.try")} onPress={() => props.onTry?.()} testID="trial-open" />
               </If>
               {/* one button, its words the action: set, or (already the baseline) clear */}
               <Button small variant="outline" icon={isBase() ? "x" : "check"} label={isBase() ? t("history.clearBaseline") : t("history.makeBaseline")} tip={isBase() ? t("history.isBaseline") : undefined} onPress={toggle} testID="history-baseline" />

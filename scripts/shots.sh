@@ -41,7 +41,7 @@ if [ "$target" = linux ] && [ -z "${DISPLAY:-}" ]; then
   sleep 1
 fi
 mkdir -p "${SONDE_SHOTS:-shots}"
-nsh test tests/shots.test.tsx --target "$target"
+nsh test tests/shots.test.tsx --target "$target" ${SHOTS_FILTER:+--filter "$SHOTS_FILTER"}
 ls "${SONDE_SHOTS:-shots}"
 # SONDE_README=1: the README's pictures (docs/images) from this tour, so they are of this version's screens
 if [ -n "${SONDE_README:-}" ]; then

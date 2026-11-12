@@ -98,7 +98,7 @@ for (const v of variants) {
     const sure = sample.includes("AWS_ENDPOINT_URL");
     // (the demo left its own first command in the field: typed after it, the two ran as one)
     await app.clear("id:run-command");
-    await app.type("id:run-command", command(cmd));
+    await app.paste("id:run-command", { text: command(cmd) });
     // (the button follows the field a frame later)
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
@@ -106,7 +106,7 @@ for (const v of variants) {
     // (the other shell's form, should the sample not have said and the first have reached no store)
     if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
       await app.clear("id:run-command");
-      await app.type("id:run-command", command(!cmd));
+      await app.paste("id:run-command", { text: command(!cmd) });
       await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
       await app.press("id:run-start");
       await app.waitUntil(() => !app.shows("id:run-no-requests"), { timeout: 20000 });
@@ -180,6 +180,12 @@ for (const v of variants) {
     // opens on the example already, and reads it again as the list changes: let that settle)
     await app.wait(900);
     await app.waitFor("id:session-summary", { timeout: 10000 });
+    // a variant after the first has the example in its list already: opened from there when the press kept the run shown
+    const wal = v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128";
+    if (!(await app.waitFor(wal, { timeout: 5000 }).then(() => true, () => false))) {
+      await app.press("text:gen-slatedb >> nth=0");
+      await app.waitFor(wal, { timeout: 10000 });
+    }
     await shot("03-session");
     await app.press(v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128");
     await app.waitFor("id:inspector");

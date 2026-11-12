@@ -561,7 +561,7 @@ test("a scenario's verdicts over the program's runs read in a few words; the ref
   expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }, { at: at[1], standing: "broke", run: "b" }] })).toBe(`Broke since ${day(at[0])}`);
   // a refusal by the policy is never a failure's red, nor a degraded run's amber
   expect(STANDING.refused).toBe("refused");
-  expect(STANDING.refused === STANDING.degraded || STANDING.refused === STANDING.broke).toBe(false);
+  expect(([STANDING.degraded, STANDING.broke] as string[]).includes(STANDING.refused)).toBe(false);
   // "Try again what broke" takes up what did not survive, the refused with it
   const verdicts = (["survived", "degraded", "broke", "untested", "refused"] as const).map((standing) => ({ ...base, scenario: standing, standing }));
   expect(toTryAgain(verdicts).map((x) => x.scenario)).toEqual(["degraded", "broke", "refused"]);

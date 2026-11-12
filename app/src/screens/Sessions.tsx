@@ -413,7 +413,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   );
   const body = (v: () => SessionView) => {
     if (pane() === "time") return <TimePane view={v()} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
-    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTry={() => tryingFaults.set(true)} onTryAgain={(trials) => tryingAgain.set(trials)} />;
+    if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
       return (
@@ -462,12 +462,19 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         />
       </If>
       {/* the same command under faults, asked first what will run (a trial is no run of its own) */}
-      <If when={ranCommand(view()?.header.command) && !view()?.trial}>
-        <Button small variant="outline" icon="flask-conical" label={t("trial.try")} onPress={() => tryingFaults.set(true)} disabled={!!running()} testID="session-try" />
+      <If when={!terminal() && ranCommand(view()?.header.command) && !view()?.trial}>
+        <If when={roomy()} else={<IconButton icon="flask-conical" label={t("trial.try")} onPress={() => tryingFaults.set(true)} disabled={!!running()} testID="session-try" />}>
+          <Button small variant="outline" icon="flask-conical" label={t("trial.try")} onPress={() => tryingFaults.set(true)} disabled={!!running()} testID="session-try" />
+        </If>
       </If>
-      <Button small variant="outline" icon="repeat-2" label={t("replay.open")} onPress={() => replaying.set(true)} testID="replay-open" />
+      {/* where the pane is narrow, the others by their icons (their words in their tooltips): the command keeps its room */}
+      <If when={roomy() || terminal()} else={<IconButton icon="repeat-2" label={t("replay.open")} onPress={() => replaying.set(true)} testID="replay-open" />}>
+        <Button small variant="outline" icon="repeat-2" label={t("replay.open")} onPress={() => replaying.set(true)} testID="replay-open" />
+      </If>
       <If when={isAvailable}>
-        <Button small variant="outline" icon="git-compare-arrows" label={t("compare.open")} onPress={compareMenu} testID="compare-open" />
+        <If when={roomy()} else={<IconButton icon="git-compare-arrows" label={t("compare.open")} onPress={compareMenu} testID="compare-open" />}>
+          <Button small variant="outline" icon="git-compare-arrows" label={t("compare.open")} onPress={compareMenu} testID="compare-open" />
+        </If>
         <IconButton icon="ellipsis" label={t("common.more")} onPress={moreMenu} testID="session-more" />
       </If>
     </View>

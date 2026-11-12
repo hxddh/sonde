@@ -383,7 +383,7 @@ function LiveOperations() {
             <If when={view()!.profile?.groups.length}>
               <Text testID="run-story" class="px-1 text-body leading-5 text-foreground">{sessionStory(view()!.profile)}</Text>
             </If>
-            <Observations view={view()!} dense max={3} whatIfUnder states={statesOf(since())} onFilter={(i) => i !== null && openLastRun(go, i)} />
+            <Observations view={view()!} dense max={3} whatIfUnder savingUnder narrow states={statesOf(since())} onFilter={(i) => i !== null && openLastRun(go, i)} />
             {/* beside them, what changed since the program's run before: fixed (with what it saved), back */}
             <SinceRun since={since()} max={3} onCompare={compareBefore} />
           </If>

@@ -321,7 +321,7 @@ export function whatIfText(v: SessionView): string | null {
 /** What stands out in a session — its core result. Each finding says what
  * happened and why it matters, and narrows the operations to those it is
  * about. `compact` (beside a run's live operations): the sentences only. */
-export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange> }) {
+export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange>; /** what acting on a finding saves under its words, never beside them (a narrow column: Run's) */ savingUnder?: boolean }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   /** How many operations a finding is about (a view lists the first of them only). */
   const about = (o: Observation) => o.episodesTotal ?? o.episodes?.length ?? 0;
@@ -429,7 +429,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
       // saves goes first, then the count's words (its chevron stays)
       trailing={
         <>
-          <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
+          <If when={dense() && props.filter !== i() && !props.compact && !props.narrow && !props.savingUnder && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
           <If when={props.onFilter && about(o())}>
             <View class={`${props.narrow ? "" : WIDTH.count} flex-row items-center justify-end gap-1`}>
               <If when={!props.narrow}>
@@ -460,7 +460,7 @@ export function Observations(props: { view: SessionView; filter?: number | null;
         </View>
         {/* why it matters and what acting on it saves: here, or (the finding opened, with fixes) once, in its advice */}
         <If when={(!dense() || props.filter === i()) && !opened(o, i) && observationWhy(o())}>{(w) => <Text class="text-small leading-snug text-muted-foreground line-clamp-2">{w()}</Text>}</If>
-        <If when={(!dense() || props.filter === i()) && !opened(o, i) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
+        <If when={(!dense() || props.filter === i() || props.savingUnder) && !opened(o, i) && !props.compact && observationSaving(o())}>{(v) => saving(v as () => string, i)}</If>
       </View>
     </ListRow>
   );
