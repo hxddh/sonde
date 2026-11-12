@@ -35,7 +35,9 @@ export function trialText(x: Trial): string {
     parts.push(hi - lo < 1 ? t("trial.after", { t: duration(lo) }) : t(x.jitter === undefined || x.jitter === null ? "trial.afterRange" : x.jitter ? "trial.afterJitter" : "trial.afterStep", { lo: duration(lo), hi: duration(hi) }));
   }
   if (x.delayed) parts.push(t("trial.delayed", { n: count(x.delayed) }));
-  if (x.cleanRequests > 0 && x.requests !== x.cleanRequests) parts.push(t("trial.load", { x: factor(x.requests / x.cleanRequests) }));
+  // more requests than the clean run: so many times its load; fewer: the two counts (never "0.1×")
+  if (x.cleanRequests > 0 && x.requests > x.cleanRequests) parts.push(t("trial.load", { x: factor(x.requests / x.cleanRequests) }));
+  if (x.cleanRequests > 0 && x.requests < x.cleanRequests) parts.push(t("trial.loadFewer", { n: count(x.requests), of: count(x.cleanRequests) }));
   // how long it took against the clean run, once that is more than a blink apart
   if (x.wallMs && x.cleanWallMs && Math.abs(x.wallMs - x.cleanWallMs) >= Math.max(50, x.cleanWallMs * 0.1)) parts.push(t("trial.took", { t: duration(x.wallMs), clean: duration(x.cleanWallMs) }));
   if (x.wroteTwice > 0) parts.push(t("trial.twice", { n: count(x.wroteTwice) }));
@@ -256,6 +258,14 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
 
 /** The Runs pane of a session: its program over its runs. */
 export function HistoryPane(props: { path: string; onOpen?: (path: string) => void; /** "Try under faults…": the app's own (a shared page runs nothing) */ onTry?: () => void }) {
+  // the program's own budget, where its project gives one
+  const budget = () => {
+    try {
+      return api.sessions.budget(props.path);
+    } catch {
+      return null;
+    }
+  };
   // a failure is said as one (with Try again), never as "one run so far"
   // read again when the sessions change: a run ended, one was deleted, a baseline set elsewhere
   const h = resource(
@@ -354,7 +364,8 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
               >
                 <View class="flex-row flex-wrap gap-3">
                   <RunTrend history={shown(x())} measure="requests" title={t("figure.requests")} format={n} onOpen={props.onOpen} />
-                  <RunTrend history={shown(x())} measure="busyMs" title={t("profile.waiting")} format={duration} onOpen={props.onOpen} />
+                  {/* the project's own limit on the waiting (sonde.toml's max-waiting), as a line */}
+                  <RunTrend history={shown(x())} measure="busyMs" title={t("profile.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
                   <RunTrend history={shown(x())} measure="cost" title={t("profile.cost")} format={(v) => cost(v, x().runs[0]?.currency ?? "USD")} onOpen={props.onOpen} />
                   <RunTrend history={shown(x())} measure="warnings" title={t("obs.warnings")} format={n} onOpen={props.onOpen} />
                 </View>

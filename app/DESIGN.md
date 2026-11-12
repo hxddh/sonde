@@ -348,6 +348,8 @@ nothing uses fails `check-locales.py`. Nouns
 for places (Run, Sessions, Buckets, Activity), verbs for commands. Chinese is written,
 not translated: `桶`, `会话`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of
 their own (运行 the place, 启动 its button, 各次运行 and 历次运行 the runs in the list and on the tab; 操作 what
-a program did, 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create). What sonde says about a session comes from
+a program did, 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create; 未通过 a
+trial the program broke under, 失败 a request, a job or a budget that failed: a sidebar of trials never reads like a
+list of failed requests). What sonde says about a session comes from
 phrases (`src/phrases.ts`) in both languages: English from Rust's own templates, which `check-locales.py`
 holds the app's to, letter for letter.

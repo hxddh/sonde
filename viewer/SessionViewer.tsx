@@ -10,11 +10,33 @@ import { duration } from "../app/src/format";
 import { t } from "../app/src/i18n";
 import { viewOfWhole, wholeOperations } from "../app/src/operations";
 import type { EpisodeRow, LogLine, RecordSummary, RequestRecord, WholeSession } from "../app/src/types";
-import { BREAK, Button, Muted, PanelHeader, Segmented, SPLIT_HANDLE, Strong } from "../app/src/ui/kit";
+import { BREAK, Button, Muted, PanelHeader, Segmented, SPLIT_HANDLE, Strong, PANE, SIZES } from "../app/src/ui/kit";
 import { SessionShape, SHAPE_STRIP, TICK_ROOM } from "../app/src/ui/plots";
 import { RecordView } from "../app/src/ui/record";
 import { findingMarks, linesOf, Observations, OperationsTable, OperationView, OutputTable, SessionHeader } from "../app/src/ui/sessionview";
 import { TimePane } from "../app/src/ui/profile";
+import { type Range, rangeOf, rangeParam } from "../app/src/range";
+
+/** The page's address, where the page has one (a browser): its hash keeps the stretch of time shown. */
+const place = () => (globalThis as { location?: { hash: string; pathname: string; search: string }; history?: { replaceState: (s: unknown, t: string, u: string) => void } });
+/** The stretch the address names (`#range=120-480`), read once as the page opens. */
+const hashRange: Range | null = (() => {
+  try {
+    return rangeOf(place().location?.hash ?? "");
+  } catch {
+    return null;
+  }
+})();
+/** The stretch shown, kept in the address (replaced, not pushed: Back leaves the page), so a copied address opens on it. */
+function keepRange(r: Range | null) {
+  try {
+    const g = place();
+    if (!g.location || !g.history) return;
+    g.history.replaceState(null, "", `${g.location.pathname}${g.location.search}${r ? `#${rangeParam(r)}` : ""}`);
+  } catch {
+    // no address to keep it in
+  }
+}
 import type { SignalId } from "../app/src/signals";
 
 /** What `sonde share` writes: the session whole, every operation and request in the page. */
@@ -38,7 +60,8 @@ export function SessionViewer(props: { data: SharedSession }) {
   const opHighlight = signal<number[]>([]);
   const outHighlight = signal<number[]>([]);
   const filter = signal<number | null>(null);
-  const pane = signal<Pane>(d.lines.length ? "aligned" : "operations");
+  // an address that names a stretch of time opens on the Time pane, over it
+  const pane = signal<Pane>(hashRange && d.profile ? "time" : d.lines.length ? "aligned" : "operations");
   // a signal pressed in the header: the Time pane, on its chart
   const reveal = signal<{ id: SignalId; n: number } | null>(null);
   const showSignal = (id: SignalId) => batch(() => (reveal.set({ id, n: (reveal()?.n ?? 0) + 1 }), pane.set("time")));
@@ -109,14 +132,14 @@ export function SessionViewer(props: { data: SharedSession }) {
   const output = () => <OutputTable lines={d.lines} onSelect={chooseLine} ref={(r) => (outRef = r)} highlight={outHighlight()} />;
   // the app's session page, read-only: its header, then what is shown of it (the tabs), then
   // the pane chosen — the shape of the session and what stands out over its operations
-  const findings = () => <Observations view={d} dense narrow={box().w < BREAK.inspector || inspecting()} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(104, Math.round(box().h * 0.3))} />;
+  const findings = () => <Observations view={d} dense narrow={box().w < BREAK.inspector || inspecting()} filter={filter()} onFilter={(f) => filter.set(f)} maxHeight={Math.max(SIZES.findingsLeast, Math.round(box().h * SIZES.findingsShare))} />;
   const strip = () => (
     <If when={d.profile && box().h >= BREAK.short}>
       <SessionShape strip axis profile={d.profile} slice={slice()} onSlice={(i) => slice.set(i)} annotate marks={findingMarks(d)} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
     </If>
   );
   const body = () => {
-    if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} reveal={reveal()} />;
+    if (pane() === "time" && d.profile) return <TimePane view={d} onRequest={(id) => rec.set(id)} reveal={reveal()} range={hashRange} onRange={keepRange} />;
     if (pane() === "operations" || !d.lines.length)
       return (
         <View class="min-h-0 flex-1 gap-3">
@@ -129,10 +152,10 @@ export function SessionViewer(props: { data: SharedSession }) {
       <View class="min-h-0 flex-1 gap-3">
         {findings()}
         <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeOutput")}>
-          <ResizablePanel minSize={240}>
+          <ResizablePanel minSize={PANE.outputLeast}>
             <View class="flex-1 pr-2">{output()}</View>
           </ResizablePanel>
-          <ResizablePanel minSize={320}>
+          <ResizablePanel minSize={PANE.besideLeast}>
             <View class="flex-1 pl-2">{operations()}</View>
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -180,9 +203,9 @@ export function SessionViewer(props: { data: SharedSession }) {
   return (
     <View class="flex-1 bg-background" testID="viewer" onLayout={(e) => box.set({ w: Math.round(e.bounds.size.width), h: Math.round(e.bounds.size.height) })}>
       <ResizablePanelGroup axis="horizontal" class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeInspector")}>
-        <ResizablePanel minSize={460}>{main()}</ResizablePanel>
+        <ResizablePanel minSize={PANE.sessionLeast}>{main()}</ResizablePanel>
         <If when={inspecting()}>
-          <ResizablePanel size={420} minSize={320} maxSize={680}>
+          <ResizablePanel size={PANE.inspector} minSize={PANE.inspectorLeast} maxSize={PANE.inspectorMost}>
             <View testID="inspector" class="flex-1 border-l border-border bg-inspector">
               <PanelHeader icon={record() ? "radio" : "layers"} title={record() ? t("inspector.request") : t("inspector.operation")} onClose={close} closeTestID="inspector-close" />
               <Scroll class="flex-1" contentClass="p-4">

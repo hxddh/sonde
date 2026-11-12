@@ -43,3 +43,34 @@ fi
 mkdir -p "${SONDE_SHOTS:-shots}"
 nsh test tests/shots.test.tsx --target "$target"
 ls "${SONDE_SHOTS:-shots}"
+# SONDE_README=1: the README's pictures (docs/images) from this tour, so they are of this version's screens
+if [ -n "${SONDE_README:-}" ]; then
+  from="${SONDE_SHOTS:-shots}"
+  to=../docs/images
+  while read -r shot name; do
+    [ -f "$from/$shot.png" ] && cp "$from/$shot.png" "$to/$name.png" && echo "docs/images/$name.png <- $shot"
+  done <<'MAP'
+wide-02b-ran run
+wide-02e-trial-plan trial-plan
+wide-02g-trial-done trial
+wide-02j-trial-time trial-over-clean
+wide-03-session session
+min-03-session session-min
+zh-03-session session-zh
+wide-03b-operation operation
+wide-03d-filtered finding-advice
+wide-03f-slice slice
+wide-03g-time time
+dark-03g-time time-dark
+wide-03i-distribution spread
+wide-03l-flows flows
+dark-03l-flows flows-dark
+wide-03m-latency latency
+wide-03h-runs runs
+wide-04b-objects store
+wide-04d-uploads uploads
+wide-05-activity activity
+wide-05c-endpoints endpoints
+wide-06-palette palette
+MAP
+fi

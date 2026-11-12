@@ -118,10 +118,108 @@ export const READING = "w-full max-w-[560px]";
 export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as const;
 /** The sizes a page may name, each once: the least width a tile reads in
  * (a session's signal, a comparison's fact with its two lines, a bucket's
- * figure), how high a dialog's scrolling part grows before it scrolls, and
- * a terminal's matrix. lint-kit fails a size constant or a literal least
- * width in a page. */
-export const SIZES = { signalTile: 168, compareTile: 236, bucketTile: 200, capacityTile: 128, dialogScroll: 480, terminalMatrix: 640 } as const;
+ * figure), how high a dialog's scrolling part grows before it scrolls, a
+ * terminal's matrix, and the findings' room over a session's operations (in
+ * a short pane: two lines, or the least a chosen finding's advice reads in;
+ * in a taller one its least and its share of the pane, a finding chosen or
+ * not; the room is then rounded down to whole findings). lint-kit and
+ * lint-layout fail a size constant, a literal least width, a column's literal
+ * width or a literal `maxHeight` in a page. */
+export const SIZES = {
+  signalTile: 168,
+  compareTile: 236,
+  bucketTile: 200,
+  capacityTile: 128,
+  dialogScroll: 480,
+  terminalMatrix: 640,
+  findingsShort: 68,
+  findingsShortOpen: 96,
+  findingsLeast: 104,
+  findingsShare: 0.3,
+  findingsShareOpen: 0.45,
+} as const;
+/** A table's column widths, each named once (lint-kit fails a literal width
+ * in a column object; lint-layout reads these to check a title and the widest
+ * cell fit): what a column holds decides its width, the column that takes the
+ * rest has a least. */
+export const COLUMN = {
+  /** a status's dot and code */
+  status: 52,
+  /** an S3 operation's longest name */
+  operation: 196,
+  /** an operation's name, as narrow as it goes when names are short */
+  operationLeast: 96,
+  /** how long a request took */
+  took: 92,
+  /** a clock time to the millisecond */
+  clock: 104,
+  /** a request's target, a key, an object's name: the least they keep */
+  targetLeast: 100,
+  keyLeast: 120,
+  /** an upload's mark (an icon) */
+  flag: 24,
+  /** a day in full ("2026年12月30日") */
+  day: 124,
+  /** a date and time in full ("Sep 30, 2026, 12:59 PM") */
+  date: 172,
+  /** an age ("9,999 d") */
+  age: 84,
+  /** a count of parts */
+  parts: 72,
+  /** a size */
+  bytes: 104,
+  /** a cost a month */
+  cost: 112,
+  /** a storage class */
+  storageClass: 124,
+  /** an object's parts, beside its size */
+  objectParts: 64,
+  /** an object's name before the table has measured itself */
+  name: 380,
+  /** the store matrix: what is compared, the recorded figure, a store's */
+  matrixWhat: 190,
+  matrixRecorded: 90,
+  matrixRun: 100,
+  /** the compatibility matrix: a probe, a store's verdict */
+  probe: 288,
+  probeStore: 150,
+  /** an operation's title: before measuring, beside the output, and the least it keeps */
+  title: 340,
+  titleCompact: 220,
+  titleLeast: 160,
+  /** the operations' place-in-time bar and notes: the least they keep */
+  whenLeast: 80,
+  notesLeast: 120,
+  /** the program's output: its clock, and a line as long as lines go */
+  outputTime: 110,
+  outputLine: 2000,
+} as const;
+
+/** The least (and most) a split's panes keep, each named once (lint-kit fails
+ * a literal `minSize`/`maxSize`/`size` on a ResizablePanel). */
+export const PANE = {
+  /** the sidebar */
+  sidebarLeast: 208,
+  sidebarMost: 440,
+  /** the page beside the sidebar */
+  mainLeast: 480,
+  /** Run's program and its operations */
+  terminalLeast: 320,
+  operationsLeast: 340,
+  /** a session's output beside its operations */
+  outputLeast: 240,
+  besideLeast: 320,
+  /** a session beside its inspector */
+  sessionLeast: 460,
+  inspector: 420,
+  inspectorLeast: 320,
+  inspectorMost: 680,
+  /** a bucket's objects beside an object's details */
+  objectsLeast: 420,
+  detailLeast: 300,
+  detailMost: 720,
+} as const;
+
 /** The widths a page may give a control or a column of text, each named
  * once (lint-kit fails a `w-N` and an arbitrary `[…]` size anywhere else):
  * fields by what they hold, columns of a hand-set row by what stands in them. */
@@ -148,6 +246,8 @@ export const WIDTH = {
   date: "w-36",
   /** a tree row's chevron */
   chevron: "w-3.5",
+  /** the digit that opens a place from a terminal's home list */
+  digit: "w-4",
   /** the title bar: the endpoint switcher, wide and tight; the search field's stand-in; the running program's pill at most */
   switcher: "w-52",
   switcherTight: "w-40",
@@ -472,7 +572,8 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
       <Icon name="chevron-right" size={ICON.small} />
     </If>
   );
-  const figure = () => <Text class={`text-heading font-bold tabular-nums line-clamp-1 ${look() === "line" ? "shrink-0" : "min-w-0 flex-1"} ${tint()}`}>{props.value}</Text>;
+  // a figure is never cut: a figure of words ("SlateDB, Apache Iceberg") takes a second line in its tile
+  const figure = () => <Text class={`text-heading font-bold tabular-nums ${look() === "line" ? "shrink-0 line-clamp-1" : "min-w-0 flex-1 line-clamp-2"} ${tint()}`}>{props.value}</Text>;
   return (
     <Card pad="tile" class={props.class} testID={props.testID} label={props.onPress || look() !== "full" ? said() : undefined} onPress={props.onPress}>
       <If
@@ -626,8 +727,8 @@ export function PageHeader(props: { title?: string; subtitle?: string; mono?: bo
  * is made of and Escape closes it (Native Shell's Popover): the keyboard,
  * touch and screen readers reach it as the pointer does. The one inline
  * figure; in a row of tiles, `Stat`. */
-export function Figure(props: { value: string; label: string; tone?: "plain" | "ok" | "warn" | "bad" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
-  const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+export function Figure(props: { value: string; label: string; /** `client`: failures that are all the program's own (4xx), in the tone their rows have */ tone?: "plain" | "ok" | "warn" | "bad" | "client" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
+  const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", client: "text-status-client", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
   const body = (
     <View class="gap-1">
       <Text class={`tabular-nums font-bold ${props.small ? "text-body" : "text-heading"} ${tint()}`}>{props.value}</Text>
@@ -1034,7 +1135,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
  * not come and go with what they would show. */
 export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName; disabled?: boolean; why?: string }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
-    <Tabs testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`} indicatorClass="inset-y-0.5 rounded-(--radius-sm) bg-background shadow-sm motion-safe:transition-all motion-safe:duration-200">
+    <Tabs testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`} indicatorClass="inset-y-0.5 rounded-(--radius-sm) bg-segment shadow-sm motion-safe:transition-all motion-safe:duration-200">
       <Each of={props.items} key={(i) => i.value}>
         {(item) => (
           <Tab
@@ -1070,7 +1171,7 @@ export function Options(props: { value: string; items: { value: string; title: s
             accessibilityLabel={item().title}
             checked={props.value === item().value}
             onChange={() => props.onChange(item().value)}
-            class={`group ${CONTROL.segment} checked:bg-background checked:shadow-sm ${FOCUS}`}
+            class={`group ${CONTROL.segment} checked:bg-segment checked:shadow-sm ${FOCUS}`}
           >
             <If when={item().icon}>
               <Icon name={item().icon!} size={12} tint={props.value === item().value ? "foreground" : "muted-foreground"} />

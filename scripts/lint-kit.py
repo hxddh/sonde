@@ -56,6 +56,11 @@ RULES = [
     ("icon-size", r"<Icon\b[^>]*\bsize=\{(?!12\}|16\}|20\}|ICON\.)", "an icon size of its own: ICON.small 12, default 16, large 20"),
     ("icon-tile", r"size-(?:8|9|10|11|12) (?:shrink-0 )?items-center justify-center rounded-\S+ bg-muted", "an icon tile by hand: use IconTile"),
     ("empty", r"text-(?:small|body) text-muted-foreground\">\{t\(\"[\w.]*(?:\.none|\.empty|noMatch|\.nothing|None|Empty)\"\)\}</Text>", "nothing-here by hand: use Empty (compact inside a list or a chart)"),
+    # 17.0: what 16.0's lint did not see
+    ("column", r"\{\s*key\b[^}]*\b(?:width|minWidth|maxWidth):\s*\d", "a column's width as a number: the kit's COLUMN"),
+    ("threshold", r"\bmaxHeight=\{[^\n]*?(?<![\w.])\d{2,}", "a bound of its own: the kit's SIZES"),
+    ("threshold", r"<ResizablePanel\b[^>]*\b(?:minSize|maxSize|size)=\{\d", "a pane's size of its own: the kit's PANE"),
+    ("press", r"<(?:Text|View)\b[^>]*\brole=\"button\"", "a pressable text or view by hand (no focus ring): use Button, ListRow or Back"),
 ]
 # in the pages and the shared pieces only: what the reader sees of a number
 # the look of an nsh/base control is the kit's: a page imports what has structure and no look of
@@ -93,6 +98,8 @@ EXEMPT = {
     ("phrases.ts", "duration"), ("corephrases.ts", "duration"),
     # the chart system names its own sizes (a chart's heights and gutters are its constants)
     ("ui/plots/system.tsx", "size"), ("ui/plots/system.tsx", "width"),
+    # a terminal's toast is Native Shell's: its one action is a word in its line, pressed or reached by its key
+    ("ui/toast.tsx", "press"),
 }
 # spacing the chart system names once (its gutter), on the lines that define it
 GUTTER_LINE = re.compile(r"^(?:export )?const GUTTER\w* = ")
@@ -107,6 +114,8 @@ def say(where, n, name, why):
 
 files = [(p, f"app/src/{p.relative_to(app).as_posix()}", p.relative_to(app).as_posix()) for p in sorted(app.rglob("*.ts*"))]
 files += [(p, f"viewer/{p.name}", f"viewer/{p.name}") for p in sorted(viewer.glob("*.tsx"))]
+# the app's own root: its window and its terminal pages are pages too (16.0's lint did not read it)
+files += [(root / "app" / "App.tsx", "app/App.tsx", "screens/App.tsx")]
 for path, where, rel in files:
     lines = path.read_text().splitlines()
     ui = rel.startswith(("ui/", "screens/", "viewer/"))
@@ -143,7 +152,7 @@ for key in BREAK_KEYS:
         say("app/src/ui/kit.tsx", kit[: m.start()].count("\n") + 1, "threshold", f"BREAK.{key} is used nowhere: delete it")
 
 # the kit's sizes are used, each by its name
-for const in ("SIZES", "WIDTH", "SURFACE"):
+for const in ("SIZES", "WIDTH", "SURFACE", "COLUMN", "PANE"):
     start = kit.index(f"export const {const} = {{")
     body = kit[start : kit.index("} as const;", start)]
     keys = re.findall(r"^\s*(\w+): ", body, re.M) if "\n" in body else re.findall(r"(\w+): ", body)
@@ -163,5 +172,5 @@ for name, body in re.findall(r"export function (\w+)\([^)]*\): string \{(.*?)\n\
         say("app/src/format.ts", fmt[: fmt.index(f"export function {name}(")].count("\n") + 1, "duration", f"{name}() writes a duration: only duration() does")
 
 charts = subprocess.run([sys.executable, str(Path(__file__).with_name("lint-charts.py"))])
-print(f"kit: {len(files)} files against {len(RULES) + len(UI_RULES) + 2} rules; weights regular and bold; {len(BREAK_KEYS)} thresholds (BREAK); sizes by name (SIZES, WIDTH, SURFACE); nsh/base in pages: structure only: {'failed' if failed else 'ok'}")
+print(f"kit: {len(files)} files against {len(RULES) + len(UI_RULES) + 2} rules; weights regular and bold; {len(BREAK_KEYS)} thresholds (BREAK); sizes by name (SIZES, WIDTH, SURFACE, COLUMN, PANE; App.tsx included); nsh/base in pages: structure only: {'failed' if failed else 'ok'}")
 sys.exit(1 if failed or charts.returncode else 0)

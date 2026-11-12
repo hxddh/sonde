@@ -8,7 +8,7 @@ import { Area, Bar, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Cell } fro
 import { bytes, cost, count, duration, percent, transfer } from "../../format";
 import { t } from "../../i18n";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, BAR_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_LABEL, TICK_ROOM, TIME_TICK, TOP_LABEL, VALUE_TICK, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, LegendItem, OUTCOMES, TimeAxis, ValueAxis, sessionSpan, BARS, GRID, STRIP, TIP, VALUE_TICK_END, CELLS, HOVER, sinceTick } from "./system";
+import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_LABEL, TICK_ROOM, TIME_TICK, TOP_LABEL, VALUE_TICK, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, LegendItem, OUTCOMES, TimeAxis, ValueAxis, sessionSpan, BARS, GRID, STRIP, TIP, VALUE_TICK_END, CELLS, HOVER, sinceTick, Budget, budgetTop } from "./system";
 import { terminal, textual, SimpleTable } from "../kit";
 
 /** The two tones of latency's bands: the body of the requests (median to
@@ -26,7 +26,7 @@ export const latencyLegend = (profile?: Profile): LegendItem[] => [
 
 /** How long requests took over the session: the band from median to p95,
  * the p99 a line above it; slices without requests leave a gap. */
-export function LatencyBand(props: { profile: Profile; class?: string; testID?: string; domainMs?: [number, number] | null; focus?: Focus; /** on the board: its time axis under it */ axis?: boolean }) {
+export function LatencyBand(props: { profile: Profile; class?: string; testID?: string; domainMs?: [number, number] | null; focus?: Focus; /** on the board: its time axis under it */ axis?: boolean; /** the project's `max-p95`, in ms: its line */ budgetMs?: number | null }) {
   // every slice, so one without requests leaves a gap rather than a line across it
   const rows = () => props.profile.rate;
   const has = (b: Profile["rate"][number]) => b.ok + b.miss + b.client + b.server > 0;
@@ -37,7 +37,7 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
     const d = props.domainMs;
     return d ? answered().filter((b) => b.tMs >= d[0] && b.tMs < d[1]) : answered();
   };
-  const top = () => Math.max(...inView().map((b) => b.p99Ms), 1) * 1.15;
+  const top = () => budgetTop(Math.max(...inView().map((b) => b.p99Ms), 1) * 1.15, props.budgetMs);
   const hovered = signal<number | null>(null);
   const domain = (): [number, number] => props.domainMs ?? sessionSpan(props.profile, props.profile.rate.length);
   const label = () => {
@@ -76,7 +76,8 @@ export function LatencyBand(props: { profile: Profile; class?: string; testID?: 
         <Area y0={gap((b) => b.p50Ms)} y1={gap((b) => b.p95Ms)} curve="linear" class={LATENCY_FILL.body} />
         <Line y={gap((b) => b.p50Ms)} curve="linear" class="stroke-foreground stroke-[1.5]" hoverDotClass="size-1.5 rounded-full bg-foreground" />
         <Rule value={(_, i) => (hovered() === null && i === nearest(rows(), props.focus?.() ?? null) ? top() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
-        <ValueAxis peak={top() / 1.15} say={duration} />
+        <ValueAxis peak={Math.max(...inView().map((b) => b.p99Ms), 1)} say={duration} />
+        <Budget value={props.budgetMs} say={duration} />
         <If when={props.axis}>
           <TimeAxis domain={domain()} />
         </If>
@@ -341,11 +342,11 @@ export function Distribution(props: { profile: Profile }) {
             {/* each bar says how many it holds; the share done by then is the line, never a bar's label */}
             <Bar value="n" color={(_, i) => (first95() >= 0 && i >= first95() ? "tail" : "body")} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} stagger={0.2} label={(_, i) => ((rows()[i]?.n ?? 0) > 0 ? count(rows()[i].n) : "")} labelClass={TOP_LABEL} />
             <Line y="cum" scale="y2" curve="linear" class="stroke-muted-foreground stroke-1" style={{ strokeDasharray: "3 3" }} hoverDotClass="size-1.5 rounded-full bg-muted-foreground" />
-            <PlotAxis format={(i) => rows()[i]?.name ?? ""} labelClass={TIME_TICK} />
+            <PlotAxis format={(i) => rows()[i]?.name ?? ""} labelClass={BUCKET_TICK} />
             <ValueAxis marked peak={peak()} say={(v) => t("run.bandRequests", { n: v })} />
             <PlotAxis placement="right" scale="y2" labelPlacement="inside" tickValues={[50, 100]} format={(v) => percent(v / 100)} labelClass={VALUE_TICK_END} />
           </Plot>
-          <Legend items={[{ label: t("dist.requests"), swatch: "bg-chart-1" }, ...(tailShare() > 0 ? [{ label: t("dist.tail", { pct: percent(tailShare()) }), swatch: "bg-chart-tail" }] : []), { label: t("dist.cumulative"), swatch: "bg-muted-foreground" }]} />
+          <Legend items={[{ label: t("dist.requests"), swatch: "bg-chart-1" }, ...(tailShare() > 0 ? [{ label: t("dist.tail", { pct: percent(tailShare()) }), swatch: "bg-chart-tail" }] : []), { label: t("dist.cumulative"), swatch: "border-muted-foreground", line: true }]} />
         </If>
       </View>
     </If>
@@ -414,13 +415,13 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
           <Grid y={[p95()]} class="stroke-muted-foreground/60" style={{ strokeDasharray: "3 3" }} />
           <Dot value="y" r={2.5} hitRadius={6} color="tone" inactiveOpacity={INACTIVE} hoverDotClass="size-2 rounded-full border border-card bg-foreground" />
           <PlotAxis placement="left" labelPlacement="inside" tickValues={decades(Math.ceil(yLo()), yHi())} format={(v) => duration(10 ** v)} labelClass={VALUE_TICK} />
-          <If when={props.by === "time"} else={<PlotAxis ticks={3} format={(v) => (v < 0 ? "" : bytes(10 ** v))} labelClass={TIME_TICK} />}>
+          <If when={props.by === "time"} else={<PlotAxis ticks={3} format={(v) => (v < 0 ? "" : bytes(10 ** v))} labelClass={BUCKET_TICK} />}>
             <TimeAxis domain={span()} />
           </If>
           <PlotLabel class="tabular-nums text-caption text-muted-foreground" texts={[{ text: `p95 ${duration(props.profile.p95Ms ?? 0)}`, x: xDomain()[1], y: p95(), align: "right", class: "-translate-y-full pb-1" }]} />
         </Plot>
         {/* every colour a dot may have, named: the outcomes this stretch holds, and a scenario's answers */}
-        <Legend items={[...OUTCOMES.filter((o) => rows().some((r) => r.tone === o.tone)).map((o) => ({ label: t(o.key), swatch: o.swatch })), ...injectedLegend(props.injected), { label: t("scatter.p95Line"), swatch: "bg-muted-foreground/60" }]} />
+        <Legend items={[...OUTCOMES.filter((o) => rows().some((r) => r.tone === o.tone)).map((o) => ({ label: t(o.key), swatch: o.swatch })), ...injectedLegend(props.injected), { label: t("scatter.p95Line"), swatch: "border-muted-foreground", line: true }]} />
       </BaseButton>
     </If>
   );

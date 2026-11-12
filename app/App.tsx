@@ -17,7 +17,8 @@ import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, 
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
-import { Badge, FocusRest, Recoverable, SidePanel, SPLIT_HANDLE, terminal } from "./src/ui/kit";
+import { Back, Badge, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, Title, WIDTH } from "./src/ui/kit";
+import { count } from "./src/format";
 import { rememberedSize } from "./src/ui/sizes";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, sidebarOpen, toggleSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
@@ -124,10 +125,10 @@ function DesktopShell() {
       <Toolbar open={open} />
       {/* the sidebar and the place: a split, the sidebar's width the user's (kept) */}
       <ResizablePanelGroup class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sidebar.resize")}>
-        <ResizablePanel fixed visible={sidebarOpen()} size={sidebarWidth.size()} minSize={208} maxSize={440} onResize={sidebarWidth.onResize}>
+        <ResizablePanel fixed visible={sidebarOpen()} size={sidebarWidth.size()} minSize={PANE.sidebarLeast} maxSize={PANE.sidebarMost} onResize={sidebarWidth.onResize}>
           <Sidebar open={open} />
         </ResizablePanel>
-        <ResizablePanel minSize={480} class="min-w-0 bg-background">
+        <ResizablePanel minSize={PANE.mainLeast} class="min-w-0 bg-background">
           {/* rebuilt per area: screens own their jobs, cancelled when they go */}
           <Each of={[view()]} key={(x) => x}>
             {(x) => <Recoverable>{screen(x().split("|")[0] as Area)}</Recoverable>}
@@ -141,7 +142,7 @@ function DesktopShell() {
       <If when={dragging()}>
         {(d) => (
           <View testID="drop-hint" class={`absolute inset-3 items-center justify-center gap-1 rounded-(--radius-card) border-2 border-dashed bg-background/80 ${d().opens > 0 || d().opens + d().others === 0 ? "border-ring" : "border-border"}`}>
-            <Text class="text-heading font-semibold text-foreground">{d().opens > 0 ? t("app.dropOpens", { n: d().opens }) : d().others > 0 ? t("app.dropNothing") : t("app.dropHint")}</Text>
+            <Title center>{d().opens > 0 ? t("app.dropOpens", { n: d().opens }) : d().others > 0 ? t("app.dropNothing") : t("app.dropHint")}</Title>
             <Text class="text-small text-muted-foreground">{d().opens > 0 && d().others > 0 ? t("app.dropSkips", { n: d().others }) : t("app.dropKinds")}</Text>
           </View>
         )}
@@ -160,11 +161,9 @@ function TermHeader(props: { title: string }) {
   return (
     <View class="flex-row items-center gap-2 border-b border-border px-1">
       <If when={nav.routes().length > 1}>
-        <Text role="button" class="text-primary" onPress={() => nav.pop()}>
-          ‹ {t("common.back")}
-        </Text>
+        <Back onPress={() => nav.pop()} />
       </If>
-      <Text class="font-semibold text-foreground">{props.title}</Text>
+      <Title>{props.title}</Title>
       <View class="flex-1">
         <Context />
       </View>
@@ -177,7 +176,7 @@ function Home() {
   // 1–5 open a place from the home list (not while typing, not under another page)
   const digits: Record<string, () => void> = {};
   AREAS.forEach((a, i) => {
-    digits[String(i + 1)] = () => {
+    digits[`${i + 1}`] = () => {
       if (nav.routes().length === 1) open(a);
     };
   });
@@ -188,13 +187,13 @@ function Home() {
         <Text class="text-muted-foreground">{`${t("app.tagline")} — ${t("app.tuiKeys")}`}</Text>
         <Each of={AREAS}>
           {(a, i) => (
-            <View role="button" testID={`nav-${a()}`} onPress={() => open(a())} class="flex-row gap-2 px-1 hover:bg-muted">
-              <Text class="w-4 text-muted-foreground">{String(i() + 1)}</Text>
+            <ListRow plain testID={`nav-${a()}`} label={areaLabel(a())} onPress={() => open(a())} class="px-1">
+              <Text class={`${WIDTH.digit} text-muted-foreground`}>{count(i() + 1)}</Text>
               <Text class="flex-1 text-foreground">{areaLabel(a())}</Text>
               <If when={a() === "run" && running()}>
                 <Text class="text-primary">● {scrubCommand(running()!.command)}</Text>
               </If>
-            </View>
+            </ListRow>
           )}
         </Each>
       </View>

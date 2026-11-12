@@ -6,7 +6,7 @@
 // ends on the verdicts — each a way into its own session, and all kept on
 // the run's Runs pane.
 
-import { batch, cleanup, resource, signal, Text, View } from "nsh";
+import { announce, batch, cleanup, resource, signal, Text, View } from "nsh";
 import { asError, api } from "../native";
 import { duration } from "../format";
 import { t } from "../i18n";
@@ -54,8 +54,10 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
   // every scenario is on until one is taken off
   const off = signal<string[]>([]);
   const chosen = () => (the()?.scenarios ?? []).filter((s) => !off().includes(s.name));
-  // how hard the two that fail a request's first attempt press: its first n attempts
+  // how hard the two that fail a request's first attempt press: its first n attempts, 1 to the
+  // most the plan allows (5, as `--fault slowdown:N` takes)
   const times = signal(1);
+  const most = () => Math.max(1, ...(the()?.scenarios ?? []).map((s) => s.maxTimes ?? 1));
   const pressed = (s: { name: string; maxTimes?: number | null }) => (s.maxTimes && times() > 1 ? Math.min(times(), s.maxTimes) : 1);
   const asked = (s: { name: string; maxTimes?: number | null }) => (pressed(s) > 1 ? `${s.name}:${pressed(s)}` : s.name);
   // what the program may do while tried: as the last run was limited, until changed here
@@ -74,9 +76,14 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
     if (!list.length || trying()) return;
     batch(() => (steps.set(trialSteps(list)), ended.set(null), trying.set(true), started.set(Date.now()), now.set(Date.now())));
     api.sessions
-      .trial(props.path, list.map(asked), limit(), 100, 30, (e) => steps.set(foldTrial(steps() ?? [], e)))
+      .trial(props.path, list.map(asked), limit(), 100, 30, (e) => {
+        steps.set(foldTrial(steps() ?? [], e));
+        // a verdict as it arrives, told to a screen reader: the dialog's text alone changes in silence
+        if ("state" in e && e.state === "done" && e.trial) announce(`${scenarioLabel(e.scenario)}: ${t(`trial.${e.trial.standing}`)}`);
+      })
       .then((r) => {
         batch(() => (now.set(Date.now()), ended.set({ cancelled: r.cancelled }), trying.set(false)));
+        announce(r.cancelled ? t("trial.cancelled") : t("trial.endedSaid", { t: duration(Math.max(0, now() - started())) }));
         sessionsChanged();
         if (!r.cancelled && r.trials.length) props.onDone?.(r.trials);
       })
@@ -95,9 +102,10 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
   };
   // closing while it runs would leave a program running unseen: Stop first
   const close = () => !going() && props.onClose();
+  // the session first, then the dialog closed: what closing does after a trial (the run's Runs pane) gives way to it
   const open = (session: string) => {
-    props.onClose();
     props.onOpen?.(session);
+    props.onClose();
   };
   const standing = (s: () => TrialStep) => (
     <View class="min-h-5 shrink-0 justify-center">
@@ -188,7 +196,7 @@ export function TrialDialog(props: { path: string; onClose: () => void; /** it e
                   {/* how hard: one number, for the scenarios it means one thing for; a project's own say theirs in sonde.toml */}
                   <If when={p().scenarios.some((s) => s.maxTimes)}>
                     <Labeled label={t("trial.strength")}>
-                      <Options testID="trial-times" value={`${times()}`} items={[1, 2, 3].map((n) => ({ value: `${n}`, title: t("trial.times", { n }) }))} onChange={(v) => times.set(Number(v))} />
+                      <Options testID="trial-times" value={`${times()}`} items={Array.from({ length: most() }, (_, i) => i + 1).map((n) => ({ value: `${n}`, title: t("trial.times", { n }) }))} onChange={(v) => times.set(Number(v))} />
                     </Labeled>
                   </If>
                   {/* the limit on what the program does while tried: its own choice here */}

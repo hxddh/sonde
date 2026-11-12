@@ -669,6 +669,13 @@ export interface RunPoint {
   findings: number;
 }
 
+/** What a project's `sonde.toml` `[check]` allows its program, drawn on the charts it is about (null: not given). */
+export interface ProjectBudget {
+  maxP95Ms: number | null;
+  maxErrors: number | null;
+  maxWaitingMs: number | null;
+}
+
 export interface BudgetVerdict {
   what: "requests" | "waiting" | "cost" | "errors" | "warnings" | "p95";
   value: number;

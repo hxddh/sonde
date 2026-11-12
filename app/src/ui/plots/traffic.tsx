@@ -8,7 +8,7 @@ import { bytes, count, duration, rate, transfer } from "../../format";
 import { t } from "../../i18n";
 import { bytesRate, sizeLabel, sizeRange } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, GUTTER, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, TIME_TICK, TOP_LABEL, type Tone, VALUE_TICK_END, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, GRID } from "./system";
+import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, GUTTER, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, TIME_TICK, TOP_LABEL, type Tone, VALUE_TICK_END, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, GRID, OUTCOMES } from "./system";
 import { EMPHASIS, terminal, textual, SimpleTable } from "../kit";
 
 // --- what ran at once ----------------------------------------------------------------
@@ -139,7 +139,8 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
           </Plot>
         </BaseButton>
         </If>
-        <Legend items={[{ label: t("flows.ok"), swatch: "bg-bar" }, { label: t("flows.notfound"), swatch: "bg-status-miss" }, { label: t("flows.clienterror"), swatch: "bg-status-client" }, { label: t("lanes.failed"), swatch: "bg-status-server" }, ...injectedLegend(props.injected)]}>
+        {/* the outcomes the session had, and only those: no "Failed" under a run that never failed */}
+        <Legend items={[...OUTCOMES.filter((o) => all().some((x) => toneOf(x, marked()) === o.tone)).map((o) => ({ label: t(o.key), swatch: o.swatch })), ...injectedLegend(props.injected)]}>
           <If when={all().length < total()}>
             <ChartNote testID="lanes-sampled">{t("plots.sampled", { n: count(all().length), of: count(total()) })}</ChartNote>
           </If>
@@ -232,10 +233,12 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     const r = i === null ? null : rows()[i];
     if (!r) return null;
     const n = r.ok + r.miss + r.client + r.server;
-    const parts = [t("sessions.requestsN", { n }), ...(r.miss ? [t("profile.missN", { n: r.miss })] : []), ...(r.client + r.server ? [t("profile.failedN", { n: r.client + r.server })] : [])];
+    // what began in the slice (an operation that began before and still runs is no request of it: a press
+    // shows the operations that span it, so a slice of none begun is not said to hold nothing)
+    const parts = [n === 0 ? t("shape.noneBegan") : t("shape.began", { n }), ...(r.miss ? [t("profile.missN", { n: r.miss })] : []), ...(r.client + r.server ? [t("profile.failedN", { n: r.client + r.server })] : [])];
     // the findings that begin in this slice: what the numbers over it are
     const marks = marked().get(i!) ?? [];
-    return { title: `+${duration(r.tMs)} – +${duration(r.tMs + props.profile.binMs)}`, lines: [parts.join(" · "), t("profile.inFlightN", { n: r.inFlight }), ...(props.annotate && marks.length ? [t("shape.findingsHere", { list: marks.join(", ") })] : [])] };
+    return { title: `+${duration(r.tMs)} – +${duration(r.tMs + props.profile.binMs)}`, lines: [parts.join(" · "), ...(r.inFlight > 0 ? [t("profile.inFlightN", { n: r.inFlight })] : []), ...(props.strip && props.onSlice ? [t("shape.pressSpans")] : []), ...(props.annotate && marks.length ? [t("shape.findingsHere", { list: marks.join(", ") })] : [])] };
   };
   return (
     // a handful of requests has no shape worth a chart
@@ -453,8 +456,8 @@ export function Sizes(props: { signals: Signals }) {
   };
   // every bucket named where there is room for it, else every other one
   const ticks = () => rows().map((_, i) => i).filter((i) => rows().length <= 12 || i % 2 === 0);
-  // how many, at each bar's end (no value axis): none over a bar of nothing
-  const n = (v: number) => (v > 0 ? count(v) : "");
+  // how many, at each bar's end (so the scale writes zero alone): "0" beside a bar that has a count, none where neither has
+  const n = (r: { up: number; down: number }, v: number) => (v > 0 || r.up + r.down > 0 ? count(v) : "");
   return (
     <If when={!textual()} else={<SimpleTable columns={[t("requests.size"), t("sizes.sent"), t("sizes.received")]} rows={rows().map((r) => [r.name, count(r.up), count(r.down)])} />}>
       <Plot
@@ -473,11 +476,11 @@ export function Sizes(props: { signals: Signals }) {
         onHoverChange={({ index }) => hovered.set(index)}
         class={`${TICK_ROOM} ${PLOT} w-full`}
       >
-        <Bar value="up" class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i].up)} labelClass={TOP_LABEL} />
-        <Bar value="down" class="fill-chart-4" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i].down)} labelClass={TOP_LABEL} />
-        <PlotAxis tickValues={ticks()} format={(i) => rows()[i]?.name ?? ""} labelClass={TIME_TICK} />
-        {/* at the plot's far edge: the tallest bars stand at its start (empty bodies), under their own figures */}
-        <ValueAxis end peak={Math.max(1, ...rows().map((r) => Math.max(r.up, r.down)))} say={(v) => t("sizes.peak", { n: count(v) })} />
+        <Bar value="up" class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].up)} labelClass={TOP_LABEL} />
+        <Bar value="down" class="fill-chart-4" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].down)} labelClass={TOP_LABEL} />
+        <PlotAxis tickValues={ticks()} format={(i) => rows()[i]?.name ?? ""} labelClass={BUCKET_TICK} />
+        {/* every bar says its own count over itself: the scale writes zero alone (no peak chip) */}
+        <ValueAxis marked peak={Math.max(1, ...rows().map((r) => Math.max(r.up, r.down)))} say={(v) => t("sizes.peak", { n: count(v) })} />
       </Plot>
     </If>
   );

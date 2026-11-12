@@ -705,6 +705,53 @@ fn project_scenarios(dir: &Path) -> Result<Vec<sonde_proxy::fault::Scenario>, St
     sonde_proxy::fault::project_scenarios(list.iter().map(scenario_of)).map_err(said)
 }
 
+/// The budget a project gives its program in the `[check]` of the
+/// `sonde.toml` found from `dir` upwards (as `project_scenarios` finds it):
+/// what the app draws on a chart as a line — `max-p95` and `max-waiting` in
+/// ms (a number, or "250ms", "2s"), `max-errors` a count. None without a
+/// file, a `[check]`, or any of the three. (17.0: kept apart, so that the
+/// one reading of `sonde.toml` in `sonde_proxy::project` can replace it.)
+pub(crate) fn project_budget(dir: &Path) -> Option<(Option<f64>, Option<u64>, Option<f64>)> {
+    let mut at = dir.to_path_buf();
+    let file = loop {
+        let f = at.join("sonde.toml");
+        if f.is_file() {
+            break f;
+        }
+        if at.join(".git").exists() || !at.pop() {
+            return None;
+        }
+    };
+    let doc: toml::Table = toml::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+    let check = doc.get("check")?.as_table()?;
+    let ms = |v: &toml::Value| -> Option<f64> {
+        let n = match v {
+            toml::Value::Integer(n) => *n as f64,
+            toml::Value::Float(f) => *f,
+            toml::Value::String(s) => {
+                let s = s.trim();
+                let (n, scale) = if let Some(n) = s.strip_suffix("ms") {
+                    (n, 1.0)
+                } else if let Some(n) = s.strip_suffix('s') {
+                    (n, 1000.0)
+                } else {
+                    (s, 1.0)
+                };
+                n.trim().parse::<f64>().ok()? * scale
+            }
+            _ => return None,
+        };
+        (n.is_finite() && n >= 0.0).then_some(n)
+    };
+    let p95 = check.get("max-p95").and_then(ms);
+    let waiting = check.get("max-waiting").and_then(ms);
+    let errors = check
+        .get("max-errors")
+        .and_then(|v| v.as_integer())
+        .and_then(|n| u64::try_from(n).ok());
+    (p95.is_some() || waiting.is_some() || errors.is_some()).then_some((p95, errors, waiting))
+}
+
 /// One `[[scenario]]`: `name`, `fault` ("503 SlowDown", "500", "lost-answer",
 /// "delay 200ms"), `on` the operations, `prefix` the keys, `times` the
 /// attempts at each request that meet it (1 unless said; 0 is every one).
@@ -1483,6 +1530,20 @@ impl Sessions {
             TRIAL_STOPPED.store(true, std::sync::atomic::Ordering::SeqCst);
         }
         RUNNING.lock().as_mut().is_some_and(|r| r.kill())
+    }
+
+    /// The budget the session's program has in its project's `sonde.toml`
+    /// (found from the folder it ran in), for the charts to draw:
+    /// `{ maxP95Ms, maxErrors, maxWaitingMs }`, each null where it gives
+    /// none; null for a session with no folder or a project with no budget.
+    pub fn budget(path: String) -> JsonValue {
+        let Some(dir) = header_of(Path::new(&path)).and_then(|h| h.cwd) else {
+            return JsonValue::Null;
+        };
+        match project_budget(Path::new(&dir)) {
+            Some((p95, errors, waiting)) => json!({ "maxP95Ms": p95, "maxErrors": errors, "maxWaitingMs": waiting }),
+            None => JsonValue::Null,
+        }
     }
 
     /// What trying a session's program under faults would run, said before
@@ -3068,6 +3129,26 @@ mod tests {
                 .unwrap();
             assert_eq!(String::from_utf8_lossy(&out.stdout), "a-x\nb c\nd\n");
         }
+    }
+
+    #[test]
+    fn a_projects_budget_is_read_for_its_charts_from_the_nearest_sonde_toml() {
+        let project = tempfile::tempdir().unwrap();
+        let inner = project.path().join("jobs");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::create_dir_all(project.path().join(".git")).unwrap();
+        // none without a file, or without the three
+        assert_eq!(super::project_budget(&inner), None);
+        std::fs::write(project.path().join("sonde.toml"), "[check]\nmax-requests = 9\n").unwrap();
+        assert_eq!(super::project_budget(&inner), None);
+        std::fs::write(
+            project.path().join("sonde.toml"),
+            "[check]\nmax-p95 = \"50ms\"\nmax-errors = 3\nmax-waiting = \"2s\"\n",
+        )
+        .unwrap();
+        assert_eq!(super::project_budget(&inner), Some((Some(50.0), Some(3), Some(2000.0))));
+        std::fs::write(project.path().join("sonde.toml"), "[check]\nmax-p95 = 120\n").unwrap();
+        assert_eq!(super::project_budget(&inner), Some((Some(120.0), None, None)));
     }
 
     #[test]

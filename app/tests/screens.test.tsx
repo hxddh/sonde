@@ -193,6 +193,21 @@ test("sonde:// links: a bucket's folder opens in the store; an unknown endpoint 
   await app.waitFor("text:/nowhere/");
 });
 
+test("sonde:// links keep a stretch of time: a session opens on its Time pane over it", async () => {
+  const app = await withDemo();
+  await app.press("id:nav-sessions");
+  await app.press("id:open-example");
+  await app.waitFor("id:session-summary", { timeout: 10000 });
+  const { api } = await import("../src/native");
+  const example = api.sessions.list().find((s) => s.path.endsWith(".sonde") && s.requests > 0);
+  expect(!!example).toBe(true);
+  const name = example!.path.split(/[\\/]/).pop()!;
+  await app.openWithUrl(`sonde://session/${encodeURIComponent(name)}?range=0-200`);
+  await app.waitFor("id:time-pane", { timeout: 10000 });
+  // the timeline says the stretch it shows, and offers the whole session back
+  await app.waitFor("id:zoom-reset", { timeout: 5000 });
+});
+
 test("language: Chinese strings", async () => {
   const app = await withDemo();
   await place(app, "settings");

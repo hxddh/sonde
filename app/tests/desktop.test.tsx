@@ -426,14 +426,13 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(short[3].detail).toBe("↑ 0 B ↓ 3.0 MiB");
   expect(short[4].detail).toBe("of 9 requests");
   expect(short.every((x) => x.series.length === 0)).toBe(true);
-  // Rust's own flag (under a second) says totals too; with requests enough, their line stays
+  // Rust's own flag (under a second) says totals too, and draws no line, however many requests it holds
   expect(brief({ ...s, short: true })).toBe(true);
   const quick = signalTiles({ ...s, short: true });
-  // (the figure alone under "Requests" where its line stands beside it: nothing in the tile is cut)
   expect(quick[0].label).toBe("Requests");
-  expect(quick[0].value).toBe("40");
+  expect(quick[0].value).toBe("40 requests");
   expect(quick[1].value).toBe("3%");
-  expect(quick[0].series.length).toBe(2);
+  expect(quick.every((x) => x.series.length === 0)).toBe(true);
   // the run by operation: Rust's table, or what an older share's profile holds of it
   const groups = [
     { operation: "GetObject", missed: false, requests: 30, errors: 3, p50Ms: 2, p95Ms: 6 },
@@ -452,4 +451,35 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(sizeRange(1024)).toBe("512 B – 1.0 KiB");
   expect(sizeRange(0)).toBe("empty");
   expect(nearestLimit({ readShare: 0.1, writeShare: 0.4 })).toEqual({ share: 0.4, kind: "writes" });
+});
+
+test("a stretch of time in a link: read from a query or a hash, as slices of the reader's own session", async () => {
+  const { rangeOf, rangeParam, slicesOf } = await import("../src/range");
+  expect(rangeOf("?range=120-480")).toEqual([120, 480]);
+  expect(rangeOf("?path=%2Fa.sonde&range=0-1500")).toEqual([0, 1500]);
+  expect(rangeOf("#range=10.5-20")).toEqual([10.5, 20]);
+  // backwards, empty or not a range: nothing
+  expect(rangeOf("?range=480-120")).toBe(null);
+  expect(rangeOf("?range=5-5")).toBe(null);
+  expect(rangeOf("?arrange=1-2")).toBe(null);
+  expect(rangeOf("")).toBe(null);
+  expect(rangeParam([120.4, 479.2])).toBe("range=120-480");
+  // 100 ms slices, 20 of them: the first and the last slice the stretch covers
+  expect(slicesOf([120, 480], 100, 20)).toEqual([1, 4]);
+  // past the session's end: up to its last slice; less than two slices: no stretch
+  expect(slicesOf([1500, 9000], 100, 20)).toEqual([15, 19]);
+  expect(slicesOf([120, 180], 100, 20)).toBe(null);
+});
+
+test("a chart's rows as CSV: a header, plain numbers, quoted where a field needs it", async () => {
+  const { toCsv } = await import("../src/csv");
+  expect(toCsv({ columns: ["ms", "p95_ms"], rows: [[0, 1.23456789], [100, null]] })).toBe("ms,p95_ms\r\n0,1.234568\r\n100,\r\n");
+  expect(toCsv({ columns: ["key"], rows: [['a,"b"'], ["line\nbreak"]] })).toBe('key\r\n"a,""b"""\r\n"line\nbreak"\r\n');
+});
+
+test("a trial's load: so many times the clean run's where it sent more, the two counts where it sent fewer", async () => {
+  const { trialText } = await import("../src/ui/history");
+  const base = { scenario: "slowdown", about: "", standing: "broke", exit: 1, cleanExit: 0, faults: 1, retried: 0, droppedReads: 0, droppedWrites: 1, attempts: 1, leftUploads: 0, wroteTwice: 0, reasons: [] } as unknown as import("../src/types").Trial;
+  expect(trialText({ ...base, requests: 1, cleanRequests: 7 })).toBe("1 fault, 0 retried · 1 of the clean run's 7 requests");
+  expect(trialText({ ...base, requests: 14, cleanRequests: 7 })).toBe("1 fault, 0 retried · 2.0× the requests");
 });

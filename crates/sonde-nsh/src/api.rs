@@ -766,6 +766,13 @@ impl Sonde {
         Ok(to_json(probes::store::diff(&r[0], &r[1])))
     }
 
+    /// Writes a chart's rows (the app's CSV of what the chart draws) into the
+    /// exports folder as `<name>-<stamp>.csv`; the file's path. Native
+    /// Shell has no save dialog: the file goes where every export goes.
+    pub fn export_csv(name: String, text: String) -> Result<String, String> {
+        write_export(&format!("{}-{}.csv", csv_name(&name), stamp()), text.as_bytes())
+    }
+
     /// Writes runs (default: the newest of each endpoint) as `markdown` or `json`; the path.
     pub fn export_probes(format: String, runs: Option<Vec<String>>) -> Result<String, String> {
         let r = load_runs(runs);
@@ -843,6 +850,17 @@ fn stamp() -> String {
     chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
 }
 
+/// A file name's stem from a chart's id: letters, digits and `-` only, never empty.
+fn csv_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .take(48)
+        .collect();
+    let s = s.trim_matches('-');
+    if s.is_empty() { "chart".into() } else { s.into() }
+}
+
 fn write_export(name: &str, bytes: &[u8]) -> Result<String, String> {
     let s = sonde();
     let dir = s
@@ -854,4 +872,15 @@ fn write_export(name: &str, bytes: &[u8]) -> Result<String, String> {
     let path = dir.join(name);
     std::fs::write(&path, bytes).map_err(|e| err_msg(format!("{}: {e}", path.display())))?;
     Ok(path.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_charts_csv_is_named_from_its_id_and_nothing_else() {
+        assert_eq!(super::csv_name("latency"), "latency");
+        assert_eq!(super::csv_name("../../etc/passwd"), "etc-passwd");
+        assert_eq!(super::csv_name("错误"), "chart");
+        assert_eq!(super::csv_name("error rate"), "error-rate");
+    }
 }
