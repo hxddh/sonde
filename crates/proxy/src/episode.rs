@@ -639,10 +639,9 @@ fn human(b: u64) -> String {
     human_bytes(b)
 }
 
-/// A size as it is written everywhere: the one ladder
-/// ([`crate::signals::bytes_text`]).
+/// A size as it is written everywhere ([`sonde_fmt::bytes`]).
 pub(crate) fn human_bytes(b: u64) -> String {
-    crate::signals::bytes_text(b as f64)
+    sonde_fmt::bytes(b)
 }
 
 /// Payload bytes a request uploads (not the XML of Create / Complete).
@@ -2314,13 +2313,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         let saved = (waiting - fast).max(0.0);
         if !found.is_empty() && saved >= 100.0 {
             let busy = crate::profile::busy_ms(records).max(1e-9);
-            let time = |v: f64| {
-                if v >= 1000.0 {
-                    format!("{:.1} s", v / 1000.0)
-                } else {
-                    format!("{v:.0} ms")
-                }
-            };
+            let time = sonde_fmt::duration;
             let ids: Vec<u64> = found.iter().flat_map(|c| c.ids.iter().copied()).collect();
             let chained = ids.clone();
             let mut o = warn(

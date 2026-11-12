@@ -340,6 +340,69 @@ test("a refused save names the field it is about, so the field says why", async 
   expect(refusedField("a role ARN is required")).toBe(null);
 });
 
+// the table the terminal is tested against too (crates/fmt/cases.json):
+// the same size and length of time, the same figure, here in the app's words
+test("one way to write a figure, in the app and in the terminal", async () => {
+  const { bytes, duration } = await import("../src/format");
+  const sizes: [number, string][] = [
+    [0, "0 B"],
+    [1, "1 B"],
+    [512, "512 B"],
+    [1023, "1023 B"],
+    [1024, "1.0 KiB"],
+    [1280, "1.3 KiB"],
+    [1536, "1.5 KiB"],
+    [10239, "10.0 KiB"],
+    [10240, "10.0 KiB"],
+    [10291, "10.0 KiB"],
+    [102348, "99.9 KiB"],
+    [102400, "100 KiB"],
+    [1048064, "1.0 MiB"],
+    [1048575, "1.0 MiB"],
+    [1048576, "1.0 MiB"],
+    [1572864, "1.5 MiB"],
+    [104805171, "99.9 MiB"],
+    [536870912, "512 MiB"],
+    [1073741823, "1.0 GiB"],
+    [1073741824, "1.0 GiB"],
+    [1099511627776, "1.0 TiB"],
+    [1125899906842624, "1.0 PiB"],
+    [1152921504606847000, "1024 PiB"],
+  ];
+  for (const [n, text] of sizes) expect(bytes(n)).toBe(text);
+  const times: [number, string][] = [
+    [0, "0 ms"],
+    [0.04, "0.0 ms"],
+    [0.25, "0.3 ms"],
+    [0.42, "0.4 ms"],
+    [1, "1.0 ms"],
+    [9.94, "9.9 ms"],
+    [9.95, "10 ms"],
+    [12.5, "13 ms"],
+    [84, "84 ms"],
+    [84.5, "85 ms"],
+    [999.4, "999 ms"],
+    [999.5, "1.00 s"],
+    [1000, "1.00 s"],
+    [2350, "2.35 s"],
+    [2345, "2.35 s"],
+    [9994, "9.99 s"],
+    [9995, "10.0 s"],
+    [41249, "41.2 s"],
+    [59949, "59.9 s"],
+    [59950, "1 min 00 s"],
+    [60000, "1 min 00 s"],
+    [146000, "2 min 26 s"],
+    [185000, "3 min 05 s"],
+    [3599499, "59 min 59 s"],
+    [3599500, "1 h 00 min"],
+    [5976000, "1 h 40 min"],
+    [86400000, "24 h 00 min"],
+    [-2350, "-2.35 s"],
+  ];
+  for (const [ms, text] of times) expect(duration(ms)).toBe(text);
+});
+
 test("one function writes a duration, and a scenario has words", async () => {
   const format = await import("../src/format");
   expect(format.duration(0.42)).toBe("0.4 ms");

@@ -498,9 +498,10 @@ pub fn episode_line(
     let format = e.format.map(|f| f.name()).unwrap_or("");
     let n = e.requests();
     let meta = format!(
-        "{n} req{} · {:.0} ms",
+        "{} req{} · {}",
+        output::grouped(n as u64),
         if n == 1 { "" } else { "s" },
-        e.millis()
+        output::duration(e.millis())
     );
     let pad = width.saturating_sub(e.title().chars().count());
     let column = if formats {
@@ -3716,7 +3717,7 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
             eprintln!(
                 "{} {} requests · {}",
                 paint("·", "2", std::io::stderr().is_terminal()),
-                records.len(),
+                output::grouped(records.len() as u64),
                 path.display()
             );
             for o in observations(records, &episodes(records)) {
@@ -3920,10 +3921,12 @@ pub async fn watch(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
                 lat.sort_by(f64::total_cmp);
                 let p95 = sonde_proxy::profile::percentile(&lat, 0.95);
                 let line = format!(
-                    "last minute: {n} requests ({:.1}/s) · {errors} errors · p95 {} · {} in this file",
+                    "last minute: {} requests ({:.1}/s) · {} errors · p95 {} · {} in this file",
+                    output::grouped(n as u64),
                     n as f64 / 60.0,
+                    output::grouped(errors as u64),
                     ms_text(p95),
-                    figures.as_ref().map_or(0, |f| f.requests())
+                    output::grouped(figures.as_ref().map_or(0, |f| f.requests()) as u64)
                 );
                 if tty {
                     eprint!("\r\x1b[2K{line}");
@@ -4076,7 +4079,7 @@ mod tests {
         assert_eq!(over_limits(&f.point(), &budget(Some(3), None)), None);
         assert_eq!(
             over_limits(&f.point(), &budget(Some(2), Some(500.0))).as_deref(),
-            Some("requests 3 > 2, p95 2.0 s > 500 ms")
+            Some("requests 3 > 2, p95 2.00 s > 500 ms")
         );
     }
 

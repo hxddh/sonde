@@ -334,14 +334,14 @@ impl WhatIf {
             kinds.dedup();
             format!(
                 "{} of {} findings ({})",
-                self.findings,
-                self.of_findings,
+                count_text(self.findings),
+                count_text(self.of_findings),
                 kinds.join(", ")
             )
         } else {
             format!(
                 "{} finding{}",
-                self.findings,
+                count_text(self.findings),
                 if self.findings == 1 { "" } else { "s" }
             )
         };

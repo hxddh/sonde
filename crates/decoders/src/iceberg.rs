@@ -69,9 +69,22 @@ fn as_str(v: Option<&Avro>) -> Option<String> {
     }
 }
 
+/// The most an Avro length may say, in items or bytes: a manifest's
+/// strings, maps and blocks are far smaller. apache-avro reserves what a
+/// length says before it reads the items (512 MiB by default), so a file of
+/// a few bytes could ask for gigabytes (found by `fuzz/`, `iceberg_avro`).
+const AVRO_MAX_LEN: usize = 4 << 20;
+
 fn avro_records(bytes: &[u8]) -> Result<Vec<Avro>, String> {
-    let reader = apache_avro::Reader::new(bytes).map_err(|e| e.to_string())?;
-    reader.map(|r| r.map_err(|e| e.to_string())).collect()
+    // (the first call in the process sets it; every call sets the same)
+    apache_avro::max_allocation_bytes(AVRO_MAX_LEN);
+    // apache-avro panics on some malformed schemas (a name it cannot parse:
+    // `fuzz/`, `iceberg_avro`): an unreadable file, not the end of sonde
+    std::panic::catch_unwind(|| {
+        let reader = apache_avro::Reader::new(bytes).map_err(|e| e.to_string())?;
+        reader.map(|r| r.map_err(|e| e.to_string())).collect()
+    })
+    .unwrap_or_else(|_| Err("not Avro sonde can read (a malformed schema)".into()))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -590,6 +603,28 @@ pub async fn analyze(src: &dyn Source, root: &str) -> Result<Layout, SourceError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 78 bytes whose header's map says it holds some hundred million
+    /// entries (`fuzz/`, `iceberg_avro`): refused, not reserved.
+    #[test]
+    fn an_avro_length_past_any_manifests_is_refused() {
+        let file: &[u8] = &[
+            0x4f, 0x62, 0x6a, 0x01, 0xff, 0xff, 0xff, 0x64, 0x22, 0x3a, 0x31, 0x2c, 0x22, 0x6e,
+            0x61, 0x6d, 0x65, 0x22, 0x3a, 0x22, 0x69, 0x64, 0x22, 0x2c, 0x22, 0x74, 0x79, 0x70,
+            0x65, 0x22, 0x3a, 0x22, 0x3a, 0x31, 0x2c, 0x22, 0x6e, 0x61, 0x6d, 0x65, 0x22, 0x3a,
+            0x22, 0x69, 0x64, 0x22, 0x2c, 0x22, 0x74, 0x79, 0x70, 0x65, 0x22, 0x3a, 0x22, 0x6c,
+            0x6f, 0x6e, 0x4f, 0x62, 0x6a, 0x01, 0x0e, 0x0c, 0x73, 0x63, 0x6d, 0x61, 0xe6, 0x68,
+            0x65, 0x7b, 0xd2, 0x22, 0x74, 0x67, 0x22, 0x79,
+        ];
+        assert!(avro_records(file).is_err());
+    }
+
+    /// A schema whose name apache-avro cannot parse, where it panics.
+    #[test]
+    fn an_avro_schema_that_panics_its_reader_is_an_error() {
+        let file = include_bytes!("../fuzzed/avro-bad-schema-name.avro");
+        assert!(avro_records(file).is_err());
+    }
 
     #[test]
     fn path_mapping() {

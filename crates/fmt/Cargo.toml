@@ -1,0 +1,12 @@
+[package]
+name = "sonde-fmt"
+description = "How sonde writes a size, a count and a length of time: one way, in every crate, the same as the app's format.ts."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

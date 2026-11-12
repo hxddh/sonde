@@ -17,8 +17,8 @@ jobs:
     # the page `sonde share` writes: Native Shell's web target, built once
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with: { targets: wasm32-unknown-unknown }
       # `nsh package --target web` needs Native Shell's web runtime, which an
       # installed nsh does not carry: a checkout's nsh builds it.
@@ -26,7 +26,7 @@ jobs:
         run: |
           git init -q "$RUNNER_TEMP/nsh" && cd "$RUNNER_TEMP/nsh"
           git fetch -q --depth 1 https://github.com/longbridge/nsh "$NSH_REV" && git checkout -q FETCH_HEAD
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { key: viewer, workspaces: "${{ runner.temp }}/nsh -> target" }
       - run: sudo apt-get update -q && sudo apt-get install -y -q llvm
       - name: Build the viewer
@@ -34,7 +34,7 @@ jobs:
           cargo build --release --locked --manifest-path "$RUNNER_TEMP/nsh/Cargo.toml" -p nsh-cli
           cd viewer && "$RUNNER_TEMP/nsh/target/release/nsh" package App.tsx --target web
           ls -la .nsh/out/sonde-viewer
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sonde-viewer
           path: viewer/.nsh/out/sonde-viewer
@@ -51,12 +51,16 @@ jobs:
           - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, name: linux-aarch64 }
           - { os: macos-15, target: aarch64-apple-darwin, name: macos-aarch64 }
           - { os: macos-15-intel, target: x86_64-apple-darwin, name: macos-x86_64 }
+          # sonde.exe in a .zip: CI on Windows, and the terminal there
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: windows-x86_64 }
     runs-on: ${{ matrix.os }}
+    defaults:
+      run: { shell: bash }
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with: { targets: "${{ matrix.target }}" }
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { key: "${{ matrix.target }}" }
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
@@ -65,7 +69,7 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
       - name: Bundle the app
         run: cd app && nsh build App.tsx --release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Build sonde (CLI + TUI)
         run: cargo build --release --locked -p sonde-cli --features tui --target ${{ matrix.target }}
@@ -80,19 +84,32 @@ jobs:
       - name: Check the binary on macOS
         if: runner.os == 'macOS'
         run: otool -L target/${{ matrix.target }}/release/sonde
+      - name: Check the binary on Windows
+        if: runner.os == 'Windows'
+        run: target/${{ matrix.target }}/release/sonde.exe --version
       - name: sonde share has its viewer
         run: test -n "$(target/${{ matrix.target }}/release/sonde share crates/proxy/tests/fixtures/delta.sonde -o share-check 2>&1 >/dev/null; ls share-check/index.html)"
       - name: Package
         run: |
           mkdir -p dist
           name=sonde-${{ matrix.name }}
-          cp target/${{ matrix.target }}/release/sonde dist/sonde
-          tar -C dist -czf dist/$name.tar.gz sonde
-          (cd dist && shasum -a 256 $name.tar.gz > $name.tar.gz.sha256)
-      - uses: actions/upload-artifact@v4
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp target/${{ matrix.target }}/release/sonde.exe dist/sonde.exe
+            (cd dist && 7z a -tzip -bso0 $name.zip sonde.exe)
+            # "<sha>  <file>", as shasum writes it elsewhere (no "*" of binary mode)
+            (cd dist && echo "$(sha256sum < $name.zip | cut -d' ' -f1)  $name.zip" > $name.zip.sha256)
+          else
+            cp target/${{ matrix.target }}/release/sonde dist/sonde
+            tar -C dist -czf dist/$name.tar.gz sonde
+            (cd dist && shasum -a 256 $name.tar.gz > $name.tar.gz.sha256)
+          fi
+          cat dist/$name.*.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sonde-${{ matrix.name }}
-          path: dist/sonde-${{ matrix.name }}.tar.gz*
+          path: |
+            dist/sonde-${{ matrix.name }}.tar.gz*
+            dist/sonde-${{ matrix.name }}.zip*
 
   desktop:
     # the app on Linux (GTK 4) and Windows (Win32), as Native Shell packages it
@@ -107,16 +124,16 @@ jobs:
     defaults:
       run: { shell: bash }
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { key: "desktop-${{ matrix.target }}" }
       - if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
       # the app's Share writes the session as the viewer's web page
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Package the app
         run: cd app && nsh package App.tsx --target ${{ matrix.target }}
@@ -127,7 +144,7 @@ jobs:
           ls -la app/.nsh/out
           cp app/.nsh/out/sonde-[0-9]*-*.* dist/
           (cd dist && for f in sonde-[0-9]*; do sha256sum "$f" > "$f.sha256"; done)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sonde-desktop-${{ matrix.name }}
           path: dist/sonde-[0-9]*
@@ -136,12 +153,12 @@ jobs:
     needs: viewer
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Package the .app
         run: nsh package app/App.tsx --target macos --out dist
@@ -150,6 +167,8 @@ jobs:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          # a release without it says so as a warning on the run, not a notice
+          SONDE_RELEASE: ${{ inputs.release }}
         run: scripts/macos-sign.sh dist/sonde.app
       - name: Make the .dmg
         run: scripts/macos-dmg.sh dist/sonde.app dist/sonde-macos.dmg
@@ -158,13 +177,14 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          SONDE_RELEASE: ${{ inputs.release }}
         run: scripts/macos-notarize.sh dist/sonde-macos.dmg
       - name: Checksums (the .dmg, and the archive the updater installs)
         run: |
           shopt -s nullglob
           ls -la dist
           cd dist && for f in sonde-macos.dmg sonde-[0-9]*-macos-*.tar.gz; do shasum -a 256 "$f" > "$f.sha256"; done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sonde-macos-app
           path: |

@@ -22,7 +22,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "sonde", version, about = "See what your software does to S3: its requests recorded, read as operations, replayed elsewhere", long_about = None)]
+// (bin_name: "Usage: sonde", not the file's name, "sonde.exe" on Windows)
+#[command(name = "sonde", bin_name = "sonde", version, about = "See what your software does to S3: its requests recorded, read as operations, replayed elsewhere", long_about = None)]
 pub struct Cli {
     /// Configuration directory (default: $SONDE_CONFIG_DIR or the platform's).
     #[arg(

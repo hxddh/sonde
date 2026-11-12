@@ -1,0 +1,51 @@
+name: Nightly
+
+# What takes too long, or too much, for every push: the timed tests that are
+# #[ignore]d in a debug run, and the app's performance test. A failure here
+# is a regression in speed, to be seen the next morning, not a broken build.
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Native Shell, pinned (docs/decisions.md D-002): the tag v0.5.0
+  NSH_REV: f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1
+
+jobs:
+  timed:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { key: nightly }
+      # crates/proxy/tests/signals.rs: two seconds, optimised
+      - name: The signals of a million requests
+        run: cargo test --release --locked -p sonde-proxy --test signals -- --ignored --nocapture
+      # crates/sonde-nsh/src/sessions.rs: what a window asks for when it opens a
+      # large session, a later page, and the size of what crosses to it
+      - name: A million requests through the app's bridge
+        run: |
+          cargo run --release --locked -p sonde-proxy --example scale -- 1000000 "$RUNNER_TEMP/big.sonde"
+          SONDE_BIG_SESSION="$RUNNER_TEMP/big.sonde" cargo test --release --locked -p sonde-nsh --lib -- --ignored a_large_session --nocapture
+
+  ui-perf:
+    # app/tests/perf.test.tsx: 100,000 rows loaded and scrolled (its numbers
+    # go to docs/performance.md); the PERF line is in the job's summary
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - name: 100,000 rows
+        run: |
+          scripts/ui-tests.sh perf 2>&1 | tee perf.log
+          grep -h "PERF " perf.log | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY" || true

@@ -266,19 +266,9 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+/// A size ([`sonde_fmt::bytes`]).
 pub fn human_bytes(b: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
-    let mut v = b as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < UNITS.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{b} B")
-    } else {
-        format!("{v:.1} {}", UNITS[i])
-    }
+    sonde_fmt::bytes(b)
 }
 
 /// Outcome of executing a plan.

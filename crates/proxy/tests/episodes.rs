@@ -196,14 +196,14 @@ fn lance_run_reads_as_versions() {
     assert_eq!(
         titles,
         [
-            "version 1 committed · 1 data file (126.4 KiB)",
-            "version 2 committed · 1 data file (142.0 KiB)",
-            "version 3 committed · 1 data file (135.1 KiB)",
+            "version 1 committed · 1 data file (126 KiB)",
+            "version 2 committed · 1 data file (142 KiB)",
+            "version 3 committed · 1 data file (135 KiB)",
             "version 4 committed · rows deleted",
             "version 5 committed · an index (33.5 KiB)",
-            "version 6 committed · 1 data file (439.4 KiB)",
+            "version 6 committed · 1 data file (439 KiB)",
             "version 7 committed · an index (36.6 KiB)",
-            "read version 7 · 3 ranges of 1 file (111.9 KiB)"
+            "read version 7 · 3 ranges of 1 file (112 KiB)"
         ]
     );
     assert!(

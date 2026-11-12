@@ -52,6 +52,14 @@ fn batch(keys: &[&str]) -> S3Request {
 
 async fn program(what: &str) -> i32 {
     let env = |k: &str| std::env::var(k).unwrap_or_default();
+    // the key it is given: an argument `E2E_KEY=<key>` after its own (which
+    // the test harness takes for a filter that matches nothing), so that
+    // `{trial}` in it is the command's, on every system
+    let given = || {
+        std::env::args()
+            .find_map(|a| a.strip_prefix("E2E_KEY=").map(str::to_string))
+            .unwrap_or_default()
+    };
     let mut cfg = ClientConfig::new("app", &env("AWS_ENDPOINT_URL"), &env("AWS_REGION")).unwrap();
     // a request held past two seconds is given up on and sent again; a
     // patient program waits as an SDK's minute does
@@ -161,7 +169,7 @@ async fn program(what: &str) -> i32 {
         }
         // writes the key it is given; `never-key` says all is well whatever
         "key" | "never-key" => {
-            if ok(app.send_raw(put(&env("E2E_KEY"), "x")).await) || !retries {
+            if ok(app.send_raw(put(&given(), "x")).await) || !retries {
                 0
             } else {
                 1
@@ -169,8 +177,7 @@ async fn program(what: &str) -> i32 {
         }
         // marks its output done, if no one has: a 412 is "it is there"
         "marker" => {
-            let marker =
-                put(&format!("{}/_SUCCESS", env("E2E_KEY")), "").header("if-none-match", "*");
+            let marker = put(&format!("{}/_SUCCESS", given()), "").header("if-none-match", "*");
             match app.send_raw(marker).await.map(|r| r.status) {
                 Ok(200 | 412) => 0,
                 _ => 1,
@@ -246,7 +253,7 @@ async fn program(what: &str) -> i32 {
         // given (E2E_KEY) or the one its environment names (SONDE_TRIAL);
         // `never-placed` never retries and never looks at an answer
         "placed" | "never-placed" => {
-            let place = match env("E2E_KEY") {
+            let place = match given() {
                 k if k.is_empty() => format!("etl-{}", env("SONDE_TRIAL")),
                 k => k,
             };
@@ -307,7 +314,7 @@ async fn program(what: &str) -> i32 {
         // `overwrites` writes the same key without its condition; `fenced`
         // stops there, as a SlateDB writer does
         "commits" | "never-commits" | "never-overwrites" | "never-fenced" => {
-            let dir = env("E2E_KEY");
+            let dir = given();
             let name = |n: u32| {
                 if dir.ends_with("wal") {
                     format!("{dir}/{n:020}.sst")
@@ -933,12 +940,12 @@ async fn a_clean_run_that_fails_is_not_tried_and_a_scenario_that_meets_nothing_i
 #[tokio::test(flavor = "multi_thread")]
 async fn the_place_of_a_run_is_named_only_when_a_trial_runs() {
     let b = Bench::new().await;
-    let env = "env";
     let run = |args: &'static [&'static str]| {
         let mut c = b.sonde(Some("key"));
         c.args(args)
-            .args(["--", env, "E2E_KEY=k-{trial}"])
-            .args(the_program_command());
+            .arg("--")
+            .args(the_program_command())
+            .arg("E2E_KEY=k-{trial}");
         async move { out(c.output().await.unwrap()) }
     };
     // no trial: the command is run as it was written
@@ -1152,8 +1159,7 @@ async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
     std::fs::write(b.path("sonde.toml"), "[program]\nname = \"nightly\"\n").unwrap();
     let run = |key: &'static str| {
         let mut c = b.sonde(Some("key"));
-        c.args(["run", "--", "env", key])
-            .args(the_program_command());
+        c.args(["run", "--"]).args(the_program_command()).arg(key);
         async move { out(c.output().await.unwrap()) }
     };
     assert_eq!(run("E2E_KEY=first").await.code, Some(0));
@@ -1181,17 +1187,9 @@ async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
     assert_eq!(rows[0]["requests"], 1);
     // --name wins over the file, and a run without either is its command
     let mut c = b.sonde(Some("key"));
-    c.args([
-        "run",
-        "--name",
-        "other",
-        "-o",
-        "o.sonde",
-        "--",
-        "env",
-        "E2E_KEY=third",
-    ])
-    .args(the_program_command());
+    c.args(["run", "--name", "other", "-o", "o.sonde", "--"])
+        .args(the_program_command())
+        .arg("E2E_KEY=third");
     assert_eq!(out(c.output().await.unwrap()).code, Some(0));
     let c = b
         .run(None, &["check", "o.sonde", "--max-requests", "5"])
@@ -1203,12 +1201,13 @@ async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
     );
 }
 
-/// `sonde run <args> -- env E2E_KEY=<key> <the program>`.
+/// `sonde run <args> -- <the program> E2E_KEY=<key>`.
 async fn run_keyed(b: &Bench, program: &str, key: &str, args: &[&str]) -> Out {
     let mut c = b.sonde(Some(program));
     c.args(args)
-        .args(["--", "env", &format!("E2E_KEY={key}")])
-        .args(the_program_command());
+        .arg("--")
+        .args(the_program_command())
+        .arg(format!("E2E_KEY={key}"));
     out(c.output().await.unwrap())
 }
 
@@ -1759,6 +1758,7 @@ async fn a_body_cut_short_is_read_again_or_taken_for_the_whole() {
 }
 
 /// `curl` that signs as the SDKs do, when this machine has one.
+#[cfg(unix)]
 fn curl_signs() -> bool {
     std::process::Command::new("curl")
         .args(["--aws-sigv4", "aws:amz:us-east-1:s3", "--version"])
@@ -1766,6 +1766,8 @@ fn curl_signs() -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+// (a shell script around curl: a Unix test)
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn curl_resumes_a_cut_download_rereads_it_or_keeps_the_half() {
     if !curl_signs() {

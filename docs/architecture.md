@@ -1,26 +1,40 @@
 # Architecture
 
 ```
-app/                      TSX screens (Native Shell), theme, nsh.json        ─┐ presentation only
-viewer/                   the web viewer for `sonde share` (TSX, web target)  ─┤
-crates/sonde-nsh          `sonde/native`: #[module] Sonde, Sessions,          ─┤ type conversion
-                          #[class] Listing; Run's PTY (portable-pty)          │
+app/                      TSX screens (Native Shell), theme, nsh.json        ─┐ presentation
+viewer/                   the web viewer for `sonde share` (TSX, web target)  │
+crates/sonde-nsh          `sonde/native`: #[module] Sonde, Sessions,          │ and the bridges
+                          #[class] Listing; Run's PTY (portable-pty)          │ to it
 crates/sonde-cli          `sonde`: headless subcommands; `sonde tui` host     ─┘
-crates/proxy (sonde-proxy) the recording endpoint, sessions, episodes,     ─┐
-                          observations, replay and comparison                │
-crates/sonde-core         config, vendors, credentials, jobs, guard + audit,  │
-                          services: browse, mpu, versions, du, layout, exec;  │ no UI framework
-                          demo S3 server                                      │ (≈ 80 % of the code)
-crates/probes             40 probes, runner, run store, diff, matrix, reports │
-crates/decoders           SlateDB, Iceberg, lakeFS, Woodpecker, cadence       │
+crates/proxy (sonde-proxy) the recording endpoint, faults and trials,       ─┐
+                          sessions and their summary cache, episodes,         │
+                          observations, signals, the paged view, programs     │
+                          and budgets, replay, comparison, import, OTLP,      │
+                          the HTML report                                     │
+crates/sonde-core         config, vendors, credentials, jobs, guard + audit,  │ no UI framework
+                          services: browse, mpu, versions, du, layout, exec;  │ (about three
+                          demo S3 server                                      │ fifths of the
+crates/probes             40 probes, runner, run store, diff, matrix, reports │ code, the app's
+crates/decoders           SlateDB, Iceberg, lakeFS, Woodpecker, cadence       │ TSX counted)
 crates/s3raw              SigV4, addressing, retries, throttle, XML, ops      │
-crates/reqlog             records, redaction, ring buffer, SQLite, HAR        ─┘
+crates/reqlog             records, redaction, ring buffer, SQLite, HAR        │
+crates/fmt (sonde-fmt)    how a size, a count and a length of time are written ─┘
 hooks/java                the Java caller hook's sources (its jars are built into sonde-proxy)
+fuzz/                     cargo-fuzz targets for what sonde reads from others (not in the workspace)
 ```
 
-Dependencies point down: `reqlog ← s3raw ← sonde-core ← probes`, `reqlog ← s3raw ← sonde-proxy`, `decoders ← sonde-core`, and only `sonde-nsh` and
-`sonde-cli` (feature `tui`) depend on Native Shell. Replacing the UI framework keeps every crate but `sonde-nsh` and
-`app/`.
+Dependencies point down:
+
+```
+sonde-fmt ← decoders ← sonde-core ← probes
+sonde-fmt ← sonde-proxy, sonde-core, sonde-cli
+reqlog ← s3raw ← sonde-core
+reqlog ← s3raw ← sonde-proxy
+sonde-core, probes, decoders, sonde-proxy ← sonde-nsh, sonde-cli
+```
+
+`sonde-proxy` needs no sonde configuration, only an endpoint. Only `sonde-nsh` and `sonde-cli` (feature `tui`)
+depend on Native Shell; replacing the UI framework keeps every crate but `sonde-nsh` and `app/`.
 
 ## Threads
 
@@ -82,6 +96,24 @@ The same screens serve both, adapting density (`terminal()` in `ui/kit.tsx`).
 
 A bucket's overview (`ui/overview.tsx`) starts the cheap scans as a bucket or prefix opens and keeps what they found
 per endpoint, bucket and prefix, shared with the sheets it opens, which reuse those results instead of scanning again.
+
+## A recording, and what is read from it
+
+The proxy re-signs each request with the real credentials and appends it to the `.sonde` file (a header line, a
+JSON line per request or output chunk; gzipped when finished). Then, in `sonde-proxy`:
+
+| Module | Does |
+|---|---|
+| `fault.rs` | answers in the store's place (503, 500, slow, lost answer, cut body, lost race), per request's attempts |
+| `trial.rs` | a clean run, then one per scenario, each judged against the clean run (`<name>.trials.json`, `trials/`) |
+| `episode.rs` | requests → operations and findings |
+| `signals.rs` | rate, errors, latency, bytes, in flight, in one pass |
+| `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
+| `summary.rs` | counts kept as `<name>.summary.json`, valid while file length, time and cache version match |
+| `view.rs` | analysed once, sent in pages (`Sessions.view`, `Sessions.episodes`): what crosses to the UI does not grow |
+
+Every size, count and duration in text comes from `sonde-fmt`, tested with the app's `format.ts` against
+`crates/fmt/cases.json`.
 
 ## Phrases
 

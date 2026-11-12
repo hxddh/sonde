@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/fmt",
     "crates/reqlog",
     "crates/s3raw",
     "crates/sonde-core",
@@ -11,6 +12,7 @@ members = [
     "crates/sonde-cli",
 ]
 default-members = [
+    "crates/fmt",
     "crates/reqlog",
     "crates/s3raw",
     "crates/sonde-core",
@@ -38,6 +40,7 @@ too_many_arguments = "allow"
 type_complexity = "allow"
 
 [workspace.dependencies]
+sonde-fmt = { path = "crates/fmt" }
 reqlog = { path = "crates/reqlog" }
 s3raw = { path = "crates/s3raw" }
 sonde-core = { path = "crates/sonde-core" }
@@ -60,7 +63,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 http = "1"
 url = "2"
 percent-encoding = "2"
-quick-xml = { version = "0.37", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 hmac = "0.12"
 sha2 = "0.10"
 sha1 = "0.10"

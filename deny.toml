@@ -1,0 +1,62 @@
+# cargo-deny: what sonde may be built from. CI's `supply` job runs
+# `cargo deny --locked check`; locally the same, once `cargo install cargo-deny`.
+
+[graph]
+all-features = true
+
+[advisories]
+# every advisory of the RustSec database fails the check, unmaintained crates
+# among them, until it is fixed or named here with why it does not apply
+version = 2
+yanked = "deny"
+# the git on PATH fetches the database: it follows the machine's proxy
+git-fetch-with-cli = true
+ignore = [
+    # sonde opens only its own request log (reqlog's SQLite, in sonde's data
+    # directory), never a database another party wrote; rusqlite's bundled
+    # SQLite goes with the bump of rusqlite past 0.38
+    { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys: only sonde's own database files are opened; goes with the rusqlite bump" },
+    # Native Shell's tree (the terminal UI and the app), not sonde's code:
+    # raised upstream, gone when the pin moves past them
+    { id = "RUSTSEC-2023-0071", reason = "rsa in quickjs-jit-stdlib (Native Shell): sonde does no RSA" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode, unmaintained, in syntect (Native Shell)" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser, unmaintained, in nsh-core (Native Shell)" },
+]
+
+[licenses]
+version = 2
+# the licences of today's dependencies, all compatible with Apache-2.0; a new
+# one is a decision, made here
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# two versions of one crate are many, mostly from Native Shell's tree: said,
+# not refused
+multiple-versions = "warn"
+# the workspace's own crates are path dependencies without a version (none is
+# published); every crates.io dependency names one in Cargo.toml
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Native Shell, pinned by commit (docs/decisions.md D-002)
+allow-git = ["https://github.com/longbridge/nsh"]

@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+sonde-fmt.workspace = true
 s3raw.workspace = true
 reqlog.workspace = true
 serde.workspace = true

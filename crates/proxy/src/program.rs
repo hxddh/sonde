@@ -739,12 +739,9 @@ pub fn check(
     }
 }
 
+/// A length of time ([`sonde_fmt::duration`]).
 pub fn ms_text(ms: f64) -> String {
-    if ms >= 1000.0 {
-        format!("{:.1} s", ms / 1000.0)
-    } else {
-        format!("{ms:.0} ms")
-    }
+    sonde_fmt::duration(ms)
 }
 
 /// Money to two significant digits under a cent: a session's requests often

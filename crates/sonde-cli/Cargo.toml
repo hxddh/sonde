@@ -18,6 +18,7 @@ default = []
 tui = ["dep:sonde-nsh", "dep:nsh-platform-tui", "dep:nsh-tui-host", "dep:nsh-engine", "dep:nsh-base", "dep:nsh-core", "dep:ratatui-core", "dep:ratatui-crossterm", "dep:crossterm", "dep:base64"]
 
 [dependencies]
+sonde-fmt.workspace = true
 sonde-core.workspace = true
 probes.workspace = true
 decoders.workspace = true
