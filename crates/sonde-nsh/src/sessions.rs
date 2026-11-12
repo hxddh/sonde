@@ -545,10 +545,13 @@ fn analysis_of(path: &str) -> Result<(Arc<Session>, Arc<Analysis>), String> {
 /// page of operations, built from the analysis kept.
 fn view_of(path: &str) -> Result<JsonValue, String> {
     let (s, a) = analysis_of(path)?;
-    Ok(with_trials(
-        JsonValue::Object(a.view(path, &s.header)),
-        path,
-    ))
+    let mut view = a.view(path, &s.header);
+    // the SDK that sent most of its requests ("boto3 1.34"), for the header
+    view.insert(
+        "sdk".into(),
+        json!(sonde_proxy::callers::sdk_of(&s.records)),
+    );
+    Ok(with_trials(JsonValue::Object(view), path))
 }
 
 /// [`Sessions::stretch`] over `records`: those that started from `from_ms`
@@ -2336,32 +2339,6 @@ impl Sessions {
             imported.insert(digest, n.to_string_lossy().into_owned());
             write_imports(&dir, &imported);
         }
-        Ok(path.to_string_lossy().into_owned())
-    }
-
-    /// sonde's own requests (the request log: browsing, scans, probes) as a
-    /// session, read like any program's: its findings, its time, compared.
-    /// The newest `limit` requests, oldest first; the path of the new file.
-    pub fn from_request_log(limit: u32) -> Result<String, String> {
-        let mut records = sonde()
-            .log()
-            .list(&reqlog::Filter::default(), limit as usize);
-        if records.is_empty() {
-            return Err(err_msg("sonde has made no requests yet"));
-        }
-        records.reverse();
-        let dir = sonde().paths().sessions();
-        std::fs::create_dir_all(&dir).map_err(err_msg)?;
-        let path = sonde_proxy::session::fresh_path(&dir, "sonde-self");
-        let endpoint = records[0].endpoint.clone();
-        let mut header = SessionHeader::new(&endpoint, "", "", None);
-        header.created = records[0].time;
-        let session = Session {
-            header,
-            records,
-            logs: Vec::new(),
-        };
-        sonde_proxy::import::save(&session, &path).map_err(err_msg)?;
         Ok(path.to_string_lossy().into_owned())
     }
 

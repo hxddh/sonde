@@ -15,16 +15,6 @@ fn parse<T: serde::de::DeserializeOwned>(v: JsonValue, what: &str) -> Result<T, 
     serde_json::from_value(v).map_err(|e| err_msg(format!("{what}: {e}")))
 }
 
-/// The id of the newest record in the request log (0 when empty).
-fn latest_id() -> f64 {
-    sonde()
-        .log()
-        .list(&reqlog::Filter::default(), 1)
-        .first()
-        .map(|r| r.id as f64)
-        .unwrap_or(0.0)
-}
-
 /// What the endpoint form sends: everything but secrets.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -416,27 +406,9 @@ impl Sonde {
         }
     }
 
-    // --- request inspector ---------------------------------------------------------
-
-    /// Records matching `filter` (`status`, `operation`, `endpoint`, `text`,
-    /// `retried`), newest first: summaries.
-    pub fn requests(filter: JsonValue, limit: u32) -> Result<JsonValue, String> {
-        let f: reqlog::Filter = parse(filter, "filter")?;
-        Ok(to_json(
-            sonde()
-                .log()
-                .list(&f, limit as usize)
-                .iter()
-                .map(reqlog::Record::summary)
-                .collect::<Vec<_>>(),
-        ))
-    }
-
     /// Listens to `event`, so views follow the engine instead of asking it
-    /// on a timer: `"request"` gets the newest record's id as records come
-    /// (several at once come as one), `"jobs"` the number of jobs running
-    /// as any job starts, moves on or ends. Each gets the current value at
-    /// once. Returns the function that stops listening.
+    /// on a timer: `"jobs"` gets the number of jobs running as any job
+    /// starts, moves on or ends, and the current number at once. Returns the function that stops listening.
     pub fn on(
         event: String,
         listener: Callback<JsonValue>,
@@ -448,39 +420,6 @@ impl Sonde {
         // stopping ends the task at once, not at the next change
         let (stop_tx, mut stop) = tokio::sync::watch::channel(false);
         match event.as_str() {
-            "request" => {
-                let mut rx = sonde().log().subscribe();
-                cx.start(async move {
-                    let mut last = latest_id();
-                    if let Some(l) = alive() {
-                        l.post(json!(last));
-                    }
-                    loop {
-                        let next = tokio::select! {
-                            _ = stop.changed() => return,
-                            r = rx.recv() => r,
-                        };
-                        let id = match next {
-                            Ok(id) => id,
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                                latest_id() as u64
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-                        };
-                        // the ones that came meanwhile, as one
-                        let mut newest = id as f64;
-                        while let Ok(more) = rx.try_recv() {
-                            newest = more as f64;
-                        }
-                        if newest == last {
-                            continue;
-                        }
-                        last = newest;
-                        let Some(l) = alive() else { return };
-                        l.post(json!(newest));
-                    }
-                });
-            }
             "jobs" => {
                 let mut rx = sonde().jobs().changes();
                 cx.start(async move {
@@ -508,68 +447,6 @@ impl Sonde {
             drop(held.take());
             let _ = stop_tx.send(true);
         }))
-    }
-
-    /// The id of the newest record (0 when empty): poll it to refresh.
-    pub fn latest_request() -> f64 {
-        latest_id()
-    }
-
-    /// One record in full (redacted headers, error body, timing).
-    pub fn request(id: f64) -> JsonValue {
-        to_json(sonde().log().get(id as u64))
-    }
-
-    /// The record of a request id the service sent (for "show request").
-    pub fn find_request(request_id: String) -> JsonValue {
-        to_json(sonde().log().find_request_id(&request_id))
-    }
-
-    /// Operation names in the log, for the filter.
-    pub fn request_operations() -> JsonValue {
-        to_json(sonde().log().operations())
-    }
-
-    /// The record as an `aws s3api` command.
-    pub fn copy_as_aws_cli(id: f64) -> Option<String> {
-        sonde()
-            .log()
-            .get(id as u64)
-            .map(|r| reqlog::copy::as_aws_cli(&r))
-    }
-
-    /// The record as a curl command, unsigned (curl's `--aws-sigv4` signs it).
-    pub fn copy_as_curl(id: f64) -> Option<String> {
-        sonde()
-            .log()
-            .get(id as u64)
-            .map(|r| reqlog::copy::as_curl(&r))
-    }
-
-    /// Writes the matching records as `json` or `har`; the file's path.
-    pub fn export_requests(format: String, filter: JsonValue) -> Result<String, String> {
-        let f: reqlog::Filter = parse(filter, "filter")?;
-        let s = sonde();
-        let mut records = s.log().list(&f, usize::MAX);
-        records.reverse();
-        let doc = if format == "har" {
-            reqlog::export::to_har(&records)
-        } else {
-            reqlog::export::to_json(&records)
-        };
-        write_export(
-            &format!(
-                "requests-{}.{}",
-                stamp(),
-                if format == "har" { "har" } else { "json" }
-            ),
-            &serde_json::to_vec_pretty(&doc).unwrap_or_default(),
-        )
-    }
-
-    /// Empties the request log.
-    pub fn clear_requests() {
-        sonde().log().clear();
     }
 
     // --- multipart -----------------------------------------------------------------
