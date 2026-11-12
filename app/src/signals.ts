@@ -128,8 +128,8 @@ export function signalTiles(s: Signals): SignalTile[] {
     {
       id: "rate",
       label: few ? t("signal.requests") : t("signal.rate"),
-      // ("9 requests": a run of a moment has no line beside its figure)
-      value: few ? t("run.bandRequests", { n: s.rate.requests }) : s.rate.value == null ? none : t("signal.perSecond", { n: rate(s.rate.value) }),
+      // ("9 requests"; of more, the figure alone under "Requests": a tile's name is not squeezed by its figure)
+      value: few ? (some || !s.timed ? t("run.bandRequests", { n: s.rate.requests }) : count(s.rate.requests)) : s.rate.value == null ? none : t("signal.perSecond", { n: rate(s.rate.value) }),
       detail: few ? t("signal.inTime", { t: duration(s.wallMs) }) : s.timed ? t("signal.requestsIn", { n: count(s.rate.requests), t: duration(s.wallMs) }) : t("run.bandRequests", { n: s.rate.requests }),
       tone: !few && s.rate.value == null ? "quiet" : "plain",
       series: over(s.rate.series),

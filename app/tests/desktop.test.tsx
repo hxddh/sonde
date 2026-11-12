@@ -430,7 +430,7 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(brief({ ...s, short: true })).toBe(true);
   const quick = signalTiles({ ...s, short: true });
   expect(quick[0].label).toBe("Requests");
-  expect(quick[0].value).toBe("40 requests");
+  expect(quick[0].value).toBe("40");
   expect(quick[1].value).toBe("3%");
   expect(quick.every((x) => x.series.length === 0)).toBe(true);
   // the run by operation: Rust's table, or what an older share's profile holds of it

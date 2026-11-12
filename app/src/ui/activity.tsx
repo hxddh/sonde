@@ -129,8 +129,10 @@ function Requests() {
   };
   // the table's own width: its target column takes what the others leave
   const tableWidth = signal(0);
-  // the operation's column as wide as its longest name here (at the body's size, with the cell's inset)
-  const opWidth = () => Math.min(COLUMN.operation, Math.max(COLUMN.operationLeast, Math.ceil(Math.max(0, ...rows().map((r) => r.operation.length)) * TYPE.body * 0.6) + 16));
+  // the operation's column as wide as its longest name here (at the body's size, with the cell's inset),
+  // and in a narrow panel no wider than half the room the figures leave: the target has the other half
+  const rest = () => tableWidth() - (terminal() ? 0 : COLUMN.status) - COLUMN.took - COLUMN.clock - 2;
+  const opWidth = () => Math.min(COLUMN.operation, Math.ceil(Math.max(0, ...rows().map((r) => r.operation.length)) * TYPE.body * 0.6) + 16, tableWidth() > 0 ? Math.max(COLUMN.operationLeast, Math.floor(rest() / 2)) : COLUMN.operation);
   const targetWidth = () => (tableWidth() > 0 ? Math.max(TARGET, tableWidth() - (terminal() ? 0 : COLUMN.status) - opWidth() - COLUMN.took - COLUMN.clock - 2) : TARGET);
   const list = () => (
     <View class="min-h-0 flex-1 gap-2">

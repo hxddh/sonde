@@ -199,7 +199,8 @@ test("sonde:// links keep a stretch of time: a session opens on its Time pane ov
   await app.press("id:open-example");
   await app.waitFor("id:session-summary", { timeout: 10000 });
   const { api } = await import("../src/native");
-  const example = api.sessions.list().find((s) => s.path.endsWith(".sonde") && s.requests > 0);
+  // (the example: 172 requests over 467 ms, slices enough for a stretch of 200 ms)
+  const example = api.sessions.list().find((s) => (s.command ?? "").includes("gen-slatedb"));
   expect(!!example).toBe(true);
   const name = example!.path.split(/[\\/]/).pop()!;
   await app.openWithUrl(`sonde://session/${encodeURIComponent(name)}?range=0-200`);

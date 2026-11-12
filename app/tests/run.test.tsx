@@ -198,7 +198,7 @@ test("a session's time: where it went, and two runs before and after", async () 
   // the header's four signals and in flight: a figure each, and a press opens the signal's chart on the Time pane
   for (const id of ["rate", "errors", "latency", "bytes", "inFlight"]) expect(app.shows(`id:signal-${id}`)).toBe(true);
   // (a run under a second has totals, not a rate: 172 requests in 467 ms are not "368 a second")
-  expect(app.shows("label:/^Requests: 172 requests, in 467 ms, shows its chart$/")).toBe(true);
+  expect(app.shows("label:/^Requests: 172, in 467 ms, shows its chart$/")).toBe(true);
   expect(app.shows("label:/^Errors: 0%, No request failed/")).toBe(true);
   await app.press("id:signal-latency");
   await app.waitFor("id:time-pane");
