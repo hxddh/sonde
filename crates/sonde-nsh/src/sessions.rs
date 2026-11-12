@@ -988,6 +988,9 @@ async fn run_recorded(
     rows: f64,
     output: &Callback<JsonValue>,
     under: Option<Under>,
+    // a terminal shows the output and answers what the program asks of it
+    // (Run); none does for a trial's runs or a clean run made for one
+    terminal: bool,
 ) -> Result<(Option<i32>, String), String> {
     if RUNNING.lock().is_some() {
         return Err(err_msg("a program is running: stop it first"));
@@ -1071,11 +1074,11 @@ async fn run_recorded(
                     let text = decoder.push(&bytes);
                     // Windows' pseudo-console asks where the cursor is as it
                     // starts and holds the program until it is told. A run's
-                    // terminal answers; a trial's output goes to no terminal,
-                    // so it is answered here, or the program never starts.
-                    // (each answered; the question may come in two reads)
+                    // terminal answers; a run with none (a trial's, a clean
+                    // run made to try again) is answered here, or the program
+                    // never starts. (each answered; it may come in two reads)
                     let asked = asks.asked(&text);
-                    if trial.is_some()
+                    if !terminal
                         && asked > 0
                         && let Some(r) = RUNNING.lock().as_mut()
                     {
@@ -1446,6 +1449,7 @@ async fn try_under(
             rows,
             output,
             Some(under),
+            false,
         )
         .await;
         let stopped = TRIAL_STOPPED.load(SeqCst);
@@ -1727,6 +1731,7 @@ impl Sessions {
             rows,
             &output,
             None,
+            true,
         )
         .await?;
         // kept beside the session: a later trial judges against it
@@ -1874,6 +1879,7 @@ impl Sessions {
             rows,
             &output,
             None,
+            false,
         )
         .await?;
         write_exit(Path::new(&fresh), code);
