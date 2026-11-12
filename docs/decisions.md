@@ -128,3 +128,36 @@ Newest last.
 | D-122 | A short run | rates; totals | **Totals under 1 s or 20 requests**: such a rate is not measured. |
 | D-123 | Zooming a chart | wheel and drag; two presses | **Two presses**: a chart taking the wheel stops the page scrolling. |
 | D-124 | Log times to the second | as written; spread | **Spread over their second, in order, and said so**: otherwise "108 at once" was said of 16 workers. |
+| D-125 | A trial's key that holds a run's name | take out the run's own name; substitute where the template had `{trial}`; both names out to look up, then match | **Both names out to look up; as written, else the scenario's name in some of `clean`'s places**: a program builds keys from `SONDE_TRIAL` any way, so the template cannot say where the name went. |
+| D-126 | Which failures owe a retry | by status in trials; by status and code elsewhere | **One function (`episode::retryable`), by status and S3 code** (SlowDown, RequestTimeout, RequestTimeTooSkewed): S3 sends RequestTimeout as 400. Supersedes D-115's status rule. |
+| D-127 | Where `lost-race` is offered | every conditional write; a commit log | **A create in a table's log, or an `If-Match` write**; a create of a key of its own taken as made is owed nothing: the store holds it. |
+| D-128 | `skew` | move the clock; answer 403 RequestTimeTooSkewed | **Answer it on a first attempt**, when the clean run signed its requests. |
+| D-129 | `complete-500` | a fault of its own; the lost answer on CompleteMultipartUpload | **The lost answer**, judged by its rules; an upload started again is degraded, not broke: the object is right. |
+| D-130 | `slow-first-byte` | every GET held; one | **One download held 10 s**: a trial costs 10 s at most. Waited out is degraded. |
+| D-131 | `stale-list` | judge the listing's use; the key's requests | **The key's requests**: read less is broke, written again degraded, untouched untested. |
+| D-132 | What a recorded program may do by default | allow; no-delete | **no-delete** for `run`, `proxy`, `watch` and the app's Run; the demo allows. |
+| D-133 | How no-delete keeps objects | a HEAD before each write; `If-None-Match: *` | **`If-None-Match: *` on PutObject and CompleteMultipartUpload**, a HEAD for CopyObject: atomic, no extra request. A store that ignores it writes over (said; use read-only). |
+| D-134 | What no-delete lets a run write again | nothing; what it wrote | **What it wrote (a 2xx)**; a trial's runs share the clean run's. |
+| D-135 | A trial's policy | allow; the run's | **The run's**. |
+| D-136 | Read-only mode and Run | coupled; separate | **Separate**: read-only covers sonde's own acts; coupling would make every first Run read-only. |
+| D-137 | Where the policy is widened | flag, sonde.toml, setting | **CLI: flag, then `[record] policy`, then no-delete. App: the setting; a project only narrows it.** |
+| D-138 | When the major changes | every release; when a stable thing breaks | **When a stable thing breaks** ([contract.md](contract.md)): session format, JSON outputs, `sonde.toml`, flags, exit codes. |
+| D-139 | JSON schemas | closed; open; a `schema` field | **Open objects, no field**, checked by a small validator in a test: adding a field is a minor. |
+| D-140 | Session format version | 2; 1 | **1**, with an optional `sonde` field; a newer format is refused by name. |
+| D-141 | Files at rest | umask; 0600 | **0600 when made** (Unix): sessions, caches, verdicts, baselines, audit log. |
+| D-142 | What a request costs in memory | keep everything; keep what analysis reads | **A keep-list of headers, shared text (`reqlog::Text`), keys interned**: 1.1 KB a request (1.75). |
+| D-143 | `compare` | both runs whole; one at a time | **One at a time** (`profile::Run`); a kind's waiting is its share, as in `show`. |
+| D-144 | The summary cache | stamp after reading; before | **Stamped before, in ns, keyed by the analysis version**. |
+| D-145 | A damaged session | refuse; read what is whole | **A torn last line or cut gzip is read to the cut, with a warning; a bad middle line is refused (65)**. |
+| D-146 | Waiting a baseline allows | its tolerance + 5 ms; + 50 ms | **+ 50 ms**: a short run on a CI runner varies by tens of ms. |
+| D-147 | Pointing Spark and Flink at sonde | `-D` properties; `core-site.xml`; their command line | **Their command line, keys from the environment**: Hadoop reads no `-D` properties, and argv is readable by every user. |
+| D-148 | TLS on the endpoint | a second port; one port | **One port, told by the first byte**; a leaf from an authority whose key is never kept. |
+| D-149 | S3 Express One Zone | pass through; re-sign; refuse | **Refuse with the reason (501)** until it can be tested against AWS. |
+| D-150 | Hudi and Paimon | layouts; operations | **Operations**; layouts later. |
+| D-151 | A rename-based commit | a step; a finding | **A warning (`obs.rename`)** with the S3A committer as the fix. |
+| D-152 | The Java hook's jars | built at release; committed | **Committed, rebuilt in CI and compared byte for byte**; packed with zip so any JDK makes the same bytes. |
+| D-153 | Writing figures | per crate; one | **One crate (`sonde-fmt`), the app's rounding**, checked against the app's cases. |
+| D-154 | Windows | app only; tests and a CLI | **Tests in CI and a `.zip` CLI**; shell-specific tests stay Unix. |
+| D-155 | Timed tests | every push; nightly | **Nightly**; a missed memory budget runs once more. |
+| D-156 | Supply chain | tags; commits | **Actions pinned by commit, Dependabot, cargo-deny (ignores with reasons), provenance attestations**; an unsigned release warns. |
+| D-157 | Fuzzing | every push; weekly | **Weekly**, ten targets. |
