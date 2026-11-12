@@ -116,7 +116,7 @@ pub fn summarize(records: &[Record]) -> Summary {
         let e = ops.entry(r.operation.as_str()).or_insert_with(|| {
             (
                 OpStats {
-                    operation: r.operation.clone(),
+                    operation: r.operation.to_string(),
                     ..Default::default()
                 },
                 Vec::new(),

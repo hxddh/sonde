@@ -100,7 +100,7 @@ fn spans_of(
     each(json!({
         "traceId": trace_id,
         "spanId": span_id,
-        "name": e.title,
+        "name": e.title(),
         "kind": 1,
         "startTimeUnixNano": nanos(e.start),
         "endTimeUnixNano": nanos(e.end),

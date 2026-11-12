@@ -252,7 +252,11 @@ impl Tables {
                 _ => continue,
             };
             if let Some(root) = root_before(path, dir) {
-                let entry = (r.bucket.clone(), format.expect("matched above"), root);
+                let entry = (
+                    r.bucket.as_deref().map(String::from),
+                    format.expect("matched above"),
+                    root,
+                );
                 if !roots.contains(&entry) {
                     roots.push(entry);
                 }
@@ -267,7 +271,7 @@ impl Tables {
         let key = r.key.as_deref()?;
         let part = part_of(key)?;
         match part {
-            Part::IcebergData | Part::DeltaData => self.data_part(&r.bucket, key),
+            Part::IcebergData | Part::DeltaData => self.data_part(r.bucket.as_deref(), key),
             _ => Some(part),
         }
     }
@@ -275,10 +279,10 @@ impl Tables {
     /// Whose data file a Parquet file is: the table's whose log the session
     /// touched, the deepest when one table is under another. The path alone
     /// does not say: a Delta table under `…/data/` has its files there too.
-    fn data_part(&self, bucket: &Option<String>, key: &str) -> Option<Part> {
+    fn data_part(&self, bucket: Option<&str>, key: &str) -> Option<Part> {
         self.roots
             .iter()
-            .filter(|(b, _, root)| b == bucket && key.starts_with(root.as_str()))
+            .filter(|(b, _, root)| b.as_deref() == bucket && key.starts_with(root.as_str()))
             .max_by_key(|(_, _, root)| root.len())
             .and_then(|(_, f, _)| match f {
                 Format::Iceberg => Some(Part::IcebergData),
@@ -299,9 +303,9 @@ impl Tables {
         let trimmed = prefix.trim_end_matches('/');
         match part_of(trimmed) {
             // a listing of a data file's path is of a table only when the table is
-            Some(Part::IcebergData | Part::DeltaData) => {
-                self.data_part(&r.bucket, trimmed).map(|p| p.format())
-            }
+            Some(Part::IcebergData | Part::DeltaData) => self
+                .data_part(r.bucket.as_deref(), trimmed)
+                .map(|p| p.format()),
             _ => listed_format(prefix).map(|(f, _)| f),
         }
     }
@@ -332,13 +336,13 @@ pub enum Outcome {
     Refused,
 }
 
-/// One operation: requests that belong together.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// One operation: requests that belong together. Its title is its phrases
+/// ([`Episode::title`] the English of them, made when it is asked for: a
+/// session may have a million operations, and each would hold it twice).
+#[derive(Debug, Clone, PartialEq)]
 pub struct Episode {
     pub kind: Kind,
     pub format: Option<Format>,
-    pub title: String,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
     /// Record ids, in time order.
@@ -354,7 +358,51 @@ pub struct Episode {
     pub notes_text: Vec<Phrase>,
 }
 
+impl Serialize for Episode {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        /// The operation as it is written: its title in English too.
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Written<'a> {
+            kind: &'a Kind,
+            format: &'a Option<Format>,
+            title: String,
+            start: &'a DateTime<Utc>,
+            end: &'a DateTime<Utc>,
+            records: &'a [u64],
+            bytes_up: u64,
+            bytes_down: u64,
+            outcome: &'a Outcome,
+            notes: &'a [String],
+            not_found: usize,
+            title_text: &'a [Phrase],
+            notes_text: &'a [Phrase],
+        }
+        Written {
+            kind: &self.kind,
+            format: &self.format,
+            title: self.title(),
+            start: &self.start,
+            end: &self.end,
+            records: &self.records,
+            bytes_up: self.bytes_up,
+            bytes_down: self.bytes_down,
+            outcome: &self.outcome,
+            notes: &self.notes,
+            not_found: self.not_found,
+            title_text: &self.title_text,
+            notes_text: &self.notes_text,
+        }
+        .serialize(s)
+    }
+}
+
 impl Episode {
+    /// Its title in English.
+    pub fn title(&self) -> String {
+        crate::phrase::en(&self.title_text)
+    }
+
     /// Adds a note, in English and as a phrase.
     fn note(&mut self, phrase: Phrase) {
         self.notes.push(phrase.en());
@@ -487,7 +535,6 @@ fn build(kind: Kind, format: Option<Format>, title: Vec<Phrase>, mut rs: Vec<&Re
     Episode {
         kind,
         format,
-        title: crate::phrase::en(&title),
         title_text: title,
         start,
         end,
@@ -651,7 +698,7 @@ fn single(r: &Record) -> Episode {
     };
     let mut title = vec![p(
         "request",
-        &[("op", r.operation.clone()), ("target", target)],
+        &[("op", r.operation.to_string()), ("target", target)],
     )];
     if let Some(x) = query(r, "prefix").filter(|x| !x.is_empty()) {
         title.push(p("request.prefix", &[("prefix", x.to_string())]));
@@ -706,7 +753,7 @@ fn flush_listing(rs: Vec<&Record>) -> Episode {
         return single(rs[0]);
     }
     let prefix = query(rs[0], "prefix").unwrap_or("");
-    let bucket = rs[0].bucket.clone().unwrap_or_default();
+    let bucket = rs[0].bucket.as_deref().unwrap_or_default().to_string();
     let n = rs.len();
     build(
         Kind::Listing,
@@ -904,7 +951,7 @@ fn retries<'a>(
         &'r str,
         Option<&'r str>,
         Option<&'r str>,
-        &'r [(String, String)],
+        &'r [(reqlog::Text, reqlog::Text)],
     );
     fn identity<'r>(r: &'r Record) -> Identity<'r> {
         (
@@ -968,7 +1015,7 @@ fn retries<'a>(
                 vec![p(
                     "retry",
                     &[
-                        ("op", rs[0].operation.clone()),
+                        ("op", rs[0].operation.to_string()),
                         ("target", target),
                         ("n", n.to_string()),
                         ("first", first),
@@ -1090,7 +1137,7 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         _ => p(
             "step.other",
             &[
-                ("op", commit.operation.clone()),
+                ("op", commit.operation.to_string()),
                 ("key", commit.key.clone().unwrap_or_default()),
             ],
         ),
@@ -1531,7 +1578,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     let total = records.len().max(1);
     let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
     let unfinished =
-        of_episodes(&|e| e.kind == Kind::Multipart && e.title.ends_with("(not completed)"));
+        of_episodes(&|e| e.kind == Kind::Multipart && e.title().ends_with("(not completed)"));
     if !unfinished.is_empty() {
         let n = unfinished.len();
         let impact = requests_of(&unfinished);
@@ -1563,7 +1610,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .weigh(n, 0, total),
         );
     }
-    let orphans = of_episodes(&|e| e.title.contains("no commit followed"));
+    let orphans = of_episodes(&|e| e.title().contains("no commit followed"));
     if !orphans.is_empty() {
         let n = orphans.len();
         let impact = requests_of(&orphans);
@@ -1999,7 +2046,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             let n = slow.len();
             let what = match &worst.key {
                 Some(k) => format!("{} {k}", worst.operation),
-                None => worst.operation.clone(),
+                None => worst.operation.to_string(),
             };
             out.push(
                 info(
@@ -2112,7 +2159,7 @@ mod tests {
         let retried: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Retry).collect();
         assert_eq!(retried.len(), 1, "{eps:#?}");
         assert_eq!(retried[0].records, [1, 2, 3]);
-        assert_eq!(retried[0].title, "GetObject a retried 2× after 503");
+        assert_eq!(retried[0].title(), "GetObject a retried 2× after 503");
         // every other failure stands alone: 200 keys, and the late one
         assert_eq!(eps.len(), 1 + 200 + 2);
     }
@@ -2126,10 +2173,7 @@ mod tests {
             operation: op.into(),
             bucket: Some("b".into()),
             key: Some("big".into()),
-            query: q
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
+            query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
             status: Some(status),
             request_bytes: Some(if op == "UploadPart" { 8 << 20 } else { 0 }),
             latency_ms: 5.0,
@@ -2188,10 +2232,7 @@ mod tests {
     }
 
     fn with_query(mut r: Record, q: &[(&str, &str)]) -> Record {
-        r.query = q
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
+        r.query = q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
         r
     }
 
@@ -2208,7 +2249,7 @@ mod tests {
         assert_eq!(eps.len(), 2);
         let retry = eps.iter().find(|e| e.kind == Kind::Retry).unwrap();
         assert_eq!(retry.records, vec![1, 2, 3]);
-        assert_eq!(retry.title, "GetObject k retried 2× after 503 SlowDown");
+        assert_eq!(retry.title(), "GetObject k retried 2× after 503 SlowDown");
         assert_eq!(retry.outcome, Outcome::Ok);
         let obs = observations(&[], &eps);
         assert!(
@@ -2276,7 +2317,7 @@ mod tests {
     #[test]
     fn an_upload_the_store_completed_is_complete_though_the_program_was_told_500() {
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", Some("big"), 200);
-        create.query = vec![("uploads".into(), String::new())];
+        create.query = vec![("uploads".into(), "".into())];
         let q = [("uploadId", "u1")];
         let part = with_query(
             rec(2, 10, "PUT", "UploadPart", Some("big"), 200),
@@ -2304,9 +2345,9 @@ mod tests {
         let eps = episodes(&rs);
         let upload = eps.iter().find(|e| e.kind == Kind::Multipart).unwrap();
         assert!(
-            !upload.title.contains("aborted") && !upload.title.contains("not completed"),
+            !upload.title().contains("aborted") && !upload.title().contains("not completed"),
             "{}",
-            upload.title
+            upload.title()
         );
         let obs = observations(&rs, &eps);
         assert!(
@@ -2368,12 +2409,12 @@ mod tests {
         let eps = episodes(&[create, p1, p2, create2, abort]);
         assert_eq!(eps.len(), 2);
         assert_eq!(
-            eps[0].title,
+            eps[0].title(),
             "multipart upload b/big · 2 parts · 200 B (not completed)"
         );
         assert_eq!(eps[0].records, vec![1, 2, 3]);
         assert_eq!(
-            eps[1].title,
+            eps[1].title(),
             "multipart upload b/other · 0 parts · 0 B (aborted)"
         );
         let obs = observations(&[], &eps);
@@ -2424,8 +2465,11 @@ mod tests {
         let eps = episodes(&[data, manifest, list, meta, orphan, unrelated]);
         assert_eq!(eps.len(), 3, "{eps:#?}");
         assert_eq!(eps[0].format, Some(Format::Iceberg));
-        assert_eq!(eps[0].title, "commit: table metadata v1 · 3 files (300 B)");
-        assert_eq!(eps[1].title, "1 file written, no commit followed (100 B)");
+        assert_eq!(
+            eps[0].title(),
+            "commit: table metadata v1 · 3 files (300 B)"
+        );
+        assert_eq!(eps[1].title(), "1 file written, no commit followed (100 B)");
         assert!(
             observations(&[], &eps)
                 .iter()
@@ -2516,7 +2560,7 @@ mod tests {
         refused.response_headers = vec![Header::new("x-sonde-proxy", "refused")];
         let records = [won, lost, refused];
         let eps = episodes(&records);
-        assert_eq!(eps[0].title, "commit 7");
+        assert_eq!(eps[0].title(), "commit 7");
         assert_eq!(eps[0].notes, vec!["conditional create (If-None-Match: *)"]);
         assert_eq!(
             eps[1].outcome,
@@ -2551,8 +2595,8 @@ mod tests {
         );
         let eps = episodes(&[first, next, again]);
         assert_eq!(eps.len(), 2);
-        assert_eq!(eps[0].title, "listed b/logs/ in 2 pages");
-        assert_eq!(eps[1].title, "ListObjectsV2 b/logs/");
+        assert_eq!(eps[0].title(), "listed b/logs/ in 2 pages");
+        assert_eq!(eps[1].title(), "ListObjectsV2 b/logs/");
     }
 
     #[test]

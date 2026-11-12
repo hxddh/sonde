@@ -1441,7 +1441,7 @@ mod tests {
             .enumerate()
             .map(|(i, op)| {
                 let mut r = get(i as u64, i as i64 * 400, "k", 200);
-                r.operation = op.to_string();
+                r.operation = (*op).into();
                 r.method = if *op == "GetObject" { "GET" } else { "PUT" }.into();
                 r.first_byte_ms = Some(2.0);
                 r

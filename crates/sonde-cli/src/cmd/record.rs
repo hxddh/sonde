@@ -447,7 +447,7 @@ pub fn episode_line(
         if n == 1 { "" } else { "s" },
         e.millis()
     );
-    let pad = width.saturating_sub(e.title.chars().count());
+    let pad = width.saturating_sub(e.title().chars().count());
     let column = if formats {
         format!(
             "{}{}  ",
@@ -460,7 +460,7 @@ pub fn episode_line(
     let mut line = format!(
         "{}  {column}{}{}  {}",
         paint(&time, "2", color),
-        e.title,
+        e.title(),
         " ".repeat(pad),
         paint(&format!("{meta:>16}"), "2", color),
     );
@@ -1557,7 +1557,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     .collect();
                 let width = shown
                     .iter()
-                    .map(|e| e.title.chars().count())
+                    .map(|e| e.title().chars().count())
                     .max()
                     .unwrap_or(0)
                     .min(60);
@@ -3715,7 +3715,7 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
         }
         // the requests are the endpoint's: priced and checked as its
         for r in records.iter_mut() {
-            r.endpoint = ep.clone();
+            r.endpoint = ep.as_str().into();
         }
         if !records.is_empty() {
             records.sort_by_key(|r| r.time);

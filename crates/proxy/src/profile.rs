@@ -1179,7 +1179,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             });
     let op_name = |r: &Record| {
         if top_ops.iter().take(6).any(|o| *o == r.operation) {
-            r.operation.clone()
+            r.operation.to_string()
         } else {
             "other operations".into()
         }
@@ -2026,7 +2026,7 @@ mod tests {
         // cut back to its bucket
         let records: Vec<Record> = (0..10u64)
             .map(|i| Record {
-                bucket: Some(format!("b{i}")),
+                bucket: Some(format!("b{i}").into()),
                 ..at(i + 1, "a/b/c/k")
             })
             .collect();

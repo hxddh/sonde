@@ -175,10 +175,7 @@ fn a_finding_whose_details_change_is_the_same_finding() {
 #[test]
 fn concurrent_uploads_to_one_key_each_get_their_own_create() {
     let q = |mut r: Record, kv: &[(&str, &str)]| {
-        r.query = kv
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
+        r.query = kv.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
         r
     };
     let mut recs = Vec::new();

@@ -358,7 +358,7 @@ fn identity_without(r: &Record, name: &str) -> String {
     let query: Vec<(String, String)> = r
         .query
         .iter()
-        .map(|(k, v)| (k.clone(), unplace(v, name).into_owned()))
+        .map(|(k, v)| (k.to_string(), unplace(v, name).into_owned()))
         .collect();
     // the body's hash is of what was sent: with the name in it, it is the
     // hash of what is kept, the name taken out (a body cut short when it
@@ -479,7 +479,7 @@ fn place_of(r: &Record) -> String {
 
 fn where_of(r: &Record) -> Where {
     Where {
-        operation: r.operation.clone(),
+        operation: r.operation.to_string(),
         key: place_of(r),
         caller: crate::callers::caller(r),
     }
@@ -715,7 +715,7 @@ pub fn judge(
                 if next.is_error() {
                     // the store had done it: the second attempt found it done
                     refused.push((
-                        next.operation.clone(),
+                        next.operation.to_string(),
                         format!(
                             "{}{}",
                             next.status.unwrap_or(0),
@@ -1577,7 +1577,7 @@ mod tests {
         let batch = |id, at, body: &str, status| {
             let mut r = rec(id, at, "POST", "DeleteObjects", "", status);
             r.key = None;
-            r.query = vec![("delete".into(), String::new())];
+            r.query = vec![("delete".into(), "".into())];
             r.request_body = Some(body.into());
             r
         };
@@ -1646,7 +1646,7 @@ mod tests {
             r
         };
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", "big", 200);
-        create.query = vec![("uploads".into(), String::new())];
+        create.query = vec![("uploads".into(), "".into())];
         let clean = vec![create.clone(), complete(2, 10, 200)];
         let mut refused = complete(3, 120, 404);
         refused.error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());

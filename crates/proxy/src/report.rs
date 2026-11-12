@@ -192,17 +192,17 @@ pub fn redact(s: &mut Session) {
         rec.bucket = rec
             .bucket
             .as_deref()
-            .map(|b| format!("bucket-{}", r.token(b)));
+            .map(|b| format!("bucket-{}", r.token(b)).into());
         rec.key = rec.key.as_deref().map(|k| r.path(k));
         for (k, v) in &mut rec.query {
             if matches!(
                 k.as_str(),
                 "prefix" | "start-after" | "marker" | "key-marker"
             ) {
-                *v = r.path(v);
+                *v = r.path(v).into();
             } else if !PLAIN_QUERY.contains(&k.as_str()) && !v.is_empty() {
                 // ids, tokens, response-* overrides (a file name), an app's own
-                *v = r.token(v);
+                *v = r.token(v).into();
             }
         }
         rec.request_headers.clear();
@@ -422,7 +422,7 @@ pub fn html(s: &Session, prices: &RequestPrices) -> String {
             "<tr id=\"op-{i}\"><td><a href=\"#op-{i}\">{}</a></td><td class=\"muted\">+{at}</td><td{}>{}</td><td class=\"r\">{}</td><td class=\"r\">{}</td></tr>",
             i + 1,
             if failed { " class=\"bad\"" } else { "" },
-            esc(&e.title),
+            esc(&e.title()),
             e.records.len(),
             ms(took)
         );
@@ -471,7 +471,7 @@ fn timeline(eps: &[Episode], on_page: &[usize]) -> String {
             "<a href=\"#op-{i}\"><rect x=\"{a:.1}\" y=\"{}\" width=\"{:.1}\" height=\"10\" rx=\"2\" fill=\"{color}\"><title>{}</title></rect></a>",
             lane * 14 + 4,
             b - a,
-            esc(&e.title)
+            esc(&e.title())
         );
     }
     let h = lanes.len().max(1) * 14 + 22;

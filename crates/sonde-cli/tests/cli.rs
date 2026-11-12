@@ -1002,7 +1002,7 @@ fn a_session_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
 #[test]
 fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
     let t = tempfile::tempdir().unwrap();
-    let a = session_of(t.path(), "a.sonde", "python etl.py", "2026-11-01T10:00:00Z");
+    session_of(t.path(), "a.sonde", "python etl.py", "2026-11-01T10:00:00Z");
     let b = session_of(t.path(), "b.sonde", "python etl.py", "2026-11-01T11:00:00Z");
     // the second run made one upload part fewer
     let text = std::fs::read_to_string(&b).unwrap();

@@ -34,7 +34,7 @@ impl SqliteSink {
                     let json = serde_json::to_string(&r).unwrap_or_default();
                     let _ = conn.execute(
                         "INSERT INTO records (id, time, endpoint, operation, status, request_id, json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                        params![r.id as i64, r.time.to_rfc3339(), r.endpoint, r.operation, r.status, r.request_id, json],
+                        params![r.id as i64, r.time.to_rfc3339(), r.endpoint.as_str(), r.operation.as_str(), r.status, r.request_id, json],
                     );
                 }
             })

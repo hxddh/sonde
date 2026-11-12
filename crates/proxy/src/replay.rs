@@ -320,7 +320,7 @@ impl State {
                     }
                 }
                 "uploadId" => {
-                    let new = match self.uploads.get(v) {
+                    let new = match self.uploads.get(v.as_str()) {
                         Some(n) => n.clone(),
                         None => {
                             let key = (
@@ -332,7 +332,7 @@ impl State {
                                 .get_mut(&key)
                                 .and_then(VecDeque::pop_front)
                                 .ok_or("belongs to an upload that was not replayed")?;
-                            self.uploads.insert(v.clone(), n.clone());
+                            self.uploads.insert(v.to_string(), n.clone());
                             n
                         }
                     };
@@ -675,9 +675,9 @@ pub fn compare_answers(
             continue;
         }
         let conds = conditions(o);
-        let key = (o.operation.clone(), a.clone(), b.clone());
+        let key = (o.operation.to_string(), a.clone(), b.clone());
         let g = groups.entry(key).or_insert_with(|| Difference {
-            operation: o.operation.clone(),
+            operation: o.operation.to_string(),
             original: a.clone(),
             replay: b.clone(),
             count: 0,

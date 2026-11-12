@@ -705,54 +705,33 @@ pub enum Keep {
     /// Everything the file has.
     All,
     /// What the analyses read: the URL (the bucket, key and query are kept
-    /// apart), the store's ids and the headers no finding looks at are
-    /// dropped. A session of a million requests is then a third of the size.
+    /// apart), the store's host id and the headers no analysis reads
+    /// ([`read_by_analysis`]) are dropped.
     Analysis,
 }
 
-/// Headers no analysis reads, and most of a record's size: signing, the
-/// connection, ids the record has as fields of its own.
-const UNREAD_HEADERS: &[&str] = &[
-    "accept",
-    "accept-encoding",
-    "accept-ranges",
-    "amz-sdk-invocation-id",
-    "amz-sdk-request",
-    "authorization",
-    "cache-control",
-    "connection",
-    "content-encoding",
-    "content-md5",
-    "content-type",
-    "date",
-    "expect",
-    "host",
-    "keep-alive",
-    "last-modified",
-    "server",
-    "transfer-encoding",
-    "vary",
-    "x-amz-content-sha256",
-    "x-amz-date",
-    "x-amz-decoded-content-length",
-    "x-amz-id-2",
-    "x-amz-request-id",
-    "x-amz-sdk-checksum-algorithm",
-    "x-amz-security-token",
-    "x-amz-server-side-encryption",
-    "x-amz-trailer",
-    "x-amz-user-agent",
-];
+/// Whether an analysis reads a header (an operation, a finding, a signal,
+/// the code that sent it, `show --requests`' conditions): what
+/// [`Keep::Analysis`] keeps of a record's headers. Every other header is
+/// let go, whatever it is: signing, ids, lengths and ETags the record has as
+/// fields or no finding looks at, and checksums and metadata no list could
+/// foresee.
+pub fn read_by_analysis(name: &str) -> bool {
+    const READ: &[&str] = &["user-agent", "range", "content-range", "traceparent"];
+    let has = |p: &str| {
+        name.get(..p.len())
+            .is_some_and(|n| n.eq_ignore_ascii_case(p))
+    };
+    READ.iter().any(|n| name.eq_ignore_ascii_case(n))
+        || has("if-")
+        || has("x-sonde-")
+        || has("x-amz-copy-source")
+}
 
 /// A record as [`Keep::Analysis`] keeps it.
 pub fn lean(r: &mut Record) {
-    let unread = |h: &reqlog::Header| {
-        UNREAD_HEADERS
-            .iter()
-            .any(|n| h.name.eq_ignore_ascii_case(n))
-    };
-    r.request_headers.retain(|h| !unread(h));
-    r.response_headers.retain(|h| !unread(h));
+    r.request_headers.retain(|h| read_by_analysis(&h.name));
+    r.response_headers.retain(|h| read_by_analysis(&h.name));
     r.request_headers.shrink_to_fit();
     r.response_headers.shrink_to_fit();
     r.query.shrink_to_fit();
@@ -1143,7 +1122,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(names(&full.records[0]).len(), 5);
-        assert_eq!(names(&lean.records[0]), ["user-agent", "Range", "ETag"]);
+        assert_eq!(names(&lean.records[0]), ["user-agent", "Range"]);
         assert!(lean.records[0].url.is_empty() && lean.records[0].host_id.is_none());
         // and nothing an operation or a finding is made of
         let mut same = full.records[0].clone();
@@ -1153,6 +1132,65 @@ mod tests {
             crate::episode::episodes(&full.records),
             crate::episode::episodes(&lean.records)
         );
+    }
+
+    /// Every header an analysis asks for by name is one a lean reading
+    /// keeps: read from the sources, so a new one cannot be missed.
+    #[test]
+    fn a_lean_reading_keeps_every_header_an_analysis_asks_for() {
+        let sources = [
+            include_str!("episode.rs"),
+            include_str!("profile.rs"),
+            include_str!("signals.rs"),
+            include_str!("summary.rs"),
+            include_str!("fixes.rs"),
+            include_str!("fault.rs"),
+            include_str!("callers.rs"),
+            include_str!("view.rs"),
+            include_str!("program.rs"),
+            include_str!("replay.rs"),
+        ];
+        let mut asked = Vec::new();
+        for src in sources {
+            for line in src.lines().filter(|l| !l.trim_start().starts_with("//")) {
+                for pat in [
+                    "header(r, \"",
+                    "response_header(r, \"",
+                    "eq_ignore_ascii_case(\"",
+                    "has(\"",
+                    "const CALLER_HEADER: &str = \"",
+                    "const BODY_HASH_HEADER: &str = \"",
+                ] {
+                    for (i, _) in line.match_indices(pat) {
+                        let rest = &line[i + pat.len()..];
+                        if let Some(end) = rest.find('"') {
+                            asked.push(rest[..end].to_string());
+                        }
+                    }
+                }
+            }
+        }
+        // (names of operations and values are asked for the same way)
+        let headers: Vec<&String> = asked
+            .iter()
+            .filter(|n| n.contains('-') || *n == "range" || *n == "authorization")
+            .filter(|n| !n.chars().next().is_some_and(char::is_uppercase))
+            .collect();
+        assert!(headers.len() >= 8, "{headers:?}");
+        for h in headers {
+            assert!(
+                read_by_analysis(h) || h == "authorization" || h == "aws-chunked",
+                "an analysis reads {h}, a lean reading drops it"
+            );
+        }
+        for dropped in [
+            "etag",
+            "content-length",
+            "x-amz-checksum-crc32",
+            "x-amz-meta-a",
+        ] {
+            assert!(!read_by_analysis(dropped));
+        }
     }
 
     #[test]

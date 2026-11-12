@@ -198,16 +198,16 @@ pub struct Record {
     pub id: u64,
     pub time: DateTime<Utc>,
     /// The endpoint's configured id (never its credentials).
-    pub endpoint: String,
+    pub endpoint: Text,
     /// The S3 operation name, such as `ListObjectsV2`.
-    pub operation: String,
-    pub method: String,
+    pub operation: Text,
+    pub method: Text,
     /// The full URL, with presign / signature query parameters masked.
     pub url: String,
-    pub bucket: Option<String>,
+    pub bucket: Option<Text>,
     pub key: Option<String>,
     /// Query parameters, masked like the URL.
-    pub query: Vec<(String, String)>,
+    pub query: Vec<(Text, Text)>,
     /// `None` when no response arrived (a transport error).
     pub status: Option<u16>,
     pub latency_ms: f64,
@@ -233,7 +233,7 @@ pub struct Record {
     /// A transport error (DNS, TLS, timeout), when there was no response.
     pub transport_error: Option<String>,
     /// The region used for signing, for "copy as aws cli".
-    pub region: Option<String>,
+    pub region: Option<Text>,
     /// The job this request belongs to, if any.
     pub job: Option<String>,
     /// How long until the response's first byte: the proxy's measure, or the
@@ -312,7 +312,7 @@ impl Record {
     pub fn redacted(mut self) -> Self {
         self.url = crate::redact::redact_url(&self.url);
         for (k, v) in &mut self.query {
-            *v = crate::redact::redact_query_value(k, v);
+            *v = crate::redact::redact_query_value(k, v).into();
         }
         for h in self
             .request_headers
@@ -362,15 +362,15 @@ impl Record {
     pub fn summary(&self) -> RecordSummary {
         let target = match (&self.bucket, &self.key) {
             (Some(b), Some(k)) => format!("{b}/{k}"),
-            (Some(b), None) => b.clone(),
+            (Some(b), None) => b.to_string(),
             _ => String::from("/"),
         };
         RecordSummary {
             id: self.id,
             time: self.time,
-            endpoint: self.endpoint.clone(),
-            operation: self.operation.clone(),
-            method: self.method.clone(),
+            endpoint: self.endpoint.to_string(),
+            operation: self.operation.to_string(),
+            method: self.method.to_string(),
             target,
             status: self.status,
             latency_ms: self.latency_ms,
