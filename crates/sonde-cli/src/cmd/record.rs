@@ -2410,7 +2410,7 @@ fn init_project(
     let tolerance = a.tolerance.unwrap_or(10.0);
     let grow = 1.0 + tolerance / 100.0;
     // whole figures a person reads and edits
-    let waiting = (run.busy_ms * grow + 5.0).ceil();
+    let waiting = (run.busy_ms * grow + sonde_proxy::program::WAITING_SLACK_MS).ceil();
     let cost = if run.cost > 0.0 {
         let c = run.cost * grow;
         let digits = (-c.log10().floor() as i32 + 1).clamp(2, 8);
