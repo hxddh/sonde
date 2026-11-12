@@ -72,9 +72,13 @@ impl Filter {
         }
         if let Some(t) = &self.text {
             let t = t.to_lowercase();
-            let hit = [&r.bucket, &r.key, &r.request_id]
-                .iter()
-                .any(|f| f.as_ref().is_some_and(|v| v.to_lowercase().contains(&t)));
+            let hit = [
+                r.bucket.as_deref(),
+                r.key.as_deref(),
+                r.request_id.as_deref(),
+            ]
+            .iter()
+            .any(|f| f.is_some_and(|v| v.to_lowercase().contains(&t)));
             if !hit {
                 return false;
             }
@@ -229,7 +233,7 @@ impl RequestLog {
             .read()
             .records
             .iter()
-            .map(|r| r.operation.clone())
+            .map(|r| r.operation.to_string())
             .collect();
         ops.sort();
         ops.dedup();

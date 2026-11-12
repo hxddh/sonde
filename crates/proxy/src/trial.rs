@@ -490,7 +490,7 @@ fn named_request(r: &Record, name: &str) -> Named {
     let query: Vec<(String, String)> = r
         .query
         .iter()
-        .map(|(k, v)| (k.clone(), unplace_both(v, name).into_owned()))
+        .map(|(k, v)| (k.to_string(), unplace_both(v, name).into_owned()))
         .collect();
     // the body's hash is of what was sent: with a name in it, it is the
     // hash of what is kept, the names taken out (a body cut short when it
@@ -667,7 +667,7 @@ fn place_of(r: &Record) -> String {
 
 fn where_of(r: &Record) -> Where {
     Where {
-        operation: r.operation.clone(),
+        operation: r.operation.to_string(),
         key: place_of(r),
         caller: crate::callers::caller(r),
     }
@@ -938,7 +938,7 @@ pub fn judge(
                 if next.is_error() {
                     // the store had done it: the second attempt found it done
                     refused.push((
-                        next.operation.clone(),
+                        next.operation.to_string(),
                         format!(
                             "{}{}",
                             next.status.unwrap_or(0),
@@ -1112,9 +1112,9 @@ pub fn judge(
             };
             match r.operation.as_str() {
                 "PutObject" | "CopyObject" | "CompleteMultipartUpload" => {
-                    stands.insert((bucket, r.key.clone().unwrap_or_default()));
+                    stands.insert((bucket, r.key.as_deref().unwrap_or_default().to_string()));
                 }
-                "DeleteObject" => remove(r.key.clone().unwrap_or_default()),
+                "DeleteObject" => remove(r.key.as_deref().unwrap_or_default().to_string()),
                 "DeleteObjects" => {
                     let body = r.request_body.as_deref().unwrap_or("");
                     let mut keys: BTreeSet<&str> = body
@@ -2065,7 +2065,7 @@ mod tests {
         let batch = |id, at, body: &str, status| {
             let mut r = rec(id, at, "POST", "DeleteObjects", "", status);
             r.key = None;
-            r.query = vec![("delete".into(), String::new())];
+            r.query = vec![("delete".into(), "".into())];
             r.request_body = Some(body.into());
             r
         };
@@ -2134,7 +2134,7 @@ mod tests {
             r
         };
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", "big", 200);
-        create.query = vec![("uploads".into(), String::new())];
+        create.query = vec![("uploads".into(), "".into())];
         let clean = vec![create.clone(), complete(2, 10, 200)];
         let mut refused = complete(3, 120, 404);
         refused.error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
@@ -2828,7 +2828,7 @@ mod tests {
         let s = crate::fault::scenario("complete-500").unwrap();
         let upload = |id, at| {
             let mut r = rec(id, at, "POST", "CreateMultipartUpload", "big", 200);
-            r.query = vec![("uploads".into(), String::new())];
+            r.query = vec![("uploads".into(), "".into())];
             r
         };
         let part = |id, at, upload: &str| {

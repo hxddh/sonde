@@ -1179,7 +1179,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
             });
     let op_name = |r: &Record| {
         if top_ops.iter().take(6).any(|o| *o == r.operation) {
-            r.operation.clone()
+            r.operation.to_string()
         } else {
             "other operations".into()
         }
@@ -1304,6 +1304,8 @@ pub struct GroupChange {
     pub operation: String,
     pub missed: bool,
     pub requests: (usize, usize),
+    /// The run's waiting that was this kind's in each ([`Group::waited_ms`]:
+    /// what `show`'s "waiting on" says), not the time one was in flight.
     pub busy_ms: (f64, f64),
 }
 
@@ -1395,7 +1397,7 @@ fn identity(o: &Observation) -> String {
         "obs.slow" => Vec::new(),
         _ => ["key", "prefix", "format"]
             .iter()
-            .filter_map(|k| p.args.get(k).cloned())
+            .filter_map(|k| p.args.get(k).map(|v| v.to_string()))
             .collect(),
     };
     // a format's shared habit is the note it shares
@@ -1403,33 +1405,107 @@ fn identity(o: &Observation) -> String {
         && let Some(note) = o.phrases.get(1)
     {
         about.push(note.key.to_string());
-        about.extend(note.args.values().cloned());
+        about.extend(note.args.values().map(|v| v.to_string()));
     }
     format!("{key}|{}", about.join("|"))
 }
 
-pub fn compare_runs(
-    a: (&[Record], &Profile, &[Observation]),
-    b: (&[Record], &Profile, &[Observation]),
-) -> RunChange {
-    let errors = |rs: &[Record]| rs.iter().filter(|r| r.is_error() && !is_miss(r)).count();
-    let keys: BTreeSet<(String, bool)> =
-        a.1.groups
-            .iter()
-            .chain(b.1.groups.iter())
-            .map(|g| (g.operation.clone(), g.missed))
-            .collect();
+/// One run as [`compare_runs`] holds it: what it amounts to, its records
+/// not kept. Two runs are compared one read after the other, so comparing
+/// costs what reading the larger costs, not both at once.
+#[derive(Debug, Clone)]
+pub struct Run {
+    pub requests: usize,
+    /// Its failed requests (lookups that found nothing are no failure).
+    pub errors: usize,
+    pub profile: Profile,
+    pub observations: Vec<Observation>,
+    /// Its requests by folder ([`folder_of`]): what the prefixes both runs
+    /// are shown by are chosen from.
+    pub folders: HashMap<String, usize>,
+}
+
+impl Run {
+    /// A run of `records`, its profile and findings reckoned already.
+    pub fn of(records: &[Record], profile: Profile, observations: Vec<Observation>) -> Run {
+        let mut folders: HashMap<String, usize> = HashMap::new();
+        let mut name = String::new();
+        for r in records {
+            // the folder named in a buffer: a string is kept once per folder
+            name.clear();
+            let b = r.bucket.as_deref().unwrap_or("");
+            let k = r.key.as_deref().unwrap_or("");
+            let dir = k.rfind('/').map_or("", |i| &k[..=i]);
+            match (b.is_empty(), dir.is_empty()) {
+                (true, true) => name.push('/'),
+                (true, false) => name.push_str(dir),
+                _ => {
+                    name.push_str(b);
+                    name.push('/');
+                    name.push_str(dir);
+                }
+            }
+            match folders.get_mut(name.as_str()) {
+                Some(n) => *n += 1,
+                None => {
+                    folders.insert(name.clone(), 1);
+                }
+            }
+        }
+        Run {
+            requests: records.len(),
+            errors: records
+                .iter()
+                .filter(|r| r.is_error() && !is_miss(r))
+                .count(),
+            profile,
+            observations,
+            folders,
+        }
+    }
+
+    /// A run of `records` reckoned here: where its time went on one thread
+    /// while its operations and findings are made on this one.
+    pub fn analysed(
+        header: &crate::session::SessionHeader,
+        records: &[Record],
+        prices: &RequestPrices,
+    ) -> Run {
+        let (profile, observations) = std::thread::scope(|scope| {
+            let p = scope.spawn(|| profile(records, prices));
+            let episodes = crate::episode::episodes(records);
+            let o = crate::episode::observations_of(header, records, &episodes);
+            drop(episodes);
+            match p.join() {
+                Ok(p) => (p, o),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        });
+        Run::of(records, profile, observations)
+    }
+}
+
+pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
+    let keys: BTreeSet<(String, bool)> = a
+        .profile
+        .groups
+        .iter()
+        .chain(b.profile.groups.iter())
+        .map(|g| (g.operation.clone(), g.missed))
+        .collect();
+    // a kind's waiting is its share of the run's, as `show` says it
+    // ([`Group::waited_ms`]), not the time one of them was in flight
     let find = |p: &Profile, k: &(String, bool)| {
         p.groups
             .iter()
             .find(|g| g.operation == k.0 && g.missed == k.1)
-            .map_or((0, 0.0), |g| (g.requests, g.busy_ms))
+            .map_or((0, 0.0), |g| (g.requests, g.waited_ms))
     };
     let mut groups: Vec<GroupChange> = keys
         .into_iter()
         .map(|k| {
-            let (ra, ba) = find(a.1, &k);
-            let (rb, bb) = find(b.1, &k);
+            let (ra, ba) = find(&a.profile, &k);
+            let (rb, bb) = find(&b.profile, &k);
             GroupChange {
                 operation: k.0,
                 missed: k.1,
@@ -1460,42 +1536,41 @@ pub fn compare_runs(
             })
             .collect()
     };
-    let (ia, ib) = (ids(a.2), ids(b.2));
+    let (ia, ib) = (ids(&a.observations), ids(&b.observations));
     // each prefix either run counted (its busiest, not the rest's "other")
     // one set of prefixes for both runs, chosen from the folders of both:
     // each run's own choice would name the same folder at two depths
-    let (fa, fb): (Vec<String>, Vec<String>) = (
-        a.0.iter().map(folder_of).collect(),
-        b.0.iter().map(folder_of).collect(),
-    );
-    let shared = prefix_groups(
-        fa.iter().chain(fb.iter()).map(String::as_str),
-        MAX_PREFIXES * 2,
-    );
-    let count = |fs: &[String], name: &str| {
+    let mut both: HashMap<&str, usize> = HashMap::new();
+    for (f, n) in a.folders.iter().chain(b.folders.iter()) {
+        *both.entry(f.as_str()).or_default() += n;
+    }
+    let shared = fold_folders(both.into_iter(), MAX_PREFIXES * 2);
+    let count = |fs: &HashMap<String, usize>, name: &str| -> usize {
         fs.iter()
-            .filter(|f| prefix_for(&shared, f) == Some(name))
-            .count()
+            .filter(|(f, _)| prefix_for(&shared, f) == Some(name))
+            .map(|(_, n)| n)
+            .sum()
     };
     let mut prefixes: Vec<PrefixChange> = shared
         .iter()
         .map(|(name, _)| PrefixChange {
             prefix: name.clone(),
-            requests: (count(&fa, name), count(&fb, name)),
+            requests: (count(&a.folders, name), count(&b.folders, name)),
         })
         .collect();
     prefixes.sort_by_key(|x| std::cmp::Reverse(x.requests.0.max(x.requests.1)));
+    let (pa, pb) = (&a.profile, &b.profile);
     RunChange {
         prefixes,
-        requests: (a.0.len(), b.0.len()),
-        wall_ms: (a.1.wall_ms, b.1.wall_ms),
-        busy_ms: (a.1.busy_ms, b.1.busy_ms),
-        errors: (errors(a.0), errors(b.0)),
-        cost: (a.1.cost.amount, b.1.cost.amount),
-        currency: b.1.cost.currency.clone(),
-        peak_in_flight: (a.1.peak_in_flight, b.1.peak_in_flight),
+        requests: (a.requests, b.requests),
+        wall_ms: (pa.wall_ms, pb.wall_ms),
+        busy_ms: (pa.busy_ms, pb.busy_ms),
+        errors: (a.errors, b.errors),
+        cost: (pa.cost.amount, pb.cost.amount),
+        currency: pb.cost.currency.clone(),
+        peak_in_flight: (pa.peak_in_flight, pb.peak_in_flight),
         groups,
-        latency: (a.1.latency.clone(), b.1.latency.clone()),
+        latency: (pa.latency.clone(), pb.latency.clone()),
         resolved: ia
             .iter()
             .filter(|(k, _)| !ib.contains_key(*k))
@@ -1531,6 +1606,50 @@ mod tests {
             latency_ms: latency,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_kinds_waiting_in_a_comparison_is_its_share_as_show_says_it() {
+        // a long write and short reads beside it all the while: the reads
+        // were in flight nearly the whole run, but waited on for half of it
+        let run = |reads: u64| {
+            let mut rs = vec![rec(1, 0, "PutObject", 200, 1_000.0)];
+            for i in 0..reads {
+                let mut r = rec(i + 2, i as i64 * 100, "GetObject", 200, 100.0);
+                r.bucket = Some("b".into());
+                r.key = Some(format!("t/{}/f", i % 3).into());
+                rs.push(r);
+            }
+            let p = profile(&rs, &RequestPrices::default());
+            (Run::of(&rs, p.clone(), Vec::new()), p)
+        };
+        let ((a, pa), (b, _)) = (run(10), run(4));
+        let c = compare_runs(&a, &b);
+        let get = c
+            .groups
+            .iter()
+            .find(|g| g.operation == "GetObject")
+            .unwrap();
+        let shown = pa
+            .groups
+            .iter()
+            .find(|g| g.operation == "GetObject")
+            .unwrap();
+        assert_eq!(get.busy_ms.0, shown.waited_ms);
+        assert!(
+            (shown.waited_ms - 500.0).abs() < 1e-6,
+            "{}",
+            shown.waited_ms
+        );
+        assert!(shown.busy_ms > 900.0);
+        // the kinds add up to the run's waiting, as they do in `show`
+        let sum: f64 = c.groups.iter().map(|g| g.busy_ms.0).sum();
+        assert!((sum - c.busy_ms.0).abs() < 1e-6);
+        // and the prefixes are counted from each run's folders
+        assert_eq!((c.requests, c.errors), ((11, 5), (0, 0)));
+        let t0 = c.prefixes.iter().find(|p| p.prefix == "b/t/0/").unwrap();
+        assert_eq!(t0.requests, (4, 2));
+        assert_eq!(a.folders.values().sum::<usize>(), 11);
     }
 
     #[test]
@@ -1709,7 +1828,7 @@ mod tests {
             observations(&before, &episodes(&before)),
             observations(&after, &episodes(&after)),
         );
-        let c = compare_runs((&before, &pa, &oa), (&after, &pb, &ob));
+        let c = compare_runs(&Run::of(&before, pa, oa), &Run::of(&after, pb, ob));
         assert_eq!(c.requests, (12, 1));
         assert_eq!(c.groups[0].operation, "GetObject");
         assert_eq!(c.groups[0].requests, (12, 1));
@@ -1907,7 +2026,7 @@ mod tests {
         // cut back to its bucket
         let records: Vec<Record> = (0..10u64)
             .map(|i| Record {
-                bucket: Some(format!("b{i}")),
+                bucket: Some(format!("b{i}").into()),
                 ..at(i + 1, "a/b/c/k")
             })
             .collect();
@@ -1933,7 +2052,10 @@ mod tests {
         ];
         let prices = RequestPrices::default();
         let (pa, pb) = (profile(&before, &prices), profile(&after, &prices));
-        let c = compare_runs((&before, &pa, &[]), (&after, &pb, &[]));
+        let c = compare_runs(
+            &Run::of(&before, pa.clone(), Vec::new()),
+            &Run::of(&after, pb.clone(), Vec::new()),
+        );
         let of = |name: &str| {
             c.prefixes
                 .iter()
@@ -1949,7 +2071,7 @@ mod tests {
     fn a_prefix_one_run_counts_under_other_is_still_counted_in_the_comparison() {
         let at = |id: u64, key: String| Record {
             bucket: Some("b".into()),
-            key: Some(key),
+            key: Some(key.into()),
             ..rec(id, id as i64, "GetObject", 200, 1.0)
         };
         // before: ten prefixes, p0/ the quietest of them (so under "other")
@@ -1970,7 +2092,10 @@ mod tests {
             !pa.prefixes.iter().any(|x| x.prefix == name),
             "the test needs {name} outside the first run's busiest"
         );
-        let c = compare_runs((&before, &pa, &[]), (&after, &pb, &[]));
+        let c = compare_runs(
+            &Run::of(&before, pa.clone(), Vec::new()),
+            &Run::of(&after, pb.clone(), Vec::new()),
+        );
         let change = c.prefixes.iter().find(|x| x.prefix == name).unwrap();
         assert_eq!(change.requests, (1, 5));
     }

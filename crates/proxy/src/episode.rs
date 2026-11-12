@@ -15,7 +15,7 @@ use chrono::{DateTime, Duration, Utc};
 use reqlog::Record;
 use serde::Serialize;
 
-use crate::phrase::{Phrase, p, plural};
+use crate::phrase::{Phrase, p, p_shared, plural};
 use crate::summary::is_miss;
 
 /// A storage format sonde recognizes from keys.
@@ -409,7 +409,11 @@ impl Tables {
                 _ => continue,
             };
             if let Some(root) = root_before(path, dir) {
-                let entry = (r.bucket.clone(), format.expect("matched above"), root);
+                let entry = (
+                    r.bucket.as_deref().map(String::from),
+                    format.expect("matched above"),
+                    root,
+                );
                 if !roots.contains(&entry) {
                     roots.push(entry);
                 }
@@ -424,7 +428,7 @@ impl Tables {
         let key = r.key.as_deref()?;
         let part = part_of(key)?;
         if part.is_data() {
-            self.data_part(&r.bucket, key)
+            self.data_part(r.bucket.as_deref(), key)
         } else {
             Some(part)
         }
@@ -433,10 +437,10 @@ impl Tables {
     /// Whose data file a Parquet file is: the table's whose log the session
     /// touched, the deepest when one table is under another. The path alone
     /// does not say: a Delta table under `…/data/` has its files there too.
-    fn data_part(&self, bucket: &Option<String>, key: &str) -> Option<Part> {
+    fn data_part(&self, bucket: Option<&str>, key: &str) -> Option<Part> {
         self.roots
             .iter()
-            .filter(|(b, _, root)| b == bucket && key.starts_with(root.as_str()))
+            .filter(|(b, _, root)| b.as_deref() == bucket && key.starts_with(root.as_str()))
             .max_by_key(|(_, _, root)| root.len())
             .and_then(|(_, f, _)| match f {
                 Format::Iceberg => Some(Part::IcebergData),
@@ -459,7 +463,9 @@ impl Tables {
         let trimmed = prefix.trim_end_matches('/');
         match part_of(trimmed) {
             // a listing of a data file's path is of a table only when the table is
-            Some(p) if p.is_data() => self.data_part(&r.bucket, trimmed).map(|p| p.format()),
+            Some(p) if p.is_data() => self
+                .data_part(r.bucket.as_deref(), trimmed)
+                .map(|p| p.format()),
             _ => listed_format(prefix).map(|(f, _)| f),
         }
     }
@@ -490,13 +496,13 @@ pub enum Outcome {
     Refused,
 }
 
-/// One operation: requests that belong together.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// One operation: requests that belong together. Its title is its phrases
+/// ([`Episode::title`] the English of them, made when it is asked for: a
+/// session may have a million operations, and each would hold it twice).
+#[derive(Debug, Clone, PartialEq)]
 pub struct Episode {
     pub kind: Kind,
     pub format: Option<Format>,
-    pub title: String,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
     /// Record ids, in time order.
@@ -512,7 +518,51 @@ pub struct Episode {
     pub notes_text: Vec<Phrase>,
 }
 
+impl Serialize for Episode {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        /// The operation as it is written: its title in English too.
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Written<'a> {
+            kind: &'a Kind,
+            format: &'a Option<Format>,
+            title: String,
+            start: &'a DateTime<Utc>,
+            end: &'a DateTime<Utc>,
+            records: &'a [u64],
+            bytes_up: u64,
+            bytes_down: u64,
+            outcome: &'a Outcome,
+            notes: &'a [String],
+            not_found: usize,
+            title_text: &'a [Phrase],
+            notes_text: &'a [Phrase],
+        }
+        Written {
+            kind: &self.kind,
+            format: &self.format,
+            title: self.title(),
+            start: &self.start,
+            end: &self.end,
+            records: &self.records,
+            bytes_up: self.bytes_up,
+            bytes_down: self.bytes_down,
+            outcome: &self.outcome,
+            notes: &self.notes,
+            not_found: self.not_found,
+            title_text: &self.title_text,
+            notes_text: &self.notes_text,
+        }
+        .serialize(s)
+    }
+}
+
 impl Episode {
+    /// Its title in English.
+    pub fn title(&self) -> String {
+        crate::phrase::en(&self.title_text)
+    }
+
     /// Adds a note, in English and as a phrase.
     fn note(&mut self, phrase: Phrase) {
         self.notes.push(phrase.en());
@@ -645,7 +695,6 @@ fn build(kind: Kind, format: Option<Format>, title: Vec<Phrase>, mut rs: Vec<&Re
     Episode {
         kind,
         format,
-        title: crate::phrase::en(&title),
         title_text: title,
         start,
         end,
@@ -782,13 +831,21 @@ fn singles(rs: &[&Record]) -> Vec<Episode> {
     const WORTH: usize = 20_000;
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
     if threads < 2 || rs.len() < WORTH {
-        return rs.iter().map(|r| single(r)).collect();
+        let mut targets = Targets::default();
+        return rs.iter().map(|r| single(r, &mut targets)).collect();
     }
     let each = rs.len().div_ceil(threads);
     std::thread::scope(|scope| {
         let parts: Vec<_> = rs
             .chunks(each)
-            .map(|part| scope.spawn(move || part.iter().map(|r| single(r)).collect::<Vec<_>>()))
+            .map(|part| {
+                scope.spawn(move || {
+                    let mut targets = Targets::default();
+                    part.iter()
+                        .map(|r| single(r, &mut targets))
+                        .collect::<Vec<_>>()
+                })
+            })
             .collect();
         let mut out = Vec::with_capacity(rs.len());
         for part in parts {
@@ -801,15 +858,34 @@ fn singles(rs: &[&Record]) -> Vec<Episode> {
     })
 }
 
-fn single(r: &Record) -> Episode {
-    let target = match (&r.bucket, &r.key) {
-        (Some(b), Some(k)) => format!("{b}/{k}"),
-        (Some(b), None) => format!("{b}/"),
-        _ => "/".into(),
-    };
-    let mut title = vec![p(
+/// Each request's target as text its operations share, by its bucket and
+/// key (the key is held once for the session, [`crate::session`], and
+/// told by where it is): a key read a thousand times is one title's
+/// target, not a thousand.
+#[derive(Default)]
+struct Targets(std::collections::HashMap<(Option<reqlog::Text>, usize), reqlog::Text>);
+
+impl Targets {
+    fn of(&mut self, r: &Record) -> reqlog::Text {
+        let key = r.key.as_ref().map_or(0, |k| k.as_ptr() as usize);
+        self.0
+            .entry((r.bucket.clone(), key))
+            .or_insert_with(|| {
+                match (&r.bucket, &r.key) {
+                    (Some(b), Some(k)) => format!("{b}/{k}"),
+                    (Some(b), None) => format!("{b}/"),
+                    _ => "/".into(),
+                }
+                .into()
+            })
+            .clone()
+    }
+}
+
+fn single(r: &Record, targets: &mut Targets) -> Episode {
+    let mut title = vec![p_shared(
         "request",
-        &[("op", r.operation.clone()), ("target", target)],
+        &[("op", r.operation.clone()), ("target", targets.of(r))],
     )];
     if let Some(x) = query(r, "prefix").filter(|x| !x.is_empty()) {
         title.push(p("request.prefix", &[("prefix", x.to_string())]));
@@ -838,7 +914,8 @@ fn conditional_note(e: &mut Episode, rs: &[&Record]) {
 
 fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
     if rs.len() < 3 {
-        return rs.into_iter().map(single).collect();
+        let mut targets = Targets::default();
+        return rs.into_iter().map(|r| single(r, &mut targets)).collect();
     }
     let bucket = rs[0].bucket.clone().unwrap_or_default();
     let dirs: Vec<&str> = rs
@@ -861,10 +938,10 @@ fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
 
 fn flush_listing(rs: Vec<&Record>) -> Episode {
     if rs.len() == 1 {
-        return single(rs[0]);
+        return single(rs[0], &mut Targets::default());
     }
     let prefix = query(rs[0], "prefix").unwrap_or("");
-    let bucket = rs[0].bucket.clone().unwrap_or_default();
+    let bucket = rs[0].bucket.as_deref().unwrap_or_default().to_string();
     let n = rs.len();
     build(
         Kind::Listing,
@@ -1080,7 +1157,7 @@ fn retries<'a>(
         &'r str,
         Option<&'r str>,
         Option<&'r str>,
-        &'r [(String, String)],
+        &'r [(reqlog::Text, reqlog::Text)],
     );
     fn identity<'r>(r: &'r Record) -> Identity<'r> {
         (
@@ -1137,14 +1214,14 @@ fn retries<'a>(
             }
             let first = failure(rs[0]).unwrap_or_default();
             let n = rs.len() - 1;
-            let target = rs[0].key.clone().unwrap_or_default();
+            let target = rs[0].key.as_deref().unwrap_or_default().to_string();
             let mut e = build(
                 Kind::Retry,
                 None,
                 vec![p(
                     "retry",
                     &[
-                        ("op", rs[0].operation.clone()),
+                        ("op", rs[0].operation.to_string()),
                         ("target", target),
                         ("n", n.to_string()),
                         ("first", first),
@@ -1292,8 +1369,8 @@ fn commit_step(f: Format, mut rs: Vec<&Record>) -> Episode {
         _ => p(
             "step.other",
             &[
-                ("op", commit.operation.clone()),
-                ("key", commit.key.clone().unwrap_or_default()),
+                ("op", commit.operation.to_string()),
+                ("key", commit.key.as_deref().unwrap_or_default().to_string()),
             ],
         ),
     }];
@@ -1773,7 +1850,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     let total = records.len().max(1);
     let requests_of = |eps: &[usize]| eps.iter().map(|&i| episodes[i].requests()).sum::<usize>();
     let unfinished =
-        of_episodes(&|e| e.kind == Kind::Multipart && e.title.ends_with("(not completed)"));
+        of_episodes(&|e| e.kind == Kind::Multipart && e.title().ends_with("(not completed)"));
     if !unfinished.is_empty() {
         let n = unfinished.len();
         let impact = requests_of(&unfinished);
@@ -1805,7 +1882,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .weigh(n, 0, total),
         );
     }
-    let orphans = of_episodes(&|e| e.title.contains("no commit followed"));
+    let orphans = of_episodes(&|e| e.title().contains("no commit followed"));
     if !orphans.is_empty() {
         let n = orphans.len();
         let impact = requests_of(&orphans);
@@ -2295,7 +2372,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             let n = slow.len();
             let what = match &worst.key {
                 Some(k) => format!("{} {k}", worst.operation),
-                None => worst.operation.clone(),
+                None => worst.operation.to_string(),
             };
             out.push(
                 info(
@@ -2371,7 +2448,7 @@ fn renamed_from_temporary(records: &[Record]) -> (Vec<u64>, Vec<u64>) {
         .iter()
         .filter(|r| r.operation == "DeleteObject")
         .filter(|r| match (&r.bucket, &r.key) {
-            (Some(b), Some(k)) => sources.contains(&(b.clone(), k.clone())),
+            (Some(b), Some(k)) => sources.contains(&(b.to_string(), k.to_string())),
             _ => false,
         })
         .map(|r| r.id)
@@ -2402,8 +2479,20 @@ pub fn observations_of(
             let phrase = p(
                 "obs.throttled.rate",
                 &[
-                    ("n", said.args.get("n").cloned().unwrap_or_default()),
-                    ("s", said.args.get("s").cloned().unwrap_or_default()),
+                    (
+                        "n",
+                        said.args
+                            .get("n")
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                    ),
+                    (
+                        "s",
+                        said.args
+                            .get("s")
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                    ),
                 ],
             );
             o.text = phrase.en();
@@ -2445,7 +2534,7 @@ mod tests {
         let retried: Vec<&Episode> = eps.iter().filter(|e| e.kind == Kind::Retry).collect();
         assert_eq!(retried.len(), 1, "{eps:#?}");
         assert_eq!(retried[0].records, [1, 2, 3]);
-        assert_eq!(retried[0].title, "GetObject a retried 2× after 503");
+        assert_eq!(retried[0].title(), "GetObject a retried 2× after 503");
         // every other failure stands alone: 200 keys, and the late one
         assert_eq!(eps.len(), 1 + 200 + 2);
     }
@@ -2459,10 +2548,7 @@ mod tests {
             operation: op.into(),
             bucket: Some("b".into()),
             key: Some("big".into()),
-            query: q
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
+            query: q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
             status: Some(status),
             request_bytes: Some(if op == "UploadPart" { 8 << 20 } else { 0 }),
             latency_ms: 5.0,
@@ -2521,10 +2607,7 @@ mod tests {
     }
 
     fn with_query(mut r: Record, q: &[(&str, &str)]) -> Record {
-        r.query = q
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
+        r.query = q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
         r
     }
 
@@ -2541,7 +2624,7 @@ mod tests {
         assert_eq!(eps.len(), 2);
         let retry = eps.iter().find(|e| e.kind == Kind::Retry).unwrap();
         assert_eq!(retry.records, vec![1, 2, 3]);
-        assert_eq!(retry.title, "GetObject k retried 2× after 503 SlowDown");
+        assert_eq!(retry.title(), "GetObject k retried 2× after 503 SlowDown");
         assert_eq!(retry.outcome, Outcome::Ok);
         let obs = observations(&[], &eps);
         assert!(
@@ -2609,7 +2692,7 @@ mod tests {
     #[test]
     fn an_upload_the_store_completed_is_complete_though_the_program_was_told_500() {
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", Some("big"), 200);
-        create.query = vec![("uploads".into(), String::new())];
+        create.query = vec![("uploads".into(), "".into())];
         let q = [("uploadId", "u1")];
         let part = with_query(
             rec(2, 10, "PUT", "UploadPart", Some("big"), 200),
@@ -2637,9 +2720,9 @@ mod tests {
         let eps = episodes(&rs);
         let upload = eps.iter().find(|e| e.kind == Kind::Multipart).unwrap();
         assert!(
-            !upload.title.contains("aborted") && !upload.title.contains("not completed"),
+            !upload.title().contains("aborted") && !upload.title().contains("not completed"),
             "{}",
-            upload.title
+            upload.title()
         );
         let obs = observations(&rs, &eps);
         assert!(
@@ -2701,12 +2784,12 @@ mod tests {
         let eps = episodes(&[create, p1, p2, create2, abort]);
         assert_eq!(eps.len(), 2);
         assert_eq!(
-            eps[0].title,
+            eps[0].title(),
             "multipart upload b/big · 2 parts · 200 B (not completed)"
         );
         assert_eq!(eps[0].records, vec![1, 2, 3]);
         assert_eq!(
-            eps[1].title,
+            eps[1].title(),
             "multipart upload b/other · 0 parts · 0 B (aborted)"
         );
         let obs = observations(&[], &eps);
@@ -2757,8 +2840,11 @@ mod tests {
         let eps = episodes(&[data, manifest, list, meta, orphan, unrelated]);
         assert_eq!(eps.len(), 3, "{eps:#?}");
         assert_eq!(eps[0].format, Some(Format::Iceberg));
-        assert_eq!(eps[0].title, "commit: table metadata v1 · 3 files (300 B)");
-        assert_eq!(eps[1].title, "1 file written, no commit followed (100 B)");
+        assert_eq!(
+            eps[0].title(),
+            "commit: table metadata v1 · 3 files (300 B)"
+        );
+        assert_eq!(eps[1].title(), "1 file written, no commit followed (100 B)");
         assert!(
             observations(&[], &eps)
                 .iter()
@@ -2849,7 +2935,7 @@ mod tests {
         refused.response_headers = vec![Header::new("x-sonde-proxy", "refused")];
         let records = [won, lost, refused];
         let eps = episodes(&records);
-        assert_eq!(eps[0].title, "commit 7");
+        assert_eq!(eps[0].title(), "commit 7");
         assert_eq!(eps[0].notes, vec!["conditional create (If-None-Match: *)"]);
         assert_eq!(
             eps[1].outcome,
@@ -2884,8 +2970,8 @@ mod tests {
         );
         let eps = episodes(&[first, next, again]);
         assert_eq!(eps.len(), 2);
-        assert_eq!(eps[0].title, "listed b/logs/ in 2 pages");
-        assert_eq!(eps[1].title, "ListObjectsV2 b/logs/");
+        assert_eq!(eps[0].title(), "listed b/logs/ in 2 pages");
+        assert_eq!(eps[1].title(), "ListObjectsV2 b/logs/");
     }
 
     #[test]
@@ -3099,11 +3185,14 @@ mod tests {
             .find(|e| e.format == Some(Format::Hudi) && e.records.contains(&7))
             .unwrap();
         assert_eq!(commit.records, [1, 2, 3, 4, 5, 6, 7], "{eps:#?}");
-        assert_eq!(commit.title, "commit 20261112093000123 · 2 files (9.8 KiB)");
+        assert_eq!(
+            commit.title(),
+            "commit 20261112093000123 · 2 files (9.8 KiB)"
+        );
         // the markers cleared afterwards are said as deletes
         let cleared = eps.iter().find(|e| e.records == [8]).unwrap();
         assert_eq!(cleared.format, Some(Format::Hudi));
-        assert_eq!(cleared.title, "1 file deleted");
+        assert_eq!(cleared.title(), "1 file deleted");
     }
 
     #[test]
@@ -3117,13 +3206,16 @@ mod tests {
             req(6, 50, "PUT", "p/snapshot/LATEST", 1),
         ];
         let eps = episodes(&rs);
-        let titles: Vec<(&str, Option<Format>)> =
-            eps.iter().map(|e| (e.title.as_str(), e.format)).collect();
+        let titles: Vec<(String, Option<Format>)> =
+            eps.iter().map(|e| (e.title(), e.format)).collect();
         assert_eq!(
             titles,
             [
-                ("snapshot 7 · 1 file (2.9 KiB)", Some(Format::Paimon)),
-                ("LATEST hint updated", Some(Format::Paimon)),
+                (
+                    "snapshot 7 · 1 file (2.9 KiB)".to_string(),
+                    Some(Format::Paimon)
+                ),
+                ("LATEST hint updated".to_string(), Some(Format::Paimon)),
             ]
         );
     }

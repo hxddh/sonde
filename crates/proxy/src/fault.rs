@@ -340,18 +340,18 @@ pub fn body_hash(body: &[u8]) -> String {
 /// its paging and by its body's hash: two batches of deletes are two
 /// requests. The faults count attempts by it and the trial reads retries by
 /// it: one function, so the two cannot disagree.
-pub fn identity(
+pub fn identity<K: AsRef<str>, V: AsRef<str>>(
     method: &str,
     op: &str,
     bucket: Option<&str>,
     key: Option<&str>,
-    query: &[(String, String)],
+    query: &[(K, V)],
     body_hash: Option<&str>,
 ) -> String {
     let part = query
         .iter()
-        .find(|(k, _)| k == "partNumber")
-        .map(|(_, v)| v.as_str())
+        .find(|(k, _)| k.as_ref() == "partNumber")
+        .map(|(_, v)| v.as_ref())
         .unwrap_or("");
     let mut id = format!(
         "{method} {op} {}/{} {part}",
@@ -359,9 +359,10 @@ pub fn identity(
         key.unwrap_or("")
     );
     if key.is_none() {
-        let mut paging: Vec<&(String, String)> = query
+        let mut paging: Vec<(&str, &str)> = query
             .iter()
-            .filter(|(k, _)| PAGING.contains(&k.as_str()))
+            .map(|(k, v)| (k.as_ref(), v.as_ref()))
+            .filter(|(k, _)| PAGING.contains(k))
             .collect();
         paging.sort();
         for (k, v) in paging {
@@ -1131,7 +1132,7 @@ mod tests {
             method: "POST".into(),
             operation: "DeleteObjects".into(),
             bucket: Some("b".into()),
-            query: vec![("delete".into(), String::new())],
+            query: vec![("delete".into(), "".into())],
             request_body: Some("cut and redac…".into()),
             ..Default::default()
         };

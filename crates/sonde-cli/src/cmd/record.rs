@@ -502,7 +502,7 @@ pub fn episode_line(
         if n == 1 { "" } else { "s" },
         e.millis()
     );
-    let pad = width.saturating_sub(e.title.chars().count());
+    let pad = width.saturating_sub(e.title().chars().count());
     let column = if formats {
         format!(
             "{}{}  ",
@@ -515,7 +515,7 @@ pub fn episode_line(
     let mut line = format!(
         "{}  {column}{}{}  {}",
         paint(&time, "2", color),
-        e.title,
+        e.title(),
         " ".repeat(pad),
         paint(&format!("{meta:>16}"), "2", color),
     );
@@ -1646,7 +1646,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     .collect();
                 let width = shown
                     .iter()
-                    .map(|e| e.title.chars().count())
+                    .map(|e| e.title().chars().count())
                     .max()
                     .unwrap_or(0)
                     .min(60);
@@ -2144,7 +2144,14 @@ fn replay_exit(failed: usize, differ: usize) -> i32 {
 
 /// The same workload on two stores: each kind's p50 and p95 on each, slowest change first.
 fn print_latency(a: &[Record], b: &[Record], names: (&str, &str), prices: &RequestPrices) {
-    let changes = sonde_proxy::profile::latency_changes(&profile(a, prices), &profile(b, prices));
+    print_latency_of(
+        &sonde_proxy::profile::latency_changes(&profile(a, prices), &profile(b, prices)),
+        names,
+    );
+}
+
+/// [`print_latency`] of the changes reckoned already.
+fn print_latency_of(changes: &[sonde_proxy::profile::LatencyChange], names: (&str, &str)) {
     if changes.is_empty() {
         return;
     }
@@ -2186,36 +2193,50 @@ pub async fn diff(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
-    let (_, original) = super::sessions::open(s, &a.original)?;
-    let (_, replay) = super::sessions::open(s, &a.replay)?;
+    // read one after the other, each for what it amounts to: the replay
+    // kept as its answers and its profile, then the session read against them
+    let original_file = super::sessions::resolve(s, &a.original);
+    let prices = sonde_proxy::session::read_header(&original_file)
+        .map(|h| request_prices_for(s, &h.endpoint))
+        .unwrap_or_default();
+    let (replay_header, answers, is_replay, replay_profile) = {
+        let (_, replay) = super::sessions::open_lean(s, &a.replay)?;
+        (
+            replay.header,
+            sonde_proxy::replay::answers(&replay.records),
+            sonde_proxy::replay::is_replay(&replay.records),
+            profile(&replay.records, &prices),
+        )
+    };
+    let (_, original) = super::sessions::open_lean(s, &a.original)?;
     // two ordinary runs pair no request: "0 compared: 0 the same" would read as agreement
     // (a replay that sent nothing is still one: its header says what it is)
-    let named_replay = replay
-        .header
+    let named_replay = replay_header
         .command
         .as_deref()
         .is_some_and(|c| c.starts_with("replay of "));
-    if !named_replay && !sonde_proxy::replay::is_replay(&replay.records) {
+    if !named_replay && !is_replay {
         eprintln!("sonde: {}", not_a_replay(a, &original.records));
         return Ok(64);
     }
-    let c = sonde_proxy::replay::compare(&original.records, &replay.records, &[]);
-    let prices = request_prices_for(s, &original.header.endpoint);
+    let c = sonde_proxy::replay::compare_answers(&original.records, &answers, &[]);
+    let latency = sonde_proxy::profile::latency_changes(
+        &profile(&original.records, &prices),
+        &replay_profile,
+    );
     match a.format {
         Format::Json => println!(
             "{}",
             output::json(&serde_json::json!({
                 "comparison": c,
-                "latency": sonde_proxy::profile::latency_changes(&profile(&original.records, &prices), &profile(&replay.records, &prices)),
+                "latency": latency,
             }))
         ),
         _ => {
             print_comparison(&c, std::io::stdout().is_terminal());
-            print_latency(
-                &original.records,
-                &replay.records,
-                (&original.header.endpoint, &replay.header.endpoint),
-                &prices,
+            print_latency_of(
+                &latency,
+                (&original.header.endpoint, &replay_header.endpoint),
             );
         }
     }
@@ -2254,29 +2275,45 @@ fn change(a: f64, b: f64, text: impl Fn(f64) -> String) -> String {
     format!("{before} → {after}{pct}")
 }
 
+/// What `compare`'s table of kinds leaves out: `cut` that changed past its
+/// rows, `same` that did not change. `show` says its own rest the same way.
+fn more_kinds(cut: usize, same: usize) -> Option<String> {
+    let kinds = |n: usize| if n == 1 { "kind" } else { "kinds" };
+    match (cut, same) {
+        (0, 0) => None,
+        (0, s) => Some(format!(
+            "  … and {s} more {} of request, unchanged",
+            kinds(s)
+        )),
+        (c, 0) => Some(format!("  … and {c} more {} of request", kinds(c))),
+        (c, s) => Some(format!(
+            "  … and {} more {} of request, {s} of them unchanged",
+            c + s,
+            kinds(c + s)
+        )),
+    }
+}
+
 /// `sonde compare`: two runs of a program, before and after a change.
 pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     if let Some(why) = output::unsupported(a.format, "compare", &[Format::Table, Format::Json]) {
         eprintln!("sonde: {why}");
         return Ok(64);
     }
-    let (sa, sb) = (
-        super::sessions::open(s, &a.before)?.1,
-        super::sessions::open(s, &a.after)?.1,
+    // one run read, reckoned and let go before the other is read: two runs
+    // cost what the larger does, not both at once
+    let run = |f: &PathBuf| -> anyhow::Result<_> {
+        let (_, session) = super::sessions::open_lean(s, f)?;
+        let prices = request_prices_for(s, &session.header.endpoint);
+        let run = sonde_proxy::profile::Run::analysed(&session.header, &session.records, &prices);
+        Ok((session.header, run))
+    };
+    let (ha, ra) = run(&a.before)?;
+    let (hb, rb) = run(&a.after)?;
+    let c = sonde_proxy::profile::compare_runs(&ra, &rb).of_programs(
+        sonde_proxy::program::key_of(&ha).as_deref(),
+        sonde_proxy::program::key_of(&hb).as_deref(),
     );
-    let (pa, pb) = (
-        profile(&sa.records, &request_prices_for(s, &sa.header.endpoint)),
-        profile(&sb.records, &request_prices_for(s, &sb.header.endpoint)),
-    );
-    let (oa, ob) = (
-        sonde_proxy::episode::observations_of(&sa.header, &sa.records, &episodes(&sa.records)),
-        sonde_proxy::episode::observations_of(&sb.header, &sb.records, &episodes(&sb.records)),
-    );
-    let c = sonde_proxy::profile::compare_runs((&sa.records, &pa, &oa), (&sb.records, &pb, &ob))
-        .of_programs(
-            sonde_proxy::program::key_of(&sa.header).as_deref(),
-            sonde_proxy::program::key_of(&sb.header).as_deref(),
-        );
     if matches!(a.format, Format::Json) {
         println!("{}", output::json(&c));
         return Ok(0);
@@ -2326,11 +2363,16 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         "  cost ≈     {}",
         change(c.cost.0, c.cost.1, |v| money_text(v, &c.currency))
     );
-    let rows: Vec<Vec<String>> = c
+    // the kinds that changed, the largest change first; the rest counted
+    const ROWS: usize = 10;
+    let changed: Vec<&sonde_proxy::profile::GroupChange> = c
         .groups
         .iter()
         .filter(|g| g.requests.0 != g.requests.1 || (g.busy_ms.0 - g.busy_ms.1).abs() >= 1.0)
-        .take(10)
+        .collect();
+    let rows: Vec<Vec<String>> = changed
+        .iter()
+        .take(ROWS)
         .map(|g| {
             vec![
                 if g.missed {
@@ -2345,6 +2387,9 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         .collect();
     if !rows.is_empty() {
         println!("{}", output::table(&["kind", "requests", "waiting"], &rows));
+        if let Some(more) = more_kinds(changed.len() - rows.len(), c.groups.len() - changed.len()) {
+            println!("{more}");
+        }
     }
     for f in &c.resolved {
         println!("{} {}", paint("✓", "32", color), f.text);
@@ -2719,7 +2764,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     };
     // read once, for what it amounts to: its figures, its findings, its header
     let read = |p: &PathBuf| -> anyhow::Result<_> {
-        let session = Session::open_lean(p).map_err(|e| anyhow::anyhow!(e))?;
+        let session = super::sessions::read(p, sonde_proxy::session::Keep::Analysis)?;
         let Analysis {
             profile: pr,
             observations: ob,
@@ -3645,7 +3690,7 @@ async fn watch_logs(s: &Arc<Sonde>, a: &WatchArgs, src: &str) -> anyhow::Result<
         }
         // the requests are the endpoint's: priced and checked as its
         for r in records.iter_mut() {
-            r.endpoint = ep.clone();
+            r.endpoint = ep.as_str().into();
         }
         if !records.is_empty() {
             records.sort_by_key(|r| r.time);
@@ -3964,6 +4009,22 @@ mod tests {
     use super::*;
     use sonde_proxy::program::md_text;
 
+    #[test]
+    fn compare_says_how_many_kinds_its_table_leaves_out() {
+        assert_eq!(more_kinds(0, 0), None);
+        assert_eq!(
+            more_kinds(0, 1).as_deref(),
+            Some("  … and 1 more kind of request, unchanged")
+        );
+        assert_eq!(
+            more_kinds(3, 0).as_deref(),
+            Some("  … and 3 more kinds of request")
+        );
+        assert_eq!(
+            more_kinds(2, 5).as_deref(),
+            Some("  … and 7 more kinds of request, 5 of them unchanged")
+        );
+    }
     #[test]
     fn an_input_past_its_limit_is_kept_in_a_file_and_read_again_whole() {
         use std::io::Read;

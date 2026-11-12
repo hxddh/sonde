@@ -147,11 +147,8 @@ fn record(
         method: method.into(),
         url,
         bucket: Some(BUCKET.into()),
-        key: key.map(String::from),
-        query: query
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.clone()))
-            .collect(),
+        key: key.map(Into::into),
+        query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
         status: Some(status),
         latency_ms: (ms * 1000.0).round() / 1000.0,
         retries: 0,
@@ -548,7 +545,7 @@ fn plain(
         ),
         bucket: Some("b".into()),
         key: Some(key.into()),
-        query: query.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+        query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
         status: Some(status),
         latency_ms: ms,
         request_id: Some(format!("{n:016X}")),

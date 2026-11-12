@@ -10,6 +10,7 @@
 //! | 3 | probes could not run (errors only) |
 //! | 4 | findings worth attention (stale uploads, a missing lifecycle rule, layout warnings) |
 //! | 64 | usage error |
+//! | 65 | a session (or another file given to read) is not what it should be |
 //! | 70 | the operation failed (connection, credentials, permissions) |
 //! | 77 | refused: read-only mode or a confirmation mismatch |
 
@@ -288,6 +289,10 @@ fn main() -> ExitCode {
             Err(e) if e.downcast_ref::<cmd::Usage>().is_some() => {
                 eprintln!("sonde: {e:#}");
                 64
+            }
+            Err(e) if e.downcast_ref::<cmd::BadData>().is_some() => {
+                eprintln!("sonde: {e:#}");
+                65
             }
             Err(e) => {
                 eprintln!("sonde: {}", cmd::said(&sonde, &format!("{e:#}")));

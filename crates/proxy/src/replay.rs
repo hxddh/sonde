@@ -320,19 +320,19 @@ impl State {
                     }
                 }
                 "uploadId" => {
-                    let new = match self.uploads.get(v) {
+                    let new = match self.uploads.get(v.as_str()) {
                         Some(n) => n.clone(),
                         None => {
                             let key = (
                                 bucket.clone().unwrap_or_default(),
-                                r.key.clone().unwrap_or_default(),
+                                r.key.as_deref().unwrap_or_default().to_string(),
                             );
                             let n = self
                                 .pending
                                 .get_mut(&key)
                                 .and_then(VecDeque::pop_front)
                                 .ok_or("belongs to an upload that was not replayed")?;
-                            self.uploads.insert(v.clone(), n.clone());
+                            self.uploads.insert(v.to_string(), n.clone());
                             n
                         }
                     };
@@ -419,7 +419,7 @@ impl State {
             "CreateMultipartUpload" => {
                 if let Some(id) = tags(&resp.text(), "UploadId").first() {
                     self.pending
-                        .entry((bucket, r.key.clone().unwrap_or_default()))
+                        .entry((bucket, r.key.as_deref().unwrap_or_default().to_string()))
                         .or_default()
                         .push_back(id.to_string());
                 }
@@ -630,10 +630,26 @@ pub fn is_replay(records: &[Record]) -> bool {
 /// Compares an original session with its replay (records tagged by
 /// [`replay_tag`]). `replayed` gives the reasons for requests not sent.
 pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) -> Comparison {
-    let by_original: HashMap<u64, &Record> = replay
+    compare_answers(original, &answers(replay), replayed)
+}
+
+/// What [`compare`] reads of a replay: each answer ([`outcome`], and
+/// whether it was a lookup that found nothing) by the request it repeats.
+/// A few bytes a request: a replay is read, kept as this, and let go before
+/// its session is read.
+pub fn answers(replay: &[Record]) -> HashMap<u64, (String, bool)> {
+    replay
         .iter()
-        .filter_map(|r| original_of(r).map(|o| (o, r)))
-        .collect();
+        .filter_map(|r| original_of(r).map(|o| (o, (outcome(r), is_miss(r)))))
+        .collect()
+}
+
+/// [`compare`] with the replay's [`answers`].
+pub fn compare_answers(
+    original: &[Record],
+    by_original: &HashMap<u64, (String, bool)>,
+    replayed: &[Replayed],
+) -> Comparison {
     let mut c = Comparison::default();
     let mut groups: BTreeMap<(String, String, String), Difference> = BTreeMap::new();
     for o in original {
@@ -647,8 +663,8 @@ pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) ->
             continue;
         };
         c.compared += 1;
-        let (a, b) = (outcome(o), outcome(r));
-        if a == b || (is_miss(o) && is_miss(r)) {
+        let (a, b) = (outcome(o), r.0.clone());
+        if a == b || (is_miss(o) && r.1) {
             c.same += 1;
             continue;
         }
@@ -659,9 +675,9 @@ pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) ->
             continue;
         }
         let conds = conditions(o);
-        let key = (o.operation.clone(), a.clone(), b.clone());
+        let key = (o.operation.to_string(), a.clone(), b.clone());
         let g = groups.entry(key).or_insert_with(|| Difference {
-            operation: o.operation.clone(),
+            operation: o.operation.to_string(),
             original: a.clone(),
             replay: b.clone(),
             count: 0,

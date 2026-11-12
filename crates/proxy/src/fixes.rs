@@ -404,7 +404,7 @@ mod tests {
                 key: Some(if i < 15 {
                     "conf.json".into()
                 } else {
-                    format!("k{i}")
+                    format!("k{i}").into()
                 }),
                 status: Some(200),
                 latency_ms: 10.0,
@@ -447,7 +447,7 @@ mod tests {
                 method: method.into(),
                 operation: op.into(),
                 bucket: Some("b".into()),
-                key: Some(format!("k{i}")),
+                key: Some(format!("k{i}").into()),
                 status: Some(200),
                 latency_ms: ms,
                 ..Default::default()
@@ -457,7 +457,7 @@ mod tests {
             rs.push(r(i * 3 + 2, at + 10, "GET", "GetObject", 60.0));
             // and a slow write, most of the cost
             let mut put = r(i * 3 + 3, at + 100, "PUT", "PutObject", 3.0);
-            put.key = Some(format!("out{i}"));
+            put.key = Some(format!("out{i}").into());
             rs.push(put);
         }
         let p = profile(&rs, &prices);
