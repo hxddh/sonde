@@ -1,6 +1,6 @@
 # 8.0: what changed
 
-What 8.0.0 adds over 7.0.0, with the reasons in the [changelog](../CHANGELOG.md).
+What 8.0.0 adds over 7.0.0, with the reasons in the [changelog](../../CHANGELOG.md).
 
 ## A session as one file
 
@@ -10,7 +10,7 @@ are stable tokens, so the findings still read; nothing that names the data leave
 
 | Light | Dark |
 |---|---|
-| ![A shared session, light](images/share-html.png) | ![A shared session, dark](images/share-html-dark.png) |
+| ![A shared session, light](../images/share-html.png) | ![A shared session, dark](../images/share-html-dark.png) |
 
 ## What a screenshot does not show
 
@@ -22,6 +22,6 @@ are stable tokens, so the findings still read; nothing that names the data leave
   print the table.
 - `sonde demo`, `sonde watch`, `sonde sessions`, `sonde check --baseline auto`, `sonde endpoints add`.
 - Sessions are compressed (35× on a million requests) and the app reads a live one in steps
-  ([performance](performance.md#a-session-of-a-million-requests-800)).
+  ([performance](../performance.md#a-session-of-a-million-requests-800)).
 - Higher contrast, terminal parity (the session's sentence, findings that narrow, sortable columns), and a static
   Linux build.

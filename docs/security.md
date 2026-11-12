@@ -1,86 +1,85 @@
 # Security model
 
+What sonde protects and how: credentials stay in Rust, the interface has no network or file access, sonde's own
+destructive actions are gated, and a recorded program is limited by a policy.
+
 ## Credential isolation
 
-- Credentials are resolved in Rust (`sonde-core::credentials`) and held in `s3raw::Credentials`, whose `Debug`
-  prints masks. They are used to sign and for nothing else.
-- The TSX interface runs in QuickJS. `sonde/native` exposes endpoints as `EndpointView` (id, name, URL, region,
-  vendor, *how* credentials are obtained) and never a key; the endpoint form cannot submit one (`credentials:
-  "keep"` preserves configured static keys without reading them).
-- Every request record is redacted at creation (`reqlog::redact`): signatures, tokens, SSE-C keys, presign
-  parameters, and the secrets services echo in error bodies. The ring buffer, SQLite file, HAR/JSON exports, probe
-  reports and fixtures only ever hold redacted records. "Copy as curl" carries no signature.
-- `config.toml` is written with mode 0600 (its temporary file is created with that mode, never widened).
+- Credentials are resolved in Rust (`sonde-core::credentials`), held in `s3raw::Credentials` (its `Debug` masks
+  them), and used only to sign.
+- The TSX interface (QuickJS) sees endpoints as `EndpointView`: id, name, URL, region, vendor, and *how* credentials
+  are obtained, never a key. The endpoint form cannot submit a key (`credentials: "keep"` keeps static keys without
+  reading them).
+- Every request record is redacted when created (`reqlog::redact`): signatures, tokens, SSE-C keys, presign
+  parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)). The ring buffer, SQLite file,
+  HAR/JSON exports, probe reports and fixtures hold only redacted records. "Copy as curl" has no signature.
+- `config.toml` is written with mode 0600 (its temporary file is created so).
 
 ## Network
 
-- Every request is made by Rust (`reqwest` with rustls); the app's `nsh.json` declares no network capability, so
-  the TSX VM cannot open a connection (`capabilities.json` in the bundle: `"network": {"hosts": [], "http": []}`).
-- sonde has no telemetry and no background request: each request answers a user action (or a job the user
-  started). The desktop app looks for an update only when asked (Settings › Updates): Native Shell's updater reads
-  the project's `latest.json` on GitHub Releases and checks the archive's SHA-256 before installing it.
-- Custom CAs are added per endpoint (`ca-file`); TLS verification is never disabled.
+- All requests are made in Rust (`reqwest`, rustls). The app's `nsh.json` declares no network capability
+  (`"network": {"hosts": [], "http": []}`), so the TSX VM cannot connect.
+- No telemetry, no background requests: every request answers a user action or a job the user started.
+- The app checks for updates only when asked (Settings › Updates): it reads `latest.json` on GitHub Releases and
+  verifies the archive's SHA-256 before installing.
+- Custom CAs per endpoint (`ca-file`); TLS verification is never disabled.
 
 ## Files
 
-The app declares no `fs` capability: TSX cannot read or write files. Rust writes exports to the exports directory,
-downloads to the downloads directory, and its state under the data directory.
-
-What holds a program's traffic is its user's alone: on Unix, sessions, their counts (`*.summary.json`), trial
-verdicts, baselines and titles, the request log's SQLite file, `du`'s cache and `audit.jsonl` are made `0600`,
-whatever the umask (`config.toml` was already). A file made by an earlier version keeps its mode. What the user asks
-to be written somewhere (`-o`, `sonde share`, an export) is made as any file is. A `sonde://open` link opens only a
-`.sonde` or `.sonde.gz` file, and never a path on another machine (`\\host\share`, `//host/share`), which Windows
-would reach, with the user's credentials, before anything is read.
+- The app declares no `fs` capability: TSX cannot read or write files. Rust writes exports to the exports directory,
+  downloads to the downloads directory, and state under the data directory.
+- On Unix, files holding a program's traffic are `0600` regardless of umask: sessions, `*.summary.json`, trial
+  verdicts, baselines, titles, the request log's SQLite file, `du`'s cache, `audit.jsonl`. Files from earlier
+  versions keep their mode.
+- Files the user asks for elsewhere (`-o`, `sonde share`, exports) get normal permissions.
+- A `sonde://open` link opens only a `.sonde` or `.sonde.gz` file, never a network path (`\\host\share`,
+  `//host/share`).
+- A code location in a session opens only a source or text file (allow-listed extensions) inside the session's run
+  folder; anything else is shown in the file manager; a network path opens nothing.
 
 ## Read-only by default
 
-`read-only = true` until the user turns it off. It covers what sonde does itself; what a program recorded through
-sonde may do is the recording's policy ([Run](#run)). Destructive operations — aborting uploads, deleting versions or
-delete markers, deleting objects, replacing a lifecycle configuration — are plans (`sonde-core::guard`):
+`read-only = true` until the user turns it off. It covers sonde's own actions; a recorded program is governed by the
+recording policy ([Run](#run)).
 
-1. the plan is a dry run listing exactly what would change (and, for lifecycle, the old and new documents);
-2. it runs only with read-only mode off;
-3. and only with the typed confirmation it names: the number of items, or the bucket name;
-4. plans expire after 10 minutes and run once;
-5. every run is appended to `<data>/audit.jsonl` twice: an entry with `"stage": "started"` before the first
-   request (a run cut short is on record; one that cannot be recorded does not start), then the outcome (time,
-   action, targets, outcome, request ids, errors).
+Destructive operations (aborting uploads, deleting versions, delete markers or objects, replacing a lifecycle
+configuration) are plans (`sonde-core::guard`):
 
-Probe runs write too (objects under `sonde-probe/` in the scratch bucket, and buckets of their own when allowed):
-the app refuses them while read-only mode is on (`sonde probe`, where the scratch bucket is named on the command line, runs), and each run is in the audit log (`runProbes`: started, then the
-outcome with anything cleanup could not remove). A cancelled run still cleans up after the probe it stopped in.
+1. A plan is a dry run listing exactly what would change (for lifecycle, old and new documents).
+2. It runs only with read-only mode off,
+3. and only with its typed confirmation: the item count or the bucket name.
+4. Plans expire after 10 minutes and run once.
+5. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
+   be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors).
 
-A code place in a session opens only a source or text file (an allow-list of extensions) inside the folder the
-session ran in; anything else is shown in the file manager, and a session naming a folder on another machine
-(`\\host\share`) opens nothing.
+Probes write too (under `sonde-probe/` in the scratch bucket, and their own buckets when allowed):
+
+- The app refuses probe runs while read-only; `sonde probe` (scratch bucket named on the command line) runs.
+- Each run is audited (`runProbes`: started, then the outcome, with anything cleanup could not remove).
+- A cancelled run still cleans up after the probe it stopped in.
 
 ## Run
 
-Run starts the command the user typed, through their shell, with the user's rights — as a terminal would. The
-command receives a local endpoint and throwaway keys, never sonde's credentials (`AWS_SESSION_TOKEN`, `AWS_PROFILE`
-and the like are removed from its environment).
-
-What it may do with them is the recording's policy, not read-only mode (which covers sonde's own acts). By default
-(`no-delete`, in `sonde run`, `sonde proxy`, `sonde watch` and the app's Run) nothing is removed and nothing that was
-there before is replaced: deletes, aborted uploads, lifecycle rules, bucket policies, versioning suspended and a
-write over an object the recording did not write itself are refused ([recording.md](recording.md#what-a-recorded-program-may-do)
-lists each). Overwrites are refused by the store, through `If-None-Match: *` sonde adds; a store that ignores the
-header writes over the object all the same, so with such a store `read-only` is the safe policy. `read-only` lets
-only GET and HEAD through; `allow` (`--allow-writes`, `[record] policy = "allow"`) lets everything through. A
-project's `sonde.toml` may set the policy for a recording when no flag does (sonde says so on stderr when it lets a
-program delete); in the app it may only narrow the one chosen. Its output is kept in the session file as printed, so a command
-that prints secrets puts them there; records stay redacted. Only the app process can start commands: there is no
-listening socket for it, and the TSX VM reaches it through `sonde/native` only.
-
-With "Name the code" (`--callers`) on, a run also gets one small hook per language: `PYTHONPATH`, `NODE_OPTIONS`
-and `JAVA_TOOL_OPTIONS` are extended (never replaced). Each hook only adds an `x-sonde-caller` header to requests
-going to sonde, which sonde reads and never forwards; a hook that fails leaves the program as it was.
-
-The Runs pane's code change runs `git diff` and `git show` in the run's folder, with commits checked as hex and the
-repository's fsmonitor turned off, so a shared session cannot make it run anything else.
+- Run starts the user's command through their shell with their rights, like a terminal.
+- The command gets a local endpoint and throwaway keys, never sonde's credentials; `AWS_SESSION_TOKEN`,
+  `AWS_PROFILE` and similar are removed.
+- What it may do is the recording policy ([recording](recording.md#what-a-recorded-program-may-do)):
+  - `no-delete` (default): no deletes, aborts, lifecycle rules, bucket policies, versioning suspension, or overwrites
+    of objects the recording did not write. Overwrites are refused by the store via `If-None-Match: *`; a store that
+    ignores it overwrites anyway, so use `read-only` there.
+  - `read-only`: GET and HEAD only.
+  - `allow` (`--allow-writes`, `[record] policy = "allow"`): everything.
+- `sonde.toml` may set the policy when no flag does (sonde warns on stderr when it allows deletes); in the app it may
+  only narrow the chosen one.
+- The program's output is kept as printed, so printed secrets end up in the session; records stay redacted.
+- Only the app process starts commands: no listening socket; the TSX VM reaches it only through `sonde/native`.
+- "Name the code" (`--callers`) extends, never replaces, `PYTHONPATH`, `NODE_OPTIONS` and `JAVA_TOOL_OPTIONS` with a
+  hook that adds an `x-sonde-caller` header to requests to sonde. sonde reads it and never forwards it; a failing
+  hook leaves the program unchanged.
+- The Runs pane's code change runs `git diff` and `git show` in the run's folder with commits checked as hex and
+  fsmonitor off, so a shared session cannot make it run anything else.
 
 ## Shared sessions
 
-`sonde share` writes a static site: the viewer and the session's computed document. It holds what the session file
-holds and nothing more; `--serve` listens on 127.0.0.1 only and serves the site's own files.
+`sonde share` writes a static site: the viewer and the computed document, holding only what the session file holds.
+`--serve` listens on 127.0.0.1 and serves only the site's files.
