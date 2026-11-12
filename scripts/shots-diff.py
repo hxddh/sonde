@@ -45,7 +45,7 @@ PIXEL = 16
 def fingerprint(path: Path) -> str:
     """A picture's grid of mean greys, a level each, compressed."""
     im = Image.open(path).convert("L").resize(GRID, Image.Resampling.BOX)
-    cells = bytes(v * LEVELS // 256 for v in im.getdata())
+    cells = bytes(v * LEVELS // 256 for v in im.tobytes())
     return base64.b64encode(zlib.compress(cells, 9)).decode()
 
 
