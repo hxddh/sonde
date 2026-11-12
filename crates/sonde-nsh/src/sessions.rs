@@ -2364,9 +2364,15 @@ mod tests {
         std::fs::write(root.join("etl/load.py"), "x").unwrap();
         std::fs::write(root.join("run.sh"), "x").unwrap();
         let outside = tempfile::NamedTempFile::new().unwrap();
+        // a .py is opened, except on Windows, where opening runs it
+        let load = root.join("etl").join("load.py");
         assert_eq!(
             code_target(&root, "etl/load.py:212 read").unwrap(),
-            CodeTarget::Open(root.join("etl").join("load.py"))
+            if cfg!(windows) {
+                CodeTarget::Reveal(load)
+            } else {
+                CodeTarget::Open(load)
+            }
         );
         assert_eq!(
             code_target(&root, "run.sh:1 main").unwrap(),
