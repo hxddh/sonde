@@ -49,18 +49,19 @@ pub struct RunArgs {
     #[arg(long)]
     callers: bool,
     /// Then run the command again under faults chosen from what it did (a
-    /// 503 on each request's first attempt, a lost answer on each write, a
-    /// failed completion if it uploads in parts, a body cut short if it
-    /// downloads, a lost race if it writes on a condition), and say whether
-    /// it survived each. The command runs several times, so give each run a place of
+    /// 503 on each request's first attempt, a skewed clock if it signs, a
+    /// lost answer on each write, a failed completion if it uploads in
+    /// parts, a body cut short or a late first byte if it downloads, a lost
+    /// race if it commits on a condition, a stale listing if it lists what it
+    /// wrote), and say whether it survived each. The command runs several times, so give each run a place of
     /// its own: `{trial}` in the command is replaced by `clean`, then by
     /// each scenario's name, and the variable SONDE_TRIAL is set to the same
     /// (`-- python etl.py s3://scratch/etl-{trial}/`).
     #[arg(long)]
     trial: bool,
-    /// A fault scenario to try by name (repeatable): slowdown, error,
-    /// lost-answer, fail-complete, cut-body, lost-race, slow, s3-limits, or
-    /// one of sonde.toml's. `slowdown:3` and `error:3` fail each request's
+    /// A fault scenario to try by name (repeatable): slowdown, error, skew,
+    /// lost-answer, fail-complete, complete-500, cut-body, slow-first-byte,
+    /// lost-race, stale-list, slow, s3-limits, or one of sonde.toml's. `slowdown:3` and `error:3` fail each request's
     /// first three attempts rather than its first (1 to 5).
     /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
@@ -2289,7 +2290,7 @@ struct ProjectCheck {
 
 /// A fault scenario of the project's own, a `[[scenario]]` of `sonde.toml`:
 /// `fault = "503 SlowDown"` (or `500`, `lost-answer`, `cut-body`,
-/// `lost-race`, `delay 200ms`), `on`
+/// `lost-race`, `stale-list`, `delay 200ms`), `on`
 /// the operations it is for, `prefix` the keys, `times` the attempts at each
 /// request that meet it (1 unless said; 0 is every attempt).
 #[derive(Debug, serde::Deserialize)]

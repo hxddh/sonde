@@ -53,6 +53,11 @@ fn batch(keys: &[&str]) -> S3Request {
 async fn program(what: &str) -> i32 {
     let env = |k: &str| std::env::var(k).unwrap_or_default();
     let mut cfg = ClientConfig::new("app", &env("AWS_ENDPOINT_URL"), &env("AWS_REGION")).unwrap();
+    // a request held past two seconds is given up on and sent again; a
+    // patient program waits as an SDK's minute does
+    if !what.starts_with("patient") {
+        cfg.timeout = std::time::Duration::from_secs(2);
+    }
     let retries = !what.starts_with("never");
     cfg.retry = if retries {
         RetryPolicy {
@@ -98,8 +103,9 @@ async fn program(what: &str) -> i32 {
             let second = ok(app.send_raw(batch(&["c", "d"])).await);
             if retries && !(first && second) { 1 } else { 0 }
         }
-        // an upload in parts, every answer checked
-        "multipart" => {
+        // an upload in parts, every answer checked; `multipart-tolerant`
+        // takes a completion's NoSuchUpload as a question, and looks
+        "multipart" | "multipart-tolerant" => {
             let created = app
                 .send_raw(
                     S3Request::new("CreateMultipartUpload", http::Method::POST)
@@ -141,15 +147,70 @@ async fn program(what: &str) -> i32 {
                         ))),
                 )
                 .await;
-            if ok(done) { 0 } else { 1 }
+            match done {
+                Ok(r) if r.status < 300 => 0,
+                // its retry found the upload gone: completed, or never was
+                Ok(r) if what == "multipart-tolerant" && r.text().contains("NoSuchUpload") => {
+                    let head = S3Request::new("HeadObject", http::Method::HEAD)
+                        .bucket("data")
+                        .key("big");
+                    if ok(app.send_raw(head).await) { 0 } else { 1 }
+                }
+                _ => 1,
+            }
         }
-        // writes the key it is given
-        "key" => {
-            if ok(app.send_raw(put(&env("E2E_KEY"), "x")).await) {
+        // writes the key it is given; `never-key` says all is well whatever
+        "key" | "never-key" => {
+            if ok(app.send_raw(put(&env("E2E_KEY"), "x")).await) || !retries {
                 0
             } else {
                 1
             }
+        }
+        // marks its output done, if no one has: a 412 is "it is there"
+        "marker" => {
+            let marker =
+                put(&format!("{}/_SUCCESS", env("E2E_KEY")), "").header("if-none-match", "*");
+            match app.send_raw(marker).await.map(|r| r.status) {
+                Ok(200 | 412) => 0,
+                _ => 1,
+            }
+        }
+        // writes two parts, lists them and reads each it is shown;
+        // `lists-again` lists until it is shown what it wrote
+        "lists" | "lists-again" => {
+            for k in ["out/1", "out/2"] {
+                if !ok(app.send_raw(put(k, "rows")).await) {
+                    return 1;
+                }
+            }
+            let mut listed: Vec<String> = Vec::new();
+            for _ in 0..3 {
+                let list = S3Request::new("ListObjectsV2", http::Method::GET)
+                    .bucket("data")
+                    .query("list-type", "2")
+                    .query("prefix", "out/");
+                let Ok(r) = app.send_raw(list).await else {
+                    return 1;
+                };
+                listed = r
+                    .text()
+                    .split("<Key>")
+                    .skip(1)
+                    .filter_map(|k| k.split("</Key>").next())
+                    .map(str::to_string)
+                    .collect();
+                if what == "lists" || listed.len() >= 2 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            for k in &listed {
+                if !ok(app.send_raw(get(k)).await) {
+                    return 1;
+                }
+            }
+            0
         }
         // writes what it reads on its input
         "stdin" => {
@@ -232,12 +293,14 @@ async fn program(what: &str) -> i32 {
             1
         }
         // downloads `big` and holds it to its length; `never-downloads`
-        // takes whatever came
-        "downloads" | "never-downloads" => match app.send_raw(get("big")).await {
-            Ok(r) if r.status == 200 && r.body.len() == BIG => 0,
-            _ if retries => 1,
-            _ => 0,
-        },
+        // takes whatever came; `patient-downloads` waits as long as it takes
+        "downloads" | "never-downloads" | "patient-downloads" => {
+            match app.send_raw(get("big")).await {
+                Ok(r) if r.status == 200 && r.body.len() == BIG => 0,
+                _ if retries => 1,
+                _ => 0,
+            }
+        }
         // a commit to a log by conditional create (E2E_KEY names the log's
         // folder). `commits` reads the log again on a 412 and writes the
         // next number; `never-commits` takes the 412 for an answer;
@@ -428,7 +491,11 @@ async fn a_program_that_retries_survives_every_scenario() {
         o.stderr
     );
     let all = trials(&session);
-    assert_eq!(all.len(), 3, "slowdown, error, lost-answer: {all:#?}");
+    assert_eq!(
+        all.len(),
+        5,
+        "slowdown, error, skew, lost-answer, slow-first-byte: {all:#?}"
+    );
     for t in &all {
         assert_eq!(t["standing"], "survived", "{t:#}");
         assert_eq!(t["faults"], t["retried"], "{t:#}");
@@ -444,6 +511,15 @@ async fn a_program_that_retries_survives_every_scenario() {
         );
     }
     assert_eq!(trial(&all, "slowdown")["faults"], 3);
+    // a skewed clock: each request signed again and sent
+    assert_eq!(trial(&all, "skew")["retried"], 3);
+    // a first byte held: its timeout cut it short, and it asked again
+    let late = trial(&all, "slow-first-byte");
+    assert_eq!(
+        (&late["held"], &late["retried"]),
+        (&1.into(), &1.into()),
+        "{late:#}"
+    );
     // two writes whose answer was lost and which were made again
     assert_eq!(trial(&all, "lost-answer")["wroteTwice"], 2);
     assert!(trial(&all, "slowdown")["wallMs"].as_f64().unwrap() > 0.0);
@@ -646,6 +722,8 @@ async fn a_trial_run_again_leaves_no_session_of_the_one_before() {
         [
             "run.error.sonde",
             "run.lost-answer.sonde",
+            "run.skew.sonde",
+            "run.slow-first-byte.sonde",
             "run.slowdown.sonde"
         ]
     );
@@ -1092,6 +1170,222 @@ async fn run_keyed(b: &Bench, program: &str, key: &str, args: &[&str]) -> Out {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_placed_key_that_holds_the_clean_runs_name_or_the_scenarios_is_still_matched() {
+    let b = Bench::new().await;
+    // `etl-clean/clean/state` and `etl-slowdown/clean/state`: the second
+    // `clean` is the program's own folder; `etl-error/error/state` the same
+    for (fault, key) in [
+        ("slowdown", "etl-{trial}/clean"),
+        ("error", "etl-{trial}/error"),
+    ] {
+        let o = run_keyed(
+            &b,
+            "never-placed",
+            key,
+            &["run", "--fault", fault, "-o", "never.sonde"],
+        )
+        .await;
+        assert_eq!(o.code, Some(1), "{key}: {}", o.stderr);
+        let t = trial(&trials(&b.path("never.sonde")), fault).clone();
+        assert_eq!(t["standing"], "broke", "{key}: {t:#}");
+        assert_eq!(
+            (&t["retried"], &t["droppedWrites"]),
+            (&0.into(), &1.into()),
+            "{key}: {t:#}"
+        );
+        let o = run_keyed(
+            &b,
+            "placed",
+            key,
+            &["run", "--fault", fault, "-o", "retries.sonde"],
+        )
+        .await;
+        assert_eq!(o.code, Some(0), "{key}: {}", o.stderr);
+        let t = trial(&trials(&b.path("retries.sonde")), fault).clone();
+        assert_eq!(t["standing"], "survived", "{key}: {t:#}");
+    }
+    assert!(
+        b.store
+            .keys("data")
+            .contains(&"etl-slowdown/clean/state".to_string()),
+        "{:?}",
+        b.store.keys("data")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_400_request_timeout_is_owed_a_retry_and_a_dropped_write_broke() {
+    let b = Bench::new().await;
+    std::fs::write(
+        b.path("sonde.toml"),
+        "[[scenario]]\nname = \"timeout\"\nfault = \"400 RequestTimeout\"\non = [\"PutObject\"]\n",
+    )
+    .unwrap();
+    let o = run_keyed(
+        &b,
+        "never-key",
+        "k-{trial}",
+        &["run", "--trial", "-o", "never.sonde"],
+    )
+    .await;
+    assert_eq!(o.code, Some(1), "{}", o.stderr);
+    let t = trial(&trials(&b.path("never.sonde")), "timeout").clone();
+    assert_eq!(t["standing"], "broke", "{t:#}");
+    assert!(t.get("notRetryable").is_none(), "{t:#}");
+    assert_eq!(t["droppedWrites"], 1, "{t:#}");
+    // sonde's own client sends it again, as an SDK does
+    let o = run_keyed(
+        &b,
+        "key",
+        "k-{trial}",
+        &["run", "--trial", "-o", "retries.sonde"],
+    )
+    .await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    let t = trial(&trials(&b.path("retries.sonde")), "timeout").clone();
+    assert_eq!(t["standing"], "survived", "{t:#}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_marker_created_if_absent_is_not_offered_a_race_and_survives_one() {
+    let b = Bench::new().await;
+    // not chosen: a create of a marker loses nothing to a race
+    let o = run_keyed(
+        &b,
+        "marker",
+        "out-{trial}",
+        &["run", "--trial", "-o", "chosen.sonde"],
+    )
+    .await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    assert!(
+        trials(&b.path("chosen.sonde"))
+            .iter()
+            .all(|t| t["scenario"] != "lost-race"),
+        "{}",
+        o.stderr
+    );
+    // asked for: it took the 412 as "it is there", and it is
+    let o = run_keyed(
+        &b,
+        "marker",
+        "out-{trial}",
+        &["run", "--fault", "lost-race", "-o", "marker.sonde"],
+    )
+    .await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    let t = trial(&trials(&b.path("marker.sonde")), "lost-race").clone();
+    assert_eq!(t["standing"], "survived", "{t:#}");
+    assert_eq!(t["yielded"], 1, "{t:#}");
+    assert!(!o.stderr.contains("never made"), "{}", o.stderr);
+    assert!(
+        b.store
+            .keys("data")
+            .contains(&"out-lost-race/_SUCCESS".to_string())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_completion_answered_500_though_made_is_looked_for_or_reported_wrongly() {
+    let b = Bench::new().await;
+    // its retry is answered NoSuchUpload, and it reports a failure: the
+    // object is in the store all the same
+    let o = b
+        .run(
+            Some("multipart"),
+            &["run", "--fault", "complete-500", "-o", "strict.sonde"],
+        )
+        .await;
+    assert_eq!(o.code, Some(1), "{}", o.stderr);
+    let t = trial(&trials(&b.path("strict.sonde")), "complete-500").clone();
+    assert_eq!(t["standing"], "broke", "{t:#}");
+    assert!(
+        o.stderr
+            .contains("the retried CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed"),
+        "{}",
+        o.stderr
+    );
+    // one that takes NoSuchUpload as a question and looks: survived
+    let o = b
+        .run(
+            Some("multipart-tolerant"),
+            &["run", "--trial", "-o", "tolerant.sonde"],
+        )
+        .await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    let all = trials(&b.path("tolerant.sonde"));
+    let t = trial(&all, "complete-500");
+    assert_eq!(t["standing"], "survived", "{t:#}");
+    assert_eq!(t["leftUploads"], 0, "{t:#}");
+    // chosen with fail-complete for a program that uploads in parts
+    assert_eq!(trial(&all, "fail-complete")["standing"], "survived");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_late_first_byte_waited_out_is_degraded() {
+    let b = Bench::with_big().await;
+    let started = std::time::Instant::now();
+    let o = b
+        .run(
+            Some("patient-downloads"),
+            &["run", "--fault", "slow-first-byte", "-o", "patient.sonde"],
+        )
+        .await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    let t = trial(&trials(&b.path("patient.sonde")), "slow-first-byte").clone();
+    assert_eq!(t["standing"], "degraded", "{t:#}");
+    assert_eq!((&t["held"], &t["waited"]), (&1.into(), &1.into()), "{t:#}");
+    assert_eq!(t["advice"]["key"], "trial.advice.timeout", "{t:#}");
+    assert!(
+        o.stderr
+            .contains("waited out 1 stall of 10.0 s before the first byte"),
+        "{}",
+        o.stderr
+    );
+    // the stall is held once, and no longer than it says
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_listing_that_does_not_show_a_write_yet_is_listed_again_or_broke() {
+    let b = Bench::new().await;
+    // it reads what it is shown, and goes on without the rest
+    let o = b
+        .run(Some("lists"), &["run", "--trial", "-o", "lists.sonde"])
+        .await;
+    assert_eq!(o.code, Some(1), "{}", o.stderr);
+    let t = trial(&trials(&b.path("lists.sonde")), "stale-list").clone();
+    assert_eq!(t["standing"], "broke", "{t:#}");
+    assert_eq!((&t["stale"], &t["missed"]), (&2.into(), &2.into()), "{t:#}");
+    assert_eq!(t["where"]["operation"], "ListObjectsV2", "{t:#}");
+    // its session says which keys were left out
+    let shown = b
+        .run(
+            None,
+            &[
+                "show",
+                b.path("trials/lists.stale-list.sonde").to_str().unwrap(),
+                "--requests",
+                "-f",
+                "json",
+            ],
+        )
+        .await;
+    assert!(shown.stdout.contains("x-sonde-hidden"), "{}", shown.stdout);
+    // it lists until it is shown what it wrote
+    let o = b
+        .run(
+            Some("lists-again"),
+            &["run", "--fault", "stale-list", "-o", "again.sonde"],
+        )
+        .await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    let t = trial(&trials(&b.path("again.sonde")), "stale-list").clone();
+    assert_eq!(t["standing"], "survived", "{t:#}");
+    assert_eq!(t["relisted"], 2, "{t:#}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn with_the_runs_name_in_its_key_a_program_that_never_retries_still_broke() {
     let b = Bench::new().await;
     // the docs' own form: a place for each run, by {trial}
@@ -1471,7 +1765,7 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
     assert_eq!(t["advice"]["key"], "trial.advice.race");
     assert!(
         o.stderr
-            .contains("lost its race and the commit was never made, and the program exited 0"),
+            .contains("lost its race: no commit followed it and nothing read back what won, and the program exited 0"),
         "{}",
         o.stderr
     );

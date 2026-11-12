@@ -874,19 +874,37 @@ fn sondes_fault(r: &Record) -> bool {
 }
 
 /// The statuses a retry is owed for: the ones the AWS SDKs send again. A 501
-/// or a 505 is the store's answer however often it is asked, like a 404. The
-/// trial's verdict and the retries read from a session both go by this.
-pub fn status_owes_retry(status: u16) -> bool {
+/// or a 505 is the store's answer however often it is asked, like a 404.
+/// Asked only through [`retryable`], which reads the code as well.
+fn status_owes_retry(status: u16) -> bool {
     matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
 }
 
+/// The S3 codes a retry is owed for, whatever status they come with: S3
+/// sends `RequestTimeout` as a 400, and `RequestTimeTooSkewed` as a 403 to
+/// a request an SDK signs again, its clock set by the answer's `Date`.
+const CODES_OWE_RETRY: &[&str] = &["SlowDown", "RequestTimeout", "RequestTimeTooSkewed"];
+
+/// S3's code of an answer: in its error document, or, for an answer sonde
+/// gave in the store's place, at the head of what the record keeps
+/// (`SlowDown: sonde answered …`).
+pub(crate) fn code_of(r: &Record) -> Option<&str> {
+    if let Some(c) = s3_code(r) {
+        return Some(c);
+    }
+    let (code, _) = r.error_body.as_deref()?.split_once(": ")?;
+    (r.injected.is_some() && !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then_some(code)
+}
+
 /// Whether a client is expected to send the request again: no answer (or
-/// one cut short), a status that says so ([`status_owes_retry`]), or the
-/// store asking for fewer.
+/// one cut short), a status that says so (408, 429, 500, 502, 503, 504), or
+/// a code that does ([`CODES_OWE_RETRY`]). The one rule: the trial's
+/// verdict, the retries read from a session and the signals all ask this.
 pub(crate) fn retryable(r: &Record) -> bool {
     r.transport_error.is_some()
         || r.status.is_some_and(status_owes_retry)
-        || s3_code(r).is_some_and(|c| c == "SlowDown" || c == "RequestTimeout")
+        || code_of(r).is_some_and(|c| CODES_OWE_RETRY.contains(&c))
 }
 
 /// A request repeated after a retryable failure. A retried write of a

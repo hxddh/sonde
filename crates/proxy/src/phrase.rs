@@ -184,7 +184,16 @@ fn template(key: &str) -> &'static str {
         "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
         "trial.advice.retries" => "{sdk} did not send it again: turn its retries on ({setting})",
         "trial.advice.retry" => {
-            "send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry"
+            "send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry, and so is S3's SlowDown, RequestTimeout or RequestTimeTooSkewed"
+        }
+        "trial.advice.skew" => {
+            "a 403 RequestTimeTooSkewed is owed a retry signed again by the clock the answer's Date gives (the AWS SDKs for Java and JavaScript do this; boto3 does not); and keep the machine's clock in time"
+        }
+        "trial.advice.timeout" => {
+            "give each attempt a timeout well under a stall (a first byte comes in well under a second), so that a stalled request is sent again"
+        }
+        "trial.advice.list" => {
+            "a listing just after a write may not show it yet: keep the keys the program wrote, or list again before going on without one"
         }
         "trial.advice.cut" => {
             "check the bytes read against Content-Length, and read the rest (Range) or the whole again"
@@ -214,11 +223,26 @@ fn template(key: &str) -> &'static str {
             "{n} download{s} cut short and read on from past the cut: bytes are missing"
         }
         "trial.why.unrun" => {
-            "{n} conditional write{s} lost {its} race and the commit was never made"
+            "{n} conditional write{s} lost {its} race: no commit followed {it} and nothing read back what won"
         }
         "trial.why.unrun.exit" => ", and the program exited {exit}",
         "trial.why.overwrote" => {
             "{n} lost race{s} answered by writing the key without a condition: the other writer's commit would be gone"
+        }
+        "trial.why.waited" => {
+            "waited out {n} stall{s} of {time} before the first byte: no timeout cut {it} short"
+        }
+        "trial.why.reuploaded" => {
+            "{n} upload{s} made again from {its} first part though the store had completed {it}: every part sent twice"
+        }
+        "trial.why.rewrote" => {
+            "{n} key{s} a listing left out written again: the program took {it} for missing"
+        }
+        "trial.why.missed" => {
+            "{n} key{s} this run wrote and a listing left out {was} never read as the clean run read {it}: the program went on without {it}"
+        }
+        "trial.why.staleUnused" => {
+            "a listing left out {n} key{s} this run wrote, and nothing the program did after turned on {it}: the requests cannot tell whether it noticed"
         }
         "trial.why.cleanExit" => "the clean run exited {exit} itself",
         "trial.why.exit" => "exited {exit} (the clean run exited {clean})",
@@ -319,6 +343,9 @@ mod tests {
             "advice.retry",
             "advice.cut",
             "advice.race",
+            "advice.skew",
+            "advice.timeout",
+            "advice.list",
             "why.notMet",
             "why.uploads",
             "why.reads",
@@ -333,6 +360,11 @@ mod tests {
             "why.unrun",
             "why.unrun.exit",
             "why.overwrote",
+            "why.waited",
+            "why.reuploaded",
+            "why.rewrote",
+            "why.missed",
+            "why.staleUnused",
             "why.cleanExit",
             "why.exit",
             "why.refused.completed",

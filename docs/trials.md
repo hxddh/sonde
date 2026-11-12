@@ -36,14 +36,18 @@ several times, so it must be safe to run again**: `{trial}` in the command (its 
 place of its own. A command with neither `{trial}` nor a mention of `SONDE_TRIAL` is warned of once: its runs share
 a place. Without `--trial` or `--fault`, `{trial}` is left as written and `SONDE_TRIAL` is not set.
 
-**The run's name is taken out of its keys before the runs are compared.** The clean run writes
-`etl-clean/state` and the trial `etl-slowdown/state`: the same request. Before a trial's requests are matched to the
-clean run's, the run's own name (`clean`, the scenario's) is taken out of the bucket, the key, the query's values
-and a control body (`DeleteObjects`), wherever it stands as a whole word: with no letter or digit on either side.
-So `etl-clean/`, `clean/x` and `run_clean.json` lose it, and `cleaned/x` or, under the scenario `error`, `errors/x`
-are left alone. A key that holds the word by itself in both runs (`error/log` written under the scenario `error`)
-is matched as it was written. What this cannot see: a run's name folded into something else (a hash of it, upper
-case): those keys differ between the runs, and each request is then read as one the clean run never sent.
+**A trial's request is matched to the clean run's where only the run's name differs.** The clean run writes
+`etl-clean/state` and the trial `etl-slowdown/state`: the same request. A trial's request is the clean run's when
+the two are the same with the scenario's name, in some of the places it stands as a whole word (no letter or digit
+on either side), in place of `clean`, and nothing else differs: its bucket, key, query's values and control body
+(`DeleteObjects`). So `etl-slowdown/clean/state` is `etl-clean/clean/state` (the second `clean` is the program's
+own folder, in both runs), `etl-error/error.json` under the scenario `error` is `etl-clean/error.json`, and
+`etl-slowdown/state` is never `etl-clean/raw`. `cleaned/x` and, under `error`, `errors/x` are words of their own.
+A request the same as written in both runs (`error/log` under `error`, a key without `{trial}`) is matched as
+written first. Which places the program filled from `{trial}` or `SONDE_TRIAL` is read from the keys, not from the
+command: a program may build a key from `SONDE_TRIAL` any way it likes. What this cannot see: a run's name folded
+into something else (a hash of it, upper case): those keys differ between the runs, and each request is then read
+as one the clean run never sent.
 
 - **A trial is read against a clean run that worked.** A clean run that exits non-zero, or is interrupted, runs no
   trial, and says so.
@@ -63,10 +67,14 @@ Without `--fault`, the scenarios are `sonde.toml`'s if it has any, else chosen f
 |---|---|---|
 | `slowdown` | 503 SlowDown on each request's first attempt | always |
 | `error` | 500 InternalError on each request's first attempt | always |
+| `skew` | 403 RequestTimeTooSkewed on each request's first attempt, as S3 answers a clock too far out | it signs its requests: any request but one by a presigned URL, which someone else signed once |
 | `lost-answer` | each write reaches the store, and its first answer is replaced by a 500: the write happened and the program is not told | the program writes |
 | `fail-complete` | CompleteMultipartUpload fails once | it uploads in parts |
+| `complete-500` | each CompleteMultipartUpload reaches the store and completes, and its first answer is a 500 InternalError | it uploads in parts |
 | `cut-body` | each download's first answer goes out with its status and its whole `Content-Length`; the body stops at its half and the connection drops | it downloaded a body of 64 bytes or more |
-| `lost-race` | each commit's first conditional write (`If-None-Match: *` or `If-Match`) is answered 412 though it would have won | it wrote on a condition |
+| `slow-first-byte` | the first download is held 10 s before it is sent on: nothing comes back until then. One download in all, so the trial takes 10 s more at most | it downloaded |
+| `lost-race` | each commit's first conditional write (`If-None-Match: *` or `If-Match`) is answered 412 though it would have won | it commits on a condition: a create in a table's log, or a write with `If-Match`. A create of a key of its own (`_SUCCESS`, a lock) is not offered it: a 412 there loses nothing |
+| `stale-list` | a listing (`ListObjects`, `ListObjectsV2`) answered by the store leaves out the keys this run wrote, each key once: the next listing shows it | it listed, after a write, the folder it wrote in |
 | `slow` | every request waits 300 ms more | `--fault slow` |
 | `s3-limits` | past 5,500 reads or 3,500 writes a second under one prefix, 503 SlowDown (S3's documented rate) | `--fault s3-limits` |
 
@@ -119,9 +127,10 @@ followed, and its own sleep is not a backoff. A failed **read** was made good by
 the clean run got: a loop that polls for a fixed time gets fewer answers when backoff uses the time, and gave up
 on nothing. An answer is the store's own and not one that asks for another attempt.
 
-**Which answers ask for another attempt** is one rule, the trial's and the one retries are read by in any session:
-no answer, or a 408, 429, 500, 502, 503 or 504 (and S3's `SlowDown` and `RequestTimeout`). A 404, a 412 or a 501 is
-an answer, however often it is asked for. **What the clean run itself never got an answer for is not owed**: a store
+**Which answers ask for another attempt** is one rule, one function, the trial's and the one retries are read by in
+any session and in the signals: no answer, a 408, 429, 500, 502, 503 or 504, or S3's code `SlowDown`,
+`RequestTimeout` or `RequestTimeTooSkewed` whatever the status (S3 sends `RequestTimeout` as a 400, a skewed clock
+as a 403). A 404, a 412, a 501 or a 403 `AccessDenied` is an answer, however often it is asked for. **What the clean run itself never got an answer for is not owed**: a store
 without `DeleteObjects` answers 501 in the clean run and in the trial, and the program did not break.
 
 | Case | Read as |
@@ -134,6 +143,11 @@ without `DeleteObjects` answers 501 in the clean run and in the trial, and the p
 | A failure nothing followed | not retried, whatever the count |
 | A body cut short | *resumed* when later downloads of the object carry every byte from the cut to the end of what was asked for; *read again whole* when one carries all of it. A key the clean run reads twice must be read twice here too. Nothing after it carrying the rest, and the clean run's exit: the half was taken as the whole (broke). Later reads that start past the cut leave a hole (broke) |
 | A lost race | run again when the trial makes as many commits in that log as the clean run did: a conditional write in the same family, answered 2xx, after the 412 |
+| A lost race on a create of a key of its own (`_SUCCESS`, a lock), which the store made | owed nothing: a 412 to `If-None-Match: *` says "it is there", and it is. Taken so, or tried again (the store's own 412), it *survived* by the exit; written over without the condition, *broke* (as any race) |
+| A lost answer not sent again, the key then read | a write whose answer was lost and which the program did not send again, but whose key it then read (more often than the clean run reads it): it asked the store, which had it. Neither retried nor dropped |
+| A CompleteMultipartUpload answered 500 though it completed (`complete-500`, `lost-answer`) | retried, and answered 404 NoSuchUpload: the upload had completed, so taking that as done (or reading the object) and exiting as the clean run is *survived*, and reporting a failure is *broke* by the exit, with the reason said. Not retried, and the object read: *survived*. Not retried, not read, and exit 0: *broke* (it was told of a failure and said all was well). Started again from `CreateMultipartUpload`: *degraded*, every part sent twice for an object the store had |
+| A stall (`slow-first-byte`, or a delay of 5 s or more of the project's) | cut short when the program closed its connection while sonde held it (the record says `x-sonde-given-up`), or sent the request again while it was held: its retry is read as any failure's. Waited out: *degraded*, with the wait. A delay under 5 s (`slow`) only slows |
+| A listing that left out keys the run wrote (`stale-list`) | for each key, what the program did with it after, against what the clean run did with it: read it as often (it listed again, or kept its own list) is *survived*; read it less often is *broke* (it went on without what it wrote, whatever its exit); wrote it again is *degraded* (it took the key for missing). Nothing done with the key in either run, and no listing again: *untested*, for what the listing was used for is not in the requests |
 
 | | |
 |---|---|
@@ -150,21 +164,32 @@ without `DeleteObjects` answers 501 in the clean run and in the trial, and the p
 | **fenced** | a SlateDB writer answered 412 that stopped (a non-zero exit) and wrote nothing after: what the format asks of a writer that lost. Its exit is not held against it |
 | **N more objects left than the clean run leaves** | after a lost race: objects written without a condition and not removed, beyond the clean run's. They are the lost commit's files unless the commit that followed names them, which sonde does not read (degraded) |
 | **sent again with the same If-Match** | the write was run again with the ETag that had just lost: nothing was read in between, and a real writer's new ETag would refuse it again (degraded) |
+| **N creates answered 412 and taken as made** | races on a create of a key of its own that the store made, which the program did not write over: among those "none a retry is owed for" |
+| **N lost answers not sent again but read back** | see the cases above |
+| **N held before their first byte: N cut short and sent again** | requests a stall held, and the ones the program gave up on and sent again |
+| **waited out N stalls of 10.0 s** | requests a stall held that the program waited for (degraded) |
+| **N keys this run wrote left out of a listing: N listed again** | keys a stale listing left out, and the ones a later listing of their folder showed |
+| **never read as the clean run read them** | keys a stale listing left out that the program then read less often than its clean run did (broke) |
+| **written again: the program took them for missing** | keys a stale listing left out that the program wrote again (degraded) |
+| **made again from its first part** | an upload whose completion the store made (its answer lost) started again (degraded) |
 | **read back and not written again** | after a 412 to a write sonde had let through (`If-None-Match: *`), the program read that key, did not write the commit again, made every other commit the clean run made, wrote the key no other way and exited as its clean run did. The store then holds exactly the clean run's commits and nothing more, so this is **survived**: nothing is missing and nothing is to be changed. It is what a writer that knows its own commit does (Lance reads the manifest back and carries on). What the requests do not show is whether the program knew the write for its own; a program that reads back another writer's commit and carries on the same would read the same here |
 
 And the standing:
 
 - **survived**: every failed request that is owed a retry was sent again, every cut body read to its end, every
-  lost race run again (or its write, which the store has, read back; or the writer fenced), nothing more was left than a clean run leaves, and the program exited
-  as its clean run did.
-- **degraded**: it finished, but gave up on a read, left an upload unfinished, or after a lost race left more
-  objects than the clean run or sent the same `If-Match` again.
+  lost race run again (or its write, which the store has, read back; or the writer fenced; or, for a key of its
+  own, taken as made), every stall cut short, every key a listing left out still read, nothing more was left than a
+  clean run leaves, and the program exited as its clean run did.
+- **degraded**: it finished, but gave up on a read, left an upload unfinished, waited out a stall, uploaded again
+  what the store had completed, wrote again a key a listing left out, or after a lost race left more objects than
+  the clean run or sent the same `If-Match` again.
 - **broke**: it exited differently from its clean run; or a write failed, was never sent again, and it exited 0;
   or half a body was taken as the whole; or a lost race was never run again and it exited as its clean run did; or
-  the contested key was written over without a condition (the other writer's commit would be gone).
+  the contested key was written over without a condition (the other writer's commit would be gone); or it never
+  read a key it wrote that a listing left out.
   When the exit differs and a retried write was refused by the store, the reason says so: *the retried
   CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*.
-- **untested**: the scenario met none of its requests. It is neither a pass nor a failure: `--trial` with only
+- **untested**: the scenario met none of its requests, or a listing left out keys that nothing after turned on. It is neither a pass nor a failure: `--trial` with only
   untested scenarios exits 0 and says *Nothing was tried*.
 
 **A verdict that is not "survived" says where.** After the reasons the line names the request it turns on, the line
@@ -175,7 +200,10 @@ of code when the run named callers (`sonde run --callers`), and what to change:
 ```
 
 The request is the first write never sent again; else the first body taken cut; else the first race not run again;
-else the first read given up; else, when only the exit differs, the last request that failed. The setting is the
+else the first listing that left out a key gone on without (or written again); else the first read given up; else
+the first stall waited out; else, when only the exit differs, the last request that failed. The advice is the
+retry setting's, or for a skewed clock to sign again by the answer's `Date`, for a stall a timeout for each attempt,
+for a stale listing to keep the keys written or list again. The setting is the
 SDK's own, for boto3, the AWS SDKs for Java, Go and JavaScript (the setting that turns retries on, and
 nothing else); for another client the rule itself is said. `sonde check` prints the same line in every format, and the
 verdicts' file carries `where` (`operation`, `key`, `caller`) and `advice` (a phrase: `key` and `args`).
@@ -213,7 +241,7 @@ verdicts' file carries `where` (`operation`, `key`, `caller`) and `advice` (a ph
 # sonde.toml
 [[scenario]]
 name = "flaky-wal"
-fault = "503 SlowDown"     # or "500", "404 NoSuchKey", "lost-answer", "cut-body", "lost-race", "delay 200ms"
+fault = "503 SlowDown"     # or "500", "404 NoSuchKey", "lost-answer", "cut-body", "lost-race", "stale-list", "delay 200ms"
 on = ["PutObject"]         # S3 operation names; "Put*" matches by its start; all when left out
 prefix = "db/wal/"         # keys under it; all when left out
 times = 2                  # attempts at each request that meet it (1; 0 is every attempt)
@@ -242,3 +270,15 @@ faults), a name used twice, a fault with a word too many (`503 Slow Down`: a sta
   left. A commit protocol sonde has no family for (numbered keys under another folder name) is read key by key:
   the next number is then a new commit, failed once itself.
 - A wait is read only where one sender is seen; with several senders on one request no backoff is printed.
+- **A skewed clock.** sonde answers 403 RequestTimeTooSkewed; it does not move the program's clock. A client that
+  sends the request again without signing it anew passes here and would not against a store whose clock is truly
+  apart. The AWS SDKs for Java 2 and JavaScript 3 set their clock by the answer and sign again; botocore (boto3,
+  the AWS CLI) counts neither the code nor a 403 among its retries, and is seen not to send it again.
+- **A stall.** One download in all is held, the first to come: which one is the order of arrival, the one place a
+  scenario counts it. A program that waits 10 s and would not wait a minute reads the same as one that waits for
+  ever. A delay is before the request is sent on: a store that stalls mid-body is not tried.
+- **A stale listing.** sonde sees the requests a key had after the listing, not what the program did with the
+  listing itself: a listing used for a count it prints, or a manifest it writes, is *untested* or read by the keys'
+  reads alone. A program that deletes what a listing did not show (a clean-up of "orphans") deletes other keys,
+  which are not counted. S3 has listed after a write since December 2020; other stores, and caches in front of S3,
+  have not always.
