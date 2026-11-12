@@ -761,6 +761,11 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                 profile: r.1.clone(),
                 observations: r.2.clone(),
                 folders: Default::default(),
+                // (no records here: a finding gone is gone, not measured)
+                traces: Default::default(),
+                asks: Default::default(),
+                counts: Default::default(),
+                measured: false,
             };
             sonde_proxy::profile::compare_runs(&of(b), &of(&run)).of_programs(
                 sonde_proxy::program::key_of(&b.3).as_deref(),

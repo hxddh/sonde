@@ -154,7 +154,7 @@ requests show; sonde does not read data back.
 
 **Where it broke, and what to change**: a verdict other than survived names one request (first that applies: a
 write never resent, a cut body taken, a race not run again, a listing gone on without or rewritten, a read given up,
-a stall waited out, else the last failed request), its code line (with `--callers`) and advice: the SDK's retry
+a stall waited out, else the last failed request), its code line (named by default) and advice: the SDK's retry
 setting (boto3, AWS SDKs for Java, Go, JavaScript); for skew, re-sign using the answer's `Date`; for a stall, a
 per-attempt timeout; for a stale listing, keep the written keys or list again; else the rule itself.
 

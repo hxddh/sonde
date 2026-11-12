@@ -84,10 +84,10 @@ pub struct Analysis {
     pub profile: Profile,
     pub signals: Signals,
     pub what_if: Option<WhatIf>,
+    /// The SDK that sent most of its requests (`boto3 1.44`).
+    pub sdk: Option<String>,
     /// The requests a fault scenario answered, by id.
     pub injected: Vec<u64>,
-    /// The SDK that sent most of the requests (`boto3 1.44`).
-    pub sdk: Option<String>,
     /// Which operation each request belongs to, by request id (sorted: a
     /// map's buckets would cost twice as much a request).
     owner: Vec<(u64, u32)>,
@@ -156,7 +156,7 @@ impl Analysis {
             Some((start, end))
         });
         Analysis {
-            sdk: crate::split::sdk_of(records),
+            sdk: crate::callers::sdk_of(records),
             summary,
             signals,
             injected: records

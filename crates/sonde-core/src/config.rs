@@ -226,10 +226,10 @@ pub struct Settings {
     pub high_contrast: bool,
     /// `auto`, `en` or `zh`.
     pub language: String,
-    /// Runs name the place in a program's code that sent each request (hooks
-    /// that add `x-sonde-caller`: Python's boto3 on PYTHONPATH, the AWS SDK
-    /// for JavaScript v3 with NODE_OPTIONS, the AWS SDK for Java 2 with
-    /// JAVA_TOOL_OPTIONS).
+    /// Runs name the place in a program's code that sent each request, on
+    /// by default (hooks that add `x-sonde-caller`: Python's boto3 on
+    /// PYTHONPATH, the AWS SDK for JavaScript v3 with NODE_OPTIONS, the AWS
+    /// SDK for Java 2 with JAVA_TOOL_OPTIONS).
     pub name_callers: bool,
     /// What a program recorded by Run may do to the store: `no-delete`
     /// (the default: nothing removed, nothing there before written over),
@@ -294,7 +294,7 @@ impl Default for Settings {
             theme: "system".into(),
             high_contrast: false,
             language: "auto".into(),
-            name_callers: false,
+            name_callers: true,
             record_policy: "no-delete".into(),
             exports_dir: None,
             downloads_dir: None,

@@ -214,6 +214,13 @@ fn template(key: &str) -> &'static str {
         "split.size.under" => "under {hi}",
         "split.size.between" => "of {lo} to {hi}",
         "split.size.over" => "over {lo}",
+        "fix.fixed" => "fixed",
+        "fix.less" => "less",
+        "fix.back" => "back",
+        "fix.new" => "new",
+        "fix.open" => "open",
+        "fix.saved" => "saved {n} request{s} (predicted {p})",
+        "fix.savedTime" => "{time} less waiting (predicted {p})",
         "trial.advice.retries" => "{sdk} did not send it again: turn its retries on ({setting})",
         "trial.advice.retry" => {
             "send a failed request again: a 500, 502, 503, 504, 408 or 429 is owed a retry, and so is S3's SlowDown, RequestTimeout or RequestTimeTooSkewed"
@@ -441,6 +448,39 @@ mod tests {
         for k in keys {
             let key = format!("split.{k}");
             let quoted = serde_json::to_string(template(&key)).unwrap();
+            let lines: Vec<&str> = ts
+                .lines()
+                .filter(|l| l.trim_start().starts_with(&format!("\"{key}\": ")))
+                .collect();
+            assert_eq!(lines.len(), 2, "{key}: a line in each language");
+            assert!(lines.iter().any(|l| l.contains(&quoted)), "{key}");
+        }
+    }
+
+    /// The fix loop's words, said by the app in both languages.
+    #[test]
+    fn the_fix_loops_words_have_their_templates_in_the_app() {
+        let ts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/src/phrases.ts");
+        let ts = std::fs::read_to_string(ts).unwrap();
+        for state in [
+            crate::fixloop::State::Fixed,
+            crate::fixloop::State::Less,
+            crate::fixloop::State::Back,
+            crate::fixloop::State::New,
+            crate::fixloop::State::Open,
+        ] {
+            assert_eq!(state.phrase().en(), state.label());
+        }
+        for key in [
+            "fix.fixed",
+            "fix.less",
+            "fix.back",
+            "fix.new",
+            "fix.open",
+            "fix.saved",
+            "fix.savedTime",
+        ] {
+            let quoted = serde_json::to_string(template(key)).unwrap();
             let lines: Vec<&str> = ts
                 .lines()
                 .filter(|l| l.trim_start().starts_with(&format!("\"{key}\": ")))

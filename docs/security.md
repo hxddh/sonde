@@ -70,9 +70,9 @@ Probes write too (under `sonde-probe/` in the scratch bucket, and their own buck
   only narrow the chosen one.
 - The program's output is kept as printed, so printed secrets end up in the session; records stay redacted.
 - Only the app process starts commands: no listening socket; the TSX VM reaches it only through `sonde/native`.
-- "Name the code" (`--callers`) extends, never replaces, `PYTHONPATH`, `NODE_OPTIONS` and `JAVA_TOOL_OPTIONS` with a
-  hook that adds an `x-sonde-caller` header to requests to sonde. sonde reads it and never forwards it; a failing
-  hook leaves the program unchanged.
+- "Name the code" (on by default; `--no-callers`) extends, never replaces, `PYTHONPATH`, `NODE_OPTIONS` and
+  `JAVA_TOOL_OPTIONS` with a hook that adds an `x-sonde-caller` header to requests to sonde only. sonde reads it and
+  never forwards it; a failing hook leaves the program unchanged. Hook files are replaced whole (renamed into place).
 - The Runs pane's code change runs `git diff` and `git show` in the run's folder with commits checked as hex and
   fsmonitor off, so a shared session cannot make it run anything else.
 

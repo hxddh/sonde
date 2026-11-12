@@ -1756,7 +1756,23 @@ impl<V> ById<V> {
 
 /// What stands out across a session's requests and episodes.
 pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
+    observations_at(records, episodes, false)
+}
+
+/// The findings at any threshold: each pattern however little of it there
+/// is (a key read twice, one HEAD before a GET, requests one after another
+/// that would save a millisecond). What tells a finding fixed (gone) from
+/// one only under its threshold (less).
+pub fn traces(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
+    observations_at(records, episodes, true)
+}
+
+/// [`observations`], or at `any` threshold ([`traces`]).
+fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<Observation> {
     use std::collections::{BTreeSet, HashMap};
+    // a threshold, or the least that is still the pattern
+    let at = |normal: usize, least: usize| if any { least } else { normal };
+    let most = at(3, usize::MAX);
     // each record by its id: read once, for every finding that names requests
     let by_id: ById<&Record> = ById::of(records.len(), || records.iter().map(|r| (r.id, r)));
     // which episode each record belongs to
@@ -1912,7 +1928,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .iter()
         .filter(|(parts, bytes, done, _)| *done && *parts == 1 && *bytes < 5 * 1024 * 1024)
         .collect();
-    if small.len() >= 3 {
+    if small.len() >= at(3, 1) {
         let impact: usize = small.iter().map(|u| u.3.len()).sum();
         out.push(
             info(
@@ -1943,11 +1959,17 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     }
     let mut hot: Vec<(String, Vec<u64>)> = reads
         .into_iter()
-        .filter(|(_, ids)| ids.len() >= 10 && ids.len() * 10 >= total)
+        .filter(|(_, ids)| {
+            if any {
+                ids.len() >= 2
+            } else {
+                ids.len() >= 10 && ids.len() * 10 >= total
+            }
+        })
         .map(|((b, k), ids)| (format!("{b}/{k}"), ids))
         .collect();
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
-    for (k, ids) in hot.into_iter().take(3) {
+    for (k, ids) in hot.into_iter().take(most) {
         let n = ids.len();
         let again = ids[1..].to_vec();
         out.push(
@@ -1987,10 +2009,10 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     }
     let mut repeated: Vec<(String, Vec<u64>)> = lists
         .into_iter()
-        .filter(|(_, ids)| ids.len() >= 5)
+        .filter(|(_, ids)| ids.len() >= at(5, 2))
         .collect();
     repeated.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
-    for (prefix_name, ids) in repeated.into_iter().take(3) {
+    for (prefix_name, ids) in repeated.into_iter().take(most) {
         let n = ids.len();
         let again = ids[1..].to_vec();
         out.push(
@@ -2033,7 +2055,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             _ => {}
         }
     }
-    if checked >= 3 {
+    if checked >= at(3, 1) {
         out.push(
             info(
                 p("obs.headget", &[("n", checked.to_string())]),
@@ -2047,7 +2069,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
     // Hadoop's s3a: a rename is a copy and a delete, and FileOutputCommitter
     // commits by renaming out of _temporary/ (twice, with algorithm 1)
     let (copies, deletes) = renamed_from_temporary(records);
-    if copies.len() >= 3 {
+    if copies.len() >= at(3, 1) {
         let n = copies.len();
         let saved: Vec<u64> = copies.iter().chain(&deletes).copied().collect();
         out.push(
@@ -2067,7 +2089,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         .filter(|r| r.request_bytes.unwrap_or(0) == 0)
         .map(|r| r.id)
         .collect();
-    if markers.len() >= 3 {
+    if markers.len() >= at(3, 1) {
         let unmarked: Vec<u64> = records
             .iter()
             .filter(|r| {
@@ -2172,15 +2194,16 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
                 (pw, WRITES_PER_PREFIX, false)
             };
             // near the limit (four fifths of it), or past half of it and
-            // throttled already: half of it alone is no finding (18.0)
-            if n * 5 >= limit * 4 || (n * 2 >= limit && throttled > 0) {
+            // throttled already: half of it alone is no finding (18.0);
+            // traced at any threshold, any rate at all
+            if n * 5 >= limit * 4 || (n * 2 >= limit && throttled > 0) || (any && n > 0) {
                 let prefix = prefix_named(prefix.0, prefix.1);
                 hot.push((prefix, n, limit, read, ids, throttled));
             }
         }
         // nearest its limit first: n/limit, compared without dividing
         hot.sort_by(|a, b| (b.1 * a.2).cmp(&(a.1 * b.2)).then(a.0.cmp(&b.0)));
-        for (prefix, n, limit, read, ids, _) in hot.into_iter().take(3) {
+        for (prefix, n, limit, read, ids, _) in hot.into_iter().take(most) {
             let pct = n * 100 / limit;
             let phrase = p(
                 if read {
@@ -2209,7 +2232,7 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
         // only the waiting goes: the program's own work between requests stays
         let waiting: f64 = found.iter().map(|c| c.waiting_ms).sum();
         let saved = (waiting - fast).max(0.0);
-        if !found.is_empty() && saved >= 100.0 {
+        if !found.is_empty() && (saved >= 100.0 || (any && saved > 0.0)) {
             let busy = crate::profile::busy_ms(records).max(1e-9);
             let time = sonde_fmt::duration;
             let ids: Vec<u64> = found.iter().flat_map(|c| c.ids.iter().copied()).collect();
@@ -2256,6 +2279,11 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .then(b.impact.cmp(&a.impact))
     });
     for o in &mut out {
+        o.identity = crate::profile::finding_identity(o);
+        // a trace is only told apart from a finding: no fix, no callers
+        if any {
+            continue;
+        }
         if let Some(first) = o.phrases.first() {
             o.fixes = crate::fixes::for_key(first.key);
         }
@@ -2267,7 +2295,6 @@ pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation
             .flat_map(|e| e.records.iter().filter_map(|id| by_id.get(id).copied()))
             .collect();
         (o.callers, o.sdk) = crate::callers::of(&rs);
-        o.identity = crate::profile::finding_identity(o);
     }
     out
 }
@@ -2320,7 +2347,22 @@ pub fn observations_of(
     records: &[Record],
     episodes: &[Episode],
 ) -> Vec<Observation> {
-    let mut out = observations(records, episodes);
+    of_header(header, observations(records, episodes))
+}
+
+/// [`traces`] of a session, as [`observations_of`] says its findings.
+pub fn traces_of(
+    header: &crate::session::SessionHeader,
+    records: &[Record],
+    episodes: &[Episode],
+) -> Vec<Observation> {
+    of_header(header, traces(records, episodes))
+}
+
+fn of_header(
+    header: &crate::session::SessionHeader,
+    mut out: Vec<Observation>,
+) -> Vec<Observation> {
     if !header.whole_seconds {
         return out;
     }

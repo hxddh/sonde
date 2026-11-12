@@ -144,6 +144,8 @@ export const api = {
     history: async (path: string) => (await Sessions.history(path)) as T.ProgramHistory | null,
     setBaseline: (path: string, on: boolean) => Sessions.setBaseline(path, on) as boolean,
     compareRuns: async (before: string, after: string) => (await Sessions.compareRuns(before, after)) as T.RunChange,
+    /** A run against its program's run before it: its findings with their state and measured savings; null for no run of a program. */
+    sinceLast: async (path: string) => (await Sessions.sinceLast(path)) as T.SinceLast | null,
     codeChange: async (before: string, after: string) => (await Sessions.codeChange(before, after)) as T.CodeChange,
   },
 };

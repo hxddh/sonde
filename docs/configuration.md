@@ -34,7 +34,7 @@ concurrency = 16            # sonde's own requests in flight per job (not in the
 rate-limit = 50.0           # sonde's own requests per second per job; omit for none (not in the app)
 theme = "system"            # system, light, dark
 language = "auto"           # auto, en, zh
-name-callers = false        # runs name the code that sent each request (Python, Node.js, Java)
+name-callers = true         # runs name the code that sent each request (Python, Node.js, Java)
 # exports-dir = "/srv/sonde/exports"
 # downloads-dir = "/srv/sonde/downloads"
 

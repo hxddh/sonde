@@ -1,7 +1,7 @@
 // sonde: names the place in the program that sent each S3 request.
 //
-// Loaded with NODE_OPTIONS=--require by `sonde run --callers` (and the app's
-// "Name the code"), only then. For the AWS SDK for JavaScript v3 it adds one
+// Loaded with NODE_OPTIONS=--require by `sonde run` (unless --no-callers) and
+// the app's "Name the code", only then. For the AWS SDK for JavaScript v3 it adds one
 // header to each request to sonde, before it is signed: x-sonde-caller:
 // <file>:<line> <function>, the first frame of the program's own code (not
 // Node's, not an installed package's). sonde reads it and never forwards it

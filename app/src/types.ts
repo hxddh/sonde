@@ -827,14 +827,51 @@ export interface RunChange {
   currency: string;
   peakInFlight: [number, number];
   groups: { operation: string; missed: boolean; requests: [number, number]; busyMs: [number, number] }[];
+  /** Findings gone at any threshold (fixed). */
   resolved: { text: string; phrases: Phrase[] }[];
   appeared: { text: string; phrases: Phrase[] }[];
+  /** Each finding of either run, where it stands. */
+  findings: FindingChange[];
   /** Both are runs of one program; across programs the findings gone and new are left out. */
   sameProgram: boolean;
   /** Both runs' latency on the same bucket edges. */
   latency?: [{ leMs: number | null; n: number }[], { leMs: number | null; n: number }[]];
   /** The busiest prefixes of either run, each run's requests to them. */
   prefixes?: { prefix: string; requests: [number, number] }[];
+}
+
+/** Requests not sent and time not waited. */
+export interface Saving {
+  requests: number;
+  ms: number;
+}
+
+/** A finding between two runs of a program: fixed (gone at any threshold), less (under its threshold), back (fixed before, here again), new or open. */
+export interface FindingChange {
+  identity: string;
+  state: "fixed" | "less" | "back" | "new" | "open";
+  level: "warn" | "info";
+  text: string;
+  phrases: Phrase[];
+  /** As it read in the run before, when it reads otherwise now (less). */
+  was?: { text: string; phrases: Phrase[] };
+  predicted: Saving;
+  /** Measured between the runs (fixed, less). */
+  measured?: Saving;
+  /** The measured saving against the predicted (`fix.saved`, `fix.savedTime`). */
+  saved?: Phrase;
+  savedText?: string;
+}
+
+/** A run against its program's run before it. */
+export interface SinceLast {
+  program: string;
+  /** The run before, by path; absent for a program's first run. */
+  previous?: string;
+  change?: RunChange;
+  findings: FindingChange[];
+  /** Why the program's kept findings were not read or written. */
+  unsaved?: string;
 }
 
 /** A size bucket of bodies: up to `leBytes` (each twice the last; 0 is the empty body). */

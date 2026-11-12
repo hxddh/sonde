@@ -165,20 +165,8 @@ impl Keyer {
     }
 }
 
-/// The SDK most of `records` were sent by.
-pub fn sdk_of(records: &[Record]) -> Option<String> {
-    let mut n: HashMap<String, usize> = HashMap::new();
-    // one in a hundred is plenty to say which SDK it is
-    let step = (records.len() / 2000).max(1);
-    for r in records.iter().step_by(step) {
-        if let Some(s) = crate::callers::sdk(r) {
-            *n.entry(s).or_default() += 1;
-        }
-    }
-    n.into_iter()
-        .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
-        .map(|(s, _)| s)
-}
+/// The SDK most of `records` were sent by (one answer for every view).
+pub use crate::callers::sdk_of;
 
 /// The requests at or over the session's p90: the slowest tenth (none with
 /// fewer than [`FEW_SLOW`] of them, or no times).

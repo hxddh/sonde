@@ -69,6 +69,7 @@ output chunk; gzipped when finished). Then, in `sonde-proxy`:
 | `episode.rs` | requests → operations and findings |
 | `signals.rs` | rate, errors, latency, bytes, in flight, in one pass |
 | `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
+| `fixloop.rs` | a finding across a program's runs: fixed (gone at any threshold, measured saving), less, back, new, open; kept per program in `findings.json` beside its runs |
 | `summary.rs` | counts kept in the folder's index, valid while file length, time and cache version match |
 | `index.rs` | one `.index.jsonl` per sessions folder: counts, verdicts, exit codes; an appended log, compacted |
 | `view.rs` | analysed once, sent in pages (`Sessions.view`, `Sessions.episodes`): what crosses to the UI does not grow |
