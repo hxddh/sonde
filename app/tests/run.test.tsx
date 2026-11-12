@@ -365,12 +365,13 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   // what the run did chooses the scenarios: the two every program meets, and (it writes) the lost answer
   expect(app.shows("id:trial-scenario-slowdown")).toBe(true);
   expect(app.shows("id:trial-scenario-error")).toBe(true);
+  expect(app.shows("id:trial-scenario-skew")).toBe(true);
   expect(app.shows("id:trial-scenario-lost-answer")).toBe(true);
   expect(app.shows("id:trial-scenario-fail-complete")).toBe(false);
   // read-only is said alone: nothing runs, so where the runs would write waits its turn
   expect(app.shows("id:trial-shares")).toBe(false);
   expect(app.shows("id:trial-read-only")).toBe(true);
-  expect(app.shows("label:Run 3 trials")).toBe(true);
+  expect(app.shows("label:Run 4 trials")).toBe(true);
   await app.press("id:trial-start").catch(() => {});
   expect(app.shows("id:trial-progress")).toBe(false);
   await app.press("id:trial-close");
@@ -385,7 +386,7 @@ test("a run tried under faults: said before it runs, followed as it goes, its tr
   // the command names no {trial}: the runs write where the clean run wrote
   expect(app.shows("id:trial-shares")).toBe(true);
   await app.press("id:trial-scenario-error");
-  await app.waitFor("label:Run 2 trials");
+  await app.waitFor("label:Run 3 trials");
   await app.press("id:trial-start");
   await app.waitFor("id:trial-progress", { timeout: 10000 });
   expect(app.shows("id:trial-step-error")).toBe(false);
