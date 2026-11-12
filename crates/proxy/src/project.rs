@@ -84,7 +84,7 @@ pub struct Record {
 
 /// A fault scenario of the project's own, a `[[scenario]]`:
 /// `fault = "503 SlowDown"` (or `500`, `lost-answer`, `cut-body`,
-/// `lost-race`, `delay 200ms`), `on` the operations it is for, `prefix` the
+/// `lost-race`, `stale-list`, `delay 200ms`), `on` the operations it is for, `prefix` the
 /// keys, `times` the attempts at each request that meet it (1 unless said;
 /// 0 is every attempt).
 #[derive(Debug, Clone, Deserialize)]

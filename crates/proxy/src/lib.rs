@@ -1310,7 +1310,16 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
         Some((name, fault::Verdict::Wait(d))) => {
             record.injected = Some(name);
+            // a program that stops waiting closes its connection, and this
+            // is dropped mid-wait: the record is kept all the same, as an
+            // attempt it gave up on, so that a trial reads what followed
+            let held = GivenUp {
+                record: Some(record.clone()),
+                log: shared.clone(),
+                received,
+            };
             tokio::time::sleep(d).await;
+            held.waited();
         }
         Some((name, fault::Verdict::LoseAnswer)) => {
             record.injected = Some(name);
@@ -1323,6 +1332,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         Some((name, fault::Verdict::CutBody { met })) => {
             record.injected = Some(name);
             after = After::CutBody(met);
+        }
+        Some((name, fault::Verdict::HideWritten)) => {
+            record.injected = Some(name);
+            after = After::HideWritten;
         }
         None => {}
     }
@@ -1537,6 +1550,11 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // this one, was no fault: the answer goes through as the store's own
     let mut cut: Option<(u64, u64)> = None;
     let faults = shared.cfg.faults.as_deref();
+    if let Some(f) = faults
+        && status.is_success()
+    {
+        f.wrote(&operation, bucket.as_deref(), key.as_deref());
+    }
     match &after {
         After::LoseRace(met) if !status.is_success() => {
             // the store refused the write itself: its answer, not sonde's
@@ -1560,6 +1578,71 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
         }
         _ => {}
+    }
+    let plain = !headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-encoding"));
+    if after == After::HideWritten
+        && status.is_success()
+        && plain
+        && resp.content_length().is_none_or(|n| n <= 16 << 20)
+    {
+        // the listing is read whole (it is a page, a thousand keys at most),
+        // the keys left out, and the rest goes as the store wrote it
+        let Ok(Ok(body)) = tokio::time::timeout(idle, resp.bytes()).await else {
+            let msg = "the store's listing stopped part way".to_string();
+            record.injected = None;
+            record.transport_error = Some(msg.clone());
+            shared.log.push(record);
+            return Ok(xml_error(502, "SondeUpstreamError", &msg));
+        };
+        {
+            let url = query
+                .iter()
+                .any(|(k, v)| k == "encoding-type" && v.eq_ignore_ascii_case("url"));
+            let stale = faults
+                .zip(std::str::from_utf8(&body).ok())
+                .and_then(|(f, text)| f.hide(bucket.as_deref().unwrap_or(""), text, url));
+            let name = record.injected.clone().unwrap_or_default();
+            let sent: Bytes = match stale {
+                Some((text, hidden)) => {
+                    record
+                        .response_headers
+                        .push(Header::new("x-sonde-fault", &name));
+                    for k in &hidden {
+                        record
+                            .response_headers
+                            .push(Header::new(fault::HIDDEN_HEADER, k));
+                    }
+                    Bytes::from(text)
+                }
+                None => {
+                    // nothing of this run's in it: the store's own answer
+                    record.injected = None;
+                    body
+                }
+            };
+            let mut builder = Response::builder().status(status);
+            for (k, v) in resp_headers_kept(&headers) {
+                builder = builder.header(k, v);
+            }
+            if record.injected.is_some() {
+                builder = builder.header("x-sonde-fault", name.as_str());
+            }
+            record.response_bytes = Some(sent.len() as u64);
+            record.first_byte_ms = Some(record.latency_ms);
+            record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
+            shared.log.push(record);
+            return Ok(builder
+                .header("content-length", sent.len().to_string())
+                .body(full(sent))
+                .expect("valid response"));
+        }
+    }
+    if after == After::HideWritten {
+        // an error, or a listing too large or compressed: the store's own
+        record.injected = None;
+        after = After::Forward;
     }
     if matches!(after, After::LoseAnswer | After::LoseRace(_)) {
         // the store acted; the program is told it failed
@@ -1684,6 +1767,56 @@ enum After {
     LoseRace(fault::Met),
     /// The answer's body stops part way.
     CutBody(fault::Met),
+    /// The listing leaves out keys this run wrote.
+    HideWritten,
+}
+
+/// The response headers that go back to the program as the store sent
+/// them: not the connection's own, nor a length a changed body no longer has.
+fn resp_headers_kept(headers: &[(String, String)]) -> impl Iterator<Item = (&str, &str)> {
+    headers
+        .iter()
+        .filter(|(k, _)| {
+            let k = k.to_ascii_lowercase();
+            !DROP_RESPONSE.contains(&k.as_str()) && k != "content-length"
+        })
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+}
+
+/// A request a fault holds (a delay): if the program stops waiting and its
+/// connection goes, the handler is dropped mid-wait, and this keeps its
+/// record, as an attempt the program gave up on.
+struct GivenUp {
+    record: Option<Record>,
+    log: Arc<Shared>,
+    received: Instant,
+}
+
+impl GivenUp {
+    /// The wait was sat out: the request goes on, and is recorded as usual.
+    fn waited(mut self) {
+        self.record = None;
+    }
+}
+
+impl Drop for GivenUp {
+    fn drop(&mut self) {
+        let Some(mut record) = self.record.take() else {
+            return;
+        };
+        let name = record.injected.clone().unwrap_or_default();
+        record.latency_ms = self.received.elapsed().as_secs_f64() * 1000.0;
+        record.transport_error = Some(format!(
+            "the program stopped waiting while sonde held the request (scenario {name})"
+        ));
+        record
+            .response_headers
+            .push(Header::new("x-sonde-fault", &name));
+        record
+            .response_headers
+            .push(Header::new(fault::GIVEN_UP_HEADER, "1"));
+        self.log.log.push(record);
+    }
 }
 
 /// The response header a record keeps the place of an injected cut in: the

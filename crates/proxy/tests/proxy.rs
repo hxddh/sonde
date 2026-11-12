@@ -867,10 +867,16 @@ async fn a_request_in_flight_when_the_proxy_stops_is_still_recorded() {
 }
 
 async fn setup_faults(scenario: &str) -> (Proxy, S3Client, RequestLog, Arc<Upstream>) {
+    setup_scenario(&sonde_proxy::fault::scenario(scenario).unwrap()).await
+}
+
+async fn setup_scenario(
+    scenario: &sonde_proxy::fault::Scenario,
+) -> (Proxy, S3Client, RequestLog, Arc<Upstream>) {
     let (url, up) = upstream().await;
     let log = RequestLog::default();
     let target = client(&url, REAL_KEY, REAL_SECRET, RequestLog::default());
-    let faults = sonde_proxy::fault::Faults::new(&sonde_proxy::fault::scenario(scenario).unwrap());
+    let faults = sonde_proxy::fault::Faults::new(scenario);
     let proxy = Proxy::start(
         target,
         log.clone(),
@@ -898,6 +904,61 @@ fn put(key: &str) -> S3Request {
         .key(key)
         .body(Body::from("payload"))
         .no_retry()
+}
+
+#[tokio::test]
+async fn a_request_held_past_the_programs_patience_is_kept_as_given_up() {
+    let stall = sonde_proxy::fault::project_scenario(
+        "stall",
+        "delay 3s",
+        &["GetObject".to_string()],
+        "",
+        Some(1),
+    )
+    .unwrap();
+    let (proxy, _app, log, up) = setup_scenario(&stall).await;
+    let mut cfg = ClientConfig::new("app", &proxy.url(), "us-east-1").unwrap();
+    cfg.timeout = std::time::Duration::from_millis(300);
+    let (key, secret) = proxy.client_keys();
+    let impatient = S3Client::new(
+        cfg,
+        Arc::new(StaticProvider(Some(Credentials::new(key, secret, None)))),
+        RequestLog::default(),
+    )
+    .unwrap();
+    let get = || {
+        S3Request::new("GetObject", http::Method::GET)
+            .bucket("data")
+            .key("k")
+            .no_retry()
+    };
+    let started = std::time::Instant::now();
+    assert!(impatient.send_raw(get()).await.is_err(), "it timed out");
+    // its retry is let through at once
+    let r = impatient.send_raw(get()).await.unwrap();
+    assert!(r.status < 500, "{}", r.status);
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    // the attempt it gave up on is kept, as given up, and never reached the
+    // store
+    let mut held = None;
+    for _ in 0..50 {
+        let recs = log.list(&reqlog::Filter::default(), 10);
+        held = recs.into_iter().find(|r| r.injected.is_some());
+        if held.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let held = held.expect("the given-up attempt is recorded");
+    assert!(held.transport_error.is_some(), "{held:?}");
+    assert!(sonde_proxy::trial::faulted(&held));
+    assert!(
+        held.response_headers
+            .iter()
+            .any(|h| h.name == sonde_proxy::fault::GIVEN_UP_HEADER),
+        "{held:?}"
+    );
+    assert_eq!(up.calls.lock().len(), 1, "only the retry reached the store");
 }
 
 #[tokio::test]
@@ -1070,6 +1131,7 @@ async fn a_lost_answer_on_a_large_read_is_not_held_to_be_thrown_away() {
             effect: sonde_proxy::fault::Effect::LostAnswer,
             times: 1,
             conditional: false,
+            most: 0,
         }],
     };
     let proxy = Proxy::start(

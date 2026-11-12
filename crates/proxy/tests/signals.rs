@@ -286,7 +286,12 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
             // as wide as its slices, never wider than the line; none for no errors
             let bars = line.chars().filter(|c| ('▁'..='█').contains(c)).count();
             let none = label == "errors" && sig.errors.count == 0;
-            let want = if none { 0 } else { sig.bins.min(SPARK_COLUMNS) };
+            let few = sig.short || sig.rate.requests < sonde_proxy::signals::FEW;
+            let want = if none || few {
+                0
+            } else {
+                sig.bins.min(SPARK_COLUMNS)
+            };
             assert_eq!(bars, want, "{name}: {line}");
         }
         assert!(!t.contains('\x1b'), "{name}");

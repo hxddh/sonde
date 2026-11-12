@@ -13,7 +13,8 @@
 //! race ([`Effect::LostRace`]) is a 412 to a conditional write that would
 //! have won; it is counted by commit ([`commit_family`]), not by key: the
 //! next number in a table's log is the lost commit's retry, and is let
-//! through.
+//! through. A stale listing ([`Effect::StaleList`]) is the store's own
+//! listing with a key this run wrote left out, once.
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -41,6 +42,30 @@ pub enum Effect {
     /// with `If-None-Match: *` is sent on first (the object is the
     /// program's own: sonde writes nothing); one with `If-Match` is not.
     LostRace,
+    /// A listing's answer leaves out the keys this run wrote that it would
+    /// show, each key once: a listing that does not yet show a write.
+    StaleList,
+}
+
+/// A wait this long before a request's first byte is a stall: a program is
+/// to cut it short and send the request again, not sit it out (a GET's
+/// first byte comes in well under a second). A delay under it only slows.
+pub const STALL_MS: u64 = 5000;
+
+/// The response header a record names each key a stale listing left out
+/// in, once a key (as the listing writes it).
+pub const HIDDEN_HEADER: &str = "x-sonde-hidden";
+
+/// The response header of a record whose request a fault held and the
+/// program stopped waiting for: it closed its connection mid-wait.
+pub const GIVEN_UP_HEADER: &str = "x-sonde-given-up";
+
+/// The stall a scenario holds requests for, if it delays any that long.
+pub fn stall_of(s: &Scenario) -> Option<u64> {
+    s.rules.iter().find_map(|r| match r.effect {
+        Effect::Delay { ms } if ms >= STALL_MS => Some(ms),
+        _ => None,
+    })
 }
 
 /// The smallest body [`Effect::CutBody`] cuts: under it there is no half
@@ -91,19 +116,33 @@ pub fn condition_of(r: &reqlog::Record) -> Option<Condition> {
 /// and Lance's `_versions` are each one family for a folder. Any other key
 /// is a family of its own (a lock, a pointer written with `If-Match`).
 pub fn commit_family(bucket: Option<&str>, key: Option<&str>) -> String {
-    use crate::episode::Part;
     let (b, k) = (bucket.unwrap_or(""), key.unwrap_or(""));
-    let kind = match crate::episode::part_of(k) {
-        Some(Part::SlateManifest(_)) => "manifest",
-        Some(Part::SlateWal(_)) => "wal",
-        Some(Part::SlateCompactions(_)) => "compactions",
-        Some(Part::IcebergMetadata(_)) => "metadata",
-        Some(Part::DeltaCommit(_)) => "commit",
-        Some(Part::LanceManifest(_)) => "version",
-        _ => return format!("{b}/{k}"),
+    let Some(kind) = log_kind(k) else {
+        return format!("{b}/{k}");
     };
     let dir = k.rfind('/').map_or("", |i| &k[..=i]);
     format!("{b}/{dir}<{kind}>")
+}
+
+/// Which table log a key is a commit of, if any.
+fn log_kind(key: &str) -> Option<&'static str> {
+    use crate::episode::Part;
+    Some(match crate::episode::part_of(key)? {
+        Part::SlateManifest(_) => "manifest",
+        Part::SlateWal(_) => "wal",
+        Part::SlateCompactions(_) => "compactions",
+        Part::IcebergMetadata(_) => "metadata",
+        Part::DeltaCommit(_) => "commit",
+        Part::LanceManifest(_) => "version",
+        _ => return None,
+    })
+}
+
+/// Whether a key is a commit in a table's log ([`commit_family`]): where a
+/// conditional write answered 412 means a commit was lost and is owed
+/// again. A key of its own (`_SUCCESS`, a lock) is not.
+pub fn is_log(key: Option<&str>) -> bool {
+    key.and_then(log_kind).is_some()
 }
 
 /// One rule: which requests, what happens to them, how many times each.
@@ -125,6 +164,14 @@ pub struct Rule {
     /// `If-Match`).
     #[serde(default)]
     pub conditional: bool,
+    /// Requests in all that meet it, as they come (0: no bound). A stall
+    /// teaches the same once as a hundred times, and each costs its wait.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub most: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// A named set of rules: what one trial run is put through.
@@ -136,6 +183,12 @@ pub struct Scenario {
     pub about: String,
     pub rules: Vec<Rule>,
 }
+
+/// The listings a stale one is: of the objects, not of versions or uploads.
+pub const LISTINGS: [&str; 2] = ["ListObjects", "ListObjectsV2"];
+
+/// The writes after which a listing shows a key.
+pub const MAKES_KEY: &[&str] = &["PutObject", "CopyObject", "CompleteMultipartUpload"];
 
 const WRITES: &[&str] = &[
     "PutObject",
@@ -154,8 +207,12 @@ fn rule(on: &[&str], effect: Effect, times: u32) -> Rule {
         effect,
         times,
         conditional: false,
+        most: 0,
     }
 }
+
+/// How long [`scenarios`]' `slow-first-byte` holds a download.
+pub const FIRST_BYTE_MS: u64 = 10_000;
 
 fn status(status: u16, code: &str) -> Effect {
     Effect::Status {
@@ -208,6 +265,29 @@ pub fn scenarios() -> Vec<Scenario> {
                 conditional: true,
                 ..rule(&[], Effect::LostRace, 1)
             }],
+        ),
+        s(
+            "skew",
+            "403 RequestTimeTooSkewed on each request's first attempt",
+            vec![rule(&[], status(403, "RequestTimeTooSkewed"), 1)],
+        ),
+        s(
+            "complete-500",
+            "CompleteMultipartUpload completes in the store, and its first answer is a 500",
+            vec![rule(&["CompleteMultipartUpload"], Effect::LostAnswer, 1)],
+        ),
+        s(
+            "slow-first-byte",
+            "the first download's first byte comes 10 s late",
+            vec![Rule {
+                most: 1,
+                ..rule(&["GetObject"], Effect::Delay { ms: FIRST_BYTE_MS }, 1)
+            }],
+        ),
+        s(
+            "stale-list",
+            "a listing leaves out each key this run wrote, once",
+            vec![rule(&LISTINGS, Effect::StaleList, 0)],
         ),
         s(
             "slow",
@@ -318,6 +398,47 @@ pub fn identity_of(r: &reqlog::Record) -> String {
         &r.query,
         kept_body_hash(r).as_deref(),
     )
+}
+
+/// A key as a listing writes it, as it was written: XML's escapes undone,
+/// and with `encoding-type=url` its percent-encoding.
+fn listed_key(text: &str, url: bool) -> String {
+    let unescaped = text
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#13;", "\r")
+        .replace("&#10;", "\n")
+        .replace("&amp;", "&");
+    if !url {
+        return unescaped;
+    }
+    let b = unescaped.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        match (
+            b[i],
+            b.get(i + 1).and_then(|c| hex(*c)),
+            b.get(i + 2).and_then(|c| hex(*c)),
+        ) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+            }
+            (b'+', _, _) => {
+                out.push(b' ');
+                i += 1;
+            }
+            (c, _, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The operation names a rule's `on` may say: the ones [`crate::op::classify`]
@@ -446,6 +567,7 @@ pub fn project_scenario(
             effect,
             times: times.unwrap_or(if every { 0 } else { 1 }),
             conditional: false,
+            most: 0,
         }],
     })
 }
@@ -479,7 +601,7 @@ pub fn project_program_name(name: Option<&str>) -> Result<Option<String>, String
 }
 
 /// A fault as written in `sonde.toml` or on the command line: `503 SlowDown`,
-/// `500`, `lost-answer`, `cut-body`, `lost-race`, `delay 200ms`. Nothing
+/// `500`, `lost-answer`, `cut-body`, `lost-race`, `stale-list`, `delay 200ms`. Nothing
 /// may follow it: `503 Slow Down` is a mistake, not a code named `Slow`.
 pub fn parse_effect(text: &str) -> Result<Effect, String> {
     let t = text.trim();
@@ -488,13 +610,14 @@ pub fn parse_effect(text: &str) -> Result<Effect, String> {
     let second = words.next();
     if let Some(extra) = words.next() {
         return Err(format!(
-            "{t}: {extra:?} is one word too many (a fault is a status and one code, as in 503 SlowDown, or lost-answer, cut-body, lost-race, delay 200ms)"
+            "{t}: {extra:?} is one word too many (a fault is a status and one code, as in 503 SlowDown, or lost-answer, cut-body, lost-race, stale-list, delay 200ms)"
         ));
     }
     match (first, second) {
         ("lost-answer", None) => return Ok(Effect::LostAnswer),
         ("cut-body", None) => return Ok(Effect::CutBody),
         ("lost-race", None) => return Ok(Effect::LostRace),
+        ("stale-list", None) => return Ok(Effect::StaleList),
         _ => {}
     }
     if first == "delay" {
@@ -532,7 +655,7 @@ pub fn parse_effect(text: &str) -> Result<Effect, String> {
         });
     }
     Err(format!(
-        "{t}: a fault is a status (503 SlowDown), lost-answer, cut-body, lost-race, or delay 200ms"
+        "{t}: a fault is a status (503 SlowDown), lost-answer, cut-body, lost-race, stale-list, or delay 200ms"
     ))
 }
 
@@ -552,6 +675,9 @@ pub enum Verdict {
     /// Answer 412. `forward`: the write is sent on first (`If-None-Match:
     /// *`), and a store that refused it itself was no attempt met either.
     LoseRace { forward: bool, met: Met },
+    /// Send it on, and leave out of the listing it answers the keys this
+    /// run wrote ([`Faults::hide`]).
+    HideWritten,
 }
 
 /// What a verdict counted, to be taken back when the fault could not be
@@ -600,6 +726,11 @@ pub struct Faults {
     met: Mutex<HashMap<(usize, String), u32>>,
     /// When the requests of the last second came, by rule, prefix and kind.
     rate: Mutex<HashMap<(usize, String, bool), VecDeque<Instant>>>,
+    /// Requests met by each rule with a bound (`most`).
+    most: Mutex<HashMap<usize, u32>>,
+    /// The keys this run wrote, by bucket, and whether a listing has left
+    /// each out yet (a stale listing hides each once).
+    written: Mutex<HashMap<(String, String), bool>>,
 }
 
 fn matches_op(on: &[String], op: &str) -> bool {
@@ -633,7 +764,77 @@ impl Faults {
             rules: scenario.rules.clone(),
             met: Mutex::new(HashMap::new()),
             rate: Mutex::new(HashMap::new()),
+            most: Mutex::new(HashMap::new()),
+            written: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Whether a listing may be left stale: the scenario has the rule.
+    fn lists_stale(&self) -> bool {
+        self.rules.iter().any(|r| r.effect == Effect::StaleList)
+    }
+
+    /// The store made a write that a listing will show (`PutObject`,
+    /// `CopyObject`, `CompleteMultipartUpload`, answered 2xx).
+    pub fn wrote(&self, op: &str, bucket: Option<&str>, key: Option<&str>) {
+        if let (true, Some(b), Some(k)) =
+            (self.lists_stale() && MAKES_KEY.contains(&op), bucket, key)
+        {
+            self.written
+                .lock()
+                .entry((b.to_string(), k.to_string()))
+                .or_insert(false);
+        }
+    }
+
+    /// The store's listing of `bucket` with the keys this run wrote and no
+    /// listing has left out yet taken out of it, and those keys; None when
+    /// it holds none (nothing is changed). The keys are as the listing
+    /// writes them, XML-escaped and, with `url`, percent-encoded.
+    pub fn hide(&self, bucket: &str, body: &str, url: bool) -> Option<(String, Vec<String>)> {
+        let mut written = self.written.lock();
+        let mut out = String::with_capacity(body.len());
+        let mut hidden = Vec::new();
+        let mut rest = body;
+        while let Some(start) = rest.find("<Contents>") {
+            let Some(len) = rest[start..].find("</Contents>") else {
+                break;
+            };
+            let end = start + len + "</Contents>".len();
+            let entry = &rest[start..end];
+            let key = entry
+                .split_once("<Key>")
+                .and_then(|(_, k)| k.split_once("</Key>"))
+                .map(|(k, _)| listed_key(k, url));
+            out.push_str(&rest[..start]);
+            match key.and_then(|k| {
+                written
+                    .get_mut(&(bucket.to_string(), k.clone()))
+                    .map(|h| (k, h))
+            }) {
+                Some((k, h)) if !*h => {
+                    *h = true;
+                    hidden.push(k);
+                }
+                _ => out.push_str(entry),
+            }
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        if hidden.is_empty() {
+            return None;
+        }
+        // ListObjectsV2 counts what it holds
+        if let Some((head, tail)) = out.split_once("<KeyCount>")
+            && let Some((n, tail)) = tail.split_once("</KeyCount>")
+            && let Ok(n) = n.trim().parse::<usize>()
+        {
+            out = format!(
+                "{head}<KeyCount>{}</KeyCount>{tail}",
+                n.saturating_sub(hidden.len())
+            );
+        }
+        Some((out, hidden))
     }
 
     /// What happens to this request: the first rule that matches and still
@@ -672,6 +873,25 @@ impl Faults {
                 continue;
             }
             if r.effect == Effect::CutBody && method != "GET" {
+                continue;
+            }
+            if r.effect == Effect::StaleList {
+                // counted by key when the listing comes back, not by attempt;
+                // only a listing of objects is read (never an object's body)
+                let b = bucket.unwrap_or("");
+                if method == "GET"
+                    && LISTINGS.contains(&op)
+                    && self
+                        .written
+                        .lock()
+                        .iter()
+                        .any(|((wb, _), hid)| wb == b && !hid)
+                {
+                    return Some(Verdict::HideWritten);
+                }
+                continue;
+            }
+            if r.most > 0 && self.most.lock().get(&i).is_some_and(|n| *n >= r.most) {
                 continue;
             }
             if let Effect::Rate { reads, writes } = r.effect {
@@ -713,6 +933,9 @@ impl Faults {
                 *n += 1;
                 counted = Met(Some((i, id)));
             }
+            if r.most > 0 {
+                *self.most.lock().entry(i).or_insert(0) += 1;
+            }
             return Some(match &r.effect {
                 Effect::Status { status, code } => Verdict::Answer {
                     status: *status,
@@ -725,7 +948,7 @@ impl Faults {
                     forward: condition == Some(Condition::Create),
                     met: counted,
                 },
-                Effect::Rate { .. } => unreachable!("handled above"),
+                Effect::Rate { .. } | Effect::StaleList => unreachable!("handled above"),
             });
         }
         None
@@ -819,6 +1042,7 @@ mod tests {
                 effect: Effect::LostAnswer,
                 times: 0,
                 conditional: false,
+                most: 0,
             }],
         });
         assert_eq!(
@@ -970,6 +1194,87 @@ mod tests {
         );
         assert_eq!(rate_prefix(Some("b"), Some("a/b/c/d/e")), "b/a/b/c/");
         assert_eq!(rate_prefix(Some("b"), Some("top")), "b/");
+    }
+
+    #[test]
+    fn a_stale_listing_leaves_out_each_key_this_run_wrote_once() {
+        let f = Faults::new(&scenario("stale-list").unwrap());
+        let list = || {
+            f.decide(&Asked {
+                query: &[("list-type".into(), "2".into())],
+                ..Asked::new("GET", "ListObjectsV2", Some("b"), None)
+            })
+        };
+        // nothing written yet: the store's own listing
+        assert_eq!(list(), None);
+        f.wrote("PutObject", Some("b"), Some("out/a&b 1"));
+        f.wrote("GetObject", Some("b"), Some("out/read"));
+        f.wrote("PutObject", Some("other"), Some("out/x"));
+        assert_eq!(list(), Some(Verdict::HideWritten));
+        let body = "<ListBucketResult><KeyCount>3</KeyCount>\
+            <Contents><Key>out/a&amp;b 1</Key><Size>1</Size></Contents>\
+            <Contents><Key>out/old</Key><Size>1</Size></Contents>\
+            <Contents><Key>out/x</Key><Size>1</Size></Contents>\
+            </ListBucketResult>";
+        let (stale, hidden) = f.hide("b", body, false).unwrap();
+        assert_eq!(hidden, ["out/a&b 1"]);
+        assert!(stale.contains("<KeyCount>2</KeyCount>"), "{stale}");
+        assert!(
+            !stale.contains("a&amp;b") && stale.contains("out/old"),
+            "{stale}"
+        );
+        assert!(stale.contains("<Key>out/x</Key>"), "another bucket's key");
+        // once: the next listing shows it, and is not met
+        assert_eq!(f.hide("b", body, false), None);
+        assert_eq!(list(), None);
+        // a listing that encodes its keys
+        f.wrote("CompleteMultipartUpload", Some("b"), Some("out/a b"));
+        let body = "<ListBucketResult><Contents><Key>out/a+b</Key></Contents></ListBucketResult>";
+        assert_eq!(f.hide("b", body, true).unwrap().1, ["out/a b"]);
+        assert_eq!(parse_effect("stale-list").unwrap(), Effect::StaleList);
+        // a project's, on every operation: still only a listing is read
+        let own = Faults::new(&project_scenario("lag", "stale-list", &[], "", None).unwrap());
+        own.wrote("PutObject", Some("b"), Some("k"));
+        assert_eq!(decide(&own, "GET", "GetObject", "k"), None);
+        assert_eq!(
+            own.decide(&Asked::new("GET", "ListObjects", Some("b"), None)),
+            Some(Verdict::HideWritten)
+        );
+    }
+
+    #[test]
+    fn a_stall_is_a_delay_of_five_seconds_or_more_and_holds_the_first_download_only() {
+        let s = scenario("slow-first-byte").unwrap();
+        assert_eq!(stall_of(&s), Some(FIRST_BYTE_MS));
+        assert_eq!(stall_of(&scenario("slow").unwrap()), None);
+        let f = Faults::new(&s);
+        assert!(matches!(
+            decide(&f, "GET", "GetObject", "a"),
+            Some(Verdict::Wait(_))
+        ));
+        assert_eq!(decide(&f, "GET", "GetObject", "a"), None, "its retry");
+        assert_eq!(
+            decide(&f, "GET", "GetObject", "b"),
+            None,
+            "one stall in all"
+        );
+        assert_eq!(decide(&f, "PUT", "PutObject", "c"), None);
+        // the others: a skewed clock answered as S3 does, and a completion
+        // that is made and its answer lost
+        let f = Faults::new(&scenario("skew").unwrap());
+        assert_eq!(
+            decide(&f, "PUT", "PutObject", "a"),
+            Some(Verdict::Answer {
+                status: 403,
+                code: "RequestTimeTooSkewed".into()
+            })
+        );
+        let f = Faults::new(&scenario("complete-500").unwrap());
+        assert_eq!(decide(&f, "PUT", "PutObject", "a"), None);
+        assert_eq!(
+            decide(&f, "POST", "CompleteMultipartUpload", "a"),
+            Some(Verdict::LoseAnswer)
+        );
     }
 
     #[test]

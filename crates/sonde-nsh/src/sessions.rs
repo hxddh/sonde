@@ -819,10 +819,37 @@ impl Newest {
     }
 }
 
-/// Whether a terminal's output asks where the cursor is (a Device Status
-/// Report, `ESC [ 6 n`), which its reader is to answer.
-fn asks_cursor(text: &str) -> bool {
-    text.contains("\x1b[6n")
+/// A terminal's question where the cursor is (a Device Status Report),
+/// which its reader is to answer.
+const ASKS_CURSOR: &str = "\x1b[6n";
+
+/// Finds the cursor's question in a terminal's output as it comes, a piece
+/// at a time: a question split between two reads is found in the second,
+/// from the start of it the first left over.
+#[derive(Default)]
+struct CursorAsks {
+    /// The end of the last piece that could begin the question.
+    carried: String,
+}
+
+impl CursorAsks {
+    /// How many times the output asks, this piece and what was carried.
+    fn asked(&mut self, text: &str) -> usize {
+        let joined = std::mem::take(&mut self.carried) + text;
+        let n = joined.matches(ASKS_CURSOR).count();
+        // the longest end of it that begins the question (all of it was
+        // counted, and is not carried)
+        let keep = (1..ASKS_CURSOR.len())
+            .rev()
+            .find(|&k| {
+                k <= joined.len()
+                    && joined.is_char_boundary(joined.len() - k)
+                    && ASKS_CURSOR.starts_with(&joined[joined.len() - k..])
+            })
+            .unwrap_or(0);
+        self.carried = joined[joined.len() - keep..].to_string();
+        n
+    }
 }
 
 /// The command a run's shell is given: as the session keeps it, every
@@ -955,6 +982,7 @@ async fn run_recorded(
         Some(t) => output.post(json!({ "started": view, "scenario": t })),
     };
     let mut decoder = crate::run::Utf8Stream::default();
+    let mut asks = CursorAsks::default();
     let mut exit_rx = exit_rx;
     let mut code = None;
     let mut exited = false;
@@ -972,11 +1000,15 @@ async fn run_recorded(
                     // starts and holds the program until it is told. A run's
                     // terminal answers; a trial's output goes to no terminal,
                     // so it is answered here, or the program never starts.
+                    // (each answered; the question may come in two reads)
+                    let asked = asks.asked(&text);
                     if trial.is_some()
-                        && asks_cursor(&text)
+                        && asked > 0
                         && let Some(r) = RUNNING.lock().as_mut()
                     {
-                        r.write(b"\x1b[1;1R");
+                        for _ in 0..asked {
+                            r.write(b"\x1b[1;1R");
+                        }
                     }
                     if !text.is_empty() {
                         writer.write_log(&text);
@@ -2249,6 +2281,32 @@ impl Sessions {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn the_cursors_question_is_found_when_two_reads_split_it() {
+        let mut asks = CursorAsks::default();
+        assert_eq!(asks.asked("hello\x1b[6n"), 1);
+        assert_eq!(asks.asked("more"), 0, "a question is answered once");
+        // split at every place it can be
+        for at in 1..ASKS_CURSOR.len() {
+            let mut asks = CursorAsks::default();
+            let (a, b) = ASKS_CURSOR.split_at(at);
+            assert_eq!(asks.asked(&format!("starting{a}")), 0, "{at}");
+            assert_eq!(asks.asked(&format!("{b}then")), 1, "{at}");
+        }
+        // over three reads, and a piece that begins it but does not go on
+        let mut asks = CursorAsks::default();
+        assert_eq!(asks.asked("\x1b"), 0);
+        assert_eq!(asks.asked("["), 0);
+        assert_eq!(asks.asked("6n\x1b[6n"), 2);
+        assert_eq!(asks.asked("\x1b["), 0);
+        assert_eq!(asks.asked("1;1H"), 0);
+        assert_eq!(asks.asked("6n"), 0, "what was carried was not the question");
+        // the text around it is no part of what is carried
+        let mut asks = CursorAsks::default();
+        assert_eq!(asks.asked("日本\x1b[6"), 0);
+        assert_eq!(asks.asked("n語"), 1);
+    }
 
     #[test]
     fn the_example_session_has_a_shape_for_the_list_once_it_is_kept_as_finished() {
