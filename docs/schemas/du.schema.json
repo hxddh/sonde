@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/du.schema.json",
+  "title": "sonde du -f json",
+  "description": "What a bucket (or prefix) holds, by class, prefix and size.",
+  "type": "object",
+  "properties": {
+    "endpoint": {
+      "type": "string"
+    },
+    "bucket": {
+      "type": "string"
+    },
+    "prefix": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string",
+      "description": "`ListObjectVersions`, or `ListObjectsV2` where versions cannot be listed."
+    },
+    "current": {
+      "$ref": "#/$defs/agg"
+    },
+    "noncurrent": {
+      "$ref": "#/$defs/agg"
+    },
+    "deleteMarkers": {
+      "type": "integer"
+    },
+    "multipart": {
+      "$ref": "#/$defs/agg"
+    },
+    "totalBytes": {
+      "type": "integer"
+    },
+    "byClass": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/slice"
+      }
+    },
+    "byPrefix": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/slice"
+      }
+    },
+    "bySize": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "min": {
+            "type": "integer"
+          },
+          "max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Exclusive; null for the last band."
+          },
+          "objects": {
+            "type": "integer"
+          },
+          "bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "min",
+          "max",
+          "objects",
+          "bytes"
+        ]
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "findingsText": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/phrase"
+        }
+      }
+    },
+    "costPerMonth": {
+      "type": "number"
+    },
+    "currency": {
+      "type": "string"
+    },
+    "scannedAt": {
+      "type": "string"
+    },
+    "requests": {
+      "type": "integer"
+    },
+    "versionsUnknown": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Why versions were not counted: their zeros are not \"none\"."
+    }
+  },
+  "required": [
+    "endpoint",
+    "bucket",
+    "prefix",
+    "source",
+    "current",
+    "noncurrent",
+    "deleteMarkers",
+    "multipart",
+    "totalBytes",
+    "byClass",
+    "byPrefix",
+    "bySize",
+    "findings",
+    "costPerMonth",
+    "currency",
+    "scannedAt",
+    "requests",
+    "versionsUnknown"
+  ],
+  "$defs": {
+    "agg": {
+      "type": "object",
+      "properties": {
+        "objects": {
+          "type": "integer"
+        },
+        "bytes": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "objects",
+        "bytes"
+      ]
+    },
+    "phrase": {
+      "type": "object",
+      "description": "A sentence as a key and its arguments: the app says it in the reader's language.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The phrase's key in the app's locales (en, zh)."
+        },
+        "args": {
+          "type": "object",
+          "description": "Its arguments, as text.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "slice": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "current": {
+          "$ref": "#/$defs/agg"
+        },
+        "noncurrent": {
+          "$ref": "#/$defs/agg"
+        },
+        "deleteMarkers": {
+          "type": "integer"
+        },
+        "versionsUnknown": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "current",
+        "noncurrent",
+        "deleteMarkers"
+      ]
+    }
+  }
+}

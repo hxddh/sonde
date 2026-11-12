@@ -484,7 +484,14 @@ async fn a_scenario_pressed_harder_fails_more_attempts_in_a_row() {
         async move {
             b.run(
                 Some("retrying"),
-                &["run", "--fault", fault, "-o", session.to_str().unwrap()],
+                &[
+                    "run",
+                    "--allow-writes",
+                    "--fault",
+                    fault,
+                    "-o",
+                    session.to_str().unwrap(),
+                ],
             )
             .await
         }
@@ -628,7 +635,10 @@ async fn a_trial_run_again_leaves_no_session_of_the_one_before() {
     let session = b.path("run.sonde");
     let name = session.to_str().unwrap();
     let first = b
-        .run(Some("retrying"), &["run", "--trial", "-o", name])
+        .run(
+            Some("retrying"),
+            &["run", "--allow-writes", "--trial", "-o", name],
+        )
         .await;
     assert_eq!(first.code, Some(0), "{}", first.stderr);
     let files = |dir: PathBuf| -> Vec<String> {
@@ -651,7 +661,10 @@ async fn a_trial_run_again_leaves_no_session_of_the_one_before() {
     );
     // again, under one scenario: only that one's session, no -2, no orphan
     let second = b
-        .run(Some("retrying"), &["run", "--fault", "error", "-o", name])
+        .run(
+            Some("retrying"),
+            &["run", "--allow-writes", "--fault", "error", "-o", name],
+        )
         .await;
     assert_eq!(second.code, Some(0), "{}", second.stderr);
     assert_eq!(files(b.path("trials")), ["run.error.sonde"]);
@@ -668,6 +681,7 @@ async fn two_batches_of_deletes_are_each_failed_and_each_judged() {
             Some("batches"),
             &[
                 "run",
+                "--allow-writes",
                 "--fault",
                 "slowdown",
                 "-o",
@@ -702,6 +716,7 @@ async fn two_batches_of_deletes_are_each_failed_and_each_judged() {
             Some("never-batches"),
             &[
                 "run",
+                "--allow-writes",
                 "--fault",
                 "slowdown",
                 "-o",
@@ -792,7 +807,13 @@ async fn a_clean_run_that_fails_is_not_tried_and_a_scenario_that_meets_nothing_i
     let o = b
         .run(
             Some("fails"),
-            &["run", "--trial", "-o", session.to_str().unwrap()],
+            &[
+                "run",
+                "--allow-writes",
+                "--trial",
+                "-o",
+                session.to_str().unwrap(),
+            ],
         )
         .await;
     assert_eq!(o.code, Some(3), "{}", o.stderr);
@@ -809,6 +830,7 @@ async fn a_clean_run_that_fails_is_not_tried_and_a_scenario_that_meets_nothing_i
             Some("retrying"),
             &[
                 "run",
+                "--allow-writes",
                 "--fault",
                 "fail-complete",
                 "-o",
@@ -997,7 +1019,10 @@ async fn a_sonde_toml_that_says_what_sonde_does_not_know_is_an_error() {
         std::fs::write(b.path("sonde.toml"), toml).unwrap();
         // before anything runs
         let o = b
-            .run(Some("retrying"), &["run", "--trial", "-o", "run.sonde"])
+            .run(
+                Some("retrying"),
+                &["run", "--allow-writes", "--trial", "-o", "run.sonde"],
+            )
             .await;
         let code = if says == "soon" {
             // (a budget is `check`'s to read)
@@ -1019,7 +1044,10 @@ async fn a_sonde_toml_that_says_what_sonde_does_not_know_is_an_error() {
     )
     .unwrap();
     let o = b
-        .run(Some("retrying"), &["run", "--trial", "-o", "run.sonde"])
+        .run(
+            Some("retrying"),
+            &["run", "--allow-writes", "--trial", "-o", "run.sonde"],
+        )
         .await;
     assert_eq!(o.code, Some(0), "{}", o.stderr);
     assert!(o.stderr.contains("survived  flaky-puts"), "{}", o.stderr);
@@ -1639,4 +1667,55 @@ async fn an_input_too_large_to_hold_is_fed_to_every_run_all_the_same() {
         2,
         "clean run and trial"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn by_default_a_run_writes_again_only_what_it_wrote_and_deletes_nothing() {
+    let b = Bench::new().await;
+    // a trial under the default policy: each run writes again what the
+    // clean run wrote
+    let o = b
+        .run(Some("retrying"), &["run", "--trial", "-o", "run.sonde"])
+        .await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    assert!(o.stderr.contains("did not break"), "{}", o.stderr);
+    // run again: what the last run wrote was there before this one
+    let again = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
+    assert_eq!(again.code, Some(1), "{}", again.stderr);
+    let s = sonde_proxy::session::Session::open(&b.path("again.sonde")).unwrap();
+    let refused = s.records.iter().find(|r| r.status == Some(403)).unwrap();
+    assert!(
+        refused
+            .error_body
+            .as_deref()
+            .is_some_and(|e| e.contains("no-delete") && e.contains("data/a")),
+        "{refused:?}"
+    );
+    assert_eq!(b.store.state.lock().buckets["data"]["a"].0, b"1");
+    // the project may let it, and sonde says so; a flag is over the file
+    std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"allow\"\n").unwrap();
+    let allowed = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
+    assert_eq!(allowed.code, Some(0), "{}", allowed.stderr);
+    assert!(
+        allowed.stderr.contains("[record] policy"),
+        "{}",
+        allowed.stderr
+    );
+    let flag = b
+        .run(
+            Some("retrying"),
+            &["run", "--policy", "no-delete", "-o", "again.sonde"],
+        )
+        .await;
+    assert_eq!(flag.code, Some(1), "{}", flag.stderr);
+    // deletes are refused by default
+    std::fs::remove_file(b.path("sonde.toml")).unwrap();
+    let deletes = b
+        .run(Some("batches"), &["run", "-o", "deletes.sonde"])
+        .await;
+    assert_eq!(deletes.code, Some(1), "{}", deletes.stderr);
+    std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"everything\"\n").unwrap();
+    let wrong = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
+    assert_eq!(wrong.code, Some(64), "{}", wrong.stderr);
+    assert!(wrong.stderr.contains("one of allow"), "{}", wrong.stderr);
 }

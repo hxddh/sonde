@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/endpoints-test.schema.json",
+  "title": "sonde endpoints test -f json",
+  "description": "Whether an endpoint answers, and as whom.",
+  "type": "object",
+  "properties": {
+    "endpoint": {
+      "type": "string"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "latencyMs": {
+      "type": "number"
+    },
+    "credentialsSource": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "bucketCount": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "owner": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "identity": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Who the credentials are (STS)."
+    },
+    "identityNote": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "anyOf": [
+        {
+          "$ref": "#/$defs/s3Error"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "server": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The `Server` header."
+    }
+  },
+  "required": [
+    "endpoint",
+    "ok",
+    "latencyMs",
+    "credentialsSource",
+    "bucketCount",
+    "owner",
+    "identity",
+    "identityNote",
+    "error",
+    "server"
+  ],
+  "$defs": {
+    "s3Error": {
+      "type": "object",
+      "description": "An error from the store.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "status": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recordId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "body": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ]
+    }
+  }
+}

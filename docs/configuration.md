@@ -19,7 +19,8 @@ kept; comments are not. Two processes saving at once take turns (`config.toml.lo
 
 ```toml
 [settings]
-read-only = true          # destructive operations refused while on (default)
+read-only = true          # sonde's own destructive operations refused while on (default)
+record-policy = "no-delete" # what a program Run records may do: no-delete (default), read-only, allow
 concurrency = 16          # requests in flight per job
 rate-limit = 50.0         # requests per second per job; omit for none
 reqlog-capacity = 5000    # records kept in the request log

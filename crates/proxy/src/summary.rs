@@ -387,7 +387,7 @@ pub fn keep(session: &std::path::Path, c: &Counted) {
     ));
     let written = serde_json::to_vec(c)
         .ok()
-        .and_then(|b| std::fs::write(&tmp, b).ok())
+        .and_then(|b| reqlog::private::write(&tmp, b).ok())
         .and_then(|_| std::fs::rename(&tmp, &file).ok());
     if written.is_none() {
         let _ = std::fs::remove_file(&tmp);

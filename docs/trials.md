@@ -230,6 +230,9 @@ faults), a name used twice, a fault with a word too many (`503 Slow Down`: a sta
 ## Limits
 
 - The faults are the proxy's: a program that reaches its store some other way is not tried.
+- A trial's runs are recorded under the run's policy (`no-delete` unless told otherwise): each may write again
+  what the clean run wrote, and a program that deletes, or writes over what an earlier run left, needs
+  `--allow-writes` (see [recording.md](recording.md#what-a-recorded-program-may-do)).
 - **A cut body.** sonde sees which bytes were asked for again, not what the program did with the ones it had. A
   program that reads the half, fails its own checksum and stops with its clean run's exit code reads as "took the
   half as whole". A body sent without `Content-Length` (chunked) is not cut. The cut is at the half, once for each

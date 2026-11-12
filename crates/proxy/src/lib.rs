@@ -20,6 +20,7 @@ pub mod otlp;
 pub mod phrase;
 pub mod profile;
 pub mod program;
+pub mod project;
 pub mod replay;
 pub mod report;
 pub mod session;
@@ -50,19 +51,46 @@ use tokio::net::TcpListener;
 
 type Out = BoxBody<Bytes, std::io::Error>;
 
-/// What the proxy lets through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// What the proxy lets through. A recording takes [`Policy::NoDelete`]
+/// unless told otherwise (`--allow-writes`, `[record] policy`, the app's
+/// setting); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Policy {
     /// Everything.
-    #[default]
     Allow,
-    /// Everything but operations that remove data ([`op::is_destructive`]).
+    /// Nothing that removes or replaces data: deletes, aborts, lifecycle
+    /// rules, bucket policies, versioning suspended, and a write over an
+    /// object the recording did not write itself ([`Written`]).
+    #[default]
     NoDelete,
     /// GET and HEAD only.
     ReadOnly,
 }
 
 impl Policy {
+    /// By its name, as the flags, `sonde.toml` and the app say it.
+    pub fn named(name: &str) -> Option<Policy> {
+        match name {
+            "allow" => Some(Policy::Allow),
+            "no-delete" => Some(Policy::NoDelete),
+            "read-only" => Some(Policy::ReadOnly),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Policy::Allow => "allow",
+            Policy::NoDelete => "no-delete",
+            Policy::ReadOnly => "read-only",
+        }
+    }
+
+    /// The one of two that lets less through.
+    pub fn stricter(self, other: Policy) -> Policy {
+        self.max(other)
+    }
+
     /// Why `op` is refused, if it is. No-delete goes by the method and the
     /// query as well as the name: a request the proxy cannot name is forwarded
     /// as it came, and the store may read it as a delete.
@@ -73,10 +101,11 @@ impl Policy {
         query: &[(String, String)],
     ) -> Option<&'static str> {
         let q = |n: &str| query.iter().any(|(k, _)| k == n);
+        // a bucket policy can deny its owner the bucket
         let removes = op::is_destructive(op)
             || method == "DELETE"
             || (method == "POST" && q("delete"))
-            || (method == "PUT" && q("lifecycle"))
+            || (method == "PUT" && (q("lifecycle") || q("policy")))
             || (op == "Unknown" && method != "GET" && method != "HEAD");
         match self {
             Policy::Allow => None,
@@ -84,6 +113,54 @@ impl Policy {
             Policy::ReadOnly if method != "GET" && method != "HEAD" => Some("read-only"),
             _ => None,
         }
+    }
+
+    /// Why a request is refused for what its document says, once it is
+    /// read: versioning suspended (or a document not read) under no-delete.
+    /// A suspended bucket's next write replaces the version it would keep.
+    pub fn refuses_document(self, op: &str, body: Option<&str>) -> Option<&'static str> {
+        (self == Policy::NoDelete
+            && op == "PutBucketVersioning"
+            && body.is_none_or(|b| b.contains("Suspended")))
+        .then_some("no-delete")
+    }
+}
+
+/// Whether `op` writes an object whole at its key (and so may write over one).
+pub fn writes_object(op: &str) -> bool {
+    matches!(op, "PutObject" | "CompleteMultipartUpload" | "CopyObject")
+}
+
+/// The objects a recording wrote (bucket, key): under no-delete it may write
+/// them again, and of the objects already there only them. A program that
+/// writes a key twice, and a trial's runs after its clean run, share one.
+#[derive(Debug, Default)]
+pub struct Written(parking_lot::Mutex<std::collections::HashSet<(String, String)>>);
+
+impl Written {
+    /// What `records` wrote: a trial's runs may write again what its clean
+    /// run wrote, which that run's policy let through.
+    pub fn of(records: &[Record]) -> Written {
+        let w = Written::default();
+        for r in records {
+            if writes_object(&r.operation)
+                && r.status.is_some_and(|s| (200..300).contains(&s))
+                && let (Some(b), Some(k)) = (&r.bucket, &r.key)
+            {
+                w.add(b, k);
+            }
+        }
+        w
+    }
+
+    pub fn has(&self, bucket: &str, key: &str) -> bool {
+        self.0
+            .lock()
+            .contains(&(bucket.to_string(), key.to_string()))
+    }
+
+    fn add(&self, bucket: &str, key: &str) {
+        self.0.lock().insert((bucket.to_string(), key.to_string()));
     }
 }
 
@@ -114,6 +191,8 @@ pub struct ProxyConfig {
     /// TLS as well as plain HTTP, on the same port (a connection that opens
     /// with a TLS handshake is answered in TLS).
     pub tls: Option<Arc<tls::Tls>>,
+    /// What the recording wrote, which no-delete lets it write again.
+    pub written: Arc<Written>,
 }
 
 /// A fresh client key and secret: the key names the proxy, the secret is 32
@@ -149,6 +228,7 @@ impl Default for ProxyConfig {
             allow_remote: false,
             faults: None,
             tls: None,
+            written: Arc::default(),
         }
     }
 }
@@ -868,6 +948,55 @@ fn full(b: Bytes) -> Out {
     Full::new(b).map_err(|never| match never {}).boxed()
 }
 
+/// A request the policy refuses: recorded as refused, answered 403.
+fn refuse(shared: &Shared, mut record: Record, msg: String) -> Response<Out> {
+    record.status = Some(403);
+    record.error_body = Some(msg.clone());
+    record
+        .response_headers
+        .push(Header::new("x-sonde-proxy", "refused"));
+    shared.log.push(record);
+    xml_error(403, "AccessDenied", &msg)
+}
+
+/// Whether `bucket/key` is in the store: a HEAD of sonde's own, signed
+/// with the endpoint's credentials. Not a request of the program's, so not
+/// recorded.
+async fn stored(shared: &Shared, bucket: &str, key: &str) -> Result<bool, String> {
+    let client = &shared.client;
+    let cfg = client.config();
+    let (origin, path, host) = client.address(&cfg.endpoint, Some(bucket), Some(key));
+    let mut headers = vec![("host".to_string(), host)];
+    if let Some(creds) = client.credentials().await.map_err(|e| e.to_string())? {
+        sigv4::sign_headers(
+            &mut headers,
+            "HEAD",
+            &path,
+            &[],
+            sigv4::EMPTY_SHA256,
+            &cfg.region,
+            "s3",
+            Utc::now(),
+            &creds,
+        );
+    }
+    let mut rb = client.http_streaming().head(format!("{origin}{path}"));
+    for (k, v) in &headers {
+        if !k.eq_ignore_ascii_case("host") {
+            rb = rb.header(k.as_str(), v.as_str());
+        }
+    }
+    let resp = tokio::time::timeout(cfg.timeout, rb.send())
+        .await
+        .map_err(|_| "no answer".to_string())?
+        .map_err(|e| e.to_string())?;
+    match resp.status().as_u16() {
+        200..=299 => Ok(true),
+        404 => Ok(false),
+        s => Err(format!("the store answered {s}")),
+    }
+}
+
 fn header_value(headers: &http::HeaderMap, name: &str) -> String {
     headers
         .get(name)
@@ -914,7 +1043,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     // the request as the application saw it: from its arrival (a buffered
     // body's upload included) to the answer
-    let received = Instant::now();
+    let mut received = Instant::now();
     let mut record = Record {
         id: 0,
         time: Utc::now(),
@@ -1010,14 +1139,51 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     if let Some(mode) = shared.cfg.policy.refuses(&method, &operation, &query) {
         let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
-        record.status = Some(403);
-        record.error_body = Some(msg.clone());
-        record
-            .response_headers
-            .push(Header::new("x-sonde-proxy", "refused"));
-        shared.log.push(record);
-        return Ok(xml_error(403, "AccessDenied", &msg));
+        return Ok(refuse(&shared, record, msg));
     }
+
+    // under no-delete, an object already there is written over only if
+    // this recording wrote it: a copy's target is looked for first (a HEAD
+    // of sonde's own, not recorded and not timed), a write that says no
+    // condition goes with `If-None-Match: *` and the store's 412 is the
+    // refusal. A write on `If-Match` names an object already there.
+    let mut guarded = false;
+    let mut looked = std::time::Duration::ZERO;
+    if shared.cfg.policy == Policy::NoDelete
+        && writes_object(&operation)
+        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
+        && !shared.cfg.written.has(b, k)
+    {
+        let said = |n: &str| app_headers.iter().any(|(h, _)| h.eq_ignore_ascii_case(n));
+        let over = |why: &str| {
+            format!(
+                "sonde refused {operation}: {b}/{k} {why}, and the proxy runs in no-delete mode (--allow-writes lets a program write over it)"
+            )
+        };
+        if said("if-match") {
+            return Ok(refuse(
+                &shared,
+                record,
+                over("is an object this recording did not write"),
+            ));
+        }
+        if operation == "CopyObject" {
+            let at = Instant::now();
+            let found = stored(&shared, b, k).await;
+            looked = at.elapsed();
+            match found {
+                Ok(false) => {}
+                Ok(true) => return Ok(refuse(&shared, record, over("was there before"))),
+                Err(e) => {
+                    let why = format!("may be there already (looking for it: {e})");
+                    return Ok(refuse(&shared, record, over(&why)));
+                }
+            }
+        } else {
+            guarded = !said("if-none-match");
+        }
+    }
+    received += looked;
 
     let content_sha = header_value(&parts.headers, "x-amz-content-sha256");
     let length: Option<u64> = header_value(&parts.headers, "content-length").parse().ok();
@@ -1089,6 +1255,14 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
         }
     }
+    if let Some(mode) = shared
+        .cfg
+        .policy
+        .refuses_document(&operation, record.request_body.as_deref())
+    {
+        let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
+        return Ok(refuse(&shared, record, msg));
+    }
 
     // a trial's faults: answered here, delayed, or sent on with the answer
     // to be lost. The record says so, so that no reader blames the store.
@@ -1159,6 +1333,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .filter(|(k, _)| !DROP_REQUEST.contains(&k.to_ascii_lowercase().as_str()))
         .cloned()
         .collect();
+    // (signed, sent, and not on the record: the program did not ask it)
+    if guarded {
+        out.push(("if-none-match".into(), "*".into()));
+    }
     // no time for the whole exchange (a large body takes what it takes), only
     // for one that has stopped moving
     let idle = cfg.timeout;
@@ -1337,6 +1515,24 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.status = Some(status.as_u16());
     s3raw::fill_ids(&mut record, &headers);
     record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+    if guarded && status.as_u16() == 412 {
+        drain(resp, idle).await;
+        record
+            .response_headers
+            .push(Header::new("x-sonde-store-status", status.as_str()));
+        record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
+        let (b, k) = (bucket.unwrap_or_default(), key.unwrap_or_default());
+        let msg = format!(
+            "sonde refused {operation}: {b}/{k} was there before, and the proxy runs in no-delete mode (--allow-writes lets a program write over it)"
+        );
+        return Ok(refuse(&shared, record, msg));
+    }
+    if status.is_success()
+        && writes_object(&operation)
+        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
+    {
+        shared.cfg.written.add(b, k);
+    }
     // a fault that needed the store's answer first, and cannot be done to
     // this one, was no fault: the answer goes through as the store's own
     let mut cut: Option<(u64, u64)> = None;

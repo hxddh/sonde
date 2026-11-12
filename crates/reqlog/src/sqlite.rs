@@ -24,6 +24,8 @@ CREATE INDEX IF NOT EXISTS records_time ON records(time);";
 impl SqliteSink {
     pub fn open(path: &Path) -> rusqlite::Result<SqliteSink> {
         let conn = Connection::open(path)?;
+        // (records of requests: the user's alone)
+        let _ = crate::private::restrict(path);
         conn.execute_batch(SCHEMA)?;
         let (tx, rx) = mpsc::channel::<Record>();
         thread::Builder::new()
