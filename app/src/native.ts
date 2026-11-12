@@ -87,6 +87,8 @@ export const api = {
     fromRequestLog: (limit = 100000) => Sessions.fromRequestLog(limit) as string,
     /** A session as a window opens it: its totals, signals, profile and findings, and the first page of its operations. Read off the interface's thread. */
     view: async (path: string) => (await Sessions.view(path)) as T.SessionView,
+    /** The requests that started in a stretch of it (ms from its first request's start), reckoned as a session of their own: what the Time pane's charts not drawn over time read while a stretch is chosen. Off the interface's thread. */
+    stretch: async (path: string, fromMs: number, toMs: number) => (await Sessions.stretch(path, fromMs, toMs)) as T.Stretch,
     /** A range of its operations, sorted and narrowed as the table asks. */
     episodes: async (path: string, query: T.EpisodeQuery) => (await Sessions.episodes(path, query)) as T.EpisodePage,
     /** One operation by its index, with every one of its requests' ids. */

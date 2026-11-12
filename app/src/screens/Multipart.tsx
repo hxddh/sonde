@@ -4,7 +4,7 @@
 
 import { cleanup, type JSX, Scroll, signal, Text, View } from "nsh";
 import { DataTable, type DataTableSort } from "nsh/base";
-import { bytes, count, date, day, duration, money } from "../format";
+import { bytes, count, date, duration, money } from "../format";
 import { type Key, t } from "../i18n";
 import { core } from "../phrases";
 import { Icon } from "../ui/icon";
@@ -45,11 +45,11 @@ export function Multipart() {
   const uploadSort = signal<DataTableSort | null>({ key: "age", direction: "descending" });
   // the uploads' table measures itself: the key takes what the figures leave
   const tableWidth = signal(0);
-  const KEY_ROOM = COLUMN.flag + COLUMN.day + COLUMN.age + COLUMN.parts + COLUMN.bytes + COLUMN.cost + 2;
+  const KEY_ROOM = COLUMN.flag + COLUMN.age + COLUMN.parts + COLUMN.bytes + COLUMN.cost + 2;
   const keyWidth = () => (tableWidth() > 0 ? Math.max(COLUMN.keyLeast, tableWidth() - KEY_ROOM) : COLUMN.keyLeast);
   const sorted = (rows: UploadRow[]) =>
     sortRows(rows, uploadSort(), (u, key) =>
-      key === "age" ? (u.ageDays ?? -1) : key === "parts" ? u.parts : key === "bytes" ? u.bytes : key === "cost" ? u.costPerMonth : key === "initiated" ? (u.initiated ?? "") : key === "key" ? u.key : key === "uploadId" ? u.uploadId : u.stale ? 1 : 0,
+      key === "age" ? (u.ageDays ?? -1) : key === "parts" ? u.parts : key === "bytes" ? u.bytes : key === "cost" ? u.costPerMonth : key === "key" ? u.key : key === "uploadId" ? u.uploadId : u.stale ? 1 : 0,
     );
   let job: string | null = null;
   cleanup(() => {
@@ -163,20 +163,18 @@ export function Multipart() {
                     testID="uploads"
                     class="min-h-0 flex-1"
                     columns={[
-                      // fits the detail panel (760pt) without a sideways scroll: the date as a day
+                      // fits Buckets' section at the least window without a sideways scroll: how old, not the day it began
                       // the upload's id is the request inspector's: the columns that decide stay whole
                       { key: "flag", title: "", width: COLUMN.flag, resizable: false },
                       // the key takes the room the figures leave (the table measures itself), cut in its middle
                       { key: "key", title: t("mpu.key"), width: keyWidth(), minWidth: COLUMN.keyLeast, sortable: true },
-                      // (a day in full, in every language: "2026年12月30日" is the widest)
-                      { key: "initiated", title: t("mpu.initiated"), width: COLUMN.day, sortable: true },
                       { key: "age", title: t("mpu.age"), width: COLUMN.age, align: "end", sortable: true },
                       { key: "parts", title: t("mpu.parts"), width: COLUMN.parts, align: "end", sortable: true },
                       { key: "bytes", title: t("mpu.bytes"), width: COLUMN.bytes, align: "end", sortable: true },
                       { key: "cost", title: t("mpu.costMonth"), width: COLUMN.cost, align: "end", sortable: true },
                     ]}
                     // an old upload is marked in its first cell (an icon; "!" in a terminal), not shouted: the one way a row says it
-                    data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "!" : "", key: u.key, initiated: day(u.initiated), age: u.ageDays == null ? "—" : duration(u.ageDays * 86400000, "age"), parts: count(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
+                    data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "!" : "", key: u.key, age: u.ageDays == null ? "—" : duration(u.ageDays * 86400000, "age"), parts: count(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
                     fontSize={TYPE.body}
                     rowHeight={rowHeight(ROW.table)}
                     classes={terminal() ? undefined : TABLE}
@@ -194,8 +192,6 @@ export function Multipart() {
                             ) : c.key === "key" ? (
                               // a key is cut in its middle, never at its end: both ends tell two apart
                               <Text class="text-body text-foreground line-clamp-1" style={{ textOverflow: "ellipsis-middle" }}>{c.text}</Text>
-                            ) : c.key === "initiated" ? (
-                              <Text class="text-body text-foreground line-clamp-1">{c.text}</Text>
                             ) : (
                               <View class="flex-1 items-end justify-center">
                                 <Text class="text-small text-foreground">{c.text}</Text>

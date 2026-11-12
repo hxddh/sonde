@@ -8,7 +8,7 @@ import { Area, Bar, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Cell } fro
 import { bytes, cost, count, duration, percent, transfer } from "../../format";
 import { t } from "../../i18n";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_LABEL, TICK_ROOM, TIME_TICK, TOP_LABEL, VALUE_TICK, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, LegendItem, OUTCOMES, TimeAxis, ValueAxis, sessionSpan, BARS, GRID, STRIP, TIP, VALUE_TICK_END, CELLS, HOVER, sinceTick, Budget, budgetTop } from "./system";
+import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, CROSS_LINE, ChartTip, type Focus, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, ROW_LABEL, TICK_ROOM, TIME_TICK, TOP_LABEL, VALUE_TICK, axisName, decades, groupName, injectedLegend, log10, nearest, pct, rowsHeight, tipValue, toneOf, tones, tail, LegendItem, OUTCOMES, TimeAxis, ValueAxis, sessionSpan, BARS, GRID, STRIP, TIP, VALUE_TICK_END, CELLS, HOVER, sinceTick, Budget, budgetTop, HEAT_RAMP, ZERO_SLIVER } from "./system";
 import { terminal, textual, SimpleTable } from "../kit";
 
 /** The two tones of latency's bands: the body of the requests (median to
@@ -142,7 +142,7 @@ export function LatencyHeat(props: { profile: Profile; range?: [number, number] 
           data={rows()}
           xScale={{ type: "band", domain: bins(), paddingInner: CELLS.heat }}
           yScale={{ type: "band", domain: buckets().map((b) => `${b}`), paddingInner: CELLS.heat }}
-          colorScale={{ type: "sequential", domain: [0, Math.sqrt(max())], range: [token("bar-track" as never) as unknown as string, token("chart-1" as never) as unknown as string] }}
+          colorScale={{ type: "sequential", domain: [0, Math.sqrt(max())], range: HEAT_RAMP() }}
           accessibilityLabel={label()}
           accessibilityValue={tipValue(tip())}
           appearGeneration={1}
@@ -169,8 +169,10 @@ export function LatencyHeat(props: { profile: Profile; range?: [number, number] 
 
 /** Chains of requests that each waited for the one before: how long each took
  * in turn, beside how long the same requests would take eight at once. */
-export function Chains(props: { profile: Profile; max?: number }) {
-  const rows = () => (props.profile.chains ?? []).slice(0, props.max ?? 5).map((c, i) => ({ ...c, name: t("chains.row", { i: i + 1, n: c.requests }), soon: c.startMs + c.atOnceMs }));
+export function Chains(props: { profile: Profile; max?: number; /** the stretch chosen on the timeline (ms from the start): the chains in it, over it */ domainMs?: [number, number] | null }) {
+  const span = (): [number, number] => props.domainMs ?? sessionSpan(props.profile, props.profile.rate.length);
+  const inSpan = (c: { startMs: number; endMs: number }) => !props.domainMs || (c.endMs > props.domainMs[0] && c.startMs < props.domainMs[1]);
+  const rows = () => (props.profile.chains ?? []).filter(inSpan).slice(0, props.max ?? 5).map((c, i) => ({ ...c, name: t("chains.row", { i: i + 1, n: c.requests }), soon: c.startMs + c.atOnceMs }));
   const hovered = signal<number | null>(null);
   const label = () => {
     const c = rows()[0];
@@ -185,12 +187,13 @@ export function Chains(props: { profile: Profile; max?: number }) {
       when={!textual()}
       else={<SimpleTable columns={[t("chains.chain"), t("chains.from"), t("profile.time"), t("chains.atOnce")]} rows={rows().map((c) => [c.name, `+${duration(c.startMs)}`, duration(c.endMs - c.startMs), duration(c.atOnceMs)])} />}
     >
+      <If when={rows().length > 0} else={<NoneInStretch />}>
       <View class="gap-2">
         <Plot
           testID="chains"
           data={rows()}
           yScale={{ type: "band", ...BARS.pairs }}
-          xScale={{ type: "linear", domain: sessionSpan(props.profile, props.profile.rate.length) }}
+          xScale={{ type: "linear", domain: span() }}
           accessibilityLabel={label()}
           accessibilityValue={tipValue(tip())}
           appearGeneration={1}
@@ -208,10 +211,11 @@ export function Chains(props: { profile: Profile; max?: number }) {
           {/* the same requests eight at once */}
           <Bar base="startMs" value="soon" class="fill-chart-1" cornerRadii={TIP.span} inactiveOpacity={INACTIVE} label={(_, i) => t("chains.bar", { fast: duration(rows()[i].atOnceMs) })} labelClass={BAR_LABEL} />
           <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.name ?? "")} labelClass={AXIS_LABEL} />
-          <TimeAxis domain={sessionSpan(props.profile, props.profile.rate.length)} />
+          <TimeAxis domain={span()} />
         </Plot>
         <Legend gutter items={[{ label: t("chains.asRan"), swatch: "bg-muted-foreground/45" }, { label: t("chains.atOnce"), swatch: "bg-chart-1" }]} />
       </View>
+      </If>
     </If>
   );
 }
@@ -314,6 +318,8 @@ export function Distribution(props: { profile: Profile }) {
   // what those buckets hold of the requests: said as it is, not as "5%" (a bucket is not cut at the p95)
   const tailShare = () => (first95() < 0 ? 0 : rows().slice(first95()).reduce((n, r) => n + r.n, 0) / total());
   const peak = () => Math.max(1, ...rows().map((r) => r.n));
+  // between the first bucket that holds a request and the last
+  const inside = (i: number) => rows().findIndex((r) => r.n > 0) < i && i < rows().length - 1 - [...rows()].reverse().findIndex((r) => r.n > 0);
   return (
     <If when={buckets().length > 1} else={<Text class="text-small text-muted-foreground">{label()}</Text>}>
       <View class="gap-2">
@@ -340,7 +346,8 @@ export function Distribution(props: { profile: Profile }) {
             class={`${TICK_ROOM} ${PLOT} w-full`}
           >
             {/* each bar says how many it holds; the share done by then is the line, never a bar's label */}
-            <Bar value="n" color={(_, i) => (first95() >= 0 && i >= first95() ? "tail" : "body")} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} stagger={0.2} label={(_, i) => ((rows()[i]?.n ?? 0) > 0 ? count(rows()[i].n) : "")} labelClass={TOP_LABEL} />
+            {/* a bucket of none between two that hold some says "0" on a sliver of a bar (a bar of no value is not drawn, nor its label) */}
+            <Bar value={(r, i) => (r.n > 0 ? r.n : inside(i) ? peak() * ZERO_SLIVER : 0)} color={(_, i) => (first95() >= 0 && i >= first95() ? "tail" : "body")} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} stagger={0.2} label={(_, i) => ((rows()[i]?.n ?? 0) > 0 || inside(i) ? count(rows()[i]?.n ?? 0) : "")} labelClass={TOP_LABEL} />
             <Line y="cum" scale="y2" curve="linear" class="stroke-muted-foreground stroke-1" style={{ strokeDasharray: "3 3" }} hoverDotClass="size-1.5 rounded-full bg-muted-foreground" />
             <PlotAxis format={(i) => rows()[i]?.name ?? ""} labelClass={BUCKET_TICK} />
             <ValueAxis marked peak={peak()} say={(v) => t("run.bandRequests", { n: v })} />

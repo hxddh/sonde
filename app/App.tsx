@@ -13,9 +13,8 @@ import { endForQuit, followNotifications, running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, report, section, shellHeight, setOverlay, settings, shellWidth, storeSheet, type StoreTab, storeTab } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, report, section, shellHeight, setOverlay, settings, shellWidth } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
-import { openCompatWindow } from "./src/screens/CompatWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
 import { Back, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, Title, WIDTH } from "./src/ui/kit";
 import { count } from "./src/format";
@@ -84,22 +83,7 @@ function DesktopShell() {
       activityOpen.set(true);
       return true;
     }
-    // compatibility is a window of its own, opened from the endpoints
-    if (s === "probes") {
-      try {
-        openCompatWindow();
-      } catch (e) {
-        report(e);
-      }
-      return true;
-    }
-    // a bucket's details open over its objects
-    if (a === "store") {
-      storeTab.set("browse");
-      storeSheet.set(s === "browse" ? null : (s as StoreTab));
-      section.set("browse");
-      return true;
-    }
+    // (a bucket's tools and compatibility are sections of Buckets: the place itself)
     return false;
   });
   return (

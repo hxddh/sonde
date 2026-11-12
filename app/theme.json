@@ -65,6 +65,8 @@
       "latency-body": "oklch(0.64 0.15 256)",
       "latency-tail": "oklch(0.36 0.11 256)",
       "bar-track": "oklch(0.93 0.005 250)",
+      "heat-low": "oklch(0.88 0.045 256)",
+      "heat-high": "oklch(0.52 0.19 256)",
       "scrim": "oklch(0.2 0.01 255 / 18%)",
       "switch-thumb": "oklch(1 0 0)"
     },
@@ -126,6 +128,8 @@
       "latency-body": "oklch(0.56 0.14 256)",
       "latency-tail": "oklch(0.87 0.07 256)",
       "bar-track": "oklch(0.26 0.008 255)",
+      "heat-low": "oklch(0.36 0.06 256)",
+      "heat-high": "oklch(0.86 0.1 245)",
       "scrim": "oklch(0 0 0 / 45%)",
       "switch-thumb": "oklch(0.97 0.003 250)"
     }

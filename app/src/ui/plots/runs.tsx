@@ -17,12 +17,15 @@ import { Figure, terminal, textual, SimpleTable, SURFACE } from "../kit";
  * requests a second and the median latency of each, slice by slice, and a
  * rule at every moment sonde answered in the store's place. What the faults
  * cost shows as the gap between the two lines after a rule. */
-export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: number[] }) {
-  const lineOf = (p: Profile) => p.rate.map((b) => ({ tMs: b.tMs, perSec: ((b.ok + b.miss + b.client + b.server) * 1000) / Math.max(p.binMs, 1e-9), p50: b.p50Ms, has: b.ok + b.miss + b.client + b.server > 0 }));
+export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: number[]; /** the stretch chosen on the timeline (ms from the start): both runs over it */ domainMs?: [number, number] | null }) {
+  // (inside the stretch, with the slice that starts before it: the line enters the plot at its edge)
+  const within = (tMs: number, binMs: number) => !props.domainMs || (tMs + binMs > props.domainMs[0] && tMs < props.domainMs[1]);
+  const lineOf = (p: Profile) => p.rate.filter((b) => within(b.tMs, p.binMs)).map((b) => ({ tMs: b.tMs, perSec: ((b.ok + b.miss + b.client + b.server) * 1000) / Math.max(p.binMs, 1e-9), p50: b.p50Ms, has: b.ok + b.miss + b.client + b.server > 0 }));
   const trial = () => lineOf(props.trial);
   const clean = () => lineOf(props.clean);
-  // one axis for both: the longer of the two runs
+  // one axis for both: the longer of the two runs, or the stretch chosen
   const span = (): [number, number] => {
+    if (props.domainMs) return props.domainMs;
     const a = sessionSpan(props.trial, props.trial.rate.length);
     const b = sessionSpan(props.clean, props.clean.rate.length);
     return [0, Math.max(a[1], b[1])];
@@ -30,7 +33,7 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
   const rateTop = () => Math.max(1, ...trial().map((r) => r.perSec), ...clean().map((r) => r.perSec));
   const p50Top = () => Math.max(0.1, ...trial().map((r) => r.p50), ...clean().map((r) => r.p50));
   // the plot's own rows are the faults: the pointer rests on one, and the tooltip says when
-  const faults = () => [...props.faults].sort((a, b) => a - b).map((tMs) => ({ tMs }));
+  const faults = () => [...props.faults].filter((tMs) => within(tMs, 0)).sort((a, b) => a - b).map((tMs) => ({ tMs }));
   const hovered = signal<number | null>(null);
   const tip = () => {
     const f = hovered() === null ? null : faults()[hovered()!];

@@ -8,7 +8,6 @@ import { api, asError } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, showRequest, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
 import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert } from "../ui/kit";
-import { openCompatWindow } from "./CompatWindow";
 import { CELL, ConfigNotice, GRID } from "./Settings";
 
 type Draft = {
@@ -284,9 +283,6 @@ export function Endpoints() {
       <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
         <ConfigNotice />
         <PageHeader title={t("endpoints.title")}>
-          <If when={!terminal() && endpoints().length > 0}>
-            <Button variant="outline" label={t("compat.open")} tip={t("compat.hint")} onPress={() => openCompatWindow()} testID="open-compat" />
-          </If>
           {/* one primary at a time: while a form is open its Save is the one, and these wait for it */}
           <Button variant="outline" label={t("endpoints.import")} onPress={() => mode.set("import")} disabled={mode() !== "list"} testID="import-endpoints" />
           <Button variant={mode() === "list" ? "primary" : "outline"} icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} disabled={mode() !== "list"} testID="add-endpoint" />

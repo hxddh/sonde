@@ -15,8 +15,8 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { away, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo, notify } from "../store";
-import type { LogLine, SessionInfo, SessionView } from "../types";
+import { away, chooseBucket, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
+import type { LogLine, Observation, SessionInfo, SessionView } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
 import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, terminal, PANE } from "../ui/kit";
@@ -24,7 +24,7 @@ import { Toaster } from "../ui/toast";
 import { fileName, removeSession, rename, RenameDialog, sessionName, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
 import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, SessionHeader, SessionList } from "../ui/session";
-import { findingMarks, operationsText } from "../ui/sessionview";
+import { findingMarks, operationsText, storeFixOf } from "../ui/sessionview";
 import { episodeTitle } from "../phrases";
 import { programOf, ranCommand } from "../ui/sessionview";
 import { HistoryPane, ProgramList, scenarioLabel } from "../ui/history";
@@ -106,7 +106,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   // a program opened from the Programs list: its runs
   effect(() => {
     const o = paneOnOpen();
-    if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), paneOnOpen.set(null))));
+    if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), filter.set(o.finding ?? null), paneOnOpen.set(null))));
   });
   // a link with a stretch of time: the Time pane, over it
   const linkRange = signal<Range | null>(null);
@@ -355,8 +355,29 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     { value: "runs", title: t("history.pane"), icon: "activity" as const, disabled: !hasRuns(), why: t("sessions.noRuns") },
   ];
 
+  /** A finding whose fix is a tool of Buckets (incomplete uploads): that section, on the bucket and endpoint its requests went to. */
+  const openStoreFix = (o: Observation) => {
+    const v = view();
+    const to = storeFixOf(o);
+    if (!v || !to) return;
+    try {
+      const first = o.episodes[0] === undefined ? null : api.sessions.episode(props.path, o.episodes[0]);
+      const id = first?.records[0];
+      const rec = id === undefined ? null : api.sessions.record(props.path, id);
+      const ep = v.header.endpoint;
+      batch(() => {
+        if (ep === "demo" || endpoints().some((e) => e.id === ep)) useEndpoint(ep);
+        if (rec?.bucket) chooseBucket(rec.bucket);
+        go(to);
+      });
+    } catch (e) {
+      report(e);
+    }
+  };
+
   const findings = (v: () => SessionView) => (
     <Observations
+      onStore={openStoreFix}
       view={v()}
       dense={dense()}
       // a narrow pane keeps the line for what was found; what it saves is in the finding once chosen
@@ -380,7 +401,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     </If>
   );
   const body = (v: () => SessionView) => {
-    if (pane() === "time") return <TimePane view={v()} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
+    if (pane() === "time") return <TimePane view={v()} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
     if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTry={() => tryingFaults.set(true)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();

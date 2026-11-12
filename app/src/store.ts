@@ -25,7 +25,7 @@ export type Section = "run" | "sessions" | StoreTab | SettingsTab | ActivityTab;
 
 /** Every place, as a terminal lists them. */
 export const AREAS: Area[] = ["run", "sessions", "store", "activity", "settings"];
-export const STORE_TABS: StoreTab[] = ["browse", "multipart", "versions", "capacity", "layouts", "probes"];
+export const STORE_TABS: StoreTab[] = ["browse", "capacity", "multipart", "versions", "layouts", "probes"];
 export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints"];
 export const ACTIVITY_TABS: ActivityTab[] = ["requests", "jobs", "audit"];
 
@@ -46,7 +46,6 @@ export const prefix = signal<string>("");
 export const section = signal<Section>("run");
 export const storeTab = signal<StoreTab>("browse");
 /** The detail of a bucket a window shows in a sheet over its objects. */
-export const storeSheet = signal<StoreTab | null>(null);
 export const settingsTab = signal<SettingsTab>("settings");
 export const activityTab = signal<ActivityTab>("requests");
 /** The area on screen. */
@@ -62,8 +61,9 @@ export const reading = (path: string) => void read.add(path);
 export const wasRead = (path: string) => read.has(path) || openSession() === path;
 /** A comparison to open with a session: the run before it (`Run again`). */
 export const compareOnOpen = signal<{ before: string; after: string } | null>(null);
-/** A pane to show a session on when it opens: a program opens on its runs. */
-export const paneOnOpen = signal<{ path: string; pane: "runs" } | null>(null);
+/** A pane to show a session on when it opens: a program opens on its runs; a finding
+ * pressed after a run opens on the operations with that finding chosen (its advice open). */
+export const paneOnOpen = signal<{ path: string; pane: "runs" | "operations"; finding?: number } | null>(null);
 /** The request record the inspector should show. */
 export const focusRecord = signal<number | null>(null);
 /** The key the versions screen shows. */

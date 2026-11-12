@@ -203,7 +203,7 @@ test("a session's time: where it went, and two runs before and after", async () 
   expect(app.shows("text:Latency")).toBe(true);
   expect(app.shows("id:board-traffic")).toBe(true);
   expect(app.shows("id:time-shape")).toBe(true);
-  await app.waitFor("text:Where the time went");
+  await app.waitFor("text:Where did the time go?");
   // (the pane scrolls its chart into view a moment after it is laid out)
   await app.wait(200);
   // its part of the waiting: requests at once count once, the kinds add up to it

@@ -260,22 +260,20 @@ for (const v of variants) {
     await shot("04e-confirm");
     await app.press("id:confirm-cancel");
     await app.waitFor("id:confirm-dialog", { state: "gone" });
-    await app.press("id:sheet-close");
-    // a key's versions over time
-    await app.press("id:overview-versions");
+    // a key's versions over time: the next section in Buckets' one row
+    await app.press("id:store-section-versions");
     await app.waitFor("id:screen-versions");
     await app.type("id:version-key", "config/app.yaml");
     await app.press("id:load-versions");
     await app.waitFor("id:timeline", { timeout: 10000 });
     await shot("04f-versions");
-    await app.press("id:sheet-close");
     // why the bucket is this big
-    await app.press("id:overview-capacity");
+    await app.press("id:store-section-capacity");
     await app.waitFor("id:du-findings", { timeout: 15000 });
     await app.wait(600);
     await shot("04g-capacity");
-    await app.press("id:sheet-close");
-    // a table format's layout, decoded
+    // a table format's layout, decoded (from the objects' tile, which says one was recognised)
+    await app.press("id:store-section-browse");
     if (!app.shows("id:bucket-demo-layouts")) await app.keyboard.press("mod+b");
     await app.press("id:bucket-demo-layouts");
     await app.waitFor("id:overview-layouts", { timeout: 15000 });
@@ -284,7 +282,11 @@ for (const v of variants) {
     await app.press("id:analyze-slatedb");
     await app.waitFor("id:layout-report", { timeout: 15000 });
     await shot("04h-layouts");
-    await app.press("id:sheet-close");
+    // the endpoint's compatibility: the last of Buckets' sections
+    await app.press("id:store-section-probes");
+    await app.waitFor("id:screen-probes");
+    await shot("04i-compat");
+    await app.press("id:store-section-browse");
 
     await app.keyboard.press("mod+shift+a");
     await app.waitFor("id:requests");
@@ -302,11 +304,6 @@ for (const v of variants) {
     await settings("05b-settings");
     await app.press("id:tab-endpoints");
     await settings("05c-endpoints");
-    await app.press("id:open-compat");
-    await app.waitFor("id:screen-probes");
-    await app.wait(450);
-    await app.window("compat").screenshot(`${dir}/${v.name}-05e-compat.png`);
-    await app.window("compat").pressClose();
     await app.press("id:add-endpoint");
     await app.waitFor("id:endpoint-form");
     // the form is a card in place: there once its foot is
