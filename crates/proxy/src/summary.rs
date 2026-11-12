@@ -727,7 +727,7 @@ mod tests {
         for junk in [&b"not json"[..], b"{\"id\": \"x\"}", b"{\"id\": 3}"] {
             let mut bad = whole.clone();
             let at = bad.iter().position(|b| *b == b'\n').unwrap() + 1;
-            bad.splice(at..at, junk.iter().copied().chain([b'\n']));
+            bad.splice(at..at, junk.iter().copied().chain(*b"\n"));
             let (c, read) = cut(&bad);
             let said = c.unreadable.expect("said");
             assert!(said.starts_with("line 2: "), "{said}");
