@@ -13,15 +13,56 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  reuse:
+    # what CI built of this very commit (main's run, the nightly or one by
+    # hand; never a pull request's), kept again as this run's artifacts, so
+    # the build below makes only what is missing: usually the macOS app and
+    # macOS Intel, nothing after a nightly or a CI run by hand on the commit
+    runs-on: ubuntu-24.04
+    outputs:
+      have: ${{ steps.reuse.outputs.have }}
+    steps:
+      - id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          want="sonde-linux-x86_64 sonde-linux-x86_64-musl sonde-linux-aarch64 sonde-macos-aarch64 sonde-macos-x86_64
+            sonde-windows-x86_64 sonde-desktop-linux-x86_64 sonde-desktop-windows-x86_64 sonde-macos-app"
+          runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&status=completed&per_page=50" --jq \
+            '.workflow_runs[] | select((.event == "push" or .event == "schedule" or .event == "workflow_dispatch") and .head_repository.full_name == env.REPO) | .id')
+          have=()
+          mkdir -p reused
+          for id in $runs; do
+            names=$(gh api "repos/$REPO/actions/runs/$id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired | not) | .name')
+            for n in $want; do
+              case " ${have[*]} " in *" $n "*) continue;; esac
+              grep -qx "$n" <<<"$names" || continue
+              gh run download "$id" -R "$REPO" -n "$n" -D reused
+              have+=("$n")
+              echo "- \`$n\` from https://github.com/$REPO/actions/runs/$id" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
+          [ ${#have[@]} -gt 0 ] || echo "no CI run of $SHA kept a build: everything is built here" >> "$GITHUB_STEP_SUMMARY"
+          echo "have=$(jq -cn '$ARGS.positional' --args ${have[@]+"${have[@]}"})" >> "$GITHUB_OUTPUT"
+          ls -la reused
+      - if: steps.reuse.outputs.have != '[]'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: reused, path: reused }
+
   build:
+    needs: reuse
     uses: ./.github/workflows/build.yml
-    with: { release: true }
+    with: { release: true, skip: "${{ needs.reuse.outputs.have }}" }
     secrets: inherit
 
   publish:
-    needs: build
+    needs: [reuse, build]
+    if: ${{ !cancelled() && needs.reuse.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -41,6 +82,19 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         # the binaries and the app (not the viewer's site, which is inside them)
         with: { path: dist, pattern: "sonde-[lmdw]*", merge-multiple: true }
+      - if: needs.reuse.outputs.have != '[]'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: reused, path: dist }
+      - name: Every platform, once
+        run: |
+          shopt -s nullglob
+          cd dist && ls -la
+          for f in sonde-{linux-x86_64,linux-x86_64-musl,linux-aarch64,macos-aarch64,macos-x86_64}.tar.gz sonde-windows-x86_64.zip \
+            sonde-macos.dmg "sonde-$VERSION-linux-x86_64.tar.gz" "sonde-$VERSION-windows-x86_64.zip"; do
+            [ -f "$f" ] && [ -f "$f.sha256" ] || { echo "::error::$f (or its .sha256) is missing"; exit 1; }
+          done
+          app=(sonde-"$VERSION"-macos-*.tar.gz)
+          [ ${#app[@]} -gt 0 ] || { echo "::error::the macOS app's updater archive is missing"; exit 1; }
       - name: Checksums
         run: cd dist && cat ./*.sha256 > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
