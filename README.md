@@ -14,7 +14,7 @@ out, what it cost, and whether the program survives when the store misbehaves.
 | **Read** | Requests become operations: multipart uploads, retries, listings, the commits of Iceberg, Delta, Hudi, Paimon, SlateDB and Lance. A table per operation (count, errors, p50/p95/p99) and charts over time. |
 | **Find and fix** | Hot keys, HEAD before GET, throttling, orphaned files, rename-based commits, requests one after another — each with what fixing it saves, a fix for your SDK and the line that sent it. Run again: each finding reads **fixed** (with the saving measured), **less**, **back** or **new**. |
 | **Try under faults** | `--trial` runs the program again while sonde answers 503s, lost answers, cut downloads, clock skew, stale listings… and says whether it **survived**, **degraded** or **broke**, and what to change. `--trial --again` tries only what did not survive. |
-| **Gate CI** | `sonde check` fails a job over its budget or past its baseline; the GitHub Action (`hxddh/sonde@v18`) keeps one PR comment with what changed and a link to the report ([ci](docs/ci.md)). |
+| **Gate CI** | `sonde check` fails a job over its budget or past its baseline; the GitHub Action (`hxddh/sonde@v19`) keeps one PR comment with what changed and a link to the report ([ci](docs/ci.md)). |
 | **Why slow, why costly** | `show --by prefix\|size\|caller\|sdk` splits the table and says where the slow and costly requests are. |
 | **Compare and replay** | `compare` two runs, or a session replayed on another store (`--replay`) to see where answers differ. |
 | **Import** | S3 access logs, CloudTrail and HAR files read the same way. |
@@ -58,8 +58,6 @@ More: [architecture](docs/architecture.md), [security](docs/security.md).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/hxddh/sonde/main/install.sh | sh   # Linux, macOS
-brew install hxddh/sonde/sonde                                                 # Homebrew
-brew install --cask hxddh/sonde/sonde-app                                      # the macOS app
 ```
 
 Or download from [Releases](https://github.com/hxddh/sonde/releases): terminal binaries for Linux, macOS and
@@ -69,6 +67,7 @@ Windows; the app as `.dmg`, a Linux tarball (GTK 4) and a Windows zip. Checksums
 
 ```sh
 sonde demo                              # a tour on a built-in store, no account needed
+sonde run --demo -- python etl.py       # your program on the built-in store, no account needed
 sonde endpoints import                  # your ~/.aws/config profiles
 sonde run -- python etl.py              # record
 sonde show                              # read the newest session

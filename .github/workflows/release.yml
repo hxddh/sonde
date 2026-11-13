@@ -103,12 +103,8 @@ jobs:
             dist/*.nshpkg
             dist/*.sha256
             dist/SHA256SUMS
-      - name: Update the Homebrew tap (skipped without HOMEBREW_TAP_TOKEN)
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: scripts/update-tap.sh "$VERSION" dist/SHA256SUMS
 
-  # `uses: hxddh/sonde@v18` follows the newest 18.x
+  # `uses: hxddh/sonde@v19` follows the newest 19.x
   action-tag:
     needs: publish
     uses: ./.github/workflows/action-tag.yml

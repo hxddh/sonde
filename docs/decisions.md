@@ -186,7 +186,7 @@ Newest last.
 | D-180 | Default `show` | everything; the summary | **The summary, findings first, one table**; the rest behind `--all`. |
 | D-181 | The CI baseline | a local cache; the base branch's artifact | **The newest push run's artifact on the base branch**; none is a warning. |
 | D-182 | The PR comment | every row; what changed | **Verdict, failed rows, what changed (new findings first), one link.** |
-| D-183 | The GitHub Action | a repository of its own; this one | **This repository's root (`hxddh/sonde@v18`)**, versioned with the binary. |
+| D-183 | The GitHub Action | a repository of its own; this one | **This repository's root (`hxddh/sonde@v19`)**, versioned with the binary. |
 | D-184 | Why slow | a chart per dimension; one split table | **One table split by a dimension, one sentence** (`show --by`, Group by). |
 | D-185 | Run after a run | operations; findings | **The top three findings and one what-if**, and what changed since the run before. |
 | D-186 | The Time pane | fewer charts; all | **All, shown**, read Traffic → Latency → Errors → Where, each titled by its question, following the stretch. |

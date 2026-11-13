@@ -17,6 +17,12 @@ use super::record::*;
 pub struct RunArgs {
     #[command(flatten)]
     rec: Recording,
+    /// Send the requests to the built-in demo store (buckets `demo`,
+    /// `demo-large`, `demo-layouts`), as `sonde demo` does: no account or
+    /// secrets needed. It lives in this process and starts afresh each run;
+    /// its times are not meaningful.
+    #[arg(long, conflicts_with = "endpoint")]
+    demo: bool,
     /// Print each request on stderr as it happens.
     #[arg(long)]
     live: bool,
@@ -25,11 +31,8 @@ pub struct RunArgs {
     /// JavaScript v3 and the AWS SDK for Java 2 (hooks loaded with
     /// PYTHONPATH, NODE_OPTIONS, JAVA_TOOL_OPTIONS), so that each finding
     /// says its line. Also `name-callers = false` in the settings.
-    #[arg(long, conflicts_with = "callers")]
+    #[arg(long)]
     no_callers: bool,
-    /// Name callers even where the settings say not to.
-    #[arg(long, hide = true)]
-    callers: bool,
     /// Then run the command again under faults chosen from what it did (a
     /// 503 on each request's first attempt, a skewed clock if it signs, a
     /// lost answer on each write, a failed completion if it uploads in
@@ -243,10 +246,23 @@ fn names_its_place(command: &[String]) -> bool {
         .any(|w| w.contains("{trial}") || w.contains("SONDE_TRIAL"))
 }
 
-pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
+pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
     // sonde.toml and the scenarios asked for by name are checked before
     // anything runs
     let project = load_project(None)?;
+    let mut rec = a.rec.clone();
+    if a.demo {
+        if cli.url.is_some() {
+            return Err(super::usage("--demo and --url name two stores: give one"));
+        }
+        let ep = sonde_core::demo::install(s)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        rec.endpoint = Some(ep.id);
+        eprintln!(
+            "sonde: --demo: the requests go to the built-in demo store (buckets demo, demo-large, demo-layouts), in this process. Its counts and findings are the program's; its times are not meaningful."
+        );
+    }
     let mut asked: Vec<sonde_proxy::fault::Scenario> = Vec::new();
     let mut specs: Vec<String> = Vec::new();
     for name in &a.faults {
@@ -322,8 +338,8 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         input: (trying && !std::io::stdin().is_terminal()).then(Default::default),
         stop: Stop::listen(),
         rec: Recording {
-            tls: a.rec.tls || project.file.record.tls,
-            ..a.rec.clone()
+            tls: rec.tls || project.file.record.tls,
+            ..rec
         },
         written: Arc::default(),
     };
@@ -570,7 +586,7 @@ async fn run_once(
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
-    if a.callers || (!a.no_callers && s.settings().name_callers) {
+    if !a.no_callers && s.settings().name_callers {
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
     // each run a place of its own, if the command asks for one: `{trial}`
