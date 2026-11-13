@@ -282,11 +282,14 @@ impl Analysis {
         let eps = &self.episodes;
         let t0 = self.span.map(|s| s.0);
         // a kind no request had narrows to nothing; one past the 63rd to every one past it
-        let kind_bit = key.kind.as_deref().map(|k| match self.kind_names.iter().position(|n| n == k) {
-            Some(b) => 1u64 << b,
-            None if self.kind_names.len() >= 63 => 1u64 << 63,
-            None => 0,
-        });
+        let kind_bit =
+            key.kind
+                .as_deref()
+                .map(|k| match self.kind_names.iter().position(|n| n == k) {
+                    Some(b) => 1u64 << b,
+                    None if self.kind_names.len() >= 63 => 1u64 << 63,
+                    None => 0,
+                });
         let keep = |i: &u32| {
             let e = &eps[*i as usize];
             if key.failed && e.outcome == Outcome::Ok {
