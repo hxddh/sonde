@@ -30,8 +30,6 @@ pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
         policy: None,
         // the demo store is sonde's own, made for this tour
         allow_writes: true,
-        no_delete: false,
-        read_only: false,
         out: None,
         tls: false,
     };

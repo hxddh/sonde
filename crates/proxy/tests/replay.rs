@@ -275,13 +275,27 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
         &session,
         &opts,
         &dir.path().join("r.sonde"),
-        false,
         |_, _| {},
     )
     .await;
     assert!(refused.is_err(), "a prefix holding objects is refused");
     assert!(!dir.path().join("r.sonde").exists());
     assert_eq!(store.keys("data"), ["taken-not/keep.txt", "taken/mine.txt"]);
+    // never on the recorded keys: a prefix of its own, always
+    let in_place = ReplayOptions {
+        prefix: String::new(),
+        buckets: vec![],
+    };
+    let refused = sonde_proxy::replay::replay_to_file(
+        &app,
+        &session,
+        &in_place,
+        &dir.path().join("r0.sonde"),
+        |_, _| {},
+    )
+    .await;
+    assert!(refused.is_err(), "an empty prefix is refused");
+    assert!(!dir.path().join("r0.sonde").exists());
 
     // "taken" names the folder taken/, never taken-not/
     let opts = ReplayOptions {
@@ -293,7 +307,6 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
         &session,
         &opts,
         &dir.path().join("r2.sonde"),
-        false,
         |_, _| {},
     )
     .await
@@ -362,9 +375,7 @@ async fn a_replay_that_cannot_list_its_prefix_does_not_start() {
         buckets: vec![],
     };
     let out = dir.path().join("r.sonde");
-    let run =
-        sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, false, |_, _| {})
-            .await;
+    let run = sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {}).await;
     let why = run.expect_err("an unknown prefix is not replayed into");
     assert!(why.contains("could not check"), "{why}");
     assert!(!out.exists());
@@ -383,10 +394,9 @@ async fn a_bucket_that_is_not_there_yet_holds_nothing() {
         buckets: vec![],
     };
     let out = dir.path().join("r.sonde");
-    let run =
-        sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, false, |_, _| {})
-            .await
-            .unwrap();
+    let run = sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {})
+        .await
+        .unwrap();
     assert_eq!(run.plan.requests, 1);
     assert_eq!(run.removed, 0);
 }
@@ -436,7 +446,6 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
         &session,
         &opts,
         &dir.path().join("r.sonde"),
-        false,
         |_, _| {},
     )
     .await
@@ -493,7 +502,6 @@ async fn replayed(store: &MiniS3, records: Vec<reqlog::Record>) -> sonde_proxy::
         &session,
         &opts,
         &dir.path().join("r.sonde"),
-        false,
         |_, _| {},
     )
     .await

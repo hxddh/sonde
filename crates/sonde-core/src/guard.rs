@@ -315,7 +315,7 @@ mod tests {
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["summaryText"][0]["key"], "plan.putLifecycle");
         assert_eq!(v["confirmHintText"][0]["key"], "plan.confirm.bucket");
-        // a plan written before 15 still reads
+        // a plan without phrases still reads
         let mut old = v.clone();
         old.as_object_mut().unwrap().remove("summaryText");
         old.as_object_mut().unwrap().remove("confirmHintText");

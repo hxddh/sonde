@@ -69,14 +69,13 @@ Action against a real baseline and comment daily.
    a pull request's) and builds the rest with `build.yml` (the web viewer first, `nsh package App.tsx --target web`,
    embedded in every terminal binary): after main's run, the macOS app and macOS Intel; after a nightly or CI run by
    hand on the commit, nothing. It publishes the release with the changelog section, `SHA256SUMS` and a `.sha256` per
-   file, attests each file, and with `HOMEBREW_TAP_TOKEN` writes `Formula/sonde.rb` and `Casks/sonde-app.rb` into
-   `hxddh/homebrew-sonde` from `packaging/homebrew/*.rb.in`.
-3. `action-tag.yml` then moves the major tag (`v18`) to the release, so `uses: hxddh/sonde@v18` follows it. A
+   file, and attests each file.
+3. `action-tag.yml` then moves the major tag (`v19`) to the release, so `uses: hxddh/sonde@v19` installs it. A
    pre-release does not move it. To repair one: Actions › Action tag › Run workflow with `x.y.z`.
 
 | | |
 |---|---|
-| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION`, `SONDE_STATIC=1`. Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
+| `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`19.0.0`, or `19`: the newest 19.x), `SONDE_STATIC=1`. Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
 | `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb; macOS and Windows nightly), wide and smallest, light and dark, English and Chinese, into the `sonde-shots` artifact. |
 
 ## Signed packages of the app's code

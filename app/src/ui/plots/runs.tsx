@@ -138,7 +138,7 @@ export function StoreLatency(props: { changes: LatencyChange[]; names: [string, 
 export function RunBars(props: { change: RunChange; max?: number; /** two different programs: fewer is not better, more is not worse */ neutral?: boolean }) {
   const rows = () =>
     props.change.groups
-      .filter((g) => g.requests[0] !== g.requests[1] || Math.abs(g.busyMs[0] - g.busyMs[1]) >= 1)
+      .filter((g) => g.requests[0] !== g.requests[1] || Math.abs(g.waitingMs[0] - g.waitingMs[1]) >= 1)
       .slice(0, props.max ?? 8)
       .map((g) => ({ name: groupName(g), before: g.requests[0], after: g.requests[1], tone: props.neutral ? "plain" : g.requests[1] < g.requests[0] ? "fewer" : g.requests[1] > g.requests[0] ? "more" : "same" }));
   const peak = () => Math.max(1, ...rows().map((r) => Math.max(r.before, r.after)));
@@ -256,7 +256,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
 
 // --- a program over its runs ------------------------------------------------------------
 
-type Measure = "requests" | "busyMs" | "cost" | "warnings";
+type Measure = "requests" | "waitingMs" | "cost" | "warnings";
 
 /** One figure of a program over its runs: a line through them, the baseline dashed, the latest run labelled. */
 export function RunTrend(props: { history: ProgramHistory; measure: Measure; title: string; format: (v: number) => string; onOpen?: (path: string) => void; /** the project's own limit on this measure (sonde.toml's `max-waiting`): its line */ budget?: number | null }) {
@@ -270,7 +270,7 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
   const limit = () => {
     const l = props.history.limits;
     if (!l) return null;
-    return props.measure === "requests" ? l.requests : props.measure === "busyMs" ? l.waitingMs : props.measure === "cost" ? l.cost : null;
+    return props.measure === "requests" ? l.requests : props.measure === "waitingMs" ? l.waitingMs : props.measure === "cost" ? l.cost : null;
   };
   const hi = () => budgetTop(Math.max(...values(), base() ?? 0, limit() ?? 0, 1e-9) * 1.25, props.budget);
   const hovered = signal<number | null>(null);

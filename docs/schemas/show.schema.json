@@ -9,7 +9,7 @@
       "type": "array",
       "description": "The operations, in order.",
       "items": {
-        "$ref": "#/$defs/episode"
+        "$ref": "#/$defs/operation"
       }
     },
     "findings": {
@@ -60,7 +60,7 @@
     "trials"
   ],
   "$defs": {
-    "episode": {
+    "operation": {
       "type": "object",
       "description": "An operation: requests that belong together.",
       "properties": {
@@ -201,9 +201,9 @@
             "$ref": "#/$defs/phrase"
           }
         },
-        "episodes": {
+        "operations": {
           "type": "array",
-          "description": "The operations it is about (their places in `episodes`).",
+          "description": "The operations it is about (their places in the session's `operations`).",
           "items": {
             "type": "integer"
           }
@@ -251,7 +251,7 @@
         "level",
         "text",
         "phrases",
-        "episodes",
+        "operations",
         "impact"
       ]
     },

@@ -98,7 +98,7 @@ export function SessionViewer(props: { data: SharedSession }) {
     const w = window();
     if (filter() === null && !w) return null;
     const n = source.total();
-    return w ? t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n, of: d.episodesTotal }) : t("sessions.filtered", { n, of: d.episodesTotal });
+    return w ? t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n, of: d.operationsTotal }) : t("sessions.filtered", { n, of: d.operationsTotal });
   };
   const rows = (e: EpisodeRow): RecordSummary[] => e.records.map((id) => byId.get(id)).filter((r): r is RequestRecord => !!r);
   const chooseOperation = (i: number) => {

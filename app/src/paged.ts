@@ -16,7 +16,7 @@ const same = (a: OpQuery, b: OpQuery) => JSON.stringify(a) === JSON.stringify(b)
 
 /** A session's operations from the bridge, in pages: `view`'s first page at
  * once, the rest as the table scrolls, sorts or narrows. A growing session's
- * view moves `episodesTotal`: the rows held are asked for again. */
+ * view moves `operationsTotal`: the rows held are asked for again. */
 export function pagedOperations(path: () => string, view: () => SessionView | null): Operations {
   const query = signal<OpQuery>({});
   // (with the session it is of: a page of another run is never kept for this one)
@@ -59,16 +59,16 @@ export function pagedOperations(path: () => string, view: () => SessionView | nu
     const v = view();
     if (!v) return;
     untracked(() => {
-      const moved = v.episodesTotal !== seen || v.path !== seenPath;
-      seen = v.episodesTotal;
+      const moved = v.operationsTotal !== seen || v.path !== seenPath;
+      seen = v.operationsTotal;
       seenPath = v.path;
       const at = page();
       // the view's first page stands in for what is held only where it holds as much: a live
       // session scrolled past its first page keeps its rows, asked for again as it grows
-      if (plain(query()) && at.offset === 0 && (at.rows.length <= v.episodes.length || v.path !== at.path)) {
+      if (plain(query()) && at.offset === 0 && (at.rows.length <= v.operations.length || v.path !== at.path)) {
         asked++;
         last = "";
-        page.set({ total: v.episodesTotal, offset: 0, rows: v.episodes, path: v.path });
+        page.set({ total: v.operationsTotal, offset: 0, rows: v.operations, path: v.path });
       } else if (moved) fetch(at.offset, Math.max(PAGE, at.rows.length), true);
     });
   });
@@ -95,7 +95,7 @@ export function pagedOperations(path: () => string, view: () => SessionView | nu
       if (plain(q) && v) {
         asked++;
         last = "";
-        page.set({ total: v.episodesTotal, offset: 0, rows: v.episodes, path: v.path });
+        page.set({ total: v.operationsTotal, offset: 0, rows: v.operations, path: v.path });
       } else fetch(0, PAGE, true);
     },
     episode(index) {

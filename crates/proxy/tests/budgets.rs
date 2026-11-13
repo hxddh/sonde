@@ -186,10 +186,10 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_in_two_seconds() 
     assert!(took < Duration::from_secs(2), "took {took:?}");
     // and it does not grow with the session: a page of operations, not all
     assert_eq!(
-        view["episodes"].as_array().map(Vec::len),
+        view["operations"].as_array().map(Vec::len),
         Some(sonde_proxy::view::PAGE)
     );
-    assert_eq!(view["episodesTotal"], a.episodes.len());
+    assert_eq!(view["operationsTotal"], a.episodes.len());
     assert!(sent < 2 << 20, "{sent} bytes sent");
     // the next page is a lookup, not another analysis
     let started = Instant::now();

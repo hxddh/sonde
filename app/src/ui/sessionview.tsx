@@ -124,7 +124,7 @@ export function gitText(g: SessionView["header"]["git"]): string {
 export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
-    const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.episodesTotal) }), secs: duration(s().seconds * 1000) })];
+    const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.operationsTotal) }), secs: duration(s().seconds * 1000) })];
     if (s().errors) parts.push(t("timeline.errors", { n: s().errors }));
     if (s().misses) parts.push(t("timeline.notFound", { n: s().misses }));
     parts.push(transfer(s().bytesUp, s().bytesDown));
@@ -324,7 +324,7 @@ export function whatIfText(v: SessionView): string | null {
 export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange>; /** what acting on a finding saves under its words, never beside them (a narrow column: Run's) */ savingUnder?: boolean }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   /** How many operations a finding is about (a view lists the first of them only). */
-  const about = (o: Observation) => o.episodesTotal ?? o.episodes?.length ?? 0;
+  const about = (o: Observation) => o.operationsTotal ?? o.operations?.length ?? 0;
   // a finding pressed opens what to change inside its own row, under its title; the row comes
   // to the top of the findings' room, so its title stays in view over its advice
   // (Native Shell's `reveal`: the scroll views around a view bring it to show)

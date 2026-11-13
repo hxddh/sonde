@@ -398,7 +398,7 @@ mod tests {
         r.injected = Some("slowdown".into());
         let marked = serde_json::to_value(r.summary()).unwrap();
         assert_eq!(marked["injected"], "slowdown");
-        // a row written before 15 reads as the store's own answer
+        // a row without the mark reads as the store's own answer
         let old: RecordSummary = serde_json::from_value(plain).unwrap();
         assert_eq!(old.injected, None);
     }

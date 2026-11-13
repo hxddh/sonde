@@ -1,7 +1,7 @@
 // sonde: names the place in a Java program that sent each S3 request.
 //
-// Loaded with JAVA_TOOL_OPTIONS=-javaagent by `sonde run --callers` (and the
-// app's "Name the code"), only then. It adds the interceptor beside it
+// Loaded with JAVA_TOOL_OPTIONS=-javaagent by `sonde run` (unless --no-callers)
+// and the app's "Name the code", only then. It adds the interceptor beside it
 // (sonde-caller.jar) to the class path, and only when the AWS SDK for Java 2
 // is on that class path too: a program that loads the SDK from a class
 // loader of its own (a Spring Boot jar) is left as it is. Nothing here may

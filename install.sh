@@ -3,7 +3,8 @@
 # SHA-256 and, where gh is installed, its build provenance.
 #
 #   curl -fsSL https://raw.githubusercontent.com/hxddh/sonde/main/install.sh | sh
-#   SONDE_VERSION=4.0.0 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
+#   SONDE_VERSION=19.0.0 SONDE_INSTALL_DIR=$HOME/bin sh install.sh
+#   SONDE_VERSION=19 sh install.sh    # the newest 19.x
 #   SONDE_VERIFY=1 sh install.sh    # fail unless gh confirms the provenance
 set -eu
 repo="hxddh/sonde"
@@ -26,6 +27,19 @@ esac
 libc=""
 if [ "$os-$arch" = linux-x86_64 ] && { [ -n "${SONDE_STATIC:-}" ] || ls /lib/ld-musl-* >/dev/null 2>&1; }; then libc=-musl; fi
 asset="sonde-$os-$arch$libc.tar.gz"
+# A major alone (19) is its newest release (19.x.y), prereleases left out
+case "$version" in
+  latest | *.*) ;;
+  *)
+    major="${version#v}"
+    auth=""
+    [ -z "${GH_TOKEN:-}" ] || auth="Authorization: Bearer $GH_TOKEN"
+    version="$(curl -fsSL ${auth:+-H "$auth"} "https://api.github.com/repos/$repo/releases?per_page=100" |
+      sed -n 's/.*"tag_name": *"v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | grep "^$major\.[0-9]*\.[0-9]*$" |
+      sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)" || version=""
+    [ -n "$version" ] || fail "no release of sonde $major found"
+    ;;
+esac
 if [ "$version" = latest ]; then
   base="https://github.com/$repo/releases/latest/download"
 else

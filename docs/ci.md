@@ -15,22 +15,25 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: hxddh/sonde@v18
+      - uses: hxddh/sonde@v19
         with:
           run: python etl.py --day 2
-          run-args: --url ${{ vars.S3_URL }} --callers
+          run-args: --url ${{ vars.S3_URL }}
 ```
 
 Runs on Linux and macOS runners. Each push to `main` keeps its run as an artifact; a pull request is checked against
 the newest one. This repository tests it against stand-ins on each pull request and, daily, against a real baseline
 and a real comment (`.github/workflows/action-live.yml`).
 
+No store, no secrets: `run-args: --demo` runs the program against the built-in store, so the check holds its
+requests and findings (its times are not meaningful: leave `max-waiting` and `max-p95` out).
+
 | Step | Does |
 |---|---|
 | Install | The release binary (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. |
 | Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`. The program's exit status fails the job, after the steps below. |
 | Baseline | `auto`: of the newest 5 completed push runs of the same workflow on the base branch (a push: on its own branch, not itself), the first that kept the artifact `artifact` (`gh run list`, `gh run download`). None: a warning, and `check --baseline auto` says `no baseline yet` in every format. |
-| Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them (`--callers`). |
+| Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
 | Report | `sonde share --html RUN --baseline BASE` (`--redact` with `redact: true`): the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
 | Keep | The session, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
 | Comment | `sonde check -f markdown --report-url URL`: the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
@@ -39,7 +42,7 @@ and a real comment (`.github/workflows/action-live.yml`).
 | Input | Default | |
 |---|---|---|
 | `run` | (required) | The command, as typed. |
-| `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--callers`, `--allow-writes`. |
+| `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--allow-writes`, `--demo`. |
 | `name` | | The program's name (else `[program] name` in `sonde.toml`, else the command). |
 | `check-args` | | `sonde check` flags: `--tolerance 5`, `--no-new-warnings`, `--max-requests N`. |
 | `config` | found upward | `sonde.toml`. |
@@ -48,7 +51,7 @@ and a real comment (`.github/workflows/action-live.yml`).
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag, else `latest` | `18.0.0`, `latest`, `path`. |
+| `version` | the action's tag, else `latest` | `19.0.0`, `latest`, `path`. Tag `@v19` installs the newest 19.x; `@v19.0.0` that release. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 

@@ -65,7 +65,7 @@ export function trialText(x: Trial): string {
 export const trialAsked = (x: Trial): string => (x.times && x.times > 1 ? `${x.scenario}:${x.times}` : x.scenario);
 
 /** Why a trial is not "survived", a sentence each, in the reader's language:
- * Rust's phrases, or its English where a verdict kept before 16.0 has none.
+ * Rust's phrases, its English where a reason has no phrase.
  * The one place each of these is said: [`trialText`] is the figures only. */
 export function trialReasons(x: Trial): string[] {
   return x.reasons.map((en, i) => {
@@ -386,12 +386,12 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
             <If when={shown(x()).runs.length > 0 && x().runs.length > 1} else={<Empty compact text={x().runs.length > 1 ? t("history.noneInRange") : t("history.none")} />}>
               <If
                 when={!textual()}
-                else={<SimpleTable columns={[t("column.time"), t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={shown(x()).runs.map((r) => [date(r.created), n(r.requests), duration(r.busyMs), cost(r.cost, r.currency)])} />}
+                else={<SimpleTable columns={[t("column.time"), t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={shown(x()).runs.map((r) => [date(r.created), n(r.requests), duration(r.waitingMs), cost(r.cost, r.currency)])} />}
               >
                 <View class="flex-row flex-wrap gap-3">
                   <RunTrend history={shown(x())} measure="requests" title={t("figure.requests")} format={n} onOpen={props.onOpen} />
                   {/* the project's own limit on the waiting (sonde.toml's max-waiting), as a line */}
-                  <RunTrend history={shown(x())} measure="busyMs" title={t("profile.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
+                  <RunTrend history={shown(x())} measure="waitingMs" title={t("profile.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
                   <RunTrend history={shown(x())} measure="cost" title={t("profile.cost")} format={(v) => cost(v, x().runs[0]?.currency ?? "USD")} onOpen={props.onOpen} />
                   <RunTrend history={shown(x())} measure="warnings" title={t("obs.warnings")} format={n} onOpen={props.onOpen} />
                 </View>
@@ -410,7 +410,7 @@ export interface ProgramSummary {
   runs: number;
   latest: string | null;
   created: string;
-  points: { requests: number; busyMs: number; currency?: string }[];
+  points: { requests: number; waitingMs: number; currency?: string }[];
   baseline: string | null;
   regressed: boolean;
   /** A month of it at the pace it runs. */

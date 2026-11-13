@@ -40,43 +40,20 @@ pub struct CompareArgs {
     pub(super) format: Format,
 }
 
-/// `sonde diff` (17.0), kept for 18.0: `sonde compare ORIGINAL REPLAY`.
-#[derive(Args)]
-pub struct DiffArgs {
-    /// The original session.
-    original: PathBuf,
-    /// Its replay.
-    replay: PathBuf,
-    /// The format written: table or json.
-    #[arg(
-        long,
-        short = 'f',
-        value_enum,
-        default_value_t,
-        hide_possible_values = true
-    )]
-    format: Format,
-}
-
-/// `sonde diff`, said as its 18.0 form and done as that.
-pub async fn diff_alias(s: &Arc<Sonde>, a: &DiffArgs) -> anyhow::Result<i32> {
-    super::renamed(
-        "sonde diff",
-        &format!(
-            "sonde compare {} {}",
-            a.original.display(),
-            a.replay.display()
-        ),
-    );
-    diff(s, &a.original, &a.replay, a.format).await
-}
-
 pub(super) fn print_comparison(c: &sonde_proxy::replay::Comparison, color: bool) {
-    let mut head = format!("{} compared: {} the same", c.compared, c.same);
+    let mut head = format!(
+        "{} compared: {} the same",
+        output::grouped(c.compared as u64),
+        output::grouped(c.same as u64)
+    );
     if c.differ() > 0 {
         head.push_str(&format!(
             " · {}",
-            paint(&format!("{} differ", c.differ()), "33", color)
+            paint(
+                &format!("{} differ", output::grouped(c.differ() as u64)),
+                "33",
+                color
+            )
         ));
     }
     if c.environment > 0 {
@@ -257,7 +234,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     }
     if a.how != super::replay::ReplayOpts::default() {
         return Err(super::usage(
-            "--bucket, --prefix, --in-place, --keep, --yes and -o are for --replay ENDPOINT",
+            "--bucket, --prefix, --yes and -o are for --replay ENDPOINT",
         ));
     }
     // a session and its replay, in either order: their answers compared
@@ -321,7 +298,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         return Ok(0);
     }
     let color = std::io::stdout().is_terminal();
-    let n = |v: f64| format!("{v:.0}");
+    let n = |v: f64| output::grouped(v.round().max(0.0) as u64);
     use super::fixloop::moved as change;
     if !c.same_program {
         println!(
@@ -348,7 +325,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     // nothing moved: said once, before the figures that show it
     let unchanged = c.requests.0 == c.requests.1
         && c.errors.0 == c.errors.1
-        && ms_text(c.busy_ms.0) == ms_text(c.busy_ms.1)
+        && ms_text(c.waiting_ms.0) == ms_text(c.waiting_ms.1)
         && c.cost.0 == c.cost.1
         && c.resolved.is_empty()
         && c.appeared.is_empty()
@@ -375,7 +352,10 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         "  requests   {}",
         change(c.requests.0 as f64, c.requests.1 as f64, n)
     );
-    println!("  waiting    {}", change(c.busy_ms.0, c.busy_ms.1, ms_text));
+    println!(
+        "  waiting    {}",
+        change(c.waiting_ms.0, c.waiting_ms.1, ms_text)
+    );
     println!("  took       {}", change(c.wall_ms.0, c.wall_ms.1, ms_text));
     println!(
         "  errors     {}",
@@ -390,7 +370,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     let changed: Vec<&sonde_proxy::profile::GroupChange> = c
         .groups
         .iter()
-        .filter(|g| g.requests.0 != g.requests.1 || (g.busy_ms.0 - g.busy_ms.1).abs() >= 1.0)
+        .filter(|g| g.requests.0 != g.requests.1 || (g.waiting_ms.0 - g.waiting_ms.1).abs() >= 1.0)
         .collect();
     let rows: Vec<Vec<String>> = changed
         .iter()
@@ -402,8 +382,12 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
                 } else {
                     g.operation.clone()
                 },
-                format!("{} → {}", g.requests.0, g.requests.1),
-                format!("{} → {}", ms_text(g.busy_ms.0), ms_text(g.busy_ms.1)),
+                format!(
+                    "{} → {}",
+                    output::grouped(g.requests.0 as u64),
+                    output::grouped(g.requests.1 as u64)
+                ),
+                format!("{} → {}", ms_text(g.waiting_ms.0), ms_text(g.waiting_ms.1)),
             ]
         })
         .collect();

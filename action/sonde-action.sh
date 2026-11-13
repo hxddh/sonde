@@ -28,7 +28,8 @@ install() {
   fi
   if [ -z "$version" ]; then
     case "${GITHUB_ACTION_REF:-}" in
-      v[0-9]*.[0-9]*.[0-9]*) version="${GITHUB_ACTION_REF#v}" ;;
+      # a release's tag (v19.0.1) is that release; a major's (v19) the newest of it
+      v[0-9]*) version="${GITHUB_ACTION_REF#v}" ;;
       *) version=latest ;;
     esac
   fi

@@ -1,14 +1,11 @@
 //! A proxy left running (`sonde proxy --rotate/--alert`), and production
 //! read through its logs (`sonde import s3://bucket/prefix [--follow]`).
-//! `sonde watch`, which did both before 18.0, is kept for one version as an
-//! alias that says which.
 
 use sonde_proxy::program::{money_text, ms_text};
 use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::Arc;
 
-use clap::Args;
 use reqlog::Record;
 use sonde_core::Sonde;
 use sonde_proxy::episode::{episodes, observations};
@@ -21,60 +18,6 @@ use super::check::url_shown;
 use super::proxy::{ProxyArgs, check_listen, print_env};
 use super::record::*;
 
-/// `sonde watch` (17.0), kept for 18.0: `sonde proxy --rotate` or
-/// `sonde import s3://… --follow`.
-#[derive(Args)]
-pub struct WatchArgs {
-    #[command(flatten)]
-    proxy: ProxyArgs,
-    /// Watch production through its logs: `sonde import S3_URL --follow`.
-    #[arg(long, value_name = "S3_URL")]
-    logs: Option<String>,
-    /// With --logs: look for new log files this often.
-    #[arg(long, default_value = "15m")]
-    every: String,
-    /// With --logs: read what is new once, then exit.
-    #[arg(long)]
-    once: bool,
-}
-
-/// `sonde watch`, said as its 18.0 form and done as that.
-pub async fn watch_alias(s: &Arc<Sonde>, a: &WatchArgs) -> anyhow::Result<i32> {
-    let mut extra = String::new();
-    if let Some(e) = &a.proxy.rec.endpoint {
-        extra.push_str(&format!(" -e {e}"));
-    }
-    if let Some(u) = &a.proxy.alert {
-        extra.push_str(&format!(" --alert {u}"));
-    }
-    if let Some(src) = &a.logs {
-        let follow = if a.once {
-            String::new()
-        } else {
-            format!(" --follow --every {}", a.every)
-        };
-        super::renamed(
-            "sonde watch --logs",
-            &format!("sonde import {src}{follow}{extra}"),
-        );
-        let logs = Logs {
-            endpoint: a.proxy.rec.endpoint.as_deref(),
-            src,
-            every: &a.every,
-            once: a.once,
-            alert: a.proxy.alert.as_deref(),
-        };
-        return watch_logs(s, &logs).await;
-    }
-    let mut proxy = a.proxy.clone();
-    let rotate = *proxy.rotate.get_or_insert(60);
-    super::renamed(
-        "sonde watch",
-        &format!("sonde proxy --rotate {rotate}{extra}"),
-    );
-    watch(s, &proxy).await
-}
-
 /// `sonde import s3://bucket/prefix`: what to read, from where, how often.
 pub(super) struct Logs<'a> {
     pub(super) endpoint: Option<&'a str>,
@@ -85,42 +28,13 @@ pub(super) struct Logs<'a> {
     pub(super) alert: Option<&'a str>,
 }
 
-/// Where `watch --logs` got to: the newest log file's time read, and the
-/// files read since a little before it.
+/// Where an import of logs got to: the newest log file's time read, and
+/// the files read since a little before it, each with when it was written
+/// (what its forgetting goes by).
 #[derive(serde::Serialize, serde::Deserialize)]
-#[serde(from = "LogsMarkFile")]
 struct LogsMark {
     watermark: chrono::DateTime<chrono::Utc>,
-    /// Each file read, with when it was written: what its forgetting goes by.
     seen: std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>,
-}
-
-/// A mark as its file holds it: `seen` with each file's time, or (written
-/// before 13.0) the names alone.
-#[derive(serde::Deserialize)]
-struct LogsMarkFile {
-    watermark: chrono::DateTime<chrono::Utc>,
-    seen: SeenFiles,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum SeenFiles {
-    Timed(std::collections::BTreeMap<String, chrono::DateTime<chrono::Utc>>),
-    Named(std::collections::BTreeSet<String>),
-}
-
-impl From<LogsMarkFile> for LogsMark {
-    fn from(f: LogsMarkFile) -> Self {
-        LogsMark {
-            watermark: f.watermark,
-            seen: match f.seen {
-                SeenFiles::Timed(m) => m,
-                // no time kept: remembered until the mark has moved two hours on
-                SeenFiles::Named(n) => n.into_iter().map(|k| (k, f.watermark)).collect(),
-            },
-        }
-    }
 }
 
 /// How long before the mark a file is still listed, and so still remembered.
@@ -789,14 +703,6 @@ mod tests {
         mark.forget_old();
         assert_eq!(mark.seen.len(), 1);
         assert!(!mark.wants("logs/000000", t(0)));
-        // a mark written before 13.0 (names only) still reads
-        let old: LogsMark =
-            serde_json::from_str(r#"{"watermark":"2026-02-06T00:00:00Z","seen":["a","b"]}"#)
-                .unwrap();
-        assert_eq!(old.seen.len(), 2);
-        assert!(!old.wants("a", old.watermark));
-        let again: LogsMark = serde_json::from_str(&serde_json::to_string(&old).unwrap()).unwrap();
-        assert_eq!(again.seen, old.seen);
     }
 
     #[tokio::test]

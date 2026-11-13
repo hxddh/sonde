@@ -239,7 +239,7 @@ fn measured(o: &Observation, left: Option<&Observation>, a: &Run, b: &Run) -> Op
     });
     let ms = if of_time(o) {
         let own = o.saves_ms - left.map_or(0.0, |t| t.saves_ms);
-        own.min(a.profile.busy_ms - b.profile.busy_ms).max(0.0)
+        own.min(a.profile.waiting_ms - b.profile.waiting_ms).max(0.0)
     } else {
         0.0
     };

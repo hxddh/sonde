@@ -176,7 +176,7 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 | | |
 |---|---|
 | Sessions | `trials/<run>.<scenario>.sonde` beside the run. Records carry `injected`; the session says first how many requests met a fault (sonde's 503s are not the store's); replay skips injected requests. Not runs: excluded from "newest", trend, baseline. |
-| Verdicts | in the sessions folder's `.index.jsonl` (`<run>.trials.json` beside the run before 18.0, moved in when read); sessions named by file name, never path. `where` (`operation`, `key`, `caller`) and `advice` (`key`, `args`). |
+| Verdicts | in the sessions folder's `.index.jsonl`; sessions named by file name, never path. `where` (`operation`, `key`, `caller`) and `advice` (`key`, `args`). |
 | `sonde check` | rows `pass` / `warn` (degraded, refused) / `FAIL` / `skip`; **fails when the program broke**, budget or not. JSON: `trials`, `passed`, `verdict`. |
 | `sonde show` | *Under faults*: the run's verdicts with their history. JSON: `trials`. |
 | `sonde sessions` | each run's worst verdict |
