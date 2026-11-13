@@ -65,6 +65,7 @@
 | `--no-new-warnings` | Fail on a warning the baseline did not have. |
 | `--config FILE` | Default: `sonde.toml` here or in a folder above, up to the repository root. Flags win. |
 | `--report-url URL` | `-f markdown` only: the link the comment ends with (the HTML report). |
+| `--program-exit CODE` | The program's exit status: one not 0 heads the comment (`programExit` in JSON), with the request the policy refused. |
 | `--init` | Write a `sonde.toml` this run passes: counts with 10% room, times commented out beside their measured values, a `[program] name` from the command when there is none (`etl` for `python etl.py --day 2`). No trials. |
 
 - Output names the session and program first. A trial row is `pass` / `warn` / `FAIL` / `skip` (survived / degraded / broke / untested). A failed row says by how much (`+23%`) over its limit or the baseline's figure.

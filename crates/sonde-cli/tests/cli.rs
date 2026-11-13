@@ -411,6 +411,18 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
     assert_eq!(o.status.code(), Some(0), "{md}");
     assert!(md.contains("**Against the baseline**"), "{md}");
     assert!(md.contains("[The report](https://x.test/r)"), "{md}");
+    // the program's status heads it; JSON says it too
+    let o = sonde(
+        t.path(),
+        &["check", &names[1], "-f", "markdown", "--program-exit", "3"],
+    );
+    let md = stdout(&o);
+    assert!(md.contains("> ❌ **The program failed** (exit 3)"), "{md}");
+    let o = sonde(
+        t.path(),
+        &["check", &names[1], "-f", "json", "--program-exit", "3"],
+    );
+    assert!(stdout(&o).contains("\"programExit\": 3"), "{}", stdout(&o));
 }
 
 #[test]

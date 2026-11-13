@@ -138,6 +138,7 @@ runs:
         SONDE_COMMENT: ${{ inputs.comment }}
         SONDE_REPORT_URL: ${{ steps.report-upload.outputs.artifact-url }}
         SONDE_PR: ${{ github.event.pull_request.number }}
+        SONDE_EXIT: ${{ steps.record.outputs.exit }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" comment
 
