@@ -1119,6 +1119,39 @@ fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::pat
     file
 }
 
+/// `sonde check | head`: the reader gone before a line is written, the
+/// command still ends with its own exit code, not 0.
+#[cfg(unix)]
+#[test]
+fn an_exit_code_survives_a_closed_pipe() {
+    let t = tempfile::tempdir().unwrap();
+    demo_file(t.path());
+    let closed = |args: &[&str]| {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(args)
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .stdout(writer)
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(!err.contains("panicked"), "{err}");
+        o.status.code()
+    };
+    for _ in 0..3 {
+        assert_eq!(closed(&["check", "--max-requests", "10"]), Some(1));
+        assert_eq!(
+            closed(&["check", "--max-requests", "10", "-f", "json"]),
+            Some(1)
+        );
+        assert_eq!(closed(&["show", "--all"]), Some(0));
+        assert_eq!(closed(&["show", "-f", "json"]), Some(0));
+    }
+}
+
 #[test]
 fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     let t = tempfile::tempdir().unwrap();

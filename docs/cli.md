@@ -109,7 +109,8 @@
 | 77 | Refused: the confirmation did not match, or a replay without `--yes` and no terminal to ask |
 | 130, 143 | `run --trial` interrupted by Ctrl-C or SIGTERM (`run` otherwise exits as its command did) |
 
-A failed request prints its error, request id and the request line from the log.
+A failed request prints its error, request id and the request line from the log. A closed standard output
+(`sonde check | head`) ends the output, not the command: the exit code is the command's own.
 
 ## In CI
 

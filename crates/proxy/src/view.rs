@@ -110,6 +110,36 @@ fn joined<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
 }
 
 impl Analysis {
+    /// `path` (a run, its `header` and `records`, analysed as this) against
+    /// its program's run before it ([`crate::fixloop::since_last`]). Its
+    /// operations are not made again, and its findings at any threshold
+    /// only when there is a run before to judge: 18.0 made both for every
+    /// `show`, a third more time and memory at a million requests.
+    pub fn since_last(
+        &self,
+        path: &std::path::Path,
+        header: &crate::session::SessionHeader,
+        records: &[reqlog::Record],
+        prices: &dyn Fn(&str) -> RequestPrices,
+    ) -> Option<crate::fixloop::SinceLast> {
+        let key = crate::program::key_of(header)?;
+        if !header.is_recording() {
+            return None;
+        }
+        let dir = crate::fixloop::folder_of(path);
+        let traces = match crate::fixloop::previous_run(&dir, &key, header.created, path) {
+            Some(_) => crate::episode::traces_of(header, records, &self.episodes),
+            None => Vec::new(),
+        };
+        let run = crate::profile::Run::with(
+            records,
+            self.profile.clone(),
+            self.observations.clone(),
+            traces,
+        );
+        crate::fixloop::since_last(&dir, path, header, records, run, prices)
+    }
+
     pub fn of(s: &Session, prices: &RequestPrices) -> Analysis {
         Analysis::of_records(&s.header, &s.records, prices)
     }

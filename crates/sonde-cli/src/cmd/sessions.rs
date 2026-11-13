@@ -620,7 +620,7 @@ pub async fn otlp(
         }
         (None, None) => {
             use std::io::Write;
-            let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+            let mut out = std::io::BufWriter::new(crate::output::Stdout);
             sonde_proxy::otlp::write_traces(&session, &mut out, true)?;
             out.write_all(b"\n")?;
             out.flush()?;

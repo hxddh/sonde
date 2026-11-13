@@ -14,6 +14,23 @@
 //! | 70 | the operation failed (connection, credentials, permissions) |
 //! | 77 | refused: a confirmation missing or mismatched |
 
+// std's, but a closed pipe ends the output, not the command: `sonde check |
+// head` keeps check's exit code ([`output::Stdout`])
+macro_rules! println {
+    () => {
+        $crate::output::print_out(format_args!(""), true)
+    };
+    ($($arg:tt)*) => {
+        $crate::output::print_out(format_args!($($arg)*), true)
+    };
+}
+
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::output::print_out(format_args!($($arg)*), false)
+    };
+}
+
 mod cmd;
 mod output;
 
@@ -198,7 +215,10 @@ fn scoped(mut cmd: clap::Command) -> clap::Command {
 }
 
 fn main() -> ExitCode {
-    // `sonde … | head`: a closed pipe ends the output quietly
+    // `sonde … | head`: a closed pipe ends the output quietly. What sonde
+    // writes goes through output::Stdout and runs on to its exit code; a
+    // library's own print that meets one ends here, as a process a pipe
+    // closed on does (141: 128 + SIGPIPE), never as a success
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let msg = info
@@ -208,7 +228,7 @@ fn main() -> ExitCode {
             .or_else(|| info.payload().downcast_ref::<&str>().copied())
             .unwrap_or("");
         if msg.contains("Broken pipe") {
-            std::process::exit(0);
+            std::process::exit(141);
         }
         previous(info);
     }));
