@@ -1221,6 +1221,11 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
         stdout(&kept)
     );
     assert!(file.is_file());
+    // a dry run that would delete: 4, and nothing deleted
+    let dry = sonde(t.path(), &["sessions", "prune", "--keep", "0"]);
+    assert_eq!(dry.status.code(), Some(4), "{}", stdout(&dry));
+    assert!(file.is_file());
+    assert_eq!(kept.status.code(), Some(0));
     // removed, and what was counted of it with it
     let gone = sonde(t.path(), &["sessions", "prune", "--keep", "0", "--yes"]);
     assert!(stdout(&gone).contains("deleted "), "{}", stdout(&gone));
@@ -1859,4 +1864,35 @@ fn a_layout_asked_for_by_kind_and_not_there_is_said() {
     );
     assert_ne!(o.status.code(), Some(64), "{}", stderr(&o));
     assert!(!stderr(&o).contains("is not a"), "{}", stderr(&o));
+}
+
+#[test]
+fn an_endpoint_id_taken_is_refused_and_test_says_how_to_name_one() {
+    let t = tempfile::tempdir().unwrap();
+    let add = |id: &str, more: &[&str]| {
+        let mut args = vec!["endpoints", "add", id, "http://127.0.0.1:9"];
+        args.extend(more);
+        sonde(t.path(), &args)
+    };
+    assert_eq!(add("a", &[]).status.code(), Some(0));
+    let again = add("a", &[]);
+    assert_eq!(again.status.code(), Some(64));
+    assert!(stderr(&again).contains("--replace"), "{}", stderr(&again));
+    assert_eq!(add("a", &["--replace"]).status.code(), Some(0));
+    assert_eq!(add("b", &[]).status.code(), Some(0));
+    // two: named by its argument, not --endpoint
+    let o = sonde(t.path(), &["endpoints", "test"]);
+    assert_eq!(o.status.code(), Some(64));
+    assert!(
+        stderr(&o).contains("`sonde endpoints test ID` (a, b)"),
+        "{}",
+        stderr(&o)
+    );
+    let o = sonde(t.path(), &["endpoints", "test", "c"]);
+    assert_eq!(o.status.code(), Some(64));
+    assert!(
+        stderr(&o).contains("the configured ones are a, b"),
+        "{}",
+        stderr(&o)
+    );
 }

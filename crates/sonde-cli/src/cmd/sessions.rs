@@ -358,6 +358,8 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     output::count(gone.len(), "session"),
                     if gone.len() == 1 { "it" } else { "them" }
                 );
+                // a dry run with something to do: 4, as every dry run
+                return Ok(4);
             }
             Ok(0)
         }
