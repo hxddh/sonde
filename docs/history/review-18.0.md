@@ -151,7 +151,7 @@ something 18.0 opened or removes something kept for an older version.
 - Sessions are created with `create_new` and the next name on a clash; the three state files are written under
   a lock.
 - `split` says where the slow requests are when one group holds nearly all; `--again` trims names and runs every
-  broke strength; the old commands print their new form with the arguments.
+  broke strength.
 - The CI comment says when the program failed, and why.
 - An exit code survives a closed stdout; `keys.special` can pass; CloudTrail skips and counts a bad line; an
   import's window does not invent unfinished uploads; replay compares listings and bodies; each Low row of the
