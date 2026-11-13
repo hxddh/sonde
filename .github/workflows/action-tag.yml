@@ -1,0 +1,34 @@
+name: Action tag
+
+# Moves the major tag (v18) to a release's commit, so `uses: hxddh/sonde@v18`
+# follows the newest 18.x. Called by release.yml; run by hand to repair one.
+on:
+  workflow_call:
+    inputs:
+      version: { type: string, required: true }
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "A released version, without the v (its tag must exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      - name: Move the major tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          v="${VERSION#v}"
+          case "$v" in *-*) echo "a pre-release ($v) does not move the major tag"; exit 0;; esac
+          sha=$(git rev-parse "v$v^{commit}") || { echo "::error::no tag v$v"; exit 1; }
+          major="v${v%%.*}"
+          git tag -f "$major" "$sha"
+          git push -f origin "refs/tags/$major"
+          echo "$major -> v$v ($sha)"

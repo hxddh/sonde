@@ -56,6 +56,8 @@ runs `sonde --version` in `debian:bookworm-slim`.
    terminal binary), publishes the release with the changelog section, `SHA256SUMS` and a `.sha256` per file, and
    with `HOMEBREW_TAP_TOKEN` writes `Formula/sonde.rb` and `Casks/sonde-app.rb` into `hxddh/homebrew-sonde` from
    `packaging/homebrew/*.rb.in`.
+3. `action-tag.yml` then moves the major tag (`v18`) to the release, so `uses: hxddh/sonde@v18` follows it. A
+   pre-release does not move it. To repair one: Actions › Action tag › Run workflow with `x.y.z`.
 
 | | |
 |---|---|
