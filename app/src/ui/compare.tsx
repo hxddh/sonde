@@ -54,7 +54,7 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
       { id: "requests", label: t("compare.requests"), a: c().requests[0], b: c().requests[1], text: n, detail: () => (pace && pace[0] && pace[1] ? pair(pace[0], pace[1]) : ""), series: (x) => x.rate.series },
       { id: "errors", label: t("signal.errors"), a: c().errors[0], b: c().errors[1], text: n, detail: () => (share ? pair(share[0], share[1]) : ""), series: (x) => x.errors.series },
       { id: "latency", label: t("signal.latency"), a: p50?.[0] ?? null, b: p50?.[1] ?? null, text: duration, detail: tails, series: (x) => x.latency.series, kind: "line", few },
-      { id: "waiting", label: t("compare.waiting"), a: c().busyMs[0], b: c().busyMs[1], text: duration, detail: () => t("compare.took", { t: pair(duration(c().wallMs[0]), duration(c().wallMs[1])) }) },
+      { id: "waiting", label: t("compare.waiting"), a: c().waitingMs[0], b: c().waitingMs[1], text: duration, detail: () => t("compare.took", { t: pair(duration(c().wallMs[0]), duration(c().wallMs[1])) }) },
       // (both in one unit: the unit is said once, with the tile's name, so the two figures fit)
       { id: "cost", label: oneUnit() ? `${t("compare.cost")} · ${costParts(c().cost[1], c().currency).unit}` : t("compare.cost"), a: c().cost[0], b: c().cost[1], text: (v) => (oneUnit() ? costParts(v, c().currency).figure : cost(v, c().currency)), detail: () => (moved ? pair(moved[0], moved[1]) : "") },
     ];
@@ -106,7 +106,7 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean; /** 
       <If when={!c().sameProgram}>
         <Notice testID="other-program" tone="warn" text={t("compare.otherProgram")} />
       </If>
-      <If when={!terminal()} else={<Text testID="compare-figures" class="text-foreground">{[`${t("compare.requests")} ${n(c().requests[0])} → ${n(c().requests[1])}`, `${t("signal.errors")} ${n(c().errors[0])} → ${n(c().errors[1])}`, `${t("compare.waiting")} ${duration(c().busyMs[0])} → ${duration(c().busyMs[1])}`].join(" · ")}</Text>}>
+      <If when={!terminal()} else={<Text testID="compare-figures" class="text-foreground">{[`${t("compare.requests")} ${n(c().requests[0])} → ${n(c().requests[1])}`, `${t("signal.errors")} ${n(c().errors[0])} → ${n(c().errors[1])}`, `${t("compare.waiting")} ${duration(c().waitingMs[0])} → ${duration(c().waitingMs[1])}`].join(" · ")}</Text>}>
         <ChangeTiles change={c()} signals={props.signals} />
       </If>
       <If

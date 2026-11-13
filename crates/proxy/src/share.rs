@@ -236,7 +236,7 @@ pub fn write_session_json(
     header.cwd = None;
     let mut w = JsonOut::new(out, false);
     w.begin_object()?;
-    w.array("episodes", &eps)?;
+    w.array("operations", &eps)?;
     w.field("format", &"sonde-share")?;
     w.field("header", &header)?;
     w.field("lines", &crate::logs::lines(&s.logs))?;

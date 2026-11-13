@@ -70,7 +70,7 @@ pub struct Group {
     pub missed: bool,
     pub requests: usize,
     /// Wall-clock time with one of them in flight.
-    pub busy_ms: f64,
+    pub waiting_ms: f64,
     /// Their latencies added up.
     pub sum_ms: f64,
     /// The program's waiting that was theirs: each moment's waiting split
@@ -212,7 +212,7 @@ pub struct Profile {
     /// From the first request's start to the last one's end.
     pub wall_ms: f64,
     /// Time with a request in flight.
-    pub busy_ms: f64,
+    pub waiting_ms: f64,
     pub peak_in_flight: usize,
     pub peak_at_ms: f64,
     /// Requests in flight on average while any was.
@@ -586,12 +586,12 @@ pub(crate) fn end_us(r: &Record) -> i64 {
 }
 
 /// The time with a request in flight, in ms.
-pub fn busy_ms(records: &[Record]) -> f64 {
-    busy_ms_of(records.iter())
+pub fn waiting_ms(records: &[Record]) -> f64 {
+    waiting_ms_of(records.iter())
 }
 
-/// [`busy_ms`] of any records, wherever they are kept.
-pub fn busy_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
+/// [`waiting_ms`] of any records, wherever they are kept.
+pub fn waiting_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
     union_us(records.map(|r| (start_us(r), end_us(r))).collect()) as f64 / 1000.0
 }
 
@@ -870,7 +870,7 @@ pub fn prefix_stats(
 pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let empty = Profile {
         wall_ms: 0.0,
-        busy_ms: 0.0,
+        waiting_ms: 0.0,
         peak_in_flight: 0,
         peak_at_ms: 0.0,
         mean_in_flight: 0.0,
@@ -928,7 +928,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
                 operation,
                 missed,
                 requests: rs.len(),
-                busy_ms: ms(busy),
+                waiting_ms: ms(busy),
                 sum_ms: lat.iter().sum(),
                 waited_ms: waited_us / 1000.0,
                 share: waited_us / busy_us.max(1) as f64,
@@ -1229,7 +1229,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let timed = records.iter().any(|r| r.latency_ms > 0.0);
     Profile {
         wall_ms: ms(wall_us),
-        busy_ms: ms(busy_us),
+        waiting_ms: ms(busy_us),
         peak_in_flight: peak,
         peak_at_ms: peak_at,
         mean_in_flight: if busy_us > 0 {
@@ -1268,7 +1268,7 @@ pub struct LatencyChange {
     pub requests: (usize, usize),
     pub p50_ms: (f64, f64),
     pub p95_ms: (f64, f64),
-    pub busy_ms: (f64, f64),
+    pub waiting_ms: (f64, f64),
 }
 
 /// The kinds of request two sessions share, by how much slower (p95) the
@@ -1288,7 +1288,7 @@ pub fn latency_changes(a: &Profile, b: &Profile) -> Vec<LatencyChange> {
                 requests: (ga.requests, gb.requests),
                 p50_ms: (ga.p50_ms, gb.p50_ms),
                 p95_ms: (ga.p95_ms, gb.p95_ms),
-                busy_ms: (ga.busy_ms, gb.busy_ms),
+                waiting_ms: (ga.waiting_ms, gb.waiting_ms),
             })
         })
         .collect();
@@ -1306,7 +1306,7 @@ pub struct GroupChange {
     pub requests: (usize, usize),
     /// The run's waiting that was this kind's in each ([`Group::waited_ms`]:
     /// what `show`'s "waiting on" says), not the time one was in flight.
-    pub busy_ms: (f64, f64),
+    pub waiting_ms: (f64, f64),
 }
 
 /// Two runs of a program, before and after a change.
@@ -1315,7 +1315,7 @@ pub struct GroupChange {
 pub struct RunChange {
     pub requests: (usize, usize),
     pub wall_ms: (f64, f64),
-    pub busy_ms: (f64, f64),
+    pub waiting_ms: (f64, f64),
     pub errors: (usize, usize),
     pub cost: (f64, f64),
     pub currency: String,
@@ -1554,12 +1554,12 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
                 operation: k.0,
                 missed: k.1,
                 requests: (ra, rb),
-                busy_ms: (ba, bb),
+                waiting_ms: (ba, bb),
             }
         })
         .collect();
     groups.sort_by(|x, y| {
-        let d = |g: &GroupChange| (g.busy_ms.1 - g.busy_ms.0).abs();
+        let d = |g: &GroupChange| (g.waiting_ms.1 - g.waiting_ms.0).abs();
         d(y).total_cmp(&d(x)).then(
             (y.requests.1 as i64 - y.requests.0 as i64)
                 .abs()
@@ -1605,7 +1605,7 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         prefixes,
         requests: (a.requests, b.requests),
         wall_ms: (pa.wall_ms, pb.wall_ms),
-        busy_ms: (pa.busy_ms, pb.busy_ms),
+        waiting_ms: (pa.waiting_ms, pb.waiting_ms),
         errors: (a.errors, b.errors),
         cost: (pa.cost.amount, pb.cost.amount),
         currency: pb.cost.currency.clone(),
@@ -1669,16 +1669,16 @@ mod tests {
             .iter()
             .find(|g| g.operation == "GetObject")
             .unwrap();
-        assert_eq!(get.busy_ms.0, shown.waited_ms);
+        assert_eq!(get.waiting_ms.0, shown.waited_ms);
         assert!(
             (shown.waited_ms - 500.0).abs() < 1e-6,
             "{}",
             shown.waited_ms
         );
-        assert!(shown.busy_ms > 900.0);
+        assert!(shown.waiting_ms > 900.0);
         // the kinds add up to the run's waiting, as they do in `show`
-        let sum: f64 = c.groups.iter().map(|g| g.busy_ms.0).sum();
-        assert!((sum - c.busy_ms.0).abs() < 1e-6);
+        let sum: f64 = c.groups.iter().map(|g| g.waiting_ms.0).sum();
+        assert!((sum - c.waiting_ms.0).abs() < 1e-6);
         // and the prefixes are counted from each run's folders
         assert_eq!((c.requests, c.errors), ((11, 5), (0, 0)));
         let t0 = c.prefixes.iter().find(|p| p.prefix == "b/t/0/").unwrap();
@@ -1695,14 +1695,14 @@ mod tests {
         rs.push(rec(11, 200, "PutObject", 200, 100.0));
         let p = profile(&rs, &RequestPrices::default());
         assert_eq!(p.wall_ms, 300.0);
-        assert_eq!(p.busy_ms, 150.0);
+        assert_eq!(p.waiting_ms, 150.0);
         assert_eq!(p.peak_in_flight, 10);
         let get = p
             .groups
             .iter()
             .find(|g| g.operation == "GetObject")
             .unwrap();
-        assert_eq!(get.busy_ms, 50.0);
+        assert_eq!(get.waiting_ms, 50.0);
         assert_eq!(get.sum_ms, 500.0);
         assert_eq!(p.groups[0].operation, "PutObject", "most time first");
         assert!((p.groups[0].share - 100.0 / 150.0).abs() < 1e-9);
@@ -1739,7 +1739,7 @@ mod tests {
             rec(2, 50, "PutObject", 200, 100.0),
         ];
         let p = profile(&rs, &RequestPrices::default());
-        assert_eq!(p.busy_ms, 150.0);
+        assert_eq!(p.waiting_ms, 150.0);
         let by = |op: &str| p.groups.iter().find(|g| g.operation == op).unwrap();
         // the 50 ms both were in flight count once, half each
         assert!((by("GetObject").waited_ms - 75.0).abs() < 1e-6);
@@ -1833,7 +1833,7 @@ mod tests {
         assert_eq!(p.callers.len(), 2);
         assert_eq!(p.callers[0].place, "etl/load.py:12 read");
         assert_eq!(p.callers[0].requests, 4);
-        assert!((p.callers.iter().map(|c| c.waited_ms).sum::<f64>() - p.busy_ms).abs() < 1e-6);
+        assert!((p.callers.iter().map(|c| c.waited_ms).sum::<f64>() - p.waiting_ms).abs() < 1e-6);
         // each sample says its answer; every request is drawn in a session this small
         assert_eq!(p.samples.len(), 6);
         assert!(p.samples.iter().all(|s| s.status == Some(200)));

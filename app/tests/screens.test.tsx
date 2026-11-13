@@ -344,7 +344,7 @@ function bigSession(n: number) {
     inFlight: { value: 1, series: [1, 1], peak: 1, peakAtMs: 0 },
     firstByte: null, sizes: { request: [], response: [], throughput: [], mibPerSec: null }, statuses: [], cost: { amount: 0, currency: "USD", operations: [] }, prefixes: [],
   };
-  const profile = { wallMs: n * 10, busyMs: n * 4, peakInFlight: 1, peakAtMs: 0, meanInFlight: 0.4, groups: [], binMs: n * 5, rate: [], inFlight: [], samples: [], cost: { writes: 0, reads: n, free: 0, amount: 0, currency: "USD" }, prices: { per1000Writes: 0, per1000Reads: 0, currency: "USD" }, prefixes: [], heat: [], flows: [] };
+  const profile = { wallMs: n * 10, waitingMs: n * 4, peakInFlight: 1, peakAtMs: 0, meanInFlight: 0.4, groups: [], binMs: n * 5, rate: [], inFlight: [], samples: [], cost: { writes: 0, reads: n, free: 0, amount: 0, currency: "USD" }, prices: { per1000Writes: 0, per1000Reads: 0, currency: "USD" }, prefixes: [], heat: [], flows: [] };
   const asked: { offset: number; limit: number; sort?: string; descending?: boolean; finding?: number }[] = [];
   // the order a query asks for: by time, or the busiest first (ties by index)
   const order = (q: { sort?: string; descending?: boolean; finding?: number }) => {
@@ -358,9 +358,9 @@ function bigSession(n: number) {
       path, header: { endpoint: "demo", url: "http://127.0.0.1:9000", region: "us-east-1", created: new Date(t0).toISOString(), command: "etl --all" },
       summary: { requests: n, errors: 0, misses: 0, refused: 0, seconds: n / 100, bytesUp: 0, bytesDown: n * 128, operations: [{ operation: "GetObject", count: n, errors: 0, misses: 0, errorShare: 0, bytesUp: 0, bytesDown: n * 128, p50Ms: 4, p95Ms: 4, p99Ms: 4, maxMs: 4 }] },
       profile, signals, whatIf: null, injected: [], sharedNotes: [],
-      episodes: Array.from({ length: 500 }, (_, i) => row(i)), episodesTotal: n,
+      operations: Array.from({ length: 500 }, (_, i) => row(i)), operationsTotal: n,
       span: { start: new Date(t0).toISOString(), end: new Date(t0 + n * 10).toISOString() }, families: { formats: {}, kinds: { request: n } },
-      observations: [{ level: "info", text: "300 operations of every third", episodes: Array.from({ length: 200 }, (_, k) => k * 3), episodesTotal: 300, firstStart: new Date(t0).toISOString() }],
+      observations: [{ level: "info", text: "300 operations of every third", operations: Array.from({ length: 200 }, (_, k) => k * 3), operationsTotal: 300, firstStart: new Date(t0).toISOString() }],
     }),
     "Sessions.episodes": async (_: string, q: { offset?: number; limit?: number; sort?: string; descending?: boolean; finding?: number }) => {
       const offset = q.offset ?? 0;

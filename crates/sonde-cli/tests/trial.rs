@@ -715,7 +715,6 @@ async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
     let again = b.run(Some("retrying"), &["run", "-o", name]).await;
     assert_eq!(again.code, Some(0), "{}", again.stderr);
     assert!(trials(&session).is_empty());
-    assert!(!b.path("run.trials.json").exists());
     assert!(
         !b.path("trials").exists(),
         "its trial sessions went with the verdicts"
@@ -1087,7 +1086,6 @@ async fn an_interrupt_ends_the_trial_and_writes_no_verdict() {
         );
         // one scenario was begun, none after it; nothing of it is kept
         assert!(!o.stderr.contains("  broke"), "{}", o.stderr);
-        assert!(!b.path("run.trials.json").exists(), "{signal}");
         assert!(!trial_session.exists(), "the half-written session is gone");
         assert!(!b.path("trials").exists());
         // and `check` has no broken trial to fail the run on
@@ -2412,20 +2410,24 @@ async fn run_demo_records_a_program_against_the_built_in_store() {
         c
     };
     let session = dir.path().join("demo.sonde");
-    let o = out(sonde(&["run", "--demo", "-o", session.to_str().unwrap()], true)
-        .output()
-        .await
-        .unwrap());
+    let o = out(
+        sonde(&["run", "--demo", "-o", session.to_str().unwrap()], true)
+            .output()
+            .await
+            .unwrap(),
+    );
     assert_eq!(o.code, Some(0), "{}", o.stderr);
     assert!(
         o.stderr.contains("built-in demo store") && o.stderr.contains("times are not meaningful"),
         "{}",
         o.stderr
     );
-    let shown = out(sonde(&["show", session.to_str().unwrap(), "-f", "json"], false)
-        .output()
-        .await
-        .unwrap());
+    let shown = out(
+        sonde(&["show", session.to_str().unwrap(), "-f", "json"], false)
+            .output()
+            .await
+            .unwrap(),
+    );
     let v: serde_json::Value = serde_json::from_str(&shown.stdout).unwrap();
     assert_eq!(v["summary"]["requests"], 2, "{v}");
     assert_eq!(v["summary"]["errors"], 0, "{v}");

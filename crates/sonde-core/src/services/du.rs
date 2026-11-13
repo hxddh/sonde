@@ -770,7 +770,7 @@ mod tests {
         let mut r = acc.finish(&s, "e", "b", "ListObjectVersions", Agg::default(), 1);
         let v = serde_json::to_value(&r).unwrap();
         assert!(v["byClass"][0].get("versionsUnknown").is_none(), "{v}");
-        // a row saved before 15 loads as counted
+        // a row without the flag loads as counted
         let row: Slice = serde_json::from_value(v["byPrefix"][0].clone()).unwrap();
         assert!(!row.versions_unknown);
         r.versions_not_counted("AccessDenied (403)".into());

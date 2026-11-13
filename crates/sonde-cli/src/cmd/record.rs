@@ -21,12 +21,11 @@ use sonde_proxy::{Policy, Proxy, ProxyConfig};
 use crate::output;
 
 pub use super::check::{CheckArgs, check};
-pub use super::compare::{CompareArgs, DiffArgs, compare, diff_alias};
+pub use super::compare::{CompareArgs, compare};
 pub use super::demo::{DemoArgs, demo};
 pub use super::proxy::{ProxyArgs, proxy};
 pub use super::run::{RunArgs, run};
 pub use super::show::{ShowArgs, show, show_file};
-pub use super::watch::{WatchArgs, watch_alias};
 
 #[derive(Args, Clone)]
 pub struct Recording {
@@ -35,21 +34,15 @@ pub struct Recording {
     pub(super) endpoint: Option<String>,
     /// What the program may do to the store: `no-delete` refuses what
     /// removes or replaces data (deletes, aborts, lifecycle rules, bucket
-    /// policies, versioning suspended, a write over an object the recording
-    /// did not write); `read-only` lets only GET and HEAD through; `allow`
-    /// lets everything through. Default: `[record] policy` in sonde.toml,
-    /// else no-delete.
+    /// policies, versioning suspended, a write over an object that neither
+    /// this recording nor this program's earlier recordings wrote);
+    /// `read-only` lets only GET and HEAD through; `allow` lets everything
+    /// through. Default: `[record] policy` in sonde.toml, else no-delete.
     #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
     pub(super) policy: Option<String>,
     /// `--policy allow`: the program may delete and write over what it finds.
     #[arg(long, conflicts_with = "policy")]
     pub(super) allow_writes: bool,
-    /// Gone in 18.0 (`--policy no-delete`, the default): said, and refused.
-    #[arg(long, hide = true)]
-    pub(super) no_delete: bool,
-    /// Gone in 18.0 (`--policy read-only`): said, and refused.
-    #[arg(long, hide = true)]
-    pub(super) read_only: bool,
     /// The session file (default: a new file in the data directory's sessions/).
     #[arg(long, short = 'o')]
     pub(super) out: Option<PathBuf>,
@@ -91,19 +84,6 @@ impl Recording {
     /// The policy asked for: the flags', else `[record] policy` of
     /// sonde.toml, else no-delete. Said when it lets the program delete.
     fn policy(&self) -> anyhow::Result<Policy> {
-        // one way to say it: --policy, and --allow-writes for short
-        for (gone, is) in [(self.no_delete, "no-delete"), (self.read_only, "read-only")] {
-            if gone {
-                return Err(super::usage(format!(
-                    "--{is} is gone in 18.0: say --policy {is}{}",
-                    if is == "no-delete" {
-                        " (the default)"
-                    } else {
-                        ""
-                    }
-                )));
-            }
-        }
         let flag = if self.allow_writes {
             Some(Policy::Allow)
         } else {
@@ -144,7 +124,6 @@ pub(super) async fn start_under(
     of: &Of<'_>,
 ) -> anyhow::Result<Started> {
     let under = of.under;
-    // what the flags say is read first: a flag that is gone is said before anything else
     let policy = r.policy()?;
     let ep = super::endpoint(s, r.endpoint.as_deref())?;
     let client = s.client(&ep)?;
@@ -487,8 +466,8 @@ pub(super) fn print_summary_of(
         header.endpoint,
         output::duration(s.seconds * 1000.0)
     ));
-    if p.busy_ms > 0.0 {
-        head.push_str(&format!(", waiting {}", output::duration(p.busy_ms)));
+    if p.waiting_ms > 0.0 {
+        head.push_str(&format!(", waiting {}", output::duration(p.waiting_ms)));
     }
     if p.cost.amount > 0.0 {
         head.push_str(&format!(

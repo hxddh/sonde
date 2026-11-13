@@ -278,7 +278,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "summary": analysis.summary,
                     "operations": eps.len(),
                     "waiting": {
-                        "waitingMs": prof.busy_ms,
+                        "waitingMs": prof.waiting_ms,
                         "wallMs": prof.wall_ms,
                         "peakInFlight": prof.peak_in_flight,
                         "p50Ms": prof.p50_ms,
@@ -299,7 +299,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             let out = std::io::BufWriter::with_capacity(1 << 16, std::io::stdout().lock());
             let mut w = sonde_proxy::share::JsonOut::new(out, true);
             w.begin_object()?;
-            // one word each (18.0): operations, findings, requests
+            // one word each: operations, findings, requests
             w.array(
                 "operations",
                 eps.iter().filter(|e| !a.errors || e.outcome != Outcome::Ok),

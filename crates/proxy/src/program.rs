@@ -313,16 +313,14 @@ pub struct RunPoint {
     pub path: String,
     pub created: String,
     pub requests: usize,
-    pub busy_ms: f64,
+    pub waiting_ms: f64,
     pub wall_ms: f64,
     pub cost: f64,
     pub currency: String,
     pub errors: usize,
     pub warnings: usize,
     pub findings: usize,
-    /// How long 95% of its requests took at most (0 when unknown, as in runs
-    /// kept before 12.0).
-    #[serde(default)]
+    /// How long 95% of its requests took at most (0 when unknown).
     pub p95_ms: f64,
 }
 
@@ -337,7 +335,7 @@ pub fn run_point(
         path: path.into(),
         created: created.into(),
         requests: records.len(),
-        busy_ms: profile.busy_ms,
+        waiting_ms: profile.waiting_ms,
         wall_ms: profile.wall_ms,
         p95_ms: profile.p95_ms,
         cost: profile.cost.amount,
@@ -421,7 +419,7 @@ impl RunFigures {
             path: String::new(),
             created: String::new(),
             requests: self.requests,
-            busy_ms: busy_us as f64 / 1000.0,
+            waiting_ms: busy_us as f64 / 1000.0,
             wall_ms: wall_us as f64 / 1000.0,
             p95_ms: crate::profile::percentile(&sorted, 0.95),
             cost: self.cost,
@@ -577,7 +575,7 @@ pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
             .floor()
             .max(base.requests as f64),
         // a run this short varies more than its tolerance
-        waiting_ms: base.busy_ms * grow + WAITING_SLACK_MS,
+        waiting_ms: base.waiting_ms * grow + WAITING_SLACK_MS,
         // a free baseline (deletes only) still lets a run cost a hundredth of a
         // cent; one that cost anything is held to its percent, however small
         // (the same floor on top was 100% of a run costing 0.0001)
@@ -594,7 +592,7 @@ pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
 pub fn past_baseline(run: &RunPoint, base: &RunPoint, tolerance: f64) -> bool {
     let l = baseline_limits(base, tolerance);
     run.requests as f64 > l.requests
-        || run.busy_ms > l.waiting_ms
+        || run.waiting_ms > l.waiting_ms
         || run.cost > l.cost
         || run.errors as f64 > l.errors
 }
@@ -663,7 +661,7 @@ pub fn check(
         limit("requests", r.requests as f64, n as f64, "budget");
     }
     if let Some(ms) = budget.max_waiting_ms {
-        limit("waiting", r.busy_ms, ms, "budget");
+        limit("waiting", r.waiting_ms, ms, "budget");
     }
     if let Some(c) = budget.max_cost {
         limit("cost", r.cost, c, "budget");
@@ -695,7 +693,7 @@ pub fn check(
                 l.requests,
                 base.requests as f64,
             );
-            held("waiting", r.busy_ms, l.waiting_ms, base.busy_ms);
+            held("waiting", r.waiting_ms, l.waiting_ms, base.waiting_ms);
             held("cost", r.cost, l.cost, base.cost);
             held("errors", r.errors as f64, l.errors, base.errors as f64);
         }
@@ -1035,7 +1033,7 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         let mut figures = Vec::new();
         for (what, a, b) in [
             ("requests", ch.requests.0 as f64, ch.requests.1 as f64),
-            ("waiting", ch.busy_ms.0, ch.busy_ms.1),
+            ("waiting", ch.waiting_ms.0, ch.waiting_ms.1),
             ("cost", ch.cost.0, ch.cost.1),
             ("errors", ch.errors.0 as f64, ch.errors.1 as f64),
         ] {
@@ -1066,7 +1064,9 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         let kinds: Vec<Vec<String>> = ch
             .groups
             .iter()
-            .filter(|g| g.requests.0 != g.requests.1 || waiting_moved(g.busy_ms.0, g.busy_ms.1))
+            .filter(|g| {
+                g.requests.0 != g.requests.1 || waiting_moved(g.waiting_ms.0, g.waiting_ms.1)
+            })
             .take(8)
             .map(|g| {
                 vec![
@@ -1076,7 +1076,7 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
                         g.operation.clone()
                     }),
                     format!("{} → {}", g.requests.0, g.requests.1),
-                    format!("{} → {}", ms_text(g.busy_ms.0), ms_text(g.busy_ms.1)),
+                    format!("{} → {}", ms_text(g.waiting_ms.0), ms_text(g.waiting_ms.1)),
                 ]
             })
             .collect();
@@ -1266,7 +1266,7 @@ mod tests {
         let want = run_point("", "", &rs, &p, &[]);
         assert_eq!(f.point(), want);
         assert!(want.errors > 0 && want.cost > 0.0 && want.p95_ms > 10.0);
-        assert!(want.busy_ms < want.wall_ms);
+        assert!(want.waiting_ms < want.wall_ms);
         assert_eq!(RunFigures::new(prices.clone()).point().requests, 0);
         assert_eq!(
             RunFigures::new(prices.clone()).point(),
@@ -1280,7 +1280,7 @@ mod tests {
             path: String::new(),
             created: format!("2026-11-01T{h:02}:00:00Z"),
             requests: 1,
-            busy_ms: 1.0,
+            waiting_ms: 1.0,
             wall_ms: 1.0,
             cost,
             currency: "USD".into(),
@@ -1302,7 +1302,7 @@ mod tests {
             path: path.into(),
             created: String::new(),
             requests,
-            busy_ms: 10.0,
+            waiting_ms: 10.0,
             wall_ms: 10.0,
             cost: 0.0,
             currency: "USD".into(),

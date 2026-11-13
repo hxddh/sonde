@@ -371,7 +371,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const to = storeFixOf(o);
     if (!v || !to) return;
     try {
-      const first = o.episodes[0] === undefined ? null : api.sessions.episode(props.path, o.episodes[0]);
+      const first = o.operations[0] === undefined ? null : api.sessions.episode(props.path, o.operations[0]);
       const id = first?.records[0];
       const rec = id === undefined ? null : api.sessions.record(props.path, id);
       const ep = v.header.endpoint;
@@ -486,8 +486,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const w = window();
     if (!v || (f === null && !w)) return null;
     const n = source.total();
-    if (w) return t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n: count(n), of: count(v.episodesTotal) });
-    return t("sessions.filtered", { n: count(n), of: count(v.episodesTotal) });
+    if (w) return t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n: count(n), of: count(v.operationsTotal) });
+    return t("sessions.filtered", { n: count(n), of: count(v.operationsTotal) });
   };
 
   const chip = () => (

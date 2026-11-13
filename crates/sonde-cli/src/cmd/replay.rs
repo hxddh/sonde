@@ -10,7 +10,6 @@ use sonde_core::Sonde;
 use sonde_proxy::profile::{Profile, profile};
 use sonde_proxy::session::Session;
 
-use crate::Cli;
 use crate::output::{self, Format};
 
 use super::compare::{print_comparison, print_latency};
@@ -23,21 +22,16 @@ fn bucket_pair(s: &str) -> Result<(String, String), String> {
         .ok_or_else(|| format!("{s:?}: expected original=target"))
 }
 
-/// How a session is replayed: where its writes go, and what is kept.
+/// How a session is replayed: where its writes go. It writes under a prefix
+/// of its own and removes what it wrote there, always.
 #[derive(Args, Clone, Default, PartialEq)]
 pub struct ReplayOpts {
     /// Use another bucket: original=target (repeatable).
     #[arg(long, value_parser = bucket_pair)]
     pub(super) bucket: Vec<(String, String)>,
     /// The key prefix the replay writes under (default: replay-<time>/).
-    #[arg(long, conflicts_with = "in_place")]
+    #[arg(long)]
     pub(super) prefix: Option<String>,
-    /// Replay keys as they were recorded, bucket changes included.
-    #[arg(long)]
-    pub(super) in_place: bool,
-    /// Keep what the replay wrote (default: deleted afterwards).
-    #[arg(long)]
-    pub(super) keep: bool,
     /// Do not ask for confirmation.
     #[arg(long, short = 'y')]
     pub(super) yes: bool,
@@ -46,43 +40,12 @@ pub struct ReplayOpts {
     pub(super) out: Option<PathBuf>,
 }
 
-/// `sonde replay` (17.0), kept for 18.0: `sonde compare FILE --replay ENDPOINT`.
-#[derive(Args)]
-pub struct ReplayArgs {
-    /// The session to replay.
+/// A session to replay, where, and how.
+struct ReplayArgs {
     file: PathBuf,
-    /// The endpoint to replay on (default: --url, or the only one configured).
-    #[arg(long, short = 'e')]
     endpoint: Vec<String>,
-    #[command(flatten)]
     how: ReplayOpts,
-    /// The format written.
-    #[arg(
-        long,
-        short = 'f',
-        value_enum,
-        default_value_t,
-        hide_possible_values = true
-    )]
     format: Format,
-}
-
-/// `sonde replay`, as `sonde compare --replay` does it.
-pub async fn replay_alias(s: &Arc<Sonde>, _cli: &Cli, a: &ReplayArgs) -> anyhow::Result<i32> {
-    // (no endpoint: the one --url or the configuration gives, as before)
-    let endpoint = match a.endpoint.as_slice() {
-        [] => vec![super::endpoint(s, None)?],
-        e => e.to_vec(),
-    };
-    super::renamed(
-        "sonde replay",
-        &format!(
-            "sonde compare {} --replay {}",
-            a.file.display(),
-            endpoint.join(" --replay ")
-        ),
-    );
-    replay(s, &a.file, &endpoint, &a.how, a.format).await
 }
 
 /// `file` replayed on `endpoints` (one, or several side by side), and the
@@ -119,13 +82,9 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     let (asked, original) = super::sessions::open(s, &a.file)?;
     let ep = super::endpoint(s, a.endpoint.first().map(String::as_str))?;
     let base = s.client(&ep)?;
-    let prefix = if a.how.in_place {
-        String::new()
-    } else {
-        match &a.how.prefix {
-            Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
-            None => rp::default_prefix(),
-        }
+    let prefix = match &a.how.prefix {
+        Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
+        None => rp::default_prefix(),
     };
     let opts = ReplayOptions {
         prefix: prefix.clone(),
@@ -140,37 +99,22 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     buckets.sort();
     buckets.dedup();
     let color = std::io::stderr().is_terminal();
-    let place = if prefix.is_empty() {
-        paint(
-            "in place: keys as recorded, bucket changes included",
-            "33",
-            color,
-        )
-    } else {
-        format!("under {prefix} in {}", buckets.join(", "))
-    };
     eprintln!(
-        "Replay {} from {} on {ep} ({}), {place}.",
+        "Replay {} from {} on {ep} ({}), under {prefix} in {}.",
         output::count(plan.requests, "request"),
         asked.display(),
-        base.config().endpoint
+        base.config().endpoint,
+        buckets.join(", ")
     );
     eprintln!(
-        "  {} and {}{}.",
+        "  {} and {}, all under that prefix: nothing outside it is touched.",
         output::count(plan.writes, "write"),
         output::count(plan.deletes, "delete"),
-        if prefix.is_empty() {
-            ""
-        } else {
-            ", all under that prefix: nothing outside it is touched"
-        }
     );
     for (why, n) in &plan.skipped {
         eprintln!("  {n} left out: {why}");
     }
-    if !prefix.is_empty() && !a.how.keep {
-        eprintln!("  Afterwards, everything under {prefix} is deleted (--keep keeps it).");
-    }
+    eprintln!("  Afterwards, everything under {prefix} is deleted.");
     if !a.how.yes {
         if !std::io::stdin().is_terminal() {
             eprintln!("sonde: replay writes to {ep}: pass --yes to confirm");
@@ -196,7 +140,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         }
     };
     let show = color;
-    let run = rp::replay_to_file(&base, &original, &opts, &path, a.how.keep, |i, n| {
+    let run = rp::replay_to_file(&base, &original, &opts, &path, |i, n| {
         if show {
             eprint!("\r\x1b[2K{i}/{n}");
         }
@@ -207,47 +151,45 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     if show {
         eprint!("\r\x1b[2K");
     }
-    if !prefix.is_empty() && !a.how.keep {
+    eprintln!(
+        "Removed {}{} under {prefix}.",
+        output::count(run.removed, "object"),
+        match run.removed_versions {
+            0 => String::new(),
+            n => format!(
+                " and {} (the bucket keeps them)",
+                output::count(n, "version or delete marker")
+                    .replace("version or delete markers", "versions and delete markers")
+            ),
+        }
+    );
+    if run.remaining > 0 {
+        // each thing once, by what it is
+        let kinds: Vec<String> = [
+            (run.remaining_objects, "object"),
+            (run.remaining_versions, "older version"),
+            (run.remaining_markers, "delete marker"),
+        ]
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, what)| output::count(*n, what))
+        .collect();
         eprintln!(
-            "Removed {}{} under {prefix}.",
-            output::count(run.removed, "object"),
-            match run.removed_versions {
-                0 => String::new(),
-                n => format!(
-                    " and {} (the bucket keeps them)",
-                    output::count(n, "version or delete marker")
-                        .replace("version or delete markers", "versions and delete markers")
-                ),
+            "sonde: {} still under {prefix}: the store would not delete {}. `sonde bucket size -b BUCKET -p {prefix}` shows what is there.",
+            kinds.join(", "),
+            if run.remaining == 1 { "it" } else { "them" }
+        );
+    }
+    if run.unaborted_uploads > 0 {
+        eprintln!(
+            "sonde: {} under {prefix} would not abort: {} parts stay billed. `sonde bucket uploads` lists what is unfinished.",
+            output::count(run.unaborted_uploads, "multipart upload"),
+            if run.unaborted_uploads == 1 {
+                "its"
+            } else {
+                "their"
             }
         );
-        if run.remaining > 0 {
-            // each thing once, by what it is
-            let kinds: Vec<String> = [
-                (run.remaining_objects, "object"),
-                (run.remaining_versions, "older version"),
-                (run.remaining_markers, "delete marker"),
-            ]
-            .iter()
-            .filter(|(n, _)| *n > 0)
-            .map(|(n, what)| output::count(*n, what))
-            .collect();
-            eprintln!(
-                "sonde: {} still under {prefix}: the store would not delete {}. `sonde bucket size -b BUCKET -p {prefix}` shows what is there.",
-                kinds.join(", "),
-                if run.remaining == 1 { "it" } else { "them" }
-            );
-        }
-        if run.unaborted_uploads > 0 {
-            eprintln!(
-                "sonde: {} under {prefix} would not abort: {} parts stay billed. `sonde bucket uploads` lists what is unfinished.",
-                output::count(run.unaborted_uploads, "multipart upload"),
-                if run.unaborted_uploads == 1 {
-                    "its"
-                } else {
-                    "their"
-                }
-            );
-        }
     }
     let left_behind = run.remaining > 0 || run.unaborted_uploads > 0;
     let c = run.comparison;
@@ -307,9 +249,6 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         return Ok(64);
     }
     let (asked, original) = super::sessions::open(s, &a.file)?;
-    if a.how.in_place {
-        anyhow::bail!("--in-place replays on one endpoint at a time");
-    }
     let prefix = match &a.how.prefix {
         Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
         None => rp::default_prefix(),
@@ -325,7 +264,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         targets.push((id.clone(), s.client(&id)?));
     }
     eprintln!(
-        "Replay {} from {} on {} at once, under {prefix} on each ({}, {}; deleted afterwards unless --keep).",
+        "Replay {} from {} on {} at once, under {prefix} on each ({}, {}; deleted afterwards).",
         output::count(plan.requests, "request"),
         asked.display(),
         a.endpoint.join(", "),
@@ -355,8 +294,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         let path = sonde_proxy::session::fresh_path(&dir, &format!("{stamp}-replay-{id}"));
         let (original, opts) = (&original, &opts);
         async move {
-            let run =
-                rp::replay_to_file(client, original, opts, &path, a.how.keep, |_, _| {}).await;
+            let run = rp::replay_to_file(client, original, opts, &path, |_, _| {}).await;
             let _ = sonde_proxy::session::compress(&path);
             (id.clone(), path, run)
         }

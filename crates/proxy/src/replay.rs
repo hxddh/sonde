@@ -137,8 +137,7 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if r.operation == "Unknown" {
         return Some("not an S3 operation sonde knows".into());
     }
-    // by what the request is, not only by the name the session stored: a
-    // session recorded before 13.0 calls `PUT /bucket?inventory` CreateBucket
+    // by what the request is, not only by the name the session stored
     if !opts.prefix.is_empty() && (changes_bucket(&r.operation) || changes_bucket(&named(r))) {
         return Some("changes the bucket itself".into());
     }
@@ -152,7 +151,7 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     {
         return Some("copies a version of the original endpoint".into());
     }
-    // sessions before 7.0 have no flag: a cut document no longer ends its root element
+    // a cut document no longer ends its root element, flagged or not
     if r.request_body_truncated
         || r.request_body.as_ref().is_some_and(|b| {
             b.len() + 1024 >= reqlog::MAX_REQUEST_BODY && !b.trim_end().ends_with('>')
@@ -166,7 +165,7 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
         && r.request_bytes.unwrap_or(0) > 0
         && r.request_body.is_none()
     {
-        return Some("its body was not recorded (an older session)".into());
+        return Some("its body was not recorded".into());
     }
     None
 }
@@ -728,15 +727,12 @@ pub fn default_prefix() -> String {
 
 /// A replay's prefix as it is written under: without a leading `/`, ending in
 /// `/`, so it names a folder of its own and not every key that begins with
-/// the same letters. An empty prefix is refused: replaying in place is asked
-/// for explicitly (`ReplayOptions { prefix: "" }` from `--in-place`).
+/// the same letters. An empty prefix is refused: a replay never writes over
+/// the recorded keys.
 pub fn normalize_prefix(p: &str) -> Result<String, String> {
     let p = p.trim().trim_start_matches('/');
     if p.is_empty() {
-        return Err(
-            "a replay needs a prefix of its own to write under (or an explicit in-place replay)"
-                .into(),
-        );
+        return Err("a replay needs a prefix of its own to write under".into());
     }
     Ok(if p.ends_with('/') {
         p.to_string()
@@ -873,17 +869,17 @@ async fn delete_keys(
 }
 
 /// Replays `original` with `base`'s endpoint into a new session file at
-/// `out`, deletes what it wrote under the prefix (unless `keep`, or when it
-/// replays in place), and compares the answers.
+/// `out`, under a prefix of its own (an empty one is refused), deletes what
+/// it wrote under the prefix, and compares the answers.
 pub async fn replay_to_file(
     base: &S3Client,
     original: &crate::session::Session,
     opts: &ReplayOptions,
     out: &std::path::Path,
-    keep: bool,
     progress: impl FnMut(usize, usize),
 ) -> Result<ReplayRun, String> {
     use std::sync::Arc;
+    normalize_prefix(&opts.prefix)?;
     let plan = plan(&original.records, opts);
     let cfg = base.config();
     let name = original
@@ -900,25 +896,23 @@ pub async fn replay_to_file(
     let writer =
         Arc::new(crate::session::SessionWriter::create(out, &header).map_err(|e| e.to_string())?);
     // cleanup deletes everything under the prefix: it must hold nothing before
-    if !opts.prefix.is_empty() && !keep {
-        for b in buckets_of(&original.records, opts) {
-            let why = match base.list_all(&b, &opts.prefix, 1).await {
-                Ok(found) if found.is_empty() => continue,
-                Ok(_) => format!(
-                    "{b}/{} already holds objects: a replay writes under a prefix of its own and deletes what is there afterwards; choose another prefix",
-                    opts.prefix
-                ),
-                // a bucket that is not there holds nothing (the replay may
-                // create it); any other answer leaves the prefix unknown
-                Err(e) if e.status == Some(404) => continue,
-                Err(e) => format!(
-                    "could not check that {b}/{} is empty ({e}): a replay deletes what is under its prefix afterwards, so nothing was replayed",
-                    opts.prefix
-                ),
-            };
-            let _ = std::fs::remove_file(out);
-            return Err(why);
-        }
+    for b in buckets_of(&original.records, opts) {
+        let why = match base.list_all(&b, &opts.prefix, 1).await {
+            Ok(found) if found.is_empty() => continue,
+            Ok(_) => format!(
+                "{b}/{} already holds objects: a replay writes under a prefix of its own and deletes what is there afterwards; choose another prefix",
+                opts.prefix
+            ),
+            // a bucket that is not there holds nothing (the replay may
+            // create it); any other answer leaves the prefix unknown
+            Err(e) if e.status == Some(404) => continue,
+            Err(e) => format!(
+                "could not check that {b}/{} is empty ({e}): a replay deletes what is under its prefix afterwards, so nothing was replayed",
+                opts.prefix
+            ),
+        };
+        let _ = std::fs::remove_file(out);
+        return Err(why);
     }
     let log = reqlog::RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
@@ -930,48 +924,46 @@ pub async fn replay_to_file(
     let mut unaborted_uploads = 0usize;
     // whether the store takes DeleteObjects: found out once
     let mut batches = true;
-    if !opts.prefix.is_empty() && !keep {
-        for b in buckets_of(&original.records, opts) {
-            if let Ok(objects) = base.list_all(&b, &opts.prefix, usize::MAX).await {
-                let keys: Vec<(String, Option<String>)> =
-                    objects.iter().map(|o| (o.key.clone(), None)).collect();
-                removed += delete_keys(base, &b, &keys, &mut batches).await;
+    for b in buckets_of(&original.records, opts) {
+        if let Ok(objects) = base.list_all(&b, &opts.prefix, usize::MAX).await {
+            let keys: Vec<(String, Option<String>)> =
+                objects.iter().map(|o| (o.key.clone(), None)).collect();
+            removed += delete_keys(base, &b, &keys, &mut batches).await;
+        }
+        // a bucket that keeps versions kept every one of them, and a
+        // delete marker for each delete above: they go by their ids
+        // (a bucket without versions lists none once its objects are gone)
+        let versions: Vec<(String, Option<String>)> = versions_under(base, &b, &opts.prefix)
+            .await
+            .into_iter()
+            .map(|(k, v, _)| (k, Some(v)))
+            .collect();
+        removed_versions += delete_keys(base, &b, &versions, &mut batches).await;
+        // and what is there now is what was left, each thing once: an
+        // object the store also lists as a version is that version
+        let objects = base
+            .list_all(&b, &opts.prefix, usize::MAX)
+            .await
+            .map_or(0, |o| o.len());
+        let listed = versions_under(base, &b, &opts.prefix).await;
+        let markers = listed.iter().filter(|(_, _, marker)| *marker).count();
+        left_objects += objects;
+        left_markers += markers;
+        left_versions += (listed.len() - markers).saturating_sub(objects);
+        if let Ok(up) = base
+            .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
+            .await
+        {
+            for u in up.upload {
+                let _ = base.abort_multipart_upload(&b, &u.key, &u.upload_id).await;
             }
-            // a bucket that keeps versions kept every one of them, and a
-            // delete marker for each delete above: they go by their ids
-            // (a bucket without versions lists none once its objects are gone)
-            let versions: Vec<(String, Option<String>)> = versions_under(base, &b, &opts.prefix)
-                .await
-                .into_iter()
-                .map(|(k, v, _)| (k, Some(v)))
-                .collect();
-            removed_versions += delete_keys(base, &b, &versions, &mut batches).await;
-            // and what is there now is what was left, each thing once: an
-            // object the store also lists as a version is that version
-            let objects = base
-                .list_all(&b, &opts.prefix, usize::MAX)
-                .await
-                .map_or(0, |o| o.len());
-            let listed = versions_under(base, &b, &opts.prefix).await;
-            let markers = listed.iter().filter(|(_, _, marker)| *marker).count();
-            left_objects += objects;
-            left_markers += markers;
-            left_versions += (listed.len() - markers).saturating_sub(objects);
-            if let Ok(up) = base
-                .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
-                .await
-            {
-                for u in up.upload {
-                    let _ = base.abort_multipart_upload(&b, &u.key, &u.upload_id).await;
-                }
-            }
-            // an upload still listed would not abort: its parts are billed
-            if let Ok(up) = base
-                .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
-                .await
-            {
-                unaborted_uploads += up.upload.len();
-            }
+        }
+        // an upload still listed would not abort: its parts are billed
+        if let Ok(up) = base
+            .list_multipart_uploads(&b, Some(&opts.prefix), None, None)
+            .await
+        {
+            unaborted_uploads += up.upload.len();
         }
     }
     let replayed = crate::session::Session::open(out)?;

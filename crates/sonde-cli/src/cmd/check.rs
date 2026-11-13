@@ -105,7 +105,7 @@ fn init_project(
     let tolerance = a.tolerance.unwrap_or(10.0);
     let grow = 1.0 + tolerance / 100.0;
     // whole figures a person reads and edits
-    let waiting = (run.busy_ms * grow + sonde_proxy::program::WAITING_SLACK_MS).ceil();
+    let waiting = (run.waiting_ms * grow + sonde_proxy::program::WAITING_SLACK_MS).ceil();
     let cost = if run.cost > 0.0 {
         let c = run.cost * grow;
         let digits = (-c.log10().floor() as i32 + 1).clamp(2, 8);
@@ -133,7 +133,7 @@ fn init_project(
         // one run fails the next one in two. Left for a person to set
         format!(
             "# max-waiting = \"{waiting}ms\"   # measured {}: time varies run to run, set it with room",
-            ms_text(run.busy_ms)
+            ms_text(run.waiting_ms)
         ),
         format!(
             "# max-p95 = \"{:.0}ms\"   # measured {}",

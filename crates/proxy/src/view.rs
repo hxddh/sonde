@@ -354,9 +354,9 @@ impl Analysis {
                 let mut v = to(o);
                 if let Some(m) = v.as_object_mut() {
                     if o.episodes.len() > FINDING_EPISODES {
-                        m.insert("episodes".into(), json!(&o.episodes[..FINDING_EPISODES]));
+                        m.insert("operations".into(), json!(&o.episodes[..FINDING_EPISODES]));
                     }
-                    m.insert("episodesTotal".into(), json!(o.episodes.len()));
+                    m.insert("operationsTotal".into(), json!(o.episodes.len()));
                     if let Some(e) = o.episodes.first().and_then(|i| self.episodes.get(*i)) {
                         m.insert("firstStart".into(), json!(e.start));
                     }
@@ -376,8 +376,8 @@ impl Analysis {
         v.insert("whatIf".into(), to(&self.what_if));
         v.insert("injected".into(), json!(self.injected));
         v.insert("sdk".into(), json!(self.sdk));
-        v.insert("episodes".into(), Value::Array(first));
-        v.insert("episodesTotal".into(), json!(self.episodes.len()));
+        v.insert("operations".into(), Value::Array(first));
+        v.insert("operationsTotal".into(), json!(self.episodes.len()));
         v.insert(
             "span".into(),
             match self.span {
@@ -433,9 +433,9 @@ mod tests {
         let a = Analysis::of(&s, &RequestPrices::default());
         assert_eq!(a.episodes.len(), 1800);
         let v = a.view("p.sonde", &s.header);
-        assert_eq!(v["episodes"].as_array().unwrap().len(), PAGE);
-        assert_eq!(v["episodesTotal"], 1800);
-        let row = &v["episodes"][3];
+        assert_eq!(v["operations"].as_array().unwrap().len(), PAGE);
+        assert_eq!(v["operationsTotal"], 1800);
+        let row = &v["operations"][3];
         assert_eq!(row["index"], 3);
         assert_eq!(row["requests"], 1);
         // said once: by its phrases
@@ -445,8 +445,8 @@ mod tests {
         // the view of 1800 operations is no larger than that of 500
         let small = Analysis::of(&session(500), &RequestPrices::default());
         let (big, little) = (
-            serde_json::to_string(&v["episodes"]).unwrap().len(),
-            serde_json::to_string(&small.view("p", &s.header)["episodes"])
+            serde_json::to_string(&v["operations"]).unwrap().len(),
+            serde_json::to_string(&small.view("p", &s.header)["operations"])
                 .unwrap()
                 .len(),
         );
@@ -520,8 +520,8 @@ mod tests {
             .position(|o| o["phrases"][0]["key"] == "obs.hot")
             .expect("a hot key");
         let o = &v["observations"][hot];
-        assert_eq!(o["episodes"].as_array().unwrap().len(), FINDING_EPISODES);
-        assert_eq!(o["episodesTotal"], 600);
+        assert_eq!(o["operations"].as_array().unwrap().len(), FINDING_EPISODES);
+        assert_eq!(o["operationsTotal"], 600);
         assert_eq!(o["firstStart"], json!(a.episodes[0].start));
         assert_eq!(a.finding_episodes(hot, 598, 10), [598, 599]);
         let q: Query = serde_json::from_value(json!({ "finding": hot, "offset": 590 })).unwrap();

@@ -66,12 +66,6 @@ pub fn said(text: &str) -> String {
     text.replace("See Multipart.", "See `sonde bucket uploads`.")
 }
 
-/// A command folded into another in 18.0 still runs, for one version, and
-/// says what it is now (on stderr: its output is the new command's).
-pub fn renamed(old: &str, new: &str) {
-    eprintln!("note: `{old}` is now `{new}`; the old form goes in 19.0");
-}
-
 /// The endpoint id `--url` registers for one run.
 pub const ADHOC: &str = "adhoc";
 
@@ -88,10 +82,6 @@ pub fn paths(cli: &Cli) -> Paths {
 
 pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
     let s = Sonde::open(paths(cli))?;
-    // an older config.toml still loads: what it says that is no longer read is said
-    for gone in s.settings().gone() {
-        eprintln!("note: {}: {gone}", s.paths().config_file().display());
-    }
     // of this run only: neither the endpoint nor the limits are ever saved
     if let Some(url) = &cli.url {
         let vendor = Vendor::guess(url);

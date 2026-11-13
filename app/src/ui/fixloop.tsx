@@ -40,7 +40,7 @@ export function statesOf(s: SinceLast | null | undefined): Record<string, Findin
 function changeLine(s: SinceLast): string | null {
   const c = s.change;
   if (!c) return null;
-  const parts = [`${t("compare.requests")} ${count(c.requests[0])} → ${count(c.requests[1])}`, `${t("compare.waiting")} ${duration(c.busyMs[0])} → ${duration(c.busyMs[1])}`];
+  const parts = [`${t("compare.requests")} ${count(c.requests[0])} → ${count(c.requests[1])}`, `${t("compare.waiting")} ${duration(c.waitingMs[0])} → ${duration(c.waitingMs[1])}`];
   if (c.errors[0] || c.errors[1]) parts.push(`${t("signal.errors")} ${count(c.errors[0])} → ${count(c.errors[1])}`);
   return parts.join(" · ");
 }

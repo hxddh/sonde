@@ -133,7 +133,7 @@
         "requests": {
           "type": "integer"
         },
-        "busyMs": {
+        "waitingMs": {
           "type": "number"
         },
         "wallMs": {
@@ -162,7 +162,7 @@
         "path",
         "created",
         "requests",
-        "busyMs",
+        "waitingMs",
         "wallMs",
         "cost",
         "currency",

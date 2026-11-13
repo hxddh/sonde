@@ -153,7 +153,7 @@
         "errors": {
           "type": "integer"
         },
-        "busyMs": {
+        "waitingMs": {
           "type": "number",
           "description": "Time with one of these in flight."
         },
@@ -190,7 +190,7 @@
         "missed",
         "requests",
         "errors",
-        "busyMs",
+        "waitingMs",
         "p50Ms",
         "p95Ms"
       ]
@@ -218,9 +218,9 @@
             "$ref": "#/$defs/phrase"
           }
         },
-        "episodes": {
+        "operations": {
           "type": "array",
-          "description": "The operations it is about (their places in `episodes`).",
+          "description": "The operations it is about (their places in the session's `operations`).",
           "items": {
             "type": "integer"
           }
@@ -268,7 +268,7 @@
         "level",
         "text",
         "phrases",
-        "episodes",
+        "operations",
         "impact"
       ]
     },

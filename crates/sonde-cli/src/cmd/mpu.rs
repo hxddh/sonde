@@ -1,6 +1,5 @@
 //! Incomplete multipart uploads: `sonde bucket uploads`, `abort-uploads`
-//! and `lifecycle` (`sonde mpu scan|abort|lifecycle` before 18.0, kept for
-//! one version).
+//! and `lifecycle`.
 
 use std::sync::Arc;
 
@@ -8,15 +7,7 @@ use clap::{Args, Subcommand};
 use sonde_core::Sonde;
 use sonde_core::services::{exec, mpu};
 
-use crate::Cli;
 use crate::output::{self, Format};
-
-/// `sonde mpu` (17.0), kept for 18.0: `sonde bucket uploads`.
-#[derive(Args)]
-pub struct MpuArgs {
-    #[command(subcommand)]
-    action: MpuAction,
-}
 
 #[derive(Args, Clone)]
 pub(super) struct Target {
@@ -40,10 +31,10 @@ pub(super) struct Target {
 #[derive(Subcommand)]
 pub(super) enum MpuAction {
     /// Incomplete multipart uploads: their parts' bytes, age and cost, and the lifecycle rule.
-    #[command(name = "uploads", alias = "scan")]
+    #[command(name = "uploads")]
     Scan(Target),
     /// Aborts uploads older than a week: a dry run, unless --confirm repeats the count it prints.
-    #[command(name = "abort-uploads", alias = "abort")]
+    #[command(name = "abort-uploads")]
     Abort {
         #[command(flatten)]
         target: Target,
@@ -67,17 +58,6 @@ pub(super) enum MpuAction {
 
 fn human(b: u64) -> String {
     sonde_core::guard::human_bytes(b)
-}
-
-/// `sonde mpu`, said as its 18.0 form and done as that.
-pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &MpuArgs) -> anyhow::Result<i32> {
-    let (old, new) = match &a.action {
-        MpuAction::Scan(_) => ("scan", "uploads"),
-        MpuAction::Abort { .. } => ("abort", "abort-uploads"),
-        MpuAction::Lifecycle { .. } => ("lifecycle", "lifecycle"),
-    };
-    super::renamed(&format!("sonde mpu {old}"), &format!("sonde bucket {new}"));
-    act(s, &a.action).await
 }
 
 pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i32> {

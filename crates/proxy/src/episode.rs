@@ -1613,7 +1613,8 @@ pub struct Observation {
     pub text: String,
     /// The text as phrases, for saying it in other languages.
     pub phrases: Vec<Phrase>,
-    /// The episodes it is about (indexes, ascending), for showing them.
+    /// The operations it is about (indexes, ascending), for showing them.
+    #[serde(rename = "operations")]
     pub episodes: Vec<usize>,
     /// The requests it bears on: findings are ranked by it, warnings first.
     pub impact: usize,
@@ -2233,7 +2234,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         let waiting: f64 = found.iter().map(|c| c.waiting_ms).sum();
         let saved = (waiting - fast).max(0.0);
         if !found.is_empty() && (saved >= 100.0 || (any && saved > 0.0)) {
-            let busy = crate::profile::busy_ms(records).max(1e-9);
+            let busy = crate::profile::waiting_ms(records).max(1e-9);
             let time = sonde_fmt::duration;
             let ids: Vec<u64> = found.iter().flat_map(|c| c.ids.iter().copied()).collect();
             let chained = ids.clone();

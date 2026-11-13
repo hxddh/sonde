@@ -682,17 +682,9 @@ fn write_exit(session: &Path, code: Option<i32>) {
 }
 
 /// The exit code the run ended with; `None` when it was not kept (a run of
-/// the CLI's, or of before 15). Kept beside the run before 18.0
-/// (`<run>.exit`): read, and moved into the index.
+/// the CLI's).
 fn read_exit(session: &Path) -> Option<i32> {
-    sonde_proxy::index::get(session).exit.or_else(|| {
-        sonde_proxy::index::moved(
-            session,
-            "exit",
-            |b| std::str::from_utf8(b).ok()?.trim().parse().ok(),
-            |c| sonde_proxy::index::Change::Exit(*c),
-        )
-    })
+    sonde_proxy::index::get(session).exit
 }
 
 /// A run's verdicts for the app: each with the path of its trial's session
@@ -1553,7 +1545,7 @@ impl Sessions {
 
     /// A session as a window opens it: its header, summary, signals,
     /// profile and findings, the notes said once, and the first page of its
-    /// operations with how many there are (`episodesTotal`). Read and
+    /// operations with how many there are (`operationsTotal`). Read and
     /// analysed off the interface's thread, once per version of the file.
     pub async fn view(path: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || view_of(&path))
@@ -1939,7 +1931,7 @@ impl Sessions {
         };
         let file = out.clone();
         let run = background(async move {
-            replay::replay_to_file(&base, &original, &opts, &out, false, |_, _| {}).await
+            replay::replay_to_file(&base, &original, &opts, &out, |_, _| {}).await
         })
         .await
         .map_err(err_msg)?
@@ -2426,7 +2418,6 @@ impl Sessions {
         sonde_proxy::trial::remove(&p);
         forget(&p);
         sonde_proxy::index::set(&p, sonde_proxy::index::Change::Gone);
-        let _ = std::fs::remove_file(sonde_proxy::index::beside(&p, "exit"));
         // the session is gone either way; a titles file that does not read stays
         if let Ok(mut t) = map_to_change(&sonde().paths().sessions().join("titles.json"))
             && t.remove(&name).is_some()
@@ -3069,15 +3060,15 @@ mod tests {
         let p = path.to_string_lossy().into_owned();
         let v = view_of(&p).unwrap();
         assert_eq!(v["summary"]["requests"], 1200);
-        assert_eq!(v["episodesTotal"], 1200);
+        assert_eq!(v["operationsTotal"], 1200);
         assert_eq!(
-            v["episodes"].as_array().unwrap().len(),
+            v["operations"].as_array().unwrap().len(),
             sonde_proxy::view::PAGE
         );
-        assert_eq!(v["episodes"][2]["index"], 2);
-        assert_eq!(v["episodes"][2]["requests"], 1);
+        assert_eq!(v["operations"][2]["index"], 2);
+        assert_eq!(v["operations"][2]["requests"], 1);
         assert!(
-            v["episodes"][2].get("title").is_none(),
+            v["operations"][2].get("title").is_none(),
             "said by its phrases"
         );
         assert!(v["summary"]["operations"][0]["p99Ms"].is_number());
@@ -3193,7 +3184,7 @@ mod tests {
         w.write(&rec(2));
         let b = view_of(&p).unwrap();
         assert_eq!(b["summary"]["requests"], 2, "grown: analysed again");
-        assert_eq!(b["episodesTotal"], 2);
+        assert_eq!(b["operationsTotal"], 2);
         assert!(Arc::ptr_eq(
             &open_session(&p).unwrap(),
             &open_session(&p).unwrap()
@@ -3440,7 +3431,7 @@ mod tests {
         let t = std::time::Instant::now();
         let again = view_of(&path).unwrap();
         let second = t.elapsed();
-        let total = again["episodesTotal"].as_u64().unwrap();
+        let total = again["operationsTotal"].as_u64().unwrap();
         let q = query_of(json!({ "offset": total / 2, "limit": 200 })).unwrap();
         let t = std::time::Instant::now();
         let page = analysis_of(&path).unwrap().1.page(&q);
@@ -3609,11 +3600,6 @@ mod tests {
         assert_eq!(read_exit(p), None, "a killed program has no code to keep");
         write_exit(p, Some(3));
         assert_eq!(read_exit(p), Some(3));
-        assert!(!dir.path().join("20260101-000000-job.exit").exists());
-        // one kept beside it before 18.0 is read
-        sonde_proxy::index::set(p, sonde_proxy::index::Change::Gone);
-        std::fs::write(dir.path().join("20260101-000000-job.exit"), "4").unwrap();
-        assert_eq!(read_exit(p), Some(4));
     }
 
     #[test]

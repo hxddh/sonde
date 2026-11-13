@@ -231,7 +231,7 @@ fn measured(o: &Observation, a: &Run, b: &Run) -> Option<Saving> {
             .sum()
     });
     let ms = if o.saves_requests == 0 && o.saves_ms > 0.0 {
-        (a.profile.busy_ms - b.profile.busy_ms).max(0.0)
+        (a.profile.waiting_ms - b.profile.waiting_ms).max(0.0)
     } else {
         0.0
     };

@@ -175,7 +175,7 @@ export function slices(p: Profile): Slice[] {
 
 /** In words: what the shape shows and what stands out. */
 export function shapeSentence(p: Profile): string {
-  return t("profile.shapeText", { busy: duration(p.busyMs), wall: duration(p.wallMs), pct: pct(p.busyMs / Math.max(p.wallMs, 1e-9)), n: p.peakInFlight, at: duration(p.peakAtMs) });
+  return t("profile.shapeText", { busy: duration(p.waitingMs), wall: duration(p.wallMs), pct: pct(p.waitingMs / Math.max(p.wallMs, 1e-9)), n: p.peakInFlight, at: duration(p.peakAtMs) });
 }
 
 /**

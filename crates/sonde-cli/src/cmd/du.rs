@@ -1,5 +1,4 @@
-//! `sonde bucket size` (`sonde du` before 18.0, kept for one version): why a
-//! bucket is so big.
+//! `sonde bucket size`: why a bucket is so big.
 
 use std::sync::Arc;
 

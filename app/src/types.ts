@@ -590,10 +590,10 @@ export interface Observation {
   level: "warn" | "info";
   text: string;
   phrases?: Phrase[];
-  /** The episodes it is about, by index: in a view, the first 200 of `episodesTotal`. */
-  episodes: number[];
+  /** The operations it is about, by index: in a view, the first 200 of `operationsTotal`. */
+  operations: number[];
   /** How many operations it is about. */
-  episodesTotal?: number;
+  operationsTotal?: number;
   /** Its first operation's start (where it stands on the session's shape); absent when it names none. */
   firstStart?: string;
   /** The requests it bears on (findings come ranked by it, warnings first). */
@@ -624,8 +624,8 @@ export interface WhatIf {
 }
 
 export interface SessionSummary {
-  /** The run by operation, busiest first (absent before 16.0). */
-  operations?: { operation: string; count: number; errors: number; misses: number; errorShare: number; bytesUp: number; bytesDown: number; p50Ms: number; p95Ms: number; p99Ms: number; maxMs: number; few?: true }[];
+  /** The run by operation, busiest first. */
+  operations: { operation: string; count: number; errors: number; misses: number; errorShare: number; bytesUp: number; bytesDown: number; p50Ms: number; p95Ms: number; p99Ms: number; maxMs: number; few?: true }[];
   requests: number;
   errors: number;
   misses: number;
@@ -640,7 +640,7 @@ export interface ProfileGroup {
   operation: string;
   missed: boolean;
   requests: number;
-  busyMs: number;
+  waitingMs: number;
   sumMs: number;
   /** The program's waiting that was theirs (each moment split among the requests then in flight). */
   waitedMs: number;
@@ -657,7 +657,7 @@ export interface ProfileGroup {
 /** Where a session's time went, its rate and concurrency, its requests' cost. */
 export interface Profile {
   wallMs: number;
-  busyMs: number;
+  waitingMs: number;
   peakInFlight: number;
   peakAtMs: number;
   meanInFlight: number;
@@ -693,7 +693,7 @@ export interface LatencyChange {
   requests: [number, number];
   p50Ms: [number, number];
   p95Ms: [number, number];
-  busyMs: [number, number];
+  waitingMs: [number, number];
 }
 
 /** A run of a program, by the figures that move when the program changes. */
@@ -701,7 +701,7 @@ export interface RunPoint {
   path: string;
   created: string;
   requests: number;
-  busyMs: number;
+  waitingMs: number;
   wallMs: number;
   cost: number;
   currency: string;
@@ -789,7 +789,7 @@ export interface Trial {
   /** The attempts in a row it failed at each request, when asked to press harder than once (`slowdown:3`). */
   times?: number | null;
   reasons: string[];
-  /** The same reasons as phrases, each a sentence of one or more (`trial.why.*`); absent in a verdict kept before 16.0. */
+  /** The same reasons as phrases, each a sentence of one or more (`trial.why.*`); empty when there are none. */
   reasonsText?: { key: string; args?: Record<string, string> }[][];
   /** The request the verdict turns on, when it is not "survived": its operation, `bucket/key`, and the program's line when the run named callers. */
   where?: { operation: string; key: string; caller?: string } | null;
@@ -821,12 +821,12 @@ export interface ProgramHistory {
 export interface RunChange {
   requests: [number, number];
   wallMs: [number, number];
-  busyMs: [number, number];
+  waitingMs: [number, number];
   errors: [number, number];
   cost: [number, number];
   currency: string;
   peakInFlight: [number, number];
-  groups: { operation: string; missed: boolean; requests: [number, number]; busyMs: [number, number] }[];
+  groups: { operation: string; missed: boolean; requests: [number, number]; waitingMs: [number, number] }[];
   /** Findings gone at any threshold (fixed). */
   resolved: { text: string; phrases: Phrase[] }[];
   appeared: { text: string; phrases: Phrase[] }[];
@@ -885,8 +885,8 @@ export interface SizeBucket {
  * with its line over the session's slices (crates/proxy/src/signals.rs). A figure
  * that cannot be said (no time, no request) is null, never 0. */
 export interface Signals {
-  /** A run too short to have a pace (under a second, or a handful of requests): totals are said, not rates. Absent before 16.0. */
-  short?: boolean;
+  /** A run too short to have a pace (under a second, or a handful of requests): totals are said, not rates. */
+  short: boolean;
   timed: boolean;
   wallMs: number;
   binMs: number;
@@ -940,25 +940,25 @@ export interface TrialResult {
 }
 
 export interface SessionView {
-  /** The run's four signals (absent in a share made before 15.0). */
-  signals?: Signals;
+  /** The run's four signals. */
+  signals: Signals;
   /** A trial's session: its scenario, the clean run it is a trial of (and that run's file, when it is still there). */
   trial?: { scenario: string; of: string; clean: string | null };
   /** A clean run's trials, each with its own session's path. */
   trials?: Trial[];
   /** The requests a fault scenario answered, by id. */
   injected?: number[];
-  /** The SDK that sent most of its requests, from their user agents ("boto3 1.34"); absent in a share made before 18.0. */
+  /** The SDK that sent most of its requests, from their user agents ("boto3 1.34"). */
   sdk?: string | null;
   path: string;
   header: { endpoint: string; url: string; region: string; created: string; command?: string | null; cwd?: string | null; git?: GitStamp | null; /** a trial's session: the scenario its requests met */ scenario?: string | null };
   summary: SessionSummary;
   profile: Profile;
   whatIf?: WhatIf | null;
-  /** The first page of the session's operations (500 in time order), of `episodesTotal`. */
-  episodes: EpisodeRow[];
+  /** The first page of the session's operations (500 in time order), of `operationsTotal`. */
+  operations: EpisodeRow[];
   /** How many operations the session has. */
-  episodesTotal: number;
+  operationsTotal: number;
   /** Its first operation's start and its last operation's end; null when it has none. */
   span: { start: string; end: string } | null;
   /** Its operations by family: how many of each format and of each kind. */
@@ -968,8 +968,8 @@ export interface SessionView {
 }
 
 /** A session whole, every operation in it: what `sonde share` writes into a page (`Episode`s with their English titles). */
-export interface WholeSession extends Omit<SessionView, "episodes" | "episodesTotal" | "span" | "families"> {
-  episodes: Episode[];
+export interface WholeSession extends Omit<SessionView, "operations" | "operationsTotal" | "span" | "families"> {
+  operations: Episode[];
 }
 
 export interface RecordingView {

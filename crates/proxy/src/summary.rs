@@ -217,14 +217,12 @@ pub const COUNTED_VERSION: u32 = 2;
 /// raised whenever what they hold changes between versions (a finding, a
 /// warning, how waiting or cost is reckoned). A test reckons the fixtures'
 /// figures and fails, saying so, when they change and this does not.
-pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+3");
+pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+4");
 pub const SHAPE_BINS: usize = 24;
 
 /// Removes a session's counts: when the session is removed or replaced.
 pub fn forget(session: &std::path::Path) {
     crate::index::set(session, crate::index::Change::NoCounted);
-    // (and the file they were kept in before 18.0)
-    let _ = std::fs::remove_file(crate::index::beside(session, "summary.json"));
 }
 
 /// What of a record's line the counts read: the rest of the line is skipped,
@@ -398,16 +396,9 @@ pub fn stamp(path: &std::path::Path) -> Option<(u64, u64)> {
 }
 
 /// The counts kept of a session, when they are of the file as it is now:
-/// in its folder's index, or (before 18.0) beside it, moved into the index.
+/// in its folder's index.
 pub fn kept(session: &std::path::Path) -> Option<Counted> {
-    let c = crate::index::get(session).counted.or_else(|| {
-        crate::index::moved(
-            session,
-            "summary.json",
-            |b| serde_json::from_slice::<Counted>(b).ok(),
-            |c| crate::index::Change::Counted(Box::new(c.clone())),
-        )
-    })?;
+    let c = crate::index::get(session).counted?;
     (c.version == COUNTED_VERSION && Some((c.len, c.modified_ns)) == stamp(session)).then_some(c)
 }
 
@@ -656,7 +647,6 @@ mod tests {
         crate::session::compress(&live).unwrap();
         let first = counted(&live).unwrap();
         assert!(index(&live).is_some());
-        assert!(!dir.path().join("slatedb.summary.json").exists());
         assert_eq!(kept(&live), Some(first.clone()));
         // another file in its place (another length): counted again
         let other = fixture(dir.path(), "delta.sonde", true);
@@ -665,14 +655,6 @@ mod tests {
         assert_eq!(counted(&live).unwrap().requests, 49);
         forget(&live);
         assert!(index(&live).is_none());
-        // counts kept beside it before 18.0 are read, and moved into the index
-        let c = counted(&live).unwrap();
-        forget(&live);
-        let old = dir.path().join("slatedb.summary.json");
-        std::fs::write(&old, serde_json::to_vec(&c).unwrap()).unwrap();
-        assert_eq!(kept(&live), Some(c));
-        assert!(!old.exists());
-        assert!(index(&live).is_some());
     }
 
     #[test]
@@ -752,7 +734,7 @@ mod tests {
         }
         // (what they hold is there to change: warnings among them)
         assert!(all.contains("\"warnings\":[\""), "{all}");
-        const FIGURES: u64 = 0x09fe_be8e_3a36_3461;
+        const FIGURES: u64 = 0x1502_83a9_ed7c_2d73;
         assert_eq!(
             h, FIGURES,
             "the figures a run keeps changed: raise the number in `ANALYSIS` (summary.rs) and set FIGURES to {h:#x}"

@@ -231,8 +231,7 @@ pub struct Trial {
     /// Why it is not "survived", a line each.
     pub reasons: Vec<String>,
     /// The same reasons as phrases (each a sentence of one or more), for
-    /// the app to say in the reader's language. Empty in a verdict kept
-    /// before 16.0.
+    /// the app to say in the reader's language.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasons_text: Vec<Vec<Said>>,
     /// The request the verdict turns on, when it is not "survived": the
@@ -1606,8 +1605,6 @@ pub fn remove(session: &std::path::Path) {
         }
     }
     crate::index::set(session, crate::index::Change::NoTrials);
-    // (and the file they were kept in before 18.0)
-    let _ = std::fs::remove_file(crate::index::beside(session, "trials.json"));
     // (only when nothing else is in it)
     let _ = std::fs::remove_dir(dir);
 }
@@ -1628,20 +1625,9 @@ pub fn save(session: &std::path::Path, trials: &[Trial]) -> std::io::Result<()> 
     Ok(())
 }
 
-/// A run's trials; none when it was never tried. Kept beside it before
-/// 18.0 (`<run>.trials.json`): read, and moved into the index.
+/// A run's trials; none when it was never tried.
 pub fn load(session: &std::path::Path) -> Vec<Trial> {
-    crate::index::get(session)
-        .trials
-        .or_else(|| {
-            crate::index::moved(
-                session,
-                "trials.json",
-                |b| serde_json::from_slice::<Vec<Trial>>(b).ok(),
-                |t| crate::index::Change::Trials(t.clone()),
-            )
-        })
-        .unwrap_or_default()
+    crate::index::get(session).trials.unwrap_or_default()
 }
 
 /// A run's trials in a word: the worst standing among them (broke, then

@@ -41,8 +41,8 @@ const time = (iso: string) => new Date(iso).getTime();
 export const rowOf = (e: Episode, index: number): EpisodeRow => ({ ...e, index, requests: e.records.length, ...(e.kind === "probe" || e.title.includes("found nothing") ? { miss: true as const } : {}) });
 
 /** A whole session (a shared page's) in the shape a view has: its operations as rows, its span, its families, each finding's count and start. */
-export function viewOfWhole<T extends WholeSession>(d: T): Omit<T, "episodes"> & SessionView {
-  const episodes = d.episodes.map(rowOf);
+export function viewOfWhole<T extends WholeSession>(d: T): Omit<T, "operations"> & SessionView {
+  const episodes = d.operations.map(rowOf);
   const formats: Record<string, number> = {};
   const kinds: Record<string, number> = {};
   let a = Infinity;
@@ -55,23 +55,23 @@ export function viewOfWhole<T extends WholeSession>(d: T): Omit<T, "episodes"> &
   }
   return {
     ...d,
-    episodes,
-    episodesTotal: episodes.length,
+    operations: episodes,
+    operationsTotal: episodes.length,
     span: episodes.length ? { start: new Date(a).toISOString(), end: new Date(b).toISOString() } : null,
     families: { formats, kinds },
-    observations: d.observations.map((o) => ({ ...o, episodesTotal: o.episodes.length, firstStart: o.episodes.length ? episodes[o.episodes[0]]?.start : undefined })),
+    observations: d.observations.map((o) => ({ ...o, operationsTotal: o.operations.length, firstStart: o.operations.length ? episodes[o.operations[0]]?.start : undefined })),
   };
 }
 
 /** A whole session's operations, answered from memory as the bridge answers a paged one: the same order (ties by index), the same narrowing. */
 export function wholeOperations(view: () => SessionView): Operations {
   const query = signal<OpQuery>({});
-  const all = () => view().episodes;
+  const all = () => view().operations;
   const t0 = computed(() => all().reduce((m, e) => Math.min(m, time(e.start)), Infinity));
   const order = computed(() => {
     const q = query();
     const v = view();
-    let list = q.finding === undefined ? all().map((_, i) => i) : [...(v.observations[q.finding]?.episodes ?? [])];
+    let list = q.finding === undefined ? all().map((_, i) => i) : [...(v.observations[q.finding]?.operations ?? [])];
     if (q.slice) list = list.filter((i) => time(all()[i].start) - t0() < q.slice![1] && time(all()[i].end) - t0() >= q.slice![0]);
     if (q.failed) list = list.filter((i) => all()[i].outcome.kind !== "ok");
     const text = q.text?.trim().toLowerCase();
