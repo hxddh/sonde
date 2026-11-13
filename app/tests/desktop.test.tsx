@@ -296,8 +296,9 @@ test("tiles go in rows of equal count: four are two and two, never three and one
   expect(tilesPerRow(200, 4, 144)).toBe(1);
   expect(tilesPerRow(300, 4, 144)).toBe(2);
   expect(tilesPerRow(200, 1, 144)).toBe(1);
-  // five: abreast (a little tight), or a line each; never three and two
-  expect(tilesPerRow(560, 5, 128)).toBe(5);
+  // five: abreast, or a line each; never three and two, nor so tight a label is cut
+  expect(tilesPerRow(700, 5, 128)).toBe(5);
+  expect(tilesPerRow(560, 5, 128)).toBe(1);
   expect(tilesPerRow(400, 5, 128)).toBe(1);
   // six: three and three, or two by three
   expect(tilesPerRow(500, 6, 144)).toBe(3);

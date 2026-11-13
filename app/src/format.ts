@@ -182,7 +182,8 @@ export function costParts(v: number, currency: string): { figure: string; unit: 
   if (!Number.isFinite(v) || v < 0) return { figure: "—", unit: currency, per1000: false };
   if (v > 0 && v < 0.01) {
     const k = v * 1000;
-    return { figure: k < 0.01 ? Number(k.toPrecision(2)).toString() : k.toFixed(2), unit: t("cost.unitPerThousand", { cur: currency }), per1000: true };
+    // two significant figures under one (0.010 beside 0.0078, never 0.01 beside it), else two decimals
+    return { figure: k < 1 ? k.toPrecision(2) : k.toFixed(2), unit: t("cost.unitPerThousand", { cur: currency }), per1000: true };
   }
   return { figure: v.toFixed(2), unit: currency, per1000: false };
 }

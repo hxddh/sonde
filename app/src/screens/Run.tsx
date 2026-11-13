@@ -18,7 +18,7 @@ import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { TrialDialog } from "../ui/trial";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, SURFACE, WIDTH, PANE } from "../ui/kit";
+import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, More, SURFACE, WIDTH, PANE } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, sessionStory, STRIP } from "../ui/plots";
@@ -162,6 +162,14 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   };
   // (8 before the primary; never less than nothing)
   const room = () => Math.max(0, (widths().next ?? 0) - (widths().primary ?? 0) - 8);
+  // the loop's two next steps ("See the whole run", "Try under faults…") are labelled at every width: where
+  // they do not fit beside the primary (with a `⋯` for the rest), they take the row's whole width by their
+  // words, and the rest's `⋯` and the primary a line under them. (Their widths are those measured with their
+  // icons, beside the primary: what the choice is made on does not change with it.)
+  const actionWidths = signal<Record<string, number>>({});
+  const core = () => others().slice(0, 2);
+  const needs = () => core().reduce((n, a) => n + (actionWidths()[a.id] ?? 0) + 8, 0) + (others().length > core().length ? 36 : 0);
+  const stacked = () => core().length > 0 && core().every((a) => actionWidths()[a.id] !== undefined) && room() < needs();
   // the one Run of the place once a run ended: its command again, or the field's command when it was
   // changed since (the field's Return runs the same). It stays on Run: what changed since this run is
   // said here, under the band, with the way to compare the two
@@ -271,15 +279,20 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
       </If>
       {/* once it ended, a row of its own: the loop's next steps by their words, then the one Run of the place */}
       <If when={r() && !terminal()}>
-        <View class="flex-row items-center gap-2" onLayout={measure("next")}>
+        <View class={stacked() ? "gap-2" : "flex-row items-center gap-2"} onLayout={measure("next")}>
           {/* a run that sent nothing kept no session (the toast said so): it is only run again */}
-          <View class="min-w-0 flex-1 flex-row items-center">
+          <View class={stacked() ? "flex-row items-center" : "min-w-0 flex-1 flex-row items-center"}>
             <If when={!r()!.removed}>
-              <ActionRow testID="run-actions" room={room()} actions={others} />
+              <ActionRow testID="run-actions" room={stacked() ? (widths().next ?? 0) : room()} actions={stacked() ? core : others} plain={stacked()} onWidths={(w) => !stacked() && actionWidths.set({ ...actionWidths(), ...w })} />
             </If>
           </View>
-          <View class="shrink-0" onLayout={measure("primary")}>
-            <Button small variant="primary" icon="play" label={same() ? t("sessions.runAgain") : t("run.start")} onPress={runNext} disabled={!!running() || (!same() && (!command().trim() || !endpoint()))} testID="run-again-band" />
+          <View class="flex-row items-center justify-end gap-2">
+            <If when={stacked() && !r()!.removed && others().length > core().length}>
+              <More testID="run-actions-more" actions={() => others().slice(core().length)} />
+            </If>
+            <View class="shrink-0" onLayout={measure("primary")}>
+              <Button small variant="primary" icon="play" label={same() ? t("sessions.runAgain") : t("run.start")} onPress={runNext} disabled={!!running() || (!same() && (!command().trim() || !endpoint()))} testID="run-again-band" />
+            </View>
           </View>
         </View>
       </If>

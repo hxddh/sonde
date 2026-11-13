@@ -745,9 +745,8 @@ export function Figure(props: { value: string; label: string; /** `client`: fail
 
 /** How many tiles go in a row `width` wide, of `n` that each need `min`: all
  * abreast where they fit, else rows of equal count (four are 2×2, six 3×3
- * or 2×3), never a row shorter than the others: five that do not fit stand
- * abreast a little tight (narrower than `min` by a quarter at most) or a
- * line each. Where no
+ * or 2×3), never a row shorter than the others (five that do not fit are
+ * a line each, never three and two, nor tight enough to cut a label). Where no
  * equal rows fit, each takes a line of its own (one column, and `line`: what
  * it counts at the line's start, its figure at its end) — a tile is never
  * so narrow that its label or its figure is cut. */
@@ -756,8 +755,8 @@ export function tilesPerRow(width: number, n: number, min: number, gap = 12): nu
   const fits = (k: number, least: number) => (width - gap * (k - 1)) / k >= least;
   if (fits(n, min)) return n;
   for (let k = n - 1; k >= 2; k--) if (n % k === 0 && fits(k, min)) return k;
-  // no equal rows: all abreast a little tight, else a line each
-  return fits(n, min * 0.75) ? n : 1;
+  // no equal rows: a line each
+  return 1;
 }
 /** How many tiles a single row `width` wide holds, of `n` that each need `min`: two at least. */
 export const tilesFit = (width: number, n: number, min: number, gap = 12) => (width > 0 ? Math.min(n, Math.max(2, Math.floor((width + gap) / (min + gap)))) : n);
@@ -1490,7 +1489,7 @@ export function More(props: { actions: () => { label: string; icon?: IconName; r
  * (points) holds, each a small outline button; the rest behind `⋯`, never on
  * a second line. Each button measures itself while it shows, so what does
  * not fit is known without a threshold; before anything is measured all show. */
-export function ActionRow(props: { room: number; actions: () => { id: string; label: string; icon?: IconName; run: () => void; disabled?: boolean; tip?: string }[]; testID?: string }) {
+export function ActionRow(props: { room: number; actions: () => { id: string; label: string; icon?: IconName; run: () => void; disabled?: boolean; tip?: string }[]; testID?: string; /** by their words alone (no icons): a narrow place's row */ plain?: boolean; /** each button's width as measured, by its id */ onWidths?: (w: Record<string, number>) => void }) {
   const GAP = 8;
   const widths = signal<Record<string, number>>({});
   const shown = () => {
@@ -1517,10 +1516,13 @@ export function ActionRow(props: { room: number; actions: () => { id: string; la
             class={i() < shown() ? "" : "hidden"}
             onLayout={({ bounds }) => {
               const w = Math.round(bounds.size.width);
-              if (w > 0 && widths()[a().id] !== w) widths.set({ ...widths(), [a().id]: w });
+              if (w > 0 && widths()[a().id] !== w) {
+                widths.set({ ...widths(), [a().id]: w });
+                props.onWidths?.(widths());
+              }
             }}
           >
-            <Button small variant="outline" icon={a().icon} label={a().label} tip={a().tip} onPress={a().run} disabled={a().disabled} testID={a().id} />
+            <Button small variant="outline" icon={props.plain ? undefined : a().icon} label={a().label} tip={a().tip} onPress={a().run} disabled={a().disabled} testID={a().id} />
           </View>
         )}
       </Each>

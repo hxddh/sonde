@@ -72,19 +72,21 @@ export function SinceRun(props: { since: SinceLast | null | undefined; max?: num
     <If when={s()?.previous && (tally() || (s()!.change && (s()!.change!.requests[0] !== s()!.change!.requests[1] || s()!.change!.errors[0] !== s()!.change!.errors[1]))) ? s() : null}>
       {(x) => (
         <Card pad="none" testID="since-run">
-          <Row first>
-            <Icon name="git-compare-arrows" />
-            <View class="min-w-0 flex-1 gap-1">
-              <Text class="text-body text-foreground line-clamp-1">
+          {/* the name and Compare on a line; the change under them, across the card (a narrow pane does not
+              squeeze it into the column beside the button) */}
+          <Row first stack>
+            <View class="flex-row items-center gap-3">
+              <Icon name="git-compare-arrows" />
+              <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-2">
                 {/* emphasis: the section's name before what it says */}
                 <Text class={EMPHASIS}>{t("fix.since")}</Text>
                 <If when={tally()}>{(n) => <Text class="text-muted-foreground">{` · ${n()}`}</Text>}</If>
               </Text>
-              <If when={changeLine(x())}>{(l) => <Text testID="since-change" class="tabular-nums text-small text-muted-foreground line-clamp-2">{l()}</Text>}</If>
+              <If when={props.onCompare}>
+                <Button small variant="outline" icon="git-compare-arrows" label={t("fix.compare")} onPress={() => props.onCompare?.()} testID="since-compare" />
+              </If>
             </View>
-            <If when={props.onCompare}>
-              <Button small variant="outline" icon="git-compare-arrows" label={t("fix.compare")} onPress={() => props.onCompare?.()} testID="since-compare" />
-            </If>
+            <If when={changeLine(x())}>{(l) => <Text testID="since-change" class="tabular-nums text-small text-muted-foreground line-clamp-2">{l()}</Text>}</If>
           </Row>
           <Each of={shown()} key={(f) => f.identity}>
             {(f, i) => (

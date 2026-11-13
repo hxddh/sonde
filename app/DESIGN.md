@@ -174,11 +174,13 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   - a finding's words keep their width: what acting on it saves goes first, then the count's words;
   - a session's sentence wraps to two lines and is cut only at the second line's end;
   - tiles (`Tiles`) go in rows of equal count: four are four abreast or two and two, never three and one; five
-    that do not fit stand abreast a little tight (a quarter under their least) or a line each, never three and two; where
+    that do not fit are a line each, never three and two, nor tight enough to cut a label; where
     not even two fit as they read (a bucket's tiles beside an inspector) each takes a line of its own — what it
     counts at its start, the figure at its end — before any label or figure would be cut;
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
-    as fit, the rest behind `⋯`; they never wrap to a second line;
+    as fit, the rest behind `⋯`; they never wrap to a second line. Run's band is the one exception: where its two
+    next steps do not fit beside Run again, they take the row by their words (no icons), and `⋯` and Run again a
+    line under them — the loop's next step is never behind `⋯`;
   - a finding's advice opens inside its own row, under its title, which comes to the top of the findings' room;
     in a short pane that room is bounded so the operations under it keep rows, ending on a whole finding, and
     says how many are in view;

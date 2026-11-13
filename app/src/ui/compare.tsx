@@ -3,7 +3,7 @@
 
 import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, DiffView } from "nsh/base";
-import { change, count, date, duration, percent, rate, transfer, costParts } from "../format";
+import { change, count, date, duration, percent, rate, costParts } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
@@ -49,14 +49,13 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     const p95 = of((x) => (x.latency.p95Ms == null ? null : duration(x.latency.p95Ms)));
     // "p95" once, before the pair: "p95 ~5.7 ms → 69 ms"
     const tails = () => (p95 && p95[0] && p95[1] ? `p95 ${p95[0] === p95[1] && !few?.[0] && !few?.[1] ? p95[0] : `${mark(0, p95[0])} → ${mark(1, p95[1])}`}` : "");
-    const moved = of((x) => transfer(x.bytes.upBytes, x.bytes.downBytes));
     return [
       { id: "requests", label: t("compare.requests"), a: c().requests[0], b: c().requests[1], text: n, detail: () => (pace && pace[0] && pace[1] ? pair(pace[0], pace[1]) : ""), series: (x) => x.rate.series },
       { id: "errors", label: t("signal.errors"), a: c().errors[0], b: c().errors[1], text: n, detail: () => (share ? pair(share[0], share[1]) : ""), series: (x) => x.errors.series },
       { id: "latency", label: t("signal.latency"), a: p50?.[0] ?? null, b: p50?.[1] ?? null, text: duration, detail: tails, series: (x) => x.latency.series, kind: "line", few },
       { id: "waiting", label: t("compare.waiting"), a: c().busyMs[0], b: c().busyMs[1], text: duration, detail: () => t("compare.took", { t: pair(duration(c().wallMs[0]), duration(c().wallMs[1])) }) },
-      // (both in one unit: the unit is said once, with the tile's name, so the two figures fit)
-      { id: "cost", label: oneUnit() ? `${t("compare.cost")} · ${costParts(c().cost[1], c().currency).unit}` : t("compare.cost"), a: c().cost[0], b: c().cost[1], text: (v) => (oneUnit() ? costParts(v, c().currency).figure : cost(v, c().currency)), detail: () => (moved ? pair(moved[0], moved[1]) : "") },
+      // (both in one unit: the unit is said once, under the two figures, so they fit and the tile's name is not cut)
+      { id: "cost", label: t("compare.cost"), a: c().cost[0], b: c().cost[1], text: (v) => (oneUnit() ? costParts(v, c().currency).figure : cost(v, c().currency)), detail: () => (oneUnit() ? costParts(c().cost[1], c().currency).unit : "") },
     ];
   };
   const tile = (f: () => Fact) => {
@@ -76,15 +75,14 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
         value={value()}
         detail={detail()}
         tone={tone()}
+        // (a tile with no lines to draw has none: its detail then takes a second line before it is cut)
         mark={
-          <If when={lines()}>
-            {(l) => (
-              <View class="shrink-0 flex-row items-center gap-1" accessibilityLabel="">
-                <Sparkline still id={`compare:a:${f().id}`} shape={l()[0]} kind={f().kind} tone="quiet" class={MARK.pair} />
-                <Sparkline still id={`compare:b:${f().id}`} shape={l()[1]} kind={f().kind} class={MARK.pair} />
-              </View>
-            )}
-          </If>
+          lines() ? (
+            <View class="shrink-0 flex-row items-center gap-1" accessibilityLabel="">
+              <Sparkline still id={`compare:a:${f().id}`} shape={lines()![0]} kind={f().kind} tone="quiet" class={MARK.pair} />
+              <Sparkline still id={`compare:b:${f().id}`} shape={lines()![1]} kind={f().kind} class={MARK.pair} />
+            </View>
+          ) : undefined
         }
       />
     );
