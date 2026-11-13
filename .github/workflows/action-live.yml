@@ -1,0 +1,75 @@
+name: Action live
+
+# The Action (action.yml) as a user's workflow runs it, with nothing stood
+# in: the released sonde installed and its provenance checked; each push to
+# main keeps a run; daily, the run a push kept is fetched as the baseline
+# and the comment written, edited in place, on one issue kept for it.
+# (CI's action job runs it against stand-ins, on every pull request.)
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: action-live
+  cancel-in-progress: false
+
+env:
+  TITLE: "The Action's live test (kept open by action-live.yml)"
+
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./
+        id: sonde
+        with:
+          version: latest
+          run: python3 -c 'print(1)'
+          run-args: --url http://127.0.0.1:9 --path-style
+          artifact: sonde-live
+      - name: A real baseline, from the run a push to main kept
+        if: github.event_name != 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SONDE_ARTIFACT: sonde-live
+        run: |
+          GITHUB_OUTPUT="$RUNNER_TEMP/baseline.out" bash action/sonde-action.sh baseline
+          base=$(sed -n 's/^baseline=//p' "$RUNNER_TEMP/baseline.out")
+          case "$base" in "" | auto) echo "::error::no baseline: no push run of this workflow on main kept sonde-live"; exit 1 ;; esac
+          echo "BASELINE=$base" >> "$GITHUB_ENV"
+      - name: A real comment, on the issue kept for it
+        if: github.event_name != 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SONDE_SESSION: ${{ steps.sonde.outputs.session }}
+          SONDE_REPORT_URL: ${{ steps.sonde.outputs.report-url }}
+          SONDE_ARTIFACT: sonde-live
+          SONDE_COMMENT: "true"
+        run: |
+          issue=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title live test" --json number,title \
+            --jq '.[] | select(.title == env.TITLE) | .number' | head -n 1)
+          if [ -z "$issue" ]; then
+            url=$(gh issue create -R "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --body "action-live.yml keeps one comment here, as the Action keeps one on a pull request. Leave it open.")
+            issue="${url##*/}"
+          fi
+          GITHUB_OUTPUT="$RUNNER_TEMP/comment.out" SONDE_BASELINE="$BASELINE" SONDE_PR="$issue" bash action/sonde-action.sh comment
+          url=$(sed -n 's/^url=//p' "$RUNNER_TEMP/comment.out")
+          [ -n "$url" ] || { echo "::error::no comment written on #$issue"; exit 1; }
+          body=$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/${url##*-}" --jq .body)
+          head -n 1 <<<"$body" | grep -qx '<!-- sonde: sonde-live -->'
+          grep -q '^### sonde:' <<<"$body"
+          echo "$url"
