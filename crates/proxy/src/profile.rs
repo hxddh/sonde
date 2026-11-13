@@ -1378,30 +1378,212 @@ pub struct FindingText {
 }
 
 /// A finding's identity across runs: what it is and what it is about, not
-/// its counts.
-/// A finding's identity across runs (see [`identity`]).
+/// its counts, nor what changes from one run to the next in the keys it
+/// names ([`stable`]). Set on a finding when it is made, told apart there
+/// from another of the same run that reads the same.
 pub fn finding_identity(o: &Observation) -> String {
-    if o.phrases.is_empty() {
-        o.text.clone()
-    } else {
+    if o.identity.is_empty() {
         identity(o)
+    } else {
+        o.identity.clone()
     }
 }
 
-fn identity(o: &Observation) -> String {
-    let p = &o.phrases[0];
-    // one finding whatever its form: one or many, under a threshold or over
-    let key = p
-        .key
-        .trim_end_matches(".rate")
-        .trim_end_matches(".one")
-        .trim_end_matches(".reads")
-        .trim_end_matches(".writes");
+/// [`finding_identity`] worked out, before one is set.
+pub(crate) fn identity(o: &Observation) -> String {
+    let Some(p) = o.phrases.first() else {
+        return o.text.clone();
+    };
+    // one finding whatever its form: one or many, under a threshold or
+    // over. Reads and writes near a prefix's limit are two
+    let key = p.key.trim_end_matches(".rate").trim_end_matches(".one");
     let about: Vec<String> = ["key", "prefix", "format"]
         .iter()
-        .filter_map(|k| p.args.get(k).map(|v| v.to_string()))
+        .filter_map(|k| p.args.get(k).map(|v| stable(&v.to_string())))
         .collect();
     format!("{key}|{}", about.join("|"))
+}
+
+/// The kinds of finding, as an identity begins (`obs.hot` of `obs.hot|b/k`):
+/// what `[check] expect` may name.
+pub const FINDING_KINDS: &[&str] = &[
+    "obs.unfinished",
+    "obs.orphans",
+    "obs.small",
+    "obs.hot",
+    "obs.listed",
+    "obs.headget",
+    "obs.rename",
+    "obs.markers",
+    "obs.throttled",
+    "obs.prefixrate.reads",
+    "obs.prefixrate.writes",
+    "obs.serial",
+];
+
+/// A key or prefix with what changes from one run of a program to the next
+/// said as what it is: a UUID `{uuid}`, a date `{date}`, a date and time
+/// `{time}`, a long number (epoch seconds or ms, a log's sequence) `{n}`, a
+/// long hex or mixed id `{id}`, a table's metadata version `v{n}`, the
+/// numbers of a Hadoop attempt folder `{n}`. Short numbers (`part-00001`)
+/// and words stay: two keys that are two things stay two.
+pub fn stable(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        if !b[i].is_ascii_alphanumeric() {
+            // a whole character: keys are UTF-8
+            let ch = s[i..].chars().next().unwrap_or('?');
+            out.push(ch);
+            i += ch.len_utf8();
+            continue;
+        }
+        if let Some(end) = uuid_at(b, i) {
+            out.push_str("{uuid}");
+            i = end;
+            continue;
+        }
+        if let Some((end, time)) = date_at(b, i) {
+            out.push_str(if time { "{time}" } else { "{date}" });
+            i = end;
+            continue;
+        }
+        let end = word_end(b, i);
+        let (w, rest) = (&s[i..end], &s[end..]);
+        let has = |f: fn(&u8) -> bool| w.as_bytes().iter().any(f);
+        let digits = !has(|c| !c.is_ascii_digit());
+        let metadata = rest.starts_with(".metadata.");
+        if digits
+            && (w.len() >= 9
+                || metadata
+                || (rest.starts_with('-') && uuid_at(b, end + 1).is_some()))
+        {
+            out.push_str("{n}");
+        } else if (w.len() >= 16 && !has(|c| !c.is_ascii_hexdigit()) && has(u8::is_ascii_digit))
+            || (w.len() >= 20 && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
+        {
+            out.push_str("{id}");
+        } else if metadata
+            && w.len() > 1
+            && w.starts_with('v')
+            && w[1..].bytes().all(|c| c.is_ascii_digit())
+        {
+            out.push_str("v{n}");
+        } else {
+            out.push_str(w);
+        }
+        i = end;
+    }
+    attempts(&out)
+}
+
+/// The end of the word (letters and digits) at `i`.
+fn word_end(b: &[u8], i: usize) -> usize {
+    i + b[i..]
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .count()
+}
+
+/// The end of a UUID at `i` (8-4-4-4-12 hex digits), followed by no letter
+/// or digit.
+fn uuid_at(b: &[u8], i: usize) -> Option<usize> {
+    let mut at = i;
+    for (n, len) in [8, 4, 4, 4, 12].into_iter().enumerate() {
+        if n > 0 {
+            (b.get(at) == Some(&b'-')).then_some(())?;
+            at += 1;
+        }
+        b.get(at..at + len)?
+            .iter()
+            .all(u8::is_ascii_hexdigit)
+            .then_some(())?;
+        at += len;
+    }
+    (!b.get(at).is_some_and(u8::is_ascii_alphanumeric)).then_some(at)
+}
+
+/// A date at `i` (`2026-11-13`, `2026_11_13`, `2026/11/13`, `20261113`),
+/// and the time of day after it when there is one (`T10:00:00.123Z`,
+/// `T100000Z`, `_10-00`): where it ends, and whether it had a time.
+fn date_at(b: &[u8], i: usize) -> Option<(usize, bool)> {
+    let num = |at: usize, below: u32| -> Option<usize> {
+        let run = b.get(at..at + 2)?;
+        let n = std::str::from_utf8(run).ok()?.parse::<u32>().ok()?;
+        (run.iter().all(u8::is_ascii_digit) && n < below).then_some(at + 2)
+    };
+    let year: u32 = std::str::from_utf8(b.get(i..i + 4)?).ok()?.parse().ok()?;
+    (1970..2100).contains(&year).then_some(())?;
+    let sep = b
+        .get(i + 4)
+        .copied()
+        .filter(|c| matches!(c, b'-' | b'_' | b'/'));
+    let mut at = i + 4 + usize::from(sep.is_some());
+    let month = num(at, 13).filter(|_| b[at..at + 2] != *b"00")?;
+    at = month;
+    if let Some(s) = sep {
+        (b.get(at) == Some(&s)).then_some(())?;
+        at += 1;
+    }
+    at = num(at, 32).filter(|_| b[at..at + 2] != *b"00")?;
+    let ends = |at: usize| !b.get(at).is_some_and(u8::is_ascii_alphanumeric);
+    // the time of day: hours and minutes, perhaps seconds and a fraction
+    if matches!(b.get(at), Some(b'T' | b' ' | b'_' | b'-')) {
+        let sep = |t: usize| usize::from(matches!(b.get(t), Some(b':' | b'-' | b'_')));
+        if let Some(mut t) = num(at + 1, 24)
+            && let Some(m) = num(t + sep(t), 60)
+        {
+            t = m;
+            if let Some(s) = num(t + sep(t), 60) {
+                t = s;
+            }
+            if b.get(t) == Some(&b'.') && b.get(t + 1).is_some_and(u8::is_ascii_digit) {
+                t += 1 + b[t + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+            }
+            t += usize::from(b.get(t) == Some(&b'Z'));
+            if ends(t) {
+                return Some((t, true));
+            }
+        }
+    }
+    ends(at).then_some((at, false))
+}
+
+/// The numbers of a Hadoop attempt folder (`_temporary/0/`,
+/// `attempt_202611131000_0001_m_000001_1/`): another each job.
+fn attempts(s: &str) -> String {
+    if !s.contains("_temporary/") {
+        return s.to_string();
+    }
+    let mut after = false;
+    let mut out: Vec<String> = Vec::new();
+    for seg in s.split('/') {
+        let numbered = after
+            && (out.last().is_some_and(|p| p == "_temporary")
+                || seg.starts_with("attempt_")
+                || seg.starts_with("task_"));
+        after |= seg == "_temporary";
+        if !numbered {
+            out.push(seg.to_string());
+            continue;
+        }
+        let mut said = String::new();
+        let mut digit = false;
+        for ch in seg.chars() {
+            if ch.is_ascii_digit() {
+                if !digit {
+                    said.push_str("{n}");
+                }
+                digit = true;
+            } else {
+                said.push(ch);
+                digit = false;
+            }
+        }
+        out.push(said);
+    }
+    out.join("/")
 }
 
 /// One run as [`compare_runs`] holds it: what it amounts to, its records
@@ -1640,6 +1822,86 @@ mod tests {
             latency_ms: latency,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn what_changes_between_runs_is_taken_out_of_an_identity_and_stable_keys_stay_apart() {
+        for (key, said) in [
+            ("b/jobs/1794558464595/state.json", "b/jobs/{n}/state.json"),
+            ("b/epoch/1731456000/x", "b/epoch/{n}/x"),
+            (
+                "b/runs/0f8fad5b-d9cb-469f-a165-70867728950e/out",
+                "b/runs/{uuid}/out",
+            ),
+            (
+                "b/t/metadata/00003-0f8fad5b-d9cb-469f-a165-70867728950e.metadata.json",
+                "b/t/metadata/{n}-{uuid}.metadata.json",
+            ),
+            (
+                "b/t/metadata/v12.metadata.json",
+                "b/t/metadata/v{n}.metadata.json",
+            ),
+            (
+                "b/t/_delta_log/00000000000000000012.json",
+                "b/t/_delta_log/{n}.json",
+            ),
+            ("b/day=2026-11-13/part-00001", "b/day={date}/part-00001"),
+            ("b/2026/11/13/x", "b/{date}/x"),
+            ("b/run_20261113/x", "b/run_{date}/x"),
+            ("b/at=2026-11-13T10:00:00.123Z/x", "b/at={time}/x"),
+            ("b/at=20261113T100000Z/x", "b/at={time}/x"),
+            ("b/snap-6894157311395042398-1.avro", "b/snap-{n}-1.avro"),
+            ("b/c/3f786850e387550fdab836ed7e6dc881de23001b", "b/c/{id}"),
+            ("b/u/01HF8X3KQZ7Y4M2N5P6R8T9VWX/x", "b/u/{id}/x"),
+            (
+                "b/o/_temporary/0/_temporary/attempt_202611131000_0001_m_000001_1/part-00000",
+                "b/o/_temporary/{n}/_temporary/attempt_{n}_{n}_m_{n}_{n}/part-00000",
+            ),
+            // what a program names the same every run stays as it is
+            ("b/static/part-00001.parquet", "b/static/part-00001.parquet"),
+            ("b/api/v2/config.json", "b/api/v2/config.json"),
+            ("b/year=2026/month=11/", "b/year=2026/month=11/"),
+            ("b/über/schlüssel", "b/über/schlüssel"),
+        ] {
+            assert_eq!(stable(key), said, "{key}");
+        }
+        assert_ne!(stable("b/part-00001"), stable("b/part-00002"));
+        assert_ne!(stable("b/api/v1/x"), stable("b/api/v2/x"));
+    }
+
+    #[test]
+    fn reads_and_writes_near_a_prefixs_limit_are_two_findings() {
+        let of = |key: &'static str| Observation {
+            level: "warn",
+            text: String::new(),
+            phrases: vec![crate::phrase::p(
+                key,
+                &[("prefix", "b/t/".into()), ("n", "4000".into())],
+            )],
+            episodes: Vec::new(),
+            impact: 0,
+            saving: None,
+            saving_text: None,
+            saves_requests: 0,
+            saves_ms: 0.0,
+            saved_ids: Vec::new(),
+            timed_ids: Vec::new(),
+            fixes: Vec::new(),
+            callers: Vec::new(),
+            sdk: None,
+            identity: String::new(),
+        };
+        let (r, w) = (
+            finding_identity(&of("obs.prefixrate.reads")),
+            finding_identity(&of("obs.prefixrate.writes")),
+        );
+        assert_eq!(r, "obs.prefixrate.reads|b/t/");
+        assert_eq!(w, "obs.prefixrate.writes|b/t/");
+        // one finding whatever its form
+        assert_eq!(
+            finding_identity(&of("obs.throttled.rate")),
+            finding_identity(&of("obs.throttled"))
+        );
     }
 
     #[test]

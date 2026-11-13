@@ -210,3 +210,130 @@ fn a_finding_under_its_threshold_is_less_and_one_gone_is_fixed() {
     assert_eq!(c.findings[0].measured.map(|m| m.requests), Some(11));
     assert_eq!(c.resolved.len(), 1);
 }
+
+fn list(id: u64, prefix: &str) -> Record {
+    Record {
+        operation: "ListObjectsV2".into(),
+        key: None,
+        query: vec![("prefix".into(), prefix.to_string().into())],
+        ..get(id, "")
+    }
+}
+
+/// A run of a program whose keys change every run (`seed`): a job folder
+/// named by the time it started, a table's metadata version, a Hadoop
+/// attempt folder, a run id and a date. Its findings are the same each run.
+fn changing_run(seed: u64) -> Vec<Record> {
+    let ms = 1_794_558_464_595 + seed * 1_000;
+    let uuid = format!(
+        "{:08x}-{:04x}-4abc-8def-{:012x}",
+        seed * 7_919,
+        seed,
+        seed * 104_729
+    );
+    let mut out: Vec<Record> = Vec::new();
+    let mut read = |out: &mut Vec<Record>, n: usize, key: String| {
+        for _ in 0..n {
+            out.push(get(out.len() as u64 + 1, &key));
+        }
+    };
+    read(&mut out, 16, format!("jobs/{ms}/state.json"));
+    read(
+        &mut out,
+        14,
+        format!("tbl/metadata/v{}.metadata.json", seed + 3),
+    );
+    read(
+        &mut out,
+        12,
+        format!(
+            "out/_temporary/{seed}/attempt_2026111310{seed:02}_0001_m_000001_{seed}/part-00000"
+        ),
+    );
+    for _ in 0..6 {
+        let prefix = format!("runs/{uuid}/at=2026-11-{:02}T10:{seed:02}:00Z/", 10 + seed);
+        out.push(list(out.len() as u64 + 1, &prefix));
+    }
+    out
+}
+
+fn run_of(rs: &[Record]) -> Run {
+    let eps = sonde_proxy::episode::episodes(rs);
+    Run::of(
+        rs,
+        sonde_proxy::profile::profile(rs, &RequestPrices::default()),
+        sonde_proxy::episode::observations(rs, &eps),
+    )
+}
+
+/// 18.0's false ✓: keys that carry a run's own time or id made each run's
+/// findings new, and the run before's fixed, though nothing changed.
+#[test]
+fn two_runs_of_an_unchanged_program_whose_keys_change_every_run_read_no_change() {
+    let (ra, rb) = (changing_run(1), changing_run(2));
+    let a = run_of(&ra);
+    let mut b = run_of(&rb);
+    b.measure(&rb, &a);
+    let ids = kinds(&a);
+    for id in [
+        "obs.hot|b/jobs/{n}/state.json",
+        "obs.hot|b/tbl/metadata/v{n}.metadata.json",
+        "obs.hot|b/out/_temporary/{n}/attempt_{n}_{n}_m_{n}_{n}/part-00000",
+        "obs.listed|b/runs/{uuid}/at={time}/",
+    ] {
+        assert!(ids.contains(&id.to_string()), "{id} in {ids:?}");
+    }
+    assert_eq!(ids, kinds(&b));
+    let c = compare_runs(&a, &b);
+    assert!(
+        c.findings.iter().all(|f| f.state == State::Open),
+        "{:#?}",
+        c.findings
+    );
+    assert!(c.resolved.is_empty() && c.appeared.is_empty());
+}
+
+/// A session of `records` written to `path`, as `sonde run` leaves one.
+fn write_session(path: &Path, header: &sonde_proxy::session::SessionHeader, records: &[Record]) {
+    use reqlog::Sink;
+    let w = sonde_proxy::session::SessionWriter::create(path, header).unwrap();
+    for r in records {
+        w.write(r);
+    }
+    w.flush().unwrap();
+}
+
+/// A run of the program `job` recorded `minute` minutes in, kept in `dir`;
+/// what `sonde run` says of it against the run before.
+fn ran(dir: &Path, minute: i64, records: &[Record], exit: Option<i32>) -> fixloop::SinceLast {
+    let mut header =
+        sonde_proxy::session::SessionHeader::new("e", "http://e", "", Some("python job.py".into()));
+    header.name = Some("job".into());
+    header.created = DateTime::from_timestamp_millis(1_700_000_000_000 + minute * 60_000).unwrap();
+    let path = dir.join(format!("run-{minute:02}.sonde"));
+    write_session(&path, &header, records);
+    if let Some(x) = exit {
+        sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(x));
+    }
+    fixloop::since_last(dir, &path, &header, records, run_of(records), &|_: &str| {
+        RequestPrices::default()
+    })
+    .expect("a run of a program")
+}
+
+/// Kept over runs: the program's findings do not grow with keys that change.
+#[test]
+fn a_programs_kept_findings_do_not_grow_with_keys_that_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut kept = Vec::new();
+    for seed in 1..=3u64 {
+        let since = ran(dir.path(), seed as i64, &changing_run(seed), Some(0));
+        assert!(
+            since.findings.iter().all(|f| f.state == State::Open),
+            "run {seed}: {:#?}",
+            since.findings
+        );
+        kept.push(fixloop::read(dir.path()).unwrap()["job"].findings.len());
+    }
+    assert_eq!(kept[0], kept[2], "{kept:?}");
+}
