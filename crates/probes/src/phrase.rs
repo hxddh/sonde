@@ -240,10 +240,6 @@ pub const TEMPLATES: &[(&str, &str)] = &[
     ),
     ("judge.keys.special.pass", "all {p1} keys round-trip"),
     (
-        "judge.keys.special.error.2",
-        "the {sent} keys sent round-trip; ",
-    ),
-    (
         "judge.keys.special.said",
         "{p1} of {sent} keys do not round-trip: {p2}",
     ),

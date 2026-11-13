@@ -1,7 +1,7 @@
 {
   "probe": "keys.special",
   "vendor": "ceph-rgw",
-  "expect": "error",
+  "expect": "pass",
   "note": "put-8/9 and get-8/9 as 14.0 records them: sonde refuses dot-segment keys itself (they were 403 SignatureDoesNotMatch, sonde's own doing)",
   "steps": [
     {
