@@ -16,7 +16,8 @@ export interface SignalTile {
   label: string;
   value: string;
   detail: string;
-  tone: "plain" | "bad" | "quiet";
+  /** `client`: failures that are all the program's own (4xx), in the tone their rows and charts have */
+  tone: "plain" | "bad" | "client" | "quiet";
   /** Its line over the session, slice by slice (empty: nothing to draw). */
   series: number[];
   /** What the line is of: counts as bars, a level as steps, a measure as a line. */
@@ -141,7 +142,8 @@ export function signalTiles(s: Signals): SignalTile[] {
       // of a handful, how many; of a run, the share
       value: some ? t("signal.failedOf", { n: count(s.errors.count), of: count(s.rate.requests) }) : s.errors.value == null ? "—" : percent(s.errors.value),
       detail: wrong.length ? wrong.join(" · ") : t("signal.noErrors"),
-      tone: s.errors.count > 0 ? "bad" : "plain",
+      // one failure, one colour: all of them the program's own (4xx) are in the tone their rows and charts have
+      tone: s.errors.count === 0 ? "plain" : s.errors.counts.client === s.errors.count ? "client" : "bad",
       series: few ? [] : s.errors.series,
       kind: "bars",
     },

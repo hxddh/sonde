@@ -162,7 +162,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           tone={x().tone}
           hint={props.onSignal ? t("signal.open") : undefined}
           onPress={props.onSignal ? () => props.onSignal?.(SIGNALS[i]) : undefined}
-          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class={MARK.tile} kind={x().kind} tone={x().tone === "bad" ? "bad" : "plain"} />}
+          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class={MARK.tile} kind={x().kind} tone={((k) => (k === "quiet" ? "plain" : k))(x().tone)} />}
         />
       </If>
     );

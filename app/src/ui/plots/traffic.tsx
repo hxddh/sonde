@@ -243,8 +243,8 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     return { title: `+${duration(r.tMs)} – +${duration(r.tMs + props.profile.binMs)}`, lines: [parts.join(" · "), ...(r.inFlight > 0 ? [t("profile.inFlightN", { n: r.inFlight })] : []), ...(props.strip && props.onSlice ? [t("shape.pressSpans")] : []), ...(props.annotate && marks.length ? [t("shape.findingsHere", { list: marks.join(", ") })] : [])] };
   };
   return (
-    // a handful of requests has no shape worth a chart
-    <If when={!terminal() && rows().length > 1 && props.profile.samples.length >= 12} else={<Text class="hidden text-muted-foreground terminal:flex">{shapeSentence(props.profile)}</Text>}>
+    // a handful of requests has no shape worth a strip; a chart of its own (the Time pane's, with its axes) draws them
+    <If when={!terminal() && rows().length > 1 && ((props.axis && !props.strip) || props.profile.samples.length >= 12)} else={<Text class="hidden text-muted-foreground terminal:flex">{shapeSentence(props.profile)}</Text>}>
       <BaseButton
         testID={props.testID ?? "session-shape"}
         accessibilityLabel={shapeSentence(props.profile)}
@@ -347,10 +347,10 @@ export function faultMoments(p: Profile, injected: number[] | undefined): number
 
 /** A session's requests over its time, a few points high: drawn once per
  * session, kept as it is when its row scrolls away and back. */
-export function Sparkline(props: { shape: number[]; id: string; class?: string; /** its tone: a signal's own (failures in the server's), or quiet (the run before, beside the run after) */ tone?: "plain" | "bad" | "quiet"; /** what it draws: counts as bars (the default), a level as steps (requests in flight), a measure as a line (latency) */ kind?: "bars" | "steps" | "line"; /** shown whole at once: a mark beside a figure does not draw itself in */ still?: boolean }) {
+export function Sparkline(props: { shape: number[]; id: string; class?: string; /** its tone: a signal's own (failures in the server's), or quiet (the run before, beside the run after) */ tone?: "plain" | "bad" | "client" | "quiet"; /** what it draws: counts as bars (the default), a level as steps (requests in flight), a measure as a line (latency) */ kind?: "bars" | "steps" | "line"; /** shown whole at once: a mark beside a figure does not draw itself in */ still?: boolean }) {
   const rows = () => props.shape.map((n, i) => ({ i, n }));
-  const stroke = () => (props.tone === "bad" ? "stroke-status-server" : props.tone === "quiet" ? "stroke-muted-foreground" : "stroke-chart-1");
-  const fill = () => (props.tone === "bad" ? "fill-status-server" : props.tone === "quiet" ? "fill-muted-foreground" : "fill-chart-1");
+  const stroke = () => (props.tone === "bad" ? "stroke-status-server" : props.tone === "client" ? "stroke-status-client" : props.tone === "quiet" ? "stroke-muted-foreground" : "stroke-chart-1");
+  const fill = () => (props.tone === "bad" ? "fill-status-server" : props.tone === "client" ? "fill-status-client" : props.tone === "quiet" ? "fill-muted-foreground" : "fill-chart-1");
   const plot = () => (
     <Plot data={rows()} xScale={{ type: "band", ...BARS.buckets }} yScale={{ type: "linear", domain: [0, Math.max(1, ...props.shape)] }} interactive={false} accessibilityLabel="" appearGeneration={props.still ? undefined : 1} motion={props.still ? undefined : MOTION} class={props.class ?? MARK.row}>
       {/* a baseline, so a few bars read as bars on a line and not as stray ticks */}

@@ -540,8 +540,8 @@ export type TileLook = "full" | "tight" | "line";
  * line about it; with `onPress`, the tile is a button and says where it goes.
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
-  const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "client" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
+  const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", client: "text-status-client", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
   const look = () => props.look ?? "full";
   const said = () => [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ");
   const name = () => (

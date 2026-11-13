@@ -299,7 +299,8 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   what it is on, one band or line under it (`CROSS_BAND`, `CROSS_LINE`). A mark a few points high (`Sparkline`)
   stands on a baseline and is drawn at full strength, so it reads in dark.
 - **Colors are roles.** Outcomes in their status tokens (`bar` for ok, `status-miss`, `status-client`,
-  `status-server`; `status-injected` for what a fault scenario answered, whatever it looked like); a quantity in
+  `status-server`; `status-injected` for what a fault scenario answered, whatever it looked like) — one failure one
+  colour everywhere: errors all the program's own (4xx) are `status-client` on the tiles and figures too; a quantity in
   `chart-1`, a second in `chart-4`; tails and percentiles in a quiet
   `muted-foreground` (dashed for a line), never an error's color; retries in `info`; before is
   `muted-foreground/30`, after its outcome (`status-ok` fewer, `status-server` more). What a selection leaves out
@@ -342,7 +343,7 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   begin together are said in order, "1, 2, 3"); the frame's legend says so, and the slice's tooltip names the
   findings that begin in it.
 - **A trial against its clean run**: on a trial's session the Time pane opens its Traffic with the trial drawn
-  over the clean run on one axis (requests a second, then the median latency), and a rule in the injected tone
+  over the clean run on one axis (the requests sent so far — a count, never a rate a few requests would leap — then the median latency), and a rule in the injected tone
   at every moment sonde answered in the store's place — on that chart, on the timeline and on the strip.
 - **By kind of request**: Latency opens with a table (`GroupTable`) — requests, error share, median, p95, p99, the
   share of the waiting, the cost (its unit once, in its title) — the same component Group by draws, sortable, its last
