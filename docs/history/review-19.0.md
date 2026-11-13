@@ -5,7 +5,7 @@ against moto 5.2.5 and `run --demo`; one walked the README as a newcomer, timed,
 judged all 194 pictures of CI's tour (wide, least, dark, Chinese) against `app/DESIGN.md`; one looked at the project's
 health, its scope and 19.0's "Done when". The plan it is held to is [review-18.0.md](review-18.0.md#190).
 
-**Confirmed** means run and seen; **read** means from the code only. The four marked ✓ were confirmed again by hand.
+**Confirmed** means run and seen; **read** means from the code only. Those marked ✓ were confirmed again by hand.
 
 ## In short
 
@@ -35,7 +35,7 @@ with ~600 properties, display text among them, and "operation" meaning both a pr
 |---|---|---|
 | High | `profile.rs` `stable()` | Keys with `year=/month=/day=/hour=`, `dt=2026-11-13-21`, a time folder, `job-3fa2b1c9`, `run-42` are not normalised: an unchanged run reads `requests 21 (no change)` beside `✓ fixed … saved 19` and `! new`. Confirmed ✓. |
 | High | `check` | `--program-exit 3` with a budget: exit 0, `"passed": true`, markdown "within budget ❌" ✓. The session's recorded exit is ignored. Without a file, `check` takes the newest session of any program, not `[program] name`. Confirmed. |
-| High | `compare` | A finding listed 92 → 216 times reads `↓ less … saved 0 requests (predicted 91)`; throttling 649 → 1,452 is not among its findings; "4 still open" names none. Confirmed. |
+| High | `compare` | A finding listed 92 → 216 times reads ✓ `↓ less … saved 0 requests (predicted 91)`; throttling 649 → 1,452 is not among its findings; "4 still open" names none. Confirmed. |
 | High | `no-delete`, program identity | A program is its full command line: `etl.py --date 2026-11-14` is refused writing what `--date 2026-11-13` wrote, and the program exits 1 only because it is recorded. Adding a `{trial}` argument loses "since the run before". Confirmed. |
 | Medium | trials | boto3's own `AbortMultipartUpload` of an upload it created in the same recording is `refused`, with advice to add `{trial}` that is already there; with `--allow-writes` it is `broke`. "The program did not break" while two scenarios were refused. Confirmed. |
 | Medium | trials, `--demo` | `lost-answer` and `complete-500` break on `--demo` (a retried Complete is 404) and survive on moto; `docs/ci.md` recommends `--demo` for CI. Confirmed. |
@@ -99,98 +99,102 @@ with ~600 properties, display text among them, and "operation" meaning both a pr
 | No command, flag, file or word of an older version | Met; `run` lets any flag through. |
 | Every picture approved, nothing overlaps at the least window | Partly: 28 exempt, Linux only, the least window breaks. |
 
-## 19.1, then 20.0
 
-The contract says a break comes in a major and is announced one version ahead. So:
+## 20.0
 
-**19.1 (now, no break):** the verdicts and safety above — they are bugs, not changes of contract — and the
-announcement of what 20.0 breaks, said by the commands it touches.
+**Every verdict true, one name for each thing, a promise sonde can keep.** One release: the verdicts and safety above
+are fixed in it, not in a 19.1. No new command, format or screen. `tui`, `bucket` and `probe` stay, as they are.
 
-**20.0: every verdict true, one way to name things, a promise sonde can keep.** No new command, format or screen.
+20.0 breaks JSON names and the session format without a 19.x announcing it: the owner's decision. It reads 19.0's
+sessions; from 20.0 the contract's announcement rule holds.
 
-### 19.1 — what sonde says is true (S)
+### 1. What sonde says is true (M)
 
-- Identity: normalise hours, `key=value` partitions, short ids and counters, with tests from real lakehouse layouts
-  (Hive, Delta, Iceberg, Spark `part-` files); a finding that only moved key is "no change". HEAD-then-GET carries its
-  object's prefix.
-- `check`: fails a program that failed (its recorded exit, or `--program-exit`); without a file, checks the newest
-  run of `[program] name` (else of the program in this directory), never another's; refuses a failed run as baseline
-  or as `--init`'s source; prints `@v19`.
-- `compare` and `run`: direction from the counts (216 > 92 is "more"); throttling and every error class compared;
-  "still open" names them; a "less" back over its threshold is "back".
-- Trials: a program may abort, overwrite or delete what it wrote in the same recording; a verdict that depends on the
-  store's retry semantics says so; "did not break" only when every scenario was judged; `--again` keeps the flags.
-- Safety: control characters in keys escaped everywhere text reaches a terminal; replay never creates a bucket;
-  `run` refuses unknown flags (64) and a missing endpoint is 64; `-o` refuses an existing file without `--force`; no
-  empty session when the command cannot start; 137/143 one code.
-- Fix loop under concurrency: `take()` merges runs that finish out of order.
-- `import`: uploads across passes; a truncated CloudTrail exits 65.
-- Release: `publish` waits for CI's green run of the same commit and reuses its builds; "Action live" runs after a
-  release; the Action refuses `latest` for a branch or SHA ref.
+- **A finding's identity.** `stable()` replaces only runs of 9+ digits, UUIDs, dates and long ids (`profile.rs:1447`).
+  20.0 replaces every value of a `key=value` segment, every digit run, and every hex-and-digit token of 6 or more;
+  where two findings of one run then share an identity, both keep their literal key. Tested on Hive, Delta, Iceberg,
+  Spark `part-` and `dt=…-HH` layouts, unchanged runs reading "no change". HEAD-then-GET carries its prefix. The rules
+  carry a version, so `expect` and kept findings survive their next change.
+- **`check`** fails a run that failed (its recorded exit, or `--program-exit`); without a file it checks the newest run
+  of `[program] name`, else of the newest program run in this directory (the session's `cwd`), never another's;
+  a failed run is refused as a baseline and as `--init`'s source; `--init` prints `@v20`.
+- **`compare` and `run`**: direction from the counts (92 → 216 is "more"); throttling and every error class compared;
+  "still open" names them; a "less" back over its threshold is "back"; `take()` merges runs that finish out of order.
+- **Trials**: the demo store answers a retried CompleteMultipartUpload as moto does, so `--demo` and a real store
+  judge alike (`demo.rs:504` forgets the upload). A program may abort, overwrite or delete what it wrote or created
+  in the same recording, uploads included. "Did not break" only when every scenario was judged; `--again` keeps the
+  flags of the trial it repeats.
+- **Safety and edges**: control characters in keys escaped wherever text reaches a terminal; replay never creates a
+  bucket; `run` refuses unknown flags and a missing endpoint (64); `-o` refuses an existing file without `--force`;
+  no session when the command cannot start; 137/143 one code; `..` keys forwarded as sent; uploads across `import`
+  passes; a truncated CloudTrail exits 65; `compare` alone after a first run says there is no run before; `whatIf`
+  as its schema says.
 
-### 20.0 — 1. One name for a kind of request, one for a program (M)
+### 2. One name for each thing (M)
 
-- `operation` is a program's operation; an S3 call is a **kind** everywhere: `requests[].kind`, `show --by kind`,
-  session format 2 (19.x reads 1 and 2; 20.0 writes 2).
-- A program is its name, else its script and subcommand, not its full command line: arguments that change each run
-  (`--date`) keep one program, one history, one `no-delete` ledger.
-- One configuration story: what sonde keeps (`config.toml`: endpoints, prices) and what a project says
-  (`sonde.toml`: program, check, record, scenarios); a setting lives in one of them; `config.toml` joins the contract.
+- **Kind.** An S3 call is a kind everywhere: `requests[].kind`, `show --by kind`, the session format's records
+  (format 2; 20.0 reads 1). `operation` means only a program's operation.
+- **A program** is its `[program] name` or `--name`, else its command with `stable()` applied: `etl.py --date
+  2026-11-14` and `--date 2026-11-13` are one program, one history, one `no-delete` ledger; a `{trial}` argument
+  keeps "since the run before".
+- **Configuration.** `config.toml` holds what sonde keeps (endpoints, prices, the app's settings); `sonde.toml` what a
+  project says (program, check, record, scenarios). A setting lives in one: `record-policy` and `name-callers` move
+  to `sonde.toml`. `config.toml` joins the contract. One page says both.
+- **Flags.** One confirmation idiom (`--yes`; `--confirm` the count where data is lost); `--allow-writes` is
+  `--policy allow`; every flag has help; `-f` lists only what a command writes. `sonde demo` folds into `run --demo`
+  (`tui --demo` stays).
+- **The contract** stops promising display text (`*Text` phrases, `headline`, `facts`) and `tui`'s developer flags.
 
-### 2. A smaller promise (S)
+### 3. The interface says what it shows (M)
 
-- Out of the contract, said in `--help` and the schemas: display text (`*Text` phrases, `headline`, `facts`),
-  `layout`, `probe`, `bucket`, `compare --replay`, `tui`'s developer flags.
-- `sonde demo` folds into `run --demo` and `tui --demo`.
-- One confirmation idiom (`--yes`, or `--confirm` the count where data is lost); `--allow-writes` is
-  `--policy allow`; every flag has help; `-f` lists only what a command writes.
-- The finding identity's normalisation is versioned, so `expect` and kept findings survive its improvements.
+- **Time**: every chart keeps its place, shown. Each sentence is computed from what the chart draws ("2 failed, both
+  NoSuchBucket, in the last 10 ms"); how to read it moves to the legend's tooltip; a picked stretch keeps the sentence
+  and says its range beside it. A slice with no requests does not become a stretch.
+- **sonde's own answers** are one teal everywhere: timeline, rows, the Errors tile.
+- **A run and its trials apart**: a clean run is never "Broke"; trials read "2 of 5 broke", quiet. Runs told apart by
+  what differs, cut from its start.
+- **Honest figures**: no colour for figures too few to tell; one figure, not "a → a"; misses beside errors in the
+  session header; one writing of one cost on a pane; the "since" card lists what its tally counts.
+- **Buckets**: the fix ("Add abort rule…") is the primary act; the dialog names its act and count; no verb in a
+  figure's place.
+- **The least window**: the one-line tile only one per row; no heading breaks inside a word; toolbar extras behind ⋯;
+  the session header folds to one line as the pane scrolls; Run's output yields to its result. Chinese keeps a number
+  with its unit.
 
-### 3. Run, Time and trials say what they show (M)
+### 4. Releases and CI that prove it (S)
 
-- Every Time chart keeps its place, shown; each sentence is computed from the data ("2 failed, both NoSuchBucket, in
-  the last 10 ms"); how to read it moves to the legend or tooltip; a picked stretch keeps the sentence and says its
-  range beside. A slice with no requests is not a stretch.
-- sonde's own answers are one teal everywhere: timeline, rows, Errors tile.
-- A run's outcome and its trials' verdict apart: a clean run is never "Broke"; trials read "2 of 5 broke" quietly.
-  Runs told apart by what differs, cut from its start.
-- "Few" and "same" are honest: no colour for figures too few to tell; one figure, not "a → a".
-- Misses are said beside errors in the session header; one writing for one cost on a pane.
-
-### 4. The least window (S)
-
-The one-line tile layout only one per row; no heading breaks inside a word; toolbar extras behind ⋯; the session
-header folds to one line as the pane scrolls; Run's output pane yields to its result. Chinese keeps a number with its
-unit.
-
-### 5. CI that proves it (S)
-
-- The live screens held by a tolerant mask (the measured figures masked), not exempt; macOS and Windows tours run
-  before a release, and their pictures are approved.
-- Budgets measured by instructions or a cgroup's peak, not wall-clock with a retry.
-- One memory figure, measured, in one place; `performance.md` remeasured at 20.0.
+- `publish` waits for CI's green run of the same commit and reuses its builds; "Action live" runs after a release;
+  the Action refuses `latest` for a branch or SHA ref.
+- The screens that draw measured figures are shot from committed sessions, not live runs, so none is exempt
+  (28 today); the macOS and Windows tours run before a release, their pictures approved.
+- Budgets gate on peak memory (deterministic); time is reported, with room for a shared runner, not retried.
+- One memory figure, measured, in `performance.md` only; the docs link to it.
 
 ### Not in 20.0
 
 New commands, decoders or screens; a sidecar, `/metrics`, a query language, an MCP server; splitting `replay` out of
-`compare`; renames beyond kind and program; custom rules; in-test fault toggles; SDK callers beyond boto3, JS v3 and
-Java 2; S3 Express, SigV4a, HTTP/2. Signing needs the owner's secrets (Developer ID, notarization, the package key, a
-Windows certificate); the release says what it skipped, Windows included.
+`compare`; custom rules; in-test fault toggles; SDK callers beyond boto3, JS v3 and Java 2; S3 Express, SigV4a, HTTP/2.
+Signing needs the owner's secrets (Developer ID, notarization, the package key, a Windows certificate); the release
+says what it skipped, Windows included.
 
-## To decide
+### Streams
 
-- **`tui`**: a fourth interface beside the app, the share site and `--html`. Keep it outside the contract, or remove it.
-- **`bucket`** (sizes, uploads, lifecycle, aborting uploads): store hygiene that can change data, not program
-  behaviour. Keep it outside the contract, or remove it.
-- **`probe`** (S3-compatibility tests, 5.7k lines): a separate product. Keep it outside the contract, or move it out.
+| Stream | Items | Mostly in |
+|---|---|---|
+| A — Verdicts | 1 (identity, check, compare, fix loop) | `profile.rs`, `program.rs`, `fixloop.rs`, `cmd/check.rs`, `compare.rs` |
+| B — Trials, safety, edges | 1 (trials, safety) | `trial.rs`, `demo.rs`, `record.rs`, `cmd/run.rs`, `import`, replay |
+| C — Names | 2 | sessions, schemas, `project.rs`, config, CLI flags, `app/src/types.ts`, viewer |
+| D — Interface | 3 | `app/src/ui`, `app/src/screens`, locales, `DESIGN.md` |
+| E — CI and release | 4 | `.github/workflows`, `app/tests/shots.test.tsx`, budgets, docs |
+
+C renames what the others touch: it goes first in the shared files (`types.ts`, schemas), the others merge onto it.
 
 ## Done when
 
-- An hourly job writing `hour=` partitions, run twice unchanged, reads "no change"; run with `--date` changed, one
-  program.
+- An hourly job writing `hour=` partitions, run twice unchanged, reads "no change"; with `--date` changed, one program.
 - `check` of a run that exited 3 fails; of another program's run, refuses; `compare` of 92 → 216 reads "more".
-- A boto3 upload under `lost-answer` is judged, on `--demo` and on moto alike, or says why they differ.
-- `run --typo` exits 64; a key with ESC prints escaped.
-- `requests[].kind` and `show --by kind`; `operation` means only a program's operation.
-- The release waits for CI; every picture approved on Linux, macOS and Windows, live ones masked not exempt; nothing
-  breaks at the least window; every Time chart shown, each sentence an answer.
+- A boto3 upload under `lost-answer` reads the same on `--demo` and on moto; aborting its own upload is never refused.
+- `run --typo` exits 64; a key with ESC prints escaped; replay leaves no bucket.
+- `requests[].kind` and `show --by kind`; `operation` means only a program's operation; one setting, one file.
+- Every Time chart shown, each sentence an answer; nothing breaks at the least window; no clean run reads "Broke".
+- The release waits for CI; every picture approved on Linux, macOS and Windows, none exempt.
