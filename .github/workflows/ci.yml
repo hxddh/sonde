@@ -1,17 +1,24 @@
 name: CI
 
+# One run per change: a pull request's, then main's once merged. Nightly
+# and by hand, the rest: every build, the macOS and Windows tours. A
+# Dependabot crate update runs lint, unit and supply.
 on:
-  push:
-    branches: [main, "claude/**"]
   pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
-# a newer push supersedes the run before it
 permissions:
   contents: read
   actions: read
 
+# a newer push to a pull request cancels its run; main's runs all finish
+# (a release takes its build from them)
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-{0}', github.run_id) }}
   cancel-in-progress: true
 
 env:
@@ -23,7 +30,7 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with: { components: "rustfmt, clippy" }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -51,7 +58,7 @@ jobs:
     defaults:
       run: { shell: bash }
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # the default members: the CLI, the proxy and what is under them (the
@@ -75,12 +82,12 @@ jobs:
     # crates, and the Java hook it injects, rebuilt from source byte for byte
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with: { tool: cargo-deny }
       - name: Licences, advisories, sources and bans (deny.toml)
         run: cargo deny --locked check
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with: { distribution: temurin, java-version: "21" }
       - name: The committed callers hook is what hooks/java builds
         run: |
@@ -93,9 +100,11 @@ jobs:
   action:
     # the GitHub Action (action.yml): its scripts linted and run against
     # stand-ins, then the action itself with this commit's sonde
+    # (action-live.yml: against a real baseline and comment, daily)
+    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The action's metadata, scripts and the workflows that use it
         run: |
           pip install shellcheck-py==0.11.0.1 actionlint-py==1.7.12.25
@@ -122,13 +131,14 @@ jobs:
         run: test "$PASSED" = true && test -f "$SESSION" && test -n "$REPORT"
 
   integration:
+    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { workspaces: ". -> target\ntools/gen-slatedb -> target" }
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.12" }
       - run: pip install "pyiceberg[sql-sqlite,pyarrow]==0.9.1"
       - run: scripts/integration.sh ceph rustfs
@@ -137,21 +147,22 @@ jobs:
 
   record:
     # sonde run with four AWS SDKs against RustFS, and the proxy's overhead
+    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     runs-on: ubuntu-24.04
     env:
       AWS_ACCESS_KEY_ID: rustfsadmin
       AWS_SECRET_ACCESS_KEY: rustfsadmin
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with: { python-version: "3.12" }
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: "22" }
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version-file: tools/sdk-smoke/go/go.mod, cache-dependency-path: tools/sdk-smoke/go/go.sum }
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with: { distribution: temurin, java-version: "17", cache: maven }
       - run: pip install boto3
       - name: Start RustFS
@@ -166,13 +177,14 @@ jobs:
         env: { OVERHEAD_URL: "http://127.0.0.1:9100", OVERHEAD_BUCKET: sonde-smoke }
         run: cargo run --release -p sonde-proxy --example overhead
       - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: sdk-sessions, path: "sessions/*.sonde", if-no-files-found: ignore }
 
   ui:
+    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
@@ -183,19 +195,18 @@ jobs:
   shots:
     # the app on a real window — GTK under Xvfb, AppKit, Win32: every place,
     # wide and at the least size, light and dark, English and Chinese — kept
-    # as an artifact, the visual record of each build
+    # as an artifact, the visual record of each build. Linux on every change
+    # (its pictures are the approved ones); macOS and Windows nightly.
+    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-24.04, name: linux }
-          - { os: macos-15, name: macos }
-          - { os: windows-latest, name: windows }
+        include: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '[{"os":"ubuntu-24.04","name":"linux"},{"os":"macos-15","name":"macos"},{"os":"windows-latest","name":"windows"}]' || '[{"os":"ubuntu-24.04","name":"linux"}]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run: { shell: bash }
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { key: "shots-${{ matrix.name }}", workspaces: "app/.nsh/rust -> ../../target" }
@@ -209,7 +220,7 @@ jobs:
         env:
           SONDE_SHOT_MAX: ${{ runner.os == 'macOS' && '1024x688' || '' }}
         run: scripts/shots.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: sonde-shots-${{ matrix.name }}
@@ -222,13 +233,16 @@ jobs:
       # approved for it in app/shots.approved.json, or the job fails. Approving
       # is committing that file (scripts/shots-diff.py approve, on this run's
       # sonde-shots-<platform> artifact). A platform with no approved pictures
-      # is reported, not held.
+      # is reported, not held; macOS and Windows are compared with the last
+      # nightly run, the only one that has them.
       - name: Screens against the last green run, held to the approved ones
         if: success()
-        env: { GH_TOKEN: "${{ github.token }}" }
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ matrix.name != 'linux' && '&event=schedule' || '' }}
         run: |
           mkdir -p shots-before
-          prev=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?status=success&branch=${{ github.event.repository.default_branch }}&per_page=1" --jq '.workflow_runs[0].id' || true)
+          prev=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?status=success&branch=${{ github.event.repository.default_branch }}$EVENT&per_page=1" --jq '.workflow_runs[0].id' || true)
           if [ -n "$prev" ]; then
             gh run download "$prev" -R "${{ github.repository }}" -n "sonde-shots-${{ matrix.name }}" -D shots-before || echo "no screenshots in run $prev: every screen is held to the approved ones"
           else
@@ -245,7 +259,7 @@ jobs:
             echo "::error title=Screenshots::a screen changed and is not approved: see the job summary and the sonde-shots-diff-${{ matrix.name }} artifact; approve with scripts/shots-diff.py approve"
           fi
           exit "$status"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: sonde-shots-diff-${{ matrix.name }}
@@ -253,5 +267,10 @@ jobs:
           if-no-files-found: ignore
 
   build:
+    # a pull request: Linux x86_64; main: and Linux arm64, macOS arm64,
+    # Windows; nightly and by hand: everything a release ships
+    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     uses: ./.github/workflows/build.yml
+    with:
+      set: ${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && 'main' || 'all' }}
     secrets: inherit
