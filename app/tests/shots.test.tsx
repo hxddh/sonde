@@ -23,12 +23,12 @@ function command(cmd: boolean, marker?: string) {
   // a pause first: a trial of it runs long enough to be seen running
   const pause = cmd ? "ping -n 3 127.0.0.1 >NUL" : "sleep 1.5";
   // its config read ten times (a finding: a key read again and again)
-  // (with a marker, sh's form reads it ten times on the first run and once on the next: the same command, changed
-  // behaviour, as a program fixed between two runs — what "Since the run before" is about)
+  // (with a marker, sh's form reads it ten times more on the first run and not again on the next: the same command,
+  // changed behaviour, as a program fixed between two runs — what "Since the run before" is about, the finding fixed)
   const again = cmd
     ? `(for /L %i in (1,1,10) do @${curl} -o ${sink} ${url}/demo/config/app.yaml)`
     : marker
-      ? `(if [ -e ${marker} ]; then n=1; else n=10; touch ${marker}; fi; for i in $(seq $n); do ${curl} -o ${sink} ${url}/demo/config/app.yaml; done)`
+      ? `(if [ -e ${marker} ]; then n=0; else n=10; touch ${marker}; fi; for i in $(seq $n); do ${curl} -o ${sink} ${url}/demo/config/app.yaml; done)`
       : `for i in 1 2 3 4 5 6 7 8 9 10; do ${curl} -o ${sink} ${url}/demo/config/app.yaml; done`;
   // a write whose refusal curl never hears (no -f): under faults it breaks
   const put = `${curl} -X PUT --data hello -o ${sink} ${url}/demo/tour/notes.txt && echo wrote notes.txt`;
@@ -250,6 +250,8 @@ for (const v of variants) {
     // the board's charts draw themselves in: the picture is of them drawn
     await app.wait(900);
     await charts("03g-time");
+    // the slice chosen on the strip is the Time pane's too (its one chip): let go, the charts below are of the whole run
+    if (app.shows("id:clear-filter")) await app.press("id:clear-filter");
     // further down the Time pane, a window at a time: every request and each
     // kind over time; pushback and the distribution; time spent and chains;
     // limits, heat and costs; the flows

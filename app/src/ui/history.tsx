@@ -32,8 +32,8 @@ const moment = (at: string) => {
 };
 
 /** A scenario's verdicts over the program's runs, in a few words, when there are two or more: how many of
- * them stood as the last did and since when — "Broke in 3 of 3 runs, since 08:33", or "Survived since 08:40
- * (1 of 3 runs), broke before". */
+ * them stood as the last did and since when — "Broke in 3 of 3 runs, since 08:33", or "Survived in 1 of 3
+ * runs, since 08:40; broke before". */
 export function trialSince(x: Trial): string | null {
   const h = x.history ?? [];
   const last = h[h.length - 1];

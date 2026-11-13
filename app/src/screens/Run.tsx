@@ -12,7 +12,7 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, runAgain, running, start, startedAt, stop } from "../run";
+import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, running, start, startedAt, stop } from "../run";
 import { away, compareOnOpen, endpoint, endpoints, endpointsMode, go, openSession, paneOnOpen, report, sessionsChanged, showInSidebar } from "../store";
 import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { TrialDialog } from "../ui/trial";
@@ -37,9 +37,6 @@ function CommandBar() {
   const run = () => {
     const id = endpoint();
     if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
-    // the same command as the run that ended: run again, compared with it (as the band's Run again)
-    const done = lastRun();
-    if (done && !done.removed && done.path && command().trim() === done.command.trim()) return runAgain(done.path, done.command, done.endpoint, cwd() || null);
     start(command(), id);
   };
   const recent = () => {
@@ -165,13 +162,13 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   };
   // (8 before the primary; never less than nothing)
   const room = () => Math.max(0, (widths().next ?? 0) - (widths().primary ?? 0) - 8);
-  // the one Run of the place once a run ended: its command again (compared with it), or the field's
-  // command when it was changed since — the field's Return runs the same
+  // the one Run of the place once a run ended: its command again, or the field's command when it was
+  // changed since (the field's Return runs the same). It stays on Run: what changed since this run is
+  // said here, under the band, with the way to compare the two
   const same = () => !!r() && command().trim() === r()!.command.trim();
   const runNext = () => {
     const done = r();
     if (!done || running()) return;
-    if (same() && !done.removed && s()?.requests) return runAgain(done.path, done.command, done.endpoint, cwd() || null);
     const id = same() ? done.endpoint : endpoint();
     if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
     start(same() ? done.command : command(), id);

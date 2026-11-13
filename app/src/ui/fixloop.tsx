@@ -40,8 +40,10 @@ export function statesOf(s: SinceLast | null | undefined): Record<string, Findin
 function changeLine(s: SinceLast): string | null {
   const c = s.change;
   if (!c) return null;
-  const parts = [`${t("compare.requests")} ${count(c.requests[0])} → ${count(c.requests[1])}`, `${t("compare.waiting")} ${duration(c.busyMs[0])} → ${duration(c.busyMs[1])}`];
-  if (c.errors[0] || c.errors[1]) parts.push(`${t("signal.errors")} ${count(c.errors[0])} → ${count(c.errors[1])}`);
+  // a figure's "before → after" is never broken across lines (the line wraps between its words)
+  const part = (label: string, a: string, b: string) => `${label}\u00a0${`${a} → ${b}`.replace(/ /g, "\u00a0")}`;
+  const parts = [part(t("compare.requests"), count(c.requests[0]), count(c.requests[1])), part(t("compare.waiting"), duration(c.busyMs[0]), duration(c.busyMs[1]))];
+  if (c.errors[0] || c.errors[1]) parts.push(part(t("signal.errors"), count(c.errors[0]), count(c.errors[1])));
   return parts.join(" · ");
 }
 

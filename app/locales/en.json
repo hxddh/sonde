@@ -957,7 +957,7 @@
  "latencyTime.heat": "Heat map",
  "latencyHeat.scale": "Fewer to more requests",
  "trialOver.title": "What did the faults change?",
- "trialOver.hint": "Requests a second, then the median latency, of this trial over the clean run on one time axis; a rule is a request sonde answered",
+ "trialOver.hint": "The requests sent so far, then the median latency, of this trial over the clean run on one time axis; a rule is a request sonde answered",
  "trialOver.text": "This trial took %{trial}, the clean run %{clean}; sonde answered %{n} requests",
  "trialOver.text.one": "This trial took %{trial}, the clean run %{clean}; sonde answered 1 request",
  "trialOver.fault": "sonde answered in the store's place",
@@ -1037,7 +1037,7 @@
  "fix.since": "Since the run before",
  "fix.compare": "Compare",
  "fix.was": "Was: %{text}",
- "trial.sinceChanged": "%{now} since %{at} (%{k} of %{n} runs), %{was} before",
+ "trial.sinceChanged": "%{now} in %{k} of %{n} runs, since %{at}; %{was} before",
  "trial.sinceSame": "%{now} in %{k} of %{n} runs, since %{at}",
  "trial.again": "Try again what broke",
  "trial.againTitle": "Try again what broke",
@@ -1063,6 +1063,6 @@
  "failures.text.one": "1 request failed, %{retries} sent again",
  "shape.peak.one": "1 request",
  "sizes.peak.one": "1 body",
- "trial.adviceSame": "What to change: as for %{scenario}, above",
+ "trial.adviceSame": "What to change: the same as for “%{scenario}”, above",
  "layouts.decode": "Decode"
 }

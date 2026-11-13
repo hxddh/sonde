@@ -173,6 +173,7 @@ export function TrialDialog(props: {
   const same = () => adviceOnce((steps() ?? []).map((s) => s.trial));
   const row = (s: () => TrialStep, i: () => number) => {
     const session = () => (ended() && !ended()!.cancelled ? (s().trial?.session ?? null) : null);
+    // its verdict, drawn as the Runs pane draws it; done, and its session kept: a press opens it
     return (
       <If
         when={s().trial}
@@ -186,7 +187,6 @@ export function TrialDialog(props: {
           </ListRow>
         }
       >
-        {/* its verdict, drawn as the Runs pane draws it; done, and its session kept: a press opens it */}
         {(x) => <TrialRow trial={x()} first={i() === 0} sameAs={same()[i()]} onOpen={session() && props.onOpen ? () => open(session()!) : undefined} testID={`trial-step-${s().scenario}`} historyID={`trial-step-history-${s().scenario}`} />}
       </If>
     );
