@@ -296,7 +296,12 @@ test("tiles go in rows of equal count: four are two and two, never three and one
   expect(tilesPerRow(200, 4, 144)).toBe(1);
   expect(tilesPerRow(300, 4, 144)).toBe(2);
   expect(tilesPerRow(200, 1, 144)).toBe(1);
-  expect(tilesPerRow(500, 5, 128)).toBe(3);
+  // five: abreast (a little tight), or a line each; never three and two
+  expect(tilesPerRow(560, 5, 128)).toBe(5);
+  expect(tilesPerRow(400, 5, 128)).toBe(1);
+  // six: three and three, or two by three
+  expect(tilesPerRow(500, 6, 144)).toBe(3);
+  expect(tilesPerRow(320, 6, 144)).toBe(2);
   // not measured yet: all abreast
   expect(tilesPerRow(0, 4, 144)).toBe(4);
   // a ranked row holds what fits and never wraps: the last ranked go, two stay
@@ -348,7 +353,8 @@ test("one way to write a figure, in the app and in the terminal", async () => {
     [0, "0 B"],
     [1, "1 B"],
     [512, "512 B"],
-    [1023, "1023 B"],
+    [999, "999 B"],
+    [1020, "1.0 KiB"],
     [1024, "1.0 KiB"],
     [1280, "1.3 KiB"],
     [1536, "1.5 KiB"],

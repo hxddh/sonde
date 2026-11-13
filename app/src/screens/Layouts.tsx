@@ -150,7 +150,7 @@ export function Layouts() {
                       <Badge label={LABEL[d().format] ?? d().format} tone="primary" />
                       <Path path={d().root || "/"} class="min-w-0 flex-1 text-foreground" />
                       <Text class="shrink text-small text-muted-foreground line-clamp-1">{d().evidence}</Text>
-                      <Button small label={t("common.run")} onPress={() => analyze(d().format, d().root)} disabled={busy()} testID={`analyze-${d().format}`} />
+                      <Button small label={t("layouts.decode")} onPress={() => analyze(d().format, d().root)} disabled={busy()} testID={`analyze-${d().format}`} />
                     </View>
                   )}
                 </Each>

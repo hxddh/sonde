@@ -3,9 +3,10 @@
 //! `count` and `duration` take the same numbers to the same figures.
 //! `cases.json` beside this crate is the table both are tested against.
 //!
-//! - [`bytes`]: `0 B`, `1023 B`, `1.0 KiB`, `1.5 MiB`, `512 MiB`: one decimal
-//!   under 100, none from 100, and the unit chosen after rounding (1,048,575
-//!   bytes is `1.0 MiB`, never `1024 KiB`).
+//! - [`bytes`]: `0 B`, `999 B`, `1.0 KiB`, `1.5 MiB`, `512 MiB`: one decimal
+//!   under 100, none from 100, never four digits (1020 bytes is `1.0 KiB`,
+//!   never `1020 B`), and the unit chosen after rounding (1,048,575 bytes is
+//!   `1.0 MiB`, never `1024 KiB`).
 //! - [`count`]: `1,234,567`, separated in thousands always, in prose and in
 //!   tables alike.
 //! - [`duration`]: `0.4 ms`, `84 ms`, `2.35 s`, `41.2 s`, `3m 05s`,
@@ -21,18 +22,18 @@ const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
 /// A count of bytes: `1.0 KiB` for 1024. See the crate's documentation.
 pub fn bytes(n: u64) -> String {
     let n = u128::from(n);
-    // the unit whose next would be 1024 or more of it
+    // the unit under 1000 of it: no figure has four digits
     let mut i = 0;
-    while i < UNITS.len() - 1 && n >= 1u128 << (10 * (i + 1)) {
+    while i < UNITS.len() - 1 && n >= 1000u128 << (10 * i) {
         i += 1;
     }
     if i == 0 {
         return format!("{n} B");
     }
-    // the unit after rounding: 1023.96 KiB is 1.0 MiB
+    // the unit after rounding: 999.96 KiB is 1.0 MiB
     if i < UNITS.len() - 1 {
         let (r, decimals) = scaled(n, i);
-        if r >= if decimals == 0 { 1024 } else { 10240 } {
+        if r >= if decimals == 0 { 1000 } else { 10000 } {
             i += 1;
         }
     }

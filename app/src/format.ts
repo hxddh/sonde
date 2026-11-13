@@ -52,12 +52,13 @@ export function bytes(n: number | null | undefined): string {
   const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
   let v = n;
   let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
+  // under 1000 of its unit: no figure has four digits (1020 B is 1.0 KiB)
+  while (v >= 1000 && i < units.length - 1) {
     v /= 1024;
     i++;
   }
   // the unit after rounding: 1,048,575 B is 1.0 MiB, not 1024 KiB
-  if (i > 0 && i < units.length - 1 && Number(v.toFixed(v >= 100 ? 0 : 1)) >= 1024) {
+  if (i < units.length - 1 && Number(v.toFixed(v >= 100 ? 0 : 1)) >= 1000) {
     v /= 1024;
     i++;
   }
@@ -184,6 +185,22 @@ export function costParts(v: number, currency: string): { figure: string; unit: 
     return { figure: k < 0.01 ? Number(k.toPrecision(2)).toString() : k.toFixed(2), unit: t("cost.unitPerThousand", { cur: currency }), per1000: true };
   }
   return { figure: v.toFixed(2), unit: currency, per1000: false };
+}
+
+/** A column of costs in one unit, said once in its title: the largest
+ * decides it ("USD", or "USD per 1,000 runs" when every one is under a
+ * cent), and every figure is in it. */
+export function costColumn(values: number[], currency: string): { unit: string; figures: string[] } {
+  const top = Math.max(0, ...values.filter(Number.isFinite));
+  const per1000 = top > 0 && top < 0.01;
+  const unit = per1000 ? t("cost.unitPerThousand", { cur: currency }) : currency;
+  const figure = (v: number) => {
+    if (!Number.isFinite(v) || v < 0) return "—";
+    if (v === 0) return "0";
+    const x = per1000 ? v * 1000 : v;
+    return x < 0.01 ? "<0.01" : x.toFixed(2);
+  };
+  return { unit, figures: values.map(figure) };
 }
 
 /** What a run's requests cost, as people read it: "0.42 USD", or (under a

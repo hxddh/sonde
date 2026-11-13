@@ -459,7 +459,7 @@ mod tests {
         );
         jobs.wait(&id).await.unwrap();
         let info = jobs.info(&id).unwrap();
-        assert_eq!(info.title, "Capacity scan b/p/");
+        assert_eq!(info.title, "Size of b/p/");
         assert_eq!(en(&info.title_text), info.title);
         assert_eq!(info.progress.message, "3 objects");
         assert_eq!(en(&info.progress.message_text), info.progress.message);

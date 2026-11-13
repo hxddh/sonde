@@ -2,7 +2,7 @@
 // the session afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { desktop, place, runAction } from "./helpers";
+import { desktop, place, runAction, runCommand } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
@@ -107,6 +107,16 @@ test("an example session reads as operations, each opening on its requests", asy
   expect(app.shows("text:45 fewer requests (26% of the session)")).toBe(true);
   await app.press("id:observation-0");
   await app.waitFor("text:28 of 34 operations");
+  await app.press("id:clear-filter");
+  expect(app.shows("id:clear-filter")).toBe(false);
+  // a slice of the strip is the session's one selection of time: the Time pane's too, one chip on both
+  await app.hover("id:session-shape");
+  await app.press("id:session-shape");
+  await app.waitFor("id:clear-filter");
+  await app.press("id:session-pane-mode-time");
+  await app.waitFor("id:time-pane");
+  expect(app.shows("id:clear-filter")).toBe(true);
+  await app.waitFor("text:/ · in \+.* – \+.*$/", { timeout: 5000 });
   await app.press("id:clear-filter");
   expect(app.shows("id:clear-filter")).toBe(false);
 });
@@ -246,9 +256,8 @@ test("a program over its runs: history, a baseline, and the flows of its request
   for (let i = 0; i < 2; i++) {
     await app.clear("id:run-command");
     await app.type("id:run-command", cmd);
-    // the button follows the field a frame later
-    await app.waitUntil(() => app.enabled("id:run-start"));
-    await app.press("id:run-start");
+    // Run, then the ended band's one Run
+    await runCommand(app);
     await app.waitFor("id:run-ended", { timeout: 20000 });
   }
   await runAction(app, "run-open-session");
@@ -259,7 +268,7 @@ test("a program over its runs: history, a baseline, and the flows of its request
   await app.waitFor("id:history-pane", { timeout: 10000 });
   // the runs of a stretch of days
   expect(app.shows("id:history-range")).toBe(true);
-  expect(app.shows("text:/, over [2-9] runs$/")).toBe(true);
+  expect(app.shows("text:/^This command over [2-9] runs$/")).toBe(true);
   expect(app.shows("id:trend-requests")).toBe(true);
   await app.press("id:history-baseline");
   // a state has its verb as its label
@@ -445,8 +454,7 @@ test("the fix loop: a finding fixed by the next run is said fixed, with what it 
   for (let i = 0; i < 2; i++) {
     await app.clear("id:run-command");
     await app.type("id:run-command", cmd);
-    await app.waitUntil(() => app.enabled("id:run-start"));
-    await app.press("id:run-start");
+    await runCommand(app);
     await app.waitFor("id:run-ended", { timeout: 20000 });
     // the first run: its finding, and no run before it to be held to
     if (i === 0) {
@@ -492,7 +500,7 @@ test("try again what broke: a fresh run, only what did not survive, each scenari
   await app.waitFor("text:/^How the program stood/", { timeout: 60000 });
   // its history over the program's runs
   await app.waitFor("id:trial-step-history-slowdown");
-  expect(app.shows("text:/^Broke since /")).toBe(true);
+  expect(app.shows("text:/^Broke in \\d+ of \\d+ runs, since /")).toBe(true);
   // closed, the fresh run opens on its Runs pane, where it can be tried again
   await app.press("id:trial-close");
   await app.waitFor("id:history-trials", { timeout: 10000 });
@@ -511,6 +519,17 @@ test("why slow: Group by splits the operations with a sentence; a request's insp
   await app.waitFor("id:split-table", { timeout: 10000 });
   expect(app.shows("id:split-sentence")).toBe(true);
   expect(app.shows("id:operations")).toBe(false);
+  // the Time pane's table, one component: its columns, the cost's unit once in its title
+  expect(app.shows("text:Kind of request")).toBe(true);
+  expect(app.shows("text:/^Cost \(USD/")).toBe(true);
+  // a kind pressed is its operations: select, inspect, act
+  await app.press("id:split-table >> text:PutObject");
+  await app.waitFor("id:operations");
+  await app.waitFor("text:/^PutObject · \d+ of 34 operations$/");
+  await app.press("id:clear-filter");
+  await app.press("label:Group by");
+  await app.press("text:Kind of request");
+  await app.waitFor("id:split-table", { timeout: 10000 });
   await app.press("label:Group by");
   await app.press("text:Prefix");
   await app.waitFor("text:Prefix");

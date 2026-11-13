@@ -60,7 +60,7 @@ pub const TEMPLATES: &[(&str, &str)] = &[
     ),
     (
         "du.multipart",
-        "Incomplete multipart uploads: {size} in {n} upload{s} ({pct}%), billed but not listed as objects. See Multipart.",
+        "Incomplete multipart uploads: {size} in {n} upload{s} ({pct}%), billed but not listed as objects. See Incomplete uploads.",
     ),
     (
         "du.multipart.uncounted",
@@ -77,7 +77,7 @@ pub const TEMPLATES: &[(&str, &str)] = &[
     ),
     (
         "du.class",
-        "Storage class {class} holds {pct}% of the bytes.",
+        "Storage class {class} holds {pct}% of the stored versions' bytes.",
     ),
     (
         "du.small",
@@ -88,7 +88,7 @@ pub const TEMPLATES: &[(&str, &str)] = &[
         "{n} versions, {markers} delete markers",
     ),
     ("progress.objects", "{n} objects"),
-    ("job.du", "Capacity scan {bucket}/{prefix}"),
+    ("job.du", "Size of {bucket}/{prefix}"),
     ("plan.confirm.bucket", "the bucket name"),
     ("plan.confirm.count", "the number of items"),
     (
@@ -157,12 +157,12 @@ pub const TEMPLATES: &[(&str, &str)] = &[
         "lifecycle.failed",
         "GetBucketLifecycleConfiguration failed: {error}",
     ),
-    ("job.mpu", "Multipart scan {bucket}/{prefix}"),
+    ("job.mpu", "Incomplete uploads in {bucket}/{prefix}"),
     ("job.download", "Download {bucket}/{key}"),
     ("job.search", "Search {bucket}/{prefix}*{needle}*"),
     ("job.layoutDetect", "Detect layouts in {bucket}/{prefix}"),
     ("job.layout", "{format} at {bucket}/{root}"),
-    ("job.probes", "Probes on {endpoint}"),
+    ("job.probes", "Compatibility of {endpoint}"),
     ("progress.uploads", "{n} uploads listed"),
     ("progress.listParts", "ListParts {n}/{total}"),
     ("progress.leftBehind", "left behind: {path} ({error})"),

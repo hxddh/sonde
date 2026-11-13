@@ -203,8 +203,8 @@ test("sonde:// links keep a stretch of time: a session opens on its Time pane ov
   const name = example!.path.split(/[\\/]/).pop()!;
   await app.openWithUrl(`sonde://session/${encodeURIComponent(name)}?range=0-200`);
   await app.waitFor("id:time-pane", { timeout: 10000 });
-  // the timeline says the stretch it shows, and offers the whole session back
-  await app.waitFor("id:zoom-reset", { timeout: 5000 });
+  // the stretch is the session's one selection of time: its chip says it, and offers the whole session back
+  await app.waitFor("id:clear-filter", { timeout: 5000 });
   // the stretch is the pane's selection: a chart not drawn over time is reckoned again from the
   // requests that started in it, and says so
   const held = await api.sessions.stretch(example!.path, 0, 200);

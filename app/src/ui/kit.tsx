@@ -744,17 +744,20 @@ export function Figure(props: { value: string; label: string; /** `client`: fail
 }
 
 /** How many tiles go in a row `width` wide, of `n` that each need `min`: all
- * abreast where they fit, else rows of equal count (four are 2×2, six 3×3,
- * five 3 and 2), never a row of all but one. Where not even two fit abreast
- * as they read, each takes a line of its own (one column, and `line`: what
+ * abreast where they fit, else rows of equal count (four are 2×2, six 3×3
+ * or 2×3), never a row shorter than the others: five that do not fit stand
+ * abreast a little tight (narrower than `min` by a quarter at most) or a
+ * line each. Where no
+ * equal rows fit, each takes a line of its own (one column, and `line`: what
  * it counts at the line's start, its figure at its end) — a tile is never
  * so narrow that its label or its figure is cut. */
 export function tilesPerRow(width: number, n: number, min: number, gap = 12): number {
   if (width <= 0) return n;
-  const fit = Math.max(1, Math.floor((width + gap) / (min + gap)));
-  if (fit >= n) return n;
-  const half = Math.ceil(n / 2);
-  return fit >= half ? half : fit >= 2 ? 2 : 1;
+  const fits = (k: number, least: number) => (width - gap * (k - 1)) / k >= least;
+  if (fits(n, min)) return n;
+  for (let k = n - 1; k >= 2; k--) if (n % k === 0 && fits(k, min)) return k;
+  // no equal rows: all abreast a little tight, else a line each
+  return fits(n, min * 0.75) ? n : 1;
 }
 /** How many tiles a single row `width` wide holds, of `n` that each need `min`: two at least. */
 export const tilesFit = (width: number, n: number, min: number, gap = 12) => (width > 0 ? Math.min(n, Math.max(2, Math.floor((width + gap) / (min + gap)))) : n);
@@ -1359,8 +1362,12 @@ export function sortRows<T>(rows: readonly T[], sort: DataTableSort | null, valu
  * figures, set at their cell's end under their titles; `fill` the one column
  * that takes the room the others leave, so the table is as wide as its
  * place; `cell` draws a cell its own way (a status with its dot), and
- * returns nothing for the cells it leaves as text. */
-export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number; end?: number[]; fill?: number; cell?: (c: { column: number; text: string; /** the row's cells, as text */ cells: string[] }) => JSX.Element | undefined; testID?: string }) {
+ * returns nothing for the cells it leaves as text. From `ranked` on, the
+ * columns go by rank where the table is narrow (`fitColumns`: the last
+ * first, whole, never clipped). With `onSelect` a row is chosen by a press
+ * (by its place in `rows`, whatever the sort; again lets it go), marked as
+ * `selected`. */
+export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number; end?: number[]; fill?: number; ranked?: number; selected?: number | null; onSelect?: (row: number | null) => void; label?: string; cell?: (c: { column: number; text: string; /** the row's cells, as text */ cells: string[] }) => JSX.Element | undefined; testID?: string }) {
   const sort = signal<DataTableSort | null>(null);
   const width = signal(0);
   // the widths measured by Native Shell once the rows are in (CJK, mono and proportional alike);
@@ -1381,10 +1388,16 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
       const longest = Math.max(wide(title) * per() + 44, ...props.rows.slice(0, 400).map((r) => wide(r[c] ?? "") * per() + 24));
       return Math.round(Math.min(360, Math.max(56, longest)));
     });
-    const rest = own.reduce((n, w, c) => (c === props.fill ? n : n + w), 0);
-    return props.columns.map((title, c) => ({ key: `c${c}`, title, width: c === props.fill && width() > 0 ? Math.max(own[c], width() - rest - 2) : own[c], sortable: true, align: props.end?.includes(c) ? ("end" as const) : undefined }));
+    // the ranked columns that fit beside the rest, the one that fills keeping its own width
+    const from = terminal() || props.ranked === undefined ? props.columns.length : props.ranked;
+    const kept = new Set(fitColumns(width(), own.reduce((n, w, c) => (c < from ? n + w : n), 2), 0, own.slice(from).map((w, k) => ({ key: `${from + k}`, width: w }))));
+    const shown = props.columns.map((_, c) => c).filter((c) => c < from || kept.has(`${c}`));
+    const rest = shown.reduce((n, c) => (c === props.fill ? n : n + own[c]), 0);
+    return shown.map((c) => ({ key: `c${c}`, title: props.columns[c], width: c === props.fill && width() > 0 ? Math.max(own[c], width() - rest - 2) : own[c], sortable: true, align: props.end?.includes(c) ? ("end" as const) : undefined }));
   };
-  const sorted = () => sortRows(props.rows, sort(), (r, key) => sortValue(r[Number(key.slice(1))] ?? ""));
+  // the rows by their place in `rows`, in the order the sort says
+  const order = () => sortRows(props.rows.map((_, i) => i), sort(), (i, key) => sortValue(props.rows[i][Number(key.slice(1))] ?? ""));
+  const sorted = () => order().map((i) => props.rows[i]);
   const data = () => sorted().map((r) => Object.fromEntries(r.map((cell, c) => [`c${c}`, cell])));
   const shown = () => Math.min(props.rows.length, props.max ?? 12);
   const custom = () => !terminal() && (!!props.cell || !!props.end?.length);
@@ -1409,6 +1422,10 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
       rowHeight={rowHeight(ROW.dense)}
       classes={terminal() ? undefined : TABLE}
       renderCell={custom() ? cell : undefined}
+      accessibilityLabel={props.label}
+      rowSelectable={!!props.onSelect}
+      rowClasses={props.onSelect ? order().map((i) => (i === props.selected ? "bg-selection" : "")) : undefined}
+      onRowPress={props.onSelect ? ({ row }) => { const i = order()[row]; if (i !== undefined) props.onSelect!(i === props.selected ? null : i); } : undefined}
       class={CARD}
       onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}
       style={terminal() ? undefined : { height: (shown() + 1) * (rowHeight(ROW.dense) ?? 26) + 2 }}

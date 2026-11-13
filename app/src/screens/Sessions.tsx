@@ -71,6 +71,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   const opHighlight = signal<number[]>([]);
   const outHighlight = signal<number[]>([]);
   const filter = signal<number | null>(null);
+  // a kind of request chosen (Group by's row, the Time pane's by-kind table): the operations that sent one
+  const kind = signal<string | null>(null);
   const compareWith = signal<string | null>(null);
   // run again from here: the new run opens compared with this one
   effect(() => {
@@ -156,32 +158,40 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const id = rec();
     return id === null ? null : api.sessions.record(props.path, id);
   });
-  /** A slice of the session's shape: the time it covers, from the session's start. */
-  const slice = signal<number | null>(null);
+  /** The session's one selection of time: a stretch of its slices (first and last), picked on the
+   * Operations strip (a slice) or on the Time pane's timeline (two presses) — the same on both. */
+  const stretch = signal<[number, number] | null>(null);
   // a live session's slices change length as it grows: a picked one would point at another time
   let binMs: number | undefined;
   effect(() => {
     const b = view()?.profile?.binMs;
-    if (binMs !== undefined && b !== binMs) untracked(() => slice.set(null));
+    if (binMs !== undefined && b !== binMs) untracked(() => stretch.set(null));
     binMs = b;
   });
+  /** The stretch as the time it covers, from the session's start. */
   const window = (): [number, number] | null => {
     const v = view();
-    const i = slice();
-    if (!v || i === null || !v.profile) return null;
-    const a = v.profile.rate[i]?.tMs ?? 0;
-    return [a, a + v.profile.binMs];
+    const z = stretch();
+    if (!v || z === null || !v.profile) return null;
+    const a = v.profile.rate[z[0]]?.tMs ?? 0;
+    return [a, (v.profile.rate[z[1]]?.tMs ?? a) + v.profile.binMs];
+  };
+  /** The one slice chosen, when the stretch is one. */
+  const slice = () => {
+    const z = stretch();
+    return z && z[0] === z[1] ? z[0] : null;
   };
   /** The operations shown: all, those the chosen finding is about, and those running in the chosen slice —
    * narrowed where they are kept, whatever order the table has them in. */
   effect(() => {
     const f = filter();
     const w = window();
-    // a finding or a slice chosen narrows the operations: they show, not their groups
-    if (f !== null || w) untracked(() => groupBy.set("none"));
+    const k = kind();
+    // a finding, a slice or a kind chosen narrows the operations: they show, not their groups
+    if (f !== null || w || k !== null) untracked(() => groupBy.set("none"));
     untracked(() => {
-      const { finding: _, slice: __, ...kept } = source.query();
-      source.ask({ ...kept, ...(f === null ? {} : { finding: f }), ...(w ? { slice: w } : {}) });
+      const { finding: _, slice: __, kind: ___, ...kept } = source.query();
+      source.ask({ ...kept, ...(f === null ? {} : { finding: f }), ...(w ? { slice: w } : {}), ...(k === null ? {} : { kind: k }) });
     });
   });
 
@@ -408,11 +418,11 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   /** When: the session's requests over its time, full width, the findings' numbers where they begin; a press picks a slice. */
   const strip = (v: () => SessionView) => (
     <If when={!terminal() && v().profile && box().h >= BREAK.short}>
-      <SessionShape strip axis profile={v().profile} slice={slice()} onSlice={(i) => slice.set(i)} annotate marks={findingMarks(v())} faults={faultMoments(v().profile, v().injected)} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
+      <SessionShape strip axis profile={v().profile} slice={slice()} picked={stretch()} onSlice={(i) => stretch.set(i === null ? null : [i, i])} annotate marks={findingMarks(v())} faults={faultMoments(v().profile, v().injected)} class={`mt-3 ${TICK_ROOM} ${SHAPE_STRIP} w-full shrink-0`} />
     </If>
   );
   const body = (v: () => SessionView) => {
-    if (pane() === "time") return <TimePane view={v()} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
+    if (pane() === "time") return <TimePane view={v()} groupBy={groupBy() === "none" ? null : (groupBy() as Exclude<GroupBy, "none">)} splitOf={(by) => api.sessions.split(props.path, by)} kind={kind()} onKind={(k) => batch(() => (kind.set(k), k !== null && pane.set("operations")))} stretchOf={(a, b) => api.sessions.stretch(props.path, a, b)} onRequest={chooseRequest} reveal={reveal()} clean={clean.view()} budget={budget()} onExport={exportRows} range={linkRange()} stretch={stretch()} onStretch={(z) => stretch.set(z)} onRange={(r) => shownRange.set({ ...shownRange(), [props.path]: r })} />;
     if (pane() === "runs" && !v().trial) return <HistoryPane path={props.path} onOpen={open} onTryAgain={(trials) => tryingAgain.set(trials)} />;
     if (pane() === "aligned" && hasOutput()) {
       if (terminal()) return output();
@@ -436,7 +446,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         {strip(v)}
         {findings(v)}
         <If when={groupBy() !== "none"} else={operations(v)}>
-          <SplitTable path={props.path} by={groupBy() as Exclude<GroupBy, "none">} />
+          <SplitTable path={props.path} by={groupBy() as Exclude<GroupBy, "none">} onKind={(k) => kind.set(k)} />
         </If>
       </View>
     );
@@ -484,18 +494,26 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     const v = view();
     const f = filter();
     const w = window();
-    if (!v || (f === null && !w)) return null;
+    const k = kind();
+    if (!v || (f === null && !w && k === null)) return null;
     const n = source.total();
-    if (w) return t("profile.sliceFilter", { a: duration(w[0]), b: duration(w[1]), n: count(n), of: count(v.episodesTotal) });
-    return t("sessions.filtered", { n: count(n), of: count(v.episodesTotal) });
+    // what narrows them first, then how many of how many
+    const of = t("sessions.filtered", { n: count(n), of: count(v.episodesTotal) });
+    return [k, w ? `+${duration(w[0])} – +${duration(w[1])}` : null, of].filter(Boolean).join(" · ");
   };
 
   const chip = () => (
     <If when={filterNote()}>
       {(n) => (
         // what narrows the operations, and the press that lets it go
-        <Button small variant="outline" icon="x" label={n()} tip={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), slice.set(null)))} testID="clear-filter" />
+        <Button small variant="outline" icon="x" label={n()} tip={t("sessions.clearFilter")} onPress={() => batch(() => (filter.set(null), stretch.set(null), kind.set(null)))} testID="clear-filter" />
       )}
+    </If>
+  );
+  // on the Time pane, the same stretch of time as its one chip: every chart follows it, a press lets it go
+  const timeChip = () => (
+    <If when={window()}>
+      {(w) => <Button small variant="outline" icon="x" label={`+${duration(w()[0])} – +${duration(w()[1])}`} tip={t("timeline.unzoom")} onPress={() => stretch.set(null)} testID="clear-filter" />}
     </If>
   );
   const tabs = () => <Segmented testID="session-pane-mode" value={pane()} items={panes()} onChange={(p) => pane.set(p as Pane)} />;
@@ -537,9 +555,9 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           {tabs()}
           <View class="flex-1" />
           {/* what narrows the operations, said where they are; and the one way to group them */}
-          <If when={pane() === "operations" || pane() === "aligned"}>{chip()}</If>
+          <If when={pane() === "operations" || pane() === "aligned"} else={<If when={pane() === "time"}>{timeChip()}</If>}>{chip()}</If>
           <If when={pane() === "operations"}>
-            <GroupByChoice value={groupBy()} onChange={(g) => batch(() => (g !== "none" && (filter.set(null), slice.set(null)), groupBy.set(g)))} />
+            <GroupByChoice value={groupBy()} onChange={(g) => batch(() => (g !== "none" && (filter.set(null), stretch.set(null), kind.set(null)), groupBy.set(g)))} />
           </If>
         </View>
         <View class="min-h-0 flex-1 px-4 pb-4 pt-3" onLayout={({ bounds }) => bodyHeight.set(Math.round(bounds.size.height))}>

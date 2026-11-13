@@ -8,7 +8,8 @@ The app's own decisions on top of Native Shell's Design Guides
 
 One task: see what a program does to S3. Three places — **Run** (start a program and
 watch its requests become operations; once it ends, its top findings, what each saves and
-the one figure for acting on them), **Sessions** (what a run did, what stands out and how
+the one figure for acting on them, under a band of two rows — how it ended in figures, then "See the whole run",
+"Try under faults…" and the place's one Run, "Run again", by their words at every width), **Sessions** (what a run did, what stands out and how
 it stands against the run before, grouped, compared and replayed), **Buckets** (the store's side, in one row of sections: objects, size,
 incomplete uploads, versions, layouts, compatibility). The window has two columns
 and no more: the **sidebar** (the places, and under them the current place's own list —
@@ -110,7 +111,7 @@ Rules: a page passes no classes of its own to an `nsh/base` control; a class str
 belongs in the kit; `FOCUS` is on everything that takes the keyboard, and shows for focus the keyboard moved (`focus-visible:`), never
 after a click (`FOCUS_WITHIN` around a control whose focus is a text input inside it); `selected:bg-selection` is the one selection,
 `active:bg-muted` the press. One formatter per kind of value (`format.ts`): `duration` (0.4 ms … 2 h 05 min, the unit chosen after rounding),
-`percent` and `change`, `cost`, `clock`, `count`, `bytes`, `transfer` (bytes each way: `↑ 78.1 KiB ↓ 75.1 KiB`), `date` (a day with its time, one writing: "Nov 7, 2026, 00:22", and to the millisecond "Nov 7, 2026, 00:22:25.074"), `factor`, `rate`. `duration` is the one writer of a length of time, in three forms: as measured, as an `age` (now, 5 min, 3 h, 86 d: whole, never "86.0 d") and as a `counter` (0:07). `copy()` is the one way to copy, `useEndpoint()`
+`percent` and `change`, `cost` (`costColumn`: a column's costs in one unit, said once in its title), `clock`, `count`, `bytes` (never four digits: 999 B, then 1.0 KiB), `transfer` (bytes each way: `↑ 78.1 KiB ↓ 75.1 KiB`), `date` (a day with its time, one writing: "Nov 7, 2026, 00:22", and to the millisecond "Nov 7, 2026, 00:22:25.074"), `factor`, `rate`. `duration` is the one writer of a length of time, in three forms: as measured, as an `age` (now, 5 min, 3 h, 86 d: whole, never "86.0 d") and as a `counter` (0:07). `copy()` is the one way to copy, `useEndpoint()`
 the one way to change endpoint.
 
 ### One of each, and the lint that keeps it so
@@ -172,7 +173,8 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     column's state by its place;
   - a finding's words keep their width: what acting on it saves goes first, then the count's words;
   - a session's sentence wraps to two lines and is cut only at the second line's end;
-  - tiles (`Tiles`) go in rows of equal count: four are four abreast or two and two, never three and one; where
+  - tiles (`Tiles`) go in rows of equal count: four are four abreast or two and two, never three and one; five
+    that do not fit stand abreast a little tight (a quarter under their least) or a line each, never three and two; where
     not even two fit as they read (a bucket's tiles beside an inspector) each takes a line of its own — what it
     counts at its start, the figure at its end — before any label or figure would be cut;
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
@@ -264,9 +266,11 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   go?", "时间花在了哪里？"); its sentence and `accessibilityLabel` the answer ("Most of the waiting: PutObject,
   65%"). A terminal gets the sentence and a table.
 - **One reading order** on the Time pane: four titled groups, **Traffic, Latency, Errors, Where**, every chart
-  shown (none behind "more"); Latency opens with the table by operation. Two abreast where there is room, a last
+  shown (none behind "more"); Latency opens with the table by kind of request. Two abreast where there is room, a last
   one alone takes the row.
-- **One selection**: the stretch picked on the timeline. Charts over time zoom to it; every other chart is
+- **One selection**: the stretch of time chosen — a slice pressed on the Operations strip, or two on the Time pane's
+  timeline — is one state of the session, said as one chip (what narrows, and its ✕) over both panes. Charts over time
+  zoom to a stretch of two slices or more (one slice is marked, the rest quiet); every other chart is
   reckoned again from the requests that started in it (`sessions.stretch`) and its sentence says which
   ("in +200 ms – +400 ms"); a shared page, which cannot, says "of the whole session".
 - **One frame** (`Chart`), used by every chart — the Time pane's, Capacity's, Compare's, the trends, the
@@ -340,8 +344,11 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **A trial against its clean run**: on a trial's session the Time pane opens its Traffic with the trial drawn
   over the clean run on one axis (requests a second, then the median latency), and a rule in the injected tone
   at every moment sonde answered in the store's place — on that chart, on the timeline and on the strip.
-- **By operation**: Latency opens with a table — count, error share, median, p95, p99 — sortable,
-  a percentile of fewer than twenty requests marked `~`. It stands on the Time pane, not over the operations:
+- **By kind of request**: Latency opens with a table (`GroupTable`) — requests, error share, median, p95, p99, the
+  share of the waiting, the cost (its unit once, in its title) — the same component Group by draws, sortable, its last
+  columns going first where it is narrow, a row pressed the operations of that kind (on either pane). Group by on
+  another dimension adds that table beside it ("Which prefixes were slow or failed?"). A percentile of fewer than
+  twenty requests is marked `~`. It stands on the Time pane, not over the operations:
   the Operations pane lists what the program did in order, and this is a reading of the same requests as
   figures, beside the charts it summarises.
 - **Errors**: the counts by class, and beside them the rate (the share of each slice's requests that failed);
@@ -384,12 +391,14 @@ it, as `sonde run --trial` takes it, and what it does and how hard it presses in
 says the limit the program runs under and lets it be changed; **Stop** ends a running trial and is its own
 word (nothing dismisses the dialog while it runs), the time it has taken counts beside its progress, and a
 finished scenario opens its own session. A verdict that is not "survived" says where it turned (the request,
-the program's line) and what to change, from Rust's phrase. Every literal a reader sees goes through `t()`, in both languages; a key
+the program's line) and what to change, from Rust's phrase — each piece of advice once, a later verdict with the same
+referring to it. A verdict is drawn one way (`TrialRow`) in the dialog and on the Runs pane: its standing at the row's
+end, what it found and why in one quiet line, its history as a count and a time ("Broke in 3 of 3 runs, since 08:33"). Every literal a reader sees goes through `t()`, in both languages; a key
 nothing uses fails `check-locales.py`. Nouns
 for places (Run, Sessions, Buckets, Activity), verbs for commands. Chinese is written,
 not translated: `桶`, `会话`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of
 their own (运行 the place, 启动 its button, 各次运行 and 历次运行 the runs in the list and on the tab; 操作 what
-a program did, 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create; 未通过 a
+a program did (an operation), 请求类型 a kind of request (GetObject: "kind of request", never "operation"), 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create; 未通过 a
 broke trial, 失败 a failed request, job or budget). What sonde says about a session comes from
 phrases (`src/phrases.ts`) in both languages: English from Rust's own templates, which `check-locales.py`
 holds the app's to, letter for letter.

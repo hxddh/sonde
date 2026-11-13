@@ -10,12 +10,12 @@
 
 import { batch, effect, type JSX, resource, Scroll, signal, Text, untracked, View, type ViewRef } from "nsh";
 import { t } from "../i18n";
-import { count, duration, percent } from "../format";
-import { FEW, type OpStats, operationStats, type SignalId, signalsOf } from "../signals";
+import { costColumn, count, duration, percent } from "../format";
+import { FEW, operationStats, type SignalId, signalsOf } from "../signals";
 import { type Range, slicesOf } from "../range";
 import { type ChartRows, toCsv } from "../csv";
-import type { ProjectBudget, SessionView, Signals, Stretch } from "../types";
-import { Button, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable } from "./kit";
+import type { ProjectBudget, SessionView, Signals, Split, SplitBy, Stretch } from "../types";
+import { Await, Button, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable } from "./kit";
 import { findingMarks, StatusMark } from "./sessionview";
 import { BytesOverTime, Chains, Chart, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean } from "./plots";
 
@@ -83,81 +83,174 @@ function Statuses(props: { signals: Signals; /** where the requests it counts be
   );
 }
 
-/** The run by operation, as a reader of dashboards expects it first: how
- * many, what share failed, and the median, p95 and p99 of each — sortable by
- * a press on a title. A percentile of fewer than `FEW` requests is marked
- * (`~`): it is one of a handful, not a tail. */
-function ByOperation(props: { view: Pick<SessionView, "summary" | "profile"> }) {
-  const ops = () => operationStats(props.view);
-  const few = () => ops().some((o) => o.few);
-  const pc = (o: OpStats, v: number | null) => (v == null ? "—" : `${o.few ? "~" : ""}${duration(v)}`);
+/** A group of requests as the by-kind table reads it: a kind of request (or
+ * a prefix, a size, a line of the program… where Group by splits by those). */
+export interface GroupRow {
+  name: string;
+  requests: number;
+  errorShare: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  p99Ms: number | null;
+  /** Fewer than `FEW` requests: its percentiles are one of a handful, not a tail (`~`). */
+  few: boolean;
+  /** Its share of the program's waiting, and what its requests cost. */
+  waitingShare: number | null;
+  cost: number | null;
+}
+
+/** The one table of groups of requests: by kind of request on the Time pane
+ * and under Group by alike — how many, what share failed, the median, p95 and
+ * p99 (a percentile of fewer than `FEW` requests marked `~`), the share of the
+ * waiting and the cost (its unit once, in its title). Sortable by a press on
+ * a title; the last columns go first where it is narrow; with `onSelect` a
+ * row is chosen (and pressed again, let go). */
+export function GroupTable(props: { rows: GroupRow[]; title: string; currency: string; max?: number; selected?: string | null; onSelect?: (name: string | null) => void; testID?: string }) {
+  const pc = (o: GroupRow, v: number | null) => (v == null ? "—" : `${o.few ? "~" : ""}${duration(v)}`);
+  const costs = () => costColumn(props.rows.map((o) => o.cost ?? Number.NaN), props.currency);
+  const hasWaiting = () => props.rows.some((o) => o.waitingShare != null);
+  const hasCost = () => props.rows.some((o) => o.cost != null);
+  const columns = () => [props.title, t("column.requests"), t("byOp.errors"), t("byOp.p50"), "p95", "p99", ...(hasWaiting() ? [t("column.waiting")] : []), ...(hasCost() ? [t("column.costIn", { unit: costs().unit })] : [])];
+  const rows = () =>
+    props.rows.map((o, i) => [
+      o.name,
+      count(o.requests),
+      o.requests ? percent(o.errorShare) : "—",
+      pc(o, o.p50Ms),
+      pc(o, o.p95Ms),
+      pc(o, o.p99Ms),
+      ...(hasWaiting() ? [o.waitingShare == null ? "—" : percent(o.waitingShare)] : []),
+      ...(hasCost() ? [costs().figures[i]] : []),
+    ]);
+  const at = () => (props.selected == null ? null : props.rows.findIndex((o) => o.name === props.selected));
   return (
-    <View testID="by-operation" class="gap-2">
+    <View class="gap-2">
       <SimpleTable
-        columns={[t("column.operation"), t("column.requests"), t("byOp.errors"), t("byOp.p50"), "p95", "p99"]}
-        rows={ops().map((o) => [o.operation, count(o.count), o.count ? percent(o.errorShare) : "—", pc(o, o.p50Ms), pc(o, o.p95Ms), pc(o, o.p99Ms)])}
-        max={8}
-        end={[1, 2, 3, 4, 5]}
+        testID={props.testID}
+        label={props.title}
+        columns={columns()}
+        rows={rows()}
+        max={props.max ?? 8}
+        end={columns().map((_, c) => c).slice(1)}
         fill={0}
+        ranked={2}
+        selected={at()}
+        onSelect={props.onSelect ? (i) => props.onSelect!(i === null ? null : (props.rows[i]?.name ?? null)) : undefined}
         cell={(c) => (c.column === 2 && c.text !== "0%" && c.text !== "—" ? <Text class="tabular-nums text-small text-status-server">{c.text}</Text> : undefined)}
       />
-      <If when={few()}>
-        <ChartNote testID="by-operation-few">{t("byOp.few", { n: FEW })}</ChartNote>
+      <If when={props.rows.some((o) => o.few)}>
+        <ChartNote testID={props.testID ? `${props.testID}-few` : undefined}>{t("byOp.few", { n: FEW })}</ChartNote>
       </If>
     </View>
   );
 }
 
+/** A split's groups as the table's rows. */
+export const groupRows = (s: Split): GroupRow[] =>
+  s.rows.map((r) => ({
+    name: r.other ? t("split.other") : r.key || "—",
+    requests: r.requests,
+    errorShare: r.errorShare,
+    p50Ms: r.p50Ms,
+    p95Ms: r.p95Ms,
+    p99Ms: r.p99Ms,
+    few: r.requests < FEW,
+    waitingShare: r.share,
+    cost: r.cost,
+  }));
+
+/** The run by kind of request, as a reader of dashboards expects it first:
+ * Rust's figures for each kind, and from where the time went, each kind's
+ * share of the waiting and its cost. */
+function ByKind(props: { view: Pick<SessionView, "summary" | "profile">; selected?: string | null; onSelect?: (kind: string | null) => void }) {
+  const rows = (): GroupRow[] => {
+    const groups = props.view.profile.groups;
+    const timed = props.view.profile.timed !== false;
+    return operationStats(props.view).map((o) => {
+      const mine = groups.filter((g) => g.operation === o.operation);
+      return {
+        name: o.operation,
+        requests: o.count,
+        errorShare: o.errorShare,
+        p50Ms: o.p50Ms,
+        p95Ms: o.p95Ms,
+        p99Ms: o.p99Ms,
+        few: o.few,
+        waitingShare: timed && mine.length ? mine.reduce((n, g) => n + g.share, 0) : null,
+        cost: mine.length ? mine.reduce((n, g) => n + g.cost, 0) : null,
+      };
+    });
+  };
+  return <GroupTable testID="by-operation" rows={rows()} title={t("column.kind")} currency={props.view.profile.cost.currency} selected={props.selected} onSelect={props.onSelect} />;
+}
+
 /** The Time pane of a session. */
-export function TimePane(props: { /** a chart's rows out as CSV, where the page can write a file (the app; a shared page cannot) */ onExport?: (name: string, csv: string) => void; view: SessionView; onRequest?: (id: number) => void; /** a stretch to open over (a link's), in ms from the session's start */ range?: Range | null; /** the stretch shown changed (null: the whole session): for a link to keep it */ onRange?: (r: Range | null) => void; /** the program's budget in its project's sonde.toml: drawn as a line on the charts it is about */ budget?: ProjectBudget | null; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null; /** a trial's session: the clean run it is judged against, when that run is still there */ clean?: SessionView | null; /** the requests that started in a stretch, reckoned as a session (the app's bridge; a shared page has none, and says its charts not over time are of the whole session) */ stretchOf?: (fromMs: number, toMs: number) => Promise<Stretch> }) {
+export function TimePane(props: { /** what Group by splits the operations by, and the split read (the app's bridge): the table of groups follows it */ groupBy?: SplitBy | null; splitOf?: (by: SplitBy) => Promise<Split>; /** the kind of request chosen (the operations narrowed to it), and a press on a kind's row: the operations of that kind */ kind?: string | null; onKind?: (kind: string | null) => void; /** a chart's rows out as CSV, where the page can write a file (the app; a shared page cannot) */ onExport?: (name: string, csv: string) => void; view: SessionView; onRequest?: (id: number) => void; /** a stretch to open over (a link's), in ms from the session's start */ range?: Range | null; /** the stretch shown changed (null: the whole session): for a link to keep it */ onRange?: (r: Range | null) => void; /** the stretch chosen, as slices, when it is the session's one selection of time (the Operations strip's too); with `onStretch` the pane follows it and says its picks there */ stretch?: [number, number] | null; onStretch?: (s: [number, number] | null) => void; /** the program's budget in its project's sonde.toml: drawn as a line on the charts it is about */ budget?: ProjectBudget | null; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null; /** a trial's session: the clean run it is judged against, when that run is still there */ clean?: SessionView | null; /** the requests that started in a stretch, reckoned as a session (the app's bridge; a shared page has none, and says its charts not over time are of the whole session) */ stretchOf?: (fromMs: number, toMs: number) => Promise<Stretch> }) {
   const p = () => props.view.profile;
   // the four signals, as Rust counted them (an older share: what its profile holds of them)
   const sig = () => signalsOf(props.view)!;
-  // a stretch of the session, picked on the timeline by two presses
+  // the stretch of the session chosen: the session's one selection of time (the Operations strip
+  // picks one slice of it, the timeline here two presses), or this pane's own on a shared page
+  const own = signal<[number, number] | null>(null);
+  const stretch = () => (props.onStretch ? (props.stretch ?? null) : own());
+  const setStretch = (z: [number, number] | null) => (props.onStretch ? props.onStretch(z) : own.set(z));
+  // the charts over time zoom to a stretch of two slices or more (one slice is no shape over time:
+  // they would have nothing to draw, and mark it instead); every other chart is reckoned over any
+  const zoom = () => {
+    const z = stretch();
+    return z && z[1] > z[0] ? z : null;
+  };
+  const one = () => {
+    const z = stretch();
+    return z && z[1] === z[0] ? z[0] : null;
+  };
   const zoomFrom = signal<number | null>(null);
-  const zoom = signal<[number, number] | null>(null);
   const pick = (i: number | null) => {
-    // pressing the first slice again lets it go: a stretch is two slices at least
-    // (one slice is no shape over time: the timeline and the charts would have nothing to draw)
+    // pressing the first slice again lets it go: a stretch picked here is two slices at least
     if (i === null) return zoomFrom.set(null);
     const from = zoomFrom();
     if (from === i) return zoomFrom.set(null);
     if (from === null) return zoomFrom.set(i);
     batch(() => {
-      zoom.set([Math.min(from, i), Math.max(from, i)]);
+      setStretch([Math.min(from, i), Math.max(from, i)]);
       zoomFrom.set(null);
     });
   };
-  const zoomMs = (): [number, number] | null => {
-    const z = zoom();
-    return z ? [z[0] * p().binMs, (z[1] + 1) * p().binMs] : null;
-  };
+  const msOf = (z: [number, number] | null): [number, number] | null => (z ? [z[0] * p().binMs, (z[1] + 1) * p().binMs] : null);
+  const zoomMs = () => msOf(zoom());
+  const stretchMs = () => msOf(stretch());
   // a link's stretch, as this session's slices; and the stretch shown, told as it changes
   untracked(() => {
     const r = props.range ? slicesOf(props.range, p().binMs, p().rate.length) : null;
-    if (r) zoom.set(r);
+    if (r) setStretch(r);
   });
   effect(() => {
-    const r = zoomMs();
+    const r = stretchMs();
     untracked(() => props.onRange?.(r));
   });
   // the selection: the requests that started in the stretch chosen, reckoned again for the charts not over time
   const held = resource(
-    () => (props.stretchOf ? zoomMs() : null),
+    () => (props.stretchOf ? stretchMs() : null),
     async (r) => props.stretchOf!(r[0], r[1]),
   );
-  const sel = (): Stretch | null => (zoomMs() && !held.error() ? (held() ?? null) : null);
+  const sel = (): Stretch | null => (stretchMs() && !held.error() ? (held() ?? null) : null);
   /** what the charts not over time read: the stretch's requests, or the session's */
   const pa = () => sel()?.profile ?? p();
   const sa = () => sel()?.signals ?? sig();
   const va = () => (sel() ? { summary: sel()!.summary, profile: sel()!.profile } : props.view);
   /** a chart reckoned for the stretch says which; a shared page, which reckons none, says it is of the whole session */
   const ofStretch = () => {
-    const z = zoomMs();
+    const z = stretchMs();
     if (!z) return "";
     return props.stretchOf ? t("time.ofStretch", { a: duration(z[0]), b: duration(z[1]) }) : t("time.ofWhole");
   };
   const noneHeld = () => (sel() && sel()!.summary.requests === 0 ? t("plots.noneInStretch") : null);
+  // Group by, as the Operations pane has it: the table of groups follows it (by kind of request, the default)
+  const grouped = () => (props.groupBy && props.groupBy !== "operation" && props.splitOf ? props.groupBy : null);
+  const split = resource(
+    () => grouped(),
+    (by) => props.splitOf!(by),
+  );
   const latencyAs = signal<"bands" | "heat">("bands");
   // when sonde answered in the store's place (a trial's session), on the timeline itself
   const faults = () => faultMoments(p(), props.view.injected);
@@ -176,12 +269,11 @@ export function TimePane(props: { /** a chart's rows out as CSV, where the page 
   let binMs: number | undefined;
   effect(() => {
     const b = p().binMs;
-    if (binMs !== undefined && b !== binMs) untracked(() => batch(() => (zoom.set(null), zoomFrom.set(null))));
+    if (binMs !== undefined && b !== binMs) untracked(() => batch(() => (setStretch(null), zoomFrom.set(null))));
     binMs = b;
   });
   // the moment the pointer rests on in one chart, marked in the others: this pane's own
   const focus = focusOf();
-  const unzoom = () => batch(() => (zoom.set(null), zoomFrom.set(null)));
   // above what a session keeps of its requests, a chart of single requests is of a sample: said
   const sampled = () => (p().samples.length < requestsOf(p()) ? ` · ${t("plots.sampled", { n: count(p().samples.length), of: count(requestsOf(p())) })}` : "");
   const graphic = () => !terminal();
@@ -212,16 +304,17 @@ export function TimePane(props: { /** a chart's rows out as CSV, where the page 
       wide: true,
       when: () => graphic() && shaped(),
       title: () => t("timeline.title"),
-      text: () => (zoom() ? t("timeline.zoomed", { a: duration(zoomMs()![0]), b: duration(zoomMs()![1]) }) : zoomFrom() !== null ? t("timeline.zoomFrom", { t: duration((zoomFrom() ?? 0) * p().binMs) }) : t("timeline.hint")),
+      text: () => (stretch() ? t("timeline.zoomed", { a: duration(stretchMs()![0]), b: duration(stretchMs()![1]) }) : zoomFrom() !== null ? t("timeline.zoomFrom", { t: duration((zoomFrom() ?? 0) * p().binMs) }) : t("timeline.hint")),
       action: () => (
-        <If when={zoom() || zoomFrom() !== null}>
-          <Button small variant="outline" icon="x" label={t("timeline.unzoom")} onPress={unzoom} testID="zoom-reset" />
+        <If when={zoomFrom() !== null || (stretch() && !props.onStretch)}>
+          {/* a first slice pressed, let go (the stretch chosen is cleared from its chip, above the pane) */}
+          <Button small variant="outline" icon="x" label={t("timeline.unzoom")} onPress={() => batch(() => (zoomFrom.set(null), !props.onStretch && own.set(null)))} testID="zoom-reset" />
         </If>
       ),
       // every colour of the stack, the line, and what the numbers and rules over the slices are
       legend: () => [...shapeLegend(p(), findingMarks(props.view).length > 0), ...(faults().length ? [{ label: t("trialOver.faults"), swatch: "bg-status-injected" }] : [])],
       rows: () => ({ columns: ["ms", "ok", "not_found", "client_error", "server_error", "p50_ms", "p95_ms"], rows: p().rate.map((b) => [b.tMs, b.ok, b.miss, b.client, b.server, b.p50Ms, b.p95Ms]) }),
-      body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} faults={faults()} range={zoom()} slice={zoomFrom()} onSlice={pick} focus={focus} peak={sig().inFlight.peak} class={`${TICK_ROOM} mt-4 ${SHAPE} w-full`} testID="time-shape" />,
+      body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} faults={faults()} range={zoom()} slice={zoomFrom() ?? one()} onSlice={pick} focus={focus} peak={sig().inFlight.peak} class={`${TICK_ROOM} mt-4 ${SHAPE} w-full`} testID="time-shape" />,
     },
     {
       // what ran at once, what waited: each request on its lane
@@ -265,9 +358,9 @@ export function TimePane(props: { /** a chart's rows out as CSV, where the page 
         </If>
       ),
     },
-    // --- latency: which operations were slow, how long, where the time went
+    // --- latency: which kinds of request were slow, how long, where the time went
     {
-      // the run by operation: count, error share, median, p95, p99 — the table a reader of dashboards looks for
+      // the run by kind of request: count, error share, median, p95, p99, waiting, cost — the table a reader of dashboards looks for
       id: "operations",
       group: "latency",
       wide: true,
@@ -275,7 +368,22 @@ export function TimePane(props: { /** a chart's rows out as CSV, where the page 
       when: () => operationStats(props.view).length > 0,
       title: () => t("byOp.title"),
       text: () => t("byOp.hint"),
-      body: () => <ByOperation view={va()} />,
+      body: () => <ByKind view={va()} selected={props.kind} onSelect={props.onKind} />,
+    },
+    {
+      // the same table, by what Group by splits the operations by (a prefix, a size, a line of the program…):
+      // the session's whole, read where the groups are reckoned (said so when a stretch is chosen)
+      id: "groups",
+      group: "latency",
+      wide: true,
+      when: () => !!grouped(),
+      title: () => t(`byGroup.${grouped()!}` as never),
+      text: () => [t("byGroup.hint"), stretch() ? t("time.ofWhole") : ""].filter(Boolean).join(" · "),
+      body: () => (
+        <Await loading={split.loading() && !split()} error={split.error()} retry={() => split.refetch()}>
+          <If when={split()}>{(x) => <GroupTable testID="by-group" rows={groupRows(x())} title={t(`split.by.${x().by}`)} currency={x().currency} />}</If>
+        </Await>
+      ),
     },
     {
       id: "latency",

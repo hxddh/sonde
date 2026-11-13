@@ -183,7 +183,7 @@ export function shapeSentence(p: Profile): string {
  * a step line of the requests in flight. A press picks the slice under the
  * pointer (again: lets it go), for the operations running then.
  */
-export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean; marks?: { tMs: number; n: number }[]; /** the moments a fault scenario answered a request (a trial's session), in ms */ faults?: number[]; axis?: boolean; range?: [number, number] | null; focus?: Focus; /** the strip under a session's header: a mark, in no frame */ strip?: boolean; /** the most in flight, as the session's signals count it */ peak?: number }) {
+export function SessionShape(props: { profile: Profile; slice?: number | null; onSlice?: (i: number | null) => void; class?: string; testID?: string; annotate?: boolean; marks?: { tMs: number; n: number }[]; /** the moments a fault scenario answered a request (a trial's session), in ms */ faults?: number[]; axis?: boolean; range?: [number, number] | null; /** the stretch chosen elsewhere (the Time pane's), as slices: marked, the rest quiet */ picked?: [number, number] | null; focus?: Focus; /** the strip under a session's header: a mark, in no frame */ strip?: boolean; /** the most in flight, as the session's signals count it */ peak?: number }) {
   const hovered = signal<number | null>(null);
   // zoomed: the slices from `range[0]` to `range[1]`, wider each
   const from = () => props.range?.[0] ?? 0;
@@ -227,7 +227,9 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     const i = Math.floor(at / props.profile.binMs) - from();
     return props.profile.peakInFlight > 1 && i >= 0 && i < rows().length ? i : null;
   };
-  const tone = (x: Tone) => (d: Slice, i: number) => (props.slice == null || props.slice === i + from() ? x : "dim");
+  // a slice pressed, or the stretch chosen (`picked`): what it leaves out turns quiet, it does not go
+  const on = (i: number) => (props.slice != null ? props.slice === i + from() : !props.picked || (i + from() >= props.picked[0] && i + from() <= props.picked[1]));
+  const tone = (x: Tone) => (d: Slice, i: number) => (on(i) ? x : "dim");
   const tip = () => {
     const i = hovered();
     const r = i === null ? null : rows()[i];

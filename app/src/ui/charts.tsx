@@ -37,7 +37,7 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
         testID={props.testID}
         data={props.items}
         yScale={{ type: "band", ...BARS.rows }}
-        xScale={{ type: "linear", domain: [0, Math.max(1, ...props.items.map((i) => i.value)) * 1.25] }}
+        xScale={{ type: "linear", domain: [0, Math.max(1, ...props.items.map((i) => i.value)) * 1.8] }}
         accessibilityLabel={sentence()}
         accessibilityValue={{ text: tip() ? `${tip()!.title}: ${tip()!.lines[0]}` : "" }}
         appearGeneration={total()}
