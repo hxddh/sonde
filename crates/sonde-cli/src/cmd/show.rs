@@ -267,6 +267,8 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         &file,
         sonde_proxy::program::key_of(&session.header).as_deref(),
     );
+    // against the program's run before it, as `run` said it: in every format
+    let since = super::fixloop::since_last(s, &file, &session.header, all, &analysis);
     match a.format {
         // the summary alone: what the table's summary shows, and no more
         Format::Json if a.summary => {
@@ -289,6 +291,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "cost": prof.cost,
                     "whatIf": analysis.what_if,
                     "findings": analysis.observations,
+                    "since": since,
                     "trials": trials,
                 }))
             );
@@ -318,6 +321,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             w.field("summary", &analysis.summary)?;
             w.field("whatIf", &analysis.what_if)?;
             w.field("trials", &trials)?;
+            w.field("since", &since)?;
             w.end_object()?;
             let mut out = w.finish()?;
             out.write_all(b"\n")?;
@@ -367,8 +371,6 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     return Ok(0);
                 }
             }
-            // against the program's run before it, when it has one
-            let since = super::fixloop::since_last(s, &file, &session.header, all, &analysis);
             print_summary_of(
                 &analysis,
                 &session.header,

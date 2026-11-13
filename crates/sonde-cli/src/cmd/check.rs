@@ -77,6 +77,16 @@ pub struct CheckArgs {
     format: Format,
 }
 
+/// A run as `check` reads it: its figures, profile, findings and header,
+/// and the run as `compare` holds it when it is compared.
+type Checked = (
+    sonde_proxy::program::RunPoint,
+    sonde_proxy::profile::Profile,
+    Vec<sonde_proxy::episode::Observation>,
+    SessionHeader,
+    Option<sonde_proxy::profile::Run>,
+);
+
 /// `sonde check`: a run against a budget and a baseline run; exit 1 when it is past either.
 /// A duration on the command line, as `sonde.toml` writes one.
 fn duration_arg(text: &str) -> Result<f64, String> {
@@ -90,6 +100,7 @@ fn init_project(
     a: &CheckArgs,
     run: &sonde_proxy::program::RunPoint,
     header: &SessionHeader,
+    dirs: &[PathBuf],
 ) -> anyhow::Result<i32> {
     let path = a
         .config
@@ -165,6 +176,21 @@ fn init_project(
         eprintln!(
             "  and [program] name = \"{name}\": later runs (`sonde run`, here) and their baseline go by it, not by the command's arguments"
         );
+        // what the program kept under its command goes with it
+        let mut moved = Vec::new();
+        if let Some(old) = sonde_proxy::program::key_of(header) {
+            for dir in dirs {
+                moved.extend(sonde_proxy::program::rename_program(dir, &old, name)?);
+            }
+            moved.sort();
+            moved.dedup();
+            if !moved.is_empty() {
+                eprintln!(
+                    "  what was kept for `{old}` ({}) now goes by \"{name}\"",
+                    moved.join(", ")
+                );
+            }
+        }
     }
     eprintln!("  no trials: `sonde run --trial` tries the program under faults");
     eprintln!(
@@ -447,12 +473,16 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         Some(f) => super::sessions::resolve(s, f),
         None => newest_session(s)?,
     };
+    // against a baseline its findings are said as `run` and `compare` say
+    // them: at any threshold too (less, not fixed)
+    let traced = baseline_arg.is_some() && matches!(a.format, Format::Markdown | Format::Json);
     // read once, for what it amounts to: its figures, its findings, its header
-    let read = |p: &PathBuf| -> anyhow::Result<_> {
+    let read = |p: &PathBuf| -> anyhow::Result<Checked> {
         let session = super::sessions::read(p, sonde_proxy::session::Keep::Analysis)?;
         let Analysis {
             profile: pr,
             observations: ob,
+            episodes,
             ..
         } = Analysis::of(&session, &request_prices_for(s, &session.header.endpoint));
         let point = run_point(
@@ -462,8 +492,17 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             &pr,
             &ob,
         );
+        let run = traced.then(|| {
+            sonde_proxy::profile::Run::of_session(
+                &session.header,
+                &session.records,
+                &episodes,
+                pr.clone(),
+                ob.clone(),
+            )
+        });
         // (its records are let go here: two sessions are never held at once)
-        Ok((point, pr, ob, session.header))
+        Ok((point, pr, ob, session.header, run))
     };
     if !file.exists() {
         return Err(super::usage(format!(
@@ -474,11 +513,16 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     let run = read(&file)?;
     let header = run.3.clone();
-    if a.init {
-        return init_project(a, &run.0, &header);
-    }
     let program = sonde_proxy::program::key_of(&header);
     let dir = s.paths().sessions();
+    if a.init {
+        // the run's folder, and the data directory's when it is another
+        let mut dirs = vec![sonde_proxy::fixloop::folder_of(&file)];
+        if dirs[0].canonicalize().ok() != dir.canonicalize().ok() && dir.is_dir() {
+            dirs.push(dir.clone());
+        }
+        return init_project(a, &run.0, &header, &dirs);
+    }
     if a.set_baseline {
         let Some(key) = &program else {
             eprintln!("this session ran no command, so it is no program's baseline");
@@ -512,6 +556,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         eprintln!("baseline for `{key}`: {}", file.display());
     }
     let mut no_baseline: Option<String> = None;
+    // a baseline set for this program is its own, whatever it ran as then
+    // (a run of before it had a name)
+    let by_program = baseline_arg.as_deref() == Some("auto") && fetched.is_none();
     let base_path = match baseline_arg.as_deref() {
         None => None,
         Some(_) if fetched.is_some() => fetched.as_ref().map(|p| p.to_path_buf()),
@@ -553,9 +600,14 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         );
         return Ok(64);
     }
+    let base_program = match &base {
+        Some(_) if by_program => program.clone(),
+        Some(b) => sonde_proxy::program::key_of(&b.3),
+        None => None,
+    };
     if let Some(b) = &base {
         let bp = sonde_proxy::program::key_of(&b.3);
-        if bp != program {
+        if !by_program && bp != program {
             eprintln!(
                 "note: the baseline ran `{}`, this run `{}`",
                 bp.as_deref().unwrap_or("no command"),
@@ -645,6 +697,19 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         _ => None,
     };
     let since_text = since.as_ref().and_then(since_line);
+    // the run against its baseline, by kind and by finding (a finding gone
+    // is gone, not measured: no record is counted here)
+    let change = match (&base, &run.4) {
+        (Some(b), Some(r)) => b.4.as_ref().map(|br| {
+            sonde_proxy::profile::compare_runs(br, r)
+                .of_programs(base_program.as_deref(), program.as_deref())
+                .of_exits((
+                    base_path.as_deref().and_then(sonde_proxy::fixloop::failed),
+                    sonde_proxy::fixloop::failed(&file),
+                ))
+        }),
+        _ => None,
+    };
     if matches!(a.format, Format::Json) {
         let mut doc = serde_json::json!({
             "run": run.0,
@@ -656,6 +721,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             "verdict": closing,
             "since": since,
         });
+        if let Some(ch) = &change {
+            doc["change"] = serde_json::json!(ch);
+        }
         // `baseline = "auto"` found none: the rows held to one are not there
         if let Some(why) = &no_baseline {
             doc["noBaseline"] = serde_json::json!(why);
@@ -748,30 +816,6 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     }
     // a pull request's comment: the verdicts, what is new, and the run's findings
     if matches!(a.format, Format::Markdown) {
-        // the run against its baseline, by kind and by finding
-        let change = base.as_ref().map(|b| {
-            let of = |r: &(
-                sonde_proxy::program::RunPoint,
-                sonde_proxy::profile::Profile,
-                Vec<sonde_proxy::episode::Observation>,
-                SessionHeader,
-            )| sonde_proxy::profile::Run {
-                requests: r.0.requests,
-                errors: r.0.errors,
-                profile: r.1.clone(),
-                observations: r.2.clone(),
-                folders: Default::default(),
-                // (no records here: a finding gone is gone, not measured)
-                traces: Default::default(),
-                asks: Default::default(),
-                counts: Default::default(),
-                measured: false,
-            };
-            sonde_proxy::profile::compare_runs(&of(b), &of(&run)).of_programs(
-                sonde_proxy::program::key_of(&b.3).as_deref(),
-                program.as_deref(),
-            )
-        });
         print!(
             "{}",
             sonde_proxy::program::check_comment(

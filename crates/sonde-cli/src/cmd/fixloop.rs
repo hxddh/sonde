@@ -125,6 +125,14 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
     if let Some(why) = &since.unsaved {
         out.push(format!("note: {why}"));
     }
+    if let Some(exit) = since.failed {
+        out.push(paint(
+            &format!("the run failed (exit {exit}); not compared"),
+            "33",
+            color,
+        ));
+        return out;
+    }
     let (Some(c), Some(previous)) = (&since.change, &since.previous) else {
         return out;
     };
@@ -147,7 +155,13 @@ pub(super) fn since_last(
     records: &[Record],
     a: &Analysis,
 ) -> Option<SinceLast> {
-    let run = sonde_proxy::profile::Run::of(records, a.profile.clone(), a.observations.clone());
+    let run = sonde_proxy::profile::Run::of_session(
+        header,
+        records,
+        &a.episodes,
+        a.profile.clone(),
+        a.observations.clone(),
+    );
     sonde_proxy::fixloop::since_last(
         &sonde_proxy::fixloop::folder_of(path),
         path,

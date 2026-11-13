@@ -42,7 +42,7 @@ What is listed under **Stable** changes only in a major release; everything else
 - Files beside sessions and in the data directory (counts, verdicts, baselines, probe runs, caches); an unreadable
   cache is rebuilt.
 - The Rust crates' APIs.
-- A finding's text. Its `identity` (what `[check] expect` names) is stable.
+- A finding's text. Its `identity` (what `[check] expect` names) is stable; from 19.0 it leaves out what changes between runs ([cli.md](cli.md#the-fix-loop)).
 
 ## Removed in 18.0
 
@@ -58,7 +58,7 @@ A major (D-138). Each folded command still runs for 18.0 and says its new form (
   are `compare-replay`, `compare-replay-stores`, `compare-answers`, `bucket-size`, `bucket-uploads` (`share`: none).
 - Exit 77 no longer means read-only mode: there is none.
 - Findings `obs.retried`, `obs.slow`, `obs.races`, `obs.injected`, `obs.shared` and the 50% level of `obs.prefixrate`:
-  an `expect` naming them matches nothing.
+  an `expect` naming them matches nothing (from 19.0, an `expect` that is no finding's identity is an error).
 - `config.toml`: `read-only`, `reqlog-capacity`, `reqlog-persist`, `stale-upload-days` are read and ignored (said
   on stderr), and dropped at the next save.
 

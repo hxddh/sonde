@@ -797,6 +797,13 @@ fn run_exits_as_a_shell_would_when_a_signal_ends_the_program() {
         "{}",
         String::from_utf8_lossy(&o.stderr)
     );
+    // the run that failed is kept as one: compared with nothing
+    let s = sonde(t.path(), &["show"]);
+    assert!(
+        stdout(&s).contains("the run failed (exit 143); not compared"),
+        "{}",
+        stdout(&s)
+    );
 }
 
 fn stderr(o: &Output) -> String {
@@ -1737,4 +1744,153 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
         "{}",
         stderr(&none)
     );
+    // show says in JSON what it says in text: the change since the run before
+    let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["show", "etl-3-no-head", "-f", "json"],
+    )))
+    .unwrap();
+    assert_eq!(
+        j["since"]["findings"][0]["state"], "fixed",
+        "{}",
+        j["since"]
+    );
+    let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["show", "etl-3-no-head", "--summary", "-f", "json"],
+    )))
+    .unwrap();
+    assert_eq!(
+        j["since"]["findings"][0]["state"], "fixed",
+        "{}",
+        j["since"]
+    );
+
+    // a run that crashed is compared with nothing, and the next with the run before it
+    let mut fixture = String::new();
+    std::io::Read::read_to_string(
+        &mut flate2::read::MultiGzDecoder::new(
+            std::fs::File::open(dir.join("etl-3-no-head.sonde")).unwrap(),
+        ),
+        &mut fixture,
+    )
+    .unwrap();
+    let (header, records) = fixture.split_once('\n').unwrap();
+    let mut header: serde_json::Value = serde_json::from_str(header).unwrap();
+    header["created"] = "2030-01-01T00:00:00Z".into();
+    let crashed = dir.join("etl-6-crashed.sonde");
+    std::fs::write(&crashed, format!("{header}\n{records}")).unwrap();
+    sonde_proxy::index::set(&crashed, sonde_proxy::index::Change::Exit(3));
+    let s = stdout(&sonde(t.path(), &["show", "etl-6-crashed"]));
+    assert!(s.contains("the run failed (exit 3); not compared"), "{s}");
+    assert!(!s.contains("fixed"), "{s}");
+    let c = stdout(&sonde(
+        t.path(),
+        &["compare", "etl-5-undone", "etl-6-crashed"],
+    ));
+    assert!(
+        c.contains("the run failed (exit 3); its findings are not compared"),
+        "{c}"
+    );
+    assert!(!c.contains("✓ fixed"), "{c}");
+}
+
+/// `check --init` names a program: what was kept under its command goes
+/// with it, its baseline and its trials' verdicts.
+#[test]
+fn check_init_carries_the_baseline_and_verdicts_to_the_programs_name() {
+    let t = tempfile::tempdir().unwrap();
+    let run = session_of(
+        t.path(),
+        "run.sonde",
+        "python etl.py",
+        "2026-11-09T02:00:00Z",
+    );
+    let set = sonde(
+        t.path(),
+        &["check", run.to_str().unwrap(), "--set-baseline"],
+    );
+    assert_eq!(set.status.code(), Some(0), "{}", stderr(&set));
+    let dir = t.path().join("data/sessions");
+    std::fs::write(
+        dir.join("verdicts.json"),
+        r#"{"python etl.py":{"slowdown":[{"at":"2026-11-09T02:00:00Z","standing":"broke","run":"run.sonde"}]}}"#,
+    )
+    .unwrap();
+    let cfg = t.path().join("sonde.toml");
+    let init = sonde(
+        t.path(),
+        &[
+            "check",
+            run.to_str().unwrap(),
+            "--init",
+            "--config",
+            cfg.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    assert!(
+        stderr(&init).contains(
+            "what was kept for `python etl.py` (baselines.json, verdicts.json) now goes by \"etl\""
+        ),
+        "{}",
+        stderr(&init)
+    );
+    let read = |f: &str| -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(dir.join(f)).unwrap()).unwrap()
+    };
+    assert_eq!(
+        read("baselines.json"),
+        serde_json::json!({"etl": "run.sonde"})
+    );
+    assert_eq!(
+        read("verdicts.json")["etl"]["slowdown"][0]["standing"],
+        "broke"
+    );
+    assert!(read("verdicts.json").get("python etl.py").is_none());
+}
+
+/// `[check] expect` names findings by identity: words of a finding's text,
+/// or a kind sonde does not find, are a mistake in sonde.toml.
+#[test]
+fn an_expect_that_is_no_findings_identity_is_a_usage_error() {
+    let t = tempfile::tempdir().unwrap();
+    let run = session_of(
+        t.path(),
+        "run.sonde",
+        "python etl.py",
+        "2026-11-09T02:00:00Z",
+    );
+    let cfg = t.path().join("sonde.toml");
+    for (expect, ok) in [
+        ("obs.hot", true),
+        ("obs.hot|b/jobs/1794558464595/x", true),
+        ("read again", false),
+        ("obs.retried", false),
+    ] {
+        std::fs::write(
+            &cfg,
+            format!("[check]\nmax-requests = 100000\nexpect = [{expect:?}]\n"),
+        )
+        .unwrap();
+        let c = sonde(
+            t.path(),
+            &[
+                "check",
+                run.to_str().unwrap(),
+                "--config",
+                cfg.to_str().unwrap(),
+            ],
+        );
+        if ok {
+            assert_eq!(c.status.code(), Some(0), "{expect}: {}", stderr(&c));
+        } else {
+            assert_eq!(c.status.code(), Some(64), "{expect}");
+            assert!(
+                stderr(&c).contains("is not a finding's identity"),
+                "{}",
+                stderr(&c)
+            );
+        }
+    }
 }

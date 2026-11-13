@@ -1990,7 +1990,11 @@ impl Sessions {
             let (cb, b) = run(&after, Some(&a))?;
             Ok(to_json(
                 sonde_proxy::profile::compare_runs(&a, &b)
-                    .of_programs(ca.as_deref(), cb.as_deref()),
+                    .of_programs(ca.as_deref(), cb.as_deref())
+                    .of_exits((
+                        sonde_proxy::fixloop::failed(Path::new(&before)),
+                        sonde_proxy::fixloop::failed(Path::new(&after)),
+                    )),
             ))
         })
         .await

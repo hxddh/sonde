@@ -65,7 +65,7 @@
 | `--no-new-warnings` | Fail on a warning the baseline did not have. |
 | `--config FILE` | Default: `sonde.toml` here or in a folder above, up to the repository root. Flags win. |
 | `--report-url URL` | `-f markdown` only: the link the comment ends with (the HTML report). |
-| `--init` | Write a `sonde.toml` this run passes: counts with 10% room, times commented out beside their measured values, a `[program] name` from the command when there is none (`etl` for `python etl.py --day 2`). No trials. |
+| `--init` | Write a `sonde.toml` this run passes: counts with 10% room, times commented out beside their measured values, a `[program] name` from the command when there is none (`etl` for `python etl.py --day 2`); the baseline, trial verdicts and findings kept under the command move to that name. No trials. |
 
 - Output names the session and program first. A trial row is `pass` / `warn` / `FAIL` / `skip` (survived / degraded / broke / untested). A failed row says by how much (`+23%`) over its limit or the baseline's figure.
 - Closing verdict, in every format: `within budget` / `over budget`, `within its baseline` / `past its baseline` (joined with `and`), then `, and broke under a trial`; trials alone: `broke under a trial` / `did not break under its trials`.
@@ -141,8 +141,9 @@ max-p95 = "250ms"
 tolerance = 10            # % a run may grow over its baseline
 no-new-warnings = true
 baseline = "auto"         # or a session's path, or an https URL
-# findings kept on purpose, never a new warning: a finding's identity
-# (as the app's "Expected" copies it), its kind, or words of its text
+# findings kept on purpose, never a new warning: a finding's `identity`
+# (as `show -f json` and the app's "Expected" give it) or a kind for all of
+# it. Anything else is an error (exit 64)
 expect = ["obs.hot|slate/db/gc/manifest.boundary", "obs.listed"]
 ```
 
@@ -166,20 +167,29 @@ never load half of one.
 
 ## The fix loop
 
-A finding keeps one identity across a program's runs: its kind and what it is about (key, prefix), never counts or
-ids. Between a run and the program's run before it:
+A finding keeps one identity across a program's runs: its kind and what it is about (key, prefix), never counts. What
+changes from run to run in a key is said as what it is, so `jobs/1794558464595/state.json` is
+`obs.hot|b/jobs/{n}/state.json`: `{uuid}`, `{date}`, `{time}`, `{n}` (a number of 9 digits or more, a metadata
+version `v{n}.metadata.json`, a Hadoop `_temporary/` attempt's numbers), `{id}` (long hex or mixed ids). Between a
+run and the program's run before it that did not fail:
 
 | State | When | Says |
 |---|---|---|
 | fixed | gone at any threshold | what it saved, measured, against the predicted: `saved 20 requests (predicted 20)` |
 | less | still there, under its threshold | what it saved so far |
-| back | fixed in an earlier run, here again | |
-| new | not in the run before | |
-| open | in both | counted: `2 still open` |
+| back | not in the run before; fixed by it or an earlier run | |
+| new | in neither run before, at any threshold | |
+| open | in both (under its threshold in the run before, too) | counted: `2 still open` |
+
+A finding of time alone (requests one after another) is judged by its requests: as many of them one after another,
+under its threshold, is open. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);
+not compared`, and nothing kept changes; the next run is compared with the last that did not.
 
 Measured: of the requests the finding named, those the later run no longer sends (by kind and key); for a finding
-of time, the fall in waiting. Each program's findings (open, fixed with its saving, back) are kept in
-`findings.json` beside its runs (as `verdicts.json` and `baselines.json`), brought up to date by `run`, `show` and the app when they read the program's newest run.
+of time, the fall in its own waiting, at most the fall in the run's. Each program's findings (open, less, fixed with
+its saving, back) are kept in `findings.json` beside its runs (as `verdicts.json` and `baselines.json`), brought up
+to date by `run`, `show` and the app when they read the program's newest run. `run`, `show` (`since` in JSON),
+`compare` and `check -f markdown` say a run's findings the same way.
 
 ## Folded in 18.0
 

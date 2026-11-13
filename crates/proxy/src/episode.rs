@@ -2278,8 +2278,16 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .cmp(&(a.level == "warn"))
             .then(b.impact.cmp(&a.impact))
     });
+    // two of a run's findings that read the same once what changes between
+    // runs is taken out (two dates' keys) stay two: the second by rank `#2`
+    let mut seen: HashMap<String, usize> = HashMap::new();
     for o in &mut out {
-        o.identity = crate::profile::finding_identity(o);
+        let id = crate::profile::identity(o);
+        let n = seen.entry(id.clone()).or_default();
+        *n += 1;
+        o.identity = if *n == 1 { id } else { format!("{id}#{n}") };
+    }
+    for o in &mut out {
         // a trace is only told apart from a finding: no fix, no callers
         if any {
             continue;

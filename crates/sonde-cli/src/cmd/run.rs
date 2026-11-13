@@ -740,6 +740,11 @@ async fn run_once(
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
     started.writer.flush()?;
     if under.is_none() {
+        // kept as the app keeps it: a run that failed is compared with none
+        sonde_proxy::index::set(
+            &started.path,
+            sonde_proxy::index::Change::Exit(exit_code(status)),
+        );
         let session = Session::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
         let color = std::io::stderr().is_terminal();
         let prices = request_prices_for(s, &session.header.endpoint);
