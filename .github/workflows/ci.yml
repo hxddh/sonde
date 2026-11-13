@@ -70,12 +70,15 @@ jobs:
       # A shared runner's speed and what else it holds vary from run to run:
       # a budget missed once is run again before it fails the build, and the
       # miss is a warning on the run, so one that drifts toward its limit is
-      # seen before it fails twice.
+      # seen before it fails twice. Each test is a process of its own: a
+      # process's peak memory counts what the tests before it left held.
       - name: Budgets of a large session
         if: runner.os == 'Linux'
         run: |
-          budgets() { cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --nocapture; }
-          budgets || { echo "::warning title=Budgets::a budget of a large session was missed once and run again (the log says by how much)"; budgets; }
+          budget() { cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --nocapture --exact "$1"; }
+          for t in $(cargo test --release --locked -p sonde-proxy --test budgets -- --ignored --list --format terse | sed -n 's/: test$//p'); do
+            budget "$t" || { echo "::warning title=Budgets::$t missed its budget once and ran again (the log says by how much)"; budget "$t"; } || exit 1
+          done
 
   supply:
     # what sonde is built from: the licences, advisories and sources of its
