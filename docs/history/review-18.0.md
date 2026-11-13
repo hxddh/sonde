@@ -1,4 +1,4 @@
-# 18.0 reviewed, 18.1 proposed
+# 18.0 reviewed, 19.0 proposed
 
 A review of 18.0.0 after its release, by four readers who did not write it: one hunted bugs with the released
 binary against a local S3 (moto); one walked 18.0's own promises as a newcomer, timed, and measured a million
@@ -26,9 +26,9 @@ What did not hold:
    scripts.
 4. **Run, the first screen, overlaps itself** at the least window and hides its next steps at every width.
 
-And one beyond 18.0: 18 majors in 7 days. The contract (D-138) holds to the letter, but a "stable" format that
-may break tomorrow tells a user nothing. **The next version should be 18.1**: everything below is a fix or an
-addition, and none needs a break.
+And one beyond 18.0: 18 majors in 7 days, each carrying what the one before removed. **19.0 drops compatibility
+with every earlier version** — no aliases, no shims, no migrations, no old names — and is the last break for a
+while: from 19.0 the contract (D-138) holds, and a break is announced one version ahead.
 
 ## What 18.0 got wrong
 
@@ -102,15 +102,15 @@ addition, and none needs a break.
 - The app is calm and consistent: two columns, one inspector, Buckets' sections in one row, every Time chart
   shown with a question for its title, dark and Chinese complete.
 
-## 18.1
+## 19.0
 
-**Trust what it says, and reach it.** No new place, command or format. Every item closes something 18.0 opened.
+**Trust what it says, reach it, and carry nothing from before.** No new place, command or format. Every item closes
+something 18.0 opened or removes something kept for an older version.
 
 ### 1. Reach it (S)
 
-- The install line and every `main` in the docs point at a branch that exists (or the default branch becomes
-  `main`).
-- The Action installs the newest release of its own major (`@v18` → newest 18.x); tested.
+- The default branch becomes `main`. The Action installs the newest release of its own major (`@v19` → newest
+  19.x); tested.
 - `sonde run --demo -- <command>`: the built-in store `demo` already has, for your own program — a first run with
   no account, and a CI gate on request counts and findings without secrets (times there say so).
 - The owner adds `HOMEBREW_TAP_TOKEN`, a Developer ID and the package key; until then the release says plainly
@@ -120,12 +120,12 @@ addition, and none needs a break.
 
 - A failed run is not compared: "the run failed (exit 3); not compared".
 - Identity normalises what changes between runs — run ids, UUIDs, timestamps, dates, `vN.metadata.json` — tested
-  on fixtures whose keys change every run, before anything else.
+  on fixtures whose keys change every run, before anything else. What 18.x kept of findings starts afresh.
 - "Back" and "fixed" are judged from the runs compared, not the latest state; a time-only finding is judged by
   its requests, not by noise; "less" is kept; `.reads` and `.writes` are two findings.
 - `run`, `show`, `compare` and the CI comment list the same findings for the same run.
-- `check --init` carries the baseline and trial history to the new name; `expect` matches identities only and
-  warns on one it does not know.
+- `check --init` carries the baseline and trial history to the new name; `expect` takes identities only, and one
+  it does not know is an error.
 
 ### 3. Correct under concurrency and at the edges (S)
 
@@ -158,23 +158,34 @@ One run per change; macOS screenshots, `macos-15-intel` and the app's macOS buil
 Dependabot runs lint and unit; the release publishes CI's build of its commit instead of building again. A test
 of the Action against a real baseline and comment, scheduled.
 
-### 6. Words and docs (S)
+### 6. Without the past (S)
 
-JSON gains `waitingMs` and `operations` beside `busyMs` and `episodes` (the old names go in 19.0, said in the
-changelog); `compare` writes numbers as `show` does; `run --help` says what no-delete allows; stale docs fixed;
+What is kept only for an older sonde goes, and the code with it:
+
+- The folded commands `watch`, `export`, `replay`, `diff`, `mpu`, `du` and the refusals of removed flags
+  (`--log-out`, `--read-only`, `--no-delete`, `share --json`); `--callers` (the default).
+- Reading the files kept beside sessions before 18.0 (`index.rs`), shared pages and verdicts of before 15.0 and
+  16.0 (`signals.ts`, `history.tsx`).
+- Old words in JSON: `busyMs` → `waitingMs`, `episodes` → `operations`, every schema in `docs/schemas` renewed.
+- The changelog's 0.x–18.x sections move to `docs/history/`; the contract restarts at 19.0.
+
+### 7. Words and docs (S)
+
+`compare` writes numbers as `show` does; `run --help` says what no-delete allows; stale docs fixed;
 `security.md` says the policy is a net, not a sandbox.
 
-## Not in 18.1
+## Not in 19.0
 
 A production sidecar or `/metrics` (`import` reads access logs and CloudTrail), SigV4a, HTTP/2, S3 Express, a query
-language (`show --by` and `-f json` cover it), an MCP server, new table formats, drag zoom. And no major: a
-19.0 waits for something worth breaking for, announced one version ahead.
+language (`show --by` and `-f json` cover it), an MCP server, new table formats, drag zoom. The session format
+stays at version 1: its `operation` field names an S3 API call, which is what the file is for.
 
 ## Done when
 
 - `curl … | sh`, `sonde run --demo -- python etl.py`, a finding fixed and confirmed, in ten minutes, with no
   account.
 - A program whose keys change every run, run twice unchanged, reads "no change".
-- `@v18` installs 18.x; a PR's CI finishes in under 30 minutes.
+- `@v19` installs 19.x; a PR's CI finishes in under 30 minutes.
+- `sonde --help` and `grep -r` of the code find no command, flag, file or word kept for an older version.
 - Every picture in the tour, the "since the run before" one included, approved; nothing overlaps at the least
   window.
