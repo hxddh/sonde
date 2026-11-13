@@ -18,7 +18,7 @@ it. This page is its contract ([contract.md](contract.md)); `crates/proxy/src/se
 ## The header
 
 ```json
-{"format":"sonde-session","version":1,"sonde":"17.0.0","created":"2026-11-12T10:00:00.123Z","endpoint":"prod","url":"https://s3.eu-west-1.amazonaws.com/","region":"eu-west-1","command":"python etl.py","cwd":"/home/me/etl","git":{"commit":"4f1c2e9…","branch":"main","dirty":false}}
+{"format":"sonde-session","version":1,"sonde":"19.0.0","created":"2026-11-12T10:00:00.123Z","endpoint":"prod","url":"https://s3.eu-west-1.amazonaws.com/","region":"eu-west-1","command":"python etl.py","cwd":"/home/me/etl","git":{"commit":"4f1c2e9…","branch":"main","dirty":false}}
 ```
 
 | Field | | |
