@@ -14,6 +14,7 @@ pub mod redact;
 mod ring;
 
 pub use record::{
-    Header, MAX_LATENCY_MS, MAX_REQUEST_BODY, Record, RecordSummary, Text, is_control_operation,
+    Header, KEYS_HEADER, KeyCounter, MAX_LATENCY_MS, MAX_REQUEST_BODY, Record, RecordSummary, Text,
+    is_control_operation, is_listing,
 };
 pub use ring::{DEFAULT_CAPACITY, Filter, RequestLog, Sink, StatusFilter};

@@ -130,6 +130,21 @@ async fn serve(
             up.objects.lock().insert(path, (body.to_vec(), checksums));
             Response::builder().status(200).header("etag", "\"e\"")
         }
+        // a listing of the bucket: every object's key
+        "GET" if parts.uri.query().is_some_and(|q| q.contains("list-type=2")) => {
+            let keys: String = up
+                .objects
+                .lock()
+                .keys()
+                .map(|k| format!("<Contents><Key>{k}</Key></Contents>"))
+                .collect();
+            return Ok(Response::builder()
+                .status(200)
+                .body(Full::new(Bytes::from(format!(
+                    "<ListBucketResult>{keys}</ListBucketResult>"
+                ))))
+                .unwrap());
+        }
         "GET" => match up.objects.lock().get(&path) {
             Some((data, _)) => {
                 return Ok(Response::builder()
@@ -261,9 +276,20 @@ async fn put_get_list_are_resigned_and_recorded() {
         .query("list-type", "2")
         .query("prefix", "dir/");
     let r = app.send_raw(list).await.unwrap();
-    assert_ne!(r.status, 403, "{}", r.text());
+    assert_eq!(r.status, 200, "{}", r.text());
+    let keys = r.text().matches("<Key>").count();
+    assert_eq!(keys, 1);
 
     let records = log.list(&reqlog::Filter::default(), 100);
+    // a listing's record says how many keys it listed
+    let listed = records
+        .iter()
+        .find(|r| r.operation == "ListObjectsV2")
+        .unwrap();
+    assert_eq!(
+        listed.header(reqlog::KEYS_HEADER),
+        Some(keys.to_string().as_str())
+    );
     let ops: Vec<&str> = records.iter().rev().map(|r| r.operation.as_str()).collect();
     assert_eq!(ops, ["PutObject", "GetObject", "ListObjectsV2"]);
     let put = records.last().unwrap();
