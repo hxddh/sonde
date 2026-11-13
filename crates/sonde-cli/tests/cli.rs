@@ -1834,3 +1834,29 @@ fn an_import_says_what_it_left_out_and_no_time_it_does_not_have() {
     assert!(!shown.contains(", waiting"), "{shown}");
     assert!(shown.contains("so the waiting, is not known"), "{shown}");
 }
+
+#[test]
+fn a_layout_asked_for_by_kind_and_not_there_is_said() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path().join("files");
+    std::fs::create_dir_all(d.join("logs")).unwrap();
+    std::fs::write(d.join("logs/a.txt"), "x").unwrap();
+    let dir = d.to_str().unwrap();
+    let o = sonde(
+        t.path(),
+        &["layout", "inspect", "--dir", dir, "--kind", "slatedb"],
+    );
+    assert_eq!(o.status.code(), Some(4), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("is not a SlateDB layout"),
+        "{}",
+        stderr(&o)
+    );
+    // any prefix has a write cadence
+    let o = sonde(
+        t.path(),
+        &["layout", "inspect", "--dir", dir, "--kind", "generic"],
+    );
+    assert_ne!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("is not a"), "{}", stderr(&o));
+}

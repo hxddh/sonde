@@ -45,6 +45,12 @@ pub fn detect(objects: &[ObjectMeta]) -> Vec<Detection> {
     out
 }
 
+/// The `pct` percentile of `sorted`, by nearest rank: never below a lower one.
+fn rank(sorted: &[i64], pct: usize) -> i64 {
+    let i = (sorted.len() * pct).div_ceil(100).saturating_sub(1);
+    sorted.get(i).copied().unwrap_or(0)
+}
+
 fn bucket_size(span: Duration) -> Duration {
     if span <= Duration::hours(2) {
         Duration::minutes(1)
@@ -120,11 +126,8 @@ pub async fn analyze(src: &dyn Source, root: &str, format: Format) -> Result<Lay
             .collect();
         let mut sorted = gaps.clone();
         sorted.sort();
-        let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0);
-        let p99 = sorted
-            .get(sorted.len().saturating_sub(1) * 99 / 100)
-            .copied()
-            .unwrap_or(0);
+        let median = rank(&sorted, 50);
+        let p99 = rank(&sorted, 99);
         let max_gap = sorted.last().copied().unwrap_or(0);
         let busiest = buckets.values().map(|b| b.0).max().unwrap_or(0);
         let mut cumulative = (0u64, 0u64);
@@ -200,4 +203,19 @@ pub async fn analyze(src: &dyn Source, root: &str, format: Format) -> Result<Lay
     }
     l.say_headline(headline);
     Ok(l)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rank;
+
+    #[test]
+    fn the_p99_gap_is_never_below_the_median() {
+        for n in 1..300 {
+            let sorted: Vec<i64> = (0..n).collect();
+            assert!(rank(&sorted, 99) >= rank(&sorted, 50), "{n} gaps");
+        }
+        assert_eq!(rank(&[10, 1000], 99), 1000);
+        assert_eq!(rank(&[], 99), 0);
+    }
 }
