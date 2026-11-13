@@ -88,7 +88,8 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 
 - **What a recorded program may do**: by default `no-delete` — no deletes, no overwriting objects it did not write,
   no bucket policy or versioning changes. `--allow-writes` lifts it, `--policy read-only` allows only reads
-  ([recording](docs/recording.md)). On a store that ignores `If-None-Match`, use `--policy read-only`.
+  ([recording](docs/recording.md)). On a store that ignores `If-None-Match`, use `--policy read-only`. A safety net,
+  not a sandbox: the program runs with your rights ([security](docs/security.md#run)).
 - **A trial runs the program again**, once per scenario: point it at scratch paths with `{trial}` in a key, or
   every run writes over the last ([trials](docs/trials.md)).
 - sonde's own destructive actions (aborting uploads, deleting versions) are each a dry run and a typed

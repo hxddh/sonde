@@ -29,7 +29,7 @@ it. This page is its contract ([contract.md](contract.md)); `crates/proxy/src/se
 | `endpoint` | required | The endpoint's id (`adhoc` for `--url`). Never its credentials. |
 | `url` | required | The endpoint's URL. |
 | `region` | required | The signing region; may be empty. |
-| `sonde` | optional | The sonde version that wrote it (absent before 17.0). |
+| `sonde` | optional | The sonde version that wrote it. |
 | `command` | optional | The command sonde ran; `replay of …` or `imported from …` for those. |
 | `name` | optional | The program's name (`[program] name`, `--name`): its runs and baseline go by it. |
 | `cwd` | optional | The folder the command ran in. |
@@ -95,8 +95,7 @@ A piece of the program's output (escape codes included) and when it arrived. A l
 - **A new version** comes only with a change an older reader would misread (a field removed, renamed or redefined,
   a line kind it cannot skip, another encoding), in a major release ([contract.md](contract.md)).
 - A sonde reads every version up to its own and refuses a newer one by name, never partially:
-  `written by sonde 18.0.0, format 2; this sonde (17.0.0) reads up to format 1: update sonde to read it`
+  `written by sonde 20.0.0, format 2; this sonde (19.0.0) reads up to format 1: update sonde to read it`
   (`a newer sonde` when the header has no `sonde`).
-- A sessions folder's `.index.jsonl` (each session's counts, trial verdicts, exit code; before 18.0 the files
-  `<name>.summary.json`, `<name>.trials.json`, `<name>.exit` beside each) is sonde's cache and state,
+- A sessions folder's `.index.jsonl` (each session's counts, trial verdicts, exit code) is sonde's cache and state,
   not part of this contract; an unreadable cache is rebuilt.

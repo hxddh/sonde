@@ -231,9 +231,9 @@ Re-enacted (a session holds no object data):
 - Every key and listing prefix under `replay-<time>/` (or `--prefix`). Bucket-level changes (lifecycle, policy,
   deleting the bucket) and requests naming a version id are left out.
 - One request at a time, in order, no retries.
-- Asks first (`--yes` in scripts); deletes what it wrote afterwards (`--keep` keeps it).
+- Asks first (`--yes` in scripts); deletes what it wrote afterwards, always.
 - The prefix must be empty and listable (or its bucket absent), else nothing is sent.
-- `--in-place`: keys as recorded, bucket changes included; scratch buckets only.
+- Never on the recorded keys: an empty prefix is refused.
 - Compared by status and S3 error code; 404 on both sides is the same; `CreateBucket` "already owned by you" is
   counted apart. Exit 2 when anything differs.
 
@@ -243,7 +243,7 @@ Re-enacted (a session holds no object data):
 
 Tested: the SlateDB, pyiceberg, delta-rs and boto3 sessions replay with no difference on RustFS and Ceph RGW 16.2.5.
 
-In the app, Replay shows the plan (refused while read-only), runs it and opens the comparison: grouped differences
+In the app, Replay shows the plan, runs it and opens the comparison: grouped differences
 and both sessions as transcripts (`Op bucket/key [conditions] → outcome`). Compare does the same for any two sessions.
 
 ## Share a session

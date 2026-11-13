@@ -17,7 +17,7 @@ crates/sonde-core         config, vendors, credentials, jobs, guard + audit,  �
 crates/probes             40 probes, runner, run store, diff, matrix, reports │ code, the app's
 crates/decoders           SlateDB, Iceberg, lakeFS, Woodpecker, cadence       │ TSX counted)
 crates/s3raw              SigV4, addressing, retries, throttle, XML, ops      │
-crates/reqlog             records, redaction, ring buffer, SQLite, HAR        │
+crates/reqlog             records, redaction, ring buffer, HAR                │
 crates/fmt (sonde-fmt)    how a size, a count and a length of time are written ─┘
 hooks/java                the Java caller hook's sources (its jars are built into sonde-proxy)
 fuzz/                     cargo-fuzz targets for what sonde reads from others (not in the workspace)

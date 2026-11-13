@@ -24,6 +24,9 @@ jobs:
 Runs on Linux and macOS runners. Each push to `main` keeps its run as an artifact; a pull request is checked against
 the newest one.
 
+No store, no secrets: `run-args: --demo` runs the program against the built-in store, so the check holds its
+requests and findings (its times are not meaningful: leave `max-waiting` and `max-p95` out).
+
 | Step | Does |
 |---|---|
 | Install | The release binary (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. |
