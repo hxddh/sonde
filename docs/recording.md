@@ -234,7 +234,8 @@ Re-enacted (a session holds no object data):
 - Asks first (`--yes` in scripts); deletes what it wrote afterwards, always.
 - The prefix must be empty and listable (or its bucket absent), else nothing is sent.
 - Never on the recorded keys: an empty prefix is refused.
-- Compared by status and S3 error code; 404 on both sides is the same; `CreateBucket` "already owned by you" is
+- Compared by status and S3 error code, and for an answer that succeeded, what it carried: a listing's keys
+  (counted on each record, `x-sonde-keys`), a read's bytes. 404 on both sides is the same; `CreateBucket` "already owned by you" is
   counted apart. Exit 2 when anything differs.
 
 ```

@@ -1661,7 +1661,9 @@ impl Run {
         self.measured = true;
     }
 
-    fn with(
+    /// A run of `records`, its profile, findings and findings at any
+    /// threshold ([`crate::episode::traces`]) reckoned already.
+    pub fn with(
         records: &[Record],
         profile: Profile,
         observations: Vec<Observation>,

@@ -139,11 +139,19 @@ pub fn get(session: &Path) -> Entry {
 /// Holds the folder's `.index.lock` until dropped; `None` where it cannot
 /// be taken (the change is written without it).
 fn lock(dir: &Path) -> Option<std::fs::File> {
+    hold(dir, "index")
+}
+
+/// Holds the folder's `.{what}.lock` until dropped: what a file kept in it
+/// (`findings.json`, `verdicts.json`, `written.json`) is read, changed and
+/// written again under, so that the app and the CLI do not lose each
+/// other's changes. `None` where it cannot be taken.
+pub fn hold(dir: &Path, what: &str) -> Option<std::fs::File> {
     let f = reqlog::private::options()
         .write(true)
         .create(true)
         .truncate(false)
-        .open(dir.join(".index.lock"))
+        .open(dir.join(format!(".{what}.lock")))
         .ok()?;
     f.lock().ok()?;
     Some(f)

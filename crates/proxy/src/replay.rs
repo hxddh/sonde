@@ -575,6 +575,32 @@ pub fn outcome(r: &Record) -> String {
     }
 }
 
+/// What a request answered well carried, to compare beside its outcome: a
+/// listing's keys, a read's bytes. `None` when there is nothing to compare.
+pub fn carried(r: &Record) -> Option<String> {
+    if !r.status.is_some_and(|s| (200..300).contains(&s)) || r.transport_error.is_some() {
+        return None;
+    }
+    if let Some(n) = r.header(reqlog::KEYS_HEADER) {
+        return Some(format!("{n} key{}", if n == "1" { "" } else { "s" }));
+    }
+    (r.method == "GET" && r.key.is_some())
+        .then_some(r.response_bytes)
+        .flatten()
+        .map(|n| format!("{n} B"))
+}
+
+/// One replayed answer, as [`compare`] reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Answer {
+    /// [`outcome`].
+    pub outcome: String,
+    /// A lookup that found nothing.
+    pub miss: bool,
+    /// [`carried`].
+    pub carried: Option<String>,
+}
+
 /// Requests that behaved differently, grouped.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -632,21 +658,31 @@ pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) ->
     compare_answers(original, &answers(replay), replayed)
 }
 
-/// What [`compare`] reads of a replay: each answer ([`outcome`], and
-/// whether it was a lookup that found nothing) by the request it repeats.
-/// A few bytes a request: a replay is read, kept as this, and let go before
-/// its session is read.
-pub fn answers(replay: &[Record]) -> HashMap<u64, (String, bool)> {
+/// What [`compare`] reads of a replay: each [`Answer`] by the request it
+/// repeats. A few bytes a request: a replay is read, kept as this, and let
+/// go before its session is read.
+pub fn answers(replay: &[Record]) -> HashMap<u64, Answer> {
     replay
         .iter()
-        .filter_map(|r| original_of(r).map(|o| (o, (outcome(r), is_miss(r)))))
+        .filter_map(|r| {
+            original_of(r).map(|o| {
+                (
+                    o,
+                    Answer {
+                        outcome: outcome(r),
+                        miss: is_miss(r),
+                        carried: carried(r),
+                    },
+                )
+            })
+        })
         .collect()
 }
 
 /// [`compare`] with the replay's [`answers`].
 pub fn compare_answers(
     original: &[Record],
-    by_original: &HashMap<u64, (String, bool)>,
+    by_original: &HashMap<u64, Answer>,
     replayed: &[Replayed],
 ) -> Comparison {
     let mut c = Comparison::default();
@@ -662,10 +698,24 @@ pub fn compare_answers(
             continue;
         };
         c.compared += 1;
-        let (a, b) = (outcome(o), r.0.clone());
-        if a == b || (is_miss(o) && r.1) {
+        let (mut a, mut b) = (outcome(o), r.outcome.clone());
+        if is_miss(o) && r.miss {
             c.same += 1;
             continue;
+        }
+        // the same status, and what came with it: a listing of 5 keys is
+        // not one of none
+        if a == b {
+            match (carried(o), &r.carried) {
+                (Some(x), Some(y)) if x != *y => {
+                    a = format!("{a} · {x}");
+                    b = format!("{b} · {y}");
+                }
+                _ => {
+                    c.same += 1;
+                    continue;
+                }
+            }
         }
         if o.operation == "CreateBucket"
             && (b.ends_with("BucketAlreadyOwnedByYou") || b.ends_with("BucketAlreadyExists"))
@@ -1057,6 +1107,52 @@ mod tests {
         );
         assert_eq!(replay_prefix_len("replay-notes/x"), None);
         assert_eq!(replay_prefix_len("db/replay-20261107-015048/x"), None);
+    }
+
+    #[test]
+    fn a_listing_or_a_read_that_carried_another_thing_differs() {
+        let rec = |id: u64, op: &str, method: &str, keys: Option<&str>, bytes: u64| {
+            let mut r = Record {
+                id,
+                operation: op.into(),
+                method: method.into(),
+                bucket: Some("b".into()),
+                key: (method == "GET" && keys.is_none()).then(|| "k".into()),
+                status: Some(200),
+                response_bytes: Some(bytes),
+                ..Default::default()
+            };
+            if let Some(n) = keys {
+                r.response_headers
+                    .push(reqlog::Header::new(reqlog::KEYS_HEADER, n));
+            }
+            r
+        };
+        let original = [
+            rec(1, "ListObjectsV2", "GET", Some("5"), 900),
+            rec(2, "GetObject", "GET", None, 4096),
+            rec(3, "GetObject", "GET", None, 10),
+            rec(4, "ListObjectsV2", "GET", Some("1"), 300),
+        ];
+        let mut replay = [
+            rec(11, "ListObjectsV2", "GET", Some("0"), 200),
+            rec(12, "GetObject", "GET", None, 0),
+            rec(13, "GetObject", "GET", None, 10),
+            // a prefix makes the body longer: keys are what is compared
+            rec(14, "ListObjectsV2", "GET", Some("1"), 340),
+        ];
+        for (r, o) in replay.iter_mut().zip(1..) {
+            r.job = Some(replay_tag(o));
+        }
+        let c = compare(&original, &replay, &[]);
+        assert_eq!((c.compared, c.same, c.differ()), (4, 2, 2), "{c:#?}");
+        let said: Vec<(&str, &str)> = c
+            .differences
+            .iter()
+            .map(|d| (d.original.as_str(), d.replay.as_str()))
+            .collect();
+        assert!(said.contains(&("200 · 5 keys", "200 · 0 keys")), "{said:?}");
+        assert!(said.contains(&("200 · 4096 B", "200 · 0 B")), "{said:?}");
     }
 
     #[test]

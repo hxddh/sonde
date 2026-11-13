@@ -143,6 +143,7 @@ comment() {
   local md="$work/comment.md"
   check_args
   [ -z "${SONDE_REPORT_URL:-}" ] || ARGS+=(--report-url "$SONDE_REPORT_URL")
+  [ -z "${SONDE_EXIT:-}" ] || ARGS+=(--program-exit "$SONDE_EXIT")
   sonde check "${ARGS[@]}" -f markdown >"$md" || [ $? -eq 1 ]
   cat "$md" >>"${GITHUB_STEP_SUMMARY:-/dev/null}"
   if [ -z "${SONDE_PR:-}" ] || [ "${SONDE_COMMENT:-true}" != true ]; then

@@ -364,6 +364,10 @@ pub struct RunPoint {
     pub findings: usize,
     /// How long 95% of its requests took at most (0 when unknown).
     pub p95_ms: f64,
+    /// The first request the recording policy refused: sonde's answer,
+    /// why a program that failed did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
 }
 
 pub fn run_point(
@@ -388,6 +392,10 @@ pub fn run_point(
             .count(),
         warnings: findings.iter().filter(|o| o.level == "warn").count(),
         findings: findings.len(),
+        refused: records
+            .iter()
+            .find(|r| crate::refused_by_policy(r))
+            .and_then(|r| r.error_body.clone()),
     }
 }
 
@@ -469,6 +477,7 @@ impl RunFigures {
             errors: self.errors,
             warnings: 0,
             findings: 0,
+            refused: None,
         }
     }
 }
@@ -1000,6 +1009,9 @@ pub struct Comment<'a> {
     pub no_baseline: Option<&'a str>,
     /// Where the whole report is (`sonde share --html`, kept by CI).
     pub report_url: Option<&'a str>,
+    /// The program's exit status, when it is not 0, and why when the
+    /// policy refused a request ([`RunPoint::refused`]).
+    pub failed: Option<(i32, Option<&'a str>)>,
 }
 
 /// Waiting moves this much from one identical run to the next: a change
@@ -1035,12 +1047,19 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
     let mut md = format!(
         "### sonde: {} {}\n",
         check_closing(c, m.trials),
-        if check_passed(c, m.trials) {
+        if check_passed(c, m.trials) && m.failed.is_none() {
             "✅"
         } else {
             "❌"
         }
     );
+    if let Some((code, why)) = m.failed {
+        md.push_str(&format!("\n> ❌ **The program failed** (exit {code})"));
+        match why {
+            Some(w) => md.push_str(&format!(": {}\n", md_text(w))),
+            None => md.push('\n'),
+        }
+    }
     if let Some(t) = m.since {
         md.push_str(&format!("\n{}\n", md_text(t)));
     }
@@ -1359,6 +1378,7 @@ mod tests {
             warnings: 0,
             findings: 0,
             p95_ms: 0.0,
+            refused: None,
         };
         // every hour, a cent a run: 24 runs a day, $7.20 a month
         let (month, per_day) = monthly_cost(&[pt(0, 0.01), pt(1, 0.01), pt(2, 0.01)]).unwrap();
@@ -1381,6 +1401,7 @@ mod tests {
             warnings: 0,
             findings: 0,
             p95_ms: 0.0,
+            refused: None,
         };
         let git = |c: &str| {
             Some(crate::session::GitStamp {
@@ -1818,6 +1839,35 @@ mod tests {
         );
         assert!(!md.contains("**New findings**"), "{md}");
         assert!(md.contains("**Warnings now**\n\n- 20 objects"), "{md}");
+        // a program that failed is said first, with why
+        let mut refused = rec(1, "k");
+        refused.method = "DELETE".into();
+        refused.status = Some(403);
+        refused.error_body = Some("sonde refused DeleteObject: no-delete mode".into());
+        refused
+            .response_headers
+            .push(reqlog::Header::new("x-sonde-policy", "no-delete"));
+        let (pf, prf, of) = point(std::slice::from_ref(&refused));
+        assert_eq!(
+            pf.refused.as_deref(),
+            Some("sonde refused DeleteObject: no-delete mode")
+        );
+        let c = check((&pf, &[refused], &prf, &of), None, &Budget::default());
+        let md = check_comment(
+            &c,
+            &Comment {
+                currency: "USD",
+                failed: Some((1, pf.refused.as_deref())),
+                ..Default::default()
+            },
+        );
+        assert!(md.lines().next().unwrap().ends_with('❌'), "{md}");
+        assert!(
+            md.contains(
+                "> ❌ **The program failed** (exit 1): sonde refused DeleteObject: no-delete mode"
+            ),
+            "{md}"
+        );
     }
 }
 

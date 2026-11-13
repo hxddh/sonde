@@ -207,15 +207,29 @@ pub struct SessionWriter {
 
 /// A path for a new session file in `dir` named `<stem>.sonde`, or
 /// `<stem>-2.sonde`, `<stem>-3.sonde`… when that one exists: two sessions
-/// started in the same second do not share a file.
+/// started in the same second do not share a file. The file is made here,
+/// empty, with `create_new`, so that no other process takes the name
+/// between the choice and the write ([`unreserve`] when nothing comes of it).
 pub fn fresh_path(dir: &Path, stem: &str) -> std::path::PathBuf {
     let mut path = dir.join(format!("{stem}.sonde"));
     let mut n = 2;
-    while path.exists() {
-        path = dir.join(format!("{stem}-{n}.sonde"));
-        n += 1;
+    loop {
+        match reqlog::private::create_new(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                path = dir.join(format!("{stem}-{n}.sonde"));
+                n += 1;
+            }
+            // (no folder, no right to write: the caller's write says why)
+            _ => return path,
+        }
     }
-    path
+}
+
+/// Removes a file [`fresh_path`] made when nothing was written to it.
+pub fn unreserve(path: &Path) {
+    if std::fs::metadata(path).is_ok_and(|m| m.len() == 0) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 impl SessionWriter {
@@ -938,6 +952,42 @@ fn read_blocks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Many sessions begun in one second: each its own file, none written
+    /// over (the name is taken with `create_new`, not checked then opened).
+    #[test]
+    fn sessions_begun_at_once_each_get_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths: Vec<std::path::PathBuf> = std::thread::scope(|s| {
+            let made: Vec<_> = (0..24)
+                .map(|i| {
+                    let dir = dir.path();
+                    s.spawn(move || {
+                        let path = fresh_path(dir, "20261113-120000-etl");
+                        let mut h = SessionHeader::new("e", "u", "r", None);
+                        h.name = Some(format!("run {i}"));
+                        SessionWriter::create(&path, &h).unwrap().flush().unwrap();
+                        path
+                    })
+                })
+                .collect();
+            made.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let names: std::collections::BTreeSet<_> = paths.iter().collect();
+        assert_eq!(names.len(), 24);
+        let mut runs: Vec<String> = paths
+            .iter()
+            .map(|p| Session::open(p).unwrap().header.name.unwrap())
+            .collect();
+        runs.sort();
+        runs.dedup();
+        assert_eq!(runs.len(), 24, "each file holds its own run");
+        // one that comes to nothing leaves nothing
+        let p = fresh_path(dir.path(), "x");
+        assert!(p.is_file());
+        unreserve(&p);
+        assert!(!p.exists());
+    }
 
     /// A session, its counts and its verdicts are their user's alone.
     #[cfg(unix)]

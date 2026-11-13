@@ -33,15 +33,15 @@
 | ↳ `--fault S` | Repeatable: `slowdown`, `error`, `skew`, `lost-answer`, `fail-complete`, `complete-500`, `cut-body`, `slow-first-byte`, `lost-race`, `stale-list`, `slow`, `s3-limits`, or a `sonde.toml` scenario. `slowdown:N` / `error:N` (1–5) fail the first N attempts. |
 | `sonde proxy [--listen ADDR] [--allow-remote] [--policy P] [--tls] [-o FILE]` | The same endpoint, standing (default `127.0.0.1:9000`): prints the variables to set, then each request; its summary at Ctrl-C. Loopback only unless `--allow-remote`. |
 | ↳ `--rotate MIN`, `--alert URL` | Left running: a status line for the last minute (rate, errors, p95) instead of each request, each new warning finding, a new session file every `--rotate` minutes (the finished one gzipped). A file over `sonde.toml`'s budget is said on stderr. `--alert` posts warnings and over-budget files to a webhook as `{"text": …}` (Slack, Teams, Mattermost). |
-| `sonde import s3://B/PREFIX [-e E] [--follow [--every 15m]] [--alert URL]` | Production from its S3 access logs or CloudTrail files (GET and LIST only, no proxy): what arrived since the last import of that prefix, a session of program `logs of s3://…` (history, baseline, `check`) held to the budget; `--follow` keeps reading, a session a pass, until Ctrl-C. Position is kept. One pass exits 1 over budget, 70 when the logs cannot be listed or none read. |
-| `sonde import FILE\|FOLDER [-o FILE]` | An S3 access log, CloudTrail (`{"Records": …}` or one event a line) or HAR, gzipped or not, as a session. A folder is every file under it, in name order, as one session. Skipped lines (not requests, unreadable, a HAR's other hosts) are counted on stderr. Named by the store's host. Whole-second log times are spread evenly over their second (`wholeSeconds` in the header, a line in `show`), so in-flight counts, "one after another" and a throttling finding's in-flight figure are not given. A HAR's `timings.wait` is the first byte. |
+| `sonde import s3://B/PREFIX [-e E] [--follow [--every 15m]] [--alert URL]` | Production from its S3 access logs or CloudTrail files (GET and LIST only, no proxy): what arrived since the last import of that prefix, a session of program `logs of s3://…` (history, baseline, `check`) held to the budget; `--follow` keeps reading, a session a pass, until Ctrl-C. Position is kept. One pass exits 1 over budget, 70 when the logs cannot be listed, none could be read, the prefix holds no files or none is a log; nothing new since the last pass is said, exit 0. |
+| `sonde import FILE\|FOLDER [-o FILE]` | An S3 access log, CloudTrail (`{"Records": …}` or one event a line) or HAR, gzipped or not, as a session. A folder is every file under it, in name order, as one session. Skipped lines and events (not requests, unreadable, a HAR's other hosts, another service's CloudTrail events) are counted on stderr. Named by the store's host. Whole-second log times are spread evenly over their second (`wholeSeconds` in the header, a line in `show`), so in-flight counts, the waiting, "one after another" and a throttling finding's in-flight figure are not given. Times not recorded (CloudTrail) are "—". Upload parts with no create in the file are not "never completed". A HAR's `timings.wait` is the first byte. |
 
 ## Read a run
 
 | Command | Does |
 |---|---|
 | `sonde sessions [list] [-f json\|csv\|markdown]` | Sessions, newest first: program (name, else command; cut in the middle to the terminal's width), requests, duration, errors, worst trial verdict. |
-| `sonde sessions prune --keep N [--yes]` | Delete all but the newest N (baselines kept); a dry run without `--yes`. |
+| `sonde sessions prune --keep N [--yes]` | Delete all but the newest N (baselines kept); a dry run without `--yes` (exit 4 when it would delete any). |
 | `sonde show [FILE] [--requests] [--errors] [--summary] [--all] [--by DIM] [--app] [-f json]` | The summary, one shape for `run`, `show` and `demo`: head line (requests, operations, SDK, endpoint, duration, waiting, cost, errors, not found); the findings, each with its saving, code lines (`at file:line`) and the fix for the detected SDK; "Acting on N findings"; one table by kind of request (requests, errors, p95, waiting and its share, cost share; `*` under 20 requests when others have more); the change since the program's run before. |
 | ↳ `--all` | Each operation on its line first; the table with p50 and max and every kind; the four signals (rate, errors, latency, bytes), first byte, cost and the prefixes past half of S3's request limit. |
 | ↳ `--requests` | Each request on its line, then the summary. Past 2,000 lines: the first and last hundred and a count (`--all` prints all). |
@@ -66,6 +66,7 @@
 | `--no-new-warnings` | Fail on a warning the baseline did not have. |
 | `--config FILE` | Default: `sonde.toml` here or in a folder above, up to the repository root. Flags win. |
 | `--report-url URL` | `-f markdown` only: the link the comment ends with (the HTML report). |
+| `--program-exit CODE` | The program's exit status: one not 0 heads the comment (`programExit` in JSON), with the request the policy refused. |
 | `--init` | Write a `sonde.toml` this run passes: counts with 10% room, times commented out beside their measured values, a `[program] name` from the command when there is none (`etl` for `python etl.py --day 2`); the baseline, trial verdicts and findings kept under the command move to that name. No trials. |
 
 - Output names the session and program first. A trial row is `pass` / `warn` / `FAIL` / `skip` (survived / degraded / broke / untested). A failed row says by how much (`+23%`) over its limit or the baseline's figure.
@@ -86,8 +87,8 @@
 | `sonde bucket uploads -e E -b B [-p PREFIX]` | Incomplete uploads: bytes, age, cost (stale past 7 days); the lifecycle verdict. |
 | `sonde bucket abort-uploads -e E -b B [--older-than-days N] [--confirm COUNT]` | A dry run; with `--confirm` aborts (audited). |
 | `sonde bucket lifecycle -e E -b B [--days 7] [--confirm BUCKET]` | Adds an AbortIncompleteMultipartUpload rule: dry run, then `--confirm` (audited). |
-| `sonde layout inspect -e E -b B [-p PREFIX] [--kind K] [--at RFC3339]` / `--dir PATH` | Detects and decodes a layout (`slatedb`, `iceberg`, `lakefs`, `woodpecker`, `turbopuffer`, `warpstream`, `generic`); `--at` gives the state at a time. |
-| `sonde endpoints list` / `test [ID]` / `import [PROFILES…]` / `add ID URL [--profile P]` | Endpoints. `import` takes `~/.aws/config` profiles not yet configured. `add` takes `--region`, `--path-style`, `--ca-file`; credentials from a profile or the default chain, never the command line. |
+| `sonde layout inspect -e E -b B [-p PREFIX] [--kind K] [--at RFC3339]` / `--dir PATH` | Detects and decodes a layout (`slatedb`, `iceberg`, `lakefs`, `woodpecker`, `turbopuffer`, `warpstream`, `generic`); `--kind` on a prefix that is not that layout says so, exit 4; `--at` gives the state at a time. |
+| `sonde endpoints list` / `test [ID]` / `import [PROFILES…]` / `add ID URL [--profile P] [--replace]` | Endpoints. `import` takes `~/.aws/config` profiles not yet configured. `add` refuses an id taken (64) unless `--replace`; it takes `--region`, `--path-style`, `--ca-file`; credentials from a profile or the default chain, never the command line. |
 
 ## More
 
@@ -110,7 +111,8 @@
 | 77 | Refused: the confirmation did not match, or a replay without `--yes` and no terminal to ask |
 | 130, 143 | `run --trial` interrupted by Ctrl-C or SIGTERM (`run` otherwise exits as its command did) |
 
-A failed request prints its error, request id and the request line from the log.
+A failed request prints its error, request id and the request line from the log. A closed standard output
+(`sonde check | head`) ends the output, not the command: the exit code is the command's own.
 
 ## In CI
 

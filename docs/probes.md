@@ -248,7 +248,7 @@ Ceph RGW and RustFS and on AWS-reference fixtures (`crates/probes/fixtures`).
 
 ### `keys.special`
 
-**Special characters and Unicode in keys.** PUTs, GETs and lists 14 keys with spaces, +, %, reserved characters, dot segments, // and non-ASCII.
+**Special characters and Unicode in keys.** PUTs, GETs and lists 14 keys with spaces, +, %, reserved characters, dot segments, // and non-ASCII; the verdict is of the keys sent (sonde cannot send the two with a dot segment).
 
 **AWS behavior:** Keys are opaque UTF-8: every key round-trips through PUT, GET and ListObjectsV2 (with encoding-type=url) exactly.
 

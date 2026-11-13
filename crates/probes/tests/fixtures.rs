@@ -383,21 +383,18 @@ fn special_keys(refuse: &[usize]) -> Steps {
 }
 
 #[test]
-fn keys_sonde_cannot_send_are_its_own_error_and_not_the_stores() {
+fn keys_sonde_cannot_send_are_said_and_not_held_against_the_store() {
     let p = probes::probe("keys.special").unwrap();
+    // judged by the keys sent: a store that round-trips them all passes
     let j = p.judge(&special_keys(&[]));
-    assert_eq!(j.verdict, Verdict::Error, "{}", j.summary);
+    assert_eq!(j.verdict, Verdict::Pass, "{}", j.summary);
+    assert_eq!(j.summary, "all 12 keys round-trip");
+    let said = j.observations.join(" ");
     assert!(
-        j.summary.starts_with("the 12 keys sent round-trip"),
-        "{}",
-        j.summary
+        said.contains("\"./dot\" and \"a/../b\" not tested"),
+        "{said}"
     );
-    assert!(
-        j.summary.contains("\"./dot\" and \"a/../b\" not tested"),
-        "{}",
-        j.summary
-    );
-    assert!(j.summary.contains("sonde cannot send"), "{}", j.summary);
+    assert!(said.contains("sonde cannot send"), "{said}");
     // what the store does refuse is still counted, of the keys it was sent
     let j = p.judge(&special_keys(&[0]));
     assert_eq!(j.verdict, Verdict::Differs, "{}", j.summary);

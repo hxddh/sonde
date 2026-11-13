@@ -81,6 +81,7 @@ Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
 | Part | When |
 |---|---|
 | Heading | Always: the verdict, as every format closes. |
+| `> ❌ The program failed` | `--program-exit` not 0 (the Action passes `sonde run`'s): its status, and the first request the recording policy refused, if one was. |
 | Since | Past the baseline over several runs (needs the runs, so local history; not in a fresh runner). |
 | `> ⚠️ no baseline yet` | A baseline asked for and none found. |
 | Failed rows | Budget rows that failed; never a row that passed. Without a baseline, its failed rows too. |

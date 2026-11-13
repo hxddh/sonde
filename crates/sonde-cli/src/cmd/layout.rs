@@ -111,6 +111,34 @@ fn print(l: &Layout, at: Option<chrono::DateTime<chrono::Utc>>) {
     }
 }
 
+/// What to decode: what was found under the prefix, or the `--kind` asked
+/// for when it is there (any prefix is generic). `None`, said, when it is not.
+fn targets(kind: Option<Lf>, prefix: &str, found: Vec<(Lf, String)>) -> Option<Vec<(Lf, String)>> {
+    match kind {
+        None => Some(found),
+        Some(k) if k == Lf::Generic || found.iter().any(|(f, _)| *f == k) => {
+            Some(vec![(k, prefix.to_string())])
+        }
+        Some(k) => {
+            let seen: Vec<&str> = found
+                .iter()
+                .filter(|(f, _)| *f != Lf::Generic)
+                .map(|(f, _)| f.label())
+                .collect();
+            eprintln!(
+                "{prefix:?} is not a {} layout{}; --kind generic shows the write cadence of any prefix",
+                k.label(),
+                if seen.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (found: {})", seen.join(", "))
+                }
+            );
+            None
+        }
+    }
+}
+
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i32> {
     let LayoutAction::Inspect {
         endpoint,
@@ -138,13 +166,17 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i
         .transpose()?;
     let layouts: Vec<Layout> = if let Some(d) = dir {
         let src = decoders::DirSource::new(d);
-        let targets = match kind {
-            Some(k) => vec![(k, prefix.clone())],
-            None => decoders::detect(&src, prefix)
+        let found = if kind == Some(Lf::Generic) {
+            Vec::new()
+        } else {
+            decoders::detect(&src, prefix)
                 .await?
                 .into_iter()
                 .map(|d| (d.format, d.root))
-                .collect(),
+                .collect()
+        };
+        let Some(targets) = targets(kind, prefix, found) else {
+            return Ok(4);
         };
         let mut v = vec![];
         for (k, r) in targets {
@@ -156,20 +188,22 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i
         let b = bucket
             .clone()
             .ok_or_else(|| anyhow::anyhow!("--bucket (or --dir)"))?;
-        let targets: Vec<(Lf, String)> = match kind {
-            Some(k) => vec![(k, prefix.clone())],
-            None => {
-                let v = super::wait(
-                    s,
-                    &sonde_core::services::layout::detect(s, &ep, &b, prefix),
-                    false,
-                )
-                .await?;
-                serde_json::from_value::<Vec<decoders::Detection>>(v)?
-                    .into_iter()
-                    .map(|d| (d.format, d.root))
-                    .collect()
-            }
+        let found = if kind == Some(Lf::Generic) {
+            Vec::new()
+        } else {
+            let v = super::wait(
+                s,
+                &sonde_core::services::layout::detect(s, &ep, &b, prefix),
+                false,
+            )
+            .await?;
+            serde_json::from_value::<Vec<decoders::Detection>>(v)?
+                .into_iter()
+                .map(|d| (d.format, d.root))
+                .collect()
+        };
+        let Some(targets) = targets(kind, prefix, found) else {
+            return Ok(4);
         };
         let mut v = vec![];
         for (k, r) in targets {

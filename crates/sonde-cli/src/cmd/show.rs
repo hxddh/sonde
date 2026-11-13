@@ -299,7 +299,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         // written as it is made: an operation, then a request, at a time
         Format::Json => {
             use std::io::Write;
-            let out = std::io::BufWriter::with_capacity(1 << 16, std::io::stdout().lock());
+            let out = std::io::BufWriter::with_capacity(1 << 16, crate::output::Stdout);
             let mut w = sonde_proxy::share::JsonOut::new(out, true);
             w.begin_object()?;
             // one word each: operations, findings, requests

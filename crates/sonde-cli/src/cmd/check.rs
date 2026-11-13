@@ -66,6 +66,10 @@ pub struct CheckArgs {
     /// kept by CI) the comment ends with.
     #[arg(long, value_name = "URL")]
     report_url: Option<String>,
+    /// The program's exit status (CI passes `sonde run`'s): one not 0 is
+    /// said first, with the request the policy refused if one was.
+    #[arg(long, value_name = "CODE")]
+    program_exit: Option<i32>,
     /// The format written: table, json, markdown (a pull request's comment) or github (annotations).
     #[arg(
         long,
@@ -710,6 +714,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }),
         _ => None,
     };
+    let failed = a.program_exit.filter(|&c| c != 0);
     if matches!(a.format, Format::Json) {
         let mut doc = serde_json::json!({
             "run": run.0,
@@ -727,6 +732,9 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         // `baseline = "auto"` found none: the rows held to one are not there
         if let Some(why) = &no_baseline {
             doc["noBaseline"] = serde_json::json!(why);
+        }
+        if let Some(code) = failed {
+            doc["programExit"] = serde_json::json!(code);
         }
         println!("{}", output::json(&doc));
         return Ok(if passed { 0 } else { 1 });
@@ -828,6 +836,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
                     change: change.as_ref(),
                     no_baseline: no_baseline.as_deref(),
                     report_url: a.report_url.as_deref(),
+                    failed: failed.map(|code| (code, run.0.refused.as_deref())),
                 }
             )
         );

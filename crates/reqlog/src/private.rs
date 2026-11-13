@@ -24,6 +24,11 @@ pub fn create(path: &Path) -> std::io::Result<File> {
     options().write(true).create(true).truncate(true).open(path)
 }
 
+/// A file made new, 0600: an error when one is there (`AlreadyExists`).
+pub fn create_new(path: &Path) -> std::io::Result<File> {
+    options().write(true).create_new(true).open(path)
+}
+
 /// [`std::fs::write`], 0600.
 pub fn write(path: &Path, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {
     create(path)?.write_all(bytes.as_ref())

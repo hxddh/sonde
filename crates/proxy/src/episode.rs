@@ -1063,6 +1063,9 @@ fn multipart<'a>(
             .sum();
         let completed = rs.iter().any(completes);
         let aborted = rs.iter().any(|r| r.operation == "AbortMultipartUpload");
+        // parts with no create: begun before the recording (an imported
+        // log's window), so whether it completed is not known
+        let begun = rs.iter().any(|r| r.operation == "CreateMultipartUpload");
         let formatted = tables.part(rs[0]).is_some();
         if completed && formatted {
             let mut unit = rs;
@@ -1081,11 +1084,11 @@ fn multipart<'a>(
         )];
         if aborted && !completed {
             title.push(p("mpu.aborted", &[]));
-        } else if !completed {
+        } else if !completed && begun {
             title.push(p("mpu.open", &[]));
         }
         let mut e = build(Kind::Multipart, None, title, rs);
-        if !completed && !aborted {
+        if !completed && !aborted && begun {
             e.note(p("mpu.billed", &[]));
         }
         out.push(e);
@@ -2691,6 +2694,24 @@ mod tests {
             .find(|o| o.level == "warn" && o.text.starts_with("1 multipart upload never completed"))
             .expect("the unfinished upload is reported");
         assert_eq!(unfinished.episodes, vec![0], "and points at its episode");
+    }
+
+    #[test]
+    fn parts_with_no_create_began_before_the_window_and_are_not_unfinished() {
+        let q = [("partNumber", "1"), ("uploadId", "u1")];
+        let p1 = with_query(rec(1, 0, "PUT", "UploadPart", Some("big"), 200), &q);
+        let p2 = with_query(
+            rec(2, 10, "PUT", "UploadPart", Some("big"), 200),
+            &[("partNumber", "2"), ("uploadId", "u1")],
+        );
+        let eps = episodes(&[p1, p2]);
+        let up = eps.iter().find(|e| e.kind == Kind::Multipart).unwrap();
+        assert!(!up.title().contains("not completed"), "{}", up.title());
+        let obs = observations(&[], &eps);
+        assert!(
+            !obs.iter().any(|o| o.text.contains("never completed")),
+            "{obs:#?}"
+        );
     }
 
     #[test]

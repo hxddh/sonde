@@ -628,6 +628,7 @@ pub fn since_last(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let _held = dir.is_dir().then(|| crate::index::hold(dir, "findings"));
     // back is judged by what was fixed by the earlier run compared (by the
     // run itself, when it is the program's first): never by a later one
     let upto = before

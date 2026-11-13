@@ -118,7 +118,10 @@ step comment
 is "no comment yet: one is written" "$(output url)" "https://github.test/repos/o/r/issues/7/comments"
 is "the comment starts with its marker" "$(head -n 1 "$t/body")" "<!-- sonde: etl -->"
 is "the comment links the report" "$(grep -c -- '--report-url' "$t/sonde.check")" 1
+is "no status: none passed" "$(grep -c -- '--program-exit' "$t/sonde.check")" 0
 is "the summary has the comment" "$(grep -c 'within budget' "$t/summary")" 1
+SONDE_EXIT=1 step comment
+is "the comment says the program's status" "$(paste -sd' ' "$t/sonde.check" | grep -c -- '--program-exit 1')" 1
 FAKE_COMMENT=99 step comment
 is "a comment there: it is edited" "$(output url)" "https://github.test/repos/o/r/issues/comments/99"
 SONDE_COMMENT=false FAKE_COMMENT=99 step comment

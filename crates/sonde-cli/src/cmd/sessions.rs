@@ -358,6 +358,8 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     output::count(gone.len(), "session"),
                     if gone.len() == 1 { "it" } else { "them" }
                 );
+                // a dry run with something to do: 4, as every dry run
+                return Ok(4);
             }
             Ok(0)
         }
@@ -513,6 +515,12 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             }
         );
     }
+    if imported.other_services > 0 {
+        eprintln!(
+            "  {} left out: other services', not S3's",
+            output::count(imported.other_services, "event")
+        );
+    }
     super::record::show_file(s, &path).await
 }
 
@@ -583,7 +591,7 @@ pub async fn otlp(
         }
         (None, None) => {
             use std::io::Write;
-            let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+            let mut out = std::io::BufWriter::new(crate::output::Stdout);
             sonde_proxy::otlp::write_traces(&session, &mut out, true)?;
             out.write_all(b"\n")?;
             out.flush()?;

@@ -347,8 +347,10 @@ pub fn request_prices_for(s: &Sonde, endpoint: &str) -> RequestPrices {
 
 /// The kinds of request, in one table: how many, how many failed, how long
 /// 95% took at most, the run's waiting and cost that were theirs. `all`
-/// adds the median and the slowest, and every kind.
-pub(super) fn kinds_table(p: &Profile, all: bool) -> Vec<String> {
+/// adds the median and the slowest, and every kind. Times not recorded (a
+/// CloudTrail import) are "—"; so is the waiting of a log timed to the
+/// second (`whole_seconds`), whose requests sonde spread over it.
+pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<String> {
     use sonde_proxy::summary::FEW;
     if p.groups.is_empty() {
         return Vec::new();
@@ -359,6 +361,14 @@ pub(super) fn kinds_table(p: &Profile, all: bool) -> Vec<String> {
     // others are of more
     let few = |g: &sonde_proxy::profile::Group| g.requests < FEW as usize;
     let mark = p.groups.iter().any(few) && !p.groups.iter().all(few);
+    let timed = p.groups.iter().any(|g| g.max_ms > 0.0);
+    let time = |ms: f64, star: &str| {
+        if timed {
+            format!("{}{star}", output::duration(ms))
+        } else {
+            "—".to_string()
+        }
+    };
     let rows: Vec<Vec<String>> = p
         .groups
         .iter()
@@ -377,12 +387,16 @@ pub(super) fn kinds_table(p: &Profile, all: bool) -> Vec<String> {
                 } else {
                     String::new()
                 },
-                format!("{}{star}", output::duration(g.p95_ms)),
-                format!(
-                    "{} ({:.0}%)",
-                    output::duration(g.waited_ms),
-                    g.share * 100.0
-                ),
+                time(g.p95_ms, star),
+                if timed && !whole_seconds {
+                    format!(
+                        "{} ({})",
+                        output::duration(g.waited_ms),
+                        share_text(g.share)
+                    )
+                } else {
+                    "—".to_string()
+                },
                 if p.cost.amount > 0.0 {
                     share_text(g.cost / p.cost.amount)
                 } else {
@@ -390,8 +404,8 @@ pub(super) fn kinds_table(p: &Profile, all: bool) -> Vec<String> {
                 },
             ];
             if all {
-                row.push(format!("{}{star}", output::duration(g.p50_ms)));
-                row.push(output::duration(g.max_ms));
+                row.push(time(g.p50_ms, star));
+                row.push(time(g.max_ms, ""));
             }
             row
         })
@@ -466,7 +480,8 @@ pub(super) fn print_summary_of(
         header.endpoint,
         output::duration(s.seconds * 1000.0)
     ));
-    if p.waiting_ms > 0.0 {
+    // (spread over whole seconds by sonde, waiting would be sonde's guess)
+    if p.waiting_ms > 0.0 && !header.whole_seconds {
         head.push_str(&format!(", waiting {}", output::duration(p.waiting_ms)));
     }
     if p.cost.amount > 0.0 {
@@ -499,7 +514,7 @@ pub(super) fn print_summary_of(
     }
     if header.whole_seconds {
         // where in its second a request began is not known
-        say("  its times are to the second (an imported log): a second's requests are spread over it in the log's order, and how many were in flight at once is not known".into());
+        say("  its times are to the second (an imported log): a second's requests are spread over it in the log's order, and how many were in flight at once, and so the waiting, is not known".into());
     }
     for o in &a.observations {
         for line in super::fixloop::finding_lines(o, a.sdk.as_deref(), color) {
@@ -510,7 +525,7 @@ pub(super) fn print_summary_of(
     if let Some(w) = &a.what_if {
         say(paint(&w.line(), "32", color));
     }
-    for line in kinds_table(p, all) {
+    for line in kinds_table(p, all, header.whole_seconds) {
         say(line);
     }
     for (what, n) in &s.error_codes {
@@ -533,16 +548,9 @@ pub(super) fn print_summary_of(
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
 }
 
-/// A share as a percentage: `0.4%`, `12%`.
+/// A share as a percentage: `0.4%`, `12%` ([`sonde_fmt::percent`]).
 pub(super) fn share_text(share: f64) -> String {
-    let p = share * 100.0;
-    if p > 0.0 && p < 0.1 {
-        "<0.1%".into()
-    } else if p < 10.0 {
-        format!("{p:.1}%")
-    } else {
-        format!("{p:.0}%")
-    }
+    sonde_fmt::percent(share)
 }
 
 /// `sonde.toml` at `explicit`, or here or in a folder above. A file that

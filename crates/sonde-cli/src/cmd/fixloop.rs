@@ -155,21 +155,9 @@ pub(super) fn since_last(
     records: &[Record],
     a: &Analysis,
 ) -> Option<SinceLast> {
-    let run = sonde_proxy::profile::Run::of_session(
-        header,
-        records,
-        &a.episodes,
-        a.profile.clone(),
-        a.observations.clone(),
-    );
-    sonde_proxy::fixloop::since_last(
-        &sonde_proxy::fixloop::folder_of(path),
-        path,
-        header,
-        records,
-        run,
-        &|endpoint| request_prices_for(s, endpoint),
-    )
+    a.since_last(path, header, records, &|endpoint| {
+        request_prices_for(s, endpoint)
+    })
 }
 
 #[cfg(test)]

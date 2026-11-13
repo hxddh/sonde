@@ -400,6 +400,36 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
     assert_eq!(o.status.code(), Some(0), "{md}");
     assert!(md.contains("**Against the baseline**"), "{md}");
     assert!(md.contains("[The report](https://x.test/r)"), "{md}");
+    // the program's status heads it; JSON says it too
+    let o = sonde(
+        t.path(),
+        &[
+            "check",
+            &names[1],
+            "--max-requests",
+            "1000",
+            "-f",
+            "markdown",
+            "--program-exit",
+            "3",
+        ],
+    );
+    let md = stdout(&o);
+    assert!(md.contains("> ❌ **The program failed** (exit 3)"), "{md}");
+    let o = sonde(
+        t.path(),
+        &[
+            "check",
+            &names[1],
+            "--max-requests",
+            "1000",
+            "-f",
+            "json",
+            "--program-exit",
+            "3",
+        ],
+    );
+    assert!(stdout(&o).contains("\"programExit\": 3"), "{}", stdout(&o));
 }
 
 #[test]
@@ -1079,6 +1109,39 @@ fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::pat
     file
 }
 
+/// `sonde check | head`: the reader gone before a line is written, the
+/// command still ends with its own exit code, not 0.
+#[cfg(unix)]
+#[test]
+fn an_exit_code_survives_a_closed_pipe() {
+    let t = tempfile::tempdir().unwrap();
+    demo_file(t.path());
+    let closed = |args: &[&str]| {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(args)
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .stdout(writer)
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(!err.contains("panicked"), "{err}");
+        o.status.code()
+    };
+    for _ in 0..3 {
+        assert_eq!(closed(&["check", "--max-requests", "10"]), Some(1));
+        assert_eq!(
+            closed(&["check", "--max-requests", "10", "-f", "json"]),
+            Some(1)
+        );
+        assert_eq!(closed(&["show", "--all"]), Some(0));
+        assert_eq!(closed(&["show", "-f", "json"]), Some(0));
+    }
+}
+
 #[test]
 fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     let t = tempfile::tempdir().unwrap();
@@ -1118,6 +1181,11 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
         stdout(&kept)
     );
     assert!(file.is_file());
+    // a dry run that would delete: 4, and nothing deleted
+    let dry = sonde(t.path(), &["sessions", "prune", "--keep", "0"]);
+    assert_eq!(dry.status.code(), Some(4), "{}", stdout(&dry));
+    assert!(file.is_file());
+    assert_eq!(kept.status.code(), Some(0));
     // removed, and what was counted of it with it
     let gone = sonde(t.path(), &["sessions", "prune", "--keep", "0", "--yes"]);
     assert!(stdout(&gone).contains("deleted "), "{}", stdout(&gone));
@@ -1809,4 +1877,94 @@ fn an_expect_that_is_no_findings_identity_is_a_usage_error() {
             );
         }
     }
+}
+
+#[test]
+fn an_import_says_what_it_left_out_and_no_time_it_does_not_have() {
+    let t = tempfile::tempdir().unwrap();
+    // CloudTrail, one event a line: a cut line and another service's event
+    let trail = t.path().join("trail.json");
+    std::fs::write(
+        &trail,
+        [
+            r#"{"eventTime":"2031-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"a"}}"#,
+            r#"{"eventTime":"2031-02-06T00:00:02Z","eventSource":"ec2.amazonaws.com","eventName":"RunInstances"}"#,
+            r#"{"eventTime":"2031-02-06T00:00:03Z","eventSource":"s3.amaz"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let o = sonde(t.path(), &["import", trail.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let err = stderr(&o);
+    assert!(err.contains("1 line could not be read"), "{err}");
+    assert!(err.contains("1 event left out"), "{err}");
+    // no latency in CloudTrail: no p95, no waiting
+    let table = stdout(&o);
+    let row = table.lines().find(|l| l.contains("GetObject")).unwrap();
+    assert!(row.contains('—') && !row.contains(" ms"), "{table}");
+    // an access log to the second: its waiting would be sonde's spreading
+    let log = t.path().join("two.log");
+    std::fs::write(&log, A_LOG_LINE.repeat(2)).unwrap();
+    let o = sonde(t.path(), &["import", log.to_str().unwrap()]);
+    let shown = stdout(&o);
+    assert!(!shown.contains(", waiting"), "{shown}");
+    assert!(shown.contains("so the waiting, is not known"), "{shown}");
+}
+
+#[test]
+fn a_layout_asked_for_by_kind_and_not_there_is_said() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path().join("files");
+    std::fs::create_dir_all(d.join("logs")).unwrap();
+    std::fs::write(d.join("logs/a.txt"), "x").unwrap();
+    let dir = d.to_str().unwrap();
+    let o = sonde(
+        t.path(),
+        &["layout", "inspect", "--dir", dir, "--kind", "slatedb"],
+    );
+    assert_eq!(o.status.code(), Some(4), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("is not a SlateDB layout"),
+        "{}",
+        stderr(&o)
+    );
+    // any prefix has a write cadence
+    let o = sonde(
+        t.path(),
+        &["layout", "inspect", "--dir", dir, "--kind", "generic"],
+    );
+    assert_ne!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("is not a"), "{}", stderr(&o));
+}
+
+#[test]
+fn an_endpoint_id_taken_is_refused_and_test_says_how_to_name_one() {
+    let t = tempfile::tempdir().unwrap();
+    let add = |id: &str, more: &[&str]| {
+        let mut args = vec!["endpoints", "add", id, "http://127.0.0.1:9"];
+        args.extend(more);
+        sonde(t.path(), &args)
+    };
+    assert_eq!(add("a", &[]).status.code(), Some(0));
+    let again = add("a", &[]);
+    assert_eq!(again.status.code(), Some(64));
+    assert!(stderr(&again).contains("--replace"), "{}", stderr(&again));
+    assert_eq!(add("a", &["--replace"]).status.code(), Some(0));
+    assert_eq!(add("b", &[]).status.code(), Some(0));
+    // two: named by its argument, not --endpoint
+    let o = sonde(t.path(), &["endpoints", "test"]);
+    assert_eq!(o.status.code(), Some(64));
+    assert!(
+        stderr(&o).contains("`sonde endpoints test ID` (a, b)"),
+        "{}",
+        stderr(&o)
+    );
+    let o = sonde(t.path(), &["endpoints", "test", "c"]);
+    assert_eq!(o.status.code(), Some(64));
+    assert!(
+        stderr(&o).contains("the configured ones are a, b"),
+        "{}",
+        stderr(&o)
+    );
 }

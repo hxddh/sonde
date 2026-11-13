@@ -39,6 +39,9 @@ enum EndpointAction {
         /// Credentials from this profile of ~/.aws/config (default: the AWS default chain).
         #[arg(long)]
         profile: Option<String>,
+        /// Replace the endpoint of this id (else an id taken is refused).
+        #[arg(long)]
+        replace: bool,
     },
     /// Adds endpoints for the profiles of ~/.aws/config.
     Import {
@@ -64,7 +67,14 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
             id,
             endpoint_url,
             profile,
+            replace,
         } => {
+            if !replace && s.endpoint_config(id).is_some() {
+                eprintln!(
+                    "sonde: there is an endpoint {id:?} already: --replace replaces it (`sonde endpoints list` shows it)"
+                );
+                return Ok(64);
+            }
             let vendor = sonde_core::Vendor::guess(endpoint_url);
             let mut e = sonde_core::EndpointConfig::new(id, id, endpoint_url, &cli.region, vendor);
             e.path_style |= cli.path_style;
@@ -110,7 +120,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
             Ok(0)
         }
         EndpointAction::Test { endpoint } => {
-            let ep = super::endpoint(s, endpoint.as_deref())?;
+            let ep = to_test(s, endpoint.as_deref())?;
             let r = s.test_endpoint(&ep).await;
             match a.format {
                 Format::Json => println!("{}", output::json(&r)),
@@ -169,5 +179,35 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &EndpointArgs) -> anyhow::Result<
             }
             Ok(0)
         }
+    }
+}
+
+/// The endpoint `endpoints test` tests: the one named, or the only one.
+/// Otherwise a usage error that says how to name one here.
+fn to_test(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
+    let all = s.endpoints();
+    let ids = || {
+        all.iter()
+            .map(|e| e.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match given {
+        Some(e) if s.endpoint_config(e).is_some() => Ok(e.to_string()),
+        Some(e) if all.is_empty() => Err(super::usage(format!(
+            "no endpoint {e:?}: none is configured (`sonde endpoints add ID URL`)"
+        ))),
+        Some(e) => Err(super::usage(format!(
+            "no endpoint {e:?}: the configured ones are {}",
+            ids()
+        ))),
+        None if all.len() == 1 => Ok(all[0].id.clone()),
+        None if all.is_empty() => Err(super::usage(
+            "no endpoint configured: add one with `sonde endpoints add ID URL`",
+        )),
+        None => Err(super::usage(format!(
+            "several endpoints configured: name one, `sonde endpoints test ID` ({})",
+            ids()
+        ))),
     }
 }
