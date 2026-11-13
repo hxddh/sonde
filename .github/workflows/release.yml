@@ -45,6 +45,22 @@ jobs:
         run: cd dist && cat ./*.sha256 > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
         run: scripts/changelog-section.sh "$VERSION" > notes.md
+      # what the owner's secrets would add, said on the release page too
+      - name: What this release skipped
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          NSH_PACKAGE_KEY: ${{ secrets.NSH_PACKAGE_KEY }}
+          NSH_PACKAGE_CERT: ${{ secrets.NSH_PACKAGE_CERT }}
+        run: |
+          skipped=()
+          [ -n "$MACOS_CERTIFICATE_P12" ] || skipped+=("- The macOS app is not signed with a Developer ID: Gatekeeper refuses the \`.dmg\` until you right-click → Open, or run \`xattr -d com.apple.quarantine sonde.app\`.")
+          [ -n "$APPLE_ID" ] || skipped+=("- The \`.dmg\` is not notarized.")
+          [ -n "$NSH_PACKAGE_KEY" ] && [ -n "$NSH_PACKAGE_CERT" ] || skipped+=("- No signed package of the app's code: an installed app updates only by installing the new app.")
+          if [ ${#skipped[@]} -gt 0 ]; then
+            { echo; echo "### Not in this release"; echo; printf '%s\n' "${skipped[@]}"; } >> notes.md
+            printf '::warning title=Skipped::%s\n' "${skipped[@]}"
+          fi
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: ./.github/actions/nsh
         # (the tag v0.5.0)

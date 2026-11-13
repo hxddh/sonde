@@ -19,6 +19,7 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
   every schema in `docs/schemas` follows.
 - `compare` writes counts with separators, as `show` does (`1,000,000`).
 - A replay always writes under a prefix of its own and removes what it wrote.
+- A release made without the signing keys says what it skipped on its page, not only in its log.
 
 ### Removed
 
