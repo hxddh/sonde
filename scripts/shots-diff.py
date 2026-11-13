@@ -38,10 +38,10 @@ GRID = (40, 25)
 LEVELS = 16
 # cells that may differ by more than a level and still be the same picture
 TOLERANCE = 6
-# screens that draw what the tour's run measured (latencies, its timeline, a request's timings): on the same code
+# screens that draw what the tour's run measured (latencies, its timeline, a request's timings, two of its runs compared): on the same code
 # they move from run to run by more than any tolerance that would still catch a change, so they are reported with
 # their difference images for a person to look at, and not held
-LIVE = re.compile(r"-(02c-errors|02d-first-byte|02j-trial-time|03c-request|03g-time|03p-programs)\.png$")
+LIVE = re.compile(r"-(02c-errors|02d-first-byte|02j-trial-time|03c-request|03g-time|03h-runs|03p-programs)\.png$")
 
 
 def is_held(name: str) -> bool:
