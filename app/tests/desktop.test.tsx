@@ -2,6 +2,7 @@
 
 import { expect, open, test } from "nsh/test";
 import { desktop, place } from "./helpers";
+import type { Signals } from "../src/types";
 
 test("a first launch welcomes; its demo makes Run ready; the sidebar hides and comes back", async () => {
   const app = await open("../App.tsx", desktop);
@@ -434,22 +435,39 @@ test("one function writes a duration, and a scenario has words", async () => {
 });
 
 test("a run reads as four signals and in flight; what a log without times cannot say is said, never 0", async () => {
-  const { signalsFromProfile, signalTiles, brief, operationStats, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
-  const bin = (tMs: number, ok: number, server = 0, retried = 0) => ({ tMs, ok, miss: 0, client: 0, server, p50Ms: 2, p95Ms: 6, p99Ms: 9, retried, bytesUp: 1024 * ok, bytesDown: 0 });
-  const profile = {
-    wallMs: 2000,
-    binMs: 1000,
-    peakInFlight: 4,
-    peakAtMs: 1200,
-    rate: [bin(0, 30), bin(1000, 9, 1, 2)],
-    inFlight: [{ tMs: 100, n: 2 }, { tMs: 1200, n: 4 }],
-    p50Ms: 2,
-    p95Ms: 6,
-    p99Ms: 9,
-    cost: { amount: 0, currency: "USD" },
-  } as never;
-  const summary = { requests: 40, errors: 1, misses: 0, refused: 0, seconds: 2, bytesUp: 39936, bytesDown: 0 };
-  const s = signalsFromProfile(profile, summary);
+  const { signalTiles, brief, operationStats, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
+  // signals as Rust counts them: slices of requests (ok, server errors, retries), the most in flight in each
+  type Bin = { ok: number; server: number; retried: number; flight: number };
+  const bin = (ok: number, server = 0, retried = 0, flight = 0): Bin => ({ ok, server, retried, flight });
+  const signalsOf = (bins: Bin[], wallMs: number, bytesUp: number, bytesDown: number, timed = true): Signals => {
+    const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+    const binS = wallMs / bins.length / 1000;
+    const per = (n: number) => (timed ? n / (wallMs / 1000) : null);
+    const n = bins.map((b) => b.ok + b.server);
+    const requests = sum(n);
+    const zero = bins.map(() => 0);
+    const up = bins.map((b) => (1024 * b.ok * (bytesUp ? 1 : 0)) / binS);
+    const peak = Math.max(...bins.map((b) => b.flight));
+    return {
+      timed,
+      wallMs,
+      binMs: wallMs / bins.length,
+      bins: bins.length,
+      rate: { value: per(requests), unit: "1/s", series: n.map((x) => x / binS), requests },
+      errors: { value: sum(bins.map((b) => b.server)) / requests, series: bins.map((b) => b.server), count: sum(bins.map((b) => b.server)), counts: { client: 0, server: sum(bins.map((b) => b.server)), transport: 0, injected: 0 }, client: zero, server: bins.map((b) => b.server), transport: zero, injected: zero, retries: bins.map((b) => b.retried), retriesTotal: sum(bins.map((b) => b.retried)) },
+      latency: { value: timed ? 2 : null, series: bins.map(() => 2), p50Ms: timed ? 2 : null, p95Ms: timed ? 6 : null, p99Ms: timed ? 9 : null, p95: bins.map(() => 6), p99: bins.map(() => 9) },
+      bytes: { value: per(bytesUp + bytesDown), series: up, upPerSec: per(bytesUp), downPerSec: per(bytesDown), up, down: zero, upBytes: bytesUp, downBytes: bytesDown },
+      inFlight: { value: timed ? peak : null, series: bins.map((b) => b.flight), peak, peakAtMs: 0 },
+      firstByte: null,
+      sizes: { request: [], response: [], throughput: [], mibPerSec: null },
+      statuses: [],
+      cost: { amount: 0, currency: "USD", operations: [] },
+      prefixes: [],
+    } as unknown as Signals;
+  };
+  const bins = [bin(30, 0, 0, 2), bin(9, 1, 2, 4)];
+  const summary = { requests: 40, errors: 1, misses: 0, refused: 0, seconds: 2, bytesUp: 39936, bytesDown: 0, operations: [] };
+  const s = signalsOf(bins, 2000, 39936, 0);
   expect(s.rate.value).toBe(20);
   expect(s.inFlight.series).toEqual([2, 4]);
   const tiles = signalTiles(s);
@@ -465,7 +483,7 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(tiles[3].detail).toBe("↑ 19.5 KiB/s ↓ 0 B/s");
   expect(tiles[4].value).toBe("4");
   // a CloudTrail file has no times: no rate, no latency, no pace of bytes, and nothing drawn over time
-  const untimed = signalTiles(signalsFromProfile({ ...(profile as object), timed: false } as never, summary));
+  const untimed = signalTiles(signalsOf(bins, 2000, 39936, 0, false));
   expect(untimed[0].value).toBe("Not timed");
   expect(untimed[0].detail).toBe("40 requests");
   expect(untimed[2].value).toBe("Not timed");
@@ -475,8 +493,7 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(untimed.every((x) => x.id === "errors" || x.series.length === 0)).toBe(true);
   // a run of a moment says totals, not rates, and draws no line: 9 requests in a third of a second
   expect(brief(s)).toBe(false);
-  const few = { requests: 9, errors: 2, misses: 0, refused: 0, seconds: 0.334, bytesUp: 0, bytesDown: 3145728 };
-  const moment = signalsFromProfile({ ...(profile as object), wallMs: 334, binMs: 167, peakAtMs: 0, rate: [bin(0, 5, 2), bin(167, 2)] } as never, few);
+  const moment = signalsOf([bin(5, 2), bin(2)], 334, 0, 3145728);
   expect(brief(moment)).toBe(true);
   const short = signalTiles(moment);
   expect(short[0].label).toBe("Requests");
@@ -496,17 +513,8 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(quick[0].value).toBe("40");
   expect(quick[1].value).toBe("3%");
   expect(quick.every((x) => x.series.length === 0)).toBe(true);
-  // the run by operation: Rust's table, or what an older share's profile holds of it
-  const groups = [
-    { operation: "GetObject", missed: false, requests: 30, errors: 3, p50Ms: 2, p95Ms: 6 },
-    { operation: "GetObject", missed: true, requests: 10, errors: 0, p50Ms: 1, p95Ms: 2 },
-    { operation: "PutObject", missed: false, requests: 5, errors: 0, p50Ms: 9, p95Ms: 12 },
-  ];
-  const ops = operationStats({ summary, profile: { ...(profile as object), groups } as never });
-  expect(ops.map((o) => [o.operation, o.count, o.few])).toEqual([["GetObject", 40, false], ["PutObject", 5, true]]);
-  expect(ops[0].errorShare).toBe(3 / 40);
-  expect(ops[0].p99Ms).toBe(null);
-  const own = operationStats({ summary: { ...summary, operations: [{ operation: "PutObject", count: 12, errors: 6, misses: 0, errorShare: 0.5, bytesUp: 0, bytesDown: 0, p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4, few: true }] }, profile: profile as never });
+  // the run by operation: Rust's table
+  const own = operationStats({ summary: { ...summary, operations: [{ operation: "PutObject", count: 12, errors: 6, misses: 0, errorShare: 0.5, bytesUp: 0, bytesDown: 0, p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4, few: true }] } });
   expect(own).toEqual([{ operation: "PutObject", count: 12, errorShare: 0.5, p50Ms: 1, p95Ms: 2, p99Ms: 3, few: true }]);
   // sizes by their bounds; a prefix by the nearer of its two limits
   expect(sizeLabel(0)).toBe("empty");
