@@ -47,22 +47,37 @@ $ ldd target/release/sonde
 No GTK, GLib, Cairo, Pango, WebKit, X11 or Wayland (the terminal backend draws with ratatui). CI checks with `ldd` and
 runs `sonde --version` in `debian:bookworm-slim`.
 
+## CI
+
+| Run | `ci.yml` jobs | `build.yml` builds |
+|---|---|---|
+| Pull request (a newer push cancels it) | lint, unit (Linux, macOS arm64, Windows), supply, action, integration, record, ui, Linux tour | Linux x86_64 (glibc, musl, desktop) |
+| Push to `main` | the same | and Linux arm64, macOS arm64, Windows (terminal, desktop) |
+| Nightly, or Actions › CI › Run workflow | the same, and the macOS and Windows tours | and macOS Intel and the macOS app: all a release ships |
+| Dependabot crate update | lint, unit, supply | nothing |
+
+A pull request's run takes under 30 minutes; its tour is the one approved (`app/shots.approved.json`), the macOS and
+Windows tours are reported. `nightly.yml` runs the timed tests, `fuzz.yml` the fuzzers weekly, `action-live.yml` the
+Action against a real baseline and comment daily.
+
 ## Releasing
 
 1. Update `CHANGELOG.md` (`## [x.y.z] - date`) and the versions: `Cargo.toml` `workspace.package.version`,
    `app/nsh.json` `version` and `build`.
 2. Push tag `vx.y.z`, or run Actions › Release › Run workflow with `x.y.z` (it tags the chosen commit).
-   `release.yml` builds everything (the web viewer first, `nsh package App.tsx --target web`, embedded in every
-   terminal binary), publishes the release with the changelog section, `SHA256SUMS` and a `.sha256` per file, and
-   with `HOMEBREW_TAP_TOKEN` writes `Formula/sonde.rb` and `Casks/sonde-app.rb` into `hxddh/homebrew-sonde` from
-   `packaging/homebrew/*.rb.in`.
+   `release.yml` takes each artifact a finished CI run of that commit kept (main's, the nightly or one by hand; never
+   a pull request's) and builds the rest with `build.yml` (the web viewer first, `nsh package App.tsx --target web`,
+   embedded in every terminal binary): after main's run, the macOS app and macOS Intel; after a nightly or CI run by
+   hand on the commit, nothing. It publishes the release with the changelog section, `SHA256SUMS` and a `.sha256` per
+   file, attests each file, and with `HOMEBREW_TAP_TOKEN` writes `Formula/sonde.rb` and `Casks/sonde-app.rb` into
+   `hxddh/homebrew-sonde` from `packaging/homebrew/*.rb.in`.
 3. `action-tag.yml` then moves the major tag (`v18`) to the release, so `uses: hxddh/sonde@v18` follows it. A
    pre-release does not move it. To repair one: Actions › Action tag › Run workflow with `x.y.z`.
 
 | | |
 |---|---|
 | `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION`, `SONDE_STATIC=1`. Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
-| `scripts/shots.sh` | CI's `shots` job: every place on a real Linux window under Xvfb, wide and smallest, light and dark, English and Chinese, into the `sonde-shots` artifact. |
+| `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb; macOS and Windows nightly), wide and smallest, light and dark, English and Chinese, into the `sonde-shots` artifact. |
 
 ## Signed packages of the app's code
 

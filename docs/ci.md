@@ -22,7 +22,8 @@ jobs:
 ```
 
 Runs on Linux and macOS runners. Each push to `main` keeps its run as an artifact; a pull request is checked against
-the newest one.
+the newest one. This repository tests it against stand-ins on each pull request and, daily, against a real baseline
+and a real comment (`.github/workflows/action-live.yml`).
 
 | Step | Does |
 |---|---|

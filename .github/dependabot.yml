@@ -1,6 +1,8 @@
 # Weekly: the actions (pinned by commit, their tag in a comment, which
 # Dependabot moves together) and the crates. Native Shell is pinned by
-# commit in Cargo.toml and moved by hand (docs/decisions.md D-002).
+# commit in Cargo.toml and moved by hand (docs/decisions.md D-002). A crate
+# update's pull request runs lint, unit and supply (ci.yml); an action
+# update's, the whole pull request CI.
 version: 2
 updates:
   - package-ecosystem: github-actions
