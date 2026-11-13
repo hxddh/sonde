@@ -189,7 +189,7 @@ test("a trial reads as figures (the faults and retries, the wait, the load), and
   const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
   expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
   expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried");
-  // why: Rust's phrases in the reader's language (two make one sentence), its English for a verdict kept before 16.0
+  // why: Rust's phrases in the reader's language (two make one sentence), its English where a reason has no phrase
   const why = { ...base, standing: "broke" as const, faults: 2, retried: 0, droppedWrites: 2, reasons: ["2 writes failed and were never sent again, and the program exited 0", "an older reason"] };
   expect(trialReasons(why)).toEqual(why.reasons);
   const said = [[{ key: "trial.why.writes", args: { n: "2", s: "s", it: "them", was: "were" } }, { key: "trial.why.exit0" }], []];
