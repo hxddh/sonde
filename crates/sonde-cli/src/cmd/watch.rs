@@ -149,6 +149,7 @@ impl LogsMark {
 /// What a single pass over the logs exits with: the listing failed, or files were
 /// listed and not one could be downloaded (nothing was read: 70), the pass is
 /// over the budget (1, as `sonde check`), or 0.
+/// "None read" is also a prefix with no files, or none a log.
 fn once_exit(listing_failed: bool, none_read: bool, over_budget: bool) -> i32 {
     if listing_failed || none_read {
         70
@@ -230,6 +231,7 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
         // the files written since the mark (less a grace for late ones), not read yet
         let mut keys: Vec<(String, u64, chrono::DateTime<chrono::Utc>)> = Vec::new();
         let mut token = None;
+        let mut files = 0usize;
         let listed = loop {
             let page = client
                 .list_objects_v2(
@@ -246,6 +248,7 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
                 Ok(p) => p,
                 Err(e) => break Err(e),
             };
+            files += page.contents.len();
             keys.extend(page.contents.iter().filter_map(|o| {
                 let at = o
                     .last_modified
@@ -271,7 +274,7 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
         }
         let mut records = Vec::new();
         // of the files asked for: how many answered, how many did not
-        let (mut downloaded, mut unread) = (0usize, 0usize);
+        let (mut downloaded, mut unread, mut logs) = (0usize, 0usize, 0usize);
         for (k, size, at) in &keys {
             // a log file is small; something this large is not one
             if *size > 256 << 20 {
@@ -294,6 +297,7 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
             let text = sonde_proxy::import::text_of(&r.body)
                 .unwrap_or_else(|_| String::from_utf8_lossy(&r.body).into_owned());
             if let Ok(i) = sonde_proxy::import::import_counted(&text, k) {
+                logs += 1;
                 if i.malformed > 0 {
                     eprintln!(
                         "{} {k}: {} line{} could not be read",
@@ -312,11 +316,26 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
         // every file failed: a pass that read nothing did not find nothing
         // (no permission to GET, say); one file gone among many is not that
         none_read = unread > 0 && downloaded == 0;
+        let bang = paint("!", "33", std::io::stderr().is_terminal());
         if none_read {
             eprintln!(
-                "{} none of the {unread} log file{} listed under {src} could be read",
-                paint("!", "33", std::io::stderr().is_terminal()),
+                "{bang} none of the {unread} log file{} listed under {src} could be read",
                 if unread == 1 { "" } else { "s" }
+            );
+        } else if !listing_failed && files == 0 {
+            // a prefix with nothing under it is a wrong prefix, not a quiet hour
+            none_read = true;
+            eprintln!("{bang} no files under {src}: is it where the logs are delivered?");
+        } else if downloaded > 0 && logs == 0 {
+            none_read = true;
+            eprintln!(
+                "{bang} none of the {} read under {src} is an S3 access log or CloudTrail file",
+                output::count(downloaded, "file")
+            );
+        } else if !listing_failed && keys.is_empty() {
+            eprintln!(
+                "{} nothing new under {src} since the last pass",
+                paint("·", "2", std::io::stderr().is_terminal())
             );
         }
         // the seen files old enough to be past the grace are forgotten
@@ -808,8 +827,8 @@ mod tests {
         assert_eq!(watch_logs(&s, &logs("demo", src)).await.unwrap(), 70);
     }
 
-    /// A store that lists two log files and refuses to hand over either.
-    async fn store_that_lists_and_refuses_gets() -> std::net::SocketAddr {
+    /// A store that lists `n` log files (0 or 2) and refuses to hand over any.
+    async fn store_that_lists_and_refuses_gets(n: u8) -> std::net::SocketAddr {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -840,9 +859,8 @@ mod tests {
                             (
                                 "200 OK",
                                 format!(
-                                    "<ListBucketResult><Name>lake</Name><Prefix>logs/</Prefix><KeyCount>2</KeyCount><IsTruncated>false</IsTruncated>{}{}</ListBucketResult>",
-                                    file(0),
-                                    file(1)
+                                    "<ListBucketResult><Name>lake</Name><Prefix>logs/</Prefix><KeyCount>{n}</KeyCount><IsTruncated>false</IsTruncated>{}</ListBucketResult>",
+                                    (0..n).map(file).collect::<String>()
                                 ),
                             )
                         } else {
@@ -867,9 +885,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_single_pass_that_could_read_none_of_the_files_listed_does_not_exit_0() {
+        for n in [2, 0] {
+            assert_eq!(pass_over(n).await, 70, "{n} files");
+        }
+    }
+
+    async fn pass_over(n: u8) -> i32 {
         let dir = tempfile::tempdir().unwrap();
         let s = Arc::new(Sonde::open(sonde_core::Paths::rooted(dir.path())).unwrap());
-        let addr = store_that_lists_and_refuses_gets().await;
+        let addr = store_that_lists_and_refuses_gets(n).await;
         let mut e = sonde_core::EndpointConfig::new(
             "refusing",
             "refusing",
@@ -884,6 +908,6 @@ mod tests {
         };
         s.add_transient_endpoint(e).unwrap();
         let src = "s3://lake/logs/";
-        assert_eq!(watch_logs(&s, &logs("refusing", src)).await.unwrap(), 70);
+        watch_logs(&s, &logs("refusing", src)).await.unwrap()
     }
 }

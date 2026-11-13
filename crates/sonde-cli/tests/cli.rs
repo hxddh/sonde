@@ -1801,3 +1801,36 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
         stderr(&none)
     );
 }
+
+#[test]
+fn an_import_says_what_it_left_out_and_no_time_it_does_not_have() {
+    let t = tempfile::tempdir().unwrap();
+    // CloudTrail, one event a line: a cut line and another service's event
+    let trail = t.path().join("trail.json");
+    std::fs::write(
+        &trail,
+        [
+            r#"{"eventTime":"2031-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"a"}}"#,
+            r#"{"eventTime":"2031-02-06T00:00:02Z","eventSource":"ec2.amazonaws.com","eventName":"RunInstances"}"#,
+            r#"{"eventTime":"2031-02-06T00:00:03Z","eventSource":"s3.amaz"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let o = sonde(t.path(), &["import", trail.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let err = stderr(&o);
+    assert!(err.contains("1 line could not be read"), "{err}");
+    assert!(err.contains("1 event left out"), "{err}");
+    // no latency in CloudTrail: no p95, no waiting
+    let table = stdout(&o);
+    let row = table.lines().find(|l| l.contains("GetObject")).unwrap();
+    assert!(row.contains('—') && !row.contains(" ms"), "{table}");
+    // an access log to the second: its waiting would be sonde's spreading
+    let log = t.path().join("two.log");
+    std::fs::write(&log, A_LOG_LINE.repeat(2)).unwrap();
+    let o = sonde(t.path(), &["import", log.to_str().unwrap()]);
+    let shown = stdout(&o);
+    assert!(!shown.contains(", waiting"), "{shown}");
+    assert!(shown.contains("so the waiting, is not known"), "{shown}");
+}

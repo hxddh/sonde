@@ -513,6 +513,12 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             }
         );
     }
+    if imported.other_services > 0 {
+        eprintln!(
+            "  {} left out: other services', not S3's",
+            output::count(imported.other_services, "event")
+        );
+    }
     super::record::show_file(s, &path).await
 }
 
