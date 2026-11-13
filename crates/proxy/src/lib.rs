@@ -216,6 +216,7 @@ impl Written {
         if order.is_empty() {
             return Ok(());
         }
+        let _held = crate::index::hold(&dir, "written");
         let mut all = read_written(&dir);
         let keys = all.entry(program).or_default().entry(endpoint).or_default();
         keys.retain(|k| !set.contains(k));

@@ -248,33 +248,26 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
     // anything runs
     let project = load_project(None)?;
     let mut asked: Vec<sonde_proxy::fault::Scenario> = Vec::new();
-    let mut specs: Vec<String> = Vec::new();
+    // one scenario at two strengths is two runs, each with a session of its own
+    let same = |a: &sonde_proxy::fault::Scenario, b: &sonde_proxy::fault::Scenario| {
+        a.name == b.name && sonde_proxy::fault::pressed(a) == sonde_proxy::fault::pressed(b)
+    };
     for name in &a.faults {
         let scenario = named_scenario(name, &project.scenarios)?;
         // named twice, run once: the second run would write over the first
-        match asked.iter().position(|s| s.name == scenario.name) {
-            None => {
-                asked.push(scenario);
-                specs.push(name.clone());
-            }
-            // one scenario at two strengths has one file to go to: refused,
-            // not silently run at the first
-            Some(at) if specs[at] != *name => {
-                return Err(super::usage(format!(
-                    "--fault {} and --fault {name} are one scenario and would write one session: name it once",
-                    specs[at]
-                )));
-            }
-            Some(_) => {}
+        if !asked.iter().any(|s| same(s, &scenario)) {
+            asked.push(scenario);
         }
     }
     // what to try again is known before anything runs
     if a.again {
+        // (trimmed as the name is when kept)
         let program = a
             .name
             .clone()
             .or(project.file.program.name.clone())
-            .filter(|n| !n.trim().is_empty())
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
             .or_else(|| {
                 sonde_proxy::program::program_key(Some(&sonde_proxy::program::shell_join(
                     &a.command,
@@ -301,12 +294,8 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         }
         for name in &names {
             match named_scenario(name, &project.scenarios) {
-                // (one scenario at two strengths has one session: once)
-                Ok(scenario) if asked.iter().any(|s| s.name == scenario.name) => {}
-                Ok(scenario) => {
-                    asked.push(scenario);
-                    specs.push(name.clone());
-                }
+                Ok(scenario) if asked.iter().any(|s| same(s, &scenario)) => {}
+                Ok(scenario) => asked.push(scenario),
                 // a project's scenario since taken out of sonde.toml
                 Err(e) => eprintln!("warning: not tried again: {e}"),
             }
@@ -392,7 +381,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
             // name is free, and is the one the verdict keeps)
             path: folder.join(format!(
                 "{}.sonde",
-                sonde_proxy::trial::session_stem(&file, &scenario.name)
+                sonde_proxy::trial::session_stem(&file, &scenario)
             )),
             of: of.clone(),
             scenario,

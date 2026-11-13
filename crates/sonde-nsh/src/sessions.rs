@@ -1434,7 +1434,7 @@ async fn try_under(
         let under = Under {
             path: sonde_proxy::session::fresh_path(
                 &dir,
-                &sonde_proxy::trial::session_stem(&file, &scenario.name),
+                &sonde_proxy::trial::session_stem(&file, &scenario),
             ),
             of: of.clone(),
             scenario: scenario.clone(),

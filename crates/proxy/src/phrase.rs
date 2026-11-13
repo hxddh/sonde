@@ -199,6 +199,9 @@ fn template(key: &str) -> &'static str {
         "obs.savesTime" => "about {time} sooner ({pct}% of the time waiting)",
         "obs.saves" => "{n} fewer request{s} ({pct}% of the session)",
         "split.slow" => "{pct}% of the slow requests (over {ms}) are ",
+        "split.slow.most" => {
+            "{pct}% of the slow requests (over {ms}), and {all}% of all requests, are "
+        }
         "split.spread" => "the slow requests are spread: no one group holds half of them",
         "split.cost.first" => "{pct}% of the cost is ",
         "split.cost" => "; {pct}% of the cost is ",

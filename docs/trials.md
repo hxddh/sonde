@@ -68,8 +68,9 @@ repeatable; duplicates run once.
 | `s3-limits` | 503 SlowDown past 5,500 reads or 3,500 writes a second per prefix | only `--fault s3-limits` |
 
 - **`slowdown:N` / `error:N`** (1–5): fail each request's first N attempts. The verdict row reads `slowdown:3`; the
-  session and `{trial}` keep `slowdown`. No other built-in takes a number (project scenarios set `times`); the app
-  offers the same count.
+  session is `<run>.slowdown-3x.sonde` and `{trial}` keeps `slowdown`; two strengths are two runs, and `--again`
+  runs each that stands broke. No other built-in takes a number (project scenarios set `times`); the app offers the
+  same count.
 - **One request** = method, operation, bucket, key, part number (not upload id: a restarted upload retries the same
   parts). Key-less requests add `prefix`, `delimiter`, `start-after`, `continuation-token`, `marker`, `key-marker`,
   `upload-id-marker`, `version-id-marker`, `versions`, `uploads` and the body's hash. Attempts are counted per

@@ -586,6 +586,7 @@ pub fn since_last(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let _held = dir.is_dir().then(|| crate::index::hold(dir, "findings"));
     let unsaved = match read(dir) {
         // nothing recorded here yet (a run written elsewhere with -o)
         _ if !dir.is_dir() => None,

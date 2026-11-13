@@ -591,7 +591,7 @@ async fn a_scenario_pressed_harder_fails_more_attempts_in_a_row() {
     assert_eq!(t["times"], 3, "{t:#}");
     assert_eq!(t["attempts"], 4, "{t:#}");
     assert_eq!(t["faults"], 9, "three requests, three attempts each: {t:#}");
-    assert_eq!(t["session"], "run.slowdown.sonde");
+    assert_eq!(t["session"], "run.slowdown-3x.sonde");
     assert_eq!(
         t["about"],
         "503 SlowDown on each request's first 3 attempts"
@@ -2375,4 +2375,42 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
         )
         .await;
     assert_eq!(never.code, Some(64), "{}", never.stderr);
+}
+
+/// Two strengths of one scenario stand broke: each is run again, into a
+/// session of its own; the name is trimmed as it was when kept.
+#[tokio::test(flavor = "multi_thread")]
+async fn trying_again_runs_every_strength_that_broke() {
+    let b = Bench::new().await;
+    let broke = serde_json::json!([{
+        "at": "2026-11-01T00:00:00Z", "standing": "broke", "run": "run.sonde"
+    }]);
+    let kept = serde_json::json!({ "etl": { "slowdown": broke, "slowdown:3": broke } });
+    std::fs::write(b.path("verdicts.json"), kept.to_string()).unwrap();
+    let o = b
+        .run(
+            Some("retrying"),
+            &[
+                "run",
+                "--trial",
+                "--again",
+                "--name",
+                " etl ",
+                "-o",
+                "run.sonde",
+            ],
+        )
+        .await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    let mut sessions: Vec<String> = trials(&b.path("run.sonde"))
+        .iter()
+        .map(|t| t["session"].as_str().unwrap().to_string())
+        .collect();
+    sessions.sort();
+    assert_eq!(
+        sessions,
+        ["run.slowdown-3x.sonde", "run.slowdown.sonde"],
+        "{}",
+        o.stderr
+    );
 }

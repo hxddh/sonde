@@ -1565,9 +1565,13 @@ pub fn folder_for(session: &std::path::Path) -> std::path::PathBuf {
     session.with_file_name("trials")
 }
 
-/// The stem a trial's session file is given: `<run>.<scenario>`.
-pub fn session_stem(session: &std::path::Path, scenario: &str) -> String {
-    format!("{}.{scenario}", stem_of(session))
+/// The stem a trial's session file is given: `<run>.<scenario>`, and its
+/// strength when pressed (`<run>.slowdown-3x`): two strengths, two files.
+pub fn session_stem(session: &std::path::Path, scenario: &crate::fault::Scenario) -> String {
+    match crate::fault::pressed(scenario) {
+        Some(n) => format!("{}.{}-{n}x", stem_of(session), scenario.name),
+        None => format!("{}.{}", stem_of(session), scenario.name),
+    }
 }
 
 /// Whether a file in a run's `trials/` folder is one of that run's trial
@@ -1721,6 +1725,7 @@ pub fn record(
     if trials.is_empty() {
         return Ok(());
     }
+    let _held = crate::index::hold(dir, "verdicts");
     let mut all = read_verdicts(dir);
     let mine = all.entry(program.to_string()).or_default();
     for t in trials {
@@ -3937,5 +3942,30 @@ mod tests {
             record(dir, "q", "q.sonde", at(4), std::slice::from_ref(&fixed)).unwrap();
         }
         assert_eq!(read_verdicts(dir)["q"]["slowdown"].len(), HISTORY_KEPT);
+    }
+
+    #[test]
+    fn verdicts_written_at_once_are_all_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let clean = vec![put(1, 0, "state", 200)];
+        let run = vec![fault(put(1, 0, "state", 503), "slowdown")];
+        let broke = judge(&slowdown(), &clean, 0, &run, 0);
+        let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        std::thread::scope(|s| {
+            for i in 0..16 {
+                let (dir, broke) = (dir.path(), &broke);
+                s.spawn(move || {
+                    record(
+                        dir,
+                        &format!("p{i}"),
+                        "r.sonde",
+                        at,
+                        std::slice::from_ref(broke),
+                    )
+                    .unwrap()
+                });
+            }
+        });
+        assert_eq!(read_verdicts(dir.path()).len(), 16);
     }
 }
