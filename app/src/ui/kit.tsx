@@ -127,7 +127,7 @@ export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as
  * width or a literal `maxHeight` in a page. */
 export const SIZES = {
   signalTile: 168,
-  compareTile: 236,
+  compareTile: 176,
   bucketTile: 200,
   capacityTile: 128,
   dialogScroll: 480,

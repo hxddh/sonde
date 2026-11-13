@@ -83,6 +83,14 @@ for (const v of variants) {
     // test's press in the hidden title bar's area does not reach the view
     // (FINDINGS 12). The sidebar holds the places and their lists at every
     // size: brought back if it was put away.
+    // a press that a busy window may let pass (it reads a long list of sessions again): pressed again until it shows
+    const pressUntil = async (press: string, shown: string) => {
+      for (let i = 0; i < 4; i++) {
+        await app.press(press);
+        if (await app.waitFor(shown, { timeout: 4000 }).then(() => true, () => false)) return;
+      }
+      await app.waitFor(shown, { timeout: 4000 });
+    };
     const go = async (area: string) => {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
@@ -214,7 +222,7 @@ for (const v of variants) {
     await shot("03p-programs");
     await app.press("id:sessions-by-runs");
     // (the runs' list back first: a press before it settles is undone as it chooses its first run)
-    await app.waitFor("id:session-list");
+    if (!app.shows("id:session-list")) await pressUntil("id:sessions-by-runs", "id:session-list");
     await app.wait(700);
     await app.press("id:open-example");
     // read off the interface's thread: there once its header is (a variant after the first
@@ -223,14 +231,13 @@ for (const v of variants) {
     await app.waitFor("id:session-summary", { timeout: 10000 });
     // a variant after the first has the example in its list already: opened from there when the press kept the run shown
     const wal = v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128";
-    // (found by the list's search: a short window's list has it under the fold, past the tour's runs)
+    // (else opened from the Programs list, three rows long: a long list of runs has it under the fold)
     if (!(await app.waitFor(wal, { timeout: 5000 }).then(() => true, () => false))) {
-      await app.type("id:session-search", "gen-slatedb");
-      await app.waitFor("text:gen-slatedb", { timeout: 5000 });
-      await app.wait(300);
-      await app.press("id:session-0");
+      await pressUntil("id:sessions-by-programs", "id:program-list");
+      await pressUntil("text:gen-slatedb", "text:$ gen-slatedb s3://slate");
+      await app.press("id:session-pane-mode-operations");
+      await pressUntil("id:sessions-by-runs", "id:session-list");
       await app.waitFor(wal, { timeout: 10000 });
-      await app.clear("id:session-search");
     }
     await shot("03-session");
     await app.press(v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128");
