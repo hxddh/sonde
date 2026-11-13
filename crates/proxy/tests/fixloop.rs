@@ -449,5 +449,5 @@ fn a_finding_of_time_is_judged_by_its_requests_not_its_timing() {
     assert_eq!(s.state, State::Less);
     let ms = s.measured.unwrap().ms;
     assert!((ms - 130.0).abs() < 1.0, "{ms}");
-    assert!(ms < a.profile.busy_ms - b.profile.busy_ms);
+    assert!(ms < a.profile.waiting_ms - b.profile.waiting_ms);
 }
