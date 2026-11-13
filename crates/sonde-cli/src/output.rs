@@ -117,17 +117,7 @@ pub fn duration(ms: f64) -> String {
 
 /// Prints rows as an aligned table (wide characters counted as two).
 pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
-    let width = |s: &str| {
-        s.chars()
-            .map(|c| {
-                if (c as u32) > 0x1100 && !c.is_ascii() {
-                    2
-                } else {
-                    1
-                }
-            })
-            .sum::<usize>()
-    };
+    let width = sonde_fmt::width;
     let mut w: Vec<usize> = headers.iter().map(|h| width(h)).collect();
     for r in rows {
         for (i, c) in r.iter().enumerate() {
@@ -179,6 +169,23 @@ pub fn json(v: &impl serde::Serialize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_dash_takes_one_column() {
+        let t = super::table(
+            &["p95", "cost"],
+            &[
+                vec!["—".into(), "1%".into()],
+                vec!["12 ms".into(), "2%".into()],
+            ],
+        );
+        let at: Vec<usize> = t
+            .lines()
+            .filter(|l| l.ends_with('%'))
+            .map(|l| sonde_fmt::width(l.split('%').next().unwrap()))
+            .collect();
+        assert_eq!(at[0], at[1], "{t}");
+    }
+
     #[test]
     fn aligned() {
         let t = super::table(&["a", "bb"], &[vec!["xxx".into(), "y".into()]]);

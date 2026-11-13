@@ -943,6 +943,8 @@ fn percent(share: f64) -> String {
         "<0.1%".into()
     } else if p < 10.0 && p.fract() != 0.0 {
         format!("{p:.1}%")
+    } else if (99.5..100.0).contains(&p) {
+        sonde_fmt::percent(share)
     } else {
         format!("{p:.0}%")
     }

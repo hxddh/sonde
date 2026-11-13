@@ -411,9 +411,9 @@ pub(super) fn kinds_table(p: &Profile, all: bool, whole_seconds: bool) -> Vec<St
                 time(g.p95_ms, star),
                 if timed && !whole_seconds {
                     format!(
-                        "{} ({:.0}%)",
+                        "{} ({})",
                         output::duration(g.waited_ms),
-                        g.share * 100.0
+                        share_text(g.share)
                     )
                 } else {
                     "—".to_string()
@@ -569,16 +569,9 @@ pub(super) fn print_summary_of(
     say(paint(&format!("session: {}", path.display()), "2", color).to_string());
 }
 
-/// A share as a percentage: `0.4%`, `12%`.
+/// A share as a percentage: `0.4%`, `12%` ([`sonde_fmt::percent`]).
 pub(super) fn share_text(share: f64) -> String {
-    let p = share * 100.0;
-    if p > 0.0 && p < 0.1 {
-        "<0.1%".into()
-    } else if p < 10.0 {
-        format!("{p:.1}%")
-    } else {
-        format!("{p:.0}%")
-    }
+    sonde_fmt::percent(share)
 }
 
 /// `sonde.toml` at `explicit`, or here or in a folder above. A file that

@@ -135,7 +135,7 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
                                 format!("{:.1} d", u.age_days.unwrap_or(0.0)),
                                 u.parts.to_string(),
                                 human(u.bytes),
-                                format!("{:.2}", u.cost_per_month),
+                                sonde_fmt::cents(u.cost_per_month),
                             ]
                         })
                         .collect();
@@ -155,13 +155,13 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
                         )
                     );
                     println!(
-                        "\n{}, {} stale (> {} days): {} ({} stale), {:.2} {}/month",
+                        "\n{}, {} stale (> {} days): {} ({} stale), {} {}/month",
                         output::count(r.total_uploads as usize, "upload"),
                         r.stale_uploads,
                         r.threshold_days,
                         human(r.total_bytes),
                         human(r.stale_bytes),
-                        r.cost_per_month,
+                        sonde_fmt::cents(r.cost_per_month),
                         r.currency
                     );
                     println!("Lifecycle: {}", r.lifecycle.message);

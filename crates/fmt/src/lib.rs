@@ -78,6 +78,59 @@ pub fn count(n: u64) -> String {
     out
 }
 
+/// The columns `s` takes in a terminal: one a character, two for the East
+/// Asian wide ones (CJK, Hangul, full-width forms, emoji). `—`, `…` and `→`
+/// take one.
+pub fn width(s: &str) -> usize {
+    s.chars()
+        .map(|c| {
+            let c = c as u32;
+            let wide = matches!(c,
+                0x1100..=0x115F
+                | 0x2E80..=0x303E
+                | 0x3041..=0x33FF
+                | 0x3400..=0x4DBF
+                | 0x4E00..=0x9FFF
+                | 0xA000..=0xA4CF
+                | 0xAC00..=0xD7A3
+                | 0xF900..=0xFAFF
+                | 0xFE30..=0xFE4F
+                | 0xFF00..=0xFF60
+                | 0xFFE0..=0xFFE6
+                | 0x1F300..=0x1F64F
+                | 0x1F900..=0x1F9FF
+                | 0x20000..=0x3FFFD);
+            if wide { 2 } else { 1 }
+        })
+        .sum()
+}
+
+/// An amount of money to the cent, never `-0.00`: a cost a rounding left
+/// below zero is none.
+pub fn cents(v: f64) -> String {
+    let t = format!("{:.2}", v);
+    if t == "-0.00" { "0.00".into() } else { t }
+}
+
+/// A share as a percentage: `<0.1%`, `0.4%`, `12%`; never `100%` for less
+/// than all, nor `0%` for more than none.
+pub fn percent(share: f64) -> String {
+    let p = share * 100.0;
+    if p > 0.0 && p < 0.1 {
+        "<0.1%".into()
+    } else if p < 10.0 {
+        format!("{p:.1}%")
+    } else if p < 100.0 && p >= 99.5 {
+        if p >= 99.95 {
+            ">99.9%".into()
+        } else {
+            format!("{p:.1}%")
+        }
+    } else {
+        format!("{p:.0}%")
+    }
+}
+
 /// A count that can fall: `-1,234`, `+56` with `signed`.
 pub fn count_signed(n: i64, plus: bool) -> String {
     let sign = if n < 0 {
@@ -188,6 +241,21 @@ fn round_up(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn widths_shares_and_cents_at_their_edges() {
+        assert_eq!(width("—"), 1);
+        assert_eq!(width("a → b…"), 6);
+        assert_eq!(width("操作"), 4);
+        assert_eq!(percent(0.995), "99.5%");
+        assert_eq!(percent(0.9999), ">99.9%");
+        assert_eq!(percent(1.0), "100%");
+        assert_eq!(percent(0.0004), "<0.1%");
+        assert_eq!(percent(0.5), "50%");
+        assert_eq!(cents(-0.001), "0.00");
+        assert_eq!(cents(-0.0), "0.00");
+        assert_eq!(cents(1.234), "1.23");
+    }
 
     #[test]
     fn a_tie_goes_away_from_zero_as_in_javascript() {
