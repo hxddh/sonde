@@ -17,8 +17,8 @@ gets one comment with what changed and one link. `show --by caller` says `82% of
 
 What did not hold:
 
-1. **A newcomer cannot reach it.** The README's install line is a 404 (there is no `main` branch), the Homebrew
-   tap and the macOS app's signing were skipped by the release (no secrets), and `sonde run` needs an S3 of
+1. **A newcomer cannot reach it.** The README's install line is a 404 (there is no `main` branch), the macOS
+   app's signing was skipped by the release (no secrets), and `sonde run` needs an S3 of
    your own: the built-in store `demo` uses is refused to `run`. The ten-minute promise holds only with moto.
 2. **The fix loop says "fixed" when nothing was fixed** — for a run that crashed, and on every run of a program
    whose keys carry a run id or a timestamp, which is most lakehouse and ETL programs.
@@ -37,7 +37,7 @@ while: from 19.0 the contract (D-138) holds, and a break is announced one versio
 | | Where | What |
 |---|---|---|
 | High | README, `install.sh`, `docs/ci.md` | `raw.githubusercontent.com/hxddh/sonde/main/install.sh` is 404: the default branch is not `main`. Confirmed. |
-| High | `release.yml` | No `HOMEBREW_TAP_TOKEN`: the tap is not updated. No Developer ID: the `.dmg` is refused by Gatekeeper on another Mac. No package key: installed apps cannot update themselves. Confirmed (release log). These need the owner's secrets. |
+| High | `release.yml` | No Developer ID: the `.dmg` is refused by Gatekeeper on another Mac. No package key: installed apps cannot update themselves. Confirmed (release log). These need the owner's secrets. |
 | High | `sonde run` | No store without an account. `sonde run -e demo` → `no endpoint "demo"`, though `demo` and `tui --demo` have one built in. Confirmed. |
 | High | `action/sonde-action.sh:30` | `GITHUB_ACTION_REF=v18` does not match `v*.*.*`, so the Action installs `latest`. Confirmed. |
 
@@ -64,7 +64,7 @@ while: from 19.0 the contract (D-138) holds, and a break is announced one versio
 | Low | `fixloop::write`, `trial::record`, `Written::keep` | `findings.json`, `verdicts.json`, `written.json` are read-modify-write without a lock; the app and the CLI can lose each other's entries, and a lost `written.json` entry refuses a legitimate overwrite. Read. |
 | Low | `run --again` | `--name ' etl '` is trimmed when stored, not when looked up. With `slowdown` and `slowdown:3` both broke, one is run, silently. Confirmed / read. |
 | Low | `du`, `mpu`, `diff`, `replay` | The new form they print drops the arguments (`diff -f json A B` → `sonde compare A B`). Confirmed. |
-| Low | `show`, 1M requests | 13.9 s and 1.76 GiB, over the 1.5 GiB budget (17.0: 1.11 GiB; these records carry more headers). `compare` of two: 22.4 s, 1.43 GiB. Confirmed. |
+| Medium | `show`, 1M requests | **18.0 is slower and larger than 17.0 on the same file**: 1.80 GiB and 9.8–14.5 s against 1.37–1.43 GiB and 7.2–11.6 s (two runs each, idle), over the 1.5 GiB budget. The budgets test did not catch it. `compare` of two: 22.4 s, 1.43 GiB. Confirmed. |
 | Low | words | JSON keeps `busyMs` and `episodes`; `compare` prints `1000000` where `show` prints `1,000,000`; `run --help` says no-delete refuses "a write over an object the recording did not write", but earlier recordings' are allowed. Confirmed. |
 
 ### The interface
@@ -113,7 +113,9 @@ something 18.0 opened or removes something kept for an older version.
   19.x); tested.
 - `sonde run --demo -- <command>`: the built-in store `demo` already has, for your own program — a first run with
   no account, and a CI gate on request counts and findings without secrets (times there say so).
-- The owner adds `HOMEBREW_TAP_TOKEN`, a Developer ID and the package key; until then the release says plainly
+- Homebrew goes (`packaging/homebrew/`, `scripts/update-tap.sh`, the release's step, the README's lines): one
+  install line, `install.sh`, and the release page.
+- The owner adds a Developer ID and the package key; until then the release says plainly
   what it skipped, on the release page as well as in its log.
 
 ### 2. A fix loop to trust (M)
@@ -134,7 +136,7 @@ something 18.0 opened or removes something kept for an older version.
 - `split` says where the slow requests are when one group holds nearly all; `--again` trims names and runs every
   broke strength; the old commands print their new form with the arguments.
 - The CI comment says when the program failed, and why.
-- `show` of a million requests back under its budget.
+- `show` of a million requests back to 17.0's memory and time; the budgets test made to fail on that.
 
 ### 4. Run and one word for a kind of request (M)
 
