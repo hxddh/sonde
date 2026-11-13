@@ -120,7 +120,7 @@ pub fn percent(share: f64) -> String {
         "<0.1%".into()
     } else if p < 10.0 {
         format!("{p:.1}%")
-    } else if p < 100.0 && p >= 99.5 {
+    } else if (99.5..100.0).contains(&p) {
         if p >= 99.95 {
             ">99.9%".into()
         } else {
