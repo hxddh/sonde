@@ -325,6 +325,10 @@
           "requests"
         ]
       }
+    },
+    "failed": {
+      "type": "integer",
+      "description": "The exit code of a run compared that failed (the later's, when both did): its findings are not compared, and `findings`, `resolved` and `appeared` are empty."
     }
   },
   "required": [

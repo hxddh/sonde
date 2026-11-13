@@ -1334,6 +1334,10 @@ pub struct RunChange {
     /// but their findings do not: one's are not "gone" because the other
     /// never had them.
     pub same_program: bool,
+    /// The exit code of a run compared that failed (the later's, when both
+    /// did): its findings are not compared, a crash is no fix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<i32>,
     /// Both runs' latency, bucket by bucket on the same edges: their two
     /// distributions side by side.
     pub latency: (Vec<LatencyBucket>, Vec<LatencyBucket>),
@@ -1361,6 +1365,19 @@ impl RunChange {
         );
         self.same_program = ka.is_some() && ka == kb;
         if !self.same_program {
+            self.resolved.clear();
+            self.appeared.clear();
+            self.findings.clear();
+        }
+        self
+    }
+
+    /// Says whether a run compared failed (`exits`, as kept: none when not
+    /// known); then their findings are not compared.
+    pub fn of_exits(mut self, exits: (Option<i32>, Option<i32>)) -> Self {
+        let failed = |x: Option<i32>| x.filter(|x| *x != 0);
+        self.failed = failed(exits.1).or(failed(exits.0));
+        if self.failed.is_some() {
             self.resolved.clear();
             self.appeared.clear();
             self.findings.clear();
@@ -1399,7 +1416,7 @@ pub(crate) fn identity(o: &Observation) -> String {
     let key = p.key.trim_end_matches(".rate").trim_end_matches(".one");
     let about: Vec<String> = ["key", "prefix", "format"]
         .iter()
-        .filter_map(|k| p.args.get(k).map(|v| stable(&v.to_string())))
+        .filter_map(|k| p.args.get(k).map(|v| stable(v.as_ref())))
         .collect();
     format!("{key}|{}", about.join("|"))
 }
@@ -1601,7 +1618,7 @@ pub struct Run {
     pub folders: HashMap<String, usize>,
     /// Its findings at any threshold, by identity: a finding of the run
     /// before that is only among these is less, not fixed.
-    pub traces: BTreeMap<String, FindingText>,
+    pub traces: BTreeMap<String, Observation>,
     /// What its findings would save, by what their requests asked.
     pub asks: crate::fixloop::Asks,
     /// How often it asked what the run before's findings would save
@@ -1614,6 +1631,20 @@ impl Run {
     /// A run of `records`, its profile and findings reckoned already.
     pub fn of(records: &[Record], profile: Profile, observations: Vec<Observation>) -> Run {
         let traces = crate::episode::traces(records, &crate::episode::episodes(records));
+        Run::with(records, profile, observations, traces)
+    }
+
+    /// [`Run::of`] a session's records, read with its header as its
+    /// findings were ([`crate::episode::traces_of`]), its operations made
+    /// already.
+    pub fn of_session(
+        header: &crate::session::SessionHeader,
+        records: &[Record],
+        episodes: &[crate::episode::Episode],
+        profile: Profile,
+        observations: Vec<Observation>,
+    ) -> Run {
+        let traces = crate::episode::traces_of(header, records, episodes);
         Run::with(records, profile, observations, traces)
     }
 
@@ -1663,15 +1694,7 @@ impl Run {
         let asks = crate::fixloop::asks_of(records, &observations);
         let traces = traces
             .into_iter()
-            .map(|o| {
-                (
-                    finding_identity(&o),
-                    FindingText {
-                        text: o.text,
-                        phrases: o.phrases,
-                    },
-                )
-            })
+            .map(|o| (finding_identity(&o), o))
             .collect();
         Run {
             requests: records.len(),
@@ -1749,17 +1772,7 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         )
     });
     let findings = crate::fixloop::changes(a, b);
-    let said = |states: &[crate::fixloop::State]| -> Vec<FindingText> {
-        findings
-            .iter()
-            .filter(|f| states.contains(&f.state))
-            .map(|f| FindingText {
-                text: f.text.clone(),
-                phrases: f.phrases.clone(),
-            })
-            .collect()
-    };
-    use crate::fixloop::State;
+    use crate::fixloop::{State, said};
     // each prefix either run counted (its busiest, not the rest's "other")
     // one set of prefixes for both runs, chosen from the folders of both:
     // each run's own choice would name the same folder at two depths
@@ -1794,10 +1807,11 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         peak_in_flight: (pa.peak_in_flight, pb.peak_in_flight),
         groups,
         latency: (pa.latency.clone(), pb.latency.clone()),
-        resolved: said(&[State::Fixed]),
-        appeared: said(&[State::New, State::Back]),
+        resolved: said(&findings, &[State::Fixed]),
+        appeared: said(&findings, &[State::New, State::Back]),
         findings,
         same_program: true,
+        failed: None,
     }
 }
 

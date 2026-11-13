@@ -306,6 +306,48 @@ pub fn write_baselines(
     std::fs::rename(&tmp, dir.join("baselines.json"))
 }
 
+/// What a program keeps beside its runs, by its key: its baseline, its
+/// trials' verdicts, its findings, what it wrote.
+pub const KEPT_BY_PROGRAM: &[&str] = &[
+    "baselines.json",
+    "verdicts.json",
+    "findings.json",
+    "written.json",
+];
+
+/// Moves what program `from` keeps in `dir` ([`KEPT_BY_PROGRAM`]) to
+/// program `to`: a program given a name keeps its baseline and history.
+/// What `to` keeps already stays. Returns the files it moved something in.
+pub fn rename_program(
+    dir: &std::path::Path,
+    from: &str,
+    to: &str,
+) -> std::io::Result<Vec<&'static str>> {
+    let mut moved = Vec::new();
+    for name in KEPT_BY_PROGRAM {
+        let path = dir.join(name);
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        let mut all: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        if all.contains_key(to) {
+            continue;
+        }
+        let Some(kept) = all.remove(from) else {
+            continue;
+        };
+        all.insert(to.to_string(), kept);
+        let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
+        reqlog::private::write(&tmp, serde_json::to_vec_pretty(&all)?)?;
+        std::fs::rename(&tmp, &path)?;
+        moved.push(*name);
+    }
+    Ok(moved)
+}
+
 /// A run, by the figures that move when the program changes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -516,18 +558,40 @@ pub struct Check {
 }
 
 /// Whether the project expects finding `o`: an entry of `expect` is its
-/// identity, its kind, or a part of its text.
+/// identity, or its kind for every finding of that kind. A key in an entry
+/// is read as an identity says it (`jobs/{n}/`), whatever it was named in.
 pub fn expected(o: &Observation, expect: &[String]) -> bool {
     if expect.is_empty() {
         return false;
     }
     let id = crate::profile::finding_identity(o);
     let kind = id.split('|').next().unwrap_or("");
-    let text = o.text.to_lowercase();
     expect.iter().any(|e| {
         let e = e.trim();
-        !e.is_empty() && (e == id || e == kind || text.contains(&e.to_lowercase()))
+        e == kind || e == id || expected_identity(e) == id
     })
+}
+
+/// An entry of `expect` as an identity: what it is about made
+/// [`crate::profile::stable`].
+fn expected_identity(e: &str) -> String {
+    let mut parts = e.split('|');
+    let kind = parts.next().unwrap_or("");
+    let about: Vec<String> = parts.map(crate::profile::stable).collect();
+    format!("{kind}|{}", about.join("|"))
+}
+
+/// Why an entry of `[check] expect` is no finding's identity, when it is
+/// not: its kind is none sonde finds.
+pub fn expect_error(e: &str) -> Option<String> {
+    let kind = e.trim().split('|').next().unwrap_or("");
+    if crate::profile::FINDING_KINDS.contains(&kind) {
+        return None;
+    }
+    Some(format!(
+        "[check] expect = {e:?} is not a finding's identity: give one as `sonde show -f json` writes it (\"obs.hot|bucket/key\"), or a kind for all of it ({})",
+        crate::profile::FINDING_KINDS.join(", ")
+    ))
 }
 
 /// A run against a budget, and against a baseline run when there is one.
@@ -1088,16 +1152,23 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
                 &kinds,
             ));
         }
-        // new first: what this change brought
-        let mut new: Vec<String> = ch.appeared.iter().map(|f| f.text.clone()).collect();
-        for w in &c.new_warnings {
-            if !new.contains(w) {
-                new.push(w.clone());
-            }
-        }
+        // new first: what this change brought, as `compare` says it
+        let new: Vec<&str> = ch.appeared.iter().map(|f| f.text.as_str()).collect();
         if !new.is_empty() {
             md.push_str("\n**New findings**\n\n");
             for t in &new {
+                md.push_str(&format!("- {}{}\n", md_text(t), place(t)));
+            }
+        }
+        // one the baseline had as a note, a warning now
+        let grown: Vec<&String> = c
+            .new_warnings
+            .iter()
+            .filter(|w| !new.contains(&w.as_str()))
+            .collect();
+        if !grown.is_empty() {
+            md.push_str("\n**Warnings now**\n\n");
+            for t in grown {
                 md.push_str(&format!("- {}{}\n", md_text(t), place(t)));
             }
         }
@@ -1356,18 +1427,41 @@ mod tests {
             )
         };
         assert!(new(Vec::new()).expected.is_empty());
-        // the finding, expected by its identity, its kind or its words
+        // the finding, expected by its identity or its kind; never by words
+        // of its text, which change
         let hot = og.iter().find(|o| o.text.contains("hot")).unwrap();
         let id = crate::profile::finding_identity(hot);
-        for e in [
-            id.clone(),
-            id.split('|').next().unwrap().to_string(),
-            "HOT".to_string(),
-        ] {
+        for e in [id.clone(), id.split('|').next().unwrap().to_string()] {
             let c = new(vec![e.clone()]);
             assert!(c.new_warnings.is_empty(), "{e}: {c:#?}");
             assert!(!c.expected.is_empty());
             assert!(c.passed);
+        }
+        assert!(new(vec!["hot".into()]).expected.is_empty());
+        // a key named as the program named it is read as an identity says it
+        let job = |key: &str| Observation {
+            phrases: vec![crate::phrase::p("obs.hot", &[("key", key.into())])],
+            identity: String::new(),
+            ..hot.clone()
+        };
+        assert!(expected(
+            &job("b/jobs/1794558464595/state.json"),
+            &["obs.hot|b/jobs/1794558465084/state.json".into()]
+        ));
+        assert!(!expected(
+            &job("b/jobs/1794558464595/state.json"),
+            &["obs.hot|b/other".into()]
+        ));
+        // one sonde does not find is no identity
+        assert_eq!(expect_error("obs.hot|b/k"), None);
+        assert_eq!(expect_error("obs.listed"), None);
+        for e in ["obs.retried", "hot", "obs.hto|b/k"] {
+            assert!(
+                expect_error(e)
+                    .unwrap()
+                    .contains("not a finding's identity"),
+                "{e}"
+            );
         }
         // 95% of the requests within a limit
         let c = check(
@@ -1703,6 +1797,27 @@ mod tests {
             md.contains("> ⚠️ no baseline yet for program \\`etl\\`: nothing was compared"),
             "{md}"
         );
+        // a note of the baseline's that is a warning now is not new: the
+        // finding is the same one, as `compare` says
+        let same = compare_runs(
+            &Run::of(&after, pra.clone(), oa.to_vec()),
+            &Run::of(&after, pra.clone(), oa.to_vec()),
+        );
+        let grown = Check {
+            new_warnings: vec!["20 objects were checked with HEAD".into()],
+            ..c.clone()
+        };
+        let md = check_comment(
+            &grown,
+            &Comment {
+                currency: "USD",
+                findings: &oa,
+                change: Some(&same),
+                ..Default::default()
+            },
+        );
+        assert!(!md.contains("**New findings**"), "{md}");
+        assert!(md.contains("**Warnings now**\n\n- 20 objects"), "{md}");
     }
 }
 

@@ -297,17 +297,25 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     let mut c = sonde_proxy::profile::compare_runs(&ra, &rb);
     c.same_program = ka.is_some() && ka == kb;
     if c.same_program {
-        // a finding fixed in an earlier run of the program is back, not new
+        // a finding fixed by the earlier run or one before it is back, not new
         if let (Some(k), Ok(kept)) = (
             &ka,
             sonde_proxy::fixloop::read(&sonde_proxy::fixloop::folder_of(&after)),
         ) && let Some(program) = kept.get(k)
         {
-            program.mark_back(&mut c.findings);
+            program.mark_back(&mut c.findings, &ha.created.to_rfc3339());
+            use sonde_proxy::fixloop::{State, said};
+            c.appeared = said(&c.findings, &[State::New, State::Back]);
         }
     } else {
         c = c.of_programs(None, None);
     }
+    // a run that failed: its figures compare, its findings do not
+    let exits = (
+        sonde_proxy::fixloop::failed(&before),
+        sonde_proxy::fixloop::failed(&after),
+    );
+    c = c.of_exits(exits);
     if matches!(a.format, Format::Json) {
         println!("{}", output::json(&c));
         return Ok(0);
@@ -324,6 +332,18 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
                 color
             )
         );
+    }
+    let failed = match exits {
+        (_, Some(x)) => Some(format!(
+            "the run failed (exit {x}); its findings are not compared"
+        )),
+        (Some(x), _) => Some(format!(
+            "the run before failed (exit {x}); its findings are not compared"
+        )),
+        _ => None,
+    };
+    if let Some(t) = failed {
+        println!("{}", paint(&t, "33", color));
     }
     // nothing moved: said once, before the figures that show it
     let unchanged = c.requests.0 == c.requests.1

@@ -232,7 +232,7 @@ fn changing_run(seed: u64) -> Vec<Record> {
         seed * 104_729
     );
     let mut out: Vec<Record> = Vec::new();
-    let mut read = |out: &mut Vec<Record>, n: usize, key: String| {
+    let read = |out: &mut Vec<Record>, n: usize, key: String| {
         for _ in 0..n {
             out.push(get(out.len() as u64 + 1, &key));
         }
@@ -306,15 +306,26 @@ fn write_session(path: &Path, header: &sonde_proxy::session::SessionHeader, reco
 /// A run of the program `job` recorded `minute` minutes in, kept in `dir`;
 /// what `sonde run` says of it against the run before.
 fn ran(dir: &Path, minute: i64, records: &[Record], exit: Option<i32>) -> fixloop::SinceLast {
-    let mut header =
-        sonde_proxy::session::SessionHeader::new("e", "http://e", "", Some("python job.py".into()));
-    header.name = Some("job".into());
-    header.created = DateTime::from_timestamp_millis(1_700_000_000_000 + minute * 60_000).unwrap();
-    let path = dir.join(format!("run-{minute:02}.sonde"));
+    let (path, header) = job(dir, minute);
     write_session(&path, &header, records);
     if let Some(x) = exit {
         sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(x));
     }
+    shown(dir, minute, records)
+}
+
+/// The run of `job` recorded `minute` minutes in: its path and header.
+fn job(dir: &Path, minute: i64) -> (PathBuf, sonde_proxy::session::SessionHeader) {
+    let mut header =
+        sonde_proxy::session::SessionHeader::new("e", "http://e", "", Some("python job.py".into()));
+    header.name = Some("job".into());
+    header.created = DateTime::from_timestamp_millis(1_700_000_000_000 + minute * 60_000).unwrap();
+    (dir.join(format!("run-{minute:02}.sonde")), header)
+}
+
+/// What `sonde show` says of a run of `job` kept already.
+fn shown(dir: &Path, minute: i64, records: &[Record]) -> fixloop::SinceLast {
+    let (path, header) = job(dir, minute);
     fixloop::since_last(dir, &path, &header, records, run_of(records), &|_: &str| {
         RequestPrices::default()
     })
@@ -336,4 +347,107 @@ fn a_programs_kept_findings_do_not_grow_with_keys_that_change() {
         kept.push(fixloop::read(dir.path()).unwrap()["job"].findings.len());
     }
     assert_eq!(kept[0], kept[2], "{kept:?}");
+}
+
+fn hot(reads: u64) -> Vec<Record> {
+    (1..=reads).map(|i| get(i, "hot")).collect()
+}
+
+/// 18.0 said a crash fixed what it did not get to, and the next run back.
+#[test]
+fn a_run_that_failed_is_not_compared_and_changes_nothing_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = ran(dir.path(), 1, &hot(12), Some(0));
+    assert!(first.failed.is_none());
+    let kept = std::fs::read(dir.path().join("findings.json")).unwrap();
+    // it crashed after one request
+    let crashed = ran(dir.path(), 2, &hot(1), Some(3));
+    assert_eq!(crashed.failed, Some(3));
+    assert!(crashed.change.is_none() && crashed.findings.is_empty());
+    assert_eq!(
+        std::fs::read(dir.path().join("findings.json")).unwrap(),
+        kept
+    );
+    // the next is compared with the last that did not fail
+    let next = ran(dir.path(), 3, &hot(12), Some(0));
+    assert!(next.previous.as_deref().unwrap().ends_with("run-01.sonde"));
+    assert_eq!(state_of(&next.findings, "obs.hot"), State::Open);
+}
+
+/// `show` of an older run says what it was against the run before it, not
+/// what later runs made of its findings.
+#[test]
+fn back_is_judged_by_the_runs_compared_not_by_later_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let good = || hot(1);
+    ran(dir.path(), 1, &good(), Some(0));
+    let bad = ran(dir.path(), 2, &hot(12), Some(0));
+    assert_eq!(state_of(&bad.findings, "obs.hot"), State::New);
+    let fixed = ran(dir.path(), 3, &good(), Some(0));
+    assert_eq!(state_of(&fixed.findings, "obs.hot"), State::Fixed);
+    // the bad run shown again: new then, whatever came after
+    let again = shown(dir.path(), 2, &hot(12));
+    assert_eq!(state_of(&again.findings, "obs.hot"), State::New);
+    let ch = again.change.unwrap();
+    assert_eq!(ch.appeared.len(), 1);
+    // and back once it was fixed before
+    let back = ran(dir.path(), 4, &hot(12), Some(0));
+    assert_eq!(state_of(&back.findings, "obs.hot"), State::Back);
+}
+
+/// Less is kept: over its threshold again it is open, not new.
+#[test]
+fn less_is_kept_and_over_its_threshold_again_is_open() {
+    let dir = tempfile::tempdir().unwrap();
+    ran(dir.path(), 1, &hot(12), Some(0));
+    let less = ran(dir.path(), 2, &hot(3), Some(0));
+    assert_eq!(state_of(&less.findings, "obs.hot"), State::Less);
+    let kept = |dir: &Path| fixloop::read(dir).unwrap()["job"].findings["obs.hot|b/hot"].state;
+    assert_eq!(kept(dir.path()), State::Less);
+    let over = ran(dir.path(), 3, &hot(12), Some(0));
+    assert_eq!(state_of(&over.findings, "obs.hot"), State::Open);
+    assert_eq!(kept(dir.path()), State::Open);
+}
+
+/// `n` requests one after another, each `ms` long.
+fn chain(n: u64, ms: i64) -> Vec<Record> {
+    (1..=n)
+        .map(|i| Record {
+            time: DateTime::from_timestamp_millis(1_700_000_000_000 + i as i64 * (ms + 1)).unwrap(),
+            latency_ms: ms as f64,
+            ..get(i, &format!("k{i}"))
+        })
+        .collect()
+}
+
+/// A finding of time alone is judged by its requests: timing that drops it
+/// under its threshold leaves it open, and what it saved is its own waiting.
+#[test]
+fn a_finding_of_time_is_judged_by_its_requests_not_its_timing() {
+    let serial = |c: &[fixloop::FindingChange]| {
+        c.iter()
+            .find(|f| f.identity == "obs.serial|")
+            .cloned()
+            .unwrap_or_else(|| panic!("obs.serial in {c:#?}"))
+    };
+    let a = run_of(&chain(20, 10));
+    assert!(a.observations.iter().any(|o| o.identity == "obs.serial|"));
+    // the same 20 requests, faster: under its threshold, still there
+    let quick = chain(20, 5);
+    let mut b = run_of(&quick);
+    assert!(b.observations.is_empty());
+    b.measure(&quick, &a);
+    let c = compare_runs(&a, &b);
+    assert_eq!(serial(&c.findings).state, State::Open);
+    assert!(c.resolved.is_empty() && c.appeared.is_empty());
+    // half of them: less, and saved its own waiting, not the whole drop
+    let fewer = chain(10, 5);
+    let mut b = run_of(&fewer);
+    b.measure(&fewer, &a);
+    let c = compare_runs(&a, &b);
+    let s = serial(&c.findings);
+    assert_eq!(s.state, State::Less);
+    let ms = s.measured.unwrap().ms;
+    assert!((ms - 130.0).abs() < 1.0, "{ms}");
+    assert!(ms < a.profile.busy_ms - b.profile.busy_ms);
 }

@@ -81,7 +81,8 @@ Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
 | `> ⚠️ no baseline yet` | A baseline asked for and none found. |
 | Failed rows | Budget rows that failed; never a row that passed. Without a baseline, its failed rows too. |
 | Against the baseline | Requests, cost and errors that changed, waiting that moved past 10% and 50 ms; a figure past the baseline in bold with its limit. Kinds of request that changed. |
-| New findings, Gone | Against the baseline; new first, with the code line that sent them. |
+| New findings, Gone | Against the baseline, as `sonde compare` says them (one under its threshold in the baseline is not new, one under it in the run is not gone); new first, with the code line that sent them. Not when either run failed. |
+| Warnings now | `no-new-warnings`: a finding the baseline had as a note, a warning in this run. |
 | Trials | Those that broke or degraded; the survived counted. |
 | Findings | Without a baseline: the run's first five findings, folded. |
 | The report | With `--report-url`. |
