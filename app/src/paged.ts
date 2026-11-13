@@ -23,7 +23,7 @@ export function pagedOperations(path: () => string, view: () => SessionView | nu
   const page = signal<EpisodePage & { path?: string }>({ total: 0, offset: 0, rows: [] });
   // the last answer wins: a page asked for before a newer query is dropped
   let asked = 0;
-  const plain = (q: OpQuery) => !q.sort && !q.descending && q.finding === undefined && !q.slice && !q.text && !q.failed;
+  const plain = (q: OpQuery) => !q.sort && !q.descending && q.finding === undefined && !q.slice && !q.text && !q.failed && !q.kind;
   // (the same range of the same order is asked for once: a table that reports its rows again does not ask again)
   let last = "";
   // the range on its way, if one is: a table scrolling on within it waits for it, it does not ask again

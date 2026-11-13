@@ -11,7 +11,7 @@ const dir = (globalThis as any).process?.env?.SONDE_SHOTS ?? "shots";
 
 /** The tour's program in the shell Run starts it in: sh, or cmd.exe on
  * Windows. The recording endpoint is in AWS_ENDPOINT_URL either way. */
-function command(cmd: boolean) {
+function command(cmd: boolean, marker?: string) {
   const url = cmd ? "%AWS_ENDPOINT_URL%" : "$AWS_ENDPOINT_URL";
   const sink = cmd ? "NUL" : "/dev/null";
   // signed with the keys sonde gives the program: its proxy refuses anything else
@@ -23,7 +23,13 @@ function command(cmd: boolean) {
   // a pause first: a trial of it runs long enough to be seen running
   const pause = cmd ? "ping -n 3 127.0.0.1 >NUL" : "sleep 1.5";
   // its config read ten times (a finding: a key read again and again)
-  const again = cmd ? `(for /L %i in (1,1,10) do @${curl} -o ${sink} ${url}/demo/config/app.yaml)` : `for i in 1 2 3 4 5 6 7 8 9 10; do ${curl} -o ${sink} ${url}/demo/config/app.yaml; done`;
+  // (with a marker, sh's form reads it ten times more on the first run and not again on the next: the same command,
+  // changed behaviour, as a program fixed between two runs — what "Since the run before" is about, the finding fixed)
+  const again = cmd
+    ? `(for /L %i in (1,1,10) do @${curl} -o ${sink} ${url}/demo/config/app.yaml)`
+    : marker
+      ? `(if [ -e ${marker} ]; then n=0; else n=10; touch ${marker}; fi; for i in $(seq $n); do ${curl} -o ${sink} ${url}/demo/config/app.yaml; done)`
+      : `for i in 1 2 3 4 5 6 7 8 9 10; do ${curl} -o ${sink} ${url}/demo/config/app.yaml; done`;
   // a write whose refusal curl never hears (no -f): under faults it breaks
   const put = `${curl} -X PUT --data hello -o ${sink} ${url}/demo/tour/notes.txt && echo wrote notes.txt`;
   return [pause, ...["README.md", "config/app.yaml", "images/logo.png", "backups/db-2026-10-01.tar.zst"].map(get), again, put, `${curl} -o ${sink} ${url}/demo/missing.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/a.txt`, `${curl} -o ${sink} ${url}/no-such-bucket/b.txt`, "echo done"].join(" && ");
@@ -68,10 +74,23 @@ for (const v of variants) {
       await app.wait(450);
       await app.screenshot(`${dir}/${v.name}-${name}.png`);
     };
+    // a screen of charts: each draws itself in (420 ms, data that arrives after the figures its own): shot once drawn
+    const charts = async (name: string) => {
+      await app.wait(1500);
+      await shot(name);
+    };
     // The title bar's buttons are reached by their shortcuts: on macOS a
     // test's press in the hidden title bar's area does not reach the view
     // (FINDINGS 12). The sidebar holds the places and their lists at every
     // size: brought back if it was put away.
+    // a press that a busy window may let pass (it reads a long list of sessions again): pressed again until it shows
+    const pressUntil = async (press: string, shown: string) => {
+      for (let i = 0; i < 4; i++) {
+        await app.press(press);
+        if (await app.waitFor(shown, { timeout: 4000 }).then(() => true, () => false)) return;
+      }
+      await app.waitFor(shown, { timeout: 4000 });
+    };
     const go = async (area: string) => {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
@@ -109,7 +128,8 @@ for (const v of variants) {
     const sure = sample.includes("AWS_ENDPOINT_URL");
     // (the demo left its own first command in the field: typed after it, the two ran as one)
     await app.clear("id:run-command");
-    await enter(app, "id:run-command", command(cmd));
+    const marker = `/tmp/sonde-tour-${v.name}-${Date.now()}`;
+    await enter(app, "id:run-command", command(cmd, marker));
     // (the button follows the field a frame later)
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
@@ -117,13 +137,22 @@ for (const v of variants) {
     // (the other shell's form, should the sample not have said and the first have reached no store)
     if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
       await app.clear("id:run-command");
-      await enter(app, "id:run-command", command(!cmd));
+      await enter(app, "id:run-command", command(!cmd, marker));
       await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
       await app.press("id:run-start");
       await app.waitUntil(() => !app.shows("id:run-no-requests"), { timeout: 20000 });
       await app.waitFor("id:run-ended", { timeout: 20000 });
     }
     await shot("02b-ran");
+    // run again from the band's one Run, the program fixed meanwhile (its config read once, not ten times):
+    // what changed since the run before, the finding fixed with what it saved
+    if (!app.shows("id:run-no-requests") && !String((await app.value("id:run-command")) ?? "").includes("%AWS_ENDPOINT_URL%")) {
+      await app.press("id:run-again-band");
+      await app.waitFor("id:run-status", { timeout: 10000 });
+      await app.waitFor("id:run-ended", { timeout: 20000 });
+      await app.waitFor("id:since-run", { timeout: 10000 });
+      await charts("02bb-since");
+    }
     // the same command under faults: said before it runs, followed as it goes, its verdicts
     await runAction(app, "run-try");
     await app.waitFor("id:trial-plan", { timeout: 10000 });
@@ -146,19 +175,25 @@ for (const v of variants) {
     }
     // closed, the run opens on its Runs pane, where the verdicts stay, each with its history
     await app.press("id:trial-close");
-    await app.waitFor("id:history-trials", { timeout: 10000 });
+    await app.waitFor("id:history-trials", { timeout: 20000 });
     await shot("02h-runs-verdicts");
     // a trial's own session: its notice, the faults' moments on its shape, and the run over its clean run
     await app.press("id:trial-slowdown");
-    await app.waitFor("id:trial-note", { timeout: 10000 });
+    // (a long list of verdicts has it under the fold: brought up, and pressed again)
+    if (!(await app.waitFor("id:trial-note", { timeout: 10000 }).then(() => true, () => false)) && app.shows("id:trial-slowdown")) {
+      await app.scroll("id:history-pane", 500);
+      await app.wait(300);
+      await app.press("id:trial-slowdown");
+    }
+    await app.waitFor("id:trial-note", { timeout: 20000 });
     await app.wait(600);
     await shot("02i-trial-session");
     await app.press("id:session-pane-mode-time");
     await app.waitFor("id:time-pane");
     await app.wait(900);
-    await shot("02j-trial-time");
+    await charts("02j-trial-time");
     await app.press("id:trial-open-clean");
-    await app.waitFor("id:trial-note", { state: "gone", timeout: 10000 });
+    await app.waitFor("id:trial-note", { state: "gone", timeout: 20000 });
     await app.waitFor("id:session-summary", { timeout: 10000 });
     // the program's output lined up with what it did
     if (app.enabled("id:session-pane-mode-aligned")) {
@@ -172,12 +207,12 @@ for (const v of variants) {
     await app.press("id:signal-errors");
     await app.waitFor("id:time-pane");
     await app.wait(900);
-    await shot("02c-errors");
+    await charts("02c-errors");
     await app.press("id:signal-latency");
     await app.wait(700);
     if (app.shows("id:chart-firstByte")) {
       await app.scroll("id:time-pane", 320);
-      await shot("02d-first-byte");
+      await charts("02d-first-byte");
     }
 
     await go("sessions");
@@ -186,6 +221,9 @@ for (const v of variants) {
     await app.wait(700);
     await shot("03p-programs");
     await app.press("id:sessions-by-runs");
+    // (the runs' list back first: a press before it settles is undone as it chooses its first run)
+    if (!app.shows("id:session-list")) await pressUntil("id:sessions-by-runs", "id:session-list");
+    await app.wait(700);
     await app.press("id:open-example");
     // read off the interface's thread: there once its header is (a variant after the first
     // opens on the example already, and reads it again as the list changes: let that settle)
@@ -193,8 +231,12 @@ for (const v of variants) {
     await app.waitFor("id:session-summary", { timeout: 10000 });
     // a variant after the first has the example in its list already: opened from there when the press kept the run shown
     const wal = v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128";
+    // (else opened from the Programs list, three rows long: a long list of runs has it under the fold)
     if (!(await app.waitFor(wal, { timeout: 5000 }).then(() => true, () => false))) {
-      await app.press("text:gen-slatedb >> nth=0");
+      await pressUntil("id:sessions-by-programs", "id:program-list");
+      await pressUntil("text:gen-slatedb", "text:$ gen-slatedb s3://slate");
+      await app.press("id:session-pane-mode-operations");
+      await pressUntil("id:sessions-by-runs", "id:session-list");
       await app.waitFor(wal, { timeout: 10000 });
     }
     await shot("03-session");
@@ -228,44 +270,53 @@ for (const v of variants) {
     await app.waitFor("id:time-pane");
     // the board's charts draw themselves in: the picture is of them drawn
     await app.wait(900);
-    await shot("03g-time");
+    await charts("03g-time");
+    // the slice chosen on the strip is the Time pane's too (its one chip): let go, the charts below are of the whole run
+    if (app.shows("id:clear-filter")) await app.press("id:clear-filter");
     // further down the Time pane, a window at a time: every request and each
     // kind over time; pushback and the distribution; time spent and chains;
     // limits, heat and costs; the flows
     await app.scroll("id:time-pane", 300);
-    await shot("03h-requests");
+    await charts("03h-requests");
     await app.scroll("id:time-pane", 400);
-    await shot("03i-distribution");
+    await charts("03i-distribution");
     await app.scroll("id:time-pane", 400);
-    await shot("03j-spent");
+    await charts("03j-spent");
     await app.scroll("id:time-pane", 400);
-    await shot("03k-prefixes");
+    await charts("03k-prefixes");
     // to the board's end: where requests went
     await app.scroll("id:time-pane", 4000);
     // the flows on demand, pressed last: the shots above show the pane as it opens
     if (app.shows("id:flows-show")) await app.press("id:flows-show").catch(() => {});
-    await shot("03l-flows");
+    await charts("03l-flows");
     // a signal pressed in the header brings its chart into view: latency's bands, then bytes each way
     await app.press("id:signal-latency");
     await app.wait(700);
-    await shot("03m-latency");
+    await charts("03m-latency");
     if (app.shows("id:signal-bytes")) {
       await app.press("id:signal-bytes");
       await app.wait(700);
-      await shot("03n-bytes");
+      await charts("03n-bytes");
     }
     await app.press("id:signal-errors");
     await app.wait(700);
-    await shot("03o-errors");
-    // the same program run twice: before and after
+    await charts("03o-errors");
+    // the same program run twice, before and after its fix: the tour's second run against its first (18 requests)
+    if (!app.shows("id:session-1")) await app.keyboard.press("mod+b");
+    if (app.shows("id:session-1")) {
+      await app.press("id:session-1");
+      await app.waitFor("id:session-summary", { timeout: 10000 });
+      await app.wait(600);
+    }
     await app.press("id:compare-open");
-    const run = app.menu()?.map((m) => m.label).find((l) => l.includes("curl"));
+    const labels = app.menu()?.map((m) => m.label) ?? [];
+    const run = labels.find((l) => l.includes("curl") && /· 18$/.test(l)) ?? labels.find((l) => l.includes("curl"));
     if (run) {
       await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });
       // (each run's signals and the charts arrive after the figures: a picture taken at once showed "Not timed" over empty charts)
       await app.wait(1500);
-      await shot("03h-runs");
+      await charts("03h-runs");
       await app.press("id:compare-back");
     } else if (app.menu()) await app.closeMenu();
 
@@ -310,7 +361,7 @@ for (const v of variants) {
     await app.press("id:store-section-capacity");
     await app.waitFor("id:du-findings", { timeout: 15000 });
     await app.wait(600);
-    await shot("04g-capacity");
+    await charts("04g-capacity");
     // a table format's layout, decoded (from the objects' tile, which says one was recognised)
     await app.press("id:store-section-browse");
     if (!app.shows("id:bucket-demo-layouts")) await app.keyboard.press("mod+b");

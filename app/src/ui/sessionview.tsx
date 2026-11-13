@@ -162,7 +162,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           tone={x().tone}
           hint={props.onSignal ? t("signal.open") : undefined}
           onPress={props.onSignal ? () => props.onSignal?.(SIGNALS[i]) : undefined}
-          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class={MARK.tile} kind={x().kind} tone={x().tone === "bad" ? "bad" : "plain"} />}
+          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class={MARK.tile} kind={x().kind} tone={((k) => (k === "quiet" ? "plain" : k))(x().tone)} />}
         />
       </If>
     );
@@ -175,14 +175,15 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
             {command() ? commandLine(command()!) : props.view.header.endpoint}
           </Title>
           <Text testID="session-meta" class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
-          {/* the session in a sentence: where its time went, and the first thing to do. It wraps
-              to two lines as the pane narrows; what is past them is cut at the second line's end */}
-          <If when={profile()?.groups.length}>
-            <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(profile())}</Text>
-          </If>
         </View>
         {props.actions}
       </View>
+      {/* the session in a sentence: where its time went, and the first thing to do. Across the pane
+          (not held to the title's column beside the commands); it wraps to two lines as the pane
+          narrows, and what is past them is cut at the second line's end */}
+      <If when={profile()?.groups.length}>
+        <Text testID="session-story" class="text-body leading-5 text-foreground line-clamp-2">{sessionStory(profile())}</Text>
+      </If>
       {props.children}
       {/* one reading of a run: rate, errors, latency, bytes, and how many at once; each opens its chart */}
       {/* (a page shared before sessions had a profile: its figures in a line) */}

@@ -77,16 +77,22 @@ function KeyHistory(props: { path: string; bucket: string; keyName: string; at: 
                 selected={x().id === props.at}
                 disabled={x().id === props.at}
                 onPress={() => props.onRecord(x().id)}
-                trailing={<Text class="shrink-0 tabular-nums text-small text-muted-foreground">{duration(x().latencyMs)}</Text>}
+                trailing={
+                  // its time, then (another request than the one shown) the chevron, at the row's end
+                  <>
+                    <Text class="shrink-0 tabular-nums text-small text-muted-foreground">{duration(x().latencyMs)}</Text>
+                    {/* (the one shown keeps the chevron's room, so the times stand in one column) */}
+                    <View class={x().id === props.at ? "opacity-0" : ""}>
+                      <Icon name="chevron-right" size={ICON.small} />
+                    </View>
+                  </>
+                }
               >
                 <View class={WIDTH.status}>
                   <StatusMark status={x().status} injected={x().injected} />
                 </View>
                 <Text class="min-w-0 flex-1 text-small text-foreground line-clamp-1">{x().operation}</Text>
                 <Text class="shrink-0 font-mono text-caption text-muted-foreground">{clock(x().time, "ms")}</Text>
-                <If when={x().id !== props.at}>
-                  <Icon name="chevron-right" size={ICON.small} />
-                </If>
               </ListRow>
             )}
           </Each>

@@ -15,7 +15,7 @@ import type { Policy } from "./session";
 import { report, sessionsChanged } from "../store";
 import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, trialSteps } from "../trials";
 import type { Trial, TrialEvent, TrialPlan } from "../types";
-import { AGAIN, STANDING, trialAsked, trialSince, TrialWhere, trialReasons, trialText } from "./history";
+import { adviceOnce, AGAIN, STANDING, trialAsked, TrialRow } from "./history";
 import { Icon } from "./icon";
 import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Mono, Muted, Notice, Options, Row, Title } from "./kit";
 import { scrubCommand } from "./sessionview";
@@ -169,52 +169,26 @@ export function TrialDialog(props: {
     props.onOpen?.(session);
     props.onClose();
   };
-  const standing = (s: () => TrialStep) => (
-    <View class="min-h-5 shrink-0 justify-center">
-      <If when={s().trial} else={<Badge label={s().state === "running" ? t("trial.running") : t("trial.waiting")} tone={s().state === "running" ? "info" : "neutral"} />}>
-        {(x) => <Badge label={t(`trial.${x().standing}`)} tone={STANDING[x().standing]} />}
-      </If>
-    </View>
-  );
+  // each distinct advice said once, under the first verdict that gives it
+  const same = () => adviceOnce((steps() ?? []).map((s) => s.trial));
   const row = (s: () => TrialStep, i: () => number) => {
     const session = () => (ended() && !ended()!.cancelled ? (s().trial?.session ?? null) : null);
+    // its verdict, drawn as the Runs pane draws it; done, and its session kept: a press opens it
     return (
-      <ListRow
-        divided
-        top
-        first={i() === 0}
-        testID={`trial-step-${s().scenario}`}
-        label={s().trial ? `${t(`trial.${s().trial!.standing}`)}: ${scenarioLabel(s().scenario)}` : scenarioLabel(s().scenario)}
-        // done, and its session kept: a press opens it
-        disabled={!session() || !props.onOpen}
-        onPress={() => session() && open(session()!)}
-        trailing={
-          <>
-            {standing(s)}
-            <If when={session() && props.onOpen}>
-              <Icon name="chevron-right" size={ICON.small} />
-            </If>
-          </>
+      <If
+        when={s().trial}
+        else={
+          // before its verdict: the scenario, and how it stands so far
+          <ListRow divided top first={i() === 0} testID={`trial-step-${s().scenario}`} label={scenarioLabel(s().scenario)} disabled trailing={<View class="min-h-5 shrink-0 justify-center"><Badge label={s().state === "running" ? t("trial.running") : t("trial.waiting")} tone={s().state === "running" ? "info" : "neutral"} /></View>}>
+            <View class="min-w-0 flex-1 flex-row flex-wrap items-baseline gap-x-2">
+              <Text class="text-body text-foreground">{scenarioLabel(s().scenario)}</Text>
+              <Text class="font-mono text-caption text-muted-foreground">{s().scenario}</Text>
+            </View>
+          </ListRow>
         }
       >
-        <View class="min-w-0 flex-1 gap-1">
-          <View class="flex-row flex-wrap items-baseline gap-x-2">
-            <Text class="text-body text-foreground">{scenarioLabel(s().scenario)}</Text>
-            <Text class="font-mono text-caption text-muted-foreground">{s().trial ? trialAsked(s().trial!) : s().scenario}</Text>
-          </View>
-          <If when={s().trial}>
-            {(x) => (
-              <>
-                <If when={trialSince(x())}>{(h) => <Text testID={`trial-step-history-${s().scenario}`} class="text-small text-foreground">{h()}</Text>}</If>
-                <Muted class="text-small">{[trialText(x()), ...trialReasons(x())].filter(Boolean).join(" · ")}</Muted>
-                <If when={x().standing !== "survived"}>
-                  <TrialWhere trial={x()} />
-                </If>
-              </>
-            )}
-          </If>
-        </View>
-      </ListRow>
+        {(x) => <TrialRow trial={x()} first={i() === 0} sameAs={same()[i()]} onOpen={session() && props.onOpen ? () => open(session()!) : undefined} testID={`trial-step-${s().scenario}`} historyID={`trial-step-history-${s().scenario}`} />}
+      </If>
     );
   };
   return (

@@ -577,6 +577,8 @@ export interface EpisodeQuery {
   slice?: [number, number];
   text?: string;
   failed?: boolean;
+  /** Only the operations that sent a request of this kind (`GetObject`). */
+  kind?: string;
 }
 
 /** A range of a session's operations: `rows[i]` is the table's row `offset + i`, of `total` that match. */

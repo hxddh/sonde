@@ -56,6 +56,8 @@ pub struct Query {
     pub text: Option<String>,
     /// Only the operations that did not end well.
     pub failed: bool,
+    /// Only the operations that sent a request of this kind (`GetObject`).
+    pub kind: Option<String>,
 }
 
 impl Query {
@@ -91,6 +93,10 @@ pub struct Analysis {
     /// Which operation each request belongs to, by request id (sorted: a
     /// map's buckets would cost twice as much a request).
     owner: Vec<(u64, u32)>,
+    /// The kinds of request each operation sent, as bits of `kind_names`
+    /// (the 64th holds every kind past the 63rd): what a query by kind reads.
+    kinds: Vec<u64>,
+    kind_names: Vec<String>,
     /// The first operation's start and the last end.
     span: Option<(DateTime<Utc>, DateTime<Utc>)>,
     /// The order last asked for: the next page of it does not sort again.
@@ -178,6 +184,29 @@ impl Analysis {
                 owner.push((*id, i as u32));
             }
         }
+        // the kinds each operation sent, a bit a kind
+        let mut kind_names: Vec<String> = Vec::new();
+        let mut kinds = vec![0u64; episodes.len()];
+        {
+            let mut by_id: Vec<(u64, u32)> = owner.clone();
+            by_id.sort_unstable_by_key(|(id, _)| *id);
+            for r in records {
+                let mut k = by_id.partition_point(|(id, _)| *id < r.id);
+                while k < by_id.len() && by_id[k].0 == r.id {
+                    let name: &str = &r.operation;
+                    let bit = match kind_names.iter().position(|n| n == name) {
+                        Some(b) => b,
+                        None if kind_names.len() < 63 => {
+                            kind_names.push(name.to_string());
+                            kind_names.len() - 1
+                        }
+                        None => 63,
+                    };
+                    kinds[by_id[k].1 as usize] |= 1 << bit;
+                    k += 1;
+                }
+            }
+        }
         // (a request two operations claim is the later's)
         owner.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
         owner.dedup_by_key(|(id, _)| *id);
@@ -200,6 +229,8 @@ impl Analysis {
             profile,
             what_if,
             owner,
+            kinds,
+            kind_names,
             span,
             order: Mutex::new(None),
         }
@@ -250,9 +281,20 @@ impl Analysis {
         }
         let eps = &self.episodes;
         let t0 = self.span.map(|s| s.0);
+        // a kind no request had narrows to nothing; one past the 63rd to every one past it
+        let kind_bit = key.kind.as_deref().map(|k| match self.kind_names.iter().position(|n| n == k) {
+            Some(b) => 1u64 << b,
+            None if self.kind_names.len() >= 63 => 1u64 << 63,
+            None => 0,
+        });
         let keep = |i: &u32| {
             let e = &eps[*i as usize];
             if key.failed && e.outcome == Outcome::Ok {
+                return false;
+            }
+            if let Some(bit) = kind_bit
+                && self.kinds[*i as usize] & bit == 0
+            {
                 return false;
             }
             if let (Some((a, b)), Some(t0)) = (key.slice, t0)
@@ -513,6 +555,11 @@ mod tests {
         let failed = a.page(&q(json!({ "failed": true })));
         assert_eq!(failed["total"], 36);
         assert_eq!(idx(&failed)[..2], [3, 53]);
+        // those that sent a kind of request
+        let puts = a.page(&q(json!({ "kind": "PutObject" })));
+        assert_eq!(puts["total"], 258);
+        assert_eq!(idx(&puts)[..2], [0, 7]);
+        assert_eq!(a.page(&q(json!({ "kind": "DeleteObject" })))["total"], 0);
         let named = a.page(&q(json!({ "text": "K00042" })));
         assert_eq!(idx(&named), [42]);
         assert_eq!(a.row_of(&q(json!({ "text": "k00042" })), 7), None);

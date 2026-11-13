@@ -297,7 +297,13 @@ test("tiles go in rows of equal count: four are two and two, never three and one
   expect(tilesPerRow(200, 4, 144)).toBe(1);
   expect(tilesPerRow(300, 4, 144)).toBe(2);
   expect(tilesPerRow(200, 1, 144)).toBe(1);
-  expect(tilesPerRow(500, 5, 128)).toBe(3);
+  // five: abreast, or a line each; never three and two, nor so tight a label is cut
+  expect(tilesPerRow(700, 5, 128)).toBe(5);
+  expect(tilesPerRow(560, 5, 128)).toBe(1);
+  expect(tilesPerRow(400, 5, 128)).toBe(1);
+  // six: three and three, or two by three
+  expect(tilesPerRow(500, 6, 144)).toBe(3);
+  expect(tilesPerRow(320, 6, 144)).toBe(2);
   // not measured yet: all abreast
   expect(tilesPerRow(0, 4, 144)).toBe(4);
   // a ranked row holds what fits and never wraps: the last ranked go, two stay
@@ -349,7 +355,8 @@ test("one way to write a figure, in the app and in the terminal", async () => {
     [0, "0 B"],
     [1, "1 B"],
     [512, "512 B"],
-    [1023, "1023 B"],
+    [999, "999 B"],
+    [1020, "1.0 KiB"],
     [1024, "1.0 KiB"],
     [1280, "1.3 KiB"],
     [1536, "1.5 KiB"],
@@ -477,6 +484,9 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(tiles[1].value).toBe("3%");
   expect(tiles[1].detail).toBe("1 server · 2 retries");
   expect(tiles[1].tone).toBe("bad");
+  // one failure, one colour: errors that are all the program's own (4xx) are in the client's tone, as on their charts
+  const clientOnly = signalTiles(signalsFromProfile({ ...(profile as object), rate: [bin(0, 30), { ...bin(1000, 9), client: 1 }] } as never, summary));
+  expect(clientOnly[1].tone).toBe("client");
   expect(tiles[2].value).toBe("2.0 ms");
   expect(tiles[2].detail).toBe("p95 6.0 ms · p99 9.0 ms");
   expect(tiles[3].value).toBe("19.5 KiB/s");
@@ -557,16 +567,18 @@ test("a trial's load: so many times the clean run's where it sent more, the two 
 
 test("a scenario's verdicts over the program's runs read in a few words; the refused have a tone of their own", async () => {
   const { trialSince, STANDING, toTryAgain } = await import("../src/ui/history");
-  const { day } = await import("../src/format");
+  const { date, hm } = await import("../src/format");
   const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 1, faults: 1, retried: 0, requests: 1, cleanRequests: 1, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
   const at = ["2026-11-10T09:00:00Z", "2026-11-11T09:00:00Z", "2026-11-12T09:00:00Z"];
   // one verdict has no history to tell
   expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }] })).toBe(null);
-  // broke, then survived: when it last broke, and that it has survived since
+  // broke, then survived: in how many of the runs, since when, and that it broke before
   const fixed = { ...base, standing: "survived" as const, history: [{ at: at[0], standing: "broke" as const, run: "a" }, { at: at[1], standing: "broke" as const, run: "b" }, { at: at[2], standing: "survived" as const, run: "c" }] };
-  expect(trialSince(fixed)).toBe(`Broke on ${day(at[1])}, survived since`);
-  // the same all along: since when
-  expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }, { at: at[1], standing: "broke", run: "b" }] })).toBe(`Broke since ${day(at[0])}`);
+  expect(trialSince(fixed)).toBe(`Survived in 1 of 3 runs, since ${date(at[2])}; broke before`);
+  // the same all along: in how many, since when ("Broke in 3 of 3 runs, since 08:33" where that is today)
+  expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }, { at: at[1], standing: "broke", run: "b" }] })).toBe(`Broke in 2 of 2 runs, since ${date(at[0])}`);
+  const today = new Date().toISOString();
+  expect(trialSince({ ...base, standing: "broke", history: [{ at: today, standing: "broke", run: "a" }, { at: today, standing: "broke", run: "b" }] })).toBe(`Broke in 2 of 2 runs, since ${hm(today)}`);
   // a refusal by the policy is never a failure's red, nor a degraded run's amber
   expect(STANDING.refused).toBe("refused");
   expect(([STANDING.degraded, STANDING.broke] as string[]).includes(STANDING.refused)).toBe(false);

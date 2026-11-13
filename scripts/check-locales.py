@@ -35,6 +35,7 @@ for f in sorted(root.glob("*.json")):
 FAMILIES = {
     "audit.action.": "abortUploads deleteVersions restoreObject deleteObjects putLifecycle runProbes",
     "board.": "traffic latency errors where",
+    "byGroup.": "prefix size caller sdk status",
     "costBy.": "write list read free",
     "failures.": "server client transport injected",
     "flows.": "ok notfound clienterror servererror",

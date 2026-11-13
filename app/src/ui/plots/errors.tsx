@@ -39,6 +39,8 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
       props.range,
     );
   const peak = () => Math.max(0.01, ...rows().map((r) => r.share));
+  // one failure, one colour: in the client's tone where every failure was the program's own (4xx), as the counts beside draw it
+  const tone = () => (e().counts.client > 0 && e().counts.server + e().counts.transport + e().counts.injected === 0 ? FAILURE_FILL.client : FAILURE_FILL.server);
   const hovered = signal<number | null>(null);
   const label = () => t("errorRate.text", { pct: percent(e().value ?? 0), peak: percent(peak()) });
   const tip = () => {
@@ -68,7 +70,7 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
           }}
           class={`${TICK_ROOM} ${PLOT} w-full`}
         >
-          <Bar value="share" class="fill-status-server" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
+          <Bar value="share" class={tone()} cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
           <Rule value={(_, i) => (i === focused() ? budgetTop(peak() * 1.25, props.budgetShare) : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
           <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
           <ValueAxis peak={peak()} say={(v) => t("errorRate.peak", { pct: percent(v) })} />
