@@ -17,6 +17,12 @@ use super::record::*;
 pub struct RunArgs {
     #[command(flatten)]
     rec: Recording,
+    /// Send the requests to the built-in demo store (buckets `demo`,
+    /// `demo-large`, `demo-layouts`), as `sonde demo` does: no account or
+    /// secrets needed. It lives in this process and starts afresh each run;
+    /// its times are not meaningful.
+    #[arg(long, conflicts_with = "endpoint")]
+    demo: bool,
     /// Print each request on stderr as it happens.
     #[arg(long)]
     live: bool,
@@ -25,11 +31,8 @@ pub struct RunArgs {
     /// JavaScript v3 and the AWS SDK for Java 2 (hooks loaded with
     /// PYTHONPATH, NODE_OPTIONS, JAVA_TOOL_OPTIONS), so that each finding
     /// says its line. Also `name-callers = false` in the settings.
-    #[arg(long, conflicts_with = "callers")]
+    #[arg(long)]
     no_callers: bool,
-    /// Name callers even where the settings say not to.
-    #[arg(long, hide = true)]
-    callers: bool,
     /// Then run the command again under faults chosen from what it did (a
     /// 503 on each request's first attempt, a skewed clock if it signs, a
     /// lost answer on each write, a failed completion if it uploads in
@@ -243,38 +246,44 @@ fn names_its_place(command: &[String]) -> bool {
         .any(|w| w.contains("{trial}") || w.contains("SONDE_TRIAL"))
 }
 
-pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
+pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
     // sonde.toml and the scenarios asked for by name are checked before
     // anything runs
     let project = load_project(None)?;
+    let mut rec = a.rec.clone();
+    if a.demo {
+        if cli.url.is_some() {
+            return Err(super::usage("--demo and --url name two stores: give one"));
+        }
+        let ep = sonde_core::demo::install(s)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        rec.endpoint = Some(ep.id);
+        eprintln!(
+            "sonde: --demo: the requests go to the built-in demo store (buckets demo, demo-large, demo-layouts), in this process. Its counts and findings are the program's; its times are not meaningful."
+        );
+    }
     let mut asked: Vec<sonde_proxy::fault::Scenario> = Vec::new();
-    let mut specs: Vec<String> = Vec::new();
+    // one scenario at two strengths is two runs, each with a session of its own
+    let same = |a: &sonde_proxy::fault::Scenario, b: &sonde_proxy::fault::Scenario| {
+        a.name == b.name && sonde_proxy::fault::pressed(a) == sonde_proxy::fault::pressed(b)
+    };
     for name in &a.faults {
         let scenario = named_scenario(name, &project.scenarios)?;
         // named twice, run once: the second run would write over the first
-        match asked.iter().position(|s| s.name == scenario.name) {
-            None => {
-                asked.push(scenario);
-                specs.push(name.clone());
-            }
-            // one scenario at two strengths has one file to go to: refused,
-            // not silently run at the first
-            Some(at) if specs[at] != *name => {
-                return Err(super::usage(format!(
-                    "--fault {} and --fault {name} are one scenario and would write one session: name it once",
-                    specs[at]
-                )));
-            }
-            Some(_) => {}
+        if !asked.iter().any(|s| same(s, &scenario)) {
+            asked.push(scenario);
         }
     }
     // what to try again is known before anything runs
     if a.again {
+        // (trimmed as the name is when kept)
         let program = a
             .name
             .clone()
             .or(project.file.program.name.clone())
-            .filter(|n| !n.trim().is_empty())
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
             .or_else(|| {
                 sonde_proxy::program::program_key(Some(&sonde_proxy::program::shell_join(
                     &a.command,
@@ -301,12 +310,8 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         }
         for name in &names {
             match named_scenario(name, &project.scenarios) {
-                // (one scenario at two strengths has one session: once)
-                Ok(scenario) if asked.iter().any(|s| s.name == scenario.name) => {}
-                Ok(scenario) => {
-                    asked.push(scenario);
-                    specs.push(name.clone());
-                }
+                Ok(scenario) if asked.iter().any(|s| same(s, &scenario)) => {}
+                Ok(scenario) => asked.push(scenario),
                 // a project's scenario since taken out of sonde.toml
                 Err(e) => eprintln!("warning: not tried again: {e}"),
             }
@@ -322,8 +327,8 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
         input: (trying && !std::io::stdin().is_terminal()).then(Default::default),
         stop: Stop::listen(),
         rec: Recording {
-            tls: a.rec.tls || project.file.record.tls,
-            ..a.rec.clone()
+            tls: rec.tls || project.file.record.tls,
+            ..rec
         },
         written: Arc::default(),
     };
@@ -392,7 +397,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &RunArgs) -> anyhow::Result<i32>
             // name is free, and is the one the verdict keeps)
             path: folder.join(format!(
                 "{}.sonde",
-                sonde_proxy::trial::session_stem(&file, &scenario.name)
+                sonde_proxy::trial::session_stem(&file, &scenario)
             )),
             of: of.clone(),
             scenario,
@@ -570,7 +575,7 @@ async fn run_once(
     )
     .await?;
     let (mut set, unset) = started.proxy.env();
-    if a.callers || (!a.no_callers && s.settings().name_callers) {
+    if !a.no_callers && s.settings().name_callers {
         set.extend(sonde_proxy::callers::caller_env(&s.paths().python_hook())?);
     }
     // each run a place of its own, if the command asks for one: `{trial}`
@@ -740,6 +745,11 @@ async fn run_once(
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
     started.writer.flush()?;
     if under.is_none() {
+        // kept as the app keeps it: a run that failed is compared with none
+        sonde_proxy::index::set(
+            &started.path,
+            sonde_proxy::index::Change::Exit(exit_code(status)),
+        );
         let session = Session::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
         let color = std::io::stderr().is_terminal();
         let prices = request_prices_for(s, &session.header.endpoint);

@@ -13,15 +13,56 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  reuse:
+    # what CI built of this very commit (main's run, the nightly or one by
+    # hand; never a pull request's), kept again as this run's artifacts, so
+    # the build below makes only what is missing: usually the macOS app and
+    # macOS Intel, nothing after a nightly or a CI run by hand on the commit
+    runs-on: ubuntu-24.04
+    outputs:
+      have: ${{ steps.reuse.outputs.have }}
+    steps:
+      - id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          want="sonde-linux-x86_64 sonde-linux-x86_64-musl sonde-linux-aarch64 sonde-macos-aarch64 sonde-macos-x86_64
+            sonde-windows-x86_64 sonde-desktop-linux-x86_64 sonde-desktop-windows-x86_64 sonde-macos-app"
+          runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&status=completed&per_page=50" --jq \
+            '.workflow_runs[] | select((.event == "push" or .event == "schedule" or .event == "workflow_dispatch") and .head_repository.full_name == env.REPO) | .id')
+          have=()
+          mkdir -p reused
+          for id in $runs; do
+            names=$(gh api "repos/$REPO/actions/runs/$id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired | not) | .name')
+            for n in $want; do
+              case " ${have[*]} " in *" $n "*) continue;; esac
+              grep -qx "$n" <<<"$names" || continue
+              gh run download "$id" -R "$REPO" -n "$n" -D reused
+              have+=("$n")
+              echo "- \`$n\` from https://github.com/$REPO/actions/runs/$id" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
+          [ ${#have[@]} -gt 0 ] || echo "no CI run of $SHA kept a build: everything is built here" >> "$GITHUB_STEP_SUMMARY"
+          echo "have=$(jq -cn '$ARGS.positional' --args ${have[@]+"${have[@]}"})" >> "$GITHUB_OUTPUT"
+          ls -la reused
+      - if: steps.reuse.outputs.have != '[]'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: reused, path: reused }
+
   build:
+    needs: reuse
     uses: ./.github/workflows/build.yml
-    with: { release: true }
+    with: { release: true, skip: "${{ needs.reuse.outputs.have }}" }
     secrets: inherit
 
   publish:
-    needs: build
+    needs: [reuse, build]
+    if: ${{ !cancelled() && needs.reuse.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -32,19 +73,48 @@ jobs:
     env:
       VERSION: ${{ inputs.version || github.ref_name }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Version
         run: |
           v="${VERSION#v}"
           grep -q "^version = \"$v\"" Cargo.toml || { echo "::error::Cargo.toml is not at $v"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         # the binaries and the app (not the viewer's site, which is inside them)
         with: { path: dist, pattern: "sonde-[lmdw]*", merge-multiple: true }
+      - if: needs.reuse.outputs.have != '[]'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: reused, path: dist }
+      - name: Every platform, once
+        run: |
+          shopt -s nullglob
+          cd dist && ls -la
+          for f in sonde-{linux-x86_64,linux-x86_64-musl,linux-aarch64,macos-aarch64,macos-x86_64}.tar.gz sonde-windows-x86_64.zip \
+            sonde-macos.dmg "sonde-$VERSION-linux-x86_64.tar.gz" "sonde-$VERSION-windows-x86_64.zip"; do
+            [ -f "$f" ] && [ -f "$f.sha256" ] || { echo "::error::$f (or its .sha256) is missing"; exit 1; }
+          done
+          app=(sonde-"$VERSION"-macos-*.tar.gz)
+          [ ${#app[@]} -gt 0 ] || { echo "::error::the macOS app's updater archive is missing"; exit 1; }
       - name: Checksums
         run: cd dist && cat ./*.sha256 > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
         run: scripts/changelog-section.sh "$VERSION" > notes.md
+      # what the owner's secrets would add, said on the release page too
+      - name: What this release skipped
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          NSH_PACKAGE_KEY: ${{ secrets.NSH_PACKAGE_KEY }}
+          NSH_PACKAGE_CERT: ${{ secrets.NSH_PACKAGE_CERT }}
+        run: |
+          skipped=()
+          [ -n "$MACOS_CERTIFICATE_P12" ] || skipped+=("- The macOS app is not signed with a Developer ID: Gatekeeper refuses the \`.dmg\` until you right-click → Open, or run \`xattr -d com.apple.quarantine sonde.app\`.")
+          [ -n "$APPLE_ID" ] || skipped+=("- The \`.dmg\` is not notarized.")
+          [ -n "$NSH_PACKAGE_KEY" ] && [ -n "$NSH_PACKAGE_CERT" ] || skipped+=("- No signed package of the app's code: an installed app updates only by installing the new app.")
+          if [ ${#skipped[@]} -gt 0 ]; then
+            { echo; echo "### Not in this release"; echo; printf '%s\n' "${skipped[@]}"; } >> notes.md
+            printf '::warning title=Skipped::%s\n' "${skipped[@]}"
+          fi
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: ./.github/actions/nsh
         # (the tag v0.5.0)
@@ -89,7 +159,7 @@ jobs:
             dist/*.dmg
             dist/*.nshpkg
             dist/latest.json
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
@@ -103,12 +173,8 @@ jobs:
             dist/*.nshpkg
             dist/*.sha256
             dist/SHA256SUMS
-      - name: Update the Homebrew tap (skipped without HOMEBREW_TAP_TOKEN)
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: scripts/update-tap.sh "$VERSION" dist/SHA256SUMS
 
-  # `uses: hxddh/sonde@v18` follows the newest 18.x
+  # `uses: hxddh/sonde@v19` follows the newest 19.x
   action-tag:
     needs: publish
     uses: ./.github/workflows/action-tag.yml

@@ -77,6 +77,8 @@ pub struct Imported {
     /// A HAR's entries for other hosts (a page, its scripts, another
     /// service): no request to S3, and left out.
     pub other_hosts: usize,
+    /// CloudTrail events of other services than S3, left out.
+    pub other_services: usize,
 }
 
 /// A file's text: gunzipped when it is gzip (as S3 delivers CloudTrail).
@@ -131,6 +133,7 @@ pub struct Parts {
     malformed: usize,
     not_requests: usize,
     other_hosts: usize,
+    other_services: usize,
     /// The hosts the requests went to, each with how many.
     hosts: std::collections::BTreeMap<String, usize>,
     /// request id → the object a copy read, from the store's own line of
@@ -158,7 +161,12 @@ impl Parts {
                 &mut self.sources,
                 &mut self.hosts,
             ),
-            Source::CloudTrail => cloudtrail(text, &mut self.hosts)?,
+            Source::CloudTrail => cloudtrail(
+                text,
+                &mut malformed,
+                &mut self.other_services,
+                &mut self.hosts,
+            ),
             Source::Har => har(text, &mut self.other_hosts, &mut self.hosts)?,
         };
         self.source = Some(source);
@@ -217,6 +225,7 @@ impl Parts {
             malformed: self.malformed,
             not_requests: self.not_requests,
             other_hosts: self.other_hosts,
+            other_services: self.other_services,
         })
     }
 }
@@ -550,10 +559,14 @@ const TRAIL_QUERY: &[&str] = &[
 ];
 
 /// CloudTrail S3 data events (`{"Records": [...]}`, or one event per line).
+/// A line or event that does not read is counted in `malformed`; another
+/// service's event in `other`.
 fn cloudtrail(
     text: &str,
+    malformed: &mut usize,
+    other: &mut usize,
     hosts: &mut std::collections::BTreeMap<String, usize>,
-) -> Result<Vec<Record>, String> {
+) -> Vec<Record> {
     let events: Vec<Value> = match serde_json::from_str::<Value>(text) {
         Ok(v) => match v.get("Records") {
             Some(Value::Array(a)) => a.clone(),
@@ -563,20 +576,28 @@ fn cloudtrail(
         Err(_) => text
             .lines()
             .filter(|l| !l.trim().is_empty())
-            .map(|l| serde_json::from_str(l).map_err(|e| e.to_string()))
-            .collect::<Result<_, _>>()?,
+            .filter_map(|l| {
+                let v = serde_json::from_str(l).ok();
+                *malformed += v.is_none() as usize;
+                v
+            })
+            .collect(),
     };
     let mut out = Vec::new();
     for e in events {
         if e["eventSource"].as_str() != Some("s3.amazonaws.com") {
+            *other += 1;
             continue;
         }
         let name = e["eventName"].as_str().unwrap_or("");
-        let time = e["eventTime"]
+        let Some(time) = e["eventTime"]
             .as_str()
             .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
             .map(|t| t.with_timezone(&Utc))
-            .ok_or("an event without eventTime")?;
+        else {
+            *malformed += 1;
+            continue;
+        };
         let p = &e["requestParameters"];
         let bucket = p["bucketName"].as_str().map(String::from);
         let key = p["key"].as_str().map(String::from);
@@ -632,7 +653,7 @@ fn cloudtrail(
         }
         out.push(r);
     }
-    Ok(out)
+    out
 }
 
 /// A HAR file's requests to S3 (a browser's, say).
@@ -1223,6 +1244,21 @@ mod tests {
             .iter()
             .find(|e| e.kind == crate::episode::Kind::Multipart && e.records.len() == 3);
         assert!(upload.is_some(), "{eps:?}");
+    }
+
+    #[test]
+    fn a_cut_cloudtrail_line_and_other_services_events_are_counted_not_fatal() {
+        let ct = [
+            r#"{"eventTime":"2026-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"a"}}"#,
+            r#"{"eventTime":"2026-02-06T00:00:02Z","eventSource":"ec2.amazonaws.com","eventName":"RunInstances"}"#,
+            r#"{"eventTime":"2026-02-06T00:00:03Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"b"}}"#,
+            r#"{"eventSource":"s3.amazonaws.com","eventName":"GetObject"}"#,
+            r#"{"eventTime":"2026-02-06T00:00:04Z","eventSource":"s3.amaz"#,
+        ]
+        .join("\n");
+        let i = import_counted(&ct, "trail").unwrap();
+        assert_eq!(i.session.records.len(), 2);
+        assert_eq!((i.malformed, i.other_services), (2, 1));
     }
 
     #[test]

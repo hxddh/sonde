@@ -459,19 +459,19 @@ mod tests {
         );
         jobs.wait(&id).await.unwrap();
         let info = jobs.info(&id).unwrap();
-        assert_eq!(info.title, "Capacity scan b/p/");
+        assert_eq!(info.title, "Size of b/p/");
         assert_eq!(en(&info.title_text), info.title);
         assert_eq!(info.progress.message, "3 objects");
         assert_eq!(en(&info.progress.message_text), info.progress.message);
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["titleText"][0]["key"], "job.du");
         assert_eq!(v["progress"]["messageText"][0]["args"]["n"], "3");
-        // words given as they are stay words, and old JSON still reads
+        // words given as they are stay words, and JSON without phrases reads
         let plain = jobs.spawn("t", "plain", 1, None, |_| async { Ok(Value::Null) });
         assert_eq!(jobs.info(&plain).unwrap().title, "plain");
-        let old: Progress =
+        let plain_json: Progress =
             serde_json::from_str(r#"{"done":1,"total":null,"bytes":0,"message":"x"}"#).unwrap();
-        assert!(old.message_text.is_empty());
+        assert!(plain_json.message_text.is_empty());
     }
 
     #[tokio::test]

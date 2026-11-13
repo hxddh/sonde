@@ -43,12 +43,16 @@ fn peak_mib() -> Option<u64> {
 /// read), then count it, group it into operations, find what stands out,
 /// reckon the four signals and where the time went, and what acting on the
 /// findings would leave ([`Analysis::of`]: `show`, `check` and the app's
-/// view all go through it). Returns how long it took, and the analysis.
+/// view all go through it), and the run against its program's run before
+/// it ([`Analysis::since_last`]). Returns how long it took, and the analysis.
 fn read_as_show(path: &std::path::Path) -> (Duration, usize, Analysis) {
     let started = Instant::now();
     let s = Session::open_lean(path).expect("the session opens");
     let opened = started.elapsed();
     let a = Analysis::of(&s, &RequestPrices::default());
+    // and, a run of a program, against the run before it (none here)
+    let since = a.since_last(path, &s.header, &s.records, &|_| RequestPrices::default());
+    assert!(since.is_some_and(|c| c.previous.is_none() && !c.findings.is_empty()));
     let took = started.elapsed();
     eprintln!(
         "  read {:.2} s, analysed {:.2} s, peak {} MiB",
@@ -186,10 +190,10 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_in_two_seconds() 
     assert!(took < Duration::from_secs(2), "took {took:?}");
     // and it does not grow with the session: a page of operations, not all
     assert_eq!(
-        view["episodes"].as_array().map(Vec::len),
+        view["operations"].as_array().map(Vec::len),
         Some(sonde_proxy::view::PAGE)
     );
-    assert_eq!(view["episodesTotal"], a.episodes.len());
+    assert_eq!(view["operationsTotal"], a.episodes.len());
     assert!(sent < 2 << 20, "{sent} bytes sent");
     // the next page is a lookup, not another analysis
     let started = Instant::now();

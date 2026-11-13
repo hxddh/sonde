@@ -316,12 +316,25 @@ fn sentence(
             .iter()
             .max_by(|a, b| a.slow.cmp(&b.slow).then(b.key.cmp(&a.key)))
             .copied();
-        let concentrated = top.filter(|t| {
-            let share = t.slow as f64 / slow_total as f64;
-            share >= 0.5 && share >= t.requests as f64 / total * 1.5
-        });
-        match concentrated {
-            Some(t) => {
+        let share = |t: &Row| t.slow as f64 / slow_total as f64;
+        let concentrated =
+            top.filter(|t| share(t) >= 0.5 && share(t) >= t.requests as f64 / total * 1.5);
+        // half or more of them where most requests are: not more there than
+        // anywhere, but said where, and that the requests are there too
+        let with_most = top.filter(|t| concentrated.is_none() && share(t) >= 0.5);
+        match (concentrated, with_most) {
+            (None, Some(t)) => {
+                out.push(p(
+                    "split.slow.most",
+                    &[
+                        ("pct", pct(share(t))),
+                        ("ms", sonde_fmt::duration(slow_at)),
+                        ("all", pct(t.requests as f64 / total)),
+                    ],
+                ));
+                out.push(place(by, &t.key));
+            }
+            (Some(t), _) => {
                 let in_top = |i: usize| keys[i] == t.key;
                 let slow_in_top: Vec<usize> = (0..records.len())
                     .filter(|&i| in_top(i) && records[i].latency_ms >= slow_at)
@@ -371,7 +384,7 @@ fn sentence(
                 ));
                 out.extend(said);
             }
-            None => out.push(p("split.spread", &[])),
+            (None, None) => out.push(p("split.spread", &[])),
         }
     }
     if total_cost > 0.0 && rows.len() >= 2 {
@@ -501,6 +514,25 @@ mod tests {
         let s = split(&even, Dimension::Prefix, &RequestPrices::default());
         assert!(
             s.text.starts_with("the slow requests are spread"),
+            "{}",
+            s.text
+        );
+    }
+
+    #[test]
+    fn slow_requests_where_nearly_all_requests_are_are_said_to_be_there() {
+        // 96 of 100 requests under data/, and every slow one
+        let mut recs: Vec<Record> = (0..96)
+            .map(|i| rec(i, "GetObject", &format!("data/{i}"), 1.0 + i as f64, 10))
+            .collect();
+        for i in 96..100 {
+            recs.push(rec(i, "GetObject", &format!("wal/{i}"), 1.0, 10));
+        }
+        let s = split(&recs, Dimension::Prefix, &RequestPrices::default());
+        assert!(
+            s.text.contains("% of the slow requests (over ")
+                && s.text
+                    .contains("), and 96% of all requests, are under b/data/"),
             "{}",
             s.text
         );

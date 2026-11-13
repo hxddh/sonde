@@ -358,6 +358,8 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     output::count(gone.len(), "session"),
                     if gone.len() == 1 { "it" } else { "them" }
                 );
+                // a dry run with something to do: 4, as every dry run
+                return Ok(4);
             }
             Ok(0)
         }
@@ -513,44 +515,13 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
             }
         );
     }
+    if imported.other_services > 0 {
+        eprintln!(
+            "  {} left out: other services', not S3's",
+            output::count(imported.other_services, "event")
+        );
+    }
     super::record::show_file(s, &path).await
-}
-
-/// `sonde export` (17.0), kept for 18.0: `sonde share --otlp`.
-#[derive(Args)]
-pub struct ExportArgs {
-    /// The session (default: the newest).
-    file: Option<PathBuf>,
-    /// OpenTelemetry traces: the only form there is.
-    #[arg(long)]
-    otlp: bool,
-    /// Write it here (default: stdout).
-    #[arg(long, short = 'o')]
-    out: Option<PathBuf>,
-    /// Send it to an OTLP/HTTP collector instead.
-    #[arg(long, conflicts_with = "out")]
-    to: Option<String>,
-}
-
-/// `sonde export`, said as its 18.0 form and done as that.
-pub async fn export(s: &Arc<Sonde>, a: &ExportArgs) -> anyhow::Result<i32> {
-    let _ = a.otlp;
-    let mut new = String::from("sonde share --otlp");
-    if let Some(f) = &a.file {
-        new.push_str(&format!(" {}", f.display()));
-    }
-    if let Some(u) = &a.to {
-        new.push_str(&format!(" --to {u}"));
-    }
-    if let Some(o) = &a.out {
-        new.push_str(&format!(" -o {}", o.display()));
-    }
-    super::renamed("sonde export", &new);
-    let file = match &a.file {
-        Some(f) => resolve(s, f),
-        None => super::record::newest_session(s)?,
-    };
-    otlp(s, &file, a.out.as_deref(), a.to.as_deref()).await
 }
 
 /// A session as OpenTelemetry traces (OTLP/JSON: each operation a span, its
@@ -620,7 +591,7 @@ pub async fn otlp(
         }
         (None, None) => {
             use std::io::Write;
-            let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+            let mut out = std::io::BufWriter::new(crate::output::Stdout);
             sonde_proxy::otlp::write_traces(&session, &mut out, true)?;
             out.write_all(b"\n")?;
             out.flush()?;

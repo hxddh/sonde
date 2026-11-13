@@ -1,9 +1,7 @@
 //! One index per sessions folder (`.index.jsonl`): what sonde keeps of each
 //! session in it — its counts and figures ([`crate::summary`]), its trials'
 //! verdicts ([`crate::trial`]), the exit code its program ended with —
-//! instead of files beside each one. Before 18.0 those were
-//! `<name>.summary.json`, `<name>.trials.json` and `<name>.exit`: each is
-//! still read once, moved into the index, and removed.
+//! instead of files beside each one.
 //!
 //! The index is a log: each change is a line appended (under a lock, so the
 //! app and the CLI may write at once), and the last line about a session is
@@ -141,11 +139,19 @@ pub fn get(session: &Path) -> Entry {
 /// Holds the folder's `.index.lock` until dropped; `None` where it cannot
 /// be taken (the change is written without it).
 fn lock(dir: &Path) -> Option<std::fs::File> {
+    hold(dir, "index")
+}
+
+/// Holds the folder's `.{what}.lock` until dropped: what a file kept in it
+/// (`findings.json`, `verdicts.json`, `written.json`) is read, changed and
+/// written again under, so that the app and the CLI do not lose each
+/// other's changes. `None` where it cannot be taken.
+pub fn hold(dir: &Path, what: &str) -> Option<std::fs::File> {
     let f = reqlog::private::options()
         .write(true)
         .create(true)
         .truncate(false)
-        .open(dir.join(".index.lock"))
+        .open(dir.join(format!(".{what}.lock")))
         .ok()?;
     f.lock().ok()?;
     Some(f)
@@ -234,35 +240,6 @@ fn compact(dir: &Path, entries: &Entries) {
     }
 }
 
-/// A file that sonde kept beside `session` before 18.0, by its suffix
-/// (`summary.json`, `trials.json`, `exit`).
-pub fn beside(session: &Path, suffix: &str) -> PathBuf {
-    let name = session
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let stem = name.strip_suffix(".sonde").unwrap_or(&name);
-    session.with_file_name(format!("{stem}.{suffix}"))
-}
-
-/// What a file of before 18.0 beside `session` held, read once: moved into
-/// the index by `into` and removed. `None` when there is none, or it does not read.
-pub fn moved<T>(
-    session: &Path,
-    suffix: &str,
-    read: impl FnOnce(&[u8]) -> Option<T>,
-    into: impl FnOnce(&T) -> Change,
-) -> Option<T> {
-    let old = beside(session, suffix);
-    let bytes = std::fs::read(&old).ok()?;
-    let value = read(&bytes);
-    if let Some(v) = &value {
-        set(session, into(v));
-    }
-    let _ = std::fs::remove_file(&old);
-    value
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,17 +296,5 @@ mod tests {
         assert!(lines < 100, "{lines} lines");
         READ.lock().clear();
         assert_eq!(get(&a).counted.unwrap().requests, 199);
-    }
-
-    #[test]
-    fn a_file_of_before_18_is_read_once_and_moved_in() {
-        let dir = tempfile::tempdir().unwrap();
-        let a = dir.path().join("run.sonde");
-        std::fs::write(dir.path().join("run.exit"), "3").unwrap();
-        let read = |b: &[u8]| std::str::from_utf8(b).ok()?.trim().parse::<i32>().ok();
-        assert_eq!(moved(&a, "exit", read, |x| Change::Exit(*x)), Some(3));
-        assert!(!dir.path().join("run.exit").exists());
-        assert_eq!(get(&a).exit, Some(3));
-        assert_eq!(moved(&a, "exit", read, |x| Change::Exit(*x)), None);
     }
 }

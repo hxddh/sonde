@@ -187,10 +187,12 @@ impl Accumulator {
             c.noncurrent.add(size);
             p.noncurrent.add(size);
         }
-        if let Some(b) = self
-            .bands
-            .iter_mut()
-            .find(|b| size >= b.min && b.max.is_none_or(|m| size < m))
+        // the sizes are of the objects (current versions), as the objects are counted
+        if current
+            && let Some(b) = self
+                .bands
+                .iter_mut()
+                .find(|b| size >= b.min && b.max.is_none_or(|m| size < m))
         {
             b.objects += 1;
             b.bytes += size;
@@ -372,6 +374,8 @@ pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
             )],
         ));
     }
+    // of the bytes the classes hold (versions, not incomplete uploads): the share the chart by class draws
+    let classed: u64 = r.by_class.iter().map(|c| c.total_bytes()).sum();
     if let Some(c) = r.by_class.first()
         && r.by_class.len() > 1
     {
@@ -380,7 +384,7 @@ pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
             vec![ph!(
                 "du.class",
                 class = c.name,
-                pct = pct1(c.total_bytes(), t)
+                pct = pct1(c.total_bytes(), classed)
             )],
         ));
     }
@@ -390,7 +394,7 @@ pub fn findings_text(r: &DuReport) -> Vec<Vec<Phrase>> {
         .filter(|b| b.max.is_some_and(|m| m <= 128 * KIB))
         .map(|b| b.objects)
         .sum();
-    let objects = r.current.objects + r.noncurrent.objects;
+    let objects = r.current.objects;
     if objects > 1000 && pct(small, objects) > 50.0 {
         f.push((
             0,
@@ -630,13 +634,18 @@ mod tests {
                 .objects,
             2
         );
+        // the sizes are of the objects: the noncurrent 30 MiB version is not one
         assert_eq!(
             r.by_size
                 .iter()
                 .find(|b| b.label == "16–128 MiB")
                 .unwrap()
                 .objects,
-            1
+            0
+        );
+        assert_eq!(
+            r.by_size.iter().map(|b| b.objects).sum::<u64>(),
+            r.current.objects
         );
         assert!(
             r.findings[0].starts_with("Incomplete multipart uploads"),
@@ -770,7 +779,7 @@ mod tests {
         let mut r = acc.finish(&s, "e", "b", "ListObjectVersions", Agg::default(), 1);
         let v = serde_json::to_value(&r).unwrap();
         assert!(v["byClass"][0].get("versionsUnknown").is_none(), "{v}");
-        // a row saved before 15 loads as counted
+        // a row without the flag loads as counted
         let row: Slice = serde_json::from_value(v["byPrefix"][0].clone()).unwrap();
         assert!(!row.versions_unknown);
         r.versions_not_counted("AccessDenied (403)".into());

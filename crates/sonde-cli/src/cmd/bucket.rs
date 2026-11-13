@@ -1,6 +1,6 @@
 //! `sonde bucket`: the store side of a bucket — its size and why, and its
 //! incomplete uploads (aborted, or a lifecycle rule added, each a dry run
-//! until confirmed). `du` and `mpu` before 18.0.
+//! until confirmed).
 
 use std::sync::Arc;
 

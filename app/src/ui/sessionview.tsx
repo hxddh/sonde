@@ -124,7 +124,7 @@ export function gitText(g: SessionView["header"]["git"]): string {
 export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
-    const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.episodesTotal) }), secs: duration(s().seconds * 1000) })];
+    const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.operationsTotal) }), secs: duration(s().seconds * 1000) })];
     if (s().errors) parts.push(t("timeline.errors", { n: s().errors }));
     if (s().misses) parts.push(t("timeline.notFound", { n: s().misses }));
     parts.push(transfer(s().bytesUp, s().bytesDown));
@@ -162,7 +162,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
           tone={x().tone}
           hint={props.onSignal ? t("signal.open") : undefined}
           onPress={props.onSignal ? () => props.onSignal?.(SIGNALS[i]) : undefined}
-          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class={MARK.tile} kind={x().kind} tone={x().tone === "bad" ? "bad" : "plain"} />}
+          mark={<Sparkline shape={x().series} id={`signal:${props.view.path}:${SIGNALS[i]}`} still class={MARK.tile} kind={x().kind} tone={((k) => (k === "quiet" ? "plain" : k))(x().tone)} />}
         />
       </If>
     );
@@ -175,14 +175,15 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
             {command() ? commandLine(command()!) : props.view.header.endpoint}
           </Title>
           <Text testID="session-meta" class="text-small text-muted-foreground line-clamp-1">{[props.view.header.endpoint, date(props.view.header.created), gitText(props.view.header.git), props.view.sdk ? t("session.sdk", { sdk: props.view.sdk }) : ""].filter(Boolean).join(" · ")}</Text>
-          {/* the session in a sentence: where its time went, and the first thing to do. It wraps
-              to two lines as the pane narrows; what is past them is cut at the second line's end */}
-          <If when={profile()?.groups.length}>
-            <Text testID="session-story" class="pt-1 text-body leading-5 text-foreground line-clamp-2">{sessionStory(profile())}</Text>
-          </If>
         </View>
         {props.actions}
       </View>
+      {/* the session in a sentence: where its time went, and the first thing to do. Across the pane
+          (not held to the title's column beside the commands); it wraps to two lines as the pane
+          narrows, and what is past them is cut at the second line's end */}
+      <If when={profile()?.groups.length}>
+        <Text testID="session-story" class="text-body leading-5 text-foreground line-clamp-2">{sessionStory(profile())}</Text>
+      </If>
       {props.children}
       {/* one reading of a run: rate, errors, latency, bytes, and how many at once; each opens its chart */}
       {/* (a page shared before sessions had a profile: its figures in a line) */}
@@ -324,7 +325,7 @@ export function whatIfText(v: SessionView): string | null {
 export function Observations(props: { view: SessionView; filter?: number | null; onFilter?: (i: number | null) => void; compact?: boolean; dense?: boolean; narrow?: boolean; max?: number; maxHeight?: number; onOpenCode?: (place: string) => void; onExpect?: (o: Observation) => void; /** a finding whose fix is a tool of Buckets: open it there */ onStore?: (o: Observation) => void; /** what acting on them saves as a line under the findings (a narrow place), not beside their heading */ whatIfUnder?: boolean; /** each finding's state against the program's run before, by its identity (fixloop's `statesOf`) */ states?: Record<string, FindingChange>; /** what acting on a finding saves under its words, never beside them (a narrow column: Run's) */ savingUnder?: boolean }) {
   const press = (i: number) => props.onFilter?.(props.filter === i ? null : i);
   /** How many operations a finding is about (a view lists the first of them only). */
-  const about = (o: Observation) => o.episodesTotal ?? o.episodes?.length ?? 0;
+  const about = (o: Observation) => o.operationsTotal ?? o.operations?.length ?? 0;
   // a finding pressed opens what to change inside its own row, under its title; the row comes
   // to the top of the findings' room, so its title stays in view over its advice
   // (Native Shell's `reveal`: the scroll views around a view bring it to show)

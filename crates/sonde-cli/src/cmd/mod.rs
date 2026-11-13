@@ -63,13 +63,7 @@ pub fn bad_data(msg: impl Into<String>) -> anyhow::Error {
 /// An error as the CLI says it: where sonde's own text points at the app
 /// (its Incomplete uploads), what to do from a terminal.
 pub fn said(text: &str) -> String {
-    text.replace("See Multipart.", "See `sonde bucket uploads`.")
-}
-
-/// A command folded into another in 18.0 still runs, for one version, and
-/// says what it is now (on stderr: its output is the new command's).
-pub fn renamed(old: &str, new: &str) {
-    eprintln!("note: `{old}` is now `{new}`; the old form goes in 19.0");
+    text.replace("See Incomplete uploads.", "See `sonde bucket uploads`.")
 }
 
 /// The endpoint id `--url` registers for one run.
@@ -88,10 +82,6 @@ pub fn paths(cli: &Cli) -> Paths {
 
 pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
     let s = Sonde::open(paths(cli))?;
-    // an older config.toml still loads: what it says that is no longer read is said
-    for gone in s.settings().gone() {
-        eprintln!("note: {}: {gone}", s.paths().config_file().display());
-    }
     // of this run only: neither the endpoint nor the limits are ever saved
     if let Some(url) = &cli.url {
         let vendor = Vendor::guess(url);
@@ -229,7 +219,7 @@ mod tests {
     #[test]
     fn what_points_at_the_app_is_said_for_a_terminal() {
         assert_eq!(
-            said("billed but not listed as objects. See Multipart."),
+            said("billed but not listed as objects. See Incomplete uploads."),
             "billed but not listed as objects. See `sonde bucket uploads`."
         );
     }

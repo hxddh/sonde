@@ -1,5 +1,4 @@
-//! `sonde bucket size` (`sonde du` before 18.0, kept for one version): why a
-//! bucket is so big.
+//! `sonde bucket size`: why a bucket is so big.
 
 use std::sync::Arc;
 
@@ -65,11 +64,11 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &DuArgs) -> anyhow::Result<i32> 
         Format::Csv => print!("{}", du::to_csv(&r)),
         _ => {
             println!(
-                "{}/{}: {} total ({:.2} {}/month), via {}\n",
+                "{}/{}: {} total ({} {}/month), via {}\n",
                 r.bucket,
                 r.prefix,
                 h(r.total_bytes),
-                r.cost_per_month,
+                sonde_fmt::cents(r.cost_per_month),
                 r.currency,
                 r.source
             );

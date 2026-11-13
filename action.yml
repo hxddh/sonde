@@ -10,7 +10,7 @@ inputs:
     description: The program's command, as you would type it (`python etl.py --day 2`).
     required: true
   run-args:
-    description: Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--callers`, `--allow-writes`).
+    description: Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--allow-writes`, `--demo`).
     default: ""
   name:
     description: The program's name (default `[program] name` in sonde.toml, else its command).
@@ -37,7 +37,7 @@ inputs:
     description: Fail the step when the check fails.
     default: "true"
   version:
-    description: "The sonde to install: `18.0.0`, `latest`, or `path` (the one on PATH). Default: this action's tag when it is a version, else `latest`."
+    description: "The sonde to install: `19.0.0`, `latest`, or `path` (the one on PATH). Default: this action's tag (`@v19`: the newest 19.x), else `latest`."
     default: ""
   working-directory:
     description: Where the command runs.
@@ -112,14 +112,14 @@ runs:
     - name: Keep the report
       id: report-upload
       if: steps.report.outputs.file != ''
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.artifact }}-report
         path: ${{ steps.report.outputs.file }}
         overwrite: true
 
     - name: Keep the run (the baseline of the pull requests that follow)
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.artifact }}
         path: ${{ steps.record.outputs.session }}
@@ -138,6 +138,7 @@ runs:
         SONDE_COMMENT: ${{ inputs.comment }}
         SONDE_REPORT_URL: ${{ steps.report-upload.outputs.artifact-url }}
         SONDE_PR: ${{ github.event.pull_request.number }}
+        SONDE_EXIT: ${{ steps.record.outputs.exit }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: bash "$GITHUB_ACTION_PATH/action/sonde-action.sh" comment
 

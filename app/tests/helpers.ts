@@ -58,6 +58,15 @@ export async function withDemo(bucket?: string, options: Parameters<typeof open>
   return app;
 }
 
+/** Runs the command in Run's field: by Run before any run, by the ended band's one Run after one (the field's
+ * command when it was changed, "Run again" when it was not). */
+export async function runCommand(app: App) {
+  const id = app.shows("id:run-again-band") ? "id:run-again-band" : "id:run-start";
+  // (the button follows the field a frame later)
+  await app.waitUntil(() => app.enabled(id), { timeout: 10000 });
+  await app.press(id);
+}
+
 /** Presses one of the commands at the end of Run's band: as a button where
  * the band has room for it, behind `⋯` where it has not (they never wrap). */
 export async function runAction(app: App, id: "run-open-session" | "run-try" | "run-now-yours") {

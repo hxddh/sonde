@@ -2,6 +2,10 @@
 
 What is listed under **Stable** changes only in a major release; everything else may change in any release.
 
+The contract starts at 19.0 (D-138). 19.0 kept nothing of earlier versions: no folded commands, flags, files, settings
+or JSON names of before it are read or said ([changelog](../CHANGELOG.md), [0.1 to 18.0](history/changelog-0-18.md)).
+From here a break comes only in a major, and is announced one version ahead.
+
 ## Stable
 
 | | What | Documented in | Tested by |
@@ -42,33 +46,15 @@ What is listed under **Stable** changes only in a major release; everything else
 - Files beside sessions and in the data directory (counts, verdicts, baselines, probe runs, caches); an unreadable
   cache is rebuilt.
 - The Rust crates' APIs.
-- A finding's text. Its `identity` (what `[check] expect` names) is stable.
-
-## Removed in 18.0
-
-A major (D-138). Each folded command still runs for 18.0 and says its new form ([cli.md](cli.md#folded-in-180)).
-
-- Commands: `diff`, `replay` (→ `compare`), `watch` (→ `proxy --rotate`, `import s3://… --follow`), `export`
-  (→ `share --otlp`), `du`, `mpu` (→ `bucket size`, `bucket uploads`).
-- Flags: `share --json` (`show -f json`), `--log-out`, `run`/`proxy` `--no-delete` and `--read-only` (`--policy`).
-  `--rate` and `--concurrency` are no longer listed (still taken).
-- JSON: `show -f json`'s `episodes`, `observations`, `records` are `operations`, `findings`, `requests`;
-  `show --summary`'s `observations` is `findings` and `waiting.busyMs` is `waiting.waitingMs`. Fields inside a
-  finding or an operation keep their names. The schemas `share`, `replay`, `replay-stores`, `diff`, `du`, `mpu-scan`
-  are `compare-replay`, `compare-replay-stores`, `compare-answers`, `bucket-size`, `bucket-uploads` (`share`: none).
-- Exit 77 no longer means read-only mode: there is none.
-- Findings `obs.retried`, `obs.slow`, `obs.races`, `obs.injected`, `obs.shared` and the 50% level of `obs.prefixrate`:
-  an `expect` naming them matches nothing.
-- `config.toml`: `read-only`, `reqlog-capacity`, `reqlog-persist`, `stale-upload-days` are read and ignored (said
-  on stderr), and dropped at the next save.
+- A finding's text. Its `identity` (what `[check] expect` names) is stable; from 19.0 it leaves out what changes between runs ([cli.md](cli.md#the-fix-loop)).
 
 ## Versions
 
 | Release | Changes |
 |---|---|
-| **Major** (`18.0.0`) | a stable thing breaks: a required field removed, renamed, retyped or redefined; a new session format version; a `sonde.toml` key or flag removed or redefined; an exit code redefined |
-| **Minor** (`17.1.0`) | any other change in behaviour: new commands, flags, fields, `sonde.toml` keys, findings, scenarios; app and text changes |
-| **Patch** (`17.0.1`) | fixes where documented behaviour did not hold |
+| **Major** (`20.0.0`) | a stable thing breaks: a required field removed, renamed, retyped or redefined; a new session format version; a `sonde.toml` key or flag removed or redefined; an exit code redefined |
+| **Minor** (`19.1.0`) | any other change in behaviour: new commands, flags, fields, `sonde.toml` keys, findings, scenarios; app and text changes |
+| **Patch** (`19.0.1`) | fixes where documented behaviour did not hold |
 
 Within a major:
 
@@ -77,7 +63,7 @@ Within a major:
 - A session file may gain fields within its version. sonde reads every version up to its own and refuses a newer one
   by name.
 - `sonde.toml` may gain keys. An older sonde refuses an unknown key (exit 64) rather than half-reading the file.
-- A deprecated flag keeps working, with a note on stderr, until the next major.
+- A flag to be removed keeps working, with a note on stderr, until the next major, and is gone in it.
 
 A change to a stable thing updates its documentation and its test in the same commit; a test failing on a change
 means the change needs a major.

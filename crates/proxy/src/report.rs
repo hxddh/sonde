@@ -344,7 +344,7 @@ pub fn html_against(s: &Session, prices: &RequestPrices, against: Option<&Agains
     stat(&mut o, ms(prof.wall_ms), "took");
     stat(
         &mut o,
-        format!("{:.0}%", prof.busy_ms * 100.0 / prof.wall_ms.max(1e-9)),
+        format!("{:.0}%", prof.waiting_ms * 100.0 / prof.wall_ms.max(1e-9)),
         "waiting on the store",
     );
     stat(&mut o, sonde_fmt::count(sum.errors), "errors");
@@ -499,10 +499,10 @@ fn compared(a: &Against) -> String {
     cell(
         &mut o,
         "waiting",
-        ms(c.busy_ms.0),
-        ms(c.busy_ms.1),
-        crate::program::waiting_moved(c.busy_ms.0, c.busy_ms.1)
-            .then(|| pct(c.busy_ms.0, c.busy_ms.1))
+        ms(c.waiting_ms.0),
+        ms(c.waiting_ms.1),
+        crate::program::waiting_moved(c.waiting_ms.0, c.waiting_ms.1)
+            .then(|| pct(c.waiting_ms.0, c.waiting_ms.1))
             .flatten(),
     );
     cell(
@@ -524,7 +524,8 @@ fn compared(a: &Against) -> String {
         .groups
         .iter()
         .filter(|g| {
-            g.requests.0 != g.requests.1 || crate::program::waiting_moved(g.busy_ms.0, g.busy_ms.1)
+            g.requests.0 != g.requests.1
+                || crate::program::waiting_moved(g.waiting_ms.0, g.waiting_ms.1)
         })
         .collect();
     if kinds.is_empty() {
@@ -543,8 +544,8 @@ fn compared(a: &Against) -> String {
                 esc(&name),
                 n(g.requests.0),
                 n(g.requests.1),
-                ms(g.busy_ms.0),
-                ms(g.busy_ms.1)
+                ms(g.waiting_ms.0),
+                ms(g.waiting_ms.1)
             );
         }
         o.push_str("</tbody></table></div>");

@@ -47,6 +47,30 @@ is() {
   else echo "ok   $1"; fi
 }
 
+# install: a major's tag is the newest release of that major, a release's tag
+# that release (a stand-in curl serves the releases and refuses downloads)
+mkdir -p "$t/net"
+cat >"$t/net/curl" <<'EOF'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+case "$url" in
+  https://api.github.com/*)
+    printf '  "tag_name": "%s",\n' v20.0.0 v19.3.0-rc.1 v19.2.10 v19.2.9 v19.0.0 v18.4.0 ;;
+  *) echo "curl $url" >>"$FAKE/curl.log"; exit 22 ;;
+esac
+EOF
+chmod +x "$t/net/curl"
+fetched() {
+  : >"$t/curl.log"
+  PATH="$t/net:$PATH" GITHUB_ACTION_REF="$1" step install >/dev/null 2>&1 || true
+  sed -n 's|.*/releases/\(.*\)/sonde-.*|\1|p' "$t/curl.log" | head -n 1
+}
+is "install @v19: the newest 19.x" "$(fetched v19)" download/v19.2.10
+is "install @v18: the newest 18.x" "$(fetched v18)" download/v18.4.0
+is "install @v19.0.0: that release" "$(fetched v19.0.0)" download/v19.0.0
+is "install @main: the latest" "$(fetched main)" latest/download
+is "install of a major with no release fails before downloading" "$(fetched v7)" ""
+
 # a pull request: the newest of the base branch's runs that kept the artifact
 export GITHUB_BASE_REF=main
 FAKE_RUNS="11 22" FAKE_HAS=22 step baseline >"$t/said"
@@ -68,11 +92,11 @@ is "a push takes the run before it" "$(output baseline)" "$t/runner/sonde/baseli
 is "and never downloads its own" "$(grep -c 'download 11' "$t/gh.log")" 0
 
 # the program's command as typed; its status kept for the verdict
-SONDE_RUN="python3 -c 'print(1)'" SONDE_RUN_ARGS="--url https://s3.test --callers" SONDE_NAME=etl FAKE_RUN_EXIT=3 step record
+SONDE_RUN="python3 -c 'print(1)'" SONDE_RUN_ARGS="--url https://s3.test --allow-writes" SONDE_NAME=etl FAKE_RUN_EXIT=3 step record
 is "record keeps the program's status" "$(output exit)" 3
 is "record writes a session" "$(output session)" "$t/runner/sonde/run.sonde"
 is "the command's words as typed" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "python3|-c|print(1)"
-is "run's flags and the name before --" "$(grep -c -e '^--callers$' -e '^etl$' "$t/sonde.run")" 2
+is "run's flags and the name before --" "$(grep -c -e '^--allow-writes$' -e '^etl$' "$t/sonde.run")" 2
 
 # check: passed or not; anything else is the step's failure
 export SONDE_SESSION="$t/runner/sonde/run.sonde" SONDE_BASELINE=auto
@@ -94,7 +118,10 @@ step comment
 is "no comment yet: one is written" "$(output url)" "https://github.test/repos/o/r/issues/7/comments"
 is "the comment starts with its marker" "$(head -n 1 "$t/body")" "<!-- sonde: etl -->"
 is "the comment links the report" "$(grep -c -- '--report-url' "$t/sonde.check")" 1
+is "no status: none passed" "$(grep -c -- '--program-exit' "$t/sonde.check")" 0
 is "the summary has the comment" "$(grep -c 'within budget' "$t/summary")" 1
+SONDE_EXIT=1 step comment
+is "the comment says the program's status" "$(paste -sd' ' "$t/sonde.check" | grep -c -- '--program-exit 1')" 1
 FAKE_COMMENT=99 step comment
 is "a comment there: it is edited" "$(output url)" "https://github.test/repos/o/r/issues/comments/99"
 SONDE_COMMENT=false FAKE_COMMENT=99 step comment

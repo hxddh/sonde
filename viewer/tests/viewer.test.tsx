@@ -1,5 +1,5 @@
 // The shared-session viewer on a real delta-rs session (sample.json, from
-// `sonde share --json`).
+// `sonde share`).
 
 import { expect, open, test } from "nsh/test";
 

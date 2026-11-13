@@ -15,21 +15,25 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: hxddh/sonde@v18
+      - uses: hxddh/sonde@v19
         with:
           run: python etl.py --day 2
-          run-args: --url ${{ vars.S3_URL }} --callers
+          run-args: --url ${{ vars.S3_URL }}
 ```
 
 Runs on Linux and macOS runners. Each push to `main` keeps its run as an artifact; a pull request is checked against
-the newest one.
+the newest one. This repository tests it against stand-ins on each pull request and, daily, against a real baseline
+and a real comment (`.github/workflows/action-live.yml`).
+
+No store, no secrets: `run-args: --demo` runs the program against the built-in store, so the check holds its
+requests and findings (its times are not meaningful: leave `max-waiting` and `max-p95` out).
 
 | Step | Does |
 |---|---|
 | Install | The release binary (`install.sh`): SHA-256 checked; build provenance checked with `gh attestation verify` (the token signs gh in). `version: path` uses the `sonde` on `PATH`. |
 | Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`. The program's exit status fails the job, after the steps below. |
 | Baseline | `auto`: of the newest 5 completed push runs of the same workflow on the base branch (a push: on its own branch, not itself), the first that kept the artifact `artifact` (`gh run list`, `gh run download`). None: a warning, and `check --baseline auto` says `no baseline yet` in every format. |
-| Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them (`--callers`). |
+| Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
 | Report | `sonde share --html RUN --baseline BASE` (`--redact` with `redact: true`): the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
 | Keep | The session, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
 | Comment | `sonde check -f markdown --report-url URL`: the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
@@ -38,7 +42,7 @@ the newest one.
 | Input | Default | |
 |---|---|---|
 | `run` | (required) | The command, as typed. |
-| `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--callers`, `--allow-writes`. |
+| `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--allow-writes`, `--demo`. |
 | `name` | | The program's name (else `[program] name` in `sonde.toml`, else the command). |
 | `check-args` | | `sonde check` flags: `--tolerance 5`, `--no-new-warnings`, `--max-requests N`. |
 | `config` | found upward | `sonde.toml`. |
@@ -47,7 +51,7 @@ the newest one.
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag, else `latest` | `18.0.0`, `latest`, `path`. |
+| `version` | the action's tag, else `latest` | `19.0.0`, `latest`, `path`. Tag `@v19` installs the newest 19.x; `@v19.0.0` that release. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 
@@ -77,11 +81,13 @@ Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
 | Part | When |
 |---|---|
 | Heading | Always: the verdict, as every format closes. |
+| `> ❌ The program failed` | `--program-exit` not 0 (the Action passes `sonde run`'s): its status, and the first request the recording policy refused, if one was. |
 | Since | Past the baseline over several runs (needs the runs, so local history; not in a fresh runner). |
 | `> ⚠️ no baseline yet` | A baseline asked for and none found. |
 | Failed rows | Budget rows that failed; never a row that passed. Without a baseline, its failed rows too. |
 | Against the baseline | Requests, cost and errors that changed, waiting that moved past 10% and 50 ms; a figure past the baseline in bold with its limit. Kinds of request that changed. |
-| New findings, Gone | Against the baseline; new first, with the code line that sent them. |
+| New findings, Gone | Against the baseline, as `sonde compare` says them (one under its threshold in the baseline is not new, one under it in the run is not gone); new first, with the code line that sent them. Not when either run failed. |
+| Warnings now | `no-new-warnings`: a finding the baseline had as a note, a warning in this run. |
 | Trials | Those that broke or degraded; the survived counted. |
 | Findings | Without a baseline: the run's first five findings, folded. |
 | The report | With `--report-url`. |

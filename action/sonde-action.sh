@@ -28,7 +28,8 @@ install() {
   fi
   if [ -z "$version" ]; then
     case "${GITHUB_ACTION_REF:-}" in
-      v[0-9]*.[0-9]*.[0-9]*) version="${GITHUB_ACTION_REF#v}" ;;
+      # a release's tag (v19.0.1) is that release; a major's (v19) the newest of it
+      v[0-9]*) version="${GITHUB_ACTION_REF#v}" ;;
       *) version=latest ;;
     esac
   fi
@@ -142,6 +143,7 @@ comment() {
   local md="$work/comment.md"
   check_args
   [ -z "${SONDE_REPORT_URL:-}" ] || ARGS+=(--report-url "$SONDE_REPORT_URL")
+  [ -z "${SONDE_EXIT:-}" ] || ARGS+=(--program-exit "$SONDE_EXIT")
   sonde check "${ARGS[@]}" -f markdown >"$md" || [ $? -eq 1 ]
   cat "$md" >>"${GITHUB_STEP_SUMMARY:-/dev/null}"
   if [ -z "${SONDE_PR:-}" ] || [ "${SONDE_COMMENT:-true}" != true ]; then

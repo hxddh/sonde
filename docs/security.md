@@ -11,7 +11,7 @@ destructive actions are gated, and a recorded program is limited by a policy.
   are obtained, never a key. The endpoint form cannot submit a key (`credentials: "keep"` keeps static keys without
   reading them).
 - Every request record is redacted when created (`reqlog::redact`): signatures, tokens, SSE-C keys, presign
-  parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)). The ring buffer, SQLite file,
+  parameters, secrets echoed in error bodies ([credentials](credentials.md#redaction)). The ring buffer, sessions,
   HAR/JSON exports, probe reports and fixtures hold only redacted records. "Copy as curl" has no signature.
 - `config.toml` is written with mode 0600 (its temporary file is created so).
 
@@ -29,8 +29,7 @@ destructive actions are gated, and a recorded program is limited by a policy.
 - The app declares no `fs` capability: TSX cannot read or write files. Rust writes exports to the exports directory,
   downloads to the downloads directory, and state under the data directory.
 - On Unix, files holding a program's traffic are `0600` regardless of umask: sessions, each sessions folder's
-  `.index.jsonl` (counts, trial verdicts), baselines, titles, `bucket size`'s cache, `audit.jsonl`. Files from earlier
-  versions keep their mode.
+  `.index.jsonl` (counts, trial verdicts), baselines, titles, `bucket size`'s cache, `audit.jsonl`.
 - Files the user asks for elsewhere (`-o`, `sonde share`, exports) get normal permissions.
 - A `sonde://open` link opens only a `.sonde` or `.sonde.gz` file, never a network path (`\\host\share`,
   `//host/share`).
@@ -57,12 +56,17 @@ Probes write too (under `sonde-probe/` in the scratch bucket, and their own buck
 
 ## Run
 
+The recording policy is a safety net against a program's mistakes, not a sandbox: the program runs with the user's
+rights and can reach the store (or anything else) by other means, with other credentials. A repository's
+`sonde.toml` can widen the policy to `allow`, with a warning on stderr only. Run a program you do not trust as you
+would without sonde.
+
 - Run starts the user's command through their shell with their rights, like a terminal.
 - The command gets a local endpoint and throwaway keys, never sonde's credentials; `AWS_SESSION_TOKEN`,
   `AWS_PROFILE` and similar are removed.
 - What it may do is the recording policy ([recording](recording.md#what-a-recorded-program-may-do)):
   - `no-delete` (default): no deletes, aborts, lifecycle rules, bucket policies, versioning suspension, or overwrites
-    of objects the recording did not write. Overwrites are refused by the store via `If-None-Match: *`; a store that
+    of objects that neither this recording nor this program's earlier recordings wrote. Overwrites are refused by the store via `If-None-Match: *`; a store that
     ignores it overwrites anyway, so use `read-only` there.
   - `read-only`: GET and HEAD only.
   - `allow` (`--allow-writes`, `[record] policy = "allow"`): everything.

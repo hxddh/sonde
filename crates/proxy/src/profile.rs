@@ -70,7 +70,7 @@ pub struct Group {
     pub missed: bool,
     pub requests: usize,
     /// Wall-clock time with one of them in flight.
-    pub busy_ms: f64,
+    pub waiting_ms: f64,
     /// Their latencies added up.
     pub sum_ms: f64,
     /// The program's waiting that was theirs: each moment's waiting split
@@ -212,7 +212,7 @@ pub struct Profile {
     /// From the first request's start to the last one's end.
     pub wall_ms: f64,
     /// Time with a request in flight.
-    pub busy_ms: f64,
+    pub waiting_ms: f64,
     pub peak_in_flight: usize,
     pub peak_at_ms: f64,
     /// Requests in flight on average while any was.
@@ -586,12 +586,12 @@ pub(crate) fn end_us(r: &Record) -> i64 {
 }
 
 /// The time with a request in flight, in ms.
-pub fn busy_ms(records: &[Record]) -> f64 {
-    busy_ms_of(records.iter())
+pub fn waiting_ms(records: &[Record]) -> f64 {
+    waiting_ms_of(records.iter())
 }
 
-/// [`busy_ms`] of any records, wherever they are kept.
-pub fn busy_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
+/// [`waiting_ms`] of any records, wherever they are kept.
+pub fn waiting_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
     union_us(records.map(|r| (start_us(r), end_us(r))).collect()) as f64 / 1000.0
 }
 
@@ -870,7 +870,7 @@ pub fn prefix_stats(
 pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let empty = Profile {
         wall_ms: 0.0,
-        busy_ms: 0.0,
+        waiting_ms: 0.0,
         peak_in_flight: 0,
         peak_at_ms: 0.0,
         mean_in_flight: 0.0,
@@ -928,7 +928,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
                 operation,
                 missed,
                 requests: rs.len(),
-                busy_ms: ms(busy),
+                waiting_ms: ms(busy),
                 sum_ms: lat.iter().sum(),
                 waited_ms: waited_us / 1000.0,
                 share: waited_us / busy_us.max(1) as f64,
@@ -1229,7 +1229,7 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     let timed = records.iter().any(|r| r.latency_ms > 0.0);
     Profile {
         wall_ms: ms(wall_us),
-        busy_ms: ms(busy_us),
+        waiting_ms: ms(busy_us),
         peak_in_flight: peak,
         peak_at_ms: peak_at,
         mean_in_flight: if busy_us > 0 {
@@ -1268,7 +1268,7 @@ pub struct LatencyChange {
     pub requests: (usize, usize),
     pub p50_ms: (f64, f64),
     pub p95_ms: (f64, f64),
-    pub busy_ms: (f64, f64),
+    pub waiting_ms: (f64, f64),
 }
 
 /// The kinds of request two sessions share, by how much slower (p95) the
@@ -1288,7 +1288,7 @@ pub fn latency_changes(a: &Profile, b: &Profile) -> Vec<LatencyChange> {
                 requests: (ga.requests, gb.requests),
                 p50_ms: (ga.p50_ms, gb.p50_ms),
                 p95_ms: (ga.p95_ms, gb.p95_ms),
-                busy_ms: (ga.busy_ms, gb.busy_ms),
+                waiting_ms: (ga.waiting_ms, gb.waiting_ms),
             })
         })
         .collect();
@@ -1306,7 +1306,7 @@ pub struct GroupChange {
     pub requests: (usize, usize),
     /// The run's waiting that was this kind's in each ([`Group::waited_ms`]:
     /// what `show`'s "waiting on" says), not the time one was in flight.
-    pub busy_ms: (f64, f64),
+    pub waiting_ms: (f64, f64),
 }
 
 /// Two runs of a program, before and after a change.
@@ -1315,7 +1315,7 @@ pub struct GroupChange {
 pub struct RunChange {
     pub requests: (usize, usize),
     pub wall_ms: (f64, f64),
-    pub busy_ms: (f64, f64),
+    pub waiting_ms: (f64, f64),
     pub errors: (usize, usize),
     pub cost: (f64, f64),
     pub currency: String,
@@ -1334,6 +1334,10 @@ pub struct RunChange {
     /// but their findings do not: one's are not "gone" because the other
     /// never had them.
     pub same_program: bool,
+    /// The exit code of a run compared that failed (the later's, when both
+    /// did): its findings are not compared, a crash is no fix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<i32>,
     /// Both runs' latency, bucket by bucket on the same edges: their two
     /// distributions side by side.
     pub latency: (Vec<LatencyBucket>, Vec<LatencyBucket>),
@@ -1367,6 +1371,19 @@ impl RunChange {
         }
         self
     }
+
+    /// Says whether a run compared failed (`exits`, as kept: none when not
+    /// known); then their findings are not compared.
+    pub fn of_exits(mut self, exits: (Option<i32>, Option<i32>)) -> Self {
+        let failed = |x: Option<i32>| x.filter(|x| *x != 0);
+        self.failed = failed(exits.1).or(failed(exits.0));
+        if self.failed.is_some() {
+            self.resolved.clear();
+            self.appeared.clear();
+            self.findings.clear();
+        }
+        self
+    }
 }
 
 /// A finding as it reads: in English, and as phrases for other languages.
@@ -1378,30 +1395,212 @@ pub struct FindingText {
 }
 
 /// A finding's identity across runs: what it is and what it is about, not
-/// its counts.
-/// A finding's identity across runs (see [`identity`]).
+/// its counts, nor what changes from one run to the next in the keys it
+/// names ([`stable`]). Set on a finding when it is made, told apart there
+/// from another of the same run that reads the same.
 pub fn finding_identity(o: &Observation) -> String {
-    if o.phrases.is_empty() {
-        o.text.clone()
-    } else {
+    if o.identity.is_empty() {
         identity(o)
+    } else {
+        o.identity.clone()
     }
 }
 
-fn identity(o: &Observation) -> String {
-    let p = &o.phrases[0];
-    // one finding whatever its form: one or many, under a threshold or over
-    let key = p
-        .key
-        .trim_end_matches(".rate")
-        .trim_end_matches(".one")
-        .trim_end_matches(".reads")
-        .trim_end_matches(".writes");
+/// [`finding_identity`] worked out, before one is set.
+pub(crate) fn identity(o: &Observation) -> String {
+    let Some(p) = o.phrases.first() else {
+        return o.text.clone();
+    };
+    // one finding whatever its form: one or many, under a threshold or
+    // over. Reads and writes near a prefix's limit are two
+    let key = p.key.trim_end_matches(".rate").trim_end_matches(".one");
     let about: Vec<String> = ["key", "prefix", "format"]
         .iter()
-        .filter_map(|k| p.args.get(k).map(|v| v.to_string()))
+        .filter_map(|k| p.args.get(k).map(|v| stable(v.as_ref())))
         .collect();
     format!("{key}|{}", about.join("|"))
+}
+
+/// The kinds of finding, as an identity begins (`obs.hot` of `obs.hot|b/k`):
+/// what `[check] expect` may name.
+pub const FINDING_KINDS: &[&str] = &[
+    "obs.unfinished",
+    "obs.orphans",
+    "obs.small",
+    "obs.hot",
+    "obs.listed",
+    "obs.headget",
+    "obs.rename",
+    "obs.markers",
+    "obs.throttled",
+    "obs.prefixrate.reads",
+    "obs.prefixrate.writes",
+    "obs.serial",
+];
+
+/// A key or prefix with what changes from one run of a program to the next
+/// said as what it is: a UUID `{uuid}`, a date `{date}`, a date and time
+/// `{time}`, a long number (epoch seconds or ms, a log's sequence) `{n}`, a
+/// long hex or mixed id `{id}`, a table's metadata version `v{n}`, the
+/// numbers of a Hadoop attempt folder `{n}`. Short numbers (`part-00001`)
+/// and words stay: two keys that are two things stay two.
+pub fn stable(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        if !b[i].is_ascii_alphanumeric() {
+            // a whole character: keys are UTF-8
+            let ch = s[i..].chars().next().unwrap_or('?');
+            out.push(ch);
+            i += ch.len_utf8();
+            continue;
+        }
+        if let Some(end) = uuid_at(b, i) {
+            out.push_str("{uuid}");
+            i = end;
+            continue;
+        }
+        if let Some((end, time)) = date_at(b, i) {
+            out.push_str(if time { "{time}" } else { "{date}" });
+            i = end;
+            continue;
+        }
+        let end = word_end(b, i);
+        let (w, rest) = (&s[i..end], &s[end..]);
+        let has = |f: fn(&u8) -> bool| w.as_bytes().iter().any(f);
+        let digits = !has(|c| !c.is_ascii_digit());
+        let metadata = rest.starts_with(".metadata.");
+        if digits
+            && (w.len() >= 9
+                || metadata
+                || (rest.starts_with('-') && uuid_at(b, end + 1).is_some()))
+        {
+            out.push_str("{n}");
+        } else if (w.len() >= 16 && !has(|c| !c.is_ascii_hexdigit()) && has(u8::is_ascii_digit))
+            || (w.len() >= 20 && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
+        {
+            out.push_str("{id}");
+        } else if metadata
+            && w.len() > 1
+            && w.starts_with('v')
+            && w[1..].bytes().all(|c| c.is_ascii_digit())
+        {
+            out.push_str("v{n}");
+        } else {
+            out.push_str(w);
+        }
+        i = end;
+    }
+    attempts(&out)
+}
+
+/// The end of the word (letters and digits) at `i`.
+fn word_end(b: &[u8], i: usize) -> usize {
+    i + b[i..]
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .count()
+}
+
+/// The end of a UUID at `i` (8-4-4-4-12 hex digits), followed by no letter
+/// or digit.
+fn uuid_at(b: &[u8], i: usize) -> Option<usize> {
+    let mut at = i;
+    for (n, len) in [8, 4, 4, 4, 12].into_iter().enumerate() {
+        if n > 0 {
+            (b.get(at) == Some(&b'-')).then_some(())?;
+            at += 1;
+        }
+        b.get(at..at + len)?
+            .iter()
+            .all(u8::is_ascii_hexdigit)
+            .then_some(())?;
+        at += len;
+    }
+    (!b.get(at).is_some_and(u8::is_ascii_alphanumeric)).then_some(at)
+}
+
+/// A date at `i` (`2026-11-13`, `2026_11_13`, `2026/11/13`, `20261113`),
+/// and the time of day after it when there is one (`T10:00:00.123Z`,
+/// `T100000Z`, `_10-00`): where it ends, and whether it had a time.
+fn date_at(b: &[u8], i: usize) -> Option<(usize, bool)> {
+    let num = |at: usize, below: u32| -> Option<usize> {
+        let run = b.get(at..at + 2)?;
+        let n = std::str::from_utf8(run).ok()?.parse::<u32>().ok()?;
+        (run.iter().all(u8::is_ascii_digit) && n < below).then_some(at + 2)
+    };
+    let year: u32 = std::str::from_utf8(b.get(i..i + 4)?).ok()?.parse().ok()?;
+    (1970..2100).contains(&year).then_some(())?;
+    let sep = b
+        .get(i + 4)
+        .copied()
+        .filter(|c| matches!(c, b'-' | b'_' | b'/'));
+    let mut at = i + 4 + usize::from(sep.is_some());
+    let month = num(at, 13).filter(|_| b[at..at + 2] != *b"00")?;
+    at = month;
+    if let Some(s) = sep {
+        (b.get(at) == Some(&s)).then_some(())?;
+        at += 1;
+    }
+    at = num(at, 32).filter(|_| b[at..at + 2] != *b"00")?;
+    let ends = |at: usize| !b.get(at).is_some_and(u8::is_ascii_alphanumeric);
+    // the time of day: hours and minutes, perhaps seconds and a fraction
+    if matches!(b.get(at), Some(b'T' | b' ' | b'_' | b'-')) {
+        let sep = |t: usize| usize::from(matches!(b.get(t), Some(b':' | b'-' | b'_')));
+        if let Some(mut t) = num(at + 1, 24)
+            && let Some(m) = num(t + sep(t), 60)
+        {
+            t = m;
+            if let Some(s) = num(t + sep(t), 60) {
+                t = s;
+            }
+            if b.get(t) == Some(&b'.') && b.get(t + 1).is_some_and(u8::is_ascii_digit) {
+                t += 1 + b[t + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+            }
+            t += usize::from(b.get(t) == Some(&b'Z'));
+            if ends(t) {
+                return Some((t, true));
+            }
+        }
+    }
+    ends(at).then_some((at, false))
+}
+
+/// The numbers of a Hadoop attempt folder (`_temporary/0/`,
+/// `attempt_202611131000_0001_m_000001_1/`): another each job.
+fn attempts(s: &str) -> String {
+    if !s.contains("_temporary/") {
+        return s.to_string();
+    }
+    let mut after = false;
+    let mut out: Vec<String> = Vec::new();
+    for seg in s.split('/') {
+        let numbered = after
+            && (out.last().is_some_and(|p| p == "_temporary")
+                || seg.starts_with("attempt_")
+                || seg.starts_with("task_"));
+        after |= seg == "_temporary";
+        if !numbered {
+            out.push(seg.to_string());
+            continue;
+        }
+        let mut said = String::new();
+        let mut digit = false;
+        for ch in seg.chars() {
+            if ch.is_ascii_digit() {
+                if !digit {
+                    said.push_str("{n}");
+                }
+                digit = true;
+            } else {
+                said.push(ch);
+                digit = false;
+            }
+        }
+        out.push(said);
+    }
+    out.join("/")
 }
 
 /// One run as [`compare_runs`] holds it: what it amounts to, its records
@@ -1419,7 +1618,7 @@ pub struct Run {
     pub folders: HashMap<String, usize>,
     /// Its findings at any threshold, by identity: a finding of the run
     /// before that is only among these is less, not fixed.
-    pub traces: BTreeMap<String, FindingText>,
+    pub traces: BTreeMap<String, Observation>,
     /// What its findings would save, by what their requests asked.
     pub asks: crate::fixloop::Asks,
     /// How often it asked what the run before's findings would save
@@ -1432,6 +1631,20 @@ impl Run {
     /// A run of `records`, its profile and findings reckoned already.
     pub fn of(records: &[Record], profile: Profile, observations: Vec<Observation>) -> Run {
         let traces = crate::episode::traces(records, &crate::episode::episodes(records));
+        Run::with(records, profile, observations, traces)
+    }
+
+    /// [`Run::of`] a session's records, read with its header as its
+    /// findings were ([`crate::episode::traces_of`]), its operations made
+    /// already.
+    pub fn of_session(
+        header: &crate::session::SessionHeader,
+        records: &[Record],
+        episodes: &[crate::episode::Episode],
+        profile: Profile,
+        observations: Vec<Observation>,
+    ) -> Run {
+        let traces = crate::episode::traces_of(header, records, episodes);
         Run::with(records, profile, observations, traces)
     }
 
@@ -1448,7 +1661,9 @@ impl Run {
         self.measured = true;
     }
 
-    fn with(
+    /// A run of `records`, its profile, findings and findings at any
+    /// threshold ([`crate::episode::traces`]) reckoned already.
+    pub fn with(
         records: &[Record],
         profile: Profile,
         observations: Vec<Observation>,
@@ -1481,15 +1696,7 @@ impl Run {
         let asks = crate::fixloop::asks_of(records, &observations);
         let traces = traces
             .into_iter()
-            .map(|o| {
-                (
-                    finding_identity(&o),
-                    FindingText {
-                        text: o.text,
-                        phrases: o.phrases,
-                    },
-                )
-            })
+            .map(|o| (finding_identity(&o), o))
             .collect();
         Run {
             requests: records.len(),
@@ -1554,12 +1761,12 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
                 operation: k.0,
                 missed: k.1,
                 requests: (ra, rb),
-                busy_ms: (ba, bb),
+                waiting_ms: (ba, bb),
             }
         })
         .collect();
     groups.sort_by(|x, y| {
-        let d = |g: &GroupChange| (g.busy_ms.1 - g.busy_ms.0).abs();
+        let d = |g: &GroupChange| (g.waiting_ms.1 - g.waiting_ms.0).abs();
         d(y).total_cmp(&d(x)).then(
             (y.requests.1 as i64 - y.requests.0 as i64)
                 .abs()
@@ -1567,17 +1774,7 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         )
     });
     let findings = crate::fixloop::changes(a, b);
-    let said = |states: &[crate::fixloop::State]| -> Vec<FindingText> {
-        findings
-            .iter()
-            .filter(|f| states.contains(&f.state))
-            .map(|f| FindingText {
-                text: f.text.clone(),
-                phrases: f.phrases.clone(),
-            })
-            .collect()
-    };
-    use crate::fixloop::State;
+    use crate::fixloop::{State, said};
     // each prefix either run counted (its busiest, not the rest's "other")
     // one set of prefixes for both runs, chosen from the folders of both:
     // each run's own choice would name the same folder at two depths
@@ -1605,17 +1802,18 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         prefixes,
         requests: (a.requests, b.requests),
         wall_ms: (pa.wall_ms, pb.wall_ms),
-        busy_ms: (pa.busy_ms, pb.busy_ms),
+        waiting_ms: (pa.waiting_ms, pb.waiting_ms),
         errors: (a.errors, b.errors),
         cost: (pa.cost.amount, pb.cost.amount),
         currency: pb.cost.currency.clone(),
         peak_in_flight: (pa.peak_in_flight, pb.peak_in_flight),
         groups,
         latency: (pa.latency.clone(), pb.latency.clone()),
-        resolved: said(&[State::Fixed]),
-        appeared: said(&[State::New, State::Back]),
+        resolved: said(&findings, &[State::Fixed]),
+        appeared: said(&findings, &[State::New, State::Back]),
         findings,
         same_program: true,
+        failed: None,
     }
 }
 
@@ -1640,6 +1838,86 @@ mod tests {
             latency_ms: latency,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn what_changes_between_runs_is_taken_out_of_an_identity_and_stable_keys_stay_apart() {
+        for (key, said) in [
+            ("b/jobs/1794558464595/state.json", "b/jobs/{n}/state.json"),
+            ("b/epoch/1731456000/x", "b/epoch/{n}/x"),
+            (
+                "b/runs/0f8fad5b-d9cb-469f-a165-70867728950e/out",
+                "b/runs/{uuid}/out",
+            ),
+            (
+                "b/t/metadata/00003-0f8fad5b-d9cb-469f-a165-70867728950e.metadata.json",
+                "b/t/metadata/{n}-{uuid}.metadata.json",
+            ),
+            (
+                "b/t/metadata/v12.metadata.json",
+                "b/t/metadata/v{n}.metadata.json",
+            ),
+            (
+                "b/t/_delta_log/00000000000000000012.json",
+                "b/t/_delta_log/{n}.json",
+            ),
+            ("b/day=2026-11-13/part-00001", "b/day={date}/part-00001"),
+            ("b/2026/11/13/x", "b/{date}/x"),
+            ("b/run_20261113/x", "b/run_{date}/x"),
+            ("b/at=2026-11-13T10:00:00.123Z/x", "b/at={time}/x"),
+            ("b/at=20261113T100000Z/x", "b/at={time}/x"),
+            ("b/snap-6894157311395042398-1.avro", "b/snap-{n}-1.avro"),
+            ("b/c/3f786850e387550fdab836ed7e6dc881de23001b", "b/c/{id}"),
+            ("b/u/01HF8X3KQZ7Y4M2N5P6R8T9VWX/x", "b/u/{id}/x"),
+            (
+                "b/o/_temporary/0/_temporary/attempt_202611131000_0001_m_000001_1/part-00000",
+                "b/o/_temporary/{n}/_temporary/attempt_{n}_{n}_m_{n}_{n}/part-00000",
+            ),
+            // what a program names the same every run stays as it is
+            ("b/static/part-00001.parquet", "b/static/part-00001.parquet"),
+            ("b/api/v2/config.json", "b/api/v2/config.json"),
+            ("b/year=2026/month=11/", "b/year=2026/month=11/"),
+            ("b/über/schlüssel", "b/über/schlüssel"),
+        ] {
+            assert_eq!(stable(key), said, "{key}");
+        }
+        assert_ne!(stable("b/part-00001"), stable("b/part-00002"));
+        assert_ne!(stable("b/api/v1/x"), stable("b/api/v2/x"));
+    }
+
+    #[test]
+    fn reads_and_writes_near_a_prefixs_limit_are_two_findings() {
+        let of = |key: &'static str| Observation {
+            level: "warn",
+            text: String::new(),
+            phrases: vec![crate::phrase::p(
+                key,
+                &[("prefix", "b/t/".into()), ("n", "4000".into())],
+            )],
+            episodes: Vec::new(),
+            impact: 0,
+            saving: None,
+            saving_text: None,
+            saves_requests: 0,
+            saves_ms: 0.0,
+            saved_ids: Vec::new(),
+            timed_ids: Vec::new(),
+            fixes: Vec::new(),
+            callers: Vec::new(),
+            sdk: None,
+            identity: String::new(),
+        };
+        let (r, w) = (
+            finding_identity(&of("obs.prefixrate.reads")),
+            finding_identity(&of("obs.prefixrate.writes")),
+        );
+        assert_eq!(r, "obs.prefixrate.reads|b/t/");
+        assert_eq!(w, "obs.prefixrate.writes|b/t/");
+        // one finding whatever its form
+        assert_eq!(
+            finding_identity(&of("obs.throttled.rate")),
+            finding_identity(&of("obs.throttled"))
+        );
     }
 
     #[test]
@@ -1669,16 +1947,16 @@ mod tests {
             .iter()
             .find(|g| g.operation == "GetObject")
             .unwrap();
-        assert_eq!(get.busy_ms.0, shown.waited_ms);
+        assert_eq!(get.waiting_ms.0, shown.waited_ms);
         assert!(
             (shown.waited_ms - 500.0).abs() < 1e-6,
             "{}",
             shown.waited_ms
         );
-        assert!(shown.busy_ms > 900.0);
+        assert!(shown.waiting_ms > 900.0);
         // the kinds add up to the run's waiting, as they do in `show`
-        let sum: f64 = c.groups.iter().map(|g| g.busy_ms.0).sum();
-        assert!((sum - c.busy_ms.0).abs() < 1e-6);
+        let sum: f64 = c.groups.iter().map(|g| g.waiting_ms.0).sum();
+        assert!((sum - c.waiting_ms.0).abs() < 1e-6);
         // and the prefixes are counted from each run's folders
         assert_eq!((c.requests, c.errors), ((11, 5), (0, 0)));
         let t0 = c.prefixes.iter().find(|p| p.prefix == "b/t/0/").unwrap();
@@ -1695,14 +1973,14 @@ mod tests {
         rs.push(rec(11, 200, "PutObject", 200, 100.0));
         let p = profile(&rs, &RequestPrices::default());
         assert_eq!(p.wall_ms, 300.0);
-        assert_eq!(p.busy_ms, 150.0);
+        assert_eq!(p.waiting_ms, 150.0);
         assert_eq!(p.peak_in_flight, 10);
         let get = p
             .groups
             .iter()
             .find(|g| g.operation == "GetObject")
             .unwrap();
-        assert_eq!(get.busy_ms, 50.0);
+        assert_eq!(get.waiting_ms, 50.0);
         assert_eq!(get.sum_ms, 500.0);
         assert_eq!(p.groups[0].operation, "PutObject", "most time first");
         assert!((p.groups[0].share - 100.0 / 150.0).abs() < 1e-9);
@@ -1739,7 +2017,7 @@ mod tests {
             rec(2, 50, "PutObject", 200, 100.0),
         ];
         let p = profile(&rs, &RequestPrices::default());
-        assert_eq!(p.busy_ms, 150.0);
+        assert_eq!(p.waiting_ms, 150.0);
         let by = |op: &str| p.groups.iter().find(|g| g.operation == op).unwrap();
         // the 50 ms both were in flight count once, half each
         assert!((by("GetObject").waited_ms - 75.0).abs() < 1e-6);
@@ -1833,7 +2111,7 @@ mod tests {
         assert_eq!(p.callers.len(), 2);
         assert_eq!(p.callers[0].place, "etl/load.py:12 read");
         assert_eq!(p.callers[0].requests, 4);
-        assert!((p.callers.iter().map(|c| c.waited_ms).sum::<f64>() - p.busy_ms).abs() < 1e-6);
+        assert!((p.callers.iter().map(|c| c.waited_ms).sum::<f64>() - p.waiting_ms).abs() < 1e-6);
         // each sample says its answer; every request is drawn in a session this small
         assert_eq!(p.samples.len(), 6);
         assert!(p.samples.iter().all(|s| s.status == Some(200)));

@@ -306,6 +306,48 @@ pub fn write_baselines(
     std::fs::rename(&tmp, dir.join("baselines.json"))
 }
 
+/// What a program keeps beside its runs, by its key: its baseline, its
+/// trials' verdicts, its findings, what it wrote.
+pub const KEPT_BY_PROGRAM: &[&str] = &[
+    "baselines.json",
+    "verdicts.json",
+    "findings.json",
+    "written.json",
+];
+
+/// Moves what program `from` keeps in `dir` ([`KEPT_BY_PROGRAM`]) to
+/// program `to`: a program given a name keeps its baseline and history.
+/// What `to` keeps already stays. Returns the files it moved something in.
+pub fn rename_program(
+    dir: &std::path::Path,
+    from: &str,
+    to: &str,
+) -> std::io::Result<Vec<&'static str>> {
+    let mut moved = Vec::new();
+    for name in KEPT_BY_PROGRAM {
+        let path = dir.join(name);
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        let mut all: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        if all.contains_key(to) {
+            continue;
+        }
+        let Some(kept) = all.remove(from) else {
+            continue;
+        };
+        all.insert(to.to_string(), kept);
+        let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
+        reqlog::private::write(&tmp, serde_json::to_vec_pretty(&all)?)?;
+        std::fs::rename(&tmp, &path)?;
+        moved.push(*name);
+    }
+    Ok(moved)
+}
+
 /// A run, by the figures that move when the program changes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -313,17 +355,19 @@ pub struct RunPoint {
     pub path: String,
     pub created: String,
     pub requests: usize,
-    pub busy_ms: f64,
+    pub waiting_ms: f64,
     pub wall_ms: f64,
     pub cost: f64,
     pub currency: String,
     pub errors: usize,
     pub warnings: usize,
     pub findings: usize,
-    /// How long 95% of its requests took at most (0 when unknown, as in runs
-    /// kept before 12.0).
-    #[serde(default)]
+    /// How long 95% of its requests took at most (0 when unknown).
     pub p95_ms: f64,
+    /// The first request the recording policy refused: sonde's answer,
+    /// why a program that failed did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
 }
 
 pub fn run_point(
@@ -337,7 +381,7 @@ pub fn run_point(
         path: path.into(),
         created: created.into(),
         requests: records.len(),
-        busy_ms: profile.busy_ms,
+        waiting_ms: profile.waiting_ms,
         wall_ms: profile.wall_ms,
         p95_ms: profile.p95_ms,
         cost: profile.cost.amount,
@@ -348,6 +392,10 @@ pub fn run_point(
             .count(),
         warnings: findings.iter().filter(|o| o.level == "warn").count(),
         findings: findings.len(),
+        refused: records
+            .iter()
+            .find(|r| crate::refused_by_policy(r))
+            .and_then(|r| r.error_body.clone()),
     }
 }
 
@@ -421,7 +469,7 @@ impl RunFigures {
             path: String::new(),
             created: String::new(),
             requests: self.requests,
-            busy_ms: busy_us as f64 / 1000.0,
+            waiting_ms: busy_us as f64 / 1000.0,
             wall_ms: wall_us as f64 / 1000.0,
             p95_ms: crate::profile::percentile(&sorted, 0.95),
             cost: self.cost,
@@ -429,6 +477,7 @@ impl RunFigures {
             errors: self.errors,
             warnings: 0,
             findings: 0,
+            refused: None,
         }
     }
 }
@@ -516,18 +565,40 @@ pub struct Check {
 }
 
 /// Whether the project expects finding `o`: an entry of `expect` is its
-/// identity, its kind, or a part of its text.
+/// identity, or its kind for every finding of that kind. A key in an entry
+/// is read as an identity says it (`jobs/{n}/`), whatever it was named in.
 pub fn expected(o: &Observation, expect: &[String]) -> bool {
     if expect.is_empty() {
         return false;
     }
     let id = crate::profile::finding_identity(o);
     let kind = id.split('|').next().unwrap_or("");
-    let text = o.text.to_lowercase();
     expect.iter().any(|e| {
         let e = e.trim();
-        !e.is_empty() && (e == id || e == kind || text.contains(&e.to_lowercase()))
+        e == kind || e == id || expected_identity(e) == id
     })
+}
+
+/// An entry of `expect` as an identity: what it is about made
+/// [`crate::profile::stable`].
+fn expected_identity(e: &str) -> String {
+    let mut parts = e.split('|');
+    let kind = parts.next().unwrap_or("");
+    let about: Vec<String> = parts.map(crate::profile::stable).collect();
+    format!("{kind}|{}", about.join("|"))
+}
+
+/// Why an entry of `[check] expect` is no finding's identity, when it is
+/// not: its kind is none sonde finds.
+pub fn expect_error(e: &str) -> Option<String> {
+    let kind = e.trim().split('|').next().unwrap_or("");
+    if crate::profile::FINDING_KINDS.contains(&kind) {
+        return None;
+    }
+    Some(format!(
+        "[check] expect = {e:?} is not a finding's identity: give one as `sonde show -f json` writes it (\"obs.hot|bucket/key\"), or a kind for all of it ({})",
+        crate::profile::FINDING_KINDS.join(", ")
+    ))
 }
 
 /// A run against a budget, and against a baseline run when there is one.
@@ -577,7 +648,7 @@ pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
             .floor()
             .max(base.requests as f64),
         // a run this short varies more than its tolerance
-        waiting_ms: base.busy_ms * grow + WAITING_SLACK_MS,
+        waiting_ms: base.waiting_ms * grow + WAITING_SLACK_MS,
         // a free baseline (deletes only) still lets a run cost a hundredth of a
         // cent; one that cost anything is held to its percent, however small
         // (the same floor on top was 100% of a run costing 0.0001)
@@ -594,7 +665,7 @@ pub fn baseline_limits(base: &RunPoint, tolerance: f64) -> BaselineLimits {
 pub fn past_baseline(run: &RunPoint, base: &RunPoint, tolerance: f64) -> bool {
     let l = baseline_limits(base, tolerance);
     run.requests as f64 > l.requests
-        || run.busy_ms > l.waiting_ms
+        || run.waiting_ms > l.waiting_ms
         || run.cost > l.cost
         || run.errors as f64 > l.errors
 }
@@ -663,7 +734,7 @@ pub fn check(
         limit("requests", r.requests as f64, n as f64, "budget");
     }
     if let Some(ms) = budget.max_waiting_ms {
-        limit("waiting", r.busy_ms, ms, "budget");
+        limit("waiting", r.waiting_ms, ms, "budget");
     }
     if let Some(c) = budget.max_cost {
         limit("cost", r.cost, c, "budget");
@@ -695,7 +766,7 @@ pub fn check(
                 l.requests,
                 base.requests as f64,
             );
-            held("waiting", r.busy_ms, l.waiting_ms, base.busy_ms);
+            held("waiting", r.waiting_ms, l.waiting_ms, base.waiting_ms);
             held("cost", r.cost, l.cost, base.cost);
             held("errors", r.errors as f64, l.errors, base.errors as f64);
         }
@@ -938,6 +1009,9 @@ pub struct Comment<'a> {
     pub no_baseline: Option<&'a str>,
     /// Where the whole report is (`sonde share --html`, kept by CI).
     pub report_url: Option<&'a str>,
+    /// The program's exit status, when it is not 0, and why when the
+    /// policy refused a request ([`RunPoint::refused`]).
+    pub failed: Option<(i32, Option<&'a str>)>,
 }
 
 /// Waiting moves this much from one identical run to the next: a change
@@ -973,12 +1047,19 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
     let mut md = format!(
         "### sonde: {} {}\n",
         check_closing(c, m.trials),
-        if check_passed(c, m.trials) {
+        if check_passed(c, m.trials) && m.failed.is_none() {
             "✅"
         } else {
             "❌"
         }
     );
+    if let Some((code, why)) = m.failed {
+        md.push_str(&format!("\n> ❌ **The program failed** (exit {code})"));
+        match why {
+            Some(w) => md.push_str(&format!(": {}\n", md_text(w))),
+            None => md.push('\n'),
+        }
+    }
     if let Some(t) = m.since {
         md.push_str(&format!("\n{}\n", md_text(t)));
     }
@@ -1035,7 +1116,7 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         let mut figures = Vec::new();
         for (what, a, b) in [
             ("requests", ch.requests.0 as f64, ch.requests.1 as f64),
-            ("waiting", ch.busy_ms.0, ch.busy_ms.1),
+            ("waiting", ch.waiting_ms.0, ch.waiting_ms.1),
             ("cost", ch.cost.0, ch.cost.1),
             ("errors", ch.errors.0 as f64, ch.errors.1 as f64),
         ] {
@@ -1066,7 +1147,9 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         let kinds: Vec<Vec<String>> = ch
             .groups
             .iter()
-            .filter(|g| g.requests.0 != g.requests.1 || waiting_moved(g.busy_ms.0, g.busy_ms.1))
+            .filter(|g| {
+                g.requests.0 != g.requests.1 || waiting_moved(g.waiting_ms.0, g.waiting_ms.1)
+            })
             .take(8)
             .map(|g| {
                 vec![
@@ -1076,7 +1159,7 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
                         g.operation.clone()
                     }),
                     format!("{} → {}", g.requests.0, g.requests.1),
-                    format!("{} → {}", ms_text(g.busy_ms.0), ms_text(g.busy_ms.1)),
+                    format!("{} → {}", ms_text(g.waiting_ms.0), ms_text(g.waiting_ms.1)),
                 ]
             })
             .collect();
@@ -1088,16 +1171,23 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
                 &kinds,
             ));
         }
-        // new first: what this change brought
-        let mut new: Vec<String> = ch.appeared.iter().map(|f| f.text.clone()).collect();
-        for w in &c.new_warnings {
-            if !new.contains(w) {
-                new.push(w.clone());
-            }
-        }
+        // new first: what this change brought, as `compare` says it
+        let new: Vec<&str> = ch.appeared.iter().map(|f| f.text.as_str()).collect();
         if !new.is_empty() {
             md.push_str("\n**New findings**\n\n");
             for t in &new {
+                md.push_str(&format!("- {}{}\n", md_text(t), place(t)));
+            }
+        }
+        // one the baseline had as a note, a warning now
+        let grown: Vec<&String> = c
+            .new_warnings
+            .iter()
+            .filter(|w| !new.contains(&w.as_str()))
+            .collect();
+        if !grown.is_empty() {
+            md.push_str("\n**Warnings now**\n\n");
+            for t in grown {
                 md.push_str(&format!("- {}{}\n", md_text(t), place(t)));
             }
         }
@@ -1266,7 +1356,7 @@ mod tests {
         let want = run_point("", "", &rs, &p, &[]);
         assert_eq!(f.point(), want);
         assert!(want.errors > 0 && want.cost > 0.0 && want.p95_ms > 10.0);
-        assert!(want.busy_ms < want.wall_ms);
+        assert!(want.waiting_ms < want.wall_ms);
         assert_eq!(RunFigures::new(prices.clone()).point().requests, 0);
         assert_eq!(
             RunFigures::new(prices.clone()).point(),
@@ -1280,7 +1370,7 @@ mod tests {
             path: String::new(),
             created: format!("2026-11-01T{h:02}:00:00Z"),
             requests: 1,
-            busy_ms: 1.0,
+            waiting_ms: 1.0,
             wall_ms: 1.0,
             cost,
             currency: "USD".into(),
@@ -1288,6 +1378,7 @@ mod tests {
             warnings: 0,
             findings: 0,
             p95_ms: 0.0,
+            refused: None,
         };
         // every hour, a cent a run: 24 runs a day, $7.20 a month
         let (month, per_day) = monthly_cost(&[pt(0, 0.01), pt(1, 0.01), pt(2, 0.01)]).unwrap();
@@ -1302,7 +1393,7 @@ mod tests {
             path: path.into(),
             created: String::new(),
             requests,
-            busy_ms: 10.0,
+            waiting_ms: 10.0,
             wall_ms: 10.0,
             cost: 0.0,
             currency: "USD".into(),
@@ -1310,6 +1401,7 @@ mod tests {
             warnings: 0,
             findings: 0,
             p95_ms: 0.0,
+            refused: None,
         };
         let git = |c: &str| {
             Some(crate::session::GitStamp {
@@ -1356,18 +1448,41 @@ mod tests {
             )
         };
         assert!(new(Vec::new()).expected.is_empty());
-        // the finding, expected by its identity, its kind or its words
+        // the finding, expected by its identity or its kind; never by words
+        // of its text, which change
         let hot = og.iter().find(|o| o.text.contains("hot")).unwrap();
         let id = crate::profile::finding_identity(hot);
-        for e in [
-            id.clone(),
-            id.split('|').next().unwrap().to_string(),
-            "HOT".to_string(),
-        ] {
+        for e in [id.clone(), id.split('|').next().unwrap().to_string()] {
             let c = new(vec![e.clone()]);
             assert!(c.new_warnings.is_empty(), "{e}: {c:#?}");
             assert!(!c.expected.is_empty());
             assert!(c.passed);
+        }
+        assert!(new(vec!["hot".into()]).expected.is_empty());
+        // a key named as the program named it is read as an identity says it
+        let job = |key: &str| Observation {
+            phrases: vec![crate::phrase::p("obs.hot", &[("key", key.into())])],
+            identity: String::new(),
+            ..hot.clone()
+        };
+        assert!(expected(
+            &job("b/jobs/1794558464595/state.json"),
+            &["obs.hot|b/jobs/1794558465084/state.json".into()]
+        ));
+        assert!(!expected(
+            &job("b/jobs/1794558464595/state.json"),
+            &["obs.hot|b/other".into()]
+        ));
+        // one sonde does not find is no identity
+        assert_eq!(expect_error("obs.hot|b/k"), None);
+        assert_eq!(expect_error("obs.listed"), None);
+        for e in ["obs.retried", "hot", "obs.hto|b/k"] {
+            assert!(
+                expect_error(e)
+                    .unwrap()
+                    .contains("not a finding's identity"),
+                "{e}"
+            );
         }
         // 95% of the requests within a limit
         let c = check(
@@ -1701,6 +1816,56 @@ mod tests {
         );
         assert!(
             md.contains("> ⚠️ no baseline yet for program \\`etl\\`: nothing was compared"),
+            "{md}"
+        );
+        // a note of the baseline's that is a warning now is not new: the
+        // finding is the same one, as `compare` says
+        let same = compare_runs(
+            &Run::of(&after, pra.clone(), oa.to_vec()),
+            &Run::of(&after, pra.clone(), oa.to_vec()),
+        );
+        let grown = Check {
+            new_warnings: vec!["20 objects were checked with HEAD".into()],
+            ..c.clone()
+        };
+        let md = check_comment(
+            &grown,
+            &Comment {
+                currency: "USD",
+                findings: &oa,
+                change: Some(&same),
+                ..Default::default()
+            },
+        );
+        assert!(!md.contains("**New findings**"), "{md}");
+        assert!(md.contains("**Warnings now**\n\n- 20 objects"), "{md}");
+        // a program that failed is said first, with why
+        let mut refused = rec(1, "k");
+        refused.method = "DELETE".into();
+        refused.status = Some(403);
+        refused.error_body = Some("sonde refused DeleteObject: no-delete mode".into());
+        refused
+            .response_headers
+            .push(reqlog::Header::new("x-sonde-policy", "no-delete"));
+        let (pf, prf, of) = point(std::slice::from_ref(&refused));
+        assert_eq!(
+            pf.refused.as_deref(),
+            Some("sonde refused DeleteObject: no-delete mode")
+        );
+        let c = check((&pf, &[refused], &prf, &of), None, &Budget::default());
+        let md = check_comment(
+            &c,
+            &Comment {
+                currency: "USD",
+                failed: Some((1, pf.refused.as_deref())),
+                ..Default::default()
+            },
+        );
+        assert!(md.lines().next().unwrap().ends_with('❌'), "{md}");
+        assert!(
+            md.contains(
+                "> ❌ **The program failed** (exit 1): sonde refused DeleteObject: no-delete mode"
+            ),
             "{md}"
         );
     }

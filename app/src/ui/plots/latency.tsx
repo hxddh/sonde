@@ -230,7 +230,7 @@ export function TimeSpent(props: { profile: Profile; max?: number; by?: "kind" |
       ? (props.profile.callers ?? []).slice(0, props.max ?? 8).map((c) => ({
           name: c.place,
           waitedMs: c.waitedMs,
-          share: c.waitedMs / Math.max(props.profile.busyMs, 1e-9),
+          share: c.waitedMs / Math.max(props.profile.waitingMs, 1e-9),
           requests: c.requests,
           p50Ms: 0,
           p95Ms: 0,

@@ -1063,6 +1063,9 @@ fn multipart<'a>(
             .sum();
         let completed = rs.iter().any(completes);
         let aborted = rs.iter().any(|r| r.operation == "AbortMultipartUpload");
+        // parts with no create: begun before the recording (an imported
+        // log's window), so whether it completed is not known
+        let begun = rs.iter().any(|r| r.operation == "CreateMultipartUpload");
         let formatted = tables.part(rs[0]).is_some();
         if completed && formatted {
             let mut unit = rs;
@@ -1081,11 +1084,11 @@ fn multipart<'a>(
         )];
         if aborted && !completed {
             title.push(p("mpu.aborted", &[]));
-        } else if !completed {
+        } else if !completed && begun {
             title.push(p("mpu.open", &[]));
         }
         let mut e = build(Kind::Multipart, None, title, rs);
-        if !completed && !aborted {
+        if !completed && !aborted && begun {
             e.note(p("mpu.billed", &[]));
         }
         out.push(e);
@@ -1613,7 +1616,8 @@ pub struct Observation {
     pub text: String,
     /// The text as phrases, for saying it in other languages.
     pub phrases: Vec<Phrase>,
-    /// The episodes it is about (indexes, ascending), for showing them.
+    /// The operations it is about (indexes, ascending), for showing them.
+    #[serde(rename = "operations")]
     pub episodes: Vec<usize>,
     /// The requests it bears on: findings are ranked by it, warnings first.
     pub impact: usize,
@@ -2233,7 +2237,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
         let waiting: f64 = found.iter().map(|c| c.waiting_ms).sum();
         let saved = (waiting - fast).max(0.0);
         if !found.is_empty() && (saved >= 100.0 || (any && saved > 0.0)) {
-            let busy = crate::profile::busy_ms(records).max(1e-9);
+            let busy = crate::profile::waiting_ms(records).max(1e-9);
             let time = sonde_fmt::duration;
             let ids: Vec<u64> = found.iter().flat_map(|c| c.ids.iter().copied()).collect();
             let chained = ids.clone();
@@ -2278,8 +2282,16 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .cmp(&(a.level == "warn"))
             .then(b.impact.cmp(&a.impact))
     });
+    // two of a run's findings that read the same once what changes between
+    // runs is taken out (two dates' keys) stay two: the second by rank `#2`
+    let mut seen: HashMap<String, usize> = HashMap::new();
     for o in &mut out {
-        o.identity = crate::profile::finding_identity(o);
+        let id = crate::profile::identity(o);
+        let n = seen.entry(id.clone()).or_default();
+        *n += 1;
+        o.identity = if *n == 1 { id } else { format!("{id}#{n}") };
+    }
+    for o in &mut out {
         // a trace is only told apart from a finding: no fix, no callers
         if any {
             continue;
@@ -2682,6 +2694,24 @@ mod tests {
             .find(|o| o.level == "warn" && o.text.starts_with("1 multipart upload never completed"))
             .expect("the unfinished upload is reported");
         assert_eq!(unfinished.episodes, vec![0], "and points at its episode");
+    }
+
+    #[test]
+    fn parts_with_no_create_began_before_the_window_and_are_not_unfinished() {
+        let q = [("partNumber", "1"), ("uploadId", "u1")];
+        let p1 = with_query(rec(1, 0, "PUT", "UploadPart", Some("big"), 200), &q);
+        let p2 = with_query(
+            rec(2, 10, "PUT", "UploadPart", Some("big"), 200),
+            &[("partNumber", "2"), ("uploadId", "u1")],
+        );
+        let eps = episodes(&[p1, p2]);
+        let up = eps.iter().find(|e| e.kind == Kind::Multipart).unwrap();
+        assert!(!up.title().contains("not completed"), "{}", up.title());
+        let obs = observations(&[], &eps);
+        assert!(
+            !obs.iter().any(|o| o.text.contains("never completed")),
+            "{obs:#?}"
+        );
     }
 
     #[test]

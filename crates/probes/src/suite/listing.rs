@@ -44,7 +44,7 @@ impl Probe for SpecialKeys {
             "keys.special",
             Category::Keys,
             "Special characters and Unicode in keys",
-            "PUTs, GETs and lists 14 keys with spaces, +, %, reserved characters, dot segments, // and non-ASCII.",
+            "PUTs, GETs and lists 14 keys with spaces, +, %, reserved characters, dot segments, // and non-ASCII; the verdict is of the keys sent (sonde cannot send the two with a dot segment).",
             "Keys are opaque UTF-8: every key round-trips through PUT, GET and ListObjectsV2 (with encoding-type=url) exactly.",
             &[],
         )
@@ -122,19 +122,14 @@ impl Probe for SpecialKeys {
             );
         }
         let not_tested = ph!("obs.keys.notTested", keys = unsent.join(" and "));
-        if bad.is_empty() && unsent.is_empty() {
-            Judgement::say(
-                Verdict::Pass,
-                ph!("judge.keys.special.pass", p1 = SPECIAL.len()),
-                s,
-            )
-        } else if bad.is_empty() {
-            // sonde's own limit, not a difference of the store's
-            Judgement::say(
-                Verdict::Error,
-                vec![ph!("judge.keys.special.error.2", sent = sent), not_tested],
-                s,
-            )
+        if bad.is_empty() {
+            // judged by the keys sent: one sonde cannot send is its own
+            // limit, said, and no mark against the store
+            let mut j = Judgement::say(Verdict::Pass, ph!("judge.keys.special.pass", p1 = sent), s);
+            if !unsent.is_empty() {
+                j.observe(not_tested);
+            }
+            j
         } else {
             let mut j = Judgement::say(
                 if bad.len() == sent {

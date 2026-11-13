@@ -249,6 +249,18 @@ async fn program(what: &str) -> i32 {
                 1
             }
         }
+        // reads the demo store's README, asking first whether it is there
+        "demo" => {
+            let on = |op: &str, method: http::Method| {
+                S3Request::new(op, method).bucket("demo").key("README.md")
+            };
+            let head = ok(app.send_raw(on("HeadObject", http::Method::HEAD)).await);
+            if head && ok(app.send_raw(on("GetObject", http::Method::GET)).await) {
+                0
+            } else {
+                1
+            }
+        }
         // one write, then fails
         "fails" => {
             let _ = app.send_raw(put("a", "1")).await;
@@ -591,7 +603,7 @@ async fn a_scenario_pressed_harder_fails_more_attempts_in_a_row() {
     assert_eq!(t["times"], 3, "{t:#}");
     assert_eq!(t["attempts"], 4, "{t:#}");
     assert_eq!(t["faults"], 9, "three requests, three attempts each: {t:#}");
-    assert_eq!(t["session"], "run.slowdown.sonde");
+    assert_eq!(t["session"], "run.slowdown-3x.sonde");
     assert_eq!(
         t["about"],
         "503 SlowDown on each request's first 3 attempts"
@@ -703,7 +715,6 @@ async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
     let again = b.run(Some("retrying"), &["run", "-o", name]).await;
     assert_eq!(again.code, Some(0), "{}", again.stderr);
     assert!(trials(&session).is_empty());
-    assert!(!b.path("run.trials.json").exists());
     assert!(
         !b.path("trials").exists(),
         "its trial sessions went with the verdicts"
@@ -1075,7 +1086,6 @@ async fn an_interrupt_ends_the_trial_and_writes_no_verdict() {
         );
         // one scenario was begun, none after it; nothing of it is kept
         assert!(!o.stderr.contains("  broke"), "{}", o.stderr);
-        assert!(!b.path("run.trials.json").exists(), "{signal}");
         assert!(!trial_session.exists(), "the half-written session is gone");
         assert!(!b.path("trials").exists());
         // and `check` has no broken trial to fail the run on
@@ -2375,4 +2385,95 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
         )
         .await;
     assert_eq!(never.code, Some(64), "{}", never.stderr);
+}
+
+/// `run --demo`: the program against the built-in store, no endpoint
+/// configured and no secrets; said to be the demo's, its times not meaningful.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_demo_records_a_program_against_the_built_in_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let sonde = |args: &[&str], program: bool| {
+        let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_sonde"));
+        c.current_dir(dir.path())
+            .env("SONDE_CONFIG_DIR", dir.path().join("config"))
+            .env("SONDE_DATA_DIR", dir.path().join("data"))
+            .env("AWS_EC2_METADATA_DISABLED", "true")
+            .env_remove("AWS_ACCESS_KEY_ID")
+            .env_remove("AWS_SECRET_ACCESS_KEY")
+            .env_remove("AWS_PROFILE")
+            .env("SONDE_E2E", "demo")
+            .args(args)
+            .stdin(Stdio::null());
+        if program {
+            c.arg("--").args(the_program_command());
+        }
+        c
+    };
+    let session = dir.path().join("demo.sonde");
+    let o = out(
+        sonde(&["run", "--demo", "-o", session.to_str().unwrap()], true)
+            .output()
+            .await
+            .unwrap(),
+    );
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    assert!(
+        o.stderr.contains("built-in demo store") && o.stderr.contains("times are not meaningful"),
+        "{}",
+        o.stderr
+    );
+    let shown = out(
+        sonde(&["show", session.to_str().unwrap(), "-f", "json"], false)
+            .output()
+            .await
+            .unwrap(),
+    );
+    let v: serde_json::Value = serde_json::from_str(&shown.stdout).unwrap();
+    assert_eq!(v["summary"]["requests"], 2, "{v}");
+    assert_eq!(v["summary"]["errors"], 0, "{v}");
+    // one store at a time
+    for other in [&["--url", "http://127.0.0.1:9"][..], &["-e", "mine"][..]] {
+        let mut args = vec!["run", "--demo"];
+        args.extend_from_slice(other);
+        let o = out(sonde(&args, true).output().await.unwrap());
+        assert_eq!(o.code, Some(64), "{other:?}: {}", o.stderr);
+    }
+}
+
+/// Two strengths of one scenario stand broke: each is run again, into a
+/// session of its own; the name is trimmed as it was when kept.
+#[tokio::test(flavor = "multi_thread")]
+async fn trying_again_runs_every_strength_that_broke() {
+    let b = Bench::new().await;
+    let broke = serde_json::json!([{
+        "at": "2026-11-01T00:00:00Z", "standing": "broke", "run": "run.sonde"
+    }]);
+    let kept = serde_json::json!({ "etl": { "slowdown": broke, "slowdown:3": broke } });
+    std::fs::write(b.path("verdicts.json"), kept.to_string()).unwrap();
+    let o = b
+        .run(
+            Some("retrying"),
+            &[
+                "run",
+                "--trial",
+                "--again",
+                "--name",
+                " etl ",
+                "-o",
+                "run.sonde",
+            ],
+        )
+        .await;
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    let mut sessions: Vec<String> = trials(&b.path("run.sonde"))
+        .iter()
+        .map(|t| t["session"].as_str().unwrap().to_string())
+        .collect();
+    sessions.sort();
+    assert_eq!(
+        sessions,
+        ["run.slowdown-3x.sonde", "run.slowdown.sonde"],
+        "{}",
+        o.stderr
+    );
 }

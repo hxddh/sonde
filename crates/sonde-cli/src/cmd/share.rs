@@ -42,9 +42,6 @@ pub struct ShareArgs {
     /// http://localhost:4318/v1/traces.
     #[arg(long, value_name = "URL", requires = "otlp", conflicts_with = "out")]
     to: Option<String>,
-    /// Gone in 18.0 (`sonde show FILE -f json`): said, and refused.
-    #[arg(long, hide = true)]
-    json: bool,
     /// Replace bucket and key names with tokens and drop headers, bodies, URLs,
     /// the program's output and arguments: safe to send outside.
     #[arg(long)]
@@ -101,11 +98,6 @@ async fn baseline_of(
 }
 
 pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
-    if a.json {
-        return Err(super::usage(
-            "share --json is gone in 18.0: `sonde show FILE -f json` writes the session as data",
-        ));
-    }
     let compared = a.files.len() == 2 || a.baseline.is_some();
     if compared && a.otlp {
         eprintln!("--otlp takes one session");

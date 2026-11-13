@@ -291,6 +291,34 @@ pub fn is_control_operation(op: &str) -> bool {
         || op == "PutPublicAccessBlock")
 }
 
+/// The header a listing's record says how many keys it listed in: the
+/// body is not kept, and a replay compares listings by it.
+pub const KEYS_HEADER: &str = "x-sonde-keys";
+
+/// Whether `op` lists keys (its record gets [`KEYS_HEADER`]).
+pub fn is_listing(op: &str) -> bool {
+    matches!(op, "ListObjects" | "ListObjectsV2" | "ListObjectVersions")
+}
+
+/// `<Key>`s in a listing's body, read a piece at a time: a tag across two
+/// pieces is counted once.
+#[derive(Debug, Default, Clone)]
+pub struct KeyCounter {
+    pub keys: usize,
+    tail: Vec<u8>,
+}
+
+impl KeyCounter {
+    pub fn feed(&mut self, piece: &[u8]) {
+        const TAG: &[u8] = b"<Key>";
+        let mut seen = std::mem::take(&mut self.tail);
+        seen.extend_from_slice(piece);
+        self.keys += seen.windows(TAG.len()).filter(|w| *w == TAG).count();
+        // (shorter than the tag: nothing counted is counted again)
+        self.tail = seen[seen.len().saturating_sub(TAG.len() - 1)..].to_vec();
+    }
+}
+
 /// Largest error body kept on a record.
 pub const MAX_ERROR_BODY: usize = 64 * 1024;
 /// Largest control body kept on a record.
@@ -387,6 +415,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn keys_are_counted_across_pieces_once() {
+        let body = b"<R><Contents><Key>a</Key></Contents><Contents><Key>b</Key></Contents></R>";
+        for cut in 0..body.len() {
+            let mut k = KeyCounter::default();
+            k.feed(&body[..cut]);
+            k.feed(&body[cut..]);
+            assert_eq!(k.keys, 2, "cut at {cut}");
+        }
+    }
+
+    #[test]
     fn a_summary_says_which_scenario_answered_in_the_stores_place() {
         let mut r = Record {
             id: 7,
@@ -398,7 +437,7 @@ mod tests {
         r.injected = Some("slowdown".into());
         let marked = serde_json::to_value(r.summary()).unwrap();
         assert_eq!(marked["injected"], "slowdown");
-        // a row written before 15 reads as the store's own answer
+        // a row without the mark reads as the store's own answer
         let old: RecordSummary = serde_json::from_value(plain).unwrap();
         assert_eq!(old.injected, None);
     }

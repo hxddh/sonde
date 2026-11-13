@@ -68,8 +68,9 @@ repeatable; duplicates run once.
 | `s3-limits` | 503 SlowDown past 5,500 reads or 3,500 writes a second per prefix | only `--fault s3-limits` |
 
 - **`slowdown:N` / `error:N`** (1–5): fail each request's first N attempts. The verdict row reads `slowdown:3`; the
-  session and `{trial}` keep `slowdown`. No other built-in takes a number (project scenarios set `times`); the app
-  offers the same count.
+  session is `<run>.slowdown-3x.sonde` and `{trial}` keeps `slowdown`; two strengths are two runs, and `--again`
+  runs each that stands broke. No other built-in takes a number (project scenarios set `times`); the app offers the
+  same count.
 - **One request** = method, operation, bucket, key, part number (not upload id: a restarted upload retries the same
   parts). Key-less requests add `prefix`, `delimiter`, `start-after`, `continuation-token`, `marker`, `key-marker`,
   `upload-id-marker`, `version-id-marker`, `versions`, `uploads` and the body's hash. Attempts are counted per
@@ -176,7 +177,7 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 | | |
 |---|---|
 | Sessions | `trials/<run>.<scenario>.sonde` beside the run. Records carry `injected`; the session says first how many requests met a fault (sonde's 503s are not the store's); replay skips injected requests. Not runs: excluded from "newest", trend, baseline. |
-| Verdicts | in the sessions folder's `.index.jsonl` (`<run>.trials.json` beside the run before 18.0, moved in when read); sessions named by file name, never path. `where` (`operation`, `key`, `caller`) and `advice` (`key`, `args`). |
+| Verdicts | in the sessions folder's `.index.jsonl`; sessions named by file name, never path. `where` (`operation`, `key`, `caller`) and `advice` (`key`, `args`). |
 | `sonde check` | rows `pass` / `warn` (degraded, refused) / `FAIL` / `skip`; **fails when the program broke**, budget or not. JSON: `trials`, `passed`, `verdict`. |
 | `sonde show` | *Under faults*: the run's verdicts with their history. JSON: `trials`. |
 | `sonde sessions` | each run's worst verdict |

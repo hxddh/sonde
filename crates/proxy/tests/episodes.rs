@@ -167,7 +167,7 @@ fn delta_rs_run_reads_as_commits() {
         &titles[..4],
         [
             "commit 0 · 1 file (1.2 KiB)",
-            "commit 1 · 1 file (1004 B)",
+            "commit 1 · 1 file (1.0 KiB)",
             "commit 2 · 1 file (883 B)",
             "commit 3 · 1 file (904 B)"
         ]

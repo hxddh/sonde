@@ -236,7 +236,7 @@ pub fn write_session_json(
     header.cwd = None;
     let mut w = JsonOut::new(out, false);
     w.begin_object()?;
-    w.array("episodes", &eps)?;
+    w.array("operations", &eps)?;
     w.field("format", &"sonde-share")?;
     w.field("header", &header)?;
     w.field("lines", &crate::logs::lines(&s.logs))?;
@@ -278,7 +278,7 @@ pub fn write_session_json(
 pub fn write_site(dir: &Path, doc: &[u8]) -> std::io::Result<()> {
     if !has_viewer() {
         return Err(std::io::Error::other(
-            "this build of sonde has no web viewer: build it first (`cd viewer && nsh package App.tsx --target web`), or use --json",
+            "this build of sonde has no web viewer: build it first (`cd viewer && nsh package App.tsx --target web`), or write the session as data with `sonde show FILE -f json`",
         ));
     }
     for (rel, bytes) in embedded::VIEWER {

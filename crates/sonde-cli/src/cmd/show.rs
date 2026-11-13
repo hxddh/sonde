@@ -267,6 +267,8 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         &file,
         sonde_proxy::program::key_of(&session.header).as_deref(),
     );
+    // against the program's run before it, as `run` said it: in every format
+    let since = super::fixloop::since_last(s, &file, &session.header, all, &analysis);
     match a.format {
         // the summary alone: what the table's summary shows, and no more
         Format::Json if a.summary => {
@@ -278,7 +280,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "summary": analysis.summary,
                     "operations": eps.len(),
                     "waiting": {
-                        "waitingMs": prof.busy_ms,
+                        "waitingMs": prof.waiting_ms,
                         "wallMs": prof.wall_ms,
                         "peakInFlight": prof.peak_in_flight,
                         "p50Ms": prof.p50_ms,
@@ -289,6 +291,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     "cost": prof.cost,
                     "whatIf": analysis.what_if,
                     "findings": analysis.observations,
+                    "since": since,
                     "trials": trials,
                 }))
             );
@@ -296,10 +299,10 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         // written as it is made: an operation, then a request, at a time
         Format::Json => {
             use std::io::Write;
-            let out = std::io::BufWriter::with_capacity(1 << 16, std::io::stdout().lock());
+            let out = std::io::BufWriter::with_capacity(1 << 16, crate::output::Stdout);
             let mut w = sonde_proxy::share::JsonOut::new(out, true);
             w.begin_object()?;
-            // one word each (18.0): operations, findings, requests
+            // one word each: operations, findings, requests
             w.array(
                 "operations",
                 eps.iter().filter(|e| !a.errors || e.outcome != Outcome::Ok),
@@ -318,6 +321,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             w.field("summary", &analysis.summary)?;
             w.field("whatIf", &analysis.what_if)?;
             w.field("trials", &trials)?;
+            w.field("since", &since)?;
             w.end_object()?;
             let mut out = w.finish()?;
             out.write_all(b"\n")?;
@@ -367,8 +371,6 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                     return Ok(0);
                 }
             }
-            // against the program's run before it, when it has one
-            let since = super::fixloop::since_last(s, &file, &session.header, all, &analysis);
             print_summary_of(
                 &analysis,
                 &session.header,

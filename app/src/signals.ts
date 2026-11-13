@@ -1,12 +1,11 @@
 // A run by its four signals — rate, errors, latency, bytes — and how many
 // requests were in flight: what the session's header says of each (a figure,
 // its line over the session, one line of detail), in words. Rust counts them
-// (crates/proxy/src/signals.rs); a page shared before 15.0 has none, and
-// its figures are read from the profile's slices instead.
+// (crates/proxy/src/signals.rs).
 
 import { bytes, count, duration, percent, rate, transfer } from "./format";
 import { type Key, t } from "./i18n";
-import type { Profile, SessionSummary, SessionView, Signals } from "./types";
+import type { SessionView, Signals } from "./types";
 
 export type SignalId = "rate" | "errors" | "latency" | "bytes" | "inFlight";
 
@@ -16,7 +15,8 @@ export interface SignalTile {
   label: string;
   value: string;
   detail: string;
-  tone: "plain" | "bad" | "quiet";
+  /** `client`: failures that are all the program's own (4xx), in the tone their rows and charts have */
+  tone: "plain" | "bad" | "client" | "quiet";
   /** Its line over the session, slice by slice (empty: nothing to draw). */
   series: number[];
   /** What the line is of: counts as bars, a level as steps, a measure as a line. */
@@ -37,61 +37,9 @@ export function brief(s: Signals): boolean {
  * stray ticks), and counts where a run has shares ("2 of 9"). */
 export const handful = (s: Signals): boolean => s.rate.requests < FEW;
 
-const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-
-/** The signals of a session read from its profile: what a page shared before
- * 15.0 can still say. What the profile does not hold (transport failures,
- * injected faults, sizes, first bytes, statuses) is left empty, not guessed. */
-export function signalsFromProfile(p: Profile, s: SessionSummary): Signals {
-  const timed = p.timed !== false;
-  const secs = p.wallMs / 1000;
-  const per = (n: number) => (timed && secs > 0 ? n / secs : null);
-  const bin = Math.max(p.binMs, 1e-6) / 1000;
-  const n = (b: Profile["rate"][number]) => b.ok + b.miss + b.client + b.server;
-  const requests = sum(p.rate.map(n));
-  const client = p.rate.map((b) => b.client);
-  const server = p.rate.map((b) => b.server);
-  const up = p.rate.map((b) => (b.bytesUp ?? 0) / bin);
-  const down = p.rate.map((b) => (b.bytesDown ?? 0) / bin);
-  // the most in flight within each slice
-  const flight = p.rate.map(() => 0);
-  for (const x of p.inFlight) {
-    const i = Math.min(flight.length - 1, Math.max(0, Math.floor(x.tMs / Math.max(p.binMs, 1e-6))));
-    if (i >= 0) flight[i] = Math.max(flight[i], x.n);
-  }
-  const failed = sum(client) + sum(server);
-  return {
-    timed,
-    wallMs: p.wallMs,
-    binMs: p.binMs,
-    bins: p.rate.length,
-    rate: { value: per(requests), unit: "1/s", series: p.rate.map((b) => n(b) / bin), requests: requests || s.requests },
-    errors: {
-      value: requests ? failed / requests : null,
-      series: p.rate.map((b) => b.client + b.server),
-      count: failed,
-      counts: { client: sum(client), server: sum(server), transport: 0, injected: 0 },
-      client,
-      server,
-      transport: p.rate.map(() => 0),
-      injected: p.rate.map(() => 0),
-      retries: p.rate.map((b) => b.retried ?? 0),
-      retriesTotal: sum(p.rate.map((b) => b.retried ?? 0)),
-    },
-    latency: { value: timed ? (p.p50Ms ?? null) : null, series: p.rate.map((b) => b.p50Ms), p50Ms: timed ? (p.p50Ms ?? null) : null, p95Ms: timed ? (p.p95Ms ?? null) : null, p99Ms: timed ? (p.p99Ms ?? null) : null, p95: p.rate.map((b) => b.p95Ms), p99: p.rate.map((b) => b.p99Ms) },
-    bytes: { value: per(s.bytesUp + s.bytesDown), series: up.map((u, i) => u + down[i]), upPerSec: per(s.bytesUp), downPerSec: per(s.bytesDown), up, down, upBytes: s.bytesUp, downBytes: s.bytesDown },
-    inFlight: { value: timed ? p.peakInFlight : null, series: flight, peak: p.peakInFlight, peakAtMs: p.peakAtMs },
-    firstByte: null,
-    sizes: { request: [], response: [], throughput: [], mibPerSec: null },
-    statuses: [],
-    cost: { amount: p.cost.amount, currency: p.cost.currency, operations: [] },
-    prefixes: [],
-  };
-}
-
-/** A session's signals: Rust's, or (an older share) the profile's. */
-export function signalsOf(v: Pick<SessionView, "signals" | "profile" | "summary">): Signals | null {
-  return v.signals ?? (v.profile ? signalsFromProfile(v.profile, v.summary) : null);
+/** A session's signals, as Rust counted them. */
+export function signalsOf(v: Pick<SessionView, "signals">): Signals {
+  return v.signals;
 }
 
 /** Bytes a second: "575 KiB/s". */
@@ -141,7 +89,8 @@ export function signalTiles(s: Signals): SignalTile[] {
       // of a handful, how many; of a run, the share
       value: some ? t("signal.failedOf", { n: count(s.errors.count), of: count(s.rate.requests) }) : s.errors.value == null ? "—" : percent(s.errors.value),
       detail: wrong.length ? wrong.join(" · ") : t("signal.noErrors"),
-      tone: s.errors.count > 0 ? "bad" : "plain",
+      // one failure, one colour: all of them the program's own (4xx) are in the tone their rows and charts have
+      tone: s.errors.count === 0 ? "plain" : s.errors.counts.client === s.errors.count ? "client" : "bad",
       series: few ? [] : s.errors.series,
       kind: "bars",
     },
@@ -188,25 +137,9 @@ export interface OpStats {
   few: boolean;
 }
 
-/** A run by operation: Rust's own table (`summary.operations`), or — a share
- * made before 16.0 — what its profile's kinds hold of it (no p99, and a
- * lookup that found nothing counted with its operation). */
-export function operationStats(v: Pick<SessionView, "summary" | "profile">): OpStats[] {
-  const own = v.summary.operations;
-  if (own?.length) return own.map((o) => ({ operation: o.operation, count: o.count, errorShare: o.errorShare, p50Ms: o.p50Ms, p95Ms: o.p95Ms, p99Ms: o.p99Ms, few: !!o.few || o.count < FEW }));
-  const timed = v.profile.timed !== false;
-  const by = new Map<string, OpStats & { top: number }>();
-  for (const g of v.profile.groups) {
-    const x = by.get(g.operation);
-    if (!x) by.set(g.operation, { operation: g.operation, count: g.requests, errorShare: g.errors, p50Ms: timed ? g.p50Ms : null, p95Ms: timed ? g.p95Ms : null, p99Ms: null, few: false, top: g.requests });
-    else {
-      // the percentiles of the larger of its two kinds: the profile holds no others
-      if (g.requests > x.top) (x.top = g.requests), (x.p50Ms = timed ? g.p50Ms : null), (x.p95Ms = timed ? g.p95Ms : null);
-      x.count += g.requests;
-      x.errorShare += g.errors;
-    }
-  }
-  return [...by.values()].map(({ top: _, ...o }) => ({ ...o, errorShare: o.count ? o.errorShare / o.count : 0, few: o.count < FEW })).sort((a, b) => b.count - a.count);
+/** A run by operation: Rust's own table (`summary.operations`). */
+export function operationStats(v: Pick<SessionView, "summary">): OpStats[] {
+  return v.summary.operations.map((o) => ({ operation: o.operation, count: o.count, errorShare: o.errorShare, p50Ms: o.p50Ms, p95Ms: o.p95Ms, p99Ms: o.p99Ms, few: !!o.few || o.count < FEW }));
 }
 
 /** A size bucket by its upper bound, short enough for an axis: "empty", "≤ 1.0 KiB". */

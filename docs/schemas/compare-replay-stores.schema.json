@@ -162,7 +162,7 @@
           ],
           "items": false
         },
-        "busyMs": {
+        "waitingMs": {
           "type": "array",
           "prefixItems": [
             {
@@ -181,7 +181,7 @@
         "requests",
         "p50Ms",
         "p95Ms",
-        "busyMs"
+        "waitingMs"
       ]
     },
     "plan": {

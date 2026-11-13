@@ -98,5 +98,5 @@ export function sessionStory(p: Profile): string {
   const busiest = [...p.groups].sort((a, b) => b.requests - a.requests)[0];
   const total = p.groups.reduce((n, g) => n + g.requests, 0) || 1;
   if (!timed(p)) return busiest ? t("story.untimed", { what: groupName(busiest), pct: pct(busiest.requests / total) }) : "";
-  return top ? t("story.time", { busy: duration(p.busyMs), wall: duration(p.wallMs), what: groupName(top), pct: pct(top.share) }) : "";
+  return top ? t("story.time", { busy: duration(p.waitingMs), wall: duration(p.wallMs), what: groupName(top), pct: pct(top.share) }) : "";
 }

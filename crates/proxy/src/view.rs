@@ -56,6 +56,8 @@ pub struct Query {
     pub text: Option<String>,
     /// Only the operations that did not end well.
     pub failed: bool,
+    /// Only the operations that sent a request of this kind (`GetObject`).
+    pub kind: Option<String>,
 }
 
 impl Query {
@@ -91,6 +93,10 @@ pub struct Analysis {
     /// Which operation each request belongs to, by request id (sorted: a
     /// map's buckets would cost twice as much a request).
     owner: Vec<(u64, u32)>,
+    /// The kinds of request each operation sent, as bits of `kind_names`
+    /// (the 64th holds every kind past the 63rd): what a query by kind reads.
+    kinds: Vec<u64>,
+    kind_names: Vec<String>,
     /// The first operation's start and the last end.
     span: Option<(DateTime<Utc>, DateTime<Utc>)>,
     /// The order last asked for: the next page of it does not sort again.
@@ -110,6 +116,36 @@ fn joined<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
 }
 
 impl Analysis {
+    /// `path` (a run, its `header` and `records`, analysed as this) against
+    /// its program's run before it ([`crate::fixloop::since_last`]). Its
+    /// operations are not made again, and its findings at any threshold
+    /// only when there is a run before to judge: 18.0 made both for every
+    /// `show`, a third more time and memory at a million requests.
+    pub fn since_last(
+        &self,
+        path: &std::path::Path,
+        header: &crate::session::SessionHeader,
+        records: &[reqlog::Record],
+        prices: &dyn Fn(&str) -> RequestPrices,
+    ) -> Option<crate::fixloop::SinceLast> {
+        let key = crate::program::key_of(header)?;
+        if !header.is_recording() {
+            return None;
+        }
+        let dir = crate::fixloop::folder_of(path);
+        let traces = match crate::fixloop::previous_run(&dir, &key, header.created, path) {
+            Some(_) => crate::episode::traces_of(header, records, &self.episodes),
+            None => Vec::new(),
+        };
+        let run = crate::profile::Run::with(
+            records,
+            self.profile.clone(),
+            self.observations.clone(),
+            traces,
+        );
+        crate::fixloop::since_last(&dir, path, header, records, run, prices)
+    }
+
     pub fn of(s: &Session, prices: &RequestPrices) -> Analysis {
         Analysis::of_records(&s.header, &s.records, prices)
     }
@@ -148,6 +184,29 @@ impl Analysis {
                 owner.push((*id, i as u32));
             }
         }
+        // the kinds each operation sent, a bit a kind
+        let mut kind_names: Vec<String> = Vec::new();
+        let mut kinds = vec![0u64; episodes.len()];
+        {
+            let mut by_id: Vec<(u64, u32)> = owner.clone();
+            by_id.sort_unstable_by_key(|(id, _)| *id);
+            for r in records {
+                let mut k = by_id.partition_point(|(id, _)| *id < r.id);
+                while k < by_id.len() && by_id[k].0 == r.id {
+                    let name: &str = &r.operation;
+                    let bit = match kind_names.iter().position(|n| n == name) {
+                        Some(b) => b,
+                        None if kind_names.len() < 63 => {
+                            kind_names.push(name.to_string());
+                            kind_names.len() - 1
+                        }
+                        None => 63,
+                    };
+                    kinds[by_id[k].1 as usize] |= 1 << bit;
+                    k += 1;
+                }
+            }
+        }
         // (a request two operations claim is the later's)
         owner.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
         owner.dedup_by_key(|(id, _)| *id);
@@ -170,6 +229,8 @@ impl Analysis {
             profile,
             what_if,
             owner,
+            kinds,
+            kind_names,
             span,
             order: Mutex::new(None),
         }
@@ -220,9 +281,23 @@ impl Analysis {
         }
         let eps = &self.episodes;
         let t0 = self.span.map(|s| s.0);
+        // a kind no request had narrows to nothing; one past the 63rd to every one past it
+        let kind_bit =
+            key.kind
+                .as_deref()
+                .map(|k| match self.kind_names.iter().position(|n| n == k) {
+                    Some(b) => 1u64 << b,
+                    None if self.kind_names.len() >= 63 => 1u64 << 63,
+                    None => 0,
+                });
         let keep = |i: &u32| {
             let e = &eps[*i as usize];
             if key.failed && e.outcome == Outcome::Ok {
+                return false;
+            }
+            if let Some(bit) = kind_bit
+                && self.kinds[*i as usize] & bit == 0
+            {
                 return false;
             }
             if let (Some((a, b)), Some(t0)) = (key.slice, t0)
@@ -354,9 +429,9 @@ impl Analysis {
                 let mut v = to(o);
                 if let Some(m) = v.as_object_mut() {
                     if o.episodes.len() > FINDING_EPISODES {
-                        m.insert("episodes".into(), json!(&o.episodes[..FINDING_EPISODES]));
+                        m.insert("operations".into(), json!(&o.episodes[..FINDING_EPISODES]));
                     }
-                    m.insert("episodesTotal".into(), json!(o.episodes.len()));
+                    m.insert("operationsTotal".into(), json!(o.episodes.len()));
                     if let Some(e) = o.episodes.first().and_then(|i| self.episodes.get(*i)) {
                         m.insert("firstStart".into(), json!(e.start));
                     }
@@ -376,8 +451,8 @@ impl Analysis {
         v.insert("whatIf".into(), to(&self.what_if));
         v.insert("injected".into(), json!(self.injected));
         v.insert("sdk".into(), json!(self.sdk));
-        v.insert("episodes".into(), Value::Array(first));
-        v.insert("episodesTotal".into(), json!(self.episodes.len()));
+        v.insert("operations".into(), Value::Array(first));
+        v.insert("operationsTotal".into(), json!(self.episodes.len()));
         v.insert(
             "span".into(),
             match self.span {
@@ -433,9 +508,9 @@ mod tests {
         let a = Analysis::of(&s, &RequestPrices::default());
         assert_eq!(a.episodes.len(), 1800);
         let v = a.view("p.sonde", &s.header);
-        assert_eq!(v["episodes"].as_array().unwrap().len(), PAGE);
-        assert_eq!(v["episodesTotal"], 1800);
-        let row = &v["episodes"][3];
+        assert_eq!(v["operations"].as_array().unwrap().len(), PAGE);
+        assert_eq!(v["operationsTotal"], 1800);
+        let row = &v["operations"][3];
         assert_eq!(row["index"], 3);
         assert_eq!(row["requests"], 1);
         // said once: by its phrases
@@ -445,8 +520,8 @@ mod tests {
         // the view of 1800 operations is no larger than that of 500
         let small = Analysis::of(&session(500), &RequestPrices::default());
         let (big, little) = (
-            serde_json::to_string(&v["episodes"]).unwrap().len(),
-            serde_json::to_string(&small.view("p", &s.header)["episodes"])
+            serde_json::to_string(&v["operations"]).unwrap().len(),
+            serde_json::to_string(&small.view("p", &s.header)["operations"])
                 .unwrap()
                 .len(),
         );
@@ -483,6 +558,11 @@ mod tests {
         let failed = a.page(&q(json!({ "failed": true })));
         assert_eq!(failed["total"], 36);
         assert_eq!(idx(&failed)[..2], [3, 53]);
+        // those that sent a kind of request
+        let puts = a.page(&q(json!({ "kind": "PutObject" })));
+        assert_eq!(puts["total"], 258);
+        assert_eq!(idx(&puts)[..2], [0, 7]);
+        assert_eq!(a.page(&q(json!({ "kind": "DeleteObject" })))["total"], 0);
         let named = a.page(&q(json!({ "text": "K00042" })));
         assert_eq!(idx(&named), [42]);
         assert_eq!(a.row_of(&q(json!({ "text": "k00042" })), 7), None);
@@ -520,8 +600,8 @@ mod tests {
             .position(|o| o["phrases"][0]["key"] == "obs.hot")
             .expect("a hot key");
         let o = &v["observations"][hot];
-        assert_eq!(o["episodes"].as_array().unwrap().len(), FINDING_EPISODES);
-        assert_eq!(o["episodesTotal"], 600);
+        assert_eq!(o["operations"].as_array().unwrap().len(), FINDING_EPISODES);
+        assert_eq!(o["operationsTotal"], 600);
         assert_eq!(o["firstStart"], json!(a.episodes[0].start));
         assert_eq!(a.finding_episodes(hot, 598, 10), [598, 599]);
         let q: Query = serde_json::from_value(json!({ "finding": hot, "offset": 590 })).unwrap();

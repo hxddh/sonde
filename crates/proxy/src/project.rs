@@ -157,6 +157,14 @@ pub fn parse(text: &str) -> Result<Project, String> {
         format!("{}{hint}", e.to_string().trim_end())
     })?;
     crate::fault::project_program_name(file.program.name.as_deref())?;
+    if let Some(why) = file
+        .check
+        .expect
+        .iter()
+        .find_map(|e| crate::program::expect_error(e))
+    {
+        return Err(why);
+    }
     let scenarios =
         crate::fault::project_scenarios(file.scenario.iter().map(ScenarioTable::scenario))?;
     let policy = file
@@ -248,6 +256,12 @@ mod tests {
                 "when",
             ),
             ("[program]\nname = \"\"\n", "a program's name"),
+            // words of a finding's text are no identity
+            (
+                "[check]\nexpect = [\"read again\"]\n",
+                "not a finding's identity",
+            ),
+            ("[check]\nexpect = [\"obs.retried\"]\n", "obs.retried"),
         ] {
             let e = parse(text).unwrap_err();
             assert!(e.contains(says), "{text}: {e}");

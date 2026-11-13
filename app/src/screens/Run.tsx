@@ -12,13 +12,13 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, runAgain, running, start, startedAt, stop } from "../run";
+import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, running, start, startedAt, stop } from "../run";
 import { away, compareOnOpen, endpoint, endpoints, endpointsMode, go, openSession, paneOnOpen, report, sessionsChanged, showInSidebar } from "../store";
 import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { TrialDialog } from "../ui/trial";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, SURFACE, WIDTH, PANE } from "../ui/kit";
+import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, More, SURFACE, WIDTH, PANE } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, sessionStory, STRIP } from "../ui/plots";
@@ -80,8 +80,8 @@ function CommandBar() {
             </If>
           }
         />
-        {/* the one primary of the place: Run, until a run ended and its band offers Run again (then this is the other way to run) */}
-        <If when={running()} else={<Button variant={lastRun() ? "outline" : "primary"} icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" />}>
+        {/* the one primary of the place: Run, Stop while it runs; once a run ended, the band's Run again is the one Run */}
+        <If when={running()} else={<If when={!lastRun()}><Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" /></If>}>
           <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
         </If>
       </View>
@@ -152,19 +152,34 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   // "Try under faults…": its dialog
   const trying = signal(false);
   let tried = false;
-  // the band's actions stand in one row: the primary, and beside it the others while they fit,
-  // in rank order; where they do not, they go behind `⋯` (never onto a second line). The band
-  // and its parts measure themselves: what is said of the run keeps its room first.
+  // once it ended, the band's second row: what to do next, labelled, and the one primary at its end.
+  // The row measures itself: the others stand in rank order while they fit beside the primary, the
+  // rest behind `⋯` (never on a third line, never under the figures)
   const widths = signal<Record<string, number>>({});
   const measure = (key: string) => ({ bounds }: { bounds: { size: { width: number } } }) => {
     const w = Math.round(bounds.size.width);
     if (widths()[key] !== w) widths.set({ ...widths(), [key]: w });
   };
-  const room = () => {
-    const w = widths();
-    const said = ["status", "figures", "verdict"].filter((k) => (w[k] ?? 0) > 0);
-    // (24: the band's padding; 24 between what is said and the commands; 8 before the primary)
-    return (w.band ?? 0) - 24 - said.reduce((n, k) => n + w[k] + 24, 0) - (w.primary ?? 0) - 8;
+  // (8 before the primary; never less than nothing)
+  const room = () => Math.max(0, (widths().next ?? 0) - (widths().primary ?? 0) - 8);
+  // the loop's two next steps ("See the whole run", "Try under faults…") are labelled at every width: where
+  // they do not fit beside the primary (with a `⋯` for the rest), they take the row's whole width by their
+  // words, and the rest's `⋯` and the primary a line under them. (Their widths are those measured with their
+  // icons, beside the primary: what the choice is made on does not change with it.)
+  const actionWidths = signal<Record<string, number>>({});
+  const core = () => others().slice(0, 2);
+  const needs = () => core().reduce((n, a) => n + (actionWidths()[a.id] ?? 0) + 8, 0) + (others().length > core().length ? 36 : 0);
+  const stacked = () => core().length > 0 && core().every((a) => actionWidths()[a.id] !== undefined) && room() < needs();
+  // the one Run of the place once a run ended: its command again, or the field's command when it was
+  // changed since (the field's Return runs the same). It stays on Run: what changed since this run is
+  // said here, under the band, with the way to compare the two
+  const same = () => !!r() && command().trim() === r()!.command.trim();
+  const runNext = () => {
+    const done = r();
+    if (!done || running()) return;
+    const id = same() ? done.endpoint : endpoint();
+    if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
+    start(same() ? done.command : command(), id);
   };
   const others = () => [
     // the loop in one place: change the program, run it again, see what it did
@@ -187,74 +202,58 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
     return t("run.pastBaselineBy", { what: t(`verdict.${v.what}` as never), pct: change(v.limit, v.value).slice(1, -1) });
   };
   return (
-    <View class="shrink-0" onLayout={measure("band")}>
-    <Card pad="none" testID={r() ? "run-ended" : "run-status"} class="flex-row items-center gap-6 px-3 py-2">
-      {/* what is said of the run: on one line where it fits; at the least window it takes a second, and no figure is cut */}
-      <View class="min-w-0 flex-1 flex-row flex-wrap items-center gap-x-6 gap-y-2">
-      <View onLayout={measure("status")}>
-      <If
-        when={r()}
-        else={
-          <View class="flex-row items-center gap-2">
-            <Dot tone="live" label={t("run.running")} />
-            <If when={!terminal()} else={<Strong class="tabular-nums text-foreground">{duration(props.now() - (startedAt() ?? props.now()), "counter")}</Strong>}>
-              <Figure small value={duration(props.now() - (startedAt() ?? props.now()), "counter")} label={t("run.running")} />
-            </If>
-          </View>
-        }
-      >
-        {(done) => (
-          <View class="flex-row items-center gap-2">
-            <Dot tone={done().killed ? "refused" : done().exit === 0 ? "ok" : "server"} />
-            <Strong>{done().killed ? t("run.killed") : t("run.exited", { code: `${done().exit ?? "?"}` })}</Strong>
-          </View>
-        )}
-      </If>
-      </View>
-      <If when={s()}>
-        {(x) => (
-          // the kit's inline figure, one each; a terminal's one line of words
-          <If
-            when={!terminal()}
-            else={
-              <Text class="tabular-nums text-foreground">
-                {[t("run.bandRequests", { n: x().requests }), x().errors > 0 ? t("run.bandErrors", { n: x().errors }) : "", x().misses > 0 ? t("run.bandMisses", { n: x().misses }) : "", r() ? duration(x().seconds * 1000) : "", r() && warnings() > 0 ? t("run.toLook", { n: warnings() }) : ""].filter(Boolean).join(" · ")}
-              </Text>
-            }
-          >
-            <View class="flex-row flex-wrap items-center gap-x-6 gap-y-2" onLayout={measure("figures")}>
-              {/* (at the least window they take a second line among themselves: none stands under the commands) */}
-              <Figure small value={count(x().requests)} label={t("figure.requests")} />
-              <If when={x().errors > 0}>
-                <Figure small value={count(x().errors)} label={t("figure.errors")} tone={errorTone()} />
-              </If>
-              <If when={x().misses > 0}>
-                <Figure small value={count(x().misses)} label={t("figure.notFound")} />
-              </If>
-              <If when={r()}>
-                <Figure small value={duration(x().seconds * 1000)} label={t("figure.took")} />
-              </If>
-              <If when={r() && warnings() > 0}>
-                <Figure small value={count(warnings())} label={t("figure.toLook")} tone="warn" />
+    <Card pad="none" testID={r() ? "run-ended" : "run-status"} class="shrink-0 gap-2 px-3 py-2">
+      {/* what is said of the run: on one line where it fits, wrapping among itself where not; no figure is cut */}
+      <View class="flex-row flex-wrap items-center gap-x-6 gap-y-2">
+        <If
+          when={r()}
+          else={
+            <View class="flex-row items-center gap-2">
+              <Dot tone="live" label={t("run.running")} />
+              <If when={!terminal()} else={<Strong class="tabular-nums text-foreground">{duration(props.now() - (startedAt() ?? props.now()), "counter")}</Strong>}>
+                <Figure small value={duration(props.now() - (startedAt() ?? props.now()), "counter")} label={t("run.running")} />
               </If>
             </View>
-          </If>
-        )}
-      </If>
-      <If when={verdictText()}>
-        {(v) => (
-          <View onLayout={measure("verdict")}>
-            <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "pass" : "fail"} />
-          </View>
-        )}
-      </If>
+          }
+        >
+          {(done) => (
+            <View class="flex-row items-center gap-2">
+              <Dot tone={done().killed ? "refused" : done().exit === 0 ? "ok" : "server"} />
+              <Strong>{done().killed ? t("run.killed") : t("run.exited", { code: `${done().exit ?? "?"}` })}</Strong>
+            </View>
+          )}
+        </If>
+        <If when={s()}>
+          {(x) => (
+            // the kit's inline figure, one each; a terminal's one line of words
+            <If
+              when={!terminal()}
+              else={
+                <Text class="tabular-nums text-foreground">
+                  {[t("run.bandRequests", { n: x().requests }), x().errors > 0 ? t("run.bandErrors", { n: x().errors }) : "", x().misses > 0 ? t("run.bandMisses", { n: x().misses }) : "", r() ? duration(x().seconds * 1000) : "", r() && warnings() > 0 ? t("run.toLook", { n: warnings() }) : ""].filter(Boolean).join(" · ")}
+                </Text>
+              }
+            >
+              <View class="flex-row flex-wrap items-center gap-x-6 gap-y-2">
+                <Figure small value={count(x().requests)} label={t("figure.requests")} />
+                <If when={x().errors > 0}>
+                  <Figure small value={count(x().errors)} label={t("figure.errors")} tone={errorTone()} />
+                </If>
+                <If when={x().misses > 0}>
+                  <Figure small value={count(x().misses)} label={t("figure.notFound")} />
+                </If>
+                <If when={r()}>
+                  <Figure small value={duration(x().seconds * 1000)} label={t("figure.took")} />
+                </If>
+                <If when={r() && warnings() > 0}>
+                  <Figure small value={count(warnings())} label={t("figure.toLook")} tone="warn" />
+                </If>
+              </View>
+            </If>
+          )}
+        </If>
+        <If when={verdictText()}>{(v) => <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "pass" : "fail"} />}</If>
       </View>
-      {/* a run that sent nothing kept no session (the toast said so): it is run again from its command */}
-      <If when={r() && r()!.removed}>
-        <View class="ms-auto">
-        <Button small variant="primary" icon="play" label={t("sessions.runAgain")} onPress={() => start(r()!.command, r()!.endpoint)} disabled={!r()!.command.trim()} testID="run-again-empty" />
-        </View>
-      </If>
       <If when={trying() && r() && !r()!.removed}>
         <TrialDialog
           path={r()!.path}
@@ -278,18 +277,29 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
           }}
         />
       </If>
-      <If when={r() && !r()!.removed}>
-        {/* at the band's end, in one row: what else there is to do (behind `⋯` where it does not fit), then the one primary */}
-        <View class="shrink-0 flex-row items-center gap-2">
-          <ActionRow testID="run-actions" room={room()} actions={others} />
-          {/* the loop's next step, and so the one primary here (a run that sent nothing has nothing to be compared with: it only starts again) */}
-          <View onLayout={measure("primary")}>
-            <Button small variant="primary" icon="play" label={t("sessions.runAgain")} onPress={() => (s()?.requests ? runAgain(r()!.path, r()!.command, r()!.endpoint, cwd() || null) : start(r()!.command, r()!.endpoint))} testID="run-again-band" />
+      {/* once it ended, a row of its own: the loop's next steps by their words, then the one Run of the place */}
+      <If when={r() && !terminal()}>
+        <View class={stacked() ? "gap-2" : "flex-row items-center gap-2"} onLayout={measure("next")}>
+          {/* a run that sent nothing kept no session (the toast said so): it is only run again */}
+          <View class={stacked() ? "flex-row items-center" : "min-w-0 flex-1 flex-row items-center"}>
+            <If when={!r()!.removed}>
+              <ActionRow testID="run-actions" room={stacked() ? (widths().next ?? 0) : room()} actions={stacked() ? core : others} plain={stacked()} onWidths={(w) => !stacked() && actionWidths.set({ ...actionWidths(), ...w })} />
+            </If>
+          </View>
+          <View class="flex-row items-center justify-end gap-2">
+            <If when={stacked() && !r()!.removed && others().length > core().length}>
+              <More testID="run-actions-more" actions={() => others().slice(core().length)} />
+            </If>
+            <View class="shrink-0" onLayout={measure("primary")}>
+              <Button small variant="primary" icon="play" label={same() ? t("sessions.runAgain") : t("run.start")} onPress={runNext} disabled={!!running() || (!same() && (!command().trim() || !endpoint()))} testID="run-again-band" />
+            </View>
           </View>
         </View>
       </If>
+      <If when={r() && terminal() && !r()!.removed}>
+        <ActionRow testID="run-actions" room={0} actions={others} />
+      </If>
     </Card>
-    </View>
   );
 }
 
@@ -363,7 +373,7 @@ function LiveOperations() {
   return (
     <View class="min-h-0 flex-1 gap-2" testID="run-operations">
       <StatusBand view={view()} now={now} />
-      <If when={view() && view()!.episodesTotal > 0} else={<If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}>
+      <If when={view() && view()!.operationsTotal > 0} else={<If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}>
             {/* the SDK hints only for a program that ran and still sent nothing */}
             <If
               when={!lastRun()!.killed && lastRun()!.exit !== 127}

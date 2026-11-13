@@ -231,8 +231,7 @@ pub struct Trial {
     /// Why it is not "survived", a line each.
     pub reasons: Vec<String>,
     /// The same reasons as phrases (each a sentence of one or more), for
-    /// the app to say in the reader's language. Empty in a verdict kept
-    /// before 16.0.
+    /// the app to say in the reader's language.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasons_text: Vec<Vec<Said>>,
     /// The request the verdict turns on, when it is not "survived": the
@@ -1565,9 +1564,13 @@ pub fn folder_for(session: &std::path::Path) -> std::path::PathBuf {
     session.with_file_name("trials")
 }
 
-/// The stem a trial's session file is given: `<run>.<scenario>`.
-pub fn session_stem(session: &std::path::Path, scenario: &str) -> String {
-    format!("{}.{scenario}", stem_of(session))
+/// The stem a trial's session file is given: `<run>.<scenario>`, and its
+/// strength when pressed (`<run>.slowdown-3x`): two strengths, two files.
+pub fn session_stem(session: &std::path::Path, scenario: &crate::fault::Scenario) -> String {
+    match crate::fault::pressed(scenario) {
+        Some(n) => format!("{}.{}-{n}x", stem_of(session), scenario.name),
+        None => format!("{}.{}", stem_of(session), scenario.name),
+    }
 }
 
 /// Whether a file in a run's `trials/` folder is one of that run's trial
@@ -1606,8 +1609,6 @@ pub fn remove(session: &std::path::Path) {
         }
     }
     crate::index::set(session, crate::index::Change::NoTrials);
-    // (and the file they were kept in before 18.0)
-    let _ = std::fs::remove_file(crate::index::beside(session, "trials.json"));
     // (only when nothing else is in it)
     let _ = std::fs::remove_dir(dir);
 }
@@ -1628,20 +1629,9 @@ pub fn save(session: &std::path::Path, trials: &[Trial]) -> std::io::Result<()> 
     Ok(())
 }
 
-/// A run's trials; none when it was never tried. Kept beside it before
-/// 18.0 (`<run>.trials.json`): read, and moved into the index.
+/// A run's trials; none when it was never tried.
 pub fn load(session: &std::path::Path) -> Vec<Trial> {
-    crate::index::get(session)
-        .trials
-        .or_else(|| {
-            crate::index::moved(
-                session,
-                "trials.json",
-                |b| serde_json::from_slice::<Vec<Trial>>(b).ok(),
-                |t| crate::index::Change::Trials(t.clone()),
-            )
-        })
-        .unwrap_or_default()
+    crate::index::get(session).trials.unwrap_or_default()
 }
 
 /// A run's trials in a word: the worst standing among them (broke, then
@@ -1721,6 +1711,7 @@ pub fn record(
     if trials.is_empty() {
         return Ok(());
     }
+    let _held = crate::index::hold(dir, "verdicts");
     let mut all = read_verdicts(dir);
     let mine = all.entry(program.to_string()).or_default();
     for t in trials {
@@ -3937,5 +3928,30 @@ mod tests {
             record(dir, "q", "q.sonde", at(4), std::slice::from_ref(&fixed)).unwrap();
         }
         assert_eq!(read_verdicts(dir)["q"]["slowdown"].len(), HISTORY_KEPT);
+    }
+
+    #[test]
+    fn verdicts_written_at_once_are_all_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let clean = vec![put(1, 0, "state", 200)];
+        let run = vec![fault(put(1, 0, "state", 503), "slowdown")];
+        let broke = judge(&slowdown(), &clean, 0, &run, 0);
+        let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        std::thread::scope(|s| {
+            for i in 0..16 {
+                let (dir, broke) = (dir.path(), &broke);
+                s.spawn(move || {
+                    record(
+                        dir,
+                        &format!("p{i}"),
+                        "r.sonde",
+                        at,
+                        std::slice::from_ref(broke),
+                    )
+                    .unwrap()
+                });
+            }
+        });
+        assert_eq!(read_verdicts(dir.path()).len(), 16);
     }
 }

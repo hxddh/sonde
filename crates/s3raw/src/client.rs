@@ -507,6 +507,7 @@ impl S3Client {
                 record.response_bytes = Some(body.len() as u64);
                 fill_ids(&mut record, &headers);
                 record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+                listed(&mut record, &body);
                 if !(200..300).contains(&status) && !body.is_empty() {
                     record.error_body = Some(String::from_utf8_lossy(&body).to_string());
                 }
@@ -739,6 +740,7 @@ impl S3Client {
                 record.response_bytes = Some(body.len() as u64);
                 fill_ids(&mut record, &headers);
                 record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
+                listed(&mut record, &body);
                 if !(200..300).contains(&status) && !body.is_empty() {
                     record.error_body = Some(String::from_utf8_lossy(&body).to_string());
                 }
@@ -981,6 +983,18 @@ pub fn header_pairs(map: &http::HeaderMap) -> Vec<(String, String)> {
             )
         })
         .collect()
+}
+
+/// A listing answered well says on its record how many keys it listed
+/// ([`reqlog::KEYS_HEADER`]).
+fn listed(record: &mut Record, body: &[u8]) {
+    if reqlog::is_listing(&record.operation) && record.status.is_some_and(|s| s < 300) {
+        let mut k = reqlog::KeyCounter::default();
+        k.feed(body);
+        record
+            .response_headers
+            .push(Header::new(reqlog::KEYS_HEADER, k.keys.to_string()));
+    }
 }
 
 /// Fills a record's request id and host id from response headers.

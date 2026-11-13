@@ -112,7 +112,7 @@ fn figures_line(c: &RunChange) -> String {
     format!(
         "requests {} · waiting {} · cost ≈ {}",
         moved(c.requests.0 as f64, c.requests.1 as f64, n),
-        moved(c.busy_ms.0, c.busy_ms.1, ms_text),
+        moved(c.waiting_ms.0, c.waiting_ms.1, ms_text),
         moved(c.cost.0, c.cost.1, |v| money_text(v, &c.currency)),
     )
 }
@@ -124,6 +124,14 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(why) = &since.unsaved {
         out.push(format!("note: {why}"));
+    }
+    if let Some(exit) = since.failed {
+        out.push(paint(
+            &format!("the run failed (exit {exit}); not compared"),
+            "33",
+            color,
+        ));
+        return out;
     }
     let (Some(c), Some(previous)) = (&since.change, &since.previous) else {
         return out;
@@ -147,15 +155,9 @@ pub(super) fn since_last(
     records: &[Record],
     a: &Analysis,
 ) -> Option<SinceLast> {
-    let run = sonde_proxy::profile::Run::of(records, a.profile.clone(), a.observations.clone());
-    sonde_proxy::fixloop::since_last(
-        &sonde_proxy::fixloop::folder_of(path),
-        path,
-        header,
-        records,
-        run,
-        &|endpoint| request_prices_for(s, endpoint),
-    )
+    a.since_last(path, header, records, &|endpoint| {
+        request_prices_for(s, endpoint)
+    })
 }
 
 #[cfg(test)]

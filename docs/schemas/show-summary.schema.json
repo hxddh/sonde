@@ -75,6 +75,13 @@
       "items": {
         "$ref": "#/$defs/trial"
       }
+    },
+    "since": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, back, new, open), or `failed` (the exit code of a run that failed: not compared). Null for a session that is no run of a program."
     }
   },
   "required": [
@@ -153,7 +160,7 @@
         "errors": {
           "type": "integer"
         },
-        "busyMs": {
+        "waitingMs": {
           "type": "number",
           "description": "Time with one of these in flight."
         },
@@ -190,7 +197,7 @@
         "missed",
         "requests",
         "errors",
-        "busyMs",
+        "waitingMs",
         "p50Ms",
         "p95Ms"
       ]
@@ -218,9 +225,9 @@
             "$ref": "#/$defs/phrase"
           }
         },
-        "episodes": {
+        "operations": {
           "type": "array",
-          "description": "The operations it is about (their places in `episodes`).",
+          "description": "The operations it is about (their places in the session's `operations`).",
           "items": {
             "type": "integer"
           }
@@ -268,7 +275,7 @@
         "level",
         "text",
         "phrases",
-        "episodes",
+        "operations",
         "impact"
       ]
     },

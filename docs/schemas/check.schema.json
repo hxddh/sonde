@@ -87,6 +87,10 @@
     "noBaseline": {
       "type": "string",
       "description": "`--baseline auto` found none: why, and for which program."
+    },
+    "change": {
+      "type": "object",
+      "description": "With a baseline: the run against it, as `compare -f json` writes two runs (findings at any threshold, so less is not fixed). What the comment's figures, kinds and findings say."
     }
   },
   "required": [
@@ -133,7 +137,7 @@
         "requests": {
           "type": "integer"
         },
-        "busyMs": {
+        "waitingMs": {
           "type": "number"
         },
         "wallMs": {
@@ -162,7 +166,7 @@
         "path",
         "created",
         "requests",
-        "busyMs",
+        "waitingMs",
         "wallMs",
         "cost",
         "currency",

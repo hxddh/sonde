@@ -260,7 +260,7 @@ pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) 
     // never the whole session: a request each finding keeps is among the ids
     // it does not name. Those left are added up where they are, not copied
     let left = || records.iter().filter(|r| !gone.contains(&r.id));
-    let mut waiting = crate::profile::busy_ms_of(left());
+    let mut waiting = crate::profile::waiting_ms_of(left());
     for o in saving.iter().filter(|o| o.saves_requests == 0) {
         // its figure was reckoned with every request there: with one of
         // them gone it is another figure, and is left out
@@ -281,7 +281,7 @@ pub fn what_if(records: &[Record], profile: &Profile, findings: &[Observation]) 
         .sum();
     Some(WhatIf {
         requests: (records.len(), left().count()),
-        waiting_ms: (profile.busy_ms, waiting.clamp(0.0, profile.busy_ms)),
+        waiting_ms: (profile.waiting_ms, waiting.clamp(0.0, profile.waiting_ms)),
         cost: (profile.cost.amount, cost.min(profile.cost.amount)),
         currency: profile.cost.currency.clone(),
         findings: counted.len(),

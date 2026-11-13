@@ -111,20 +111,9 @@ fn the_demo_records_a_session_that_every_command_reads() {
     assert_eq!(by_name.status.code(), Some(0));
     assert!(stdout(&by_name).contains("28 requests"));
 
-    // the same run against itself is no session and its replay: `diff`
-    // (kept for 18.0) says its new form, and that this is no replay
+    // the same run against itself: no change
     let path = t.path().join("data/sessions").join(&name);
     let p = path.to_str().unwrap();
-    for format in ["table", "json"] {
-        let diff = sonde(t.path(), &["diff", p, p, "-f", format]);
-        let err = String::from_utf8_lossy(&diff.stderr).into_owned();
-        assert_eq!(diff.status.code(), Some(64), "{err}");
-        assert!(diff.stdout.is_empty(), "{}", stdout(&diff));
-        assert!(
-            err.contains("`sonde diff` is now `sonde compare ") && err.contains("is not a replay"),
-            "{err}"
-        );
-    }
     let same = stdout(&sonde(t.path(), &["compare", p, p]));
     assert!(same.starts_with("no change"), "{same}");
     assert!(same.contains("requests   28 (no change)"), "{same}");
@@ -411,6 +400,36 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
     assert_eq!(o.status.code(), Some(0), "{md}");
     assert!(md.contains("**Against the baseline**"), "{md}");
     assert!(md.contains("[The report](https://x.test/r)"), "{md}");
+    // the program's status heads it; JSON says it too
+    let o = sonde(
+        t.path(),
+        &[
+            "check",
+            &names[1],
+            "--max-requests",
+            "1000",
+            "-f",
+            "markdown",
+            "--program-exit",
+            "3",
+        ],
+    );
+    let md = stdout(&o);
+    assert!(md.contains("> ❌ **The program failed** (exit 3)"), "{md}");
+    let o = sonde(
+        t.path(),
+        &[
+            "check",
+            &names[1],
+            "--max-requests",
+            "1000",
+            "-f",
+            "json",
+            "--program-exit",
+            "3",
+        ],
+    );
+    assert!(stdout(&o).contains("\"programExit\": 3"), "{}", stdout(&o));
 }
 
 #[test]
@@ -692,7 +711,6 @@ fn every_command_refuses_a_format_it_does_not_write() {
         &["bucket", "size", "-b", "b", "-f", "markdown"][..],
         &["bucket", "uploads", "-b", "b", "-f", "github"],
         &["bucket", "abort-uploads", "-b", "b", "-f", "json"],
-        &["du", "-b", "b", "-f", "markdown"],
         &["probe", "list", "-f", "csv"],
         &["probe", "-b", "scratch", "-f", "github"],
         &["layout", "inspect", "-b", "b", "-f", "csv"],
@@ -797,6 +815,13 @@ fn run_exits_as_a_shell_would_when_a_signal_ends_the_program() {
         "{}",
         String::from_utf8_lossy(&o.stderr)
     );
+    // the run that failed is kept as one: compared with nothing
+    let s = sonde(t.path(), &["show"]);
+    assert!(
+        stdout(&s).contains("the run failed (exit 143); not compared"),
+        "{}",
+        stdout(&s)
+    );
 }
 
 fn stderr(o: &Output) -> String {
@@ -822,13 +847,10 @@ const A_LOG_LINE: &str = "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E5
 fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
     let t = tempfile::tempdir().unwrap();
     let name = demo_session(t.path());
-    // compare and diff by name, as show and check take one
+    // compare by name, as show and check take one
     let c = sonde(t.path(), &["compare", &name, &name]);
     assert_eq!(c.status.code(), Some(0), "{}", stderr(&c));
     assert!(stdout(&c).contains("no change"), "{}", stdout(&c));
-    let d = sonde(t.path(), &["diff", &name, &name]);
-    assert_eq!(d.status.code(), Some(64), "two runs are not a replay");
-    assert!(stderr(&d).contains("sonde compare"), "{}", stderr(&d));
     // a replay opens it too (and stops at the confirmation: nothing is sent)
     let r = sonde(
         t.path(),
@@ -844,32 +866,19 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
     );
     assert_eq!(r.status.code(), Some(77), "{}", stderr(&r));
     assert!(stderr(&r).contains("Replay 28 requests"), "{}", stderr(&r));
-    // and `replay`, kept for 18.0, says what it is now and does the same
-    let r = sonde(
-        t.path(),
-        &[
-            "--url",
-            "http://127.0.0.1:9",
-            "--path-style",
-            "replay",
-            &name,
-        ],
-    );
-    assert_eq!(r.status.code(), Some(77), "{}", stderr(&r));
-    assert!(
-        stderr(&r).contains("`sonde replay` is now `sonde compare ")
-            && stderr(&r).contains("Replay 28 requests"),
-        "{}",
-        stderr(&r)
-    );
     // a name that is no session is said, with where it was looked for
     for args in [
         vec!["compare", "nosuch", name.as_str()],
-        vec!["diff", name.as_str(), "nosuch"],
-        vec!["replay", "nosuch", "--url", "http://127.0.0.1:9"],
+        vec![
+            "compare",
+            "nosuch",
+            "--replay",
+            "adhoc",
+            "--url",
+            "http://127.0.0.1:9",
+        ],
         vec!["show", "nosuch"],
         vec!["check", "nosuch", "--max-requests", "1"],
-        vec!["export", "nosuch"],
         vec!["share", "--otlp", "nosuch"],
     ] {
         let o = sonde(t.path(), &args);
@@ -921,31 +930,29 @@ fn the_newest_session_is_the_newest_recording_not_an_import() {
 #[test]
 fn what_a_command_cannot_do_is_said_with_what_does_it() {
     let t = tempfile::tempdir().unwrap();
-    // --log-out is gone (18.0): refused, with where the requests are
+    // flags and commands of earlier versions are unknown, as any other
     for args in [
-        vec!["--log-out", "x.har", "run", "--", "true"],
         vec!["--log-out", "x.har", "endpoints", "list"],
+        vec!["proxy", "--no-delete"],
+        vec!["proxy", "--read-only"],
+        vec!["share", "--json"],
+        vec!["export"],
+        vec!["watch"],
+        vec!["replay", "x.sonde"],
+        vec!["diff", "a.sonde", "b.sonde"],
+        vec!["du", "-b", "b"],
+        vec!["mpu", "scan", "-b", "b"],
+        vec!["bucket", "scan", "-b", "b"],
+        vec!["compare", "x.sonde", "--replay", "e", "--in-place"],
     ] {
         let o = sonde(t.path(), &args);
-        assert_eq!(o.status.code(), Some(64), "{args:?}");
+        assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
         assert!(
-            stderr(&o).contains("--log-out is gone") && stderr(&o).contains("show FILE -f json"),
-            "{}",
+            stderr(&o).contains("unexpected argument")
+                || stderr(&o).contains("unrecognized subcommand"),
+            "{args:?}: {}",
             stderr(&o)
         );
-        assert!(!Path::new("x.har").exists());
-    }
-    // one way to say the recording policy: --policy, --allow-writes for short
-    for (flag, is) in [
-        ("--no-delete", "--policy no-delete"),
-        ("--read-only", "--policy read-only"),
-    ] {
-        let o = sonde(
-            t.path(),
-            &["--url", "http://127.0.0.1:9", "run", flag, "--", "true"],
-        );
-        assert_eq!(o.status.code(), Some(64), "{flag}: {}", stderr(&o));
-        assert!(stderr(&o).contains(is), "{flag}: {}", stderr(&o));
     }
     // no endpoint: how to add one, both ways
     let o = sonde(t.path(), &["run", "--", "true"]);
@@ -972,20 +979,6 @@ fn what_a_command_cannot_do_is_said_with_what_does_it() {
     let o = sonde(t.path(), &["share", "--otlp"]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     assert!(stdout(&o).contains("resourceSpans"), "{}", stdout(&o));
-    // and `export`, kept for 18.0, says so and writes the same
-    let o = sonde(t.path(), &["export"]);
-    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
-    assert!(
-        stderr(&o).contains("`sonde export` is now `sonde share --otlp`"),
-        "{}",
-        stderr(&o)
-    );
-    assert!(stdout(&o).contains("resourceSpans"), "{}", stdout(&o));
-    // share --json is gone: `show -f json` is the session as data
-    assert_eq!(
-        sonde(t.path(), &["share", "--json"]).status.code(),
-        Some(64)
-    );
     // a session without a failure says so, when only failures are asked for
     let o = sonde(t.path(), &["show", "--errors", "--requests"]);
     let shown = stdout(&o);
@@ -1047,10 +1040,7 @@ fn a_commands_help_lists_the_formats_it_writes_and_the_options_it_uses() {
     for cmd in ["show", "sessions", "check", "share"] {
         let h = help(&[cmd]);
         assert!(h.contains("--data-dir"), "{cmd}: {h}");
-        assert!(
-            !h.contains("--url") && !h.contains("--rate") && !h.contains("--log-out"),
-            "{cmd}: {h}"
-        );
+        assert!(!h.contains("--url") && !h.contains("--rate"), "{cmd}: {h}");
     }
     // (still taken where it was always taken: it is hidden, not gone)
     assert_eq!(
@@ -1119,6 +1109,39 @@ fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::pat
     file
 }
 
+/// `sonde check | head`: the reader gone before a line is written, the
+/// command still ends with its own exit code, not 0.
+#[cfg(unix)]
+#[test]
+fn an_exit_code_survives_a_closed_pipe() {
+    let t = tempfile::tempdir().unwrap();
+    demo_file(t.path());
+    let closed = |args: &[&str]| {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+            .args(args)
+            .env("SONDE_CONFIG_DIR", t.path().join("config"))
+            .env("SONDE_DATA_DIR", t.path().join("data"))
+            .stdout(writer)
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(!err.contains("panicked"), "{err}");
+        o.status.code()
+    };
+    for _ in 0..3 {
+        assert_eq!(closed(&["check", "--max-requests", "10"]), Some(1));
+        assert_eq!(
+            closed(&["check", "--max-requests", "10", "-f", "json"]),
+            Some(1)
+        );
+        assert_eq!(closed(&["show", "--all"]), Some(0));
+        assert_eq!(closed(&["show", "-f", "json"]), Some(0));
+    }
+}
+
 #[test]
 fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     let t = tempfile::tempdir().unwrap();
@@ -1145,7 +1168,7 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     assert_eq!(listed[0]["requests"], 28, "{listed}");
     assert_eq!(listed[0]["program"], "sonde demo");
     assert!(listed[0]["seconds"].as_f64().unwrap() > 0.0);
-    // one that is missing is made by the listing (a session of before 16)
+    // one that is missing is made by the listing
     sonde_proxy::index::set(&file, sonde_proxy::index::Change::NoCounted);
     assert!(!counted());
     assert!(stdout(&sonde(t.path(), &["sessions"])).contains("sonde demo"));
@@ -1158,6 +1181,11 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
         stdout(&kept)
     );
     assert!(file.is_file());
+    // a dry run that would delete: 4, and nothing deleted
+    let dry = sonde(t.path(), &["sessions", "prune", "--keep", "0"]);
+    assert_eq!(dry.status.code(), Some(4), "{}", stdout(&dry));
+    assert!(file.is_file());
+    assert_eq!(kept.status.code(), Some(0));
     // removed, and what was counted of it with it
     let gone = sonde(t.path(), &["sessions", "prune", "--keep", "0", "--yes"]);
     assert!(stdout(&gone).contains("deleted "), "{}", stdout(&gone));
@@ -1244,7 +1272,7 @@ fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
             .iter()
             .find(|k| k["operation"] == g["operation"] && k["missed"] == g["missed"])
             .unwrap();
-        assert_eq!(g["busyMs"][0], s["waitedMs"], "{g} {s}");
+        assert_eq!(g["waitingMs"][0], s["waitedMs"], "{g} {s}");
     }
 }
 
@@ -1508,15 +1536,14 @@ fn a_check_of_trials_alone_has_no_failed_budget_inside_it() {
         "python etl.py",
         "2026-11-09T02:00:00Z",
     );
-    // a verdict kept beside the run before 18.0: read, and moved into the index
-    let verdicts = file.with_file_name("run.trials.json");
-    std::fs::write(
-        &verdicts,
+    // a verdict kept in the folder's index
+    let broke: Vec<sonde_proxy::trial::Trial> = serde_json::from_str(
         r#"[{"scenario":"slowdown","about":"503 SlowDown","standing":"broke","exit":1,"cleanExit":0,
             "faults":2,"retried":0,"droppedReads":0,"droppedWrites":2,"attempts":1,"requests":10,
             "cleanRequests":13,"leftUploads":0,"wroteTwice":0,"reasons":["exited 1"]}]"#,
     )
     .unwrap();
+    sonde_proxy::trial::save(&file, &broke).unwrap();
     let c = sonde(t.path(), &["check", file.to_str().unwrap(), "-f", "json"]);
     assert_eq!(c.status.code(), Some(1), "{}{}", stdout(&c), stderr(&c));
     let doc: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
@@ -1596,7 +1623,7 @@ fn spark_submit_is_given_s3as_endpoint_and_tls_its_certificate() {
 }
 
 #[test]
-fn the_help_lists_fourteen_commands_at_most_and_the_folded_ones_say_their_new_form() {
+fn the_help_lists_fourteen_commands_at_most() {
     let t = tempfile::tempdir().unwrap();
     let help = stdout(&sonde(t.path(), &["--help"]));
     let listed: Vec<&str> = help
@@ -1606,42 +1633,6 @@ fn the_help_lists_fourteen_commands_at_most_and_the_folded_ones_say_their_new_fo
         .filter(|n| *n != "help")
         .collect();
     assert!(listed.len() <= 14, "{listed:?}");
-    for gone in ["watch", "export", "replay", "diff", "mpu", "du"] {
-        assert!(!listed.contains(&gone), "{gone} is listed: {listed:?}");
-    }
-    for (old, new) in [
-        (
-            vec!["du", "-b", "b"],
-            "`sonde du` is now `sonde bucket size`",
-        ),
-        (
-            vec!["mpu", "scan", "-b", "b"],
-            "`sonde mpu scan` is now `sonde bucket uploads`",
-        ),
-    ] {
-        let o = sonde(t.path(), &old);
-        assert!(stderr(&o).contains(new), "{old:?}: {}", stderr(&o));
-    }
-}
-
-#[test]
-fn a_config_of_17_still_loads_and_says_what_is_gone() {
-    let t = tempfile::tempdir().unwrap();
-    let config = t.path().join("config");
-    std::fs::create_dir_all(&config).unwrap();
-    std::fs::write(
-        config.join("config.toml"),
-        "[settings]\nread-only = true\nreqlog-capacity = 100\n",
-    )
-    .unwrap();
-    let o = sonde(t.path(), &["endpoints", "list"]);
-    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
-    assert!(
-        stderr(&o).contains("`read-only` is no longer a setting")
-            && stderr(&o).contains("`reqlog-capacity` is no longer read"),
-        "{}",
-        stderr(&o)
-    );
 }
 
 /// The fix loop on recorded runs of one boto3 program: `show` says each
@@ -1736,5 +1727,244 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
         stderr(&none).contains("the first run of `etl`"),
         "{}",
         stderr(&none)
+    );
+    // show says in JSON what it says in text: the change since the run before
+    let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["show", "etl-3-no-head", "-f", "json"],
+    )))
+    .unwrap();
+    assert_eq!(
+        j["since"]["findings"][0]["state"], "fixed",
+        "{}",
+        j["since"]
+    );
+    let j: serde_json::Value = serde_json::from_str(&stdout(&sonde(
+        t.path(),
+        &["show", "etl-3-no-head", "--summary", "-f", "json"],
+    )))
+    .unwrap();
+    assert_eq!(
+        j["since"]["findings"][0]["state"], "fixed",
+        "{}",
+        j["since"]
+    );
+
+    // a run that crashed is compared with nothing, and the next with the run before it
+    let mut fixture = String::new();
+    std::io::Read::read_to_string(
+        &mut flate2::read::MultiGzDecoder::new(
+            std::fs::File::open(dir.join("etl-3-no-head.sonde")).unwrap(),
+        ),
+        &mut fixture,
+    )
+    .unwrap();
+    let (header, records) = fixture.split_once('\n').unwrap();
+    let mut header: serde_json::Value = serde_json::from_str(header).unwrap();
+    header["created"] = "2030-01-01T00:00:00Z".into();
+    let crashed = dir.join("etl-6-crashed.sonde");
+    std::fs::write(&crashed, format!("{header}\n{records}")).unwrap();
+    sonde_proxy::index::set(&crashed, sonde_proxy::index::Change::Exit(3));
+    let s = stdout(&sonde(t.path(), &["show", "etl-6-crashed"]));
+    assert!(s.contains("the run failed (exit 3); not compared"), "{s}");
+    assert!(!s.contains("fixed"), "{s}");
+    let c = stdout(&sonde(
+        t.path(),
+        &["compare", "etl-5-undone", "etl-6-crashed"],
+    ));
+    assert!(
+        c.contains("the run failed (exit 3); its findings are not compared"),
+        "{c}"
+    );
+    assert!(!c.contains("✓ fixed"), "{c}");
+}
+
+/// `check --init` names a program: what was kept under its command goes
+/// with it, its baseline and its trials' verdicts.
+#[test]
+fn check_init_carries_the_baseline_and_verdicts_to_the_programs_name() {
+    let t = tempfile::tempdir().unwrap();
+    let run = session_of(
+        t.path(),
+        "run.sonde",
+        "python etl.py",
+        "2026-11-09T02:00:00Z",
+    );
+    let set = sonde(
+        t.path(),
+        &["check", run.to_str().unwrap(), "--set-baseline"],
+    );
+    assert_eq!(set.status.code(), Some(0), "{}", stderr(&set));
+    let dir = t.path().join("data/sessions");
+    std::fs::write(
+        dir.join("verdicts.json"),
+        r#"{"python etl.py":{"slowdown":[{"at":"2026-11-09T02:00:00Z","standing":"broke","run":"run.sonde"}]}}"#,
+    )
+    .unwrap();
+    let cfg = t.path().join("sonde.toml");
+    let init = sonde(
+        t.path(),
+        &[
+            "check",
+            run.to_str().unwrap(),
+            "--init",
+            "--config",
+            cfg.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    assert!(
+        stderr(&init).contains(
+            "what was kept for `python etl.py` (baselines.json, verdicts.json) now goes by \"etl\""
+        ),
+        "{}",
+        stderr(&init)
+    );
+    let read = |f: &str| -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(dir.join(f)).unwrap()).unwrap()
+    };
+    assert_eq!(
+        read("baselines.json"),
+        serde_json::json!({"etl": "run.sonde"})
+    );
+    assert_eq!(
+        read("verdicts.json")["etl"]["slowdown"][0]["standing"],
+        "broke"
+    );
+    assert!(read("verdicts.json").get("python etl.py").is_none());
+}
+
+/// `[check] expect` names findings by identity: words of a finding's text,
+/// or a kind sonde does not find, are a mistake in sonde.toml.
+#[test]
+fn an_expect_that_is_no_findings_identity_is_a_usage_error() {
+    let t = tempfile::tempdir().unwrap();
+    let run = session_of(
+        t.path(),
+        "run.sonde",
+        "python etl.py",
+        "2026-11-09T02:00:00Z",
+    );
+    let cfg = t.path().join("sonde.toml");
+    for (expect, ok) in [
+        ("obs.hot", true),
+        ("obs.hot|b/jobs/1794558464595/x", true),
+        ("read again", false),
+        ("obs.retried", false),
+    ] {
+        std::fs::write(
+            &cfg,
+            format!("[check]\nmax-requests = 100000\nexpect = [{expect:?}]\n"),
+        )
+        .unwrap();
+        let c = sonde(
+            t.path(),
+            &[
+                "check",
+                run.to_str().unwrap(),
+                "--config",
+                cfg.to_str().unwrap(),
+            ],
+        );
+        if ok {
+            assert_eq!(c.status.code(), Some(0), "{expect}: {}", stderr(&c));
+        } else {
+            assert_eq!(c.status.code(), Some(64), "{expect}");
+            assert!(
+                stderr(&c).contains("is not a finding's identity"),
+                "{}",
+                stderr(&c)
+            );
+        }
+    }
+}
+
+#[test]
+fn an_import_says_what_it_left_out_and_no_time_it_does_not_have() {
+    let t = tempfile::tempdir().unwrap();
+    // CloudTrail, one event a line: a cut line and another service's event
+    let trail = t.path().join("trail.json");
+    std::fs::write(
+        &trail,
+        [
+            r#"{"eventTime":"2031-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"a"}}"#,
+            r#"{"eventTime":"2031-02-06T00:00:02Z","eventSource":"ec2.amazonaws.com","eventName":"RunInstances"}"#,
+            r#"{"eventTime":"2031-02-06T00:00:03Z","eventSource":"s3.amaz"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let o = sonde(t.path(), &["import", trail.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let err = stderr(&o);
+    assert!(err.contains("1 line could not be read"), "{err}");
+    assert!(err.contains("1 event left out"), "{err}");
+    // no latency in CloudTrail: no p95, no waiting
+    let table = stdout(&o);
+    let row = table.lines().find(|l| l.contains("GetObject")).unwrap();
+    assert!(row.contains('—') && !row.contains(" ms"), "{table}");
+    // an access log to the second: its waiting would be sonde's spreading
+    let log = t.path().join("two.log");
+    std::fs::write(&log, A_LOG_LINE.repeat(2)).unwrap();
+    let o = sonde(t.path(), &["import", log.to_str().unwrap()]);
+    let shown = stdout(&o);
+    assert!(!shown.contains(", waiting"), "{shown}");
+    assert!(shown.contains("so the waiting, is not known"), "{shown}");
+}
+
+#[test]
+fn a_layout_asked_for_by_kind_and_not_there_is_said() {
+    let t = tempfile::tempdir().unwrap();
+    let d = t.path().join("files");
+    std::fs::create_dir_all(d.join("logs")).unwrap();
+    std::fs::write(d.join("logs/a.txt"), "x").unwrap();
+    let dir = d.to_str().unwrap();
+    let o = sonde(
+        t.path(),
+        &["layout", "inspect", "--dir", dir, "--kind", "slatedb"],
+    );
+    assert_eq!(o.status.code(), Some(4), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("is not a SlateDB layout"),
+        "{}",
+        stderr(&o)
+    );
+    // any prefix has a write cadence
+    let o = sonde(
+        t.path(),
+        &["layout", "inspect", "--dir", dir, "--kind", "generic"],
+    );
+    assert_ne!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("is not a"), "{}", stderr(&o));
+}
+
+#[test]
+fn an_endpoint_id_taken_is_refused_and_test_says_how_to_name_one() {
+    let t = tempfile::tempdir().unwrap();
+    let add = |id: &str, more: &[&str]| {
+        let mut args = vec!["endpoints", "add", id, "http://127.0.0.1:9"];
+        args.extend(more);
+        sonde(t.path(), &args)
+    };
+    assert_eq!(add("a", &[]).status.code(), Some(0));
+    let again = add("a", &[]);
+    assert_eq!(again.status.code(), Some(64));
+    assert!(stderr(&again).contains("--replace"), "{}", stderr(&again));
+    assert_eq!(add("a", &["--replace"]).status.code(), Some(0));
+    assert_eq!(add("b", &[]).status.code(), Some(0));
+    // two: named by its argument, not --endpoint
+    let o = sonde(t.path(), &["endpoints", "test"]);
+    assert_eq!(o.status.code(), Some(64));
+    assert!(
+        stderr(&o).contains("`sonde endpoints test ID` (a, b)"),
+        "{}",
+        stderr(&o)
+    );
+    let o = sonde(t.path(), &["endpoints", "test", "c"]);
+    assert_eq!(o.status.code(), Some(64));
+    assert!(
+        stderr(&o).contains("the configured ones are a, b"),
+        "{}",
+        stderr(&o)
     );
 }

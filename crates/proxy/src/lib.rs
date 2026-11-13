@@ -216,6 +216,7 @@ impl Written {
         if order.is_empty() {
             return Ok(());
         }
+        let _held = crate::index::hold(&dir, "written");
         let mut all = read_written(&dir);
         let keys = all.entry(program).or_default().entry(endpoint).or_default();
         keys.retain(|k| !set.contains(k));
@@ -1841,7 +1842,10 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // gone through (or the program stopped reading it), its time the whole
     // exchange's
     record.first_byte_ms = Some(record.latency_ms);
+    let keys = (reqlog::is_listing(&record.operation) && status.is_success())
+        .then(reqlog::KeyCounter::default);
     let mut pending = Pending {
+        keys,
         record: Some(record),
         log: shared.clone(),
         received,
@@ -1859,7 +1863,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         // goes, and the record is logged, when the body does
         .map(move |piece| match piece {
             Ok(chunk) => {
-                pending.count(chunk.len());
+                pending.count(&chunk);
                 Ok(Frame::data(chunk))
             }
             // the status went out already: the record is what says the
@@ -2102,11 +2106,16 @@ struct Pending {
     cut: Option<String>,
     /// The cut sonde makes itself (a trial's scenario).
     cutting: Option<Cutting>,
+    /// A listing's keys, as its body goes through.
+    keys: Option<reqlog::KeyCounter>,
 }
 
 impl Pending {
-    fn count(&mut self, n: usize) {
-        self.read += n as u64;
+    fn count(&mut self, piece: &[u8]) {
+        self.read += piece.len() as u64;
+        if let Some(k) = &mut self.keys {
+            k.feed(piece);
+        }
     }
 
     fn cut(&mut self, why: &std::io::Error) {
@@ -2140,6 +2149,11 @@ impl Drop for Pending {
                     self.read,
                     if self.read == 1 { "" } else { "s" }
                 ));
+            }
+            // (a listing cut short listed no number of keys)
+            if let Some(k) = self.keys.take().filter(|_| r.transport_error.is_none()) {
+                r.response_headers
+                    .push(Header::new(reqlog::KEYS_HEADER, k.keys.to_string()));
             }
             self.log.log.push(r);
         }

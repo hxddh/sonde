@@ -2,6 +2,7 @@
 
 import { expect, open, test } from "nsh/test";
 import { desktop, place } from "./helpers";
+import type { Signals } from "../src/types";
 
 test("a first launch welcomes; its demo makes Run ready; the sidebar hides and comes back", async () => {
   const app = await open("../App.tsx", desktop);
@@ -189,7 +190,7 @@ test("a trial reads as figures (the faults and retries, the wait, the load), and
   const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 2, jitter: false, requests: 96, cleanRequests: 64, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
   expect(trialText({ ...base, standing: "survived", faults: 35, retried: 35, backoffMs: [101, 103, 105] })).toBe("35 faults, all retried · after 101 ms to 105 ms, in step · 1.5× the requests");
   expect(trialText({ ...base, standing: "broke", faults: 2, retried: 0, droppedWrites: 2, exit: 1, requests: 64 })).toBe("2 faults, 0 retried");
-  // why: Rust's phrases in the reader's language (two make one sentence), its English for a verdict kept before 16.0
+  // why: Rust's phrases in the reader's language (two make one sentence), its English where a reason has no phrase
   const why = { ...base, standing: "broke" as const, faults: 2, retried: 0, droppedWrites: 2, reasons: ["2 writes failed and were never sent again, and the program exited 0", "an older reason"] };
   expect(trialReasons(why)).toEqual(why.reasons);
   const said = [[{ key: "trial.why.writes", args: { n: "2", s: "s", it: "them", was: "were" } }, { key: "trial.why.exit0" }], []];
@@ -296,7 +297,13 @@ test("tiles go in rows of equal count: four are two and two, never three and one
   expect(tilesPerRow(200, 4, 144)).toBe(1);
   expect(tilesPerRow(300, 4, 144)).toBe(2);
   expect(tilesPerRow(200, 1, 144)).toBe(1);
-  expect(tilesPerRow(500, 5, 128)).toBe(3);
+  // five: abreast, or a line each; never three and two, nor so tight a label is cut
+  expect(tilesPerRow(700, 5, 128)).toBe(5);
+  expect(tilesPerRow(560, 5, 128)).toBe(1);
+  expect(tilesPerRow(400, 5, 128)).toBe(1);
+  // six: three and three, or two by three
+  expect(tilesPerRow(500, 6, 144)).toBe(3);
+  expect(tilesPerRow(320, 6, 144)).toBe(2);
   // not measured yet: all abreast
   expect(tilesPerRow(0, 4, 144)).toBe(4);
   // a ranked row holds what fits and never wraps: the last ranked go, two stay
@@ -348,7 +355,10 @@ test("one way to write a figure, in the app and in the terminal", async () => {
     [0, "0 B"],
     [1, "1 B"],
     [512, "512 B"],
-    [1023, "1023 B"],
+    [999, "999 B"],
+    [1000, "1.0 KiB"],
+    [1020, "1.0 KiB"],
+    [1023, "1.0 KiB"],
     [1024, "1.0 KiB"],
     [1280, "1.3 KiB"],
     [1536, "1.5 KiB"],
@@ -434,22 +444,39 @@ test("one function writes a duration, and a scenario has words", async () => {
 });
 
 test("a run reads as four signals and in flight; what a log without times cannot say is said, never 0", async () => {
-  const { signalsFromProfile, signalTiles, brief, operationStats, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
-  const bin = (tMs: number, ok: number, server = 0, retried = 0) => ({ tMs, ok, miss: 0, client: 0, server, p50Ms: 2, p95Ms: 6, p99Ms: 9, retried, bytesUp: 1024 * ok, bytesDown: 0 });
-  const profile = {
-    wallMs: 2000,
-    binMs: 1000,
-    peakInFlight: 4,
-    peakAtMs: 1200,
-    rate: [bin(0, 30), bin(1000, 9, 1, 2)],
-    inFlight: [{ tMs: 100, n: 2 }, { tMs: 1200, n: 4 }],
-    p50Ms: 2,
-    p95Ms: 6,
-    p99Ms: 9,
-    cost: { amount: 0, currency: "USD" },
-  } as never;
-  const summary = { requests: 40, errors: 1, misses: 0, refused: 0, seconds: 2, bytesUp: 39936, bytesDown: 0 };
-  const s = signalsFromProfile(profile, summary);
+  const { signalTiles, brief, operationStats, sizeLabel, sizeRange, nearestLimit } = await import("../src/signals");
+  // signals as Rust counts them: slices of requests (ok, server errors, retries), the most in flight in each
+  type Bin = { ok: number; server: number; retried: number; flight: number };
+  const bin = (ok: number, server = 0, retried = 0, flight = 0): Bin => ({ ok, server, retried, flight });
+  const signalsOf = (bins: Bin[], wallMs: number, bytesUp: number, bytesDown: number, timed = true): Signals => {
+    const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+    const binS = wallMs / bins.length / 1000;
+    const per = (n: number) => (timed ? n / (wallMs / 1000) : null);
+    const n = bins.map((b) => b.ok + b.server);
+    const requests = sum(n);
+    const zero = bins.map(() => 0);
+    const up = bins.map((b) => (1024 * b.ok * (bytesUp ? 1 : 0)) / binS);
+    const peak = Math.max(...bins.map((b) => b.flight));
+    return {
+      timed,
+      wallMs,
+      binMs: wallMs / bins.length,
+      bins: bins.length,
+      rate: { value: per(requests), unit: "1/s", series: n.map((x) => x / binS), requests },
+      errors: { value: sum(bins.map((b) => b.server)) / requests, series: bins.map((b) => b.server), count: sum(bins.map((b) => b.server)), counts: { client: 0, server: sum(bins.map((b) => b.server)), transport: 0, injected: 0 }, client: zero, server: bins.map((b) => b.server), transport: zero, injected: zero, retries: bins.map((b) => b.retried), retriesTotal: sum(bins.map((b) => b.retried)) },
+      latency: { value: timed ? 2 : null, series: bins.map(() => 2), p50Ms: timed ? 2 : null, p95Ms: timed ? 6 : null, p99Ms: timed ? 9 : null, p95: bins.map(() => 6), p99: bins.map(() => 9) },
+      bytes: { value: per(bytesUp + bytesDown), series: up, upPerSec: per(bytesUp), downPerSec: per(bytesDown), up, down: zero, upBytes: bytesUp, downBytes: bytesDown },
+      inFlight: { value: timed ? peak : null, series: bins.map((b) => b.flight), peak, peakAtMs: 0 },
+      firstByte: null,
+      sizes: { request: [], response: [], throughput: [], mibPerSec: null },
+      statuses: [],
+      cost: { amount: 0, currency: "USD", operations: [] },
+      prefixes: [],
+    } as unknown as Signals;
+  };
+  const bins = [bin(30, 0, 0, 2), bin(9, 1, 2, 4)];
+  const summary = { requests: 40, errors: 1, misses: 0, refused: 0, seconds: 2, bytesUp: 39936, bytesDown: 0, operations: [] };
+  const s = signalsOf(bins, 2000, 39936, 0);
   expect(s.rate.value).toBe(20);
   expect(s.inFlight.series).toEqual([2, 4]);
   const tiles = signalTiles(s);
@@ -459,13 +486,16 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(tiles[1].value).toBe("3%");
   expect(tiles[1].detail).toBe("1 server · 2 retries");
   expect(tiles[1].tone).toBe("bad");
+  // one failure, one colour: errors that are all the program's own (4xx) are in the client's tone, as on their charts
+  const clientOnly = signalTiles({ ...s, errors: { ...s.errors, counts: { ...s.errors.counts, client: s.errors.count, server: 0 } } });
+  expect(clientOnly[1].tone).toBe("client");
   expect(tiles[2].value).toBe("2.0 ms");
   expect(tiles[2].detail).toBe("p95 6.0 ms · p99 9.0 ms");
   expect(tiles[3].value).toBe("19.5 KiB/s");
   expect(tiles[3].detail).toBe("↑ 19.5 KiB/s ↓ 0 B/s");
   expect(tiles[4].value).toBe("4");
   // a CloudTrail file has no times: no rate, no latency, no pace of bytes, and nothing drawn over time
-  const untimed = signalTiles(signalsFromProfile({ ...(profile as object), timed: false } as never, summary));
+  const untimed = signalTiles(signalsOf(bins, 2000, 39936, 0, false));
   expect(untimed[0].value).toBe("Not timed");
   expect(untimed[0].detail).toBe("40 requests");
   expect(untimed[2].value).toBe("Not timed");
@@ -475,8 +505,7 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(untimed.every((x) => x.id === "errors" || x.series.length === 0)).toBe(true);
   // a run of a moment says totals, not rates, and draws no line: 9 requests in a third of a second
   expect(brief(s)).toBe(false);
-  const few = { requests: 9, errors: 2, misses: 0, refused: 0, seconds: 0.334, bytesUp: 0, bytesDown: 3145728 };
-  const moment = signalsFromProfile({ ...(profile as object), wallMs: 334, binMs: 167, peakAtMs: 0, rate: [bin(0, 5, 2), bin(167, 2)] } as never, few);
+  const moment = signalsOf([bin(5, 2), bin(2)], 334, 0, 3145728);
   expect(brief(moment)).toBe(true);
   const short = signalTiles(moment);
   expect(short[0].label).toBe("Requests");
@@ -496,17 +525,8 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(quick[0].value).toBe("40");
   expect(quick[1].value).toBe("3%");
   expect(quick.every((x) => x.series.length === 0)).toBe(true);
-  // the run by operation: Rust's table, or what an older share's profile holds of it
-  const groups = [
-    { operation: "GetObject", missed: false, requests: 30, errors: 3, p50Ms: 2, p95Ms: 6 },
-    { operation: "GetObject", missed: true, requests: 10, errors: 0, p50Ms: 1, p95Ms: 2 },
-    { operation: "PutObject", missed: false, requests: 5, errors: 0, p50Ms: 9, p95Ms: 12 },
-  ];
-  const ops = operationStats({ summary, profile: { ...(profile as object), groups } as never });
-  expect(ops.map((o) => [o.operation, o.count, o.few])).toEqual([["GetObject", 40, false], ["PutObject", 5, true]]);
-  expect(ops[0].errorShare).toBe(3 / 40);
-  expect(ops[0].p99Ms).toBe(null);
-  const own = operationStats({ summary: { ...summary, operations: [{ operation: "PutObject", count: 12, errors: 6, misses: 0, errorShare: 0.5, bytesUp: 0, bytesDown: 0, p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4, few: true }] }, profile: profile as never });
+  // the run by operation: Rust's table
+  const own = operationStats({ summary: { ...summary, operations: [{ operation: "PutObject", count: 12, errors: 6, misses: 0, errorShare: 0.5, bytesUp: 0, bytesDown: 0, p50Ms: 1, p95Ms: 2, p99Ms: 3, maxMs: 4, few: true }] } });
   expect(own).toEqual([{ operation: "PutObject", count: 12, errorShare: 0.5, p50Ms: 1, p95Ms: 2, p99Ms: 3, few: true }]);
   // sizes by their bounds; a prefix by the nearer of its two limits
   expect(sizeLabel(0)).toBe("empty");
@@ -549,16 +569,18 @@ test("a trial's load: so many times the clean run's where it sent more, the two 
 
 test("a scenario's verdicts over the program's runs read in a few words; the refused have a tone of their own", async () => {
   const { trialSince, STANDING, toTryAgain } = await import("../src/ui/history");
-  const { day } = await import("../src/format");
+  const { date, hm } = await import("../src/format");
   const base = { scenario: "slowdown", about: "", exit: 0, cleanExit: 0, attempts: 1, faults: 1, retried: 0, requests: 1, cleanRequests: 1, leftUploads: 0, wroteTwice: 0, droppedReads: 0, droppedWrites: 0, reasons: [] };
   const at = ["2026-11-10T09:00:00Z", "2026-11-11T09:00:00Z", "2026-11-12T09:00:00Z"];
   // one verdict has no history to tell
   expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }] })).toBe(null);
-  // broke, then survived: when it last broke, and that it has survived since
+  // broke, then survived: in how many of the runs, since when, and that it broke before
   const fixed = { ...base, standing: "survived" as const, history: [{ at: at[0], standing: "broke" as const, run: "a" }, { at: at[1], standing: "broke" as const, run: "b" }, { at: at[2], standing: "survived" as const, run: "c" }] };
-  expect(trialSince(fixed)).toBe(`Broke on ${day(at[1])}, survived since`);
-  // the same all along: since when
-  expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }, { at: at[1], standing: "broke", run: "b" }] })).toBe(`Broke since ${day(at[0])}`);
+  expect(trialSince(fixed)).toBe(`Survived in 1 of 3 runs, since ${date(at[2])}; broke before`);
+  // the same all along: in how many, since when ("Broke in 3 of 3 runs, since 08:33" where that is today)
+  expect(trialSince({ ...base, standing: "broke", history: [{ at: at[0], standing: "broke", run: "a" }, { at: at[1], standing: "broke", run: "b" }] })).toBe(`Broke in 2 of 2 runs, since ${date(at[0])}`);
+  const today = new Date().toISOString();
+  expect(trialSince({ ...base, standing: "broke", history: [{ at: today, standing: "broke", run: "a" }, { at: today, standing: "broke", run: "b" }] })).toBe(`Broke in 2 of 2 runs, since ${hm(today)}`);
   // a refusal by the policy is never a failure's red, nor a degraded run's amber
   expect(STANDING.refused).toBe("refused");
   expect(([STANDING.degraded, STANDING.broke] as string[]).includes(STANDING.refused)).toBe(false);

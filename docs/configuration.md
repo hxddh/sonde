@@ -21,9 +21,8 @@ The CLI also takes `--config-dir` and `--data-dir`.
   kept; comments are not.
 - Concurrent saves take turns (`config.toml.lock`).
 
-Before 18.0 there were also `read-only`, `reqlog-capacity`, `reqlog-persist` and `stale-upload-days`: a file with
-them still loads, says on stderr that they are ignored, and loses them at the next save. sonde's own destructive
-acts are each a dry run, done on a typed confirmation and kept in the audit log; uploads are stale past 7 days.
+sonde's own destructive acts are each a dry run, done on a typed confirmation and kept in the audit log; uploads
+are stale past 7 days.
 
 ## Example
 
