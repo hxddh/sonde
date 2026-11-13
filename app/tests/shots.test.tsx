@@ -167,11 +167,17 @@ for (const v of variants) {
     }
     // closed, the run opens on its Runs pane, where the verdicts stay, each with its history
     await app.press("id:trial-close");
-    await app.waitFor("id:history-trials", { timeout: 10000 });
+    await app.waitFor("id:history-trials", { timeout: 20000 });
     await shot("02h-runs-verdicts");
     // a trial's own session: its notice, the faults' moments on its shape, and the run over its clean run
     await app.press("id:trial-slowdown");
-    await app.waitFor("id:trial-note", { timeout: 10000 });
+    // (a long list of verdicts has it under the fold: brought up, and pressed again)
+    if (!(await app.waitFor("id:trial-note", { timeout: 10000 }).then(() => true, () => false)) && app.shows("id:trial-slowdown")) {
+      await app.scroll("id:history-pane", 500);
+      await app.wait(300);
+      await app.press("id:trial-slowdown");
+    }
+    await app.waitFor("id:trial-note", { timeout: 20000 });
     await app.wait(600);
     await shot("02i-trial-session");
     await app.press("id:session-pane-mode-time");
@@ -179,7 +185,7 @@ for (const v of variants) {
     await app.wait(900);
     await charts("02j-trial-time");
     await app.press("id:trial-open-clean");
-    await app.waitFor("id:trial-note", { state: "gone", timeout: 10000 });
+    await app.waitFor("id:trial-note", { state: "gone", timeout: 20000 });
     await app.waitFor("id:session-summary", { timeout: 10000 });
     // the program's output lined up with what it did
     if (app.enabled("id:session-pane-mode-aligned")) {
@@ -207,6 +213,9 @@ for (const v of variants) {
     await app.wait(700);
     await shot("03p-programs");
     await app.press("id:sessions-by-runs");
+    // (the runs' list back first: a press before it settles is undone as it chooses its first run)
+    await app.waitFor("id:session-list");
+    await app.wait(700);
     await app.press("id:open-example");
     // read off the interface's thread: there once its header is (a variant after the first
     // opens on the example already, and reads it again as the list changes: let that settle)
@@ -214,9 +223,14 @@ for (const v of variants) {
     await app.waitFor("id:session-summary", { timeout: 10000 });
     // a variant after the first has the example in its list already: opened from there when the press kept the run shown
     const wal = v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128";
+    // (found by the list's search: a short window's list has it under the fold, past the tour's runs)
     if (!(await app.waitFor(wal, { timeout: 5000 }).then(() => true, () => false))) {
-      await app.press("text:gen-slatedb >> nth=0");
+      await app.type("id:session-search", "gen-slatedb");
+      await app.waitFor("text:gen-slatedb", { timeout: 5000 });
+      await app.wait(300);
+      await app.press("id:session-0");
       await app.waitFor(wal, { timeout: 10000 });
+      await app.clear("id:session-search");
     }
     await shot("03-session");
     await app.press(v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128");
@@ -280,9 +294,16 @@ for (const v of variants) {
     await app.press("id:signal-errors");
     await app.wait(700);
     await charts("03o-errors");
-    // the same program run twice: before and after
+    // the same program run twice, before and after its fix: the tour's second run against its first (18 requests)
+    if (!app.shows("id:session-1")) await app.keyboard.press("mod+b");
+    if (app.shows("id:session-1")) {
+      await app.press("id:session-1");
+      await app.waitFor("id:session-summary", { timeout: 10000 });
+      await app.wait(600);
+    }
     await app.press("id:compare-open");
-    const run = app.menu()?.map((m) => m.label).find((l) => l.includes("curl"));
+    const labels = app.menu()?.map((m) => m.label) ?? [];
+    const run = labels.find((l) => l.includes("curl") && /· 18$/.test(l)) ?? labels.find((l) => l.includes("curl"));
     if (run) {
       await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });

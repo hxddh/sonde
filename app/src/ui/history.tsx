@@ -13,6 +13,7 @@ import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
 import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH } from "./kit";
 import { cost, RunTrend, Sparkline } from "./plots";
+import { tellApart } from "./sessionlist";
 import { programOf, scrubCommand } from "./sessionview";
 
 export { scenarioLabel };
@@ -476,6 +477,19 @@ export function ProgramList(props: { onOpen: (path: string) => void; /** the pla
     () => sessionsTick(),
     async () => (await api.sessions.programs()) as ProgramSummary[],
   );
+  const nameOf = (p: ProgramSummary) => programOf(p.program) ?? scrubCommand(p.program);
+  // programs of one name (two commands of curl) are told apart by what differs in their commands
+  const told = (list: ProgramSummary[]) => {
+    const out = new Map<string, string>();
+    const by = new Map<string, ProgramSummary[]>();
+    for (const p of list) by.set(nameOf(p), [...(by.get(nameOf(p)) ?? []), p]);
+    for (const group of by.values()) {
+      if (group.length < 2) continue;
+      const shown = tellApart(group.map((p) => scrubCommand(p.program)));
+      group.forEach((p, i) => out.set(p.program, shown[i]));
+    }
+    return out;
+  };
   return (
     <Await loading={programs.loading() && !programs()} error={programs.error()} retry={() => programs.refetch()}>
     <If when={programs()}>
@@ -490,7 +504,8 @@ export function ProgramList(props: { onOpen: (path: string) => void; /** the pla
                 lines={2}
               >
                 <View class="flex-row items-center gap-2">
-                  <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{programOf(p().program) ?? scrubCommand(p().program)}</Text>
+                  <Text class="shrink-0 text-body text-foreground line-clamp-1">{nameOf(p())}</Text>
+                  <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{told(list()).get(p().program) ?? ""}</Text>
                   <If when={p().regressed}>
                     <View testID="program-regressed"><Badge label={t("programs.regressed")} tone="warn" /></View>
                   </If>
