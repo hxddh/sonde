@@ -1492,9 +1492,13 @@ export function More(props: { actions: () => { label: string; icon?: IconName; r
 export function ActionRow(props: { room: number; actions: () => { id: string; label: string; icon?: IconName; run: () => void; disabled?: boolean; tip?: string }[]; testID?: string; /** by their words alone (no icons): a narrow place's row */ plain?: boolean; /** each button's width as measured, by its id */ onWidths?: (w: Record<string, number>) => void }) {
   const GAP = 8;
   const widths = signal<Record<string, number>>({});
+  // (measured by their words alone and with their icons, apart: a row that changes how it shows them
+  // shows them all until they are measured again, so none is kept hidden by its other width)
+  const key = (id: string) => `${props.plain ? "plain" : "icon"}:${id}`;
   const shown = () => {
     const list = props.actions();
-    const w = widths();
+    const all = widths();
+    const w: Record<string, number> = Object.fromEntries(list.map((a) => [a.id, all[key(a.id)]]));
     // a terminal lists them all; so does a row not measured yet
     if (terminal() || list.some((a) => w[a.id] === undefined)) return list.length;
     if (list.reduce((n, a) => n + w[a.id] + GAP, 0) <= props.room) return list.length;
@@ -1516,9 +1520,9 @@ export function ActionRow(props: { room: number; actions: () => { id: string; la
             class={i() < shown() ? "" : "hidden"}
             onLayout={({ bounds }) => {
               const w = Math.round(bounds.size.width);
-              if (w > 0 && widths()[a().id] !== w) {
-                widths.set({ ...widths(), [a().id]: w });
-                props.onWidths?.(widths());
+              if (w > 0 && widths()[key(a().id)] !== w) {
+                widths.set({ ...widths(), [key(a().id)]: w });
+                props.onWidths?.({ [a().id]: w });
               }
             }}
           >
