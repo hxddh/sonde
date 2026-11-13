@@ -6,6 +6,15 @@ on:
       release:
         type: boolean
         default: false
+      # pr: Linux x86_64; main: and Linux arm64, macOS arm64, Windows; all:
+      # and macOS Intel and the macOS app (nightly, by hand, a release)
+      set:
+        type: string
+        default: all
+      # the artifacts a release takes from CI's run of its commit
+      skip:
+        type: string
+        default: "[]"
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,8 +22,51 @@ env:
   NSH_REV: f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      terminal: ${{ steps.plan.outputs.terminal }}
+      desktop: ${{ steps.plan.outputs.desktop }}
+      macos-app: ${{ steps.plan.outputs.macos-app }}
+      any: ${{ steps.plan.outputs.any }}
+    steps:
+      - id: plan
+        shell: python
+        env:
+          SET: ${{ inputs.set }}
+          SKIP: ${{ inputs.skip }}
+        run: |
+          import json, os
+          level = {"pr": 0, "main": 1, "all": 2}[os.environ["SET"]]
+          skip = set(json.loads(os.environ["SKIP"]))
+          terminal = [
+              (0, "ubuntu-22.04", "x86_64-unknown-linux-gnu", "linux-x86_64"),
+              # static: runs on any Linux, Alpine and distroless included
+              (0, "ubuntu-22.04", "x86_64-unknown-linux-musl", "linux-x86_64-musl"),
+              (1, "ubuntu-22.04-arm", "aarch64-unknown-linux-gnu", "linux-aarch64"),
+              (1, "macos-15", "aarch64-apple-darwin", "macos-aarch64"),
+              (2, "macos-15-intel", "x86_64-apple-darwin", "macos-x86_64"),
+              # sonde.exe in a .zip: CI on Windows, and the terminal there
+              (1, "windows-latest", "x86_64-pc-windows-msvc", "windows-x86_64"),
+          ]
+          desktop = [
+              (0, "ubuntu-24.04", "linux", "linux-x86_64"),
+              (1, "windows-latest", "windows", "windows-x86_64"),
+          ]
+          t = [{"os": o, "target": g, "name": n} for l, o, g, n in terminal
+               if l <= level and f"sonde-{n}" not in skip]
+          d = [{"os": o, "target": g, "name": n} for l, o, g, n in desktop
+               if l <= level and f"sonde-desktop-{n}" not in skip]
+          m = level >= 2 and "sonde-macos-app" not in skip
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"terminal={json.dumps(t)}\ndesktop={json.dumps(d)}\n")
+              out.write(f"macos-app={str(m).lower()}\nany={str(bool(t or d or m)).lower()}\n")
+          print("terminal:", [x["name"] for x in t], "desktop:", [x["name"] for x in d], "macos-app:", m)
+
   viewer:
     # the page `sonde share` writes: Native Shell's web target, built once
+    needs: plan
+    if: needs.plan.outputs.any == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,19 +92,12 @@ jobs:
           path: viewer/.nsh/out/sonde-viewer
 
   terminal:
-    needs: viewer
+    needs: [plan, viewer]
+    if: needs.plan.outputs.terminal != '[]'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: linux-x86_64 }
-          # static: runs on any Linux, Alpine and distroless included
-          - { os: ubuntu-22.04, target: x86_64-unknown-linux-musl, name: linux-x86_64-musl }
-          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, name: linux-aarch64 }
-          - { os: macos-15, target: aarch64-apple-darwin, name: macos-aarch64 }
-          - { os: macos-15-intel, target: x86_64-apple-darwin, name: macos-x86_64 }
-          # sonde.exe in a .zip: CI on Windows, and the terminal there
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: windows-x86_64 }
+        include: ${{ fromJSON(needs.plan.outputs.terminal) }}
     runs-on: ${{ matrix.os }}
     defaults:
       run: { shell: bash }
@@ -113,13 +158,12 @@ jobs:
 
   desktop:
     # the app on Linux (GTK 4) and Windows (Win32), as Native Shell packages it
-    needs: viewer
+    needs: [plan, viewer]
+    if: needs.plan.outputs.desktop != '[]'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-24.04, target: linux, name: linux-x86_64 }
-          - { os: windows-latest, target: windows, name: windows-x86_64 }
+        include: ${{ fromJSON(needs.plan.outputs.desktop) }}
     runs-on: ${{ matrix.os }}
     defaults:
       run: { shell: bash }
@@ -150,7 +194,8 @@ jobs:
           path: dist/sonde-[0-9]*
 
   macos-app:
-    needs: viewer
+    needs: [plan, viewer]
+    if: needs.plan.outputs.macos-app == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
