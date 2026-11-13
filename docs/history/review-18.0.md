@@ -67,6 +67,23 @@ while: from 19.0 the contract (D-138) holds, and a break is announced one versio
 | Medium | `show`, 1M requests | **18.0 is slower and larger than 17.0 on the same file**: 1.80 GiB and 9.8–14.5 s against 1.37–1.43 GiB and 7.2–11.6 s (two runs each, idle), over the 1.5 GiB budget. The budgets test did not catch it. `compare` of two: 22.4 s, 1.43 GiB. Confirmed. |
 | Low | words | JSON keeps `busyMs` and `episodes`; `compare` prints `1000000` where `show` prints `1,000,000`; `run --help` says no-delete refuses "a write over an object the recording did not write", but earlier recordings' are allowed. Confirmed. |
 
+### The store tools
+
+Checked and right: `bucket size` and `uploads` against boto3, lifecycle merges, the dry runs and typed
+confirmations of `abort-uploads` and `lifecycle`, Iceberg's live records (250, against pyiceberg), the SlateDB,
+lakeFS and Woodpecker samples, probes cleaning up after themselves, prefixed replay, access-log counts, and
+`share --html --redact`: no bucket, key, account, ARN, IP or request id left in the page.
+
+| | Where | What |
+|---|---|---|
+| High | `compare --replay --in-place` (`replay.rs`) | **Writes and deletes on the recorded keys with `--yes` alone**: no list of what it replaces, no typed confirmation, nothing in the audit log. An object holding "PRECIOUS-PRODUCTION-DATA" became random bytes, exit 0. `security.md` says such deletes are never a switch away. Confirmed. |
+| Medium | `sonde-cli` `main`, panic hook | With stdout closed (`… \| head`) sonde exits 0: exit codes 1, 2, 4 and 70 are lost, at random. A replay that differs piped to `head -c1`: 0, three times. Confirmed. |
+| Medium | `probes` `SpecialKeys::judge` | `keys.special` can never pass (two of its keys are never sent), so an all-pass run exits 3. Confirmed. |
+| Medium | `import`, CloudTrail one event a line | One cut line fails the whole file with exit 64; non-S3 events dropped uncounted. A window with `UploadPart` and no `CreateMultipartUpload` is "a multipart upload never completed". Confirmed. |
+| Medium | `compare --replay` | Compares status and error code only: a listing of 5 keys against one of 0 is "the same". Confirmed. |
+| Low | `import s3://`, `layout`, `endpoints`, `sessions prune` | Nothing to import exits 0 silently; generic cadence's p99 below its median (`cadence.rs:124`); `layout --kind slatedb` on another layout exits 0; `endpoints add` replaces an endpoint silently; prune's dry run exits 0 where the contract says 4; `share` advises the removed `--json`. Confirmed. |
+| Low | imports | "Waiting" of an access log comes from sonde spreading whole seconds evenly; CloudTrail's p95 reads 0 ms, not "—". Confirmed. |
+
 ### The interface
 
 | | Where (picture) | What |
@@ -136,6 +153,9 @@ something 18.0 opened or removes something kept for an older version.
 - `split` says where the slow requests are when one group holds nearly all; `--again` trims names and runs every
   broke strength; the old commands print their new form with the arguments.
 - The CI comment says when the program failed, and why.
+- An exit code survives a closed stdout; `keys.special` can pass; CloudTrail skips and counts a bad line; an
+  import's window does not invent unfinished uploads; replay compares listings and bodies; each Low row of the
+  store tools.
 - `show` of a million requests back to 17.0's memory and time; the budgets test made to fail on that.
 
 ### 4. Run and one word for a kind of request (M)
@@ -164,6 +184,7 @@ of the Action against a real baseline and comment, scheduled.
 
 What is kept only for an older sonde goes, and the code with it:
 
+- `compare --replay --in-place`: a replay writes under its own prefix and removes what it wrote, always.
 - The folded commands `watch`, `export`, `replay`, `diff`, `mpu`, `du` and the refusals of removed flags
   (`--log-out`, `--read-only`, `--no-delete`, `share --json`); `--callers` (the default).
 - Reading the files kept beside sessions before 18.0 (`index.rs`), shared pages and verdicts of before 15.0 and
