@@ -147,7 +147,7 @@ test("a lane's cell shows the worst of the requests it holds, and says how many"
   expect(cells[0].bin).toBe(0);
   expect(cells[0].n).toBe(3);
   // the failure wins, and is the request the cell stands for
-  expect(cells[0].tone).toBe("server");
+  expect(cells[0].tone).toBe("fail");
   expect(cells[0].sample).toBe(1);
   // a long request is a run of cells, one request each
   expect(cells[3].lane).toBe(1);

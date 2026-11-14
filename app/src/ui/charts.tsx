@@ -3,7 +3,7 @@
 // row pitch, the tooltip, the legend, the fade) is the chart system's, from
 // `plots.tsx`; each is the body of a `Chart` frame.
 
-import { signal, Text, View } from "nsh";
+import { computed, signal, Text, View } from "nsh";
 import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, count, pct } from "../format";
 import { t } from "../i18n";
@@ -126,7 +126,7 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
   };
   // the areas with room for their name whole (and their size under it): the others say nothing, their tooltip does
   const size = signal<[number, number]>([0, 0]);
-  const room = () => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, nested() ? GROUP_BAND : 0, (i) => rows()[i].label.length);
+  const room = computed(() => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, nested() ? GROUP_BAND : 0, (i) => rows()[i].label.length));
   // (a value line is told its row, not its index)
   const roomOf = (id: string) => room()[rows().findIndex((r) => r.id === id)];
   return (

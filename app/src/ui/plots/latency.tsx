@@ -376,20 +376,27 @@ export function Distribution(props: { profile: Profile }) {
  * cluster of 404s, large objects that take long. */
 export function RequestScatter(props: { profile: Profile; by: "time" | "size"; domainMs?: [number, number] | null; onRequest?: (id: number) => void; /** the requests a fault scenario answered, by id */ injected?: number[] }) {
   const marked = computed(() => new Set(props.injected ?? []));
-  const all = () => {
+  const all = computed(() => {
     const d = props.domainMs;
     return props.profile.samples
       .filter((x) => !d || (x.tMs >= d[0] && x.tMs < d[1]))
       .map((x) => ({ ...x, y: log10(Math.max(x.ms, 0.1)), x: props.by === "time" ? x.tMs : log10(Math.max(x.bytes ?? 0, 1)), tone: toneOf(x, marked()) }));
-  };
+  });
   // the scale is the dots' own range (a decade at least, the dots in its middle), a little over it each way
-  const lo = () => Math.min(...all().map((r) => r.y));
-  const hi = () => Math.max(...all().map((r) => r.y));
-  const spare = () => Math.max(0, 1 - (hi() - lo())) / 2;
-  const yLo = () => lo() - spare() - 0.12;
-  const yHi = () => hi() + spare() + 0.15;
+  const range = computed(() => {
+    const ys = all().map((r) => r.y);
+    const lo = Math.min(...ys);
+    const hi = Math.max(...ys);
+    const spare = Math.max(0, 1 - (hi - lo)) / 2;
+    return [lo - spare - 0.12, hi + spare + 0.15] as const;
+  });
+  const yLo = () => range()[0];
+  const yHi = () => range()[1];
   // every dot inside the plot: clamped to the scale, whatever a stray value is
-  const rows = () => all().map((r) => ({ ...r, y: Math.min(Math.max(r.y, yLo()), yHi()) }));
+  const rows = computed(() => {
+    const [a, b] = range();
+    return all().map((r) => ({ ...r, y: Math.min(Math.max(r.y, a), b) }));
+  });
   // a little room either side: a dot at the first or last instant is drawn whole
   const xDomain = (): [number, number] => {
     if (props.by !== "time") return [-0.1, Math.max(...rows().map((r) => r.x), 3) + 0.2];

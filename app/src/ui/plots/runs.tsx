@@ -1,7 +1,7 @@
 // Runs compared: one workload on two stores, two runs of a program, and a
 // program over its runs.
 
-import { signal, token, View, Text } from "nsh";
+import { computed, signal, token, View, Text } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { Area, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Treemap } from "nsh/base/plot";
 import { count, day, duration, factor, percent } from "../../format";
@@ -230,7 +230,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
       .map((x) => ({ id: x.prefix, parent: "", label: named().name(x.prefix), value: Math.max(x.requests[1], x.requests[0] > 0 && x.requests[1] === 0 ? x.requests[0] : 0), change: change(x.requests[0], x.requests[1]), x }));
   // the areas with room for their name whole (and their figures under it): the others say nothing, their tooltip does
   const size = signal<[number, number]>([0, 0]);
-  const room = () => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, 0, (i) => rows()[i].label.length);
+  const room = computed(() => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, 0, (i) => rows()[i].label.length));
   // (a value line is told its row, not its index)
   const roomOf = (id: string) => room()[rows().findIndex((r) => r.id === id)];
   const hovered = signal<number | null>(null);

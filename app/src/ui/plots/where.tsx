@@ -1,7 +1,7 @@
 // Where: prefixes named, where requests went (flows), when each prefix was
 // busy, the map of prefixes, and what the requests cost.
 
-import { signal, Text, View } from "nsh";
+import { computed, signal, Text, View } from "nsh";
 import { Bar, Cell, Plot, PlotAxis, Sankey, Treemap } from "nsh/base/plot";
 import { cost, count, duration, percent, costParts } from "../../format";
 import { t } from "../../i18n";
@@ -268,7 +268,7 @@ export function PrefixUse(props: { profile: Profile; measure?: PrefixMeasureKind
   const total = () => rows().reduce((n, r) => n + r.value, 0);
   // the areas with room for their name whole (and their figure under it): the others say nothing, their tooltip does
   const size = signal<[number, number]>([0, 0]);
-  const room = () => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, nested() ? GROUP_BAND : 0, (i) => rows()[i].label.length);
+  const room = computed(() => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, nested() ? GROUP_BAND : 0, (i) => rows()[i].label.length));
   // (a value line is told its row, not its index)
   const roomOf = (id: string) => room()[rows().findIndex((r) => r.id === id)];
   const hovered = signal<number | null>(null);
