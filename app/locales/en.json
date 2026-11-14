@@ -930,7 +930,6 @@
  "trial.note": "A trial of %{run} under “%{scenario}”: sonde answered some of its requests in the store's place.",
  "trial.openClean": "The clean run",
  "trial.sessionGone": "Its session is no longer there",
- "trial.brokeBadge": "Broke under faults",
  "trial.notRetryable": "%{n} no retry was owed for",
  "trial.afterRange": "after %{lo} to %{hi}",
  "trial.delayed": "%{n} requests held back",
@@ -1090,5 +1089,7 @@
  "statuses.textAll": "All %{n} answers were %{called}",
  "statuses.textAll.one": "The one answer was %{called}",
  "heat.textAt": "The busiest prefix here, %{prefix}, took %{n} requests in one slice, at +%{at}",
- "heat.textAt.one": "The busiest prefix here, %{prefix}, took 1 request in one slice, at +%{at}"
+ "heat.textAt.one": "The busiest prefix here, %{prefix}, took 1 request in one slice, at +%{at}",
+ "trial.ofBroke": "%{n} of %{of} broke",
+ "trial.ofBrokeSaid": "Tried under faults: %{n} of %{of} trials broke"
 }

@@ -930,7 +930,6 @@
  "trial.note": "%{run} 在“%{scenario}”下的试运行：sonde 代替存储应答了它的一些请求。",
  "trial.openClean": "正常运行",
  "trial.sessionGone": "它的会话已不存在",
- "trial.brokeBadge": "故障下未通过",
  "trial.notRetryable": "%{n} 个无需重试",
  "trial.afterRange": "等待 %{lo} 到 %{hi} 后",
  "trial.delayed": "%{n} 个请求被延迟",
@@ -1090,5 +1089,7 @@
  "statuses.textAll": "全部 %{n} 个应答都是 %{called}",
  "statuses.textAll.one": "唯一的应答是 %{called}",
  "heat.textAt": "这里最忙的前缀 %{prefix} 在一个时间片内有 %{n} 个请求，在 +%{at}",
- "heat.textAt.one": "这里最忙的前缀 %{prefix} 在一个时间片内有 %{n} 个请求，在 +%{at}"
+ "heat.textAt.one": "这里最忙的前缀 %{prefix} 在一个时间片内有 %{n} 个请求，在 +%{at}",
+ "trial.ofBroke": "%{of} 次试验 %{n} 次未通过",
+ "trial.ofBrokeSaid": "故障试验：%{of} 次中 %{n} 次未通过"
 }

@@ -858,6 +858,8 @@ export function Sessions() {
         </If>
       </View>
       <If when={!byProgram()} else={
+        // (inset as the runs are: a program's row lines up with a run's)
+        <View class={terminal() ? "flex-1" : "min-h-0 flex-1 px-2"}>
         <ProgramList
           query={terminal() ? "" : query()}
           onOpen={(p) => {
@@ -867,6 +869,7 @@ export function Sessions() {
             });
           }}
         />
+        </View>
       }>
       <If when={sessions().length > 0} else={<Empty compact text={t("timeline.empty")} />}>
         <If when={shown().length > 0} else={<Empty compact text={t("sessions.noMatch")} />}>

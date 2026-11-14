@@ -316,7 +316,8 @@ test("tiles go in rows of equal count: four are two and two, never three and one
 test("runs of one command are told apart by the argument that differs", async () => {
   const { tellApart } = await import("../src/ui/sessionview");
   const long = "-s --aws-sigv4 aws:amz:us-east-1:s3 -o /dev/null http://127.0.0.1:9000/demo/";
-  expect(tellApart([`${long}README.md`, `${long}missing.txt`])).toEqual(["… http://127.0.0.1:9000/demo/README.md", "… http://127.0.0.1:9000/demo/missing.txt"]);
+  // from what differs, at the edge of its part of the path: a column that cuts at its end cuts what they share
+  expect(tellApart([`${long}README.md`, `${long}missing.txt`])).toEqual(["… README.md", "… missing.txt"]);
   // the same to the letter, or different from the start: left whole
   expect(tellApart(["load.py", "load.py"])).toEqual(["load.py", "load.py"]);
   expect(tellApart(["a.py --x", "b.py --y"])).toEqual(["a.py --x", "b.py --y"]);
