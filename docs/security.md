@@ -69,7 +69,7 @@ would without sonde.
     of objects that neither this recording nor this program's earlier recordings wrote. Overwrites are refused by the store via `If-None-Match: *`; a store that
     ignores it overwrites anyway, so use `read-only` there.
   - `read-only`: GET and HEAD only.
-  - `allow` (`--allow-writes`, `[record] policy = "allow"`): everything.
+  - `allow` (`--policy allow`, `[record] policy = "allow"`): everything.
 - `sonde.toml` may set the policy when no flag does (sonde warns on stderr when it allows deletes); in the app it may
   only narrow the chosen one.
 - The program's output is kept as printed, so printed secrets end up in the session; records stay redacted.

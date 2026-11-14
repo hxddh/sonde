@@ -40,9 +40,6 @@ pub struct Recording {
     /// through. Default: `[record] policy` in sonde.toml, else no-delete.
     #[arg(long, value_name = "POLICY", value_parser = ["allow", "no-delete", "read-only"])]
     pub(super) policy: Option<String>,
-    /// `--policy allow`: the program may delete and write over what it finds.
-    #[arg(long, conflicts_with = "policy")]
-    pub(super) allow_writes: bool,
     /// The session file (default: a new file in the data directory's sessions/).
     #[arg(long, short = 'o')]
     pub(super) out: Option<PathBuf>,
@@ -81,15 +78,10 @@ pub(super) struct Of<'a> {
 }
 
 impl Recording {
-    /// The policy asked for: the flags', else `[record] policy` of
+    /// The policy asked for: the flag's, else `[record] policy` of
     /// sonde.toml, else no-delete. Said when it lets the program delete.
     fn policy(&self) -> anyhow::Result<Policy> {
-        let flag = if self.allow_writes {
-            Some(Policy::Allow)
-        } else {
-            self.policy.as_deref().and_then(Policy::named)
-        };
-        if let Some(p) = flag {
+        if let Some(p) = self.policy.as_deref().and_then(Policy::named) {
             return Ok(p);
         }
         let project = load_project(None)?;

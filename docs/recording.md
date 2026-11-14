@@ -7,7 +7,7 @@ credentials never reach the program.
 ```sh
 sonde run -- python etl.py                  # record a command
 sonde run --live -- ./my-service            # print requests as they happen
-sonde run --allow-writes -- python etl.py   # allow deletes and overwrites
+sonde run --policy allow -- python etl.py  # allow deletes and overwrites
 sonde proxy --listen 127.0.0.1:9000         # a standing endpoint for a program started elsewhere
 sonde proxy --rotate 60                     # left running: status line, warnings, a file an hour
 ```
@@ -132,10 +132,10 @@ How `no-delete` finds an existing object:
 - A program may write over what it wrote: in this recording, in its earlier recordings (kept per
   [program](cli.md) and endpoint in `written.json` beside its runs, the newest 100,000 objects), and, during a trial,
   anything under a `{trial}` place of its command (`t{trial}/` → keys under `tclean`, `tslowdown`, …). A refused write
-  names the key; `--allow-writes` lets it through.
+  names the key; `--policy allow` lets it through.
 - `sonde proxy` and `watch` record no program: only what the recording itself wrote.
 
-Which applies, first match: the flag (`--policy allow|no-delete|read-only`, or `--allow-writes`); `[record] policy`
+Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy`
 in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app, Run starts at `no-delete` (the
 project's `[record] policy` when Run is not asked for one), which `[record] policy` may narrow, never widen.
 

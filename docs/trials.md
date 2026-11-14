@@ -147,7 +147,7 @@ repeatable; duplicates run once.
 | **degraded** | finished, but gave up a read, left an upload unfinished, waited out a stall, re-uploaded a completed upload, rewrote a hidden key, or after a lost race left extra objects or resent the same `If-Match` |
 | **broke** | another exit; a failed write never resent with exit 0; half a body taken as whole; a lost race never run again with the clean exit; the contested key overwritten unconditionally; a hidden key never read |
 | **untested** | no request met the fault, or hidden keys mattered to nothing. Only untested: exit 0, *Nothing was tried* |
-| **refused** | the recording policy refused more of the trial's requests than of the clean run's, and the verdict would be degraded or broke: *refused by the recording policy*, advice to give each run its place or `--allow-writes`. Not judged; never broke |
+| **refused** | the recording policy refused more of the trial's requests than of the clean run's, and the verdict would be degraded or broke: *refused by the recording policy*, advice to give each run its place or `--policy allow`. Not judged; never broke |
 
 When the exit differs after the store refused a retried write, the reason says so (*the retried
 CompleteMultipartUpload was answered 404 NoSuchUpload: the upload had completed*). "Survived" claims only what the
@@ -211,7 +211,7 @@ times = 2                  # attempts per request that fail (default 1; 0 = ever
 
 - Only traffic through the proxy is tried.
 - Trials use the run's policy (`no-delete` by default); a program that deletes, or writes over what another program
-  wrote, needs `--allow-writes` ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no
+  wrote, needs `--policy allow` ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no
   place sonde can read: use `{trial}`.
 - **cut-body**: sonde sees which bytes are asked for again, not what the program did with the half (a checksum
   failure with the clean exit reads as "took the half as whole"). Chunked bodies are not cut. One cut per object.

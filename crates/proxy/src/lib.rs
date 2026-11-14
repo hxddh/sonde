@@ -55,8 +55,8 @@ use tokio::net::TcpListener;
 type Out = BoxBody<Bytes, std::io::Error>;
 
 /// What the proxy lets through. A recording takes [`Policy::NoDelete`]
-/// unless told otherwise (`--allow-writes`, `[record] policy`, the app's
-/// setting); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
+/// unless told otherwise (`--policy allow`, `[record] policy`, the app's
+/// Run); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Policy {
     /// Everything.
@@ -1276,7 +1276,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         let said = |n: &str| app_headers.iter().any(|(h, _)| h.eq_ignore_ascii_case(n));
         let over = |why: &str| {
             format!(
-                "sonde refused {operation}: {b}/{k} {why}, and the proxy runs in no-delete mode (--allow-writes lets a program write over it)"
+                "sonde refused {operation}: {b}/{k} {why}, and the proxy runs in no-delete mode (--policy allow lets a program write over it)"
             )
         };
         if said("if-match") {
@@ -1655,7 +1655,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
         let (b, k) = (bucket.unwrap_or_default(), key.unwrap_or_default());
         let msg = format!(
-            "sonde refused {operation}: {b}/{k} was there before, and the proxy runs in no-delete mode (--allow-writes lets a program write over it)"
+            "sonde refused {operation}: {b}/{k} was there before, and the proxy runs in no-delete mode (--policy allow lets a program write over it)"
         );
         return Ok(refuse(&shared, record, msg));
     }

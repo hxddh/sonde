@@ -935,6 +935,7 @@ fn what_a_command_cannot_do_is_said_with_what_does_it() {
         vec!["--log-out", "x.har", "endpoints", "list"],
         vec!["proxy", "--no-delete"],
         vec!["proxy", "--read-only"],
+        vec!["proxy", "--allow-writes"],
         vec!["share", "--json"],
         vec!["export"],
         vec!["watch"],

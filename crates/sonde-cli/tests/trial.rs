@@ -583,7 +583,8 @@ async fn a_scenario_pressed_harder_fails_more_attempts_in_a_row() {
                 Some("retrying"),
                 &[
                     "run",
-                    "--allow-writes",
+                    "--policy",
+                    "allow",
                     "--fault",
                     fault,
                     "-o",
@@ -733,7 +734,7 @@ async fn a_trial_run_again_leaves_no_session_of_the_one_before() {
     let first = b
         .run(
             Some("retrying"),
-            &["run", "--allow-writes", "--trial", "-o", name],
+            &["run", "--policy", "allow", "--trial", "-o", name],
         )
         .await;
     assert_eq!(first.code, Some(0), "{}", first.stderr);
@@ -761,7 +762,7 @@ async fn a_trial_run_again_leaves_no_session_of_the_one_before() {
     let second = b
         .run(
             Some("retrying"),
-            &["run", "--allow-writes", "--fault", "error", "-o", name],
+            &["run", "--policy", "allow", "--fault", "error", "-o", name],
         )
         .await;
     assert_eq!(second.code, Some(0), "{}", second.stderr);
@@ -779,7 +780,8 @@ async fn two_batches_of_deletes_are_each_failed_and_each_judged() {
             Some("batches"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "slowdown",
                 "-o",
@@ -814,7 +816,8 @@ async fn two_batches_of_deletes_are_each_failed_and_each_judged() {
             Some("never-batches"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "slowdown",
                 "-o",
@@ -907,7 +910,8 @@ async fn a_clean_run_that_fails_is_not_tried_and_a_scenario_that_meets_nothing_i
             Some("fails"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--trial",
                 "-o",
                 session.to_str().unwrap(),
@@ -928,7 +932,8 @@ async fn a_clean_run_that_fails_is_not_tried_and_a_scenario_that_meets_nothing_i
             Some("retrying"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "fail-complete",
                 "-o",
@@ -969,7 +974,8 @@ async fn the_place_of_a_run_is_named_only_when_a_trial_runs() {
     // a trial: each run its own place, and no warning that they share one
     let o = run(&[
         "run",
-        "--allow-writes",
+        "--policy",
+        "allow",
         "--fault",
         "slowdown",
         "-o",
@@ -984,12 +990,7 @@ async fn the_place_of_a_run_is_named_only_when_a_trial_runs() {
         .run(
             Some("retrying"),
             &[
-                "run",
-                "--allow-writes",
-                "--fault",
-                "slowdown",
-                "-o",
-                "w.sonde",
+                "run", "--policy", "allow", "--fault", "slowdown", "-o", "w.sonde",
             ],
         )
         .await;
@@ -1133,7 +1134,7 @@ async fn a_sonde_toml_that_says_what_sonde_does_not_know_is_an_error() {
         let o = b
             .run(
                 Some("retrying"),
-                &["run", "--allow-writes", "--trial", "-o", "run.sonde"],
+                &["run", "--policy", "allow", "--trial", "-o", "run.sonde"],
             )
             .await;
         let code = if says == "soon" {
@@ -1158,7 +1159,7 @@ async fn a_sonde_toml_that_says_what_sonde_does_not_know_is_an_error() {
     let o = b
         .run(
             Some("retrying"),
-            &["run", "--allow-writes", "--trial", "-o", "run.sonde"],
+            &["run", "--policy", "allow", "--trial", "-o", "run.sonde"],
         )
         .await;
     assert_eq!(o.code, Some(0), "{}", o.stderr);
@@ -1269,7 +1270,8 @@ async fn a_placed_key_that_holds_the_clean_runs_name_or_the_scenarios_is_still_m
             key,
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 fault,
                 "-o",
@@ -1291,7 +1293,8 @@ async fn a_placed_key_that_holds_the_clean_runs_name_or_the_scenarios_is_still_m
             key,
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 fault,
                 "-o",
@@ -1324,7 +1327,7 @@ async fn a_400_request_timeout_is_owed_a_retry_and_a_dropped_write_broke() {
         &b,
         "never-key",
         "k-{trial}",
-        &["run", "--allow-writes", "--trial", "-o", "never.sonde"],
+        &["run", "--policy", "allow", "--trial", "-o", "never.sonde"],
     )
     .await;
     assert_eq!(o.code, Some(1), "{}", o.stderr);
@@ -1337,7 +1340,7 @@ async fn a_400_request_timeout_is_owed_a_retry_and_a_dropped_write_broke() {
         &b,
         "key",
         "k-{trial}",
-        &["run", "--allow-writes", "--trial", "-o", "retries.sonde"],
+        &["run", "--policy", "allow", "--trial", "-o", "retries.sonde"],
     )
     .await;
     assert_eq!(o.code, Some(0), "{}", o.stderr);
@@ -1371,7 +1374,8 @@ async fn a_marker_created_if_absent_is_not_offered_a_race_and_survives_one() {
         "out-{trial}",
         &[
             "run",
-            "--allow-writes",
+            "--policy",
+            "allow",
             "--fault",
             "lost-race",
             "-o",
@@ -1401,7 +1405,8 @@ async fn a_completion_answered_500_though_made_is_looked_for_or_reported_wrongly
             Some("multipart"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "complete-500",
                 "-o",
@@ -1422,7 +1427,14 @@ async fn a_completion_answered_500_though_made_is_looked_for_or_reported_wrongly
     let o = b
         .run(
             Some("multipart-tolerant"),
-            &["run", "--allow-writes", "--trial", "-o", "tolerant.sonde"],
+            &[
+                "run",
+                "--policy",
+                "allow",
+                "--trial",
+                "-o",
+                "tolerant.sonde",
+            ],
         )
         .await;
     assert_eq!(o.code, Some(0), "{}", o.stderr);
@@ -1443,7 +1455,8 @@ async fn a_late_first_byte_waited_out_is_degraded() {
             Some("patient-downloads"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "slow-first-byte",
                 "-o",
@@ -1473,7 +1486,7 @@ async fn a_listing_that_does_not_show_a_write_yet_is_listed_again_or_broke() {
     let o = b
         .run(
             Some("lists"),
-            &["run", "--allow-writes", "--trial", "-o", "lists.sonde"],
+            &["run", "--policy", "allow", "--trial", "-o", "lists.sonde"],
         )
         .await;
     assert_eq!(o.code, Some(1), "{}", o.stderr);
@@ -1501,7 +1514,8 @@ async fn a_listing_that_does_not_show_a_write_yet_is_listed_again_or_broke() {
             Some("lists-again"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "stale-list",
                 "-o",
@@ -1525,7 +1539,8 @@ async fn with_the_runs_name_in_its_key_a_program_that_never_retries_still_broke(
         "etl-{trial}",
         &[
             "run",
-            "--allow-writes",
+            "--policy",
+            "allow",
             "--fault",
             "slowdown",
             "-o",
@@ -1555,7 +1570,8 @@ async fn with_the_runs_name_in_its_key_a_program_that_never_retries_still_broke(
         "etl-fixed",
         &[
             "run",
-            "--allow-writes",
+            "--policy",
+            "allow",
             "--fault",
             "slowdown",
             "-o",
@@ -1574,7 +1590,8 @@ async fn with_the_runs_name_in_its_key_a_program_that_never_retries_still_broke(
             Some("never-placed"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "error",
                 "-o",
@@ -1600,7 +1617,8 @@ async fn with_the_runs_name_in_its_key_a_program_that_never_retries_still_broke(
         "error",
         &[
             "run",
-            "--allow-writes",
+            "--policy",
+            "allow",
             "--fault",
             "error",
             "-o",
@@ -1638,7 +1656,8 @@ async fn what_the_store_itself_refuses_in_the_clean_run_is_not_held_against_the_
             Some("tolerant-batches"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "slowdown",
                 "-o",
@@ -1664,7 +1683,8 @@ async fn a_poll_is_judged_by_its_answers_and_called_a_retry_only_when_it_is_know
             Some("polls-for"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "slowdown",
                 "-o",
@@ -1685,7 +1705,8 @@ async fn a_poll_is_judged_by_its_answers_and_called_a_retry_only_when_it_is_know
             Some("never-polls"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "slowdown",
                 "-o",
@@ -1767,7 +1788,8 @@ async fn a_body_cut_short_is_read_again_or_taken_for_the_whole() {
             Some("never-downloads"),
             &[
                 "run",
-                "--allow-writes",
+                "--policy",
+                "allow",
                 "--fault",
                 "cut-body",
                 "-o",
@@ -1940,7 +1962,8 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
         "n-{trial}/_delta_log",
         &[
             "run",
-            "--allow-writes",
+            "--policy",
+            "allow",
             "--fault",
             "lost-race",
             "-o",
@@ -1972,7 +1995,8 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
         "o-{trial}/_delta_log",
         &[
             "run",
-            "--allow-writes",
+            "--policy",
+            "allow",
             "--fault",
             "lost-race",
             "-o",
@@ -1993,7 +2017,8 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
         "db-{trial}/wal",
         &[
             "run",
-            "--allow-writes",
+            "--policy",
+            "allow",
             "--fault",
             "lost-race",
             "-o",
@@ -2018,7 +2043,8 @@ async fn a_lost_race_is_run_again_given_up_written_over_or_stops_a_fenced_writer
         "f-{trial}/_delta_log",
         &[
             "run",
-            "--allow-writes",
+            "--policy",
+            "allow",
             "--fault",
             "lost-race",
             "-o",

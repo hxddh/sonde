@@ -87,7 +87,7 @@ Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 ## Good to know
 
 - **What a recorded program may do**: by default `no-delete` — no deletes, no overwriting objects it did not write,
-  no bucket policy or versioning changes. `--allow-writes` lifts it, `--policy read-only` allows only reads
+  no bucket policy or versioning changes. `--policy allow` lifts it, `--policy read-only` allows only reads
   ([recording](docs/recording.md)). On a store that ignores `If-None-Match`, use `--policy read-only`. A safety net,
   not a sandbox: the program runs with your rights ([security](docs/security.md#run)).
 - **A trial runs the program again**, once per scenario: point it at scratch paths with `{trial}` in a key, or

@@ -27,9 +27,8 @@ pub async fn demo(s: &Arc<Sonde>, a: &DemoArgs) -> anyhow::Result<i32> {
         .map_err(|e| anyhow::anyhow!(e))?;
     let rec = Recording {
         endpoint: Some(ep.id.clone()),
-        policy: None,
         // the demo store is sonde's own, made for this tour
-        allow_writes: true,
+        policy: Some("allow".into()),
         out: None,
         tls: false,
     };
