@@ -464,7 +464,7 @@ const buttonClass: Record<Variant, string> = {
   primary: "bg-primary hover:bg-primary/90 active:bg-primary/80",
   outline: "border border-input bg-background hover:bg-muted active:bg-muted",
   ghost: "hover:bg-muted active:bg-muted",
-  // (dimmed, a destructive red reads as mud on dark: a destructive that cannot act is drawn as an outline's)
+  // (dimmed, a destructive red reads as mud on dark: one that cannot act is a quiet grey fill, its label muted)
   destructive: "bg-destructive hover:bg-destructive/90 active:bg-destructive/80 disabled:bg-muted",
 };
 
@@ -547,7 +547,7 @@ export function Button(props: {
       disabled={props.disabled || props.loading}
       accessibilityLabel={props.label}
       tooltip={props.tip || props.shortcut ? <Tip text={props.tip ?? props.label} shortcut={props.shortcut} /> : undefined}
-      class={`group flex-row items-center justify-center gap-1 rounded-(--radius) ${props.small ? "h-7 px-2" : "h-8 px-3"} ${buttonClass[v()]} ${props.loading ? "" : DISABLED} ${PRESS.control} ${FOCUS} ${props.class ?? ""}`}
+      class={`group flex-row items-center justify-center gap-1 rounded-(--radius) ${props.small ? "h-7 px-2" : "h-8 px-3"} ${buttonClass[v()]} ${props.loading || v() === "destructive" ? "" : DISABLED} ${PRESS.control} ${FOCUS} ${props.class ?? ""}`}
     >
       <If when={props.icon}>
         <If when={props.loading} else={<Icon name={props.icon!} tint={tint()} />}>
@@ -1407,29 +1407,35 @@ export function ProgressBar(props: { value: number | null; label?: string }) {
     loop.start();
     cleanup(() => loop.stop());
   });
-  // a known value: a fill the track's width, slid out of the track's start by what is left (it glides on its transform)
+  // a known value: a fill the track's width, slid out of the track's start by what is left; it glides once the
+  // track is measured (not from full as it first lays out)
   const left = () => (props.value === null ? 0 : (1 - Math.min(1, Math.max(0, props.value))) * width());
+  const settled = signal(false);
+  effect(() => {
+    if (width() > 0 && !settled()) setTimeout(() => settled.set(true), 0);
+  });
   return (
     <View class="gap-1">
       <Progress
-        // Native Shell's Progress counts 0–100; it gives the value to screen readers, the bar is drawn here
+        // Native Shell's Progress counts 0–100 and gives the value to screen readers; a window's bar is drawn here,
+        // inside it (a terminal draws its own)
         value={props.value === null ? undefined : Math.min(100, Math.max(0, props.value * 100))}
         indeterminate={props.value === null}
         accessibilityLabel={props.label ?? t("common.progress")}
-        class={terminal() ? "h-1.5" : "hidden"}
-        trackClass="h-1.5 rounded-full bg-muted"
+        trackClass={terminal() ? "h-1.5 rounded-full bg-muted" : "hidden"}
         indicatorClass="h-1.5 rounded-full bg-primary"
-      />
-      <If when={!terminal()}>
-        <View accessibilityElementsHidden class="h-1.5 overflow-hidden rounded-full bg-muted" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
-          <If
-            when={props.value !== null}
-            else={<View class={`absolute bottom-0 top-0 left-0 rounded-full bg-primary ${reduceMotion() ? "w-full opacity-40" : "w-1/3"}`} style={reduceMotion() ? undefined : { translate: [sweep, 0] }} />}
-          >
-            <View class={`h-1.5 w-full rounded-full bg-primary ${GLIDE}`} style={{ translate: [-left(), 0] }} />
-          </If>
-        </View>
-      </If>
+      >
+        <If when={!terminal()}>
+          <View class="h-1.5 overflow-hidden rounded-full bg-muted" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+            <If
+              when={props.value !== null}
+              else={<View class={`absolute bottom-0 top-0 left-0 rounded-full bg-primary ${reduceMotion() ? "w-full opacity-40" : "w-1/3"}`} style={reduceMotion() ? undefined : { translate: [sweep, 0] }} />}
+            >
+              <View class={`h-1.5 w-full rounded-full bg-primary ${settled() ? GLIDE : ""}`} style={{ translate: [-left(), 0] }} />
+            </If>
+          </View>
+        </If>
+      </Progress>
       <If when={props.label}>
         <Text class={TEXT.note}>{props.label}</Text>
       </If>
