@@ -288,8 +288,8 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 })
                 .collect();
             let mut heads = vec![
-                "session", "recorded", "program", "endpoint", "requests", "took", "errors",
-                "exit", "trials", "size",
+                "session", "recorded", "program", "endpoint", "requests", "took", "errors", "exit",
+                "trials", "size",
             ];
             // a table has no column with nothing in it (no run's exit is
             // known: imports, replays); a file's columns stay what they are
