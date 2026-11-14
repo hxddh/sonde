@@ -315,7 +315,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       text: () => trialSaid(sig(), faults().length, p().wallMs, props.clean!.profile.wallMs),
       how: () => t("trialOver.hint"),
       legend: () => trialLegend(faults().length > 0),
-      body: () => <TrialOverClean trial={p()} clean={props.clean!.profile} faults={faults()} domainMs={zoomMs()} />,
+      body: () => <TrialOverClean trial={p()} clean={props.clean!.profile} faults={faults()} every={(props.view.injected?.length ?? 0) >= props.view.summary.requests} domainMs={zoomMs()} />,
     },
     {
       // the whole run, its findings marked; the stretch picked here is what every chart follows

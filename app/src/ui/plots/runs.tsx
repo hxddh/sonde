@@ -17,9 +17,10 @@ import { Figure, terminal, textual, SimpleTable, SURFACE, TONE } from "../kit";
  * the requests sent so far (a count that climbs, so a run of a few requests
  * is not drawn as a rate that leaps between nothing and hundreds a second)
  * and the median latency of the slices that sent any, and a rule at every
- * moment sonde answered in the store's place. What the faults cost shows as
- * the gap between the two lines after a rule. */
-export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: number[]; /** the stretch chosen on the timeline (ms from the start): both runs over it */ domainMs?: [number, number] | null; /** what it says of itself (two runs compared: theirs; a trial: how long each took) */ label?: string }) {
+ * moment sonde answered in the store's place (one band from the first to the
+ * last when it answered every request). What the faults cost shows as the gap
+ * between the two lines after a rule. */
+export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: number[]; /** sonde answered every request of the trial: one band, not a rule per request */ every?: boolean; /** the stretch chosen on the timeline (ms from the start): both runs over it */ domainMs?: [number, number] | null; /** what it says of itself (two runs compared: theirs; a trial: how long each took) */ label?: string }) {
   // (inside the stretch, with the slice that starts before it: the line enters the plot at its edge)
   const within = (tMs: number, binMs: number) => !props.domainMs || (tMs + binMs > props.domainMs[0] && tMs < props.domainMs[1]);
   const lineOf = (p: Profile) => {
@@ -43,6 +44,11 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
   const p50Top = () => Math.max(0.1, ...trial().map((r) => r.p50), ...clean().map((r) => r.p50));
   // the plot's own rows are the faults: the pointer rests on one, and the tooltip says when
   const faults = () => [...props.faults].filter((tMs) => within(tMs, 0)).sort((a, b) => a - b).map((tMs) => ({ tMs }));
+  // every request answered by sonde: the stretch from the first to the last (a rule where that is one moment)
+  const band = () => {
+    const f = faults();
+    return props.every && f.length > 1 && f[f.length - 1].tMs > f[0].tMs ? [f[0], f[f.length - 1]] : null;
+  };
   const hovered = signal<number | null>(null);
   const tip = () => {
     const f = hovered() === null ? null : faults()[hovered()!];
@@ -68,8 +74,10 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
       onHoverChange={({ index }) => hovered.set(index)}
       class={`${axis ? TICK_ROOM : ""} ${STRIP} w-full`}
     >
-      {/* where sonde answered in the store's place */}
-      <Rule value={() => top() * HEADROOM.strip} class={`stroke-status-injected ${STROKE.line}`} />
+      {/* where sonde answered in the store's place: every request, one band; else a rule at each */}
+      <If when={band()} else={<Rule value={() => top() * HEADROOM.strip} class={`stroke-status-injected ${STROKE.line}`} />}>
+        <Area data={band()!} x="tMs" y1={() => top() * HEADROOM.strip} y0={0} curve="linear" class="fill-status-injected/15" hoverDotClass="hidden" />
+      </If>
       {/* the clean run under, dashed and quiet; the trial over it */}
       <Line data={of(clean(), key)} x="tMs" y={key} curve={key === "sent" ? "stepAfter" : "linear"} class={`stroke-muted-foreground ${STROKE.line}`} style={{ strokeDasharray: DASH.reference }} hoverDotClass="hidden" />
       <Line data={of(trial(), key)} x="tMs" y={key} curve={key === "sent" ? "stepAfter" : "linear"} class={`stroke-chart-1 ${STROKE.line}`} hoverDotClass="hidden" />
