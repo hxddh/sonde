@@ -6,6 +6,12 @@ The contract starts at 19.0 (D-138). 19.0 kept nothing of earlier versions: no f
 or JSON names of before it are read or said ([changelog](../CHANGELOG.md), [0.1 to 18.0](history/changelog-0-18.md)).
 From here a break comes only in a major, and is announced one version ahead.
 
+**20.0** breaks without a 19.x announcing it, by the owner's decision: one name for each thing (an S3 call is a
+`kind`: `requests[].kind`, `summary.kinds`, `show --by kind`, session format 2), a program is its command with what
+changes between runs left out, `record-policy` and `name-callers` move to `sonde.toml`, `sonde demo` is `run
+--demo`, `--allow-writes` is `--policy allow`, `prune` confirms with `--confirm COUNT`, and display text leaves the
+promise. 20.0 reads 19.0's sessions (format 1). From 20.0 the announcement rule holds.
+
 ## Stable
 
 | | What | Documented in | Tested by |
@@ -43,6 +49,9 @@ From here a break comes only in a major, and is announced one version ahead.
 ## Not stable
 
 - Text for people: tables, sentences, `-f markdown`, `-f csv`, `-f github`, all of stderr. Use `-f json`.
+- Display text inside JSON: each property a schema says is "Display text, not stable": the `*Text` phrase arrays,
+  a finding's and an operation's sentences (`text`, `phrases`, `title`, `notes`), `show --by`'s sentence, and `layout
+  inspect`'s `headline`, `facts` and `tables` (which may also be absent). Read the figures and ids beside them.
 - The desktop app, the terminal UI (its developer flags `--bundle`, `--fps`, `--log-file` too, left out of help), the
   shared HTML page, the app–Rust bridge.
 - Files beside sessions and in the data directory (counts, verdicts, baselines, probe runs, caches); an unreadable

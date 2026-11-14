@@ -525,3 +525,54 @@ fn every_schema_is_checked_and_documented() {
         );
     }
 }
+
+/// The contract promises figures and ids, not wording: every phrase array
+/// (`…Text`) and `layout inspect`'s display tables say so, those tables are
+/// not required, and no output names an S3 call `operation` (it is a
+/// `kind`; an operation is a program's).
+#[test]
+fn display_text_is_marked_and_an_s3_call_is_a_kind() {
+    fn walk(v: &Value, name: &str, out: &mut Vec<String>) {
+        match v {
+            Value::Object(o) => {
+                if let Some(Value::Object(props)) = o.get("properties") {
+                    let required: Vec<&str> = o
+                        .get("required")
+                        .and_then(Value::as_array)
+                        .map(|r| r.iter().filter_map(Value::as_str).collect())
+                        .unwrap_or_default();
+                    for (k, p) in props {
+                        let said = p["description"]
+                            .as_str()
+                            .is_some_and(|d| d.starts_with("Display text, not stable"));
+                        let layout = name == "layout-inspect"
+                            && ["headline", "facts", "tables"].contains(&k.as_str());
+                        if (k.ends_with("Text") || layout) && !said {
+                            out.push(format!("{name}: {k} is not marked display text"));
+                        }
+                        if layout && required.contains(&k.as_str()) {
+                            out.push(format!("{name}: {k} is required"));
+                        }
+                        if k == "operation" {
+                            out.push(format!("{name}: an S3 call named `operation`"));
+                        }
+                    }
+                }
+                for x in o.values() {
+                    walk(x, name, out);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| walk(x, name, out)),
+            _ => {}
+        }
+    }
+    let mut wrong = Vec::new();
+    for e in std::fs::read_dir(schemas_dir()).unwrap().flatten() {
+        let file = e.file_name().to_string_lossy().into_owned();
+        let Some(name) = file.strip_suffix(".schema.json") else {
+            continue;
+        };
+        walk(&schema(name), name, &mut wrong);
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

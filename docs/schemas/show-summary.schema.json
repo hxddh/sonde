@@ -216,11 +216,11 @@
         },
         "text": {
           "type": "string",
-          "description": "In English."
+          "description": "Display text, not stable: in English."
         },
         "phrases": {
           "type": "array",
-          "description": "The same, as phrases.",
+          "description": "Display text, not stable: the same, as phrases.",
           "items": {
             "$ref": "#/$defs/phrase"
           }
@@ -244,7 +244,8 @@
           "$ref": "#/$defs/phrase"
         },
         "savingText": {
-          "type": "string"
+          "type": "string",
+          "description": "Display text, not stable."
         },
         "savesRequests": {
           "type": "integer"

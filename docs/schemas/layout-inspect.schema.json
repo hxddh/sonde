@@ -24,16 +24,19 @@
         "type": "boolean"
       },
       "headline": {
-        "type": "string"
+        "type": "string",
+        "description": "Display text, not stable."
       },
       "headlineText": {
         "type": "array",
+        "description": "Display text, not stable.",
         "items": {
           "$ref": "#/$defs/phrase"
         }
       },
       "facts": {
         "type": "array",
+        "description": "Display text, not stable.",
         "items": {
           "type": "object",
           "properties": {
@@ -64,11 +67,13 @@
       },
       "tables": {
         "type": "array",
+        "description": "Display text, not stable.",
         "items": {
           "type": "object",
           "properties": {
             "title": {
-              "type": "string"
+              "type": "string",
+              "description": "Display text, not stable."
             },
             "columns": {
               "type": "array",
@@ -111,11 +116,8 @@
       "root",
       "formatVersion",
       "decoded",
-      "headline",
-      "facts",
       "issues",
       "timeline",
-      "tables",
       "snapshots",
       "objects",
       "bytes"

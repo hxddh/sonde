@@ -42,11 +42,11 @@
         },
         "text": {
           "type": "string",
-          "description": "Where the slow and the costly requests concentrate, in a sentence (empty when nothing can be said)."
+          "description": "Display text, not stable: where the slow and the costly requests concentrate, in a sentence (empty when nothing can be said)."
         },
         "phrases": {
           "type": "array",
-          "description": "`text` as phrases, for other languages.",
+          "description": "Display text, not stable: `text` as phrases, for other languages.",
           "items": {
             "type": "object",
             "properties": {

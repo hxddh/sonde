@@ -87,6 +87,7 @@
     },
     "findingsText": {
       "type": "array",
+      "description": "Display text, not stable.",
       "items": {
         "type": "array",
         "items": {
