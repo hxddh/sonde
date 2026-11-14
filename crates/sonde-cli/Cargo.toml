@@ -3,6 +3,7 @@ name = "sonde-cli"
 description = "sonde: diagnose S3 and S3-compatible object storage. Headless subcommands for scripts and CI, and the terminal UI."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
@@ -59,7 +60,3 @@ parking_lot.workspace = true
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
-
-[package.metadata.cargo-shear]
-# used by tests/common, which cargo shear does not follow through #[path]
-ignored = ["parking_lot", "hyper", "hyper-util", "http-body-util"]

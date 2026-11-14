@@ -6,7 +6,7 @@ sonde is a Rust workspace (`crates/`) and an app written in TSX on [Native Shell
 
 ## Build
 
-Rust 1.95 or newer (the app and `sonde tui` need 1.97), and the `nsh` CLI at the commit `Cargo.toml` pins:
+Rust 1.97 or newer, and the `nsh` CLI at the commit `Cargo.toml` pins:
 
 ```sh
 cargo install --locked --git https://github.com/longbridge/nsh --rev <nsh-core's rev in Cargo.toml> nsh-cli

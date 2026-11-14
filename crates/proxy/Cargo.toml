@@ -3,6 +3,7 @@ name = "sonde-proxy"
 description = "A local S3 endpoint that records every request an application makes, re-signs it with sonde's credentials and forwards it."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [lints]

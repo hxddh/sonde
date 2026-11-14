@@ -77,7 +77,7 @@ const AVRO_MAX_LEN: usize = 4 << 20;
 
 fn avro_records(bytes: &[u8]) -> Result<Vec<Avro>, String> {
     // (the first call in the process sets it; every call sets the same)
-    apache_avro::max_allocation_bytes(AVRO_MAX_LEN);
+    apache_avro::util::max_allocation_bytes(AVRO_MAX_LEN);
     // apache-avro panics on some malformed schemas (a name it cannot parse:
     // `fuzz/`, `iceberg_avro`): an unreadable file, not the end of sonde
     std::panic::catch_unwind(|| {

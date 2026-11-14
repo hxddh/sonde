@@ -3,6 +3,7 @@ name = "s3raw"
 description = "A raw S3 client for diagnosis: SigV4, path- and virtual-hosted-style, every header, status and error body kept."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [lints]

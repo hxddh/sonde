@@ -3,6 +3,7 @@ name = "sonde-nsh"
 description = "sonde's Native Shell adapter: the `sonde/native` module TSX imports. Type conversion only; the logic is in sonde-core, probes and decoders."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [lints]

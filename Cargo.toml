@@ -27,7 +27,7 @@ version = "21.0.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/hxddh/sonde"
-rust-version = "1.95"
+rust-version = "1.97"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -53,7 +53,7 @@ anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
 tokio-util = "0.7"
@@ -63,7 +63,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 http = "1"
 url = "2"
 percent-encoding = "2"
-quick-xml = { version = "0.41", features = ["serialize"] }
+quick-xml = { version = "0.42", features = ["serialize"] }
 hmac = "0.12"
 sha2 = "0.10"
 sha1 = "0.10"
@@ -73,14 +73,14 @@ base64 = "0.22"
 crc32fast = "1"
 crc32c = "0.6"
 crc64fast-nvme = "1"
-dirs = "6"
+dirs = "7"
 parking_lot = "0.12"
 tracing = "0.1"
 clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
 flate2 = "1"
-apache-avro = { version = "0.17", default-features = false }
+apache-avro = { version = "0.22", default-features = false }
 async-trait = "0.1"
 tempfile = "3"
 
