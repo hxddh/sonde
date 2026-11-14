@@ -95,6 +95,27 @@ for (const v of variants) {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
     };
+    // The screens that draw measured figures (a run's times, a trial's run over its clean run, two runs compared, a
+    // program's runs) show committed sessions (tests/fixtures/sessions, which scripts/shots.sh puts in the tour's
+    // data folder): `./nightly-report.sh` run on two mornings, before its fix and after (with a slowdown trial).
+    // The tour's own runs are measured anew each time; their screens show what recording does, not its figures.
+    // The committed run after the fix, opened from the list of runs: the oldest are last, so the list is brought to
+    // its end, the newer of the program's two rows pressed (the first of the two in the list), and the list brought
+    // back to its start.
+    const fixture = async () => {
+      await go("sessions");
+      if (!app.shows("id:session-list") && !app.shows("id:program-list")) await app.keyboard.press("mod+b");
+      if (!app.shows("id:session-list")) await pressUntil("id:sessions-by-runs", "id:session-list");
+      for (let n = 0; n < 30 && !app.shows("text:nightly-report.sh"); n++) await app.scroll("id:session-list", 800);
+      await app.scroll("id:session-list", 800);
+      await app.wait(300);
+      await app.press("id:session-list >> text:nightly-report.sh >> nth=0");
+      // (its header says its command: the session shown is the one pressed)
+      await app.waitUntil(() => app.shows("id:session-summary") && app.texts().some((x) => x.includes("./nightly-report.sh")), { timeout: 10000 });
+      if (!app.shows("id:session-list")) await app.keyboard.press("mod+b");
+      for (let n = 0; n < 30 && !app.shows("id:session-0"); n++) await app.scroll("id:session-list", -800);
+      await app.wait(600);
+    };
 
     await shot("01-welcome");
     await app.press("id:welcome-demo");
@@ -178,16 +199,23 @@ for (const v of variants) {
     await app.waitFor("id:history-trials", { timeout: 20000 });
     await shot("02h-runs-verdicts");
     // a trial's own session: its notice, the faults' moments on its shape, and the run over its clean run
-    await app.press("id:trial-slowdown");
-    // (a long list of verdicts has it under the fold: brought up, and pressed again)
-    if (!(await app.waitFor("id:trial-note", { timeout: 10000 }).then(() => true, () => false)) && app.shows("id:trial-slowdown")) {
-      await app.scroll("id:history-pane", 500);
-      await app.wait(300);
-      await app.press("id:trial-slowdown");
+    // (a long list of verdicts, Chinese's, has it under the fold: brought up, and pressed again)
+    for (let n = 0; n < 6; n++) {
+      const opened = await app.press("id:trial-slowdown").then(() => app.waitFor("id:trial-note", { timeout: 5000 })).then(() => true, () => false);
+      if (opened) break;
+      await app.scroll("id:history-pane", 300);
+      await app.wait(500);
     }
     await app.waitFor("id:trial-note", { timeout: 20000 });
     await app.wait(600);
     await shot("02i-trial-session");
+    // the run under faults over its clean run, on its Time pane: the committed run's slowdown trial, opened as the
+    // tour's was, from the run's Runs pane
+    await fixture();
+    await app.press("id:session-pane-mode-runs");
+    await app.waitFor("id:trial-slowdown", { timeout: 10000 });
+    await app.press("id:trial-slowdown");
+    await app.waitFor("id:trial-note", { timeout: 20000 });
     await app.press("id:session-pane-mode-time");
     await app.waitFor("id:time-pane");
     await app.wait(900);
@@ -201,7 +229,8 @@ for (const v of variants) {
       await app.waitFor("id:output", { timeout: 5000 });
       await shot("02k-output");
     }
-    // the run's own session: what failed over its time, and the first byte against the rest
+    // the run's own session (the committed run, its clean run): what failed over its time, and the first byte against
+    // the rest
     await go("sessions");
     await app.waitFor("id:session-summary", { timeout: 10000 });
     await app.press("id:signal-errors");
@@ -216,9 +245,12 @@ for (const v of variants) {
     }
 
     await go("sessions");
-    // the programs run here, each over its runs
+    // the programs run here, each over its runs: the committed program's runs beside the list (its run is the one shown)
     await app.press("id:sessions-by-programs");
-    await app.wait(700);
+    await app.waitFor("id:program-list", { timeout: 10000 });
+    await app.press("id:session-pane-mode-runs");
+    await app.waitFor("id:history-pane", { timeout: 10000 });
+    await app.wait(900);
     await shot("03p-programs");
     await app.press("id:sessions-by-runs");
     // (the runs' list back first: a press before it settles is undone as it chooses its first run)
@@ -301,16 +333,11 @@ for (const v of variants) {
     await app.press("id:signal-errors");
     await app.wait(700);
     await charts("03o-errors");
-    // the same program run twice, before and after its fix: the tour's second run against its first (18 requests)
-    if (!app.shows("id:session-1")) await app.keyboard.press("mod+b");
-    if (app.shows("id:session-1")) {
-      await app.press("id:session-1");
-      await app.waitFor("id:session-summary", { timeout: 10000 });
-      await app.wait(600);
-    }
+    // the same program run twice, before and after its fix: the committed run after it against the one before
+    await fixture();
     await app.press("id:compare-open");
     const labels = app.menu()?.map((m) => m.label) ?? [];
-    const run = labels.find((l) => l.includes("curl") && /· 18$/.test(l)) ?? labels.find((l) => l.includes("curl"));
+    const run = labels.find((l) => l.includes("nightly-report"));
     if (run) {
       await app.chooseMenuItem(run);
       await app.waitFor("id:run-change", { timeout: 10000 });
