@@ -319,7 +319,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       ? [
           ...(tryable ? [{ label: t("trial.try"), icon: iconSvg("flask-conical"), disabled: !!running(), onSelect: () => tryingFaults.set(true) }] : []),
           { label: t("replay.open"), icon: iconSvg("repeat-2"), onSelect: () => replaying.set(true) },
-          { label: t("compare.open"), icon: iconSvg("git-compare-arrows"), onSelect: compareMenu },
+          // (the runs' menu opens once this one has closed: macOS shows no menu opened while one is closing)
+          { label: t("compare.open"), icon: iconSvg("git-compare-arrows"), onSelect: () => setTimeout(compareMenu, 0) },
           { type: "separator" },
         ]
       : [];
