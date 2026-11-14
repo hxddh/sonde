@@ -562,9 +562,11 @@ fn a_finding_that_grew_is_more_never_less() {
     };
     let mut ra: Vec<Record> = Vec::new();
     lists(&mut ra, "logs/", 92);
+    lists(&mut ra, "same/", 6);
     throttled(&mut ra, 64);
     let mut rb: Vec<Record> = Vec::new();
     lists(&mut rb, "logs/", 216);
+    lists(&mut rb, "same/", 6);
     for p in ["alpha/", "beta/", "gamma/"] {
         lists(&mut rb, p, 300);
     }
@@ -587,6 +589,13 @@ fn a_finding_that_grew_is_more_never_less() {
     assert_eq!(logs.state, State::More, "{logs:#?}");
     assert_eq!(logs.counts, Some([92, 216]));
     assert!(logs.saved.is_none());
+    // as much, though under the prefixes shown now: open, not less
+    let same = c
+        .findings
+        .iter()
+        .find(|f| f.identity == "obs.listed|b/same/")
+        .expect("same/");
+    assert_eq!(same.state, State::Open, "{same:#?}");
     let slow = c
         .findings
         .iter()
