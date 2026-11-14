@@ -321,8 +321,9 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
             <PlotLabel class={LABEL.mark} texts={[...marked()].map(([i, ns]) => ({ text: ns.join(", "), x: i, y: ceiling(), align: i < 2 ? ("left" as const) : i > rows().length - 3 ? ("right" as const) : ("center" as const), class: "-translate-y-full pb-1" }))} />
           </If>
           {/* the busiest moment, named where it happened */}
-          {/* (left out where a finding's number stands near it: the two would cross; Time says it too) */}
-          <If when={props.annotate && peakBin() !== null && ![...marked().keys()].some((i) => Math.abs(i - peakBin()!) <= Math.max(3, rows().length / 12))}>
+          {/* (left out where a finding's number stands near it: the two would cross; Time says it too; and where
+              the axis is drawn, whose far edge says the most in flight already) */}
+          <If when={props.annotate && !(props.axis && !props.strip) && peakBin() !== null && ![...marked().keys()].some((i) => Math.abs(i - peakBin()!) <= Math.max(3, rows().length / 12))}>
             <PlotLabel
               scale="y2"
               class={LABEL.figureStrong}
