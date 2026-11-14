@@ -381,10 +381,16 @@ for (const v of variants) {
     await charts("03o-errors");
     // the same program run twice, before and after its fix: the committed run after it against the one before
     await fixture();
-    await act("compare-open", "Compare…", "对比…");
-    const run = (await menuItems()).find((l) => l.includes("nightly-report"));
+    // (by "Since the run before"'s Compare where it is shown: the same two runs, and no menu opened from a menu, which
+    // macOS's test bridge lists but cannot choose from)
+    let run: string | undefined = "the run before";
+    if (app.shows("id:since-compare")) await app.press("id:since-compare");
+    else {
+      await act("compare-open", "Compare…", "对比…");
+      run = (await menuItems()).find((l) => l.includes("nightly-report"));
+      if (run) await chooseFrom(() => act("compare-open", "Compare…", "对比…"), run);
+    }
     if (run) {
-      await chooseFrom(() => act("compare-open", "Compare…", "对比…"), run);
       await app.waitFor("id:run-change", { timeout: 10000 });
       // (each run's signals and the charts arrive after the figures: a picture taken at once showed "Not timed" over empty charts)
       await app.wait(1500);
