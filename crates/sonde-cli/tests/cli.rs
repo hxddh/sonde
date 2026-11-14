@@ -699,7 +699,7 @@ fn every_command_writes_text_and_json_and_refuses_another_format() {
         &["bucket", "uploads", "-b", "b", "-f", "csv"],
         &["probe", "list", "-f", "csv"],
         &["probe", "-b", "scratch", "-f", "markdown"],
-        &["layout", "inspect", "-b", "b", "-f", "csv"],
+        &["layout", "-b", "b", "-f", "csv"],
         &["endpoints", "list", "-f", "table"],
         &["runs", "-f", "github"],
         &["show", "-f", "markdown"],
@@ -730,7 +730,7 @@ fn every_command_writes_text_and_json_and_refuses_another_format() {
             &["probe", "list", "--help"],
             Some("written: text or json ["),
         ),
-        (&["runs", "list", "--help"], Some("written: text or json [")),
+        (&["runs", "--help"], Some("written: text or json [")),
         (
             &["bucket", "uploads", "--help"],
             Some("written: text or json ["),
@@ -2002,10 +2002,7 @@ fn a_layout_asked_for_by_kind_and_not_there_is_said() {
     std::fs::create_dir_all(d.join("logs")).unwrap();
     std::fs::write(d.join("logs/a.txt"), "x").unwrap();
     let dir = d.to_str().unwrap();
-    let o = sonde(
-        t.path(),
-        &["layout", "inspect", "--dir", dir, "--kind", "slatedb"],
-    );
+    let o = sonde(t.path(), &["layout", "--dir", dir, "--kind", "slatedb"]);
     assert_eq!(o.status.code(), Some(4), "{}", stderr(&o));
     assert!(
         stderr(&o).contains("is not a SlateDB layout"),
@@ -2013,10 +2010,7 @@ fn a_layout_asked_for_by_kind_and_not_there_is_said() {
         stderr(&o)
     );
     // any prefix has a write cadence
-    let o = sonde(
-        t.path(),
-        &["layout", "inspect", "--dir", dir, "--kind", "generic"],
-    );
+    let o = sonde(t.path(), &["layout", "--dir", dir, "--kind", "generic"]);
     assert_ne!(o.status.code(), Some(64), "{}", stderr(&o));
     assert!(!stderr(&o).contains("is not a"), "{}", stderr(&o));
 }

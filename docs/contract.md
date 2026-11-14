@@ -50,7 +50,7 @@ and a container's image; all state beside the runs is in the folder's one index.
 | `sonde endpoints test -f json` | [endpoints-test](schemas/endpoints-test.schema.json) |
 | `sonde bucket size -f json` | [bucket-size](schemas/bucket-size.schema.json) |
 | `sonde bucket uploads -f json` | [bucket-uploads](schemas/bucket-uploads.schema.json) |
-| `sonde layout inspect -f json` | [layout-inspect](schemas/layout-inspect.schema.json) |
+| `sonde layout -f json` | [layout](schemas/layout.schema.json) |
 | `sonde probe list -f json` | [probe-list](schemas/probe-list.schema.json) |
 | `sonde probe -f json` | [probe](schemas/probe.schema.json) |
 | `sonde probe runs -f json` | [probe-runs](schemas/probe-runs.schema.json) |

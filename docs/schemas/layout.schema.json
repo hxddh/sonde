@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/layout-inspect.schema.json",
-  "title": "sonde layout inspect -f json",
+  "$id": "https://raw.githubusercontent.com/hxddh/sonde/main/docs/schemas/layout.schema.json",
+  "title": "sonde layout -f json",
   "description": "The storage layouts found under a prefix, decoded.",
   "type": "array",
   "items": {

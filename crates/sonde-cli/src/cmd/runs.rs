@@ -32,8 +32,6 @@ struct ListArgs {
 
 #[derive(Subcommand)]
 enum Action {
-    /// List them, newest first (the default).
-    List(ListArgs),
     /// Delete all but the newest N (baselines are kept): a dry run, unless --yes.
     Prune {
         /// How many of the newest runs to keep.
@@ -230,13 +228,10 @@ pub fn open_lean(
 }
 
 pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
-    let format = match &a.action {
-        Some(Action::List(l)) => l.format,
-        _ => a.list.format,
-    };
+    let format = a.list.format;
     let all = rows(s);
     match &a.action {
-        None | Some(Action::List(_)) => {
+        None => {
             if matches!(format, Format::Json) {
                 println!("{}", output::json(&all));
                 return Ok(0);

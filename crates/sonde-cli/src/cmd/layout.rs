@@ -1,50 +1,42 @@
 use std::sync::Arc;
 
-use clap::{Args, Subcommand};
+use clap::Args;
 use decoders::{Format as Lf, Layout, Severity};
 use sonde_core::Sonde;
 
 use crate::Cli;
 use crate::output::{self, Format};
 
+// the layouts under a prefix (or a local directory with --dir), detected and decoded
 #[derive(Args)]
 pub struct LayoutArgs {
-    #[command(subcommand)]
-    action: LayoutAction,
-}
-
-#[derive(Subcommand)]
-enum LayoutAction {
-    /// Detects and decodes the layouts under a prefix (or a local directory with --dir).
-    Inspect {
-        /// The endpoint (default: --url, or the only one configured).
-        #[arg(long, short = 'e')]
-        endpoint: Option<String>,
-        /// The bucket (or --dir).
-        #[arg(long, short = 'b')]
-        bucket: Option<String>,
-        /// The key prefix to look under (default: the bucket's root).
-        #[arg(long, short = 'p', default_value = "", hide_default_value = true)]
-        prefix: String,
-        /// A local directory instead of a bucket.
-        #[arg(long)]
-        dir: Option<std::path::PathBuf>,
-        /// slatedb, iceberg, lakefs, woodpecker, turbopuffer, warpstream, generic (default: detect).
-        #[arg(long)]
-        kind: Option<String>,
-        /// Replay: the logical state at this time (RFC 3339).
-        #[arg(long)]
-        at: Option<String>,
-        /// The format written: text or json.
-        #[arg(
-            long,
-            short = 'f',
-            value_enum,
-            default_value_t,
-            hide_possible_values = true
-        )]
-        format: Format,
-    },
+    /// The endpoint (default: --url, or the only one configured).
+    #[arg(long, short = 'e')]
+    endpoint: Option<String>,
+    /// The bucket (or --dir).
+    #[arg(long, short = 'b')]
+    bucket: Option<String>,
+    /// The key prefix to look under (default: the bucket's root).
+    #[arg(long, short = 'p', default_value = "", hide_default_value = true)]
+    prefix: String,
+    /// A local directory instead of a bucket.
+    #[arg(long)]
+    dir: Option<std::path::PathBuf>,
+    /// slatedb, iceberg, lakefs, woodpecker, turbopuffer, warpstream, generic (default: detect).
+    #[arg(long)]
+    kind: Option<String>,
+    /// Replay: the logical state at this time (RFC 3339).
+    #[arg(long)]
+    at: Option<String>,
+    /// The format written: text or json.
+    #[arg(
+        long,
+        short = 'f',
+        value_enum,
+        default_value_t,
+        hide_possible_values = true
+    )]
+    format: Format,
 }
 
 fn print(l: &Layout, at: Option<chrono::DateTime<chrono::Utc>>) {
@@ -143,7 +135,7 @@ fn targets(kind: Option<Lf>, prefix: &str, found: Vec<(Lf, String)>) -> Option<V
 }
 
 pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i32> {
-    let LayoutAction::Inspect {
+    let LayoutArgs {
         endpoint,
         bucket,
         prefix,
@@ -151,7 +143,7 @@ pub async fn run(s: &Arc<Sonde>, _cli: &Cli, a: &LayoutArgs) -> anyhow::Result<i
         kind,
         at,
         format,
-    } = &a.action;
+    } = a;
     let at = at
         .as_deref()
         .map(|t| chrono::DateTime::parse_from_rfc3339(t).map(|d| d.with_timezone(&chrono::Utc)))

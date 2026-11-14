@@ -42,7 +42,7 @@
 
 | Command | Does |
 |---|---|
-| `sonde runs [list] [-f json]` | Runs, newest first: program (name, else command; cut in the middle to the terminal's width), requests, duration, errors, the program's exit code (blank when not known: a proxy, a replay, an import; a table leaves the column out when none is known), worst trial verdict. |
+| `sonde runs [-f json]` | Runs, newest first: program (name, else command; cut in the middle to the terminal's width), requests, duration, errors, the program's exit code (blank when not known: a proxy, a replay, an import; a table leaves the column out when none is known), worst trial verdict. |
 | `sonde runs prune --keep N [--yes]` | Delete all but the newest N (baselines kept): a dry run (exit 4 when it would delete any), then `--yes`. |
 | `sonde show [FILE] [--requests] [--errors] [--summary] [--all] [--by DIM] [--app] [-f json]` | The summary, one shape for `run` and `show`: head line (requests, and operations when they are not the requests again; SDK, endpoint, duration, waiting, cost from a cent, errors, not found); the findings, each with its saving, code lines (`at file:line`) and the fix for the detected SDK; "Acting on N findings"; one table by kind of request (requests, errors, p95, waiting and its share, cost share; `*` under 20 requests when others have more); the change since the program's run before. |
 | ↳ `--all` | Each operation on its line first; the table with p50 and max and every kind; the four signals (rate, errors, latency, bytes), first byte, cost and the prefixes past half of S3's request limit. |
@@ -86,7 +86,7 @@
 | `sonde bucket uploads -e E -b B [-p PREFIX] [-f json]` | Incomplete uploads: bytes, age, cost (stale past 7 days), or that there are none; the lifecycle verdict. |
 | `sonde bucket abort-uploads -e E -b B [--older-than-days N] [--yes]` | A dry run; with `--yes` aborts (audited). |
 | `sonde bucket lifecycle -e E -b B [--days 7] [--yes]` | Adds an AbortIncompleteMultipartUpload rule, the bucket's other rules kept: a dry run (its rules and the one to add, each in a line), then `--yes` (audited). |
-| `sonde layout inspect -e E -b B [-p PREFIX] [--kind K] [--at RFC3339]` / `--dir PATH` | Detects and decodes a layout (`slatedb`, `iceberg`, `lakefs`, `woodpecker`, `turbopuffer`, `warpstream`, `generic`); `--kind` on a prefix that is not that layout says so, exit 4; `--at` gives the state at a time. |
+| `sonde layout -e E -b B [-p PREFIX] [--kind K] [--at RFC3339]` / `--dir PATH` | Detects and decodes a layout (`slatedb`, `iceberg`, `lakefs`, `woodpecker`, `turbopuffer`, `warpstream`, `generic`); `--kind` on a prefix that is not that layout says so, exit 4; `--at` gives the state at a time. |
 | `sonde endpoints list` / `test [ID]` / `import [PROFILES…]` / `add ID URL [--profile P] [--replace]` | Endpoints. `import` takes `~/.aws/config` profiles not yet configured. `add` refuses an id taken (64) unless `--replace`; it takes `--region`, `--path-style`, `--ca-file`; credentials from a profile or the default chain, never the command line. |
 
 ## More
