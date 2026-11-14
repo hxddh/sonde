@@ -285,8 +285,8 @@ export function Endpoints() {
       <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
         <ConfigNotice />
         <PageHeader title={t("endpoints.title")}>
-          {/* a store to try sonde on beside one's own: offered while the demo is not in the list (with none, the empty list offers it) */}
-          <If when={endpoints().length > 0 && !endpoints().some((e) => e.id === "demo")}>
+          {/* a store to try sonde on beside one's own: offered while the demo is not the one in use (with none, the empty list offers it) */}
+          <If when={endpoints().length > 0 && endpoint() !== "demo"}>
             <Button variant="ghost" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
           </If>
           {/* one primary at a time: while a form is open its Save is the one, and these wait for it */}

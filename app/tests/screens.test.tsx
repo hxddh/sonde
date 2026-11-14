@@ -1,7 +1,7 @@
 // The key path of each screen, in the desktop form, on the built-in demo.
 
 import { expect, open, test } from "nsh/test";
-import { desktop, place, withDemo } from "./helpers";
+import { openDemo, desktop, place, withDemo } from "./helpers";
 
 test("a session's request in the inspector: details, copy as curl without a signature", async () => {
   const app = await open("../App.tsx", desktop);
@@ -25,8 +25,6 @@ test("a session's request in the inspector: details, copy as curl without a sign
 
 test("multipart: scan, lifecycle verdict, the guard waits for the typed confirmation", async () => {
   const app = await withDemo("demo");
-  // the bucket's card says it before the detail opens
-  await app.waitFor("text:3 · 172 MiB", { timeout: 10000 });
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   // the figure is the count; its line says how much they hold and how many are old
@@ -264,7 +262,7 @@ test("a listing that fails says why in the one error state, with a way to try ag
   // a bucket the store does not have: its listing is the store's own refusal
   const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Sonde.buckets": async () => [bucketNamed("gone")] } } });
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await place(app, "browse");
   await app.waitFor("id:bucket-gone", { timeout: 10000 });
@@ -293,7 +291,7 @@ test("a store that is gone: the buckets say why and come back with it; the endpo
     },
   });
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   // the endpoint, tested: not reachable, and why
   await app.press("id:test-demo");

@@ -2,14 +2,14 @@
 // (an in-memory terminal, the real Cell renderer and keyboard).
 
 import { expect, open, test } from "nsh/test";
-import { place } from "./helpers";
+import { openDemo, place } from "./helpers";
 
 const term = { width: 960, height: 640 };
 
 async function demo() {
   const app = await open("../App.tsx", term);
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await app.back();
   return app;

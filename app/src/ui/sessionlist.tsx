@@ -152,16 +152,26 @@ export function SessionList(props: {
       keyExtractor={(r) => ("day" in r ? `day:${r.day}` : r.s.path)}
       scrollbar={false}
     >
-      {(r) => (
-        // a recycled cell: what it shows follows the item it is given
-        <If when={dayOf(r())} else={row(() => r() as { s: SessionInfo; i: number })}>
+      {(r) => {
+        // a recycled cell: what it shows follows the item it is given. A session's row reads the last session the
+        // cell was given: as the cell turns into a day's heading (a row deleted above it), the row's words are
+        // read once more before it goes, and must not read a heading as a session
+        let held: { s: SessionInfo; i: number } | undefined;
+        const session = () => {
+          const v = r();
+          if (!("day" in v)) held = v as { s: SessionInfo; i: number };
+          return held!;
+        };
+        return (
+        <If when={dayOf(r())} else={row(session)}>
           {(day) => (
             <View class="bg-sidebar px-2 pb-1 pt-2 terminal:bg-transparent">
               <Heading quiet>{day()}</Heading>
             </View>
           )}
         </If>
-      )}
+        );
+      }}
     </List>
   );
 }

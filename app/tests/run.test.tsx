@@ -2,12 +2,12 @@
 // the session afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { desktop, place, runAction, runCommand, sessionAction, sessionMenu } from "./helpers";
+import { openDemo, desktop, place, runAction, runCommand, sessionAction, sessionMenu } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await place(app, "run");
   return app;
