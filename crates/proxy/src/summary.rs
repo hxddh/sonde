@@ -766,9 +766,11 @@ mod tests {
         let prices = crate::profile::RequestPrices::default();
         let mut all = String::new();
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        // the sessions alone: a lock or a state file another test's reading leaves beside them is not one
         let mut names: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|x| x == "sonde"))
             .collect();
         names.sort();
         for path in names {
