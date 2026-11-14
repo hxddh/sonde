@@ -1276,7 +1276,7 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     let listed: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
     assert_eq!(listed[0]["requests"], 28, "{listed}");
-    assert_eq!(listed[0]["program"], "sonde run --demo");
+    assert_eq!(listed[0]["program"], "sonde");
     assert!(listed[0]["seconds"].as_f64().unwrap() > 0.0);
     // one that is missing is made by the listing
     sonde_proxy::index::set(&file, sonde_proxy::index::Change::NoCounted);
@@ -1571,8 +1571,7 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
         &["check", monday.to_str().unwrap(), "--set-baseline"],
     );
     assert_eq!(set.status.code(), Some(0), "{}", stderr(&set));
-    // the next day's run is the same program: its argument is a value that
-    // changes between runs, so Monday's baseline holds it
+    // the next day's run is the same program, `etl`: Monday's baseline holds it
     let c = sonde(
         t.path(),
         &[
@@ -1611,7 +1610,7 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
         "{}",
         stdout(&c)
     );
-    // and `check --init` gives the program the name its runs then share
+    // a program is what its command runs: `check --init` writes no name
     let cfg = t.path().join("sonde.toml");
     let init = sonde(
         t.path(),
@@ -1624,16 +1623,7 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
         ],
     );
     assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
-    assert!(
-        stderr(&init).contains("[program] name = \"etl\""),
-        "{}",
-        stderr(&init)
-    );
-    assert!(
-        std::fs::read_to_string(&cfg)
-            .unwrap()
-            .contains("[program]\nname = \"etl\"\n")
-    );
+    assert!(!std::fs::read_to_string(&cfg).unwrap().contains("[program]"));
 }
 
 #[test]
@@ -1888,61 +1878,6 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert!(!c.contains("✓ fixed"), "{c}");
 }
 
-/// `check --init` names a program: what was kept under its command goes
-/// with it, its baseline and its trials' verdicts.
-#[test]
-fn check_init_carries_the_baseline_and_verdicts_to_the_programs_name() {
-    let t = tempfile::tempdir().unwrap();
-    let run = session_of(
-        t.path(),
-        "run.sonde",
-        "python etl.py",
-        "2026-11-09T02:00:00Z",
-    );
-    let set = sonde(
-        t.path(),
-        &["check", run.to_str().unwrap(), "--set-baseline"],
-    );
-    assert_eq!(set.status.code(), Some(0), "{}", stderr(&set));
-    let dir = t.path().join("data/sessions");
-    std::fs::write(
-        dir.join("verdicts.json"),
-        r#"{"python etl.py":{"slowdown":[{"at":"2026-11-09T02:00:00Z","standing":"broke","run":"run.sonde"}]}}"#,
-    )
-    .unwrap();
-    let cfg = t.path().join("sonde.toml");
-    let init = sonde(
-        t.path(),
-        &[
-            "check",
-            run.to_str().unwrap(),
-            "--init",
-            "--config",
-            cfg.to_str().unwrap(),
-        ],
-    );
-    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
-    assert!(
-        stderr(&init).contains(
-            "what was kept for `python etl.py` (baselines.json, verdicts.json) now goes by \"etl\""
-        ),
-        "{}",
-        stderr(&init)
-    );
-    let read = |f: &str| -> serde_json::Value {
-        serde_json::from_slice(&std::fs::read(dir.join(f)).unwrap()).unwrap()
-    };
-    assert_eq!(
-        read("baselines.json"),
-        serde_json::json!({"etl": "run.sonde"})
-    );
-    assert_eq!(
-        read("verdicts.json")["etl"]["slowdown"][0]["standing"],
-        "broke"
-    );
-    assert!(read("verdicts.json").get("python etl.py").is_none());
-}
-
 /// `[check] expect` names findings by identity: words of a finding's text,
 /// or a kind sonde does not find, are a mistake in sonde.toml.
 #[test]
@@ -2186,7 +2121,7 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     let ck = sonde_in(t.path(), &a, &["check", "--max-requests", "100"]);
     assert_eq!(ck.status.code(), Some(0), "{}{}", stdout(&ck), stderr(&ck));
     assert!(
-        stderr(&ck).contains("the newest run of program `sh get.sh` recorded in this folder"),
+        stderr(&ck).contains("the newest run of program `get` recorded in this folder"),
         "{}",
         stderr(&ck)
     );
@@ -2196,8 +2131,8 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     assert_eq!(doc["session"]["command"], "sh get.sh", "{doc}");
     let compared = sonde_in(t.path(), &a, &["compare"]);
     assert!(
-        stdout(&compared).contains("first run of `sh get.sh`")
-            || stderr(&compared).contains("first run of `sh get.sh`"),
+        stdout(&compared).contains("first run of `get`")
+            || stderr(&compared).contains("first run of `get`"),
         "{}{}",
         stdout(&compared),
         stderr(&compared)
@@ -2206,8 +2141,7 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
     assert_eq!(ck.status.code(), Some(1), "{}", stdout(&ck));
     assert!(
-        stderr(&ck)
-            .contains("the newest run (program `sh -c exit 3`; none was recorded in this folder)"),
+        stderr(&ck).contains("the newest run (program `sh`; none was recorded in this folder)"),
         "{}",
         stderr(&ck)
     );
@@ -2238,17 +2172,40 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     );
     assert_eq!(ck.status.code(), Some(1), "the run failed: {}", stdout(&ck));
     std::fs::remove_file(c.join("sonde.toml")).unwrap();
-    // a project's program by its name, wherever it ran
-    std::fs::write(c.join("sonde.toml"), "[program]\nname = \"sh get.sh\"\n").unwrap();
+    // a project's name for its program: given to the commands that run it,
+    // not to another command run here
+    std::fs::write(
+        c.join("sonde.toml"),
+        "[program]\nname = \"fetch\"\nruns = \"get\"\n",
+    )
+    .unwrap();
+    let r = sonde_in(
+        t.path(),
+        &c,
+        &[&["run", "--demo", "--"][..], &one_request(&c)].concat(),
+    );
+    assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
+    let r = sonde_in(t.path(), &c, &["run", "--demo", "--", "sh", "-c", "exit 0"]);
+    assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
+    let listed: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
+    assert_eq!(
+        (listed[0]["program"].as_str(), listed[1]["program"].as_str()),
+        (Some("sh"), Some("fetch")),
+        "{listed}"
+    );
     let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
     assert_eq!(ck.status.code(), Some(0), "{}", stderr(&ck));
     assert!(
-        stderr(&ck)
-            .contains("the newest run of program \"sh get.sh\" ([program] name in sonde.toml)"),
+        stderr(&ck).contains("the newest run of program \"fetch\" ([program] name in sonde.toml)"),
         "{}",
         stderr(&ck)
     );
-    std::fs::write(c.join("sonde.toml"), "[program]\nname = \"etl\"\n").unwrap();
+    std::fs::write(
+        c.join("sonde.toml"),
+        "[program]\nname = \"etl\"\nruns = \"etl\"\n",
+    )
+    .unwrap();
     let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
     assert_eq!(ck.status.code(), Some(64));
     assert!(

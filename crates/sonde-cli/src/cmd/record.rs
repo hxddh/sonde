@@ -643,9 +643,8 @@ pub(super) fn not_drained(grace: std::time::Duration) -> String {
 
 /// The run a command is about when none is named: one rule for `show`,
 /// `compare`, `share` and `check`. The newest run of the project's program
-/// (`[program] name` in sonde.toml; a run recorded before it had the name,
-/// whose command `check --init` names so, is one), else of the program
-/// recorded in this folder (the session's `cwd`), else the newest run of
+/// (`[program] name` in sonde.toml), else of the program recorded in this
+/// folder (the session's `cwd`), else the newest run of
 /// any. Only runs (`run`, `proxy`): a replay, an import and a trial are
 /// named to be read. The run, and which it is in words.
 pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, String)> {
@@ -705,16 +704,9 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
     }
 }
 
-/// Whether a run is of the program named `name`: by its key, or, recorded
-/// without a name of its own, by the name `check --init` gives its command.
+/// Whether a run is of the program named `name`.
 pub fn of_program(h: &SessionHeader, name: &str) -> bool {
     sonde_proxy::program::key_of(h).as_deref() == Some(name)
-        || (h.name.as_deref().is_none_or(|x| x.trim().is_empty())
-            && h.command
-                .as_deref()
-                .and_then(sonde_proxy::program::short_name)
-                .as_deref()
-                == Some(name))
 }
 
 /// The project's program's name here (`[program] name` of the sonde.toml

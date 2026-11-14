@@ -109,10 +109,6 @@ fn once_exit(listing_failed: bool, none_read: bool, over_budget: bool) -> i32 {
     }
 }
 
-/// The program key of a log source's sessions: its runs make a history and
-/// `sonde check` holds them to a baseline like any program's.
-pub const LOGS_OF: &str = "logs of ";
-
 /// A duration as `--every` writes it: "15m", "1h", "30s", "90" (seconds).
 fn every(v: &str) -> anyhow::Result<std::time::Duration> {
     let t = v.trim();
@@ -151,7 +147,7 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
     let pause = every(a.every)?;
     let dir = s.paths().sessions();
     std::fs::create_dir_all(&dir)?;
-    let key = format!("{LOGS_OF}s3://{bucket}/{prefix}");
+    let key = format!("{}s3://{bucket}/{prefix}", sonde_proxy::program::LOGS_OF);
     // where the last pass got to, per source
     let mark_file = dir.join(format!(
         "logs-{:016x}.mark",
@@ -405,7 +401,7 @@ fn post_alert(url: &str, text: String) -> tokio::task::JoinHandle<()> {
 
 /// The project's budget (`sonde.toml`'s `[check]`), when there is one, for
 /// the sessions of program `key`: a project's budget is its program's, so
-/// only when its `[program] name` is `key` (a proxy's sessions, with no
+/// only when its `[program]` is for `key` (a proxy's sessions, with no
 /// program, are the folder's: `key` none).
 fn project_budget(key: Option<&str>) -> Option<sonde_proxy::program::Budget> {
     project_budget_in(&std::env::current_dir().ok()?, key)
@@ -415,7 +411,7 @@ fn project_budget(key: Option<&str>) -> Option<sonde_proxy::program::Budget> {
 fn project_budget_in(here: &Path, key: Option<&str>) -> Option<sonde_proxy::program::Budget> {
     let project = sonde_proxy::project::of(here).ok()??;
     if let Some(key) = key
-        && project.file.program.name.as_deref().map(str::trim) != Some(key)
+        && project.file.program.name_for(key).is_none()
     {
         return None;
     }
@@ -639,7 +635,7 @@ mod tests {
         assert!(project_budget_in(t.path(), None).is_some());
         std::fs::write(
             t.path().join("sonde.toml"),
-            "[program]\nname = \"logs of s3://b/logs/\"\n[check]\nmax-requests = 1\n",
+            "[program]\nname = \"web\"\nruns = \"logs of s3://b/logs/\"\n[check]\nmax-requests = 1\n",
         )
         .unwrap();
         let b = project_budget_in(t.path(), logs).expect("its own");

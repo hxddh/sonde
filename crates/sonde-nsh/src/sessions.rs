@@ -279,10 +279,15 @@ async fn begin(
         p => Some(policy_of(p)?),
     };
     let policy = run_policy(asked, cwd.as_deref())?;
+    // the project's name for the program, when the command runs it (as the CLI)
+    let program = match &command {
+        Some(c) => project_in(cwd.as_deref())?.and_then(|p| p.file.program.name_for(c)),
+        None => None,
+    };
     let dir = s.paths().sessions();
     std::fs::create_dir_all(&dir).map_err(err_msg)?;
-    // named as the CLI names it: by what the command runs (`etl` for `python3 etl.py`)
-    let name = sonde_proxy::program::file_stem(None, command.as_deref())
+    // named as the CLI names it: by the program (`etl` for `python3 etl.py`)
+    let name = sonde_proxy::program::file_stem(program.as_deref(), command.as_deref())
         .unwrap_or_else(|| "recording".into());
     let path = match &under {
         Some(u) => u.path.clone(),
@@ -296,6 +301,7 @@ async fn begin(
     if let Some(dir) = &cwd {
         header = header.ran_in(dir);
     }
+    header.name = program;
     if let Some(u) = &under {
         header.scenario = Some(u.scenario.name.clone());
         header.trial_of = Some(u.of.clone());
@@ -1871,13 +1877,13 @@ impl Sessions {
                 if let Some(a) = against {
                     run.measure(&s.records, a);
                 }
-                Ok::<_, String>((s.header.command.clone(), run))
+                Ok::<_, String>((sonde_proxy::program::key_of(&s.header), run))
             };
-            let (ca, a) = run(&before, None)?;
-            let (cb, b) = run(&after, Some(&a))?;
+            let (ka, a) = run(&before, None)?;
+            let (kb, b) = run(&after, Some(&a))?;
             Ok(to_json(
                 sonde_proxy::profile::compare_runs(&a, &b)
-                    .of_programs(ca.as_deref(), cb.as_deref())
+                    .of_programs(ka.as_deref(), kb.as_deref())
                     .of_exits((
                         sonde_proxy::fixloop::failed(Path::new(&before)),
                         sonde_proxy::fixloop::failed(Path::new(&after)),
@@ -3217,14 +3223,8 @@ mod tests {
             ("earlier.sonde", &before, day),
             ("20260101-000000-job.sonde", &verdict, chrono::Utc::now()),
         ] {
-            sonde_proxy::trial::record(
-                dir.path(),
-                "python job.py",
-                run,
-                at,
-                std::slice::from_ref(t),
-            )
-            .unwrap();
+            sonde_proxy::trial::record(dir.path(), "job", run, at, std::slice::from_ref(t))
+                .unwrap();
         }
         let view = view_of(&clean).unwrap();
         let history = view["trials"][0]["history"].as_array().unwrap();

@@ -57,9 +57,9 @@ pub struct RunArgs {
     /// the policy in this program's last trials (`sonde run --again -- …`).
     #[arg(long, conflicts_with = "faults")]
     again: bool,
-    /// The program's name: its runs and its baseline go by it, whatever the
-    /// command's arguments are this time (default: `name` under `[program]`
-    /// in sonde.toml, else the command itself).
+    /// The program's name: its runs, baseline and trial verdicts go by it
+    /// (default: sonde.toml's `[program] name` for the program it `runs`,
+    /// else what the command runs: `etl` for `python3 etl.py 5`).
     #[arg(long)]
     name: Option<String>,
     /// With -o: write over the file if it is there (else a run refuses it).
@@ -313,19 +313,18 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         }
     }
     // what to try again is known before anything runs
+    // the program's name, when it has one of its own
+    let command = sonde_proxy::program::shell_join(&a.command);
+    let name = a
+        .name
+        .as_deref()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .or_else(|| project.file.program.name_for(&command));
     if a.again {
-        // (trimmed as the name is when kept)
-        let program = a
-            .name
+        let program = name
             .clone()
-            .or(project.file.program.name.clone())
-            .map(|n| n.trim().to_string())
-            .filter(|n| !n.is_empty())
-            .or_else(|| {
-                sonde_proxy::program::program_key(Some(&sonde_proxy::program::shell_join(
-                    &a.command,
-                )))
-            })
+            .or_else(|| sonde_proxy::program::program_key(Some(&command)))
             .unwrap_or_default();
         let dir = match &a.rec.out {
             Some(out) => runs_dir(out),
@@ -360,7 +359,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     let trying = a.trial || a.again || !asked.is_empty();
     let ctx = RunCtx {
         trying,
-        name: a.name.clone().or(project.file.program.name.clone()),
+        name,
         input: (trying && !std::io::stdin().is_terminal()).then(Default::default),
         stop: Stop::listen(),
         rec: Recording {

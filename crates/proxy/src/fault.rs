@@ -589,18 +589,6 @@ pub fn project_scenarios(
     Ok(all)
 }
 
-/// A program's name as `[program] name` of `sonde.toml` gives it: an empty
-/// one is a mistake (its runs are found by it), not no name.
-pub fn project_program_name(name: Option<&str>) -> Result<Option<String>, String> {
-    match name {
-        Some(n) if n.trim().is_empty() => Err(
-            "[program] name = \"\": a program's name is what its runs are found by; give it one or leave the line out"
-                .into(),
-        ),
-        n => Ok(n.map(str::to_string)),
-    }
-}
-
 /// A fault as written in `sonde.toml` or on the command line: `503 SlowDown`,
 /// `500`, `lost-answer`, `cut-body`, `lost-race`, `stale-list`, `delay 200ms`. Nothing
 /// may follow it: `503 Slow Down` is a mistake, not a code named `Slow`.
@@ -1340,9 +1328,6 @@ mod tests {
         }
         let twice = project_scenarios([made("a", "500", &[]), made("a", "503", &[])]);
         assert_eq!(twice.unwrap_err(), "scenario a: named twice");
-        assert!(project_program_name(Some(" ")).is_err());
-        assert_eq!(project_program_name(None), Ok(None));
-        assert_eq!(project_program_name(Some("etl")), Ok(Some("etl".into())));
     }
 
     #[test]

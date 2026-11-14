@@ -244,7 +244,7 @@ mod tests {
                 "[[scenario]]\nname = \"slow\"\nfault = \"500\"\n",
                 "one of sonde's own",
             ),
-            ("[program]\nname = \"\"\n", "a program's name"),
+            ("[program]\nname = \"\"\n", "an empty name"),
             (
                 "[[scenario]]\nname = \"bad name\"\nfault = \"500\"\n",
                 "a name is letters, digits",

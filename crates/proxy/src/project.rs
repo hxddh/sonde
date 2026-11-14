@@ -64,11 +64,42 @@ impl Check {
     }
 }
 
-/// The `[program]` table: the name its runs and its baseline go by.
+/// The `[program]` table: a name of the project's own for the program its
+/// commands run (`runs`: `etl` for `python3 etl.py 5`), which that
+/// program's runs, baseline and trial verdicts go by. A command that runs
+/// another program goes by its own.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Program {
     pub name: Option<String>,
+    pub runs: Option<String>,
+}
+
+impl Program {
+    /// The name a run of `command` goes by: `name`, when the command runs
+    /// the program `runs` names ([`crate::program::program_key`]).
+    pub fn name_for(&self, command: &str) -> Option<String> {
+        let runs = self.runs.as_deref()?.trim();
+        (crate::program::program_key(Some(command)).as_deref() == Some(runs))
+            .then(|| self.name.as_deref().map(|n| n.trim().to_string()))
+            .flatten()
+    }
+
+    /// Both or neither: a name with no program to be for would name every
+    /// command run in the folder.
+    fn check(&self) -> Result<(), String> {
+        let given = |v: &Option<String>| v.as_deref().map(|v| !v.trim().is_empty());
+        match (given(&self.name), given(&self.runs)) {
+            (None, None) | (Some(true), Some(true)) => Ok(()),
+            (Some(false), _) | (_, Some(false)) => Err(
+                "[program]: an empty name or runs; give both or leave the table out".into(),
+            ),
+            (Some(true), None) => Err(
+                "[program] name needs `runs`, what the program's commands run (`runs = \"etl\"` for `python3 etl.py`): a command that runs something else is not this program".into(),
+            ),
+            (None, Some(true)) => Err("[program] runs needs a `name` to give those runs".into()),
+        }
+    }
 }
 
 /// The `[record]` table: what a recording of the project lets through
@@ -162,7 +193,7 @@ pub fn parse(text: &str) -> Result<Project, String> {
         };
         format!("{}{hint}", e.to_string().trim_end())
     })?;
-    crate::fault::project_program_name(file.program.name.as_deref())?;
+    file.program.check()?;
     if let Some(why) = file
         .check
         .expect
@@ -260,13 +291,17 @@ mod tests {
     #[test]
     fn every_table_reads_and_what_sonde_does_not_know_is_refused() {
         let p = parse(
-            "[check]\nmax-requests = 10\nmax-waiting = \"2s\"\nmax-p95 = 250\n\n[program]\nname = \"etl\"\n\n[record]\npolicy = \"allow\"\nname-callers = false\n\n[[scenario]]\nname = \"flaky\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\n",
+            "[check]\nmax-requests = 10\nmax-waiting = \"2s\"\nmax-p95 = 250\n\n[program]\nname = \"nightly\"\nruns = \"etl\"\n\n[record]\npolicy = \"allow\"\nname-callers = false\n\n[[scenario]]\nname = \"flaky\"\nfault = \"503 SlowDown\"\non = [\"PutObject\"]\n",
         )
         .unwrap();
         assert_eq!(p.policy, Some(Policy::Allow));
         assert_eq!(p.file.record.name_callers, Some(false));
-        assert_eq!(p.file.program.name.as_deref(), Some("etl"));
+        assert_eq!(p.file.program.name.as_deref(), Some("nightly"));
         assert_eq!(p.scenarios.len(), 1);
+        // the name is for the commands that run its program, not every one
+        let names = |c: &str| p.file.program.name_for(c);
+        assert_eq!(names("python3 etl.py 5").as_deref(), Some("nightly"));
+        assert_eq!(names("aws s3 ls"), None);
         let b = p.file.check.budget().unwrap();
         assert_eq!(
             (b.max_requests, b.max_waiting_ms, b.max_p95_ms),
@@ -281,7 +316,9 @@ mod tests {
                 "[[scenario]]\nname = \"x\"\nfault = \"500\"\nwhen = 1\n",
                 "when",
             ),
-            ("[program]\nname = \"\"\n", "a program's name"),
+            ("[program]\nname = \"\"\nruns = \"etl\"\n", "an empty name"),
+            ("[program]\nname = \"etl\"\n", "needs `runs`"),
+            ("[program]\nruns = \"etl\"\n", "needs a `name`"),
             // words of a finding's text are no identity
             (
                 "[check]\nexpect = [\"read again\"]\n",

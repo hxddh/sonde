@@ -1203,7 +1203,8 @@ async fn a_sonde_toml_that_says_what_sonde_does_not_know_is_an_error() {
             "[[scenario]]\nname = \"x\"\nfault = \"503 Slow Down extra\"\n",
             "one word too many",
         ),
-        ("[program]\nname = \"\"\n", "a program's name"),
+        ("[program]\nname = \"\"\n", "an empty name"),
+        ("[program]\nname = \"nightly\"\n", "needs `runs`"),
         ("[chek]\nmax-requests = 3\n", "chek"),
         (
             "[check]\nmax-waiting = \"soon\"\nmax-requests = 3\n",
@@ -1251,7 +1252,13 @@ async fn a_sonde_toml_that_says_what_sonde_does_not_know_is_an_error() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
     let b = Bench::new().await;
-    std::fs::write(b.path("sonde.toml"), "[program]\nname = \"nightly\"\n").unwrap();
+    // the name is for the program this test's binary is
+    let runs = sonde_proxy::program::program_key(Some(&the_program_command().join(" "))).unwrap();
+    std::fs::write(
+        b.path("sonde.toml"),
+        format!("[program]\nname = \"nightly\"\nruns = \"{runs}\"\n"),
+    )
+    .unwrap();
     let run = |key: &'static str| {
         let mut c = b.sonde(Some("key"));
         c.args(["run", "--"]).args(the_program_command()).arg(key);
@@ -1296,9 +1303,9 @@ async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
     );
 }
 
-/// A program without a name is its command with what changes between runs
-/// left out: run with another date it is the same program, so under
-/// `no-delete` it writes over what it wrote, and its runs are one history.
+/// A program without a name is what its command runs: run with another date
+/// it is the same program, its runs one history, and the fix loop says the
+/// command changed.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unnamed_program_run_with_another_date_is_the_same_program() {
     let b = Bench::new().await;
@@ -1319,11 +1326,15 @@ async fn an_unnamed_program_run_with_another_date_is_the_same_program() {
     let rows: serde_json::Value = serde_json::from_str(&list.stdout).unwrap();
     assert_eq!(rows[0]["program"], rows[1]["program"], "{rows:#}");
     assert!(
-        rows[0]["program"]
-            .as_str()
-            .unwrap()
-            .ends_with("E2E_KEY=out/latest {date}"),
+        rows[0]["program"].as_str().unwrap().starts_with("trial-"),
         "{rows:#}"
+    );
+    assert!(
+        second
+            .stderr
+            .contains("the command changed (2026-11-13 → 2026-11-14)"),
+        "{}",
+        second.stderr
     );
 }
 
