@@ -105,9 +105,10 @@ function actions(buckets: BucketEntry[]): Action[] {
   STORE_TABS.forEach((s, i) => list.push({ id: `store:${s}`, label: `${areaLabel("store")} › ${s === "browse" ? t("nav.objects") : sectionLabel(s)}`, group: t("palette.store"), icon: "database", shortcut: `mod+alt+${i + 1}`, run: () => go(s) }));
   SETTINGS_TABS.forEach((s) => list.push({ id: `settings:${s}`, label: `${areaLabel("settings")} › ${sectionLabel(s)}`, group: t("palette.settings"), icon: "settings", run: () => go(s) }));
   ACTIVITY_TABS.forEach((s) => list.push({ id: `activity:${s}`, label: `${areaLabel("activity")} › ${sectionLabel(s)}`, group: t("palette.go"), icon: "activity", run: () => go(s) }));
-  // the example and the demo: their one door after the welcome
-  list.push({ id: "example", label: t("example.open"), group: t("palette.actions"), icon: "scroll-text", run: openExample });
-  if (endpoint() !== "demo") list.push({ id: "demo", label: t("demo.start"), group: t("palette.actions"), icon: "sparkles", run: () => void startDemo() });
+  // the example and the demo: their one door after the welcome (found by their English word in any language, as the
+  // CLI's `--demo` names one)
+  list.push({ id: "example", label: t("example.open"), group: t("palette.actions"), icon: "scroll-text", keywords: ["example", "slatedb"], run: openExample });
+  if (endpoint() !== "demo") list.push({ id: "demo", label: t("demo.start"), group: t("palette.actions"), icon: "sparkles", keywords: ["demo"], run: () => void startDemo() });
   if (!terminal()) list.push({ id: "open-file", label: t("runs.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "run", "import"], run: () => void openRunFile() });
   list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => (checkRequested.update((n) => n + 1), go("settings")) });
   const theme = settings()?.theme ?? "system";
