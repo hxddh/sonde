@@ -179,6 +179,9 @@ for (const v of variants) {
     // recording a program started elsewhere: what it asks before it starts
     await app.press("id:record");
     await app.waitFor("id:record-start");
+    // (the demo's toast, shown in 02-run, closed: whether it was still up here was a race, run to run)
+    while (app.shows("id:toast-close")) await app.press("id:toast-close");
+    await app.waitUntil(() => !app.shows("id:toast"), { timeout: 3000 }).catch(() => {});
     await shot("02a-record");
     await app.press("id:record-cancel");
     // which shell Run uses: cmd.exe on Windows (no probe run: it would sit in every list)
