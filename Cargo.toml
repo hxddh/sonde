@@ -80,7 +80,7 @@ clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
 flate2 = "1"
-apache-avro = { version = "0.17", default-features = false }
+apache-avro = { version = "0.22", default-features = false }
 flatbuffers = "24"
 async-trait = "0.1"
 tempfile = "3"
