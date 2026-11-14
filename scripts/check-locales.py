@@ -35,7 +35,7 @@ for f in sorted(root.glob("*.json")):
 FAMILIES = {
     "audit.action.": "abortUploads deleteVersions restoreObject deleteObjects putLifecycle runProbes",
     "board.": "traffic latency errors where",
-    "byGroup.": "prefix size caller sdk status",
+    "byGroup.": "prefix size caller sdk status key",
     "costBy.": "write list read free",
     "failures.": "throttled server client transport injected",
     "flows.": "ok notfound clienterror servererror",
@@ -48,7 +48,7 @@ FAMILIES = {
     "scenario.": "slowdown error lost-answer fail-complete cut-body lost-race skew complete-500 slow-first-byte stale-list slow s3-limits",
     "scenario.about.": "slowdown error lost-answer fail-complete cut-body lost-race skew complete-500 slow-first-byte stale-list slow s3-limits",
     "settings.path.": "config exports downloads audit",
-    "split.by.": "none kind prefix size caller sdk status",
+    "split.by.": "none kind prefix size caller sdk status key",
     "trial.": "survived degraded broke untested refused",
     "verdict.": "pass fail differs unsupported error skipped requests waiting cost errors warnings p95",
     "why.": "obs.unfinished obs.orphans obs.small obs.hot obs.listed obs.headget obs.throttled obs.throttled.rate obs.serial obs.prefixrate",

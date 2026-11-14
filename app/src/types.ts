@@ -316,6 +316,8 @@ export interface DuReport {
   byClass: Slice[];
   byPrefix: Slice[];
   bySize: { label: string; min: number; max: number | null; objects: number; bytes: number }[];
+  /** The bytes by the month they were last written (`2026-03`), every version, the oldest first. */
+  byMonth: { month: string; objects: number; bytes: number }[];
   findings: string[];
   /** Each finding as phrases, as `findings`. */
   findingsText?: CorePhrase[][];
@@ -489,7 +491,7 @@ export interface Phrase {
 }
 
 /** What Group by splits the operations table by (crates/proxy/src/split.rs). */
-export type SplitBy = "kind" | "prefix" | "size" | "caller" | "sdk" | "status";
+export type SplitBy = "kind" | "prefix" | "size" | "caller" | "sdk" | "status" | "key";
 
 /** One group of a split: the operations table's figures for it. */
 export interface SplitRow {
@@ -713,6 +715,8 @@ export interface RunPoint {
   errors: number;
   warnings: number;
   findings: number;
+  /** How long 95% of its requests took at most (0 when unknown). */
+  p95Ms: number;
 }
 
 /** What a project's `sonde.toml` `[check]` allows its program, drawn on the charts it is about (null: not given). */
@@ -914,6 +918,8 @@ export interface Signals {
     injected: number[];
     retries: number[];
     retriesTotal: number;
+    /** Requests the program gave up on: failures no retry followed. */
+    gaveUp: number;
   };
   latency: { value: number | null; series: number[]; p50Ms: number | null; p95Ms: number | null; p99Ms: number | null; p95: number[]; p99: number[] };
   bytes: { value: number | null; series: number[]; upPerSec: number | null; downPerSec: number | null; up: number[]; down: number[]; upBytes: number; downBytes: number };

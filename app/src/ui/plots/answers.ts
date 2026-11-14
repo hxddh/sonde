@@ -2,10 +2,10 @@
 // it draws (over the stretch shown): its title asks, this says. How to read a
 // chart is not said here: it is the frame's `how`, behind the info mark.
 
-import { bytes, cost, count, duration, percent, rate } from "../../format";
+import { bytes, change, cost, count, duration, percent, rate } from "../../format";
 import { t } from "../../i18n";
 import { FEW, sizeLabel } from "../../signals";
-import type { Profile, Signals } from "../../types";
+import type { Profile, RunChange, Signals } from "../../types";
 import { groupName, slotMs } from "./system";
 
 /** A stretch of slices (a zoom), or every one: the indexes it covers. */
@@ -295,4 +295,54 @@ export function chainsSaid(p: Profile): string {
 export function prefixSaid(p: Profile): string {
   const top = p.prefixes.filter((x) => x.prefix !== "other").sort((a, b) => b.requests - a.requests)[0];
   return top ? t("prefixUse.text", { prefix: top.prefix, value: t("prefixUse.requests", { n: count(top.requests) }), peak: count(top.peakPerSecond) }) : "";
+}
+
+/** What a fault trial did: how many requests sonde answered in the store's place, how many the program sent again
+ * and how many it gave up on, and how long the trial took against the clean run. */
+export const trialSaid = (s: Signals, answered: number, trialMs: number, cleanMs: number): string =>
+  t("trialOver.text", { n: count(answered), again: count(s.errors.retriesTotal), gaveUp: count(s.errors.gaveUp), trial: duration(trialMs), clean: duration(cleanMs) });
+
+// --- two runs compared -------------------------------------------------------------
+
+/** Which kinds of request changed: the one whose requests moved most, before → after, with how much; or that none
+ * did. */
+export function kindChangeSaid(c: RunChange): string {
+  const moved = [...c.groups].filter((g) => g.requests[0] !== g.requests[1]).sort((a, b) => Math.abs(b.requests[1] - b.requests[0]) - Math.abs(a.requests[1] - a.requests[0]))[0];
+  if (!moved) return t("compare.byKindSame");
+  const how = moved.requests[0] === 0 ? t("trend.fromNone") : change(moved.requests[0], moved.requests[1]);
+  return t("compare.byKindText", { kind: groupName(moved), a: count(moved.requests[0]), b: count(moved.requests[1]), change: how });
+}
+
+/** Where it changed: the prefix whose requests moved most. */
+export function prefixChangeSaid(c: RunChange): string {
+  const top = [...(c.prefixes ?? [])].sort((a, b) => Math.abs(b.requests[1] - b.requests[0]) - Math.abs(a.requests[1] - a.requests[0]))[0];
+  if (!top || top.requests[0] === top.requests[1]) return t("prefixChange.none");
+  return t("prefixChange.text", { prefix: top.prefix, line: t("prefixChange.line", { a: count(top.requests[0]), b: count(top.requests[1]) }) });
+}
+
+/** The latency a share of the requests was done within, read off buckets (its bucket's upper edge). */
+function doneWithin(buckets: { leMs: number | null; n: number }[], q: number): number | null {
+  const all = buckets.reduce((k, b) => k + b.n, 0);
+  let run = 0;
+  for (const b of buckets) if ((run += b.n) >= q * all) return b.leMs;
+  return null;
+}
+
+/** How long requests took in each run: the median and p95 of each, to their buckets' edges ("up to"). */
+export function latencyChangeSaid(c: RunChange): string {
+  if (!c.latency) return "";
+  const say = (v: number | null) => (v === null ? t("cdf.slower") : duration(v));
+  const [a, b] = c.latency;
+  return t("cdf.textChange", { a50: say(doneWithin(a, 0.5)), b50: say(doneWithin(b, 0.5)), a95: say(doneWithin(a, 0.95)), b95: say(doneWithin(b, 0.95)) });
+}
+
+/** Two runs over time: how long each took, and how many requests each sent. */
+export const overTimeSaid = (a: Profile, b: Profile): string => t("compare.overTimeText", { a: duration(a.wallMs), b: duration(b.wallMs), na: count(a.rate.reduce((k, x) => k + requests(x), 0)), nb: count(b.rate.reduce((k, x) => k + requests(x), 0)) });
+
+/** The run as it goes: the requests of its last half minute, their pace, how many failed and their p95. */
+export function liveSaid(s: Signals): string {
+  const n = s.rate.requests;
+  if (n === 0) return t("live.none");
+  const pace = s.wallMs >= 1000 ? t("signal.perSecond", { n: rate((n * 1000) / s.wallMs) }) : "";
+  return [t("live.text", { n: count(n) }), pace, s.latency.p95Ms != null ? `p95 ${duration(s.latency.p95Ms)}${few(n)}` : "", s.errors.count ? t("timeline.errors", { n: count(s.errors.count) }) : ""].filter(Boolean).join(" · ");
 }

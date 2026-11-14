@@ -68,6 +68,9 @@ pub struct Errors {
     /// Times a request was sent again, slice by slice, and in all.
     pub retries: Vec<f64>,
     pub retries_total: u64,
+    /// Requests the program gave up on: failures no retry followed
+    /// ([`gave_up`]), what `max-errors` counts.
+    pub gave_up: usize,
 }
 
 /// How long requests took. None of it is said of a log without times.
@@ -287,8 +290,31 @@ fn took_ms(r: &Record) -> f64 {
     }
 }
 
-/// Which records are retries: the same request sent again after a failure
-/// that asks for it.
+/// A request's name, as its retry repeats it: [`crate::fault::identity_of`]
+/// and its `Range` (two ranges of one object are two requests).
+pub(crate) fn request_name(r: &Record) -> String {
+    let range = r
+        .request_headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("range"))
+        .map_or("", |h| h.value.trim());
+    format!("{} {range}", crate::fault::identity_of(r))
+}
+
+/// Which records are requests the program gave up on: a failure (not a
+/// miss) that no retry followed ([`retry_links`] has the rule). A request
+/// retried until it succeeded is none; one that failed after its retries,
+/// or was never sent again, is one, counted once, by its last attempt.
+pub fn gave_up(records: &[Record]) -> Vec<bool> {
+    let mut failed: Vec<bool> = records.iter().map(is_failure).collect();
+    for (failure, _) in retry_links(records) {
+        failed[failure] = false;
+    }
+    failed
+}
+
+/// Each retry, as (the failure, the record that sent it again), by index:
+/// the same request sent again after a failure that asks for it.
 ///
 /// The rule. A request is named by [`crate::fault::identity_of`] and its
 /// `Range` (two ranges of one object are two requests). After a retryable
@@ -302,38 +328,6 @@ fn took_ms(r: &Record) -> f64 {
 /// failing, not an SDK backing off: none of those is a retry. (An SDK set
 /// to wait a fixed fifth of a second or more between three attempts reads
 /// as that poll; the SDKs' own backoff grows or is jittered.)
-fn retries_of(records: &[Record]) -> Vec<bool> {
-    let mut again = vec![false; records.len()];
-    for (_, retry) in retry_links(records) {
-        again[retry] = true;
-    }
-    again
-}
-
-/// A request's name, as its retry repeats it: [`crate::fault::identity_of`]
-/// and its `Range` (two ranges of one object are two requests).
-pub(crate) fn request_name(r: &Record) -> String {
-    let range = r
-        .request_headers
-        .iter()
-        .find(|h| h.name.eq_ignore_ascii_case("range"))
-        .map_or("", |h| h.value.trim());
-    format!("{} {range}", crate::fault::identity_of(r))
-}
-
-/// Which records are requests the program gave up on: a failure (not a
-/// miss) that no retry followed ([`retries_of`] has the rule). A request
-/// retried until it succeeded is none; one that failed after its retries,
-/// or was never sent again, is one, counted once, by its last attempt.
-pub fn gave_up(records: &[Record]) -> Vec<bool> {
-    let mut failed: Vec<bool> = records.iter().map(is_failure).collect();
-    for (failure, _) in retry_links(records) {
-        failed[failure] = false;
-    }
-    failed
-}
-
-/// Each retry, as (the failure, the record that sent it again), by index.
 fn retry_links(records: &[Record]) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     // only the places a failure was at are named: naming every request of a
@@ -568,7 +562,19 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     let mut statuses: BTreeMap<(Option<u16>, Option<&str>), StatusRow> = BTreeMap::new();
     let mut amount = 0f64;
     let mut spans: Vec<(i64, i64)> = Vec::new();
-    let sent_again = retries_of(records);
+    // each retry once: which records were sent again, and which failures were followed by none
+    let links = retry_links(records);
+    let mut sent_again = vec![false; records.len()];
+    let mut followed = vec![false; records.len()];
+    for &(failure, retry) in &links {
+        sent_again[retry] = true;
+        followed[failure] = true;
+    }
+    let given_up = records
+        .iter()
+        .zip(&followed)
+        .filter(|(r, f)| !**f && is_failure(r))
+        .count();
 
     for (at, r) in records.iter().enumerate() {
         let Some(tl) = &tl else { break };
@@ -594,7 +600,7 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         // a retry is counted where it is known: inside a record (sonde's own
         // client says how many it took), or as a record of its own, which is
         // how a program's SDK retries through the proxy: the same request
-        // again after an answer that asks for it ([`retries_of`] has the rule)
+        // again after an answer that asks for it ([`retry_links`] has the rule)
         let again = u32::from(sent_again[at]);
         retries[i] += (r.retries + again) as f64;
         retries_total += (r.retries + again) as u64;
@@ -829,6 +835,7 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             injected,
             retries,
             retries_total,
+            gave_up: given_up,
         },
         latency: Latency {
             value: whole50,

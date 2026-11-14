@@ -17,7 +17,7 @@ import { type ChartRows, toCsv } from "../csv";
 import type { ProjectBudget, SessionView, Signals, Split, SplitBy, Stretch } from "../types";
 import { Await, Button, DOT, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable, TEXT, TONE } from "./kit";
 import { findingMarks, StatusMark } from "./sessionview";
-import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, heatLatencySaid, scatterSaid, sizeSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, Lanes, LatencyBand, type LegendItem, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean, trialLegend, bytesLegend, sizesLegend, sliceAt, slotMs, heatLegend } from "./plots";
+import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, heatLatencySaid, scatterSaid, sizeSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, Lanes, LatencyBand, type LegendItem, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean, trialLegend, bytesLegend, sizesLegend, sliceAt, slotMs, heatLegend, trialSaid } from "./plots";
 
 /** The board's groups, in order: never more than these four. */
 const GROUPS = ["traffic", "latency", "errors", "where"] as const;
@@ -313,7 +313,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       zooms: true,
       when: () => graphic() && overTime() && !!props.clean && timed(props.clean.profile) && props.clean.profile.rate.length > 2,
       title: () => t("trialOver.title"),
-      text: () => t("trialOver.text", { trial: duration(p().wallMs), clean: duration(props.clean!.profile.wallMs), n: faults().length }),
+      text: () => trialSaid(sig(), faults().length, p().wallMs, props.clean!.profile.wallMs),
       how: () => t("trialOver.hint"),
       legend: () => trialLegend(faults().length > 0),
       body: () => <TrialOverClean trial={p()} clean={props.clean!.profile} faults={faults()} domainMs={zoomMs()} />,

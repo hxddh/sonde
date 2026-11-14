@@ -130,6 +130,15 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
             sig.errors.retries_total as f64,
             "{name}"
         );
+        // the requests given up on: the failures no retry followed, as check counts them
+        assert_eq!(
+            sig.errors.gave_up,
+            sonde_proxy::signals::gave_up(recs)
+                .iter()
+                .filter(|g| **g)
+                .count(),
+            "{name}"
+        );
         assert!(
             sig.errors.retries_total >= recs.iter().map(|r| r.retries as u64).sum::<u64>(),
             "{name}"
