@@ -7,7 +7,7 @@ import { signal, Text, View } from "nsh";
 import { Bar, Plot, PlotAxis, Treemap } from "nsh/base/plot";
 import { bytes, count, pct } from "../format";
 import { t } from "../i18n";
-import { SimpleTable, terminal, textual } from "./kit";
+import { SimpleTable, terminal, textual, TEXT } from "./kit";
 import { AREA_VALUE, AXIS_LABEL, axisName, ChartNote, ChartTip, CROSS_BAND, GROUP_LABEL, GUTTER, HOVER, INACTIVE, Legend, MOTION, rowsHeight, TREEMAP, BARS, TIP, STACK } from "./plots";
 
 const PALETTE = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;
@@ -29,7 +29,7 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
       else={
         <View class="gap-1">
           <SimpleTable columns={["", t("chart.value"), t("profile.share")]} rows={props.items.map((i) => [i.label, fmt(i.value), pct(i.value, total())])} />
-          <Text class="text-small text-muted-foreground">{sentence()}</Text>
+          <Text class={TEXT.note}>{sentence()}</Text>
         </View>
       }
     >
@@ -50,7 +50,7 @@ export function BarChart(props: { items: { label: string; value: number; sub?: s
         class={GUTTER}
         style={{ height: rowsHeight(props.items.length) }}
       >
-        <Bar value="value" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} label={(_, i) => figures(props.items[i].value)} labelClass="pl-2 tabular-nums text-caption text-muted-foreground" />
+        <Bar value="value" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} label={(_, i) => figures(props.items[i].value)} labelClass={`pl-2 tabular-nums ${TEXT.meta}`} />
         <PlotAxis placement="left" format={(i) => axisName(props.items[i]?.label ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
     </If>
@@ -150,7 +150,7 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
           inactiveOpacity={INACTIVE}
           label="label"
           valueLabel={(_, v) => `${bytes(v)} · ${pct(v, total())}`}
-          labelClass="p-2 text-small text-foreground"
+          labelClass={`p-2 ${TEXT.small}`}
           valueLabelClass={AREA_VALUE}
           hoverClass={HOVER}
         />

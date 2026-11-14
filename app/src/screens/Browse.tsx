@@ -3,15 +3,15 @@
 
 import { batch, cleanup, computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, type DataTableRef, ResizablePanel, ResizablePanelGroup } from "nsh/base";
-import { isAvailable, Menu } from "nsh/desktop";
+import { isAvailable } from "nsh/desktop";
 import { bytes, count, date } from "../format";
 import { t } from "../i18n";
 import { core } from "../phrases";
 import { api, Listing, watch } from "../native";
 import { bucket, copy, endpoint, go, notify, prefix, report, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
-import { Icon, type IconName, iconSvg } from "../ui/icon";
-import { Await, Back, Bar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE } from "../ui/kit";
+import { Icon, type IconName } from "../ui/icon";
+import { Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
 import { invalidate, Overview } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
@@ -54,7 +54,7 @@ function Breadcrumbs() {
               <Icon name="chevron-right" size={ICON.small} />
             </If>
             <Crumb href={`s3://${bucket()}/${p().prefix}`} onOpen={() => prefix.set(p().prefix)} current={i() === parts().length - 1} label={p().name}>
-              <Text class={i() === parts().length - 1 ? "text-body text-foreground" : "text-body text-muted-foreground"}>{p().name}</Text>
+              <Text class={i() === parts().length - 1 ? `${TEXT.body}` : `${TEXT.bodyQuiet}`}>{p().name}</Text>
             </Crumb>
           </View>
         )}
@@ -131,7 +131,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
             <Title lines={2} class="min-w-0 flex-1">{props.entry.name}</Title>
           </View>
         </If>
-        <Text class="font-mono text-caption text-muted-foreground line-clamp-2">{uri()}</Text>
+        <Text class={`${TEXT.codeQuiet} line-clamp-2`}>{uri()}</Text>
       </View>
       <Await loading={detail.loading() || !detail()} error={detail.error()} retry={() => detail.refetch()} waiting={t("browse.readingObject")} testID="object">
         <If when={detail()}>
@@ -143,7 +143,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                 <Button small variant="outline" icon="copy" label={t("store.copyUri")} onPress={() => copy(uri())} testID="copy-uri" />
                 <Button small variant="outline" icon="file-clock" label={t("browse.versionsOpen")} onPress={() => batch(() => (versionKey.set(d().key), go("versions")))} />
               </View>
-              <If when={progress()}>{(p) => <Bar value={null} label={p()} />}</If>
+              <If when={progress()}>{(p) => <ProgressBar value={null} label={p()} />}</If>
               <KeyValue
                 boxed
                 rows={[
@@ -194,7 +194,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               <Disclosure title={t("browse.presign")}>
                 <View class="gap-2">
                   <View class="flex-row flex-wrap items-center gap-2">
-                    <Text class="text-small text-muted-foreground">{t("browse.expires")}</Text>
+                    <Text class={TEXT.note}>{t("browse.expires")}</Text>
                     <Choice
                       class={WIDTH.choice}
                       placeholder={t("browse.expires")}
@@ -212,7 +212,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                   <If when={url()}>
                     {(u) => (
                       <Card pad="tile">
-                        <Text class="font-mono text-caption text-foreground">{u()}</Text>
+                        <Text class={TEXT.code}>{u()}</Text>
                         <View class="flex-row">
                           <Button small variant="outline" icon="copy" label={t("browse.copyUrl")} onPress={() => copy(u())} testID="presign-copy" />
                         </View>
@@ -424,7 +424,7 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
   const menu = (row: number) => {
     menuRow.set(row);
     if (!systemMenus) return;
-    void Menu.popup(actions(row).map((a) => ({ label: a.label, icon: iconSvg(a.icon), onSelect: a.run })));
+    void popupMenu(actions(row));
   };
 
   return (
@@ -465,8 +465,8 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
         {(hits) => (
           <Card pad="none" testID="search-hits">
             <Row first>
-              <Text class="text-body text-foreground">{t("browse.matches", { n: count(hits().length) })}</Text>
-              <Text class="min-w-0 flex-1 text-small text-muted-foreground line-clamp-1">{searchState() ?? ""}</Text>
+              <Text class={TEXT.body}>{t("browse.matches", { n: count(hits().length) })}</Text>
+              <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{searchState() ?? ""}</Text>
               <IconButton icon="x" label={t("common.close")} onPress={() => (stopSearch(), searchHits.set(null))} />
             </Row>
             {/* six rows show; the rest scroll under them, so the table keeps its room */}
@@ -528,17 +528,17 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
                         <View class="flex-1 flex-row items-center gap-2">
                           <Icon name={folder ? "folder" : "file"} tint={folder ? "foreground" : "muted-foreground"} />
                           {/* a name is cut in its middle, never at its end: both ends tell two apart */}
-                          <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1" style={{ textOverflow: "ellipsis-middle" }}>{c.text}</Text>
+                          <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`} style={{ textOverflow: "ellipsis-middle" }}>{c.text}</Text>
                         </View>
                       );
                     }
                     // sizes as figures at the end, under their title (no tabular digits in a cell: GTK cuts the last one); the rest quiet
                     return c.key === "size" || c.key === "parts" ? (
                       <View class="flex-1 items-end justify-center">
-                        <Text class="text-small text-foreground">{c.text}</Text>
+                        <Text class={TEXT.small}>{c.text}</Text>
                       </View>
                     ) : (
-                      <Text class="text-small text-muted-foreground line-clamp-1">{c.text}</Text>
+                      <Text class={`${TEXT.note} line-clamp-1`}>{c.text}</Text>
                     );
                   }
             }

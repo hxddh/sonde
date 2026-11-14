@@ -53,7 +53,7 @@ RULES = [
     ("duration", r"(?:export )?const \w+ = duration;|duration as \w+|\bms as \w+", "another name for the one duration: call duration()"),
     ("duration", r"toFixed\(\d?\)\}? ?(?:ms|s)\b|\$\{[^}]*\} ms`", "milliseconds written by hand: use duration()"),
     ("control-height", r"<(?:BaseButton|Input|Button|IconButton|Field|SearchField|NumberField|Choice)\b[^>]*\b(?:h|size)-(?!7\b|8\b|full\b|px\b)\d[\d.]*\b", "a third control height: h-8 and h-7 only (in a field: IconButton inField)"),
-    ("icon-size", r"<Icon\b[^>]*\bsize=\{(?!12\}|16\}|20\}|ICON\.)", "an icon size of its own: ICON.small 12, default 16, large 20"),
+    ("icon-size", r"<Icon\b[^>]*\bsize=\{(?!ICON\.)", "an icon size by number: ICON.small, ICON.large (the default needs none)"),
     ("icon-tile", r"size-(?:8|9|10|11|12) (?:shrink-0 )?items-center justify-center rounded-\S+ bg-muted", "an icon tile by hand: use IconTile"),
     ("empty", r"text-(?:small|body) text-muted-foreground\">\{t\(\"[\w.]*(?:\.none|\.empty|noMatch|\.nothing|None|Empty)\"\)\}</Text>", "nothing-here by hand: use Empty (compact inside a list or a chart)"),
     # 17.0: what 16.0's lint did not see
@@ -61,6 +61,11 @@ RULES = [
     ("threshold", r"\bmaxHeight=\{[^\n]*?(?<![\w.])\d{2,}", "a bound of its own: the kit's SIZES"),
     ("threshold", r"<ResizablePanel\b[^>]*\b(?:minSize|maxSize|size)=\{\d", "a pane's size of its own: the kit's PANE"),
     ("press", r"<(?:Text|View)\b[^>]*\brole=\"button\"", "a pressable text or view by hand (no focus ring): use Button, ListRow or Back"),
+    # 21.0: motion, shadows and type are tokens
+    ("motion", r"(?<![\w-])duration-(?:\d|\[)", "a duration of its own: the kit's TIMING (TRANSITION, GLIDE, PRESS, POPUP_MOTION)"),
+    ("shadow", r"(?<![\w-])shadow-(?:2xs|xs|sm|md|lg|xl|2xl|inner|none|control|popup|modal|\[)", "a shadow of its own: the kit's SHADOW (or POPUP, Modal, SidePanel)"),
+    ("type", r"(?<![\w-])text-caption(?![\w-])", "the caption by hand: a TEXT role (TEXT.meta, .caption, .code, .captionSize), which sets Chinese at 12 pt"),
+    ("tone", r"\b(?:TONE_TEXT|TONE_BAR)\b\s*(?::|=)|\b(?:toneClass|tint)\s*=\s*\(\)\s*=>\s*\(\{", "a tone table of its own: the kit's TONE"),
 ]
 # in the pages and the shared pieces only: what the reader sees of a number
 # the look of an nsh/base control is the kit's: a page imports what has structure and no look of
@@ -100,6 +105,10 @@ EXEMPT = {
     ("ui/plots/system.tsx", "size"), ("ui/plots/system.tsx", "width"),
     # a terminal's toast is Native Shell's: its one action is a word in its line, pressed or reached by its key
     ("ui/toast.tsx", "press"),
+    # the chart system's own labels (axes, chips, legends): its text classes are its constants (lint-charts)
+    ("ui/plots/system.tsx", "type"), ("ui/plots/traffic.tsx", "type"), ("ui/plots/latency.tsx", "type"),
+    ("ui/plots/runs.tsx", "type"), ("ui/plots/operation.tsx", "type"), ("ui/plots/errors.tsx", "type"),
+    ("ui/plots/where.tsx", "type"), ("ui/charts.tsx", "type"),
 }
 # spacing the chart system names once (its gutter), on the lines that define it
 GUTTER_LINE = re.compile(r"^(?:export )?const GUTTER\w* = ")

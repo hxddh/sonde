@@ -2,9 +2,9 @@
 // toolbar), the sidebar with the places and the current place's list, and the
 // application's menus. A terminal has none of this (App.tsx's TerminalShell).
 
-import { ErrorBoundary, type JSX, platform, signal, Storage, Text, View } from "nsh";
+import { ErrorBoundary, type JSX, platform, signal, Storage, Text, View, type ViewRef } from "nsh";
 import { Button as BaseButton, Combobox, Toolbar as ToolbarGroup } from "nsh/base";
-import { isAvailable, Menu, type MenuItem, titleBar } from "nsh/desktop";
+import { isAvailable, type MenuItem, titleBar } from "nsh/desktop";
 import { date } from "../format";
 import { t } from "../i18n";
 import { areaLabel, sectionLabel, vendorName } from "../labels";
@@ -14,7 +14,7 @@ import { type Area, area, bucket, shellWidth, crumb, endpoint, endpoints, go, op
 import type { SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { programOf, scrubCommand } from "./sessionview";
-import { BREAK, Button, CONTROL, FOCUS, FOCUS_WITHIN, glass, ICON, IconButton, Kbd, material, Notice, POPUP, Strong, Tip, WIDTH, SURFACE, ListRow } from "./kit";
+import { BREAK, Button, CONTROL, DOT, FOCUS, FOCUS_WITHIN, glass, ICON, IconButton, Kbd, material, Notice, POPUP, POPUP_MOTION, popupMenu, PRESS, ROWS, Strong, Tip, TONE, WIDTH, SURFACE, ListRow, TEXT } from "./kit";
 import { ActivityButton, activityOpen } from "./activity";
 import { sessionName } from "./manage";
 import { paletteOpen } from "./palette";
@@ -94,7 +94,7 @@ function Breadcrumb() {
         {(d) => (
           <>
             <Icon name="chevron-right" size={ICON.small} />
-            <Text class="min-w-0 shrink text-body text-muted-foreground line-clamp-1">{d()}</Text>
+            <Text class={`min-w-0 shrink ${TEXT.bodyQuiet} line-clamp-1`}>{d()}</Text>
           </>
         )}
       </If>
@@ -119,29 +119,31 @@ export function EndpointSwitcher(props: { class?: string }) {
       }}
       offset={4}
       class={`${CONTROL.trigger} ${FOCUS_WITHIN} ${props.class ?? (shellWidth() >= BREAK.toolbar ? WIDTH.switcher : WIDTH.switcherTight)}`}
-      inputClass="min-w-0 flex-1 text-body text-foreground placeholder:text-foreground"
-      popupClass={`${SURFACE.switcherPopup} ${POPUP}`}
+      inputClass={`min-w-0 flex-1 ${TEXT.body} placeholder:text-foreground`}
+      popupClass={`${SURFACE.switcherPopup} ${POPUP} ${POPUP_MOTION.class}`}
       popupStyle={glass}
-      itemClass="group rounded-(--radius-sm) px-2 py-1 focus:bg-accent"
+      popupStartingClass={POPUP_MOTION.starting}
+      popupEndingClass={POPUP_MOTION.ending}
+      itemClass={`group ${ROWS.popup}`}
       prefix={<Icon name="server" />}
       triggerButton={<Icon name="chevrons-up-down" size={ICON.small} />}
-      empty={<Text class="px-2 py-2 text-small text-muted-foreground">{t("endpoints.noneYet")}</Text>}
+      empty={<Text class={`px-2 py-2 ${TEXT.note}`}>{t("endpoints.noneYet")}</Text>}
       renderItem={(item) => {
         const e = endpoints().find((x) => x.id === item.value);
         return (
           <View class="flex-row items-center gap-2">
             <View class="min-w-0 flex-1">
               <Text class="text-body text-popover-foreground line-clamp-1">{item.title}</Text>
-              <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{e?.url ?? ""}</Text>
+              <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{e?.url ?? ""}</Text>
             </View>
-            <Text class="text-caption text-muted-foreground">{e ? vendorName(e) : ""}</Text>
+            <Text class={TEXT.meta}>{e ? vendorName(e) : ""}</Text>
           </View>
         );
       }}
       footer={
         <ListRow divided testID="manage-endpoints" label={t("endpoints.manage")} onPress={() => go("endpoints")}>
           <Icon name="settings" size={ICON.small} />
-          <Text class="text-small text-muted-foreground">{t("endpoints.manage")}</Text>
+          <Text class={TEXT.note}>{t("endpoints.manage")}</Text>
         </ListRow>
       }
     />
@@ -160,7 +162,7 @@ function RunningPill() {
           tooltip={<Tip text={scrubCommand(r().command)} />}
           class={`h-7 ${WIDTH.pill} flex-row items-center gap-2 rounded-(--radius) border border-primary/40 bg-primary/10 px-2 hover:bg-primary/15 ${FOCUS}`}
         >
-          <View class="size-1.5 rounded-full bg-primary motion-safe:animate-pulse" />
+          <View class={`${DOT} ${TONE.live.dot} motion-safe:animate-pulse`} />
           <Text class="text-small text-primary line-clamp-1">{programOf(r().command) ?? ""}</Text>
         </BaseButton>
       )}
@@ -180,7 +182,7 @@ function SearchButton() {
       class={`${CONTROL.trigger} ${WIDTH.search} ${FOCUS}`}
     >
       <Icon name="search" />
-      <Text class="flex-1 text-body text-muted-foreground">{t("palette.open")}</Text>
+      <Text class={`flex-1 ${TEXT.bodyQuiet}`}>{t("palette.open")}</Text>
       <Kbd keys="mod+k" />
     </BaseButton>
     </If>
@@ -189,6 +191,7 @@ function SearchButton() {
 
 /** The window's title bar, drawn by the app: drags the window; the system's controls keep their place. */
 export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element }) {
+  let menuButton: ViewRef | undefined;
   const height = () => (isAvailable ? titleBar().height || 44 : 44);
   return (
     <View
@@ -212,7 +215,8 @@ export function Toolbar(props: { open: (a: Area) => void; extra?: JSX.Element })
           testID="app-menu"
           icon="ellipsis"
           label={t("menu.menu")}
-          onPress={() => void Menu.popup(appMenus(props.open).map((m) => ({ label: m.label, submenu: m.submenu })))}
+          ref={(r) => (menuButton = r)}
+          onPress={() => void popupMenu(appMenus(props.open).map((m) => ({ label: m.label, submenu: m.submenu })), menuButton)}
         />
       </If>
       </ToolbarGroup>
@@ -229,12 +233,12 @@ function Place(props: { area: Area; open: (a: Area) => void }) {
       selected={on()}
       onPress={() => props.open(props.area)}
       tooltip={<Tip text={areaLabel(props.area)} shortcut={AREA_KEY[props.area]} />}
-      class={`h-8 flex-row items-center gap-2 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent ${FOCUS}`}
+      class={`h-8 flex-row items-center gap-2 rounded-(--radius) px-2 hover:bg-sidebar-accent/50 selected:bg-sidebar-accent ${PRESS.surface} ${FOCUS}`}
     >
       <Icon name={AREA_ICON[props.area]} tint={on() ? "sidebar-accent-foreground" : "muted-foreground"} />
       <Text class={on() ? "flex-1 text-body text-sidebar-accent-foreground" : "flex-1 text-body text-sidebar-foreground"}>{areaLabel(props.area)}</Text>
       <If when={props.area === "run" && running()}>
-        <View class="size-1.5 rounded-full bg-primary" />
+        <View class={`${DOT} ${TONE.live.dot}`} />
       </If>
     </BaseButton>
   );

@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { bucket, endpoint, report, versionKey } from "../store";
 import type { Plan, Timeline } from "../types";
-import { Await, Badge, Button, Card, Dot, Empty, Field, Heading, IconButton, KeyValue, Notice, Path, Row, terminal, ToolBar, WIDTH } from "../ui/kit";
+import { Await, Badge, Button, Card, Dot, Empty, Field, Heading, IconButton, KeyValue, Notice, Path, Row, terminal, ToolBar, WIDTH, TEXT } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { versioningLabel } from "../ui/overview";
@@ -83,7 +83,7 @@ export function Versions() {
               <View class="gap-3" testID="timeline">
                 <View class="flex-row items-baseline gap-2">
                   <Heading count={tl().versions.length}>{t("browse.versions")}</Heading>
-                  <Text class="min-w-0 flex-1 text-small text-muted-foreground line-clamp-1">{`${t("versions.noncurrent")}: ${bytes(tl().noncurrentBytes)}`}</Text>
+                  <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{`${t("versions.noncurrent")}: ${bytes(tl().noncurrentBytes)}`}</Text>
                 </View>
                 <If when={tl().deleted}>
                   <Notice tone="warn" text={t("versions.deleted")}>
@@ -104,9 +104,9 @@ export function Versions() {
                           </View>
                           <View class="min-w-0 flex-1 gap-1">
                             <View class="flex-row items-center gap-2">
-                              <Text class="text-body text-foreground">{date(v().lastModified)}</Text>
+                              <Text class={TEXT.body}>{date(v().lastModified)}</Text>
                               <If when={v().isLatest}>
-                                <Badge label={t("versions.latest")} tone="primary" />
+                                <Badge label={t("versions.latest")} tone="live" />
                               </If>
                               <If when={v().isDeleteMarker}>
                                 <Badge label={t("versions.deleteMarker")} tone="warn" />

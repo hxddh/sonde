@@ -486,7 +486,7 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(tiles[0].detail).toBe("40 requests in 2.00 s");
   expect(tiles[1].value).toBe("3%");
   expect(tiles[1].detail).toBe("1 server · 2 retries");
-  expect(tiles[1].tone).toBe("bad");
+  expect(tiles[1].tone).toBe("fail");
   // one failure, one colour: errors that are all the program's own (4xx) are in the client's tone, as on their charts
   const clientOnly = signalTiles({ ...s, errors: { ...s.errors, counts: { ...s.errors.counts, client: s.errors.count, server: 0 } } });
   expect(clientOnly[1].tone).toBe("client");

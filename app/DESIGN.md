@@ -48,16 +48,22 @@ chart, a base control left unstyled) and for a set of classes it takes none of.
 
 ## Type
 
-A desktop scale around a 13 pt body (`nsh.json` `tailwind.fontSize`, `TYPE` in
-`src/ui/kit.tsx` for numeric props):
+A desktop scale around a 13 pt body, each size with its line (`nsh.json` `tailwind.fontSize`; `TYPE` and `LEADING`
+in `src/ui/kit.tsx` for numeric props), so no paragraph is set solid:
 
 | Class | Points | For |
 |---|---|---|
-| `text-caption` | 11 | metadata, column headers, badges, shortcuts |
-| `text-small` | 12 | secondary lines, help under a field |
-| `text-body` | 13 | everything else: rows, labels, buttons, prose |
-| `text-heading` | 15 | a panel's or section's title, a figure |
-| `text-title` | 20 | a page's title (welcome, an empty Run) |
+| `text-caption` | 11/16 | metadata, column headers, badges, shortcuts |
+| `text-small` | 12/18 | secondary lines, help under a field |
+| `text-body` | 13/20 | everything else: rows, labels, buttons, prose |
+| `text-heading` | 15/22 | a panel's or section's title, a figure |
+| `text-title` | 20/28 | a page's title (welcome, an empty Run) |
+
+A page writes a **text role**, not its classes: `TEXT.body`, `bodyQuiet`, `note` (a secondary line, a field's label),
+`small`, `meta` (a caption: a column's title, a count, a time), `caption`, `code`, `codeQuiet`, `error`, and
+`captionSize` for words whose colour is a tone's. **Chinese is never under 12 pt**: in Chinese the caption roles
+are 12 on the same 16 pt line (`caption-cjk`), which is why `text-caption` is the kit's alone. Parentheses around
+Latin and figures alone are halfwidth in Chinese, "(94%)", not "（94%）", whose own side bearings read as gaps.
 
 The interface is the platform's font, and monospace the platform's (SF Mono or Menlo,
 Cascadia Mono or Consolas, DejaVu Sans Mono): for identifiers, keys, commands, URLs,
@@ -74,6 +80,11 @@ asked for. At 600 a Chinese title was drawn regular beside the bold Latin in it.
 
 ## Color
 
+**One tone table** (`TONE` in the kit) draws every tone each way it is drawn: its words (`text`), a solid mark (`fill`),
+its dot (`dot`), its icon (`icon`) and a quiet wash with words (`badge`). The tones: the request's `ok`, `miss`,
+`client`, `fail`, `refused`, `injected`; then `warn`, `info`, `live` (at work now), `plain`, `quiet`. `Stat`, `Figure`,
+`Badge`, `Dot`, `Notice`, toasts and a request's status all read it; there is no other.
+
 Theme tokens only (`theme.json`, light and dark). Status has its own roles —
 `status-ok`, `status-miss`, `status-client`, `status-server`, `status-refused`,
 `status-injected` (a fault scenario's answer, never the store's), `warn`, `info` — and formats theirs (`fmt-*`); never a palette color in a page. The
@@ -87,10 +98,10 @@ piece wraps one nsh export with the theme's tokens:
 
 | Piece | Over | Use |
 |---|---|---|
-| `Button`, `IconButton` | `Button` | primary (one per area), outline (default), ghost (dense rows, toolbars), destructive |
+| `Button`, `IconButton` | `Button` | primary (one per area), outline (default), ghost (dense rows, toolbars), destructive; `loading` while its act is under way (its label and width stay, a ring turns in its icon's place) |
 | `Card` | `View` / `Button` | `panel` (p-4, a group), `tile` (a figure in a row), `none` (a list drawing its rows); `onPress` makes the card the button; `onWidth` tells what it holds how wide it is |
 | `ListRow`, `Row` | `Button`, `View` | the one row a press opens (hover, pressed, selected, focus; `lines={2}`, `divided` in a card, `trailing`), and the one row that is only read (a hairline, 12 by 8; `stack` for lines one under another, `bare` over what pads itself). `ROWS` for a tree's and the palette's items, which take classes |
-| `ActionRow`, `More` | `Button`, the system's menu | commands in one row that never wraps: in rank order as many as the row has room for (each measures itself), the rest behind `⋯`; `More` alone is the `⋯` |
+| `ActionRow`, `More`, `popupMenu` | `Button`, the system's menu | commands in one row that never wraps: in rank order as many as the row has room for (each measures itself), the rest behind `⋯`; `More` alone is the `⋯`; `popupMenu(actions, anchor)` the one way to show the system's menu, under the button that opened it (at the pointer for a context menu) |
 | `Pressable`, `Crumb`, `Scrubber`, `confirmAlert` | `Button`, `Link`, `Slider`, `AlertDialog` | a press area around what is not a label; a part of a path as a link; a value dragged along a range; the system's short question before something goes |
 | `Title`, `Heading`, `Strong` | `Text` | the two heading levels (`page` for an introduction's one title; `quiet` over a list), and words set heavier that are not a heading |
 | `Field`, `SearchField`, `NumberField`, `Choice`, `Check`, `SwitchRow` | `Input`, `NumberInput`, `Select`, `Checkbox`, `Switch` | forms; a switch's label is its own. A `Field` that is refused says so in one way: `error` (its edge in `fail`, the reason under it, and to a screen reader the field is `invalid` with the reason as its description); `invalid` alone where the reason stands elsewhere |
@@ -106,11 +117,13 @@ piece wraps one nsh export with the theme's tokens:
 | `Path` | `Text` | a path or key cut in its middle (the text's own `ellipsis-middle`), heard whole |
 | `TABLE`, `ROW`, `SimpleTable` | `DataTable` | every table's classes and row heights; rows of text, every row there (it scrolls past `max`), sorted by a press on a title, figures at their cell's end (`end`), one column taking the room the others leave (`fill`), a cell drawn its own way (`cell`) |
 | `Badge`, `Dot`, `KeyValue`, `Kbd`, `Empty`, `Loading` | — | display only; `Empty` is the one way to say nothing is here (`compact` inside a chart, a list or a card) |
+| `ProgressBar` | `Progress` | how far something has got: a known value glides to each new one, an unknown one sweeps |
 
 Rules: a page passes no classes of its own to an `nsh/base` control; a class string a second page would repeat
 belongs in the kit; `FOCUS` is on everything that takes the keyboard, and shows for focus the keyboard moved (`focus-visible:`), never
-after a click (`FOCUS_WITHIN` around a control whose focus is a text input inside it); `selected:bg-selection` is the one selection,
-`active:bg-muted` the press. One formatter per kind of value (`format.ts`): `duration` (0.4 ms … 2 h 05 min, the unit chosen after rounding),
+after a click (`FOCUS_WITHIN` around a control whose focus is a text input inside it). One of each state: `SELECTED` the
+selection, `HIGHLIGHT` a popup's row under the keyboard, `DISABLED` the one dimming (0.4), `DOT` the one dot (8 pt),
+`active:bg-muted` and `PRESS` the press. One formatter per kind of value (`format.ts`): `duration` (0.4 ms … 2 h 05 min, the unit chosen after rounding),
 `percent` and `change`, `cost` (`costColumn`: a column's costs in one unit, said once in its title), `clock`, `count`, `bytes` (never four digits: 999 B, then 1.0 KiB), `transfer` (bytes each way: `↑ 78.1 KiB ↓ 75.1 KiB`), `date` (a day with its time, one writing: "Nov 7, 2026, 00:22", and to the millisecond "Nov 7, 2026, 00:22:25.074"), `factor`, `rate`. `duration` is the one writer of a length of time, in three forms: as measured, as an `age` (now, 5 min, 3 h, 86 d: whole, never "86.0 d") and as a `counter` (0:07). `copy()` is the one way to copy, `useEndpoint()`
 the one way to change endpoint.
 
@@ -135,7 +148,8 @@ Each rule below is enforced by `scripts/lint-kit.py` (the name in brackets is wh
 | Numbers | Every count through `count()`, every share through `percent()`/`pct()`, a ratio through `factor()`, a rate through `rate()`: no `String(` and no `.toFixed(` in `src/ui`, `src/screens` or `viewer` | `[number]` |
 | Spacing | 4, 8, 12, 16, 24 (`gap-1 2 3 4 6`, and `p-`, `m-` alike), every value checked, not two; in the kit an off-scale inset carries an `off-scale:` comment | `[spacing]` |
 | Control heights | Two, `h-8` and `h-7`; a button inside a field is `IconButton inField` (as high as the field) | `[control]`, `[control-height]` |
-| Icons | Three sizes (`ICON.small` 12, default 16, `ICON.large` 20), one tile (`IconTile`); an `<Icon` is written on one line, so the size rule reads it | `[icon-size]`, `[icon-tile]`, `[icon]` |
+| Icons | Three sizes (`ICON.small` 12, default 16, `ICON.large` 20), by name, never a number; one tile (`IconTile`); an `<Icon` is written on one line, so the size rule reads it | `[icon-size]`, `[icon-tile]`, `[icon]` |
+| Motion, shadows, type, tones | No `duration-N` (`TIMING` and the kit's transitions), no `shadow-*` (`SHADOW`), no `text-caption` (a `TEXT` role), no tone table of a page's own (`TONE`) | `[motion]`, `[shadow]`, `[type]`, `[tone]` |
 | Nothing here | `Empty`, whole or `compact` | `[empty]` |
 | Words | Every key in every language with the same placeholders, and every key used: named whole, or a member of a family a template builds (`t(\`trial.${standing}\`)`), the family listed in the lint with its members, key by key — a prefix alone passes nothing | `check-locales.py` |
 | Charts | One frame, one left edge, one row pitch, one legend, one tooltip, one fade, one outline, one time axis, one value scale; bar thickness, tips and heights each a named small set (see Charts) | `lint-charts.py` |
@@ -149,7 +163,8 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
   `self-start` (`Badge` and `Back` included) — a column that wants it left says so where it places it.
 - **Three row heights.** 30 for a table of rows to press, 26 for a short summary table or program output, 44 for a
   row of two lines.
-- **Baseline.** Text in one row shares a baseline: one type size per row where it can, figures at the end of their
+- **Baseline.** Text in one row shares a baseline: one type size per row where it can, sizes that differ on their
+  first baseline (`items-baseline`: a one-line tile's name and figure), figures at the end of their
   cell in a `flex-1 items-end justify-center` box, an icon in a `shrink-0` box beside its text.
 - **Four thresholds** (`BREAK`), and no others: two widths — `toolbar` (1040), from which the window's toolbar shows
   the endpoint's name in full and the search field rather than its button, and `inspector` (900), from which a pane
@@ -229,8 +244,10 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 - **Base**: `bg-background`, regions separated by hairlines (`border-border`), no
   shadows. Cards (`bg-card`, `rounded-(--radius-card)`) group a few related values;
   no card inside a card.
-- **Popups** (menus, selects, the endpoint switcher): `POPUP` — the popover surface,
-  one border, one radius, one shadow, and glass on macOS.
+- **Three shadows** (`SHADOW`, `nsh.json` `tailwind.shadow`): `control` (a segment, a switch's thumb), `popup`,
+  `modal` (dialogs, side panels).
+- **Popups** (menus, selects, the endpoint switcher, a figure's preview, tooltips, toasts): `POPUP` — the popover
+  surface, one border, one radius, one shadow, and glass on macOS; they come in with `POPUP_MOTION`.
 - **Side panels** (Activity, a narrow window's inspector): `SidePanel`
   in three widths (narrow 420, default 600, wide 760) with a `PanelHeader`; they start
   below the title bar and close with Escape, the scrim or Close. The endpoint form is a
@@ -395,8 +412,20 @@ the same code: they are reported with their difference images, not held (`LIVE` 
 
 ## Motion
 
-Short, and only to explain a change: overview cards rise in, operations slide into
-the live list, sheets come from their edge. Nothing moves with reduced motion.
+Short, and only to explain a change; nothing moves with reduced motion (`motion-safe:`). Four lengths and one ease,
+the kit's and no one else's (`TIMING`: 120 a hover's wash, 180 a press or a popup, 240 a thing moving into place, 360
+a reveal; `ease-standard`, a soft settle):
+
+| Change | Motion |
+|---|---|
+| Hover, a state's colour | `TRANSITION`, 120 |
+| Press (Button, IconButton, a segment; ListRow, Card, a place) | `PRESS`: sinks to 0.97 (0.99 for what is wide) |
+| A popup opens (select, combobox, date picker, a figure's preview) | `POPUP_MOTION`: from just above, 0.97 and clear, 180; leaves by fading |
+| A dialog opens | `Modal`: the palette's fade |
+| A selection moves (a segment, a switch) | `GLIDE`, 240 |
+| A progress value changes; one unknown | `ProgressBar` glides, 240; sweeps (still under reduced motion) |
+| A toast comes and goes | `TOAST_MOTION`, 240, from its corner |
+| A run's operations, cards | slide into the live list, rise in (layout animations) |
 
 ## Words
 

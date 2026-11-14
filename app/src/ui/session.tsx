@@ -7,7 +7,7 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { copy, endpoint, endpoints, report } from "../store";
 import type { EpisodeRow, RecordingView } from "../types";
-import { Button, Card, Dot, Heading, IconTile, Options, terminal, Row } from "./kit";
+import { Button, Card, Dot, Heading, IconTile, Options, terminal, Row, TEXT } from "./kit";
 import { OperationView } from "./sessionview";
 
 export { clock, episodeTone, linesOf, Observations, OperationsTable, OutputTable, SessionHeader, SessionList, statusTone } from "./sessionview";
@@ -45,7 +45,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
             </If>
             <View class="min-w-0 flex-1 gap-1">
               <Heading>{t("timeline.recordTitle")}</Heading>
-              <Text class="text-small text-muted-foreground">{t("timeline.recordHint")}</Text>
+              <Text class={TEXT.note}>{t("timeline.recordHint")}</Text>
             </View>
             <If when={!open()}>
               <Button variant="outline" label={t("timeline.record")} onPress={() => open.set(true)} testID="record" />
@@ -53,7 +53,7 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
           </Row>
           <If when={open()}>
             <Row stack>
-              <Text class="text-small text-muted-foreground">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
+              <Text class={TEXT.note}>{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
               <If when={!props.policy}>
                 <View class="flex-row">
                 <Options
@@ -83,9 +83,9 @@ export function RecordPanel(props: { recording: RecordingView | null; onChange: 
             <Heading class="flex-1 line-clamp-1">{t("timeline.recording", { url: r().url })}</Heading>
             <Button small variant="destructive" icon="square" label={t("timeline.stop")} onPress={() => { api.sessions.stop(); props.onChange(); }} testID="record-stop" />
           </View>
-          <Text class="text-small text-muted-foreground">{t("timeline.pointApp")}</Text>
+          <Text class={TEXT.note}>{t("timeline.pointApp")}</Text>
           <View selectable class="gap-0 rounded-(--radius) border border-border bg-muted/50 px-3 py-2">
-            <Each of={r().exports.trim().split("\n")}>{(line) => <Text class="font-mono text-caption text-foreground">{line()}</Text>}</Each>
+            <Each of={r().exports.trim().split("\n")}>{(line) => <Text class={TEXT.code}>{line()}</Text>}</Each>
           </View>
           <View class="flex-row">
             <Button small variant="outline" icon="copy" label={t("timeline.copyExports")} onPress={() => copy(r().exports)} testID="copy-exports" />

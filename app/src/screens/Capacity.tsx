@@ -9,7 +9,7 @@ import { api, asError, watch } from "../native";
 import { bucket, endpoint, notify, prefix, report } from "../store";
 import { remember } from "../ui/overview";
 import type { DuReport } from "../types";
-import { Await, Bar, Button, Card, Empty, Field, Heading, More, Stat, SwitchRow, terminal, Tiles, ToolBar, SIZES, WIDTH } from "../ui/kit";
+import { Await, ProgressBar, Button, Card, Empty, Field, Heading, More, Stat, SwitchRow, terminal, Tiles, ToolBar, SIZES, WIDTH, TEXT } from "../ui/kit";
 import { Chart, HALF } from "../ui/plots";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { BarChart, PrefixMap, StackBar } from "../ui/charts";
@@ -118,7 +118,7 @@ export function Capacity() {
         </If>
       </ToolBar>
       {/* scanning again over what the last scan found */}
-      <If when={result() && progress()}>{(p) => <Bar value={null} label={p()} />}</If>
+      <If when={result() && progress()}>{(p) => <ProgressBar value={null} label={p()} />}</If>
       <Await loading={!result() && progress() !== null} error={failure()} retry={scan} waiting={progress() ?? undefined} testID="du">
         <If when={result()} else={<Empty icon="chart-pie" text={bucket() ? t("du.notMeasured") : t("common.chooseBucket")} />}>
           {(r) => (
@@ -148,7 +148,7 @@ export function Capacity() {
               </Chart>
               <Card testID="du-findings">
                 <Heading>{t("du.why")}</Heading>
-                <Each of={r().findings}>{(f, i) => <Text class="text-body text-foreground">{`• ${core(r().findingsText?.[i()], f())}`}</Text>}</Each>
+                <Each of={r().findings}>{(f, i) => <Text class={TEXT.body}>{`• ${core(r().findingsText?.[i()], f())}`}</Text>}</Each>
               </Card>
               <View class="flex-row flex-wrap gap-4 terminal:flex-col terminal:flex-nowrap">
                 <Chart class={HALF} title={t("du.byClass")} empty={r().byClass.length === 0 && t("common.empty")}>

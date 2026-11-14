@@ -17,7 +17,7 @@ export interface SignalTile {
   detail: string;
   /** `client`: failures that are all the program's own (4xx), in the tone their rows and charts have;
    * `injected`: every one sonde's own answer (a trial), never the store's failure */
-  tone: "plain" | "bad" | "client" | "injected" | "quiet";
+  tone: "plain" | "fail" | "client" | "injected" | "quiet";
   /** Its line over the session, slice by slice (empty: nothing to draw). */
   series: number[];
   /** What the line is of: counts as bars, a level as steps, a measure as a line. */
@@ -94,7 +94,7 @@ export function signalTiles(s: Signals, /** lookups that found nothing (not fail
       detail: wrong.length ? [...wrong, ...(missed ? [t("signal.missed", { pct: missed })] : [])].join(" · ") : missed ? t("signal.missed", { pct: missed }) : t("signal.noErrors"),
       // one failure, one colour: all of them the program's own (4xx) are in the tone their rows and charts have
       // (sonde's own answers in their own tone: the store's failures are what the colour says otherwise)
-      tone: s.errors.count === 0 ? "plain" : s.errors.counts.injected === s.errors.count ? "injected" : s.errors.counts.client === s.errors.count - s.errors.counts.injected ? "client" : "bad",
+      tone: s.errors.count === 0 ? "plain" : s.errors.counts.injected === s.errors.count ? "injected" : s.errors.counts.client === s.errors.count - s.errors.counts.injected ? "client" : "fail",
       series: few ? [] : s.errors.series,
       kind: "bars",
     },

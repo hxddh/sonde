@@ -4,9 +4,9 @@
 // over a band of live figures. When it ends, a toast and a notification
 // say how, and the session opens lined up with the output.
 
-import { batch, cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View } from "nsh";
+import { batch, cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
-import { isAvailable, Menu } from "nsh/desktop";
+import { isAvailable } from "nsh/desktop";
 import { change, count, duration, percent, rate } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
@@ -18,7 +18,7 @@ import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { TrialDialog } from "../ui/trial";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, More, SURFACE, WIDTH, PANE } from "../ui/kit";
+import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, popupMenu, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, More, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, sessionStory, STRIP } from "../ui/plots";
@@ -39,9 +39,10 @@ function CommandBar() {
     if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
     start(command(), id);
   };
+  let recentButton: ViewRef | undefined;
   const recent = () => {
     if (!isAvailable || !history().length) return;
-    void Menu.popup(history().map((c) => ({ label: scrubCommand(c), onSelect: () => command.set(c) })));
+    void popupMenu(history().map((c) => ({ label: scrubCommand(c), run: () => command.set(c) })), recentButton);
   };
   if (terminal()) {
     return (
@@ -73,10 +74,10 @@ function CommandBar() {
           placeholder={t("run.placeholder")}
           onChange={(v) => command.set(v)}
           onSubmit={run}
-          leading={<Text class="font-mono text-body text-muted-foreground">$</Text>}
+          leading={<Text class={`font-mono ${TEXT.bodyQuiet}`}>$</Text>}
           trailing={
             <If when={history().length > 0 && isAvailable}>
-              <IconButton inField icon="clock" label={t("run.recent")} onPress={recent} testID="run-history" />
+              <IconButton ref={(r) => (recentButton = r)} inField icon="clock" label={t("run.recent")} onPress={recent} testID="run-history" />
             </If>
           }
         />
@@ -90,7 +91,7 @@ function CommandBar() {
         <Field bare small mono class={WIDTH.long} testID="run-cwd" label={t("run.cwd")} value={cwd()} placeholder={t("run.cwdHome")} onChange={(v) => cwd.set(v)} leading={<Icon name="folder" />} />
         <View class="min-w-0 flex-1 flex-row items-center gap-2">
           <Icon name="server" />
-          <Text class="min-w-0 flex-1 text-small text-muted-foreground line-clamp-1">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
+          <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
         </View>
         <Options testID="run-policy" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
       </View>
@@ -135,7 +136,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   // the errors in the tone their rows are drawn in: the client's where every one was a 4xx
   const errorTone = () => {
     const c = props.view?.signals?.errors.counts;
-    return c && c.client > 0 && c.server + c.transport === 0 ? "client" : "bad";
+    return c && c.client > 0 && c.server + c.transport === 0 ? "client" : "fail";
   };
   // once it ended: held to its program's baseline, as sonde check would
   const verdict = resource(
@@ -218,7 +219,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
         >
           {(done) => (
             <View class="flex-row items-center gap-2">
-              <Dot tone={done().killed ? "refused" : done().exit === 0 ? "ok" : "server"} />
+              <Dot tone={done().killed ? "refused" : done().exit === 0 ? "ok" : "fail"} />
               <Strong>{done().killed ? t("run.killed") : t("run.exited", { code: `${done().exit ?? "?"}` })}</Strong>
             </View>
           )}
@@ -252,7 +253,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
             </If>
           )}
         </If>
-        <If when={verdictText()}>{(v) => <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "pass" : "fail"} />}</If>
+        <If when={verdictText()}>{(v) => <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "ok" : "fail"} />}</If>
       </View>
       <If when={trying() && r() && !r()!.removed}>
         <TrialDialog
@@ -323,7 +324,7 @@ function LivePanel(props: { profile: Profile }) {
     <Chart testID="live" class="shrink-0" title={t("live.title")} text={t("live.latency")}>
       <View class="flex-row items-center gap-6">
         <Figure small testID="live-rate" value={rate(f().perSecond)} label={t("live.perSecond")} />
-        <Figure small testID="live-failed" value={percent(f().failedShare)} label={t("live.failed")} tone={f().failedShare > 0 ? "bad" : "plain"} />
+        <Figure small testID="live-failed" value={percent(f().failedShare)} label={t("live.failed")} tone={f().failedShare > 0 ? "fail" : "plain"} />
         <Figure small testID="live-in-flight" value={count(f().inFlight)} label={t("live.inFlight")} />
         <Figure small testID="live-p95" value={duration(f().p95)} label={t("live.p95")} />
       </View>
@@ -409,7 +410,7 @@ function NoRequests() {
   return (
     <View testID="run-no-requests" class={terminal() ? "gap-1" : "flex-1 items-center justify-center gap-3 p-6"}>
       <Title center={!terminal()}>{t("run.noneTitle")}</Title>
-      <Text class={terminal() ? "text-muted-foreground" : `${SURFACE.note} text-center text-body text-muted-foreground`}>{t("run.noneText")}</Text>
+      <Text class={terminal() ? "text-muted-foreground" : `${SURFACE.note} text-center ${TEXT.bodyQuiet}`}>{t("run.noneText")}</Text>
       <Card class={SURFACE.noteCard}>
         <KeyValue
           mono
@@ -423,7 +424,7 @@ function NoRequests() {
           ]}
         />
       </Card>
-      <Text class={terminal() ? "text-muted-foreground" : `${SURFACE.note} text-center text-small text-muted-foreground`}>{t("run.noneKeys")}</Text>
+      <Text class={terminal() ? "text-muted-foreground" : `${SURFACE.note} text-center ${TEXT.note}`}>{t("run.noneKeys")}</Text>
     </View>
   );
 }
@@ -453,7 +454,7 @@ function Intro() {
             <Each of={history().slice(0, 5)}>
               {(c) => (
                 <ListRow label={scrubCommand(c())} onPress={() => command.set(c())}>
-                  <Text class="flex-1 font-mono text-small text-foreground line-clamp-1">{scrubCommand(c())}</Text>
+                  <Text class={`flex-1 font-mono ${TEXT.small} line-clamp-1`}>{scrubCommand(c())}</Text>
                 </ListRow>
               )}
             </Each>
@@ -480,8 +481,8 @@ function Recent() {
           <Each of={history().slice(0, 30)}>
             {(c) => (
               <ListRow lines={2} label={scrubCommand(c())} selected={command() === c()} onPress={() => command.set(c())}>
-                <Text class="text-body text-foreground line-clamp-1">{programOf(c()) ?? scrubCommand(c())}</Text>
-                <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{scrubCommand(c())}</Text>
+                <Text class={`${TEXT.body} line-clamp-1`}>{programOf(c()) ?? scrubCommand(c())}</Text>
+                <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{scrubCommand(c())}</Text>
               </ListRow>
             )}
           </Each>

@@ -10,7 +10,7 @@ import { core } from "../phrases";
 import { api } from "../native";
 import { ACTIVITY_TABS, type ActivityTab, activityTab } from "../store";
 import type { AuditEntry, JobInfo } from "../types";
-import { Badge, Bar, Button, Card, Empty, IconButton, PanelHeader, terminal, Row, Segmented, type Tone } from "./kit";
+import { Badge, ProgressBar, Button, Card, Empty, IconButton, PanelHeader, terminal, Row, Segmented, type Tone, TEXT } from "./kit";
 
 export const activityOpen = signal(false);
 
@@ -46,7 +46,7 @@ function throttled(f: () => void, ms: number): () => void {
 
 const TAB_LABEL: Record<ActivityTab, () => string> = { jobs: () => t("activity.jobs"), audit: () => t("activity.changes") };
 
-const JOB_TONE: Record<JobInfo["state"], Tone> = { running: "primary", finished: "pass", failed: "fail", cancelled: "neutral" };
+const JOB_TONE: Record<JobInfo["state"], Tone> = { running: "live", finished: "ok", failed: "fail", cancelled: "quiet" };
 
 /** A row of Activity's lists: hairlines between them, in one card. */
 
@@ -69,16 +69,16 @@ function Jobs() {
               <Row stack first={i() === 0}>
                 <View class="min-h-7 flex-row items-center gap-2">
                   <View class="shrink-0">
-                    <Badge tone={JOB_TONE[j().state] ?? "neutral"} label={t(`jobs.state.${j().state}` as never)} />
+                    <Badge tone={JOB_TONE[j().state] ?? "quiet"} label={t(`jobs.state.${j().state}` as never)} />
                   </View>
-                  <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{core(j().titleText, j().title)}</Text>
-                  <Text class="shrink-0 text-caption text-muted-foreground">{age(j().started)}</Text>
+                  <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{core(j().titleText, j().title)}</Text>
+                  <Text class={`shrink-0 ${TEXT.meta}`}>{age(j().started)}</Text>
                   <If when={j().state === "running"}>
                     <Button small variant="outline" label={t("jobs.cancel")} onPress={() => api.cancelJob(j().id)} />
                   </If>
                 </View>
                 <If when={j().state === "running"}>
-                  <Bar value={j().progress.total ? j().progress.done / Math.max(1, j().progress.total!) : null} label={core(j().progress.messageText, j().progress.message)} />
+                  <ProgressBar value={j().progress.total ? j().progress.done / Math.max(1, j().progress.total!) : null} label={core(j().progress.messageText, j().progress.message)} />
                 </If>
                 <If when={j().error}>{(e) => <Text class="text-small text-destructive">{e().message}</Text>}</If>
               </Row>
@@ -105,7 +105,7 @@ function Changes() {
   });
   const entries = () => log();
   // started (its outcome not yet written), failed in part, or done
-  const outcome = (e: AuditEntry): { tone: Tone; label: string } => (e.stage === "started" ? { tone: "neutral", label: t("audit.started") } : e.failed > 0 ? { tone: "fail", label: t("audit.failed") } : { tone: "pass", label: t("audit.done") });
+  const outcome = (e: AuditEntry): { tone: Tone; label: string } => (e.stage === "started" ? { tone: "quiet", label: t("audit.started") } : e.failed > 0 ? { tone: "fail", label: t("audit.failed") } : { tone: "ok", label: t("audit.done") });
   return (
     <If when={entries().length > 0} else={<Empty icon="scroll-text" text={t("audit.none")} />}>
       <Scroll class="flex-1" contentClass="pb-4">
@@ -117,15 +117,15 @@ function Changes() {
                   <View class="shrink-0">
                     <Badge tone={outcome(e()).tone} label={outcome(e()).label} />
                   </View>
-                  <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{[actionLabel(e().action), [e().endpoint, e().bucket].filter(Boolean).join("/")].filter(Boolean).join(" · ")}</Text>
+                  <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{[actionLabel(e().action), [e().endpoint, e().bucket].filter(Boolean).join("/")].filter(Boolean).join(" · ")}</Text>
                   <If when={e().stage !== "started"}>
-                    <Text class="shrink-0 tabular-nums text-caption text-muted-foreground">{t("matrix.of", { n: count(e().succeeded), of: count(e().items) })}</Text>
+                    <Text class={`shrink-0 tabular-nums ${TEXT.meta}`}>{t("matrix.of", { n: count(e().succeeded), of: count(e().items) })}</Text>
                   </If>
-                  <Text class="shrink-0 text-caption text-muted-foreground">{date(e().time)}</Text>
+                  <Text class={`shrink-0 ${TEXT.meta}`}>{date(e().time)}</Text>
                 </View>
                 <If when={e().targets.length > 0}>
                   <View selectable>
-                    <Each of={e().targets.slice(0, 6)}>{(x) => <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{x()}</Text>}</Each>
+                    <Each of={e().targets.slice(0, 6)}>{(x) => <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{x()}</Text>}</Each>
                   </View>
                 </If>
                 <If when={e().errors.length > 0}>

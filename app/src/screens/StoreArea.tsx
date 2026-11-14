@@ -8,14 +8,14 @@
 
 import { batch, cleanup, effect, resource, signal, Text, untracked, View } from "nsh";
 import { Tree, type TreeItem, type TreeRef } from "nsh/base";
-import { isAvailable, Menu } from "nsh/desktop";
+import { isAvailable } from "nsh/desktop";
 import { t } from "../i18n";
 import { sectionLabel } from "../labels";
 import { api, asError, Listing } from "../native";
 import { bucket, chooseBucket, copy, endpoint, go, prefix, report, showInSidebar, STORE_TABS, type StoreTab, storeTab } from "../store";
 import type { Entry } from "../types";
-import { Icon, iconSvg } from "../ui/icon";
-import { Button, IconButton, Loading, Notice, ROWS, Segmented, SideHeader, terminal, WIDTH } from "../ui/kit";
+import { Icon } from "../ui/icon";
+import { Button, ICON, IconButton, Loading, Notice, popupMenu, ROWS, Segmented, SideHeader, terminal, WIDTH, TEXT } from "../ui/kit";
 import { Browse } from "./Browse";
 import { Capacity } from "./Capacity";
 import { Layouts } from "./Layouts";
@@ -144,9 +144,9 @@ function useBuckets() {
 
   const menu = (b: string) => {
     if (!isAvailable) return;
-    void Menu.popup([
-      { label: t("store.copyName"), icon: iconSvg("copy"), onSelect: () => copy(b) },
-      { label: t("store.copyUri"), icon: iconSvg("link"), onSelect: () => copy(`s3://${b}/`) },
+    void popupMenu([
+      { label: t("store.copyName"), icon: "copy", run: () => copy(b) },
+      { label: t("store.copyUri"), icon: "link", run: () => copy(`s3://${b}/`) },
     ]);
   };
 
@@ -168,7 +168,7 @@ function useBuckets() {
         <Loading class="px-4" />
       </If>
       <If when={!buckets.error() && buckets.state() !== "pending" && (buckets() ?? []).length === 0}>
-        <Text class="px-4 text-small text-muted-foreground">{t("store.noBuckets")}</Text>
+        <Text class={`px-4 ${TEXT.note}`}>{t("store.noBuckets")}</Text>
       </If>
       <Tree
         ref={(r) => (tree = r)}
@@ -197,7 +197,7 @@ function useBuckets() {
             >
               <View class={`${WIDTH.chevron} items-center`}>
                 <If when={entry.folder}>
-                  <Icon name={expanded().includes(entry.id) ? "chevron-down" : "chevron-right"} size={12} />
+                  <Icon name={expanded().includes(entry.id) ? "chevron-down" : "chevron-right"} size={ICON.small} />
                 </If>
               </View>
               <Icon name={isBucket ? "database" : expanded().includes(entry.id) ? "folder-open" : "folder"} tint={isBucket ? "foreground" : "muted-foreground"} />

@@ -7,7 +7,7 @@ import { Editor, type EditorDiagnostic } from "nsh/base";
 import { count, date, duration, transfer } from "../format";
 import { t } from "../i18n";
 import type { Header, RequestRecord } from "../types";
-import { Back, Disclosure, KeyValue, Notice, terminal, Title, TYPE } from "./kit";
+import { Back, Disclosure, KeyValue, Notice, terminal, Title, TYPE, TEXT } from "./kit";
 import { StatusMark } from "./sessionview";
 import { scenarioLabel } from "../trials";
 
@@ -117,7 +117,7 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
           <StatusMark status={r().status} text={r().status === null ? t("requests.transport") : undefined} injected={r().injected} />
           <Title>{r().kind}</Title>
         </View>
-        <Text class="font-mono text-caption leading-4 text-muted-foreground">{`${r().method} ${r().url}`}</Text>
+        <Text class={`font-mono ${TEXT.captionSize} leading-4 text-muted-foreground`}>{`${r().method} ${r().url}`}</Text>
       </View>
       <If when={props.actions}>
         <View class="flex-row flex-wrap gap-2">{props.actions}</View>
