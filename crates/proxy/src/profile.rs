@@ -276,6 +276,65 @@ pub const CHAIN_MIN: usize = 10;
 /// The longest wait between two requests of a chain (the program's own time).
 const CHAIN_GAP_US: i64 = 10_000;
 
+/// What the requests of a chain touched: whether the next one depends on
+/// one of them (a read or a write of a key one of them wrote, a write of a
+/// key one read, a listing of a prefix one wrote under, a write under a
+/// prefix one listed). Requests that depend on each other cannot be sent at
+/// once without changing what the program does.
+#[derive(Default)]
+struct Depends<'a> {
+    keys: std::collections::HashMap<(&'a str, &'a str), bool>,
+    written: Vec<(&'a str, &'a str)>,
+    listed: Vec<(&'a str, &'a str)>,
+}
+
+impl<'a> Depends<'a> {
+    fn listing(r: &'a Record) -> Option<(&'a str, &'a str)> {
+        r.operation.starts_with("ListObjects").then(|| {
+            let prefix = r
+                .query
+                .iter()
+                .find(|(k, _)| k == "prefix")
+                .map_or("", |(_, v)| v.as_str());
+            (r.bucket.as_deref().unwrap_or(""), prefix)
+        })
+    }
+
+    fn on(&self, r: &'a Record) -> bool {
+        let write = !is_read(r);
+        if let Some((b, prefix)) = Self::listing(r) {
+            return self
+                .written
+                .iter()
+                .any(|(wb, k)| *wb == b && k.starts_with(prefix));
+        }
+        let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
+            return false;
+        };
+        let touched = self.keys.get(&(b, k)).is_some_and(|w| *w || write);
+        let under_listed = write
+            && self
+                .listed
+                .iter()
+                .any(|(lb, prefix)| *lb == b && k.starts_with(prefix));
+        touched || under_listed
+    }
+
+    fn add(&mut self, r: &'a Record) {
+        if let Some(listed) = Self::listing(r) {
+            self.listed.push(listed);
+            return;
+        }
+        if let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) {
+            let write = !is_read(r);
+            *self.keys.entry((b, k)).or_default() |= write;
+            if write {
+                self.written.push((b, k));
+            }
+        }
+    }
+}
+
 /// The chains of `records`: see [`Chain`].
 pub fn chains(records: &[Record]) -> Vec<Chain> {
     let mut sorted: Vec<&Record> = records.iter().collect();
@@ -308,8 +367,15 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
         }
         cur.clear();
     };
+    let mut deps = Depends::default();
     for r in sorted {
         let s = start_us(r);
+        if !cur.is_empty() && !(s < end || s - end > CHAIN_GAP_US) && deps.on(r) {
+            // it needs what one before it did (reads what it wrote, lists
+            // where it wrote): those two cannot be sent at once, so the
+            // chain ends there and another begins with it
+            close(&mut cur, &mut out);
+        }
         if !cur.is_empty() && (s < end || s - end > CHAIN_GAP_US) {
             // an overlap (requests at once already) or the program's own pause
             let overlapped = s < end;
@@ -323,6 +389,10 @@ pub fn chains(records: &[Record]) -> Vec<Chain> {
             end = end.max(end_us(r));
             continue;
         }
+        if cur.is_empty() {
+            deps = Depends::default();
+        }
+        deps.add(r);
         cur.push(r);
         end = end_us(r);
     }
@@ -1341,6 +1411,14 @@ pub struct RunChange {
     /// did): its findings are not compared, a crash is no fix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<i32>,
+    /// How the command changed between two runs of one program (a named
+    /// one's), `--limit 200 → 20`: then less, more and fixed are the
+    /// workload's doing, and no saving is counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_changed: Option<String>,
+    /// Whether both runs' waiting is known: not when either's times are to
+    /// the second (an imported log's), and then `waiting_ms` says nothing.
+    pub waiting_known: bool,
     /// Both runs' latency, bucket by bucket on the same edges: their two
     /// distributions side by side.
     pub latency: (Vec<LatencyBucket>, Vec<LatencyBucket>),
@@ -1371,6 +1449,17 @@ impl RunChange {
             self.resolved.clear();
             self.appeared.clear();
             self.findings.clear();
+        }
+        self
+    }
+
+    /// Says how the command changed between two runs of one program
+    /// ([`crate::program::command_change`]): a finding fixed, less or more
+    /// then counts no saving.
+    pub fn of_commands(mut self, a: Option<&str>, b: Option<&str>) -> Self {
+        self.command_changed = crate::program::command_change(a, b);
+        if self.command_changed.is_some() {
+            crate::fixloop::by_command(&mut self.findings);
         }
         self
     }
@@ -1499,9 +1588,12 @@ pub fn stable(s: &str) -> String {
     stable_with(s, true)
 }
 
-/// [`stable`] for a command line: a word is replaced only when the whole of it
-/// is a value (a number, a date, a UUID, an id), so `python3`, `s3://` and
-/// `job1.py` stay what they say.
+/// [`stable`] for a command line: only what is never the same twice is
+/// taken out, a date `{date}`, a time `{time}`, a UUID `{uuid}`, an id
+/// `{id}` (a hex word, a long mixed one, a number of ten digits or more),
+/// wherever it is (`--date=2026-11-14`). A number is an argument
+/// (`--limit 30` and `--limit 5` are two commands), and `python3`, `s3://`
+/// and `job1.py` stay what they say.
 pub fn stable_words(s: &str) -> String {
     stable_with(s, false)
 }
@@ -1511,8 +1603,9 @@ fn stable_with(s: &str, digits_in_words: bool) -> String {
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < b.len() {
-        // a folder or file `name=value` (Hive's partitions): its value
-        if i == 0 || b[i - 1] == b'/' {
+        // a folder or file `name=value` (Hive's partitions): its value (of
+        // a key; a command's values are taken out only by what they are)
+        if digits_in_words && (i == 0 || b[i - 1] == b'/') {
             let seg = s[i..].find('/').map_or(&s[i..], |e| &s[i..i + e]);
             if let Some((name, value)) = seg.split_once('=')
                 && !name.is_empty()
@@ -1554,8 +1647,10 @@ fn stable_with(s: &str, digits_in_words: bool) -> String {
             || (w.len() >= 20 && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
         {
             out.push_str("{id}");
-        } else if !digits_in_words && has(u8::is_ascii_alphabetic) {
+        } else if !digits_in_words && (has(u8::is_ascii_alphabetic) || w.len() < 10) {
             out.push_str(w);
+        } else if !digits_in_words {
+            out.push_str("{id}");
         } else {
             // each run of digits
             let mut digits = false;
@@ -1894,6 +1989,8 @@ pub fn compare_runs(a: &Run, b: &Run) -> RunChange {
         findings,
         same_program: true,
         failed: None,
+        command_changed: None,
+        waiting_known: true,
     }
 }
 
@@ -2580,5 +2677,65 @@ mod injected {
         assert_eq!(price(&lost, &prices), price(&put, &prices));
         let p = profile(&[put, fault, lost], &prices);
         assert_eq!(p.cost.writes, 2);
+    }
+
+    #[test]
+    fn requests_that_need_the_one_before_are_no_chain_to_send_at_once() {
+        let at = |id: u64, op: &str, key: &str| {
+            let mut r = Record {
+                id,
+                time: chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + id as i64 * 3)
+                    .unwrap(),
+                method: if op == "PutObject" {
+                    "PUT".into()
+                } else {
+                    "GET".into()
+                },
+                operation: op.into(),
+                status: Some(200),
+                latency_ms: 2.0,
+                ..Default::default()
+            };
+            r.bucket = Some("b".into());
+            r.key = Some(key.into());
+            r
+        };
+        // twelve reads of twelve keys, one after another: eight at once would do
+        let reads: Vec<Record> = (1..=12)
+            .map(|i| at(i, "GetObject", &format!("k{i}")))
+            .collect();
+        assert_eq!(chains(&reads).iter().map(|c| c.requests).sum::<usize>(), 12);
+        // each key written and then read back: the read needs its write, so
+        // sending them at once would change what the program reads
+        let back: Vec<Record> = (0..12u64)
+            .flat_map(|i| {
+                let k = format!("k{i}");
+                [
+                    at(2 * i + 1, "PutObject", &k),
+                    at(2 * i + 2, "GetObject", &k),
+                ]
+            })
+            .collect();
+        assert!(chains(&back).is_empty(), "{:?}", chains(&back));
+        // a listing of where the program wrote needs those writes too
+        let mut listed: Vec<Record> = (1..=11)
+            .map(|i| at(i, "PutObject", &format!("out/{i}")))
+            .collect();
+        let mut l = Record {
+            id: 12,
+            time: chrono::DateTime::from_timestamp_millis(1_700_000_000_036).unwrap(),
+            method: "GET".into(),
+            operation: "ListObjectsV2".into(),
+            status: Some(200),
+            latency_ms: 2.0,
+            ..Default::default()
+        };
+        l.bucket = Some("b".into());
+        l.query = vec![("prefix".into(), "out/".into())];
+        listed.push(l);
+        assert_eq!(
+            chains(&listed).iter().map(|c| c.requests).sum::<usize>(),
+            11
+        );
     }
 }

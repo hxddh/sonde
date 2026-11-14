@@ -3,7 +3,7 @@
 
 use chrono::DateTime;
 use reqlog::{Record, Sink};
-use sonde_proxy::episode::{Kind, episodes, observations};
+use sonde_proxy::episode::{Shape, episodes, observations};
 use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
 
 fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u16) -> Record {
@@ -96,7 +96,7 @@ fn a_retried_create_does_not_leave_an_upload_open() {
     ];
     let eps = episodes(&recs);
     let obs = observations(&recs, &eps);
-    let uploads: Vec<_> = eps.iter().filter(|e| e.kind == Kind::Multipart).collect();
+    let uploads: Vec<_> = eps.iter().filter(|e| e.shape == Shape::Multipart).collect();
     assert_eq!(
         uploads.len(),
         1,

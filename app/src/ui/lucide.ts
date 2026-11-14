@@ -26,6 +26,7 @@ export const lucide = {
   "chevron-down": [{"tag": "path", "d": "m6 9 6 6 6-6"}],
   "chevron-left": [{"tag": "path", "d": "m15 18-6-6 6-6"}],
   "chevron-right": [{"tag": "path", "d": "m9 18 6-6-6-6"}],
+  "chevron-up": [{"tag": "path", "d": "m18 15-6-6-6 6"}],
   "chevrons-up-down": [{"tag": "path", "d": "m7 15 5 5 5-5"}, {"tag": "path", "d": "m7 9 5-5 5 5"}],
   "circle-alert": [{"tag": "circle", "cx": 12.0, "cy": 12.0, "r": 10.0}, {"tag": "line", "x1": 12.0, "x2": 12.0, "y1": 8.0, "y2": 12.0}, {"tag": "line", "x1": 12.0, "x2": 12.01, "y1": 16.0, "y2": 16.0}],
   "circle-check": [{"tag": "circle", "cx": 12.0, "cy": 12.0, "r": 10.0}, {"tag": "path", "d": "m16 9-5.5 5.5L8 12"}],

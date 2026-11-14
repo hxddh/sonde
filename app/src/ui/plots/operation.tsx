@@ -7,7 +7,7 @@ import { duration } from "../../format";
 import { t } from "../../i18n";
 import type { Profile, RecordSummary } from "../../types";
 import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, GUTTER, GUTTER_CHARS, INACTIVE, Legend, MOTION, TICK_ROOM, groupName, pct, rowsHeight, statusTone, tipValue, tones, tail, TimeAxis, BARS, TIP } from "./system";
-import { terminal } from "../kit";
+import { terminal, TEXT } from "../kit";
 
 /** An operation's requests in time: a bar from each one's start to its end, so waits and overlaps show. */
 /** A key as a row's name: its last two parts (`…/manifest/00012.json`). */
@@ -70,7 +70,7 @@ export function Waterfall(props: { records: RecordSummary[]; onRecord?: (id: num
           <If when={anyFirst()}>
             <Bar base="start" value="firstEnd" color="tone" cornerRadii={TIP.span} inactiveOpacity={INACTIVE} stagger={0.4} />
           </If>
-          <PlotAxis placement="left" format={(i) => tail(short(rows()[i]?.target ?? ""), GUTTER_CHARS - 2)} labelClass={`${AXIS_LABEL} font-mono text-caption`} />
+          <PlotAxis placement="left" format={(i) => tail(short(rows()[i]?.target ?? ""), GUTTER_CHARS - 2)} labelClass={`${AXIS_LABEL} font-mono ${TEXT.captionSize}`} />
           {/* from the operation's first request: lengths of time, on the one axis's ticks */}
           <TimeAxis domain={[0, end()]} lengths />
         </Plot>

@@ -90,8 +90,8 @@ jobs:
           fi
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: ./.github/actions/nsh
-        # (the tag v0.5.0)
-        with: { rev: f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1 }
+        # (its main at 2ca3b80: D-207)
+        with: { rev: 2ca3b8005cf00907c8c501ad9ba5f21f576fee84 }
       # the app's code alone, signed: installed apps that trust the root run
       # it without a new app (skipped without the release key and its certificate)
       - name: Signed package of the app's code
@@ -147,7 +147,7 @@ jobs:
             dist/*.sha256
             dist/SHA256SUMS
 
-  # `uses: hxddh/sonde@v20` follows the newest 20.x
+  # `uses: hxddh/sonde@v21` follows the newest 21.x
   action-tag:
     needs: publish
     uses: ./.github/workflows/action-tag.yml

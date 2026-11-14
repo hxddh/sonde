@@ -1,7 +1,7 @@
 // The key path of each screen, in the desktop form, on the built-in demo.
 
 import { expect, open, test } from "nsh/test";
-import { desktop, place, withDemo } from "./helpers";
+import { openDemo, desktop, place, withDemo } from "./helpers";
 
 test("a session's request in the inspector: details, copy as curl without a signature", async () => {
   const app = await open("../App.tsx", desktop);
@@ -25,8 +25,6 @@ test("a session's request in the inspector: details, copy as curl without a sign
 
 test("multipart: scan, lifecycle verdict, the guard waits for the typed confirmation", async () => {
   const app = await withDemo("demo");
-  // the bucket's card says it before the detail opens
-  await app.waitFor("text:3 · 172 MiB", { timeout: 10000 });
   await place(app, "multipart");
   await app.waitFor("id:lifecycle-verdict", { timeout: 10000 });
   // the figure is the count; its line says how much they hold and how many are old
@@ -57,13 +55,13 @@ test("capacity: why the bucket is this big", async () => {
   const app = await withDemo("demo");
   await place(app, "capacity");
   await app.waitFor("id:du-findings", { timeout: 15000 });
-  expect(app.texts().some((t) => t.startsWith("• Incomplete multipart uploads"))).toBe(true);
+  expect(app.texts().some((t) => t.startsWith("Incomplete multipart uploads"))).toBe(true);
   expect(app.shows("id:du-stack")).toBe(true);
 });
 
 test("layouts: detects and decodes the real SlateDB sample, with replay", async () => {
   const app = await withDemo("demo-layouts");
-  await app.waitFor("id:overview-layouts", { timeout: 15000 });
+  await app.waitFor("text:slatedb/", { timeout: 15000 });
   await place(app, "layouts");
   await app.waitFor("id:analyze-slatedb", { timeout: 15000 });
   expect(app.shows("id:analyze-iceberg")).toBe(true);
@@ -225,18 +223,18 @@ test("language: Chinese strings", async () => {
   await app.waitFor("text:查找最新的 WAL：探测了编号 1…128", { timeout: 10000 });
   await app.press("text:写入 manifest 3");
   await app.waitFor("id:operation-detail");
-  expect(app.shows("text:/条件创建（If-None-Match: \\*）/")).toBe(true);
+  expect(app.shows("text:/条件创建 \\(If-None-Match: \\*\\)/")).toBe(true);
   await app.press("id:inspector-close");
   await app.press("label:语言");
   await app.press("text:English");
   await app.waitFor("text:General");
 });
 
-test("reduced motion: the overview's cards are there at once, still", async () => {
+test("reduced motion: the objects and the section row are there at once, still", async () => {
   const app = await withDemo("demo", { ...desktop, reducedMotion: true });
-  await app.waitFor("id:overview-versions", { timeout: 10000 });
-  expect(app.shows("id:overview-multipart")).toBe(true);
-  expect(app.shows("id:overview-capacity")).toBe(true);
+  await app.waitFor("text:README.md", { timeout: 10000 });
+  expect(app.shows("id:store-section-multipart")).toBe(true);
+  expect(app.shows("id:store-section-capacity")).toBe(true);
 });
 
 test("a number typed in Settings is saved a moment after the last key", async () => {
@@ -264,7 +262,7 @@ test("a listing that fails says why in the one error state, with a way to try ag
   // a bucket the store does not have: its listing is the store's own refusal
   const app = await open("../App.tsx", { ...desktop, modules: { [NATIVE]: { "Sonde.buckets": async () => [bucketNamed("gone")] } } });
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await place(app, "browse");
   await app.waitFor("id:bucket-gone", { timeout: 10000 });
@@ -293,7 +291,7 @@ test("a store that is gone: the buckets say why and come back with it; the endpo
     },
   });
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   // the endpoint, tested: not reachable, and why
   await app.press("id:test-demo");
@@ -333,7 +331,7 @@ test("a session file that cannot be read says so, and why", async () => {
  * carries the totals and the first page only; a page is made when it is asked for, and every ask is kept. */
 function bigSession(n: number) {
   const t0 = Date.parse("2026-11-07T00:00:00Z");
-  const row = (i: number) => ({ index: i, kind: "request", format: null, title: `operation ${i}`, start: new Date(t0 + i * 10).toISOString(), end: new Date(t0 + i * 10 + 4).toISOString(), records: [i + 1], requests: 1 + (i % 7), bytesUp: 0, bytesDown: 128, outcome: { kind: "ok" }, notes: [] });
+  const row = (i: number) => ({ index: i, shape: "request", format: null, title: `operation ${i}`, start: new Date(t0 + i * 10).toISOString(), end: new Date(t0 + i * 10 + 4).toISOString(), records: [i + 1], requests: 1 + (i % 7), bytesUp: 0, bytesDown: 128, outcome: { kind: "ok" }, notes: [] });
   const zeros = [0, 0];
   const signals = {
     timed: true, short: false, wallMs: n * 10, binMs: n * 5, bins: 2,

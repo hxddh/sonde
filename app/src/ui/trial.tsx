@@ -17,7 +17,7 @@ import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, tri
 import type { Trial, TrialEvent, TrialPlan } from "../types";
 import { adviceOnce, AGAIN, STANDING, trialAsked, TrialRow } from "./history";
 import { Icon } from "./icon";
-import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Mono, Muted, Notice, Options, Row, Title } from "./kit";
+import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Muted, Notice, Options, Path, Row, Title, TEXT } from "./kit";
 import { scrubCommand } from "./sessionview";
 
 /** Whether a trial is running (one at a time, as a program is). */
@@ -179,10 +179,10 @@ export function TrialDialog(props: {
         when={s().trial}
         else={
           // before its verdict: the scenario, and how it stands so far
-          <ListRow divided top first={i() === 0} testID={`trial-step-${s().scenario}`} label={scenarioLabel(s().scenario)} disabled trailing={<View class="min-h-5 shrink-0 justify-center"><Badge label={s().state === "running" ? t("trial.running") : t("trial.waiting")} tone={s().state === "running" ? "info" : "neutral"} /></View>}>
+          <ListRow divided top first={i() === 0} testID={`trial-step-${s().scenario}`} label={scenarioLabel(s().scenario)} disabled trailing={<View class="min-h-5 shrink-0 justify-center"><Badge label={s().state === "running" ? t("trial.running") : t("trial.waiting")} tone={s().state === "running" ? "info" : "quiet"} /></View>}>
             <View class="min-w-0 flex-1 flex-row flex-wrap items-baseline gap-x-2">
-              <Text class="text-body text-foreground">{scenarioLabel(s().scenario)}</Text>
-              <Text class="font-mono text-caption text-muted-foreground">{s().scenario}</Text>
+              <Text class={TEXT.body}>{scenarioLabel(s().scenario)}</Text>
+              <Text class={TEXT.codeQuiet}>{s().scenario}</Text>
             </View>
           </ListRow>
         }
@@ -192,13 +192,19 @@ export function TrialDialog(props: {
     );
   };
   return (
-    <Modal open onClose={close} testID="trial-dialog" describe={refused() ?? (steps() ? (ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : undefined) : t("trial.dialogHint"))}>
+    // one frame from its plan to its verdicts: as wide as a dialog that lists, as high as the window allows,
+    // its body scrolling inside; it never jumps between sizes as it goes
+    <Modal open steady size="wide" onClose={close} testID="trial-dialog" describe={refused() ?? (steps() ? (ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : undefined) : t("trial.dialogHint"))}>
       <Title>{again() ? t("trial.againTitle") : t("trial.dialogTitle")}</Title>
       <If when={plan.loading() && !plan()}>
         <Loading />
       </If>
       {/* no trial of this session: why, and nothing to press but Close */}
       <If when={refused()}>{(why) => <Notice testID="trial-refused" tone="warn" text={why()} />}</If>
+      {/* (no body to fill the frame: the actions stay at its foot) */}
+      <If when={!the()}>
+        <View class="flex-1" />
+      </If>
       <If when={the()}>
         {(p) => (
           <If
@@ -206,8 +212,9 @@ export function TrialDialog(props: {
             else={
               // before it runs: what will run, how hard each scenario presses, what the program may do
               <ModalBody testID="trial-plan">
-                <Muted class="text-small">{again() ? t("trial.againHint") : t("trial.dialogHint")}</Muted>
-                <Mono class="line-clamp-2">{`$ ${scrubCommand(p().command)}`}</Mono>
+                <Muted>{again() ? t("trial.againHint") : t("trial.dialogHint")}</Muted>
+                {/* the command on one line, cut in its middle */}
+                <Path path={`$ ${scrubCommand(p().command)}`} />
                 {/* trying again: the scenarios that did not survive, each with how it last stood */}
                 <If when={again()}>
                   {(list) => (
@@ -215,8 +222,8 @@ export function TrialDialog(props: {
                       <Each of={list()} key={(x) => x.scenario}>
                         {(x, i) => (
                           <Row first={i() === 0}>
-                            <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">{scenarioLabel(x().scenario)}</Text>
-                            <Text class="shrink-0 font-mono text-caption text-muted-foreground">{trialAsked(x())}</Text>
+                            <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>{scenarioLabel(x().scenario)}</Text>
+                            <Text class={`shrink-0 ${TEXT.codeQuiet}`}>{trialAsked(x())}</Text>
                             <Badge label={t(`trial.${x().standing}`)} tone={STANDING[x().standing]} />
                           </Row>
                         )}
@@ -235,7 +242,7 @@ export function TrialDialog(props: {
                           <View class="min-w-0 flex-1">
                             <Check testID={`trial-scenario-${s().name}`} label={scenarioLabel(s().name)} checked={!off().includes(s().name)} onChange={(on) => off.set(on ? off().filter((n) => n !== s().name) : [...off(), s().name])} />
                           </View>
-                          <Text class="shrink-0 font-mono text-caption text-muted-foreground">{asked(s())}</Text>
+                          <Text class={`shrink-0 ${TEXT.codeQuiet}`}>{asked(s())}</Text>
                         </View>
                         <Muted class="pl-6 text-small">{scenarioAbout(s().name, s().about, p().project, pressed(s()))}</Muted>
                       </Row>
@@ -244,7 +251,7 @@ export function TrialDialog(props: {
                 </Card>
                 </If>
                 <If when={p().project && !again()}>
-                  <Muted class="text-small">{t("trial.project")}</Muted>
+                  <Muted>{t("trial.project")}</Muted>
                 </If>
                 {/* side by side where there is room: the least window is no taller than the dialog with each on a row of its own */}
                 <View class="flex-row flex-wrap gap-x-6 gap-y-3">
@@ -272,8 +279,8 @@ export function TrialDialog(props: {
               // as it goes, and once it ended: a row a scenario, its standing when it has one
               <ModalBody testID="trial-progress">
                 <View class="flex-row items-center gap-2">
-                  <Muted class="min-w-0 flex-1 text-small">{ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : afresh() ? t("trial.afresh") : t("trial.progress", { n: Math.min(trialDone(list()) + 1, list().length), of: list().length })}</Muted>
-                  <Text testID="trial-elapsed" class="shrink-0 tabular-nums text-small text-muted-foreground">{took()}</Text>
+                  <Muted class="min-w-0 flex-1">{ended() ? (ended()!.cancelled ? t("trial.cancelled") : t("trial.ended")) : afresh() ? t("trial.afresh") : t("trial.progress", { n: Math.min(trialDone(list()) + 1, list().length), of: list().length })}</Muted>
+                  <Text testID="trial-elapsed" class={`shrink-0 tabular-nums ${TEXT.note}`}>{took()}</Text>
                 </View>
                 {/* tried again, the fresh run failed: no trial of it */}
                 <If when={ended()?.cleanFailed !== undefined && ended()?.cleanFailed !== null}>
@@ -294,11 +301,12 @@ export function TrialDialog(props: {
           when={going()}
           else={
             <>
-              <Button variant={steps() || refused() ? "outline" : "ghost"} label={steps() || refused() ? t("common.close") : t("common.cancel")} onPress={close} testID="trial-close" />
               {/* ended with scenarios that did not survive: after a change, only those again */}
               <If when={ended() && !ended()!.cancelled && leftOver().length > 0}>
                 <Button variant="outline" icon="rotate-ccw" label={t("trial.again")} onPress={tryAgainHere} testID="trial-again-here" />
               </If>
+              {/* the footer always has its primary: done (or refused), it is Close */}
+              <Button variant={steps() || refused() ? "primary" : "ghost"} label={steps() || refused() ? t("common.close") : t("common.cancel")} onPress={close} testID="trial-close" />
               <If when={the() && !steps()}>
                 <Button variant="primary" icon="play" label={again() ? t("trial.againRun", { n: again()!.length }) : t("trial.run", { n: chosen().length })} disabled={(again() ? !again()!.length : !chosen().length) || !!running() || trying()} onPress={start} testID="trial-start" />
               </If>

@@ -1,7 +1,7 @@
 // The desktop form, headless (`platform: "macos"`, a window-sized viewport).
 
 import { expect, open, test } from "nsh/test";
-import { desktop, place } from "./helpers";
+import { openDemo, desktop, place } from "./helpers";
 import type { Signals } from "../src/types";
 
 test("a first launch welcomes; its demo makes Run ready; the sidebar hides and comes back", async () => {
@@ -22,7 +22,7 @@ test("a first launch welcomes; its demo makes Run ready; the sidebar hides and c
 test("the demo opens from Settings › Endpoints too", async () => {
   const app = await open("../App.tsx", desktop);
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await app.press("id:test-demo");
   await app.waitFor("id:test-result", { timeout: 10000 });
@@ -35,7 +35,7 @@ test("the demo opens from Settings › Endpoints too", async () => {
 test("Store: browse the demo bucket and show object details", async () => {
   const app = await open("../App.tsx", desktop);
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await place(app, "browse");
   await app.waitFor("id:bucket-demo", { timeout: 10000 });
   await app.press("id:bucket-demo");
@@ -147,7 +147,7 @@ test("a lane's cell shows the worst of the requests it holds, and says how many"
   expect(cells[0].bin).toBe(0);
   expect(cells[0].n).toBe(3);
   // the failure wins, and is the request the cell stands for
-  expect(cells[0].tone).toBe("server");
+  expect(cells[0].tone).toBe("fail");
   expect(cells[0].sample).toBe(1);
   // a long request is a run of cells, one request each
   expect(cells[3].lane).toBe(1);
@@ -297,9 +297,9 @@ test("tiles go in rows of equal count: four are two and two, never three and one
   expect(tilesPerRow(200, 4, 144)).toBe(1);
   expect(tilesPerRow(300, 4, 144)).toBe(2);
   expect(tilesPerRow(200, 1, 144)).toBe(1);
-  // five: abreast, or a line each; never three and two, nor so tight a label is cut
+  // five: abreast; from 560 never one per row, the rows as even as they go; narrower, a line each
   expect(tilesPerRow(700, 5, 128)).toBe(5);
-  expect(tilesPerRow(560, 5, 128)).toBe(1);
+  expect(tilesPerRow(560, 5, 128)).toBe(3);
   expect(tilesPerRow(400, 5, 128)).toBe(1);
   // six: three and three, or two by three
   expect(tilesPerRow(500, 6, 144)).toBe(3);
@@ -486,7 +486,7 @@ test("a run reads as four signals and in flight; what a log without times cannot
   expect(tiles[0].detail).toBe("40 requests in 2.00 s");
   expect(tiles[1].value).toBe("3%");
   expect(tiles[1].detail).toBe("1 server · 2 retries");
-  expect(tiles[1].tone).toBe("bad");
+  expect(tiles[1].tone).toBe("fail");
   // one failure, one colour: errors that are all the program's own (4xx) are in the client's tone, as on their charts
   const clientOnly = signalTiles({ ...s, errors: { ...s.errors, counts: { ...s.errors.counts, client: s.errors.count, server: 0 } } });
   expect(clientOnly[1].tone).toBe("client");

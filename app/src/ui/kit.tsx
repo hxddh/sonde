@@ -1,10 +1,10 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
-import { effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
-import { t } from "../i18n";
+import { Animated, cleanup, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableHeaderCell, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
+import { lang, t } from "../i18n";
 import { count, middle, separators } from "../format";
-import { isAvailable, Menu } from "nsh/desktop";
+import { isAvailable, Menu, type MenuItem as MenuItemSpec } from "nsh/desktop";
 import { Icon, type IconName, iconSvg, type Tint } from "./icon";
 
 export const terminal = () => platform.idiom === "terminal";
@@ -14,6 +14,9 @@ export const textual = () => terminal() || screenReaderEnabled();
 /** The look of every split's handle (Native Shell's ResizablePanelGroup):
  * a hairline that thickens under the pointer. */
 export const SPLIT_HANDLE = "bg-border group-hover:w-[3px] group-hover:bg-ring/60 group-active:w-[3px] group-active:bg-ring";
+/** The same handle between two cards side by side: their gap parts them, so no hairline is drawn until the
+ * pointer finds it. */
+export const SPLIT_GAP = "bg-transparent group-hover:w-[3px] group-hover:bg-ring/60 group-active:w-[3px] group-active:bg-ring";
 /** A shortcut as the platform writes it: "mod+shift+k" → "⇧⌘K" on macOS,
  * "Ctrl+Shift+K" elsewhere (Native Shell's keymap). */
 export function keyLabel(shortcut: string): string {
@@ -24,10 +27,130 @@ export function keyLabel(shortcut: string): string {
   }
 }
 
+/** Chinese is never set under 12 pt: where Latin takes the 11 pt caption,
+ * Chinese takes 12 on the same 16 pt line (nsh.json's `caption-cjk`). Read
+ * where it is drawn, so a change of language reaches it. */
+const cjk = () => lang() === "zh";
+const captionSize = () => (cjk() ? "text-caption-cjk" : "text-caption");
+
 /** The type scale, in points: the `text-caption` … `text-title` classes
- * (nsh.json's `tailwind.fontSize`), for the props that take a number
- * (DataTable's `fontSize`). A desktop app's scale around a 13 pt body. */
-export const TYPE = { caption: 11, small: 12, body: 13, heading: 15, title: 20 } as const;
+ * (nsh.json's `tailwind.fontSize`, each with its line: 11/16, 12/18, 13/20,
+ * 15/22, 20/28), for the props that take a number (DataTable's `fontSize`).
+ * A desktop app's scale around a 13 pt body. */
+export const TYPE = {
+  get caption() {
+    return cjk() ? 12 : 11;
+  },
+  small: 12,
+  body: 13,
+  heading: 15,
+  title: 20,
+};
+/** Each size's line, in points (nsh.json sets them with the sizes): for what
+ * lays text out by number. */
+export const LEADING = { caption: 16, small: 18, body: 20, heading: 22, title: 28 } as const;
+
+/** The text roles: a size and a colour (and a face) that read together, each
+ * named once. A page writes the role, not its classes (lint-kit fails
+ * `text-caption` outside the kit: Chinese takes 12 pt there, which only the
+ * role knows). Read where they are drawn (getters), so a change of language
+ * reaches them. What lays the text out (`min-w-0 flex-1`, `line-clamp-1`)
+ * stands beside the role. */
+export const TEXT = {
+  /** rows, labels, buttons, prose */
+  body: "text-body text-foreground",
+  /** the same, quiet: what stands beside the body and says less */
+  bodyQuiet: "text-body text-muted-foreground",
+  /** a secondary line under a row's first, help under a field, a field's label */
+  note: "text-small text-muted-foreground",
+  /** the same at its full colour: a secondary line that is read, not glanced at */
+  small: "text-small text-foreground",
+  /** what is refused, under what refused it */
+  error: "text-small text-status-server",
+  /** metadata: a column's title, a count, a time, a shortcut */
+  get meta() {
+    return `${captionSize()} text-muted-foreground`;
+  },
+  /** the caption's size in the text's colour: a figure in a dense row */
+  get caption() {
+    return `${captionSize()} text-foreground`;
+  },
+  /** the caption's size alone, for words whose colour is a tone's (`TONE[t].text`) */
+  get captionSize() {
+    return captionSize();
+  },
+  /** a key, a path, a command, an id */
+  get code() {
+    return `font-mono ${captionSize()} text-foreground`;
+  },
+  /** the same, quiet: a key's name beside its value */
+  get codeQuiet() {
+    return `font-mono ${captionSize()} text-muted-foreground`;
+  },
+};
+
+/** Motion: four lengths (ms) and one ease (nsh.json's `ease-standard`, a soft
+ * settle), and no others; lint-kit fails a `duration-N` outside the kit.
+ * `instant` a hover's wash, a colour; `fast` a press, a control's state;
+ * `base` a thing moving into place (a selection sliding, a value gliding);
+ * `slow` a reveal (a dialog or a popup opening). Leaving is a step faster than
+ * entering. Under reduced motion none of it runs (`motion-safe:`). */
+export const TIMING = { instant: 120, fast: 180, base: 240, slow: 360 } as const;
+/** A control's states change over `TIMING.instant` on the one ease: colours,
+ * opacity, shadows and transforms (Native Shell's `transition`). */
+export const TRANSITION = "motion-safe:transition motion-safe:duration-120 motion-safe:ease-standard";
+/** What moves into place (a selection sliding, a value gliding), over `TIMING.base`. */
+export const GLIDE = "motion-safe:transition-all motion-safe:duration-240 motion-safe:ease-standard";
+/** A press sinks a little, none under reduced motion: a button, an icon
+ * button or a segment to 0.97; a row, a card or a place, wider, to 0.99. */
+export const PRESS = {
+  control: `${TRANSITION} motion-safe:active:scale-97`,
+  surface: `${TRANSITION} motion-safe:active:scale-99`,
+} as const;
+/** The three shadows (nsh.json's `tailwind.shadow`), and no others; lint-kit
+ * fails a `shadow-*` outside the kit. A control raised in its track (a
+ * segment, a switch's thumb); a popup (menus, selects, popovers, tooltips,
+ * toasts); a modal surface (dialogs, side panels). The base surface has none. */
+export const SHADOW = { control: "shadow-control", popup: "shadow-popup", modal: "shadow-modal" } as const;
+
+/** What can no longer be pressed or changed: one dimming, on every control. */
+export const DISABLED = "disabled:opacity-40";
+/** The one dot that marks a status, a live run, what is new: 8 pt, round. */
+export const DOT = "size-2 shrink-0 rounded-full";
+/** The row under the keyboard or the pointer in a popup (a menu, a select,
+ * the palette, the endpoint switcher): one highlight. */
+export const HIGHLIGHT = "bg-accent";
+/** What is chosen in a list, a table, a tree or a row of tiles: one selection. */
+export const SELECTED = "bg-selection";
+/** Chrome that is there only when wanted: a row's trash, pencil or Decode,
+ * a tile's chevron. Hidden until the pointer is over its `group` (a row, a
+ * tile), the group is selected, or the keyboard is inside it; it keeps its
+ * place, so nothing moves as it shows, and it is always reachable. */
+export const REVEAL = `opacity-0 group-hover:opacity-100 group-selected:opacity-100 focus-within:opacity-100 ${TRANSITION}`;
+
+/** One vocabulary of tones, and one table of how each is drawn: its words
+ * (`text`), a solid mark (`fill`: a bar, a lane), its dot (`dot`), its icon's
+ * tint (`icon`), and a quiet wash with words on it (`badge`). The status
+ * tones are a request's: `ok` a success, `miss` a key not found, `client`
+ * the program's own 4xx, `fail` a failure, `refused` refused by sonde,
+ * `injected` a fault scenario's answer. Then `warn`, `info`, `live` (at work
+ * now, the primary), `plain` and `quiet`. Colour marks (a dot, an icon, a
+ * rule); words in a tone are for a figure that is its tile's point, never a
+ * row's whole text. */
+export type Tone = "plain" | "quiet" | "ok" | "miss" | "client" | "fail" | "refused" | "injected" | "warn" | "info" | "live";
+export const TONE: Record<Tone, { text: string; fill: string; dot: string; icon: Tint; badge: string }> = {
+  plain: { text: "text-foreground", fill: "bg-muted-foreground", dot: "bg-muted-foreground", icon: "foreground", badge: "bg-muted text-foreground" },
+  quiet: { text: "text-muted-foreground", fill: "bg-status-miss", dot: "bg-status-miss", icon: "muted-foreground", badge: "bg-muted text-muted-foreground" },
+  ok: { text: "text-status-ok", fill: "bg-bar", dot: "bg-status-ok", icon: "status-ok", badge: "bg-status-ok/12 text-status-ok" },
+  miss: { text: "text-muted-foreground", fill: "bg-status-miss", dot: "bg-status-miss", icon: "status-miss", badge: "bg-muted text-muted-foreground" },
+  client: { text: "text-status-client", fill: "bg-status-client", dot: "bg-status-client", icon: "status-client", badge: "bg-status-client/12 text-status-client" },
+  fail: { text: "text-status-server", fill: "bg-status-server", dot: "bg-status-server", icon: "status-server", badge: "bg-status-server/12 text-status-server" },
+  refused: { text: "text-status-refused", fill: "bg-status-refused", dot: "bg-status-refused", icon: "status-refused", badge: "bg-status-refused/12 text-status-refused" },
+  injected: { text: "text-status-injected", fill: "bg-status-injected", dot: "bg-status-injected", icon: "status-injected", badge: "bg-status-injected/12 text-status-injected" },
+  warn: { text: "text-warn", fill: "bg-warn", dot: "bg-warn", icon: "warn", badge: "bg-warn/12 text-warn" },
+  info: { text: "text-info", fill: "bg-info", dot: "bg-info", icon: "info", badge: "bg-info/12 text-info" },
+  live: { text: "text-primary", fill: "bg-primary", dot: "bg-primary", icon: "primary", badge: "bg-primary/12 text-primary" },
+};
 /** An icon's three sizes, in points, and no others: `small` beside caption
  * text and at a row's end, `default` (what `Icon` draws without a size) in
  * buttons, rows and notices, `large` in an icon tile. */
@@ -66,7 +189,20 @@ export const fill = (translucent: string, opaque: string) => (material ? translu
 
 /** The one treatment of every anchored popup — menus, selects, the endpoint
  * switcher, cards on hover — so they do not drift apart. */
-export const POPUP = `rounded-(--radius-card) border border-border ${fill("bg-popover/90", "bg-popover")} p-1 shadow-lg`;
+export const POPUP = `rounded-(--radius-card) border border-border ${fill("bg-popover/90", "bg-popover")} p-1 ${SHADOW.popup}`;
+/** How every popup comes and goes (a select's list, the endpoint switcher, a
+ * figure's preview, a date picker): from just above its trigger, a little
+ * small and clear, settling in over `TIMING.fast`; it leaves by fading. Give
+ * `class` with the popup's classes, `starting` and `ending` to its
+ * `popupStartingClass` and `popupEndingClass`. Under reduced motion it is
+ * there at once. */
+export const POPUP_MOTION = {
+  class: "motion-safe:transition motion-safe:duration-180 motion-safe:ease-standard",
+  starting: "opacity-0 scale-97 -translate-y-1",
+  ending: "opacity-0",
+} as const;
+/** How a toast comes in from the window's corner and goes, over `TIMING.base`. */
+export const TOAST_MOTION = "motion-safe:transition-all motion-safe:duration-240 motion-safe:ease-standard";
 /** The scrim under a modal layer, from the theme (`scrim`, light and dark). */
 export const SCRIM = "bg-scrim";
 /** Where the keyboard is: one ring on every control that takes focus, shown
@@ -96,15 +232,50 @@ export const CONTROL = {
  * lines up with their titles, a hover and a selection, no stripes. */
 export const TABLE = {
   header: "bg-card border-b border-border",
-  headerCell: "px-2 text-caption text-muted-foreground",
+  get headerCell() {
+    return `group px-2 ${TEXT.meta}`;
+  },
+  // a sortable title is pressed anywhere on it (its sort button spans it, unseen): the mark the reader sees is
+  // drawn right after the title by `titleCells`
+  sortIndicator: "absolute inset-0 h-full w-full",
+  sortAscending: "opacity-0",
+  sortDescending: "opacity-0",
   // (its text in the theme's own colour: a table that draws its cells itself was black on dark)
   cell: "px-2 text-foreground",
   rowHover: "bg-row-hover",
-  rowSelected: "bg-selection",
+  rowSelected: SELECTED,
   fixedEdge: "border-r border-border",
 } as const;
+/** Every DataTable's titles (its `renderHeaderCell`), drawn one way: the title
+ * in the header's role, and on a sortable column its sort mark right after it
+ * — the one direction on the sorted column, both under the pointer, none
+ * otherwise. `columns` are the table's, for which sort and which stand at
+ * their end. */
+export const titleCells = (columns: () => readonly { sortable?: boolean; align?: string; key?: string }[]) => (h: DataTableHeaderCell) => {
+  const c = () => columns()[h.column];
+  return (
+    <View class={`min-w-0 flex-1 flex-row items-center gap-1 ${c()?.align === "end" ? "justify-end" : ""}`}>
+      <Text class={`min-w-0 shrink ${TEXT.meta} line-clamp-1`}>{h.title}</Text>
+      <If when={c()?.sortable && !terminal()}>
+        <View class={`shrink-0 ${h.sort ? "" : `opacity-0 group-hover:opacity-100 ${TRANSITION}`}`}>
+          <Icon name={h.sort === "ascending" ? "chevron-up" : h.sort === "descending" ? "chevron-down" : "chevrons-up-down"} size={ICON.small} tint="muted-foreground" />
+        </View>
+      </If>
+    </View>
+  );
+};
+/** A table inside a card or a chart (`SimpleTable bare`): the same, with no
+ * box of its own and no fill under its titles, the hairline under them only. */
+export const BARE_TABLE = {
+  ...TABLE,
+  get headerCell() {
+    return TABLE.headerCell;
+  },
+  header: "border-b border-border",
+  root: "border-0 bg-transparent",
+};
 /** The one width of a settings page, its forms and lists: Settings and Endpoints line up. */
-export const FORM = "w-full max-w-[720px]";
+export const FORM = "w-full max-w-[720px] self-center";
 /** The one width of a centered column to read (the welcome, an empty Run's intro). */
 export const READING = "w-full max-w-[560px]";
 /** Every size at which a layout changes, and no others (lint-kit fails a
@@ -118,7 +289,7 @@ export const READING = "w-full max-w-[560px]";
 export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as const;
 /** The sizes a page may name, each once: the least width a tile reads in
  * (a session's signal, a comparison's fact with its two lines, a bucket's
- * figure), how high a dialog's scrolling part grows before it scrolls, a
+ * size), how high a dialog's scrolling part grows before it scrolls, a
  * terminal's matrix, and the findings' room over a session's operations (in
  * a short pane: two lines, or the least a chosen finding's advice reads in;
  * in a taller one its least and its share of the pane, a finding chosen or
@@ -128,7 +299,6 @@ export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as
 export const SIZES = {
   signalTile: 168,
   compareTile: 176,
-  bucketTile: 200,
   capacityTile: 128,
   dialogScroll: 480,
   terminalMatrix: 640,
@@ -188,6 +358,8 @@ export const PANE = {
   /** the sidebar */
   sidebarLeast: 208,
   sidebarMost: 440,
+  /** the sidebar under `BREAK.toolbar`: the user's width, but never wider than this */
+  sidebarNarrow: 220,
   /** the page beside the sidebar */
   mainLeast: 480,
   /** Run's program and its operations */
@@ -260,12 +432,14 @@ export const SURFACE = {
   terminalHalf: "h-[45%]",
 } as const;
 /** A row under the pointer, pressed, and chosen: one look in every list, tree and menu. */
-const ROW_STATE = "hover:bg-row-hover active:bg-muted selected:bg-selection";
+const ROW_STATE = `hover:bg-row-hover active:bg-muted selected:${SELECTED}`;
 /** The row's look for the controls that take classes, not children: a tree's
  * items (the sidebar's buckets) and the palette's. Rows of a list are `ListRow`. */
 export const ROWS = {
-  tree: `group h-7 rounded-(--radius-sm) ${ROW_STATE} focus:bg-row-hover disabled:opacity-60`,
-  palette: `group ${CONTROL.field} rounded-(--radius-sm) px-2 focus:bg-selection`,
+  tree: `group h-7 rounded-(--radius-sm) ${ROW_STATE} focus:bg-row-hover ${DISABLED}`,
+  palette: `group ${CONTROL.field} rounded-(--radius-sm) px-2 focus:${HIGHLIGHT}`,
+  /** an item of a popup the app draws (a select's list, a menu where the system has none) */
+  popup: `rounded-(--radius-sm) px-2 py-1 focus:${HIGHLIGHT}`,
 } as const;
 /** The title bar's height: sheets start below it, so it stays a title bar. */
 export const TITLE_BAR = 44;
@@ -287,7 +461,7 @@ export function SidePanel(props: { open: boolean; onClose: () => void; size?: ke
         const r = props.returnFocus?.();
         if (r) setAccessibilityFocus(r);
       }}
-      popupClass={`${PANEL[props.size ?? "default"]} border-l border-t border-border ${fill("bg-background/90", "bg-background")} shadow-xl`}
+      popupClass={`${PANEL[props.size ?? "default"]} border-l border-t border-border ${fill("bg-background/90", "bg-background")} ${SHADOW.modal}`}
       popupStyle={{ marginTop: TITLE_BAR, ...glass }}
       backdropClass={SCRIM}
     >
@@ -329,17 +503,18 @@ export function SideHeader(props: { title: string; children?: JSX.Element }) {
 type Variant = "primary" | "outline" | "ghost" | "destructive";
 
 const buttonClass: Record<Variant, string> = {
-  primary: "bg-primary hover:bg-primary/90 active:bg-primary/80 disabled:opacity-50",
-  outline: "border border-input bg-background hover:bg-muted active:bg-muted disabled:opacity-50",
-  ghost: "hover:bg-muted active:bg-muted disabled:opacity-50",
-  destructive: "bg-destructive hover:bg-destructive/90 active:bg-destructive/80 disabled:opacity-50",
+  primary: "bg-primary hover:bg-primary/90 active:bg-primary/80",
+  outline: "border border-input bg-background hover:bg-muted active:bg-muted",
+  ghost: "hover:bg-muted active:bg-muted",
+  // (dimmed, a destructive red reads as mud on dark: one that cannot act is a quiet grey fill, its label muted)
+  destructive: "bg-destructive hover:bg-destructive/90 active:bg-destructive/80 disabled:bg-muted",
 };
 
 const buttonText: Record<Variant, string> = {
   primary: "text-primary-foreground",
   outline: "text-foreground",
   ghost: "text-foreground",
-  destructive: "text-destructive-foreground",
+  destructive: "text-destructive-foreground group-disabled:text-muted-foreground",
 };
 
 const iconTint: Record<Variant, Tint> = {
@@ -349,27 +524,52 @@ const iconTint: Record<Variant, Tint> = {
   destructive: "primary-foreground",
 };
 
-/** The app's tooltip: a short hint, and the shortcut when there is one. */
+/** The app's tooltip: a short hint, and the shortcut when there is one, on
+ * the popup surface every menu and popover has (Native Shell's design guide:
+ * one treatment for the popup family). It fades in and out. */
 export function Tip(props: { text: string; shortcut?: string }) {
   // (a hint of a sentence or two, how to read a chart, wraps rather than crossing the window)
   return (
-    <Tooltip placement="bottom" class="max-w-80 flex-row items-center gap-2 rounded-(--radius-sm) bg-foreground px-2 py-1 shadow-md transition-opacity duration-100" startingClass="opacity-0" endingClass="opacity-0">
-      <Text class="min-w-0 shrink text-small text-background">{props.text}</Text>
-      <If when={props.shortcut}>{(k) => <Text class="font-mono text-caption text-background opacity-70">{keyLabel(k())}</Text>}</If>
+    <Tooltip
+      placement="bottom"
+      class={`max-w-80 flex-row items-center gap-2 rounded-(--radius-sm) border border-border ${fill("bg-popover/95", "bg-popover")} px-2 py-1 ${SHADOW.popup} ${TRANSITION}`}
+      style={glass}
+      startingClass="opacity-0"
+      endingClass="opacity-0"
+    >
+      <Text class={`min-w-0 shrink ${TEXT.small} text-popover-foreground`}>{props.text}</Text>
+      <If when={props.shortcut}>{(k) => <Text class={`font-mono ${TEXT.meta}`}>{keyLabel(k())}</Text>}</If>
     </Tooltip>
   );
 }
 
 /** A shortcut, as the platform writes it (⌘K, Ctrl+K). */
 export function Kbd(props: { keys: string; class?: string }) {
-  return <Text class={`font-mono text-caption text-muted-foreground ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
+  return <Text class={`font-mono ${TEXT.meta} ${props.class ?? ""}`}>{keyLabel(props.keys)}</Text>;
 }
 
+/** A turning ring: what a `loading` button shows in its icon's place. Still
+ * under reduced motion (the button says it is busy all the same). */
+function Spinner(props: { tint: Tint }) {
+  return <View class={`size-3.5 shrink-0 rounded-full border-2 ${SPINNER[props.tint] ?? SPINNER.foreground} motion-safe:animate-spin`} />;
+}
+const SPINNER: Partial<Record<Tint, string>> = {
+  foreground: "border-foreground/25 border-t-foreground",
+  "muted-foreground": "border-muted-foreground/25 border-t-muted-foreground",
+  "primary-foreground": "border-primary-foreground/30 border-t-primary-foreground",
+};
+
+/** A button: its label (and icon), hover and a small sink when pressed.
+ * `loading` is a button whose act is under way: it keeps its label and its
+ * width, a turning ring stands in its icon's place (or over its label, where
+ * it has no icon), and it takes no presses until done. */
 export function Button(props: {
   label: string;
   onPress?: () => void;
   variant?: Variant | "secondary";
   disabled?: boolean;
+  /** its act is under way: the label stays, a ring turns, no presses */
+  loading?: boolean;
   small?: boolean;
   icon?: IconName;
   /** A hint on hover, with `shortcut`. */
@@ -377,42 +577,56 @@ export function Button(props: {
   shortcut?: string;
   testID?: string;
   class?: string;
+  ref?: (r: ViewRef) => void;
 }) {
   const v = (): Variant => (props.variant === "secondary" || !props.variant ? "outline" : props.variant);
+  const tint = () => (props.disabled && v() === "destructive" ? "muted-foreground" : iconTint[v()]);
   return (
     <BaseButton
+      ref={props.ref}
       testID={props.testID}
       onPress={props.onPress}
-      disabled={props.disabled}
+      disabled={props.disabled || props.loading}
       accessibilityLabel={props.label}
       tooltip={props.tip || props.shortcut ? <Tip text={props.tip ?? props.label} shortcut={props.shortcut} /> : undefined}
-      class={`flex-row items-center justify-center gap-1 rounded-(--radius) ${props.small ? "h-7 px-2" : "h-8 px-3"} ${buttonClass[v()]} ${FOCUS} ${props.class ?? ""}`}
+      class={`group flex-row items-center justify-center gap-1 rounded-(--radius) ${props.small ? "h-7 px-2" : "h-8 px-3"} ${buttonClass[v()]} ${props.loading || v() === "destructive" ? "" : DISABLED} ${PRESS.control} ${FOCUS} ${props.class ?? ""}`}
     >
       <If when={props.icon}>
-        <Icon name={props.icon!} tint={iconTint[v()]} />
+        <If when={props.loading} else={<Icon name={props.icon!} tint={tint()} />}>
+          <View class="size-4 items-center justify-center">
+            <Spinner tint={tint()} />
+          </View>
+        </If>
       </If>
-      <Text class={`${props.small ? "text-small" : "text-body"} ${buttonText[v()]}`}>{props.label}</Text>
+      <Text class={`${props.small ? "text-small" : "text-body"} ${buttonText[v()]} ${props.loading && !props.icon ? "opacity-0" : ""}`}>{props.label}</Text>
+      {/* without an icon, the ring stands over the label, which keeps the button's width */}
+      <If when={props.loading && !props.icon}>
+        <View class="absolute inset-0 items-center justify-center">
+          <Spinner tint={tint()} />
+        </View>
+      </If>
     </BaseButton>
   );
 }
 
 /** A button that shows only its icon, named for screen readers (a terminal
  * shows the name in its place), explained by its tooltip. */
-export function IconButton(props: { icon: IconName; label: string; onPress?: () => void; shortcut?: string; /** why it does nothing now, in its tooltip */ tip?: string; disabled?: boolean; selected?: boolean; tint?: Tint; testID?: string; class?: string; /** a small count at its corner (jobs running) */ badge?: string; /** at a field's end, inside it: as high as the field, no height of its own */ inField?: boolean }) {
+export function IconButton(props: { icon: IconName; label: string; onPress?: () => void; shortcut?: string; /** why it does nothing now, in its tooltip */ tip?: string; disabled?: boolean; selected?: boolean; tint?: Tint; testID?: string; class?: string; /** a small count at its corner (jobs running) */ badge?: string; /** at a field's end, inside it: as high as the field, no height of its own */ inField?: boolean; ref?: (r: ViewRef) => void }) {
   return (
     <BaseButton
+      ref={props.ref}
       testID={props.testID}
       onPress={props.onPress}
       disabled={props.disabled}
       selected={props.selected}
       accessibilityLabel={props.label}
       tooltip={<Tip text={props.tip ?? props.label} shortcut={props.tip ? undefined : props.shortcut} />}
-      class={`${props.inField ? "-mr-2 w-7 shrink-0 self-stretch" : "size-7 rounded-(--radius)"} items-center justify-center hover:bg-muted active:bg-muted selected:bg-selection disabled:opacity-40 ${FOCUS} ${props.class ?? ""}`}
+      class={`${props.inField ? "-mr-2 w-7 shrink-0 self-stretch" : "size-7 rounded-(--radius)"} items-center justify-center hover:bg-muted active:bg-muted selected:${SELECTED} ${DISABLED} ${PRESS.control} ${FOCUS} ${props.class ?? ""}`}
     >
       <Icon name={props.icon} tint={props.tint ?? (props.selected ? "foreground" : "muted-foreground")} />
       <If when={props.badge}>
         <View class="absolute -right-1.5 -top-1 h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1">
-          <Text class={`tabular-nums text-caption ${EMPHASIS} leading-4 text-primary-foreground`}>{props.badge}</Text>
+          <Text class={`tabular-nums ${TEXT.captionSize} ${EMPHASIS} leading-4 text-primary-foreground`}>{props.badge}</Text>
         </View>
       </If>
     </BaseButton>
@@ -423,7 +637,13 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
  * is the one title of a page that is only an introduction (the welcome, an
  * empty Run); `mono` for a title that is a command, a key or a bucket. A
  * terminal has one weight and no sizes. */
-export function Title(props: { children: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string }) {
+export function Title(props: { children?: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string; /** a session's command: on one line, regular-weight mono at the body's size, cut in its middle (never wrapped through an argument); heard whole */ command?: string }) {
+  if (props.command !== undefined)
+    return (
+      <Text testID={props.testID} role="header" accessibilityLabel={props.command} class={`font-mono ${TEXT.body} line-clamp-1 ${props.class ?? ""}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
+        {props.command}
+      </Text>
+    );
   return (
     <Text
       testID={props.testID}
@@ -440,7 +660,7 @@ export function Title(props: { children: JSX.Element; page?: boolean; /** at the
  * small over a list (a day of sessions, the sidebar's lists). */
 export function Heading(props: { children: JSX.Element; count?: number; quiet?: boolean; mono?: boolean; class?: string; testID?: string }) {
   return (
-    <Text testID={props.testID} role="header" class={`${props.quiet ? "text-caption text-muted-foreground" : "text-body text-foreground"} font-bold ${props.mono ? "font-mono" : ""} ${props.class ?? ""}`}>
+    <Text testID={props.testID} role="header" class={`${props.quiet ? TEXT.meta : TEXT.body} font-bold ${props.mono ? "font-mono" : ""} ${props.class ?? ""}`}>
       {props.children}
       <If when={props.count !== undefined}>
         <Text class="font-normal text-muted-foreground">{` · ${count(props.count ?? 0)}`}</Text>
@@ -460,12 +680,12 @@ export function Strong(props: { children: JSX.Element; class?: string; testID?: 
 }
 
 export function Muted(props: { children: JSX.Element; class?: string }) {
-  return <Text class={`text-body text-muted-foreground ${props.class ?? ""}`}>{props.children}</Text>;
+  return <Text class={`${TEXT.bodyQuiet} ${props.class ?? ""}`}>{props.children}</Text>;
 }
 
 export function Mono(props: { children: JSX.Element; class?: string }) {
   return (
-    <Text class={`font-mono text-small text-foreground ${props.class ?? ""}`}>
+    <Text class={`font-mono ${TEXT.small} ${props.class ?? ""}`}>
       {props.children}
     </Text>
   );
@@ -480,7 +700,7 @@ export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD
   const cls = () => `${CARD} ${CARD_PAD[props.pad ?? "panel"]} ${props.class ?? ""}`;
   return (
     <If when={props.onPress} else={<View testID={props.testID} class={cls()} onLayout={props.onWidth ? ({ bounds }) => props.onWidth?.(Math.round(bounds.size.width)) : undefined}>{props.children}</View>}>
-      <BaseButton testID={props.testID} accessibilityLabel={props.label} selected={props.selected} onPress={() => props.onPress?.()} class={`${cls()} items-stretch hover:border-ring/40 hover:bg-muted/40 active:bg-muted selected:border-ring/60 ${FOCUS}`}>
+      <BaseButton testID={props.testID} accessibilityLabel={props.label} selected={props.selected} onPress={() => props.onPress?.()} class={`group ${cls()} items-stretch hover:border-ring/40 hover:bg-muted/40 active:bg-muted selected:border-ring/60 ${PRESS.surface} ${FOCUS}`}>
         {props.children}
       </BaseButton>
     </If>
@@ -503,7 +723,7 @@ export function ListRow(props: { children: JSX.Element; onPress?: () => void; se
       selected={props.selected}
       disabled={props.disabled}
       onPress={props.onPress}
-      class={`group ${flow()} ${shape()} ${ROW_STATE} disabled:hover:bg-transparent ${FOCUS} ${props.class ?? ""}`}
+      class={`group ${flow()} ${shape()} ${ROW_STATE} disabled:hover:bg-transparent disabled:active:scale-100 ${PRESS.surface} ${FOCUS} ${props.class ?? ""}`}
     >
       {props.children}
       <If when={props.trailing}>
@@ -519,7 +739,7 @@ export function ListRow(props: { children: JSX.Element; onPress?: () => void; se
 export function Row(props: { children: JSX.Element; first?: boolean; top?: boolean; wrap?: boolean; /** lines one under another (a job: what it is, then how far it got) */ stack?: boolean; /** under its hairline, what pads itself (a list that scrolls): no padding of the row's */ bare?: boolean; class?: string; testID?: string }) {
   const flow = () => (props.stack ? "gap-1" : `flex-row ${props.wrap ? "flex-wrap gap-x-3 gap-y-1" : "gap-3"} ${props.top ? "items-start" : "items-center"}`);
   return (
-    <View testID={props.testID} class={`${flow()} ${props.bare ? "" : "px-3 py-2"} ${props.first ? "" : "border-t border-border"} ${props.class ?? ""}`}>
+    <View testID={props.testID} class={`group ${flow()} ${props.bare ? "" : "px-3 py-2"} ${props.first ? "" : "border-t border-border"} ${props.class ?? ""}`}>
       {props.children}
     </View>
   );
@@ -543,23 +763,28 @@ export type TileLook = "full" | "tight" | "line";
  * line about it; with `onPress`, the tile is a button and says where it goes.
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "client" | "injected" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
-  const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", client: "text-status-client", injected: "text-status-injected", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+export function Stat(props: { label: string; value: string; detail?: string; tone?: Tone; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
+  // the figure in the text's colour (a quiet one muted): its tone is a mark beside its name, never its figure
+  const tint = () => (props.tone === "quiet" ? TONE.quiet.text : "text-foreground");
+  const marked = () => !!props.tone && props.tone !== "plain" && props.tone !== "quiet";
   const look = () => props.look ?? "full";
   const said = () => [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ");
   const name = () => (
     <>
-      {/* the icon only where the name has room beside it; a name's qualifier ("· median") likewise */}
-      <If when={props.icon && look() === "full"}>
-        <Icon name={props.icon!} size={ICON.small} tint={props.tone === "warn" ? "warn" : "muted-foreground"} />
+      {/* the icon only where the name has room beside it, in the tile's tone; a tone without one, its dot */}
+      <If when={props.icon && look() === "full"} else={<If when={marked()}><View class="h-4 shrink-0 justify-center"><View class={`${DOT} ${TONE[props.tone!].dot}`} /></View></If>}>
+        <Icon name={props.icon!} size={ICON.small} tint={marked() ? TONE[props.tone!].icon : "muted-foreground"} />
       </If>
       {/* (on a line of its own with its figure, a long name takes a second line before it is cut) */}
-      <Text class={`min-w-0 flex-1 text-caption text-muted-foreground ${look() === "line" ? "line-clamp-2" : "line-clamp-1"}`}>{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
+      <Text class={`min-w-0 flex-1 ${TEXT.meta} ${look() === "line" ? "line-clamp-2" : "line-clamp-1"}`}>{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
     </>
   );
+  // where a press goes, said under the pointer or the keyboard only
   const chevron = () => (
     <If when={props.onPress}>
-      <Icon name="chevron-right" size={ICON.small} />
+      <View class={REVEAL}>
+        <Icon name="chevron-right" size={ICON.small} />
+      </View>
     </If>
   );
   // a figure is never cut: a figure of words ("SlateDB, Apache Iceberg") takes a second line in its tile
@@ -570,7 +795,8 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
       <If
         when={look() !== "line"}
         else={
-          <View class="flex-row items-center gap-2">
+          // what it counts on the figure's first baseline (Native Shell's `items-baseline`), not at its middle
+          <View class="flex-row items-baseline gap-2">
             {name()}
             <If when={!props.pending} else={<View class="h-4 w-12 rounded-(--radius-sm) bg-muted" />}>
               {figure()}
@@ -591,7 +817,7 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
         </If>
         <If when={look() === "full"}>
           <If when={!props.pending} else={<View class="h-3 w-32 max-w-full rounded-(--radius-sm) bg-muted/70" />}>
-            <Text class={`text-caption text-muted-foreground ${props.mark ? "line-clamp-1" : "line-clamp-2"}`}>{props.detail ?? ""}</Text>
+            <Text class={`${TEXT.meta} ${props.mark ? "line-clamp-1" : "line-clamp-2"}`}>{props.detail ?? ""}</Text>
           </If>
         </If>
       </If>
@@ -599,13 +825,18 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
   );
 }
 
-/** A path or key too long for its place, cut in its middle so both its
- * start and the end that tells it apart stay; screen readers hear it whole. */
-export function Path(props: { path: string; max?: number; class?: string; testID?: string }) {
+/** A path or key too long for its place, the one rule for cutting one: in
+ * its middle, so its start and the end that tells it apart stay, on one
+ * line (never cut and then wrapped), with no space left against the cut.
+ * Keys listed together are shortened first (`shortKeys`: their shared
+ * folders as "…/"); `whole` is then what a screen reader hears. */
+export function Path(props: { path: string; max?: number; class?: string; testID?: string; whole?: string }) {
+  // runs of spaces read as one: a cut beside them would leave a gap
+  const text = () => props.path.replace(/\s{2,}/g, " ");
   return (
     // a window cuts it where it runs out of room (Native Shell's middle ellipsis); a terminal by a count of characters
-    <Text testID={props.testID} accessibilityLabel={props.path} class={`font-mono text-caption line-clamp-1 ${props.class ?? "text-foreground"}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
-      {terminal() ? middle(props.path, props.max ?? 48) : props.path}
+    <Text testID={props.testID} accessibilityLabel={props.whole ?? props.path} class={`font-mono ${TEXT.captionSize} line-clamp-1 ${props.class ?? "text-foreground"}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
+      {terminal() ? middle(text(), props.max ?? 48) : text()}
     </Text>
   );
 }
@@ -615,9 +846,9 @@ export function Path(props: { path: string; max?: number; class?: string; testID
  * and at its end what can be done about it. The one banner. */
 export function Notice(props: { text: string; title?: string; tone?: "info" | "warn" | "error"; icon?: IconName; children?: JSX.Element; testID?: string; class?: string }) {
   const tone = () => props.tone ?? "info";
-  const look = () => ({ info: "border-border bg-muted/60", warn: "border-warn/30 bg-warn/10", error: "border-destructive/30 bg-destructive/10" })[tone()];
+  const look = () => ({ info: "border-border bg-muted/60", warn: "border-warn/30 bg-warn/10", error: "border-status-server/30 bg-status-server/10" })[tone()];
   const icon = (): IconName => props.icon ?? (tone() === "info" ? "info" : "triangle-alert");
-  const tint = (): Tint => (tone() === "warn" ? "warn" : tone() === "error" ? "destructive" : "muted-foreground");
+  const tint = (): Tint => TONE[({ info: "quiet", warn: "warn", error: "fail" } as const)[tone()]].icon;
   return (
     <View testID={props.testID} role={tone() === "error" ? "alert" : undefined} class={`flex-row items-start gap-2 rounded-(--radius) border px-3 py-2 ${look()} ${props.class ?? ""}`}>
       <If when={!terminal()}>
@@ -627,12 +858,13 @@ export function Notice(props: { text: string; title?: string; tone?: "info" | "w
       </If>
       <View selectable class="min-w-0 flex-1 gap-1">
         <If when={props.title}>
-          <Text class="text-body font-bold text-foreground">{props.title}</Text>
+          <Text class={`${TEXT.body} font-bold`}>{props.title}</Text>
         </If>
-        <Text class="text-small leading-5 text-foreground">{props.text}</Text>
+        <Text class={TEXT.small}>{props.text}</Text>
       </View>
+      {/* what can be done stands on the words' middle, not above them (the icon keeps to their first line) */}
       <If when={props.children}>
-        <View class="shrink-0 flex-row items-center gap-2">{props.children}</View>
+        <View class="shrink-0 flex-row items-center gap-2 self-center">{props.children}</View>
       </If>
     </View>
   );
@@ -703,7 +935,7 @@ export function PageHeader(props: { title?: string; subtitle?: string; mono?: bo
           </Title>
         </If>
         <If when={props.subtitle}>
-          <Text class="text-small text-muted-foreground line-clamp-2">{props.subtitle}</Text>
+          <Text class={`${TEXT.note} line-clamp-2`}>{props.subtitle}</Text>
         </If>
       </View>
       <If when={props.children}>
@@ -718,12 +950,18 @@ export function PageHeader(props: { title?: string; subtitle?: string; mono?: bo
  * is made of and Escape closes it (Native Shell's Popover): the keyboard,
  * touch and screen readers reach it as the pointer does. The one inline
  * figure; in a row of tiles, `Stat`. */
-export function Figure(props: { value: string; label: string; /** `client`: failures that are all the program's own (4xx), in the tone their rows have */ tone?: "plain" | "ok" | "warn" | "bad" | "client" | "injected" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
-  const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", client: "text-status-client", injected: "text-status-injected", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+export function Figure(props: { value: string; label: string; /** `client`: failures that are all the program's own (4xx), in the tone their rows have */ tone?: Tone; small?: boolean; preview?: JSX.Element; testID?: string }) {
+  // the figure in the text's colour; its tone (a status) is a dot before what it counts
+  const marked = () => !!props.tone && props.tone !== "plain" && props.tone !== "quiet";
   const body = (
     <View class="gap-1">
-      <Text class={`tabular-nums font-bold ${props.small ? "text-body" : "text-heading"} ${tint()}`}>{props.value}</Text>
-      <Text class="text-caption text-muted-foreground line-clamp-1">{props.label}</Text>
+      <Text class={`tabular-nums font-bold ${props.small ? "text-body" : "text-heading"} text-foreground`}>{props.value}</Text>
+      <View class="flex-row items-center gap-1">
+        <If when={marked()}>
+          <View class={`${DOT} ${TONE[props.tone!].dot}`} />
+        </If>
+        <Text class={`${TEXT.meta} line-clamp-1`}>{props.label}</Text>
+      </View>
     </View>
   );
   if (!props.preview || terminal()) return <View testID={props.testID}>{body}</View>;
@@ -734,13 +972,15 @@ export function Figure(props: { value: string; label: string; /** `client`: fail
       offset={6}
       trigger={
         // the press area reaches past the figure without moving it off the line's edge
-        <BaseButton testID={props.testID} accessibilityLabel={`${props.value} ${props.label}`} class={`-mx-2 -my-1 rounded-(--radius-sm) px-2 py-1 hover:bg-muted active:bg-muted ${FOCUS}`}>
+        <BaseButton testID={props.testID} accessibilityLabel={`${props.value} ${props.label}`} class={`-mx-2 -my-1 rounded-(--radius-sm) px-2 py-1 hover:bg-muted active:bg-muted ${TRANSITION} ${FOCUS}`}>
           {body}
         </BaseButton>
       }
-      popupClass={`w-[300px] gap-2 ${POPUP} p-3`}
-      popupStartingClass="opacity-0 -translate-y-1"
-      popupEndingClass="opacity-0"
+      // (its entrance runs on the popup's own transition: without one, the starting look was a jump)
+      popupClass={`w-[300px] gap-2 ${POPUP} p-3 ${POPUP_MOTION.class}`}
+      popupStyle={glass}
+      popupStartingClass={POPUP_MOTION.starting}
+      popupEndingClass={POPUP_MOTION.ending}
     >
       {props.preview}
     </Popover>
@@ -759,9 +999,18 @@ export function tilesPerRow(width: number, n: number, min: number, gap = 12): nu
   const fits = (k: number, least: number) => (width - gap * (k - 1)) / k >= least;
   if (fits(n, min)) return n;
   for (let k = n - 1; k >= 2; k--) if (n % k === 0 && fits(k, min)) return k;
-  // no equal rows: a line each
+  // no equal rows in a pane of some width: as many abreast as fit (two at least, the last row the
+  // shorter), never one per row — a column of one-line tiles reads as a list, not as figures
+  // and the rows as even as they go: five where four fit are three and two, not four and one
+  if (width >= TILES_ABREAST) {
+    const most = Math.max(2, Math.min(n - 1, Math.floor((width + gap) / (min + gap))));
+    return Math.ceil(n / Math.ceil(n / most));
+  }
+  // a pane too narrow for two: a line each
   return 1;
 }
+/** From this width, tiles never stand one per row. */
+const TILES_ABREAST = 560;
 /** How many tiles a single row `width` wide holds, of `n` that each need `min`: two at least. */
 export const tilesFit = (width: number, n: number, min: number, gap = 12) => (width > 0 ? Math.min(n, Math.max(2, Math.floor((width + gap) / (min + gap)))) : n);
 /** Tiles in rows by that rule: the row measures itself and gives each tile its width.
@@ -794,19 +1043,23 @@ export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => 
   );
 }
 
-/** A modal dialog: one surface, one width per size, over the scrim. */
-const MODAL = { narrow: "w-[420px]", default: "w-[560px]", wide: "w-[880px]" } as const;
+/** A modal dialog: one surface over the scrim, in one of two widths — 480
+ * for a question or a short form, 640 for a dialog that lists (a plan, its
+ * verdicts, a comparison). */
+const MODAL = { default: "w-[480px]", wide: "w-[640px]" } as const;
 
-export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string; /** what the dialog asks or says, in a sentence: a screen reader hears it after the dialog's name, as it opens */ describe?: string }) {
+export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string; /** what the dialog asks or says, in a sentence: a screen reader hears it after the dialog's name, as it opens */ describe?: string; /** one frame for all its states (a plan, its progress, its verdicts): as high as the window allows, its `ModalBody` scrolling inside, so it never changes size as it goes */ steady?: boolean }) {
   return (
     <Dialog
       open={props.open}
+      // every centred dialog comes in one way: the palette's fade (none under reduced motion)
+      animation="fade"
       accessibilityDescription={props.describe}
       onOpenChange={(e) => !e.open && props.onClose()}
       backdropClass={SCRIM}
       testID={props.testID}
       // never taller than the window: a body that grows (`ModalBody`) scrolls, its title and actions stay
-      class={`m-auto ${MODAL[props.size ?? "default"]} max-h-[92%] max-w-[94%] gap-4 ${CARD} bg-popover p-4 shadow-xl`}
+      class={`m-auto ${MODAL[props.size ?? "default"]} ${props.steady ? "h-[640px]" : ""} max-h-[92%] max-w-[94%] gap-4 ${CARD} bg-popover p-4 ${SHADOW.modal}`}
     >
       {props.children}
     </Dialog>
@@ -815,11 +1068,33 @@ export function Modal(props: { open: boolean; onClose: () => void; size?: keyof 
 
 /** A dialog's part that grows with what it holds (a plan, a list of verdicts):
  * it takes what the window leaves under the title and over the actions, and
- * scrolls there, so the dialog's actions are always in view. */
+ * scrolls there, so the dialog's actions are always in view. Where more lies
+ * past an edge, that edge fades (in a `steady` dialog it fills the frame). */
 export function ModalBody(props: { children: JSX.Element; testID?: string; class?: string }) {
+  const FADE = 16;
+  // where the view is over what it holds: its height, its content's, how far it has scrolled
+  const view = signal(0);
+  const content = signal(0);
+  const offset = signal(0);
+  const mask = () => {
+    const h = view();
+    const top = offset() > 1;
+    const bottom = offset() + h < content() - 1;
+    if ((!top && !bottom) || h <= FADE * 2) return undefined;
+    return `linear-gradient(to bottom, ${top ? "transparent" : "black"} 0px, black ${FADE}px, black ${h - FADE}px, ${bottom ? "transparent" : "black"} ${h}px)`;
+  };
   return (
-    <Scroll testID={props.testID} class="min-h-0 shrink" contentClass={`gap-3 ${props.class ?? ""}`}>
-      {props.children}
+    <Scroll
+      testID={props.testID}
+      class="min-h-0 shrink grow"
+      scrollEventThrottle={50}
+      onScroll={(e) => offset.set(Math.round(e.offset.y))}
+      onLayout={({ bounds }) => view.set(Math.round(bounds.size.height))}
+      style={terminal() ? undefined : { maskImage: mask() }}
+    >
+      <View class={`gap-3 ${props.class ?? ""}`} onLayout={({ bounds }) => content.set(Math.round(bounds.size.height))}>
+        {props.children}
+      </View>
     </Scroll>
   );
 }
@@ -843,12 +1118,12 @@ export function Disclosure(props: { title: string; count?: number; open?: boolea
       <AccordionItem value="x" testID={props.itemTestID} class="gap-2">
         <AccordionHeader level={props.level ?? 3} class="flex-row items-center gap-3">
           <AccordionTrigger testID={props.testID} class={`group ${props.trailing ? "shrink-0" : "flex-1"} flex-row items-center gap-1 rounded-(--radius-sm) py-1 pr-1 ${FOCUS}`}>
-            <View class="group-aria-expanded:rotate-90 motion-safe:transition-transform motion-safe:duration-150">
+            <View class={`group-aria-expanded:rotate-90 ${TRANSITION}`}>
               <Icon name="chevron-right" size={ICON.small} tint="muted-foreground" />
             </View>
-            <Text class="text-body font-bold text-foreground">{props.title}</Text>
+            <Text class={`${TEXT.body} font-bold`}>{props.title}</Text>
             <If when={props.count !== undefined}>
-              <Text class="text-body text-muted-foreground">{`· ${count(props.count ?? 0)}`}</Text>
+              <Text class={TEXT.bodyQuiet}>{`· ${count(props.count ?? 0)}`}</Text>
             </If>
           </AccordionTrigger>
           {props.trailing}
@@ -861,68 +1136,50 @@ export function Disclosure(props: { title: string; count?: number; open?: boolea
   );
 }
 
-export type Tone = "neutral" | "refused" | "pass" | "fail" | "differs" | "unsupported" | "warn" | "info" | "primary";
-
-const toneClass: Record<Tone, string> = {
-  neutral: "bg-muted text-muted-foreground",
-  refused: "bg-status-refused/15 text-status-refused",
-  pass: "bg-pass/15 text-pass",
-  fail: "bg-fail/15 text-fail",
-  differs: "bg-differs/15 text-differs",
-  unsupported: "bg-unsupported/15 text-unsupported",
-  warn: "bg-warn/15 text-warn",
-  info: "bg-info/15 text-info",
-  primary: "bg-primary/15 text-primary",
-};
-
+/** A state or a standing ("Broke", "Latest", "Missing"): a word, its tone on
+ * a dot before it — no painted word, no wash, no pill: a verdict is read, it
+ * does not shout. A neutral one (`quiet`, `plain`) is a muted word alone. */
 export function Badge(props: { label: string; tone?: Tone; testID?: string }) {
-  const [bg, fg] = toneClass[props.tone ?? "neutral"].split(" ");
+  const tone = () => props.tone ?? "quiet";
+  const marked = () => tone() !== "plain" && tone() !== "quiet";
   return (
-    <View testID={props.testID} accessibilityLabel={props.label} class={`h-5 shrink-0 flex-row items-center rounded-full px-2 ${bg}`}>
-      <Text class={`text-small ${fg}`}>{props.label}</Text>
+    <View testID={props.testID} accessibilityLabel={props.label} class="h-5 shrink-0 flex-row items-center gap-1">
+      <If when={marked()}>
+        <View class={`${DOT} ${TONE[tone()].dot}`} />
+      </If>
+      <Text class={`text-small ${marked() ? "text-foreground" : "text-muted-foreground"}`}>{props.label}</Text>
     </View>
   );
 }
 
-/** Names and their values: muted names, selectable values. `boxed` lists
- * them in a bordered card, compact and monospaced (a request's headers). */
-export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxed?: boolean }) {
-  if (props.boxed)
-    return (
-      // a table to a screen reader: names in the first column, values in the second
-      <View selectable>
-      <Table class="overflow-hidden rounded-(--radius) border border-border bg-card">
+/** Names and their values, the one list of them: bare (no box, no rules
+ * between its columns), a hairline between rows; names sans and muted,
+ * values selectable, in mono only where they are identifiers (`mono`: ids,
+ * hashes, headers' values). `dense` is the smaller size of an inspector's
+ * long lists (a request's headers). Inside a card or the inspector it is
+ * never boxed again. */
+export function KeyValue(props: { rows: [string, string][]; mono?: boolean; dense?: boolean }) {
+  const size = () => (props.dense ? "text-small" : "text-body");
+  return (
+    // a table to a screen reader: names in the first column, values in the second
+    <View selectable>
+      <Table>
         <TableBody>
           <Each of={props.rows}>
             {(row, i) => (
-              <TableRow class={`flex-row gap-3 px-2 py-1 ${i() > 0 ? "border-t border-border" : ""}`}>
-                <TableCell class="w-[136px] shrink-0">
-                  <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{row()[0]}</Text>
+              // off-scale: a long list's rows (6 pt around 20 pt lines) sit between the dense (4) and a card's (8)
+              <TableRow class={`flex-row gap-3 ${props.dense ? "py-1" : "py-1.5"} ${i() > 0 ? "border-t border-border" : ""}`}>
+                <TableCell class={`${props.dense ? "w-[136px]" : "w-44"} shrink-0`}>
+                  <Text class={`${size()} text-muted-foreground line-clamp-1`}>{row()[0]}</Text>
                 </TableCell>
                 <TableCell class="min-w-0 flex-1">
-                  <Text class={`text-caption text-foreground ${props.mono === false ? "" : "font-mono"}`}>{row()[1]}</Text>
+                  <Text class={`${size()} text-foreground ${props.mono ? "font-mono" : ""}`}>{row()[1]}</Text>
                 </TableCell>
               </TableRow>
             )}
           </Each>
         </TableBody>
       </Table>
-      </View>
-    );
-  return (
-    <View class="gap-1">
-      <Each of={props.rows}>
-        {(row) => (
-          <View class="flex-row gap-3">
-            <Text class="w-44 text-body text-muted-foreground line-clamp-1">
-              {row()[0]}
-            </Text>
-            <Text class={`flex-1 text-body text-foreground ${props.mono ? "font-mono" : ""}`}>
-              {row()[1]}
-            </Text>
-          </View>
-        )}
-      </Each>
     </View>
   );
 }
@@ -935,7 +1192,10 @@ export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxe
 export function Field(props: { label: string; value: string; onChange: (v: string) => void; onSubmit?: () => void; placeholder?: string; testID?: string; mono?: boolean; class?: string; bare?: boolean; small?: boolean; leading?: JSX.Element; trailing?: JSX.Element; /** shown and selectable, not changed (Native Shell's `readonly`) */ readonly?: boolean; /** not for now: no focus, no typing, dimmed (Native Shell's `disabled`) */ disabled?: boolean; /** what is typed is refused: said under the field, drawn on its edge, and told to a screen reader (the field is `invalid`, the reason its description) */ error?: string | null; /** refused without words of its own here (the reason stands beside it, or is the label's): the edge and the state only */ invalid?: boolean }) {
   const boxed = () => !!props.leading || !!props.trailing;
   const refused = () => !!props.error || !!props.invalid;
-  const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} disabled:opacity-50`;
+  const text = () => `${props.small ? "text-small" : "text-body"} text-foreground placeholder:text-muted-foreground ${props.mono ? "font-mono" : ""} ${DISABLED}`;
+  // the reason under the field is the field's description to a screen reader, read again each time the field is
+  // reached (Native Shell's `accessibilityDescribedBy`, the web's `aria-describedby`)
+  const reason = signal<ViewRef | null>(null);
   const input = (cls: string) => (
     <Input
       testID={props.testID}
@@ -947,7 +1207,7 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
       readonly={props.readonly}
       disabled={props.disabled}
       accessibilityState={refused() ? { invalid: true } : undefined}
-      accessibilityDescription={props.error ?? undefined}
+      accessibilityDescribedBy={props.error ? reason() : null}
       onChange={({ value }) => props.onChange(value)}
       onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
       submitBehavior={props.onSubmit ? "submit" : undefined}
@@ -957,7 +1217,7 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
       <If when={!props.bare}>
-        <Text class="text-small text-muted-foreground">{props.label}</Text>
+        <Text class={TEXT.note}>{props.label}</Text>
       </If>
       <If when={boxed()} else={input(`${props.small ? CONTROL.small : CONTROL.field} rounded-(--radius) border ${refused() ? "border-fail" : "border-input"} bg-background px-2 focus-visible:border-ring ${FOCUS} ${text()}`)}>
         <View class={`${props.small ? CONTROL.small : CONTROL.field} ${CONTROL.box} ${refused() ? "border-fail" : ""}`}>
@@ -967,7 +1227,7 @@ export function Field(props: { label: string; value: string; onChange: (v: strin
         </View>
       </If>
       {/* why it is refused, under it: the same words a screen reader is given as the field's description */}
-      <If when={props.error}>{(why) => <Text testID={props.testID ? `${props.testID}-error` : undefined} class="text-small text-fail">{why()}</Text>}</If>
+      <If when={props.error}>{(why) => <Text ref={(r) => reason.set(r)} testID={props.testID ? `${props.testID}-error` : undefined} class={TEXT.error}>{why()}</Text>}</If>
     </View>
   );
 }
@@ -992,7 +1252,7 @@ export function FocusRest() {
 export function Labeled(props: { label: string; children: JSX.Element; class?: string }) {
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
-      <Text class="text-small text-muted-foreground">{props.label}</Text>
+      <Text class={TEXT.note}>{props.label}</Text>
       <View class="min-h-8 flex-row items-center">{props.children}</View>
     </View>
   );
@@ -1018,7 +1278,7 @@ export function SearchField(props: { value: string; onChange: (v: string) => voi
         onSubmit={props.onSubmit ? () => props.onSubmit?.() : undefined}
         submitBehavior={props.onSubmit ? "submit" : undefined}
         accessibilityLabel={props.label ?? props.placeholder}
-        class="min-w-0 flex-1 text-body text-foreground placeholder:text-muted-foreground"
+        class={`min-w-0 flex-1 ${TEXT.body} placeholder:text-muted-foreground`}
       />
       <If when={props.value && !terminal()}>
         <IconButton inField icon="x" label={t("common.clear")} onPress={() => props.onChange("")} />
@@ -1045,19 +1305,19 @@ export function NumberField(props: { label: string; value: number | null; onChan
       controlsRight
       // a field like every other: a border, a ring when focused, steppers at its end
       class={terminal() ? undefined : "h-8 flex-row items-center overflow-hidden rounded-(--radius) border border-input bg-background focus-within:border-ring"}
-      inputClass={terminal() ? undefined : "min-w-0 flex-1 px-2 text-body tabular-nums text-foreground placeholder:text-muted-foreground"}
+      inputClass={terminal() ? undefined : `min-w-0 flex-1 px-2 ${TEXT.body} tabular-nums placeholder:text-muted-foreground`}
       controlsClass={terminal() ? undefined : "h-full border-l border-input"}
-      incrementButtonClass={terminal() ? undefined : "flex-1 items-center justify-center px-2 hover:bg-muted active:bg-accent"}
-      decrementButtonClass={terminal() ? undefined : "flex-1 items-center justify-center px-2 hover:bg-muted active:bg-accent"}
-      incrementButton={terminal() ? undefined : <View style={{ transform: [{ rotate: "180deg" }] }}><Icon name="chevron-down" size={12} /></View>}
-      decrementButton={terminal() ? undefined : <Icon name="chevron-down" size={12} />}
-      suffix={props.suffix ? <Text class="pr-2 text-small text-muted-foreground">{props.suffix}</Text> : undefined}
+      incrementButtonClass={terminal() ? undefined : `flex-1 items-center justify-center px-2 hover:bg-muted active:bg-accent ${TRANSITION}`}
+      decrementButtonClass={terminal() ? undefined : `flex-1 items-center justify-center px-2 hover:bg-muted active:bg-accent ${TRANSITION}`}
+      incrementButton={terminal() ? undefined : <Icon name="chevron-up" size={ICON.small} />}
+      decrementButton={terminal() ? undefined : <Icon name="chevron-down" size={ICON.small} />}
+      suffix={props.suffix ? <Text class={`pr-2 ${TEXT.note}`}>{props.suffix}</Text> : undefined}
     />
   );
   if (props.bare) return <View class={props.class}>{input}</View>;
   return (
     <View class={`gap-1 ${props.class ?? ""}`}>
-      <Text class="text-small text-muted-foreground">{props.label}</Text>
+      <Text class={TEXT.note}>{props.label}</Text>
       {input}
     </View>
   );
@@ -1073,16 +1333,16 @@ export function SwitchRow(props: { label: string; checked: boolean; onChange: (v
       disabled={props.disabled}
       accessibilityLabel={props.label}
       onChange={({ checked }) => props.onChange(checked)}
-      class={`flex-row items-center gap-3 rounded-(--radius-sm) disabled:opacity-50 ${FOCUS}`}
-      // the thumb centered in its track, top to bottom
+      class={`flex-row items-center gap-3 rounded-(--radius-sm) ${DISABLED} ${FOCUS}`}
+      // the thumb centered in its track, top to bottom; off, quieter than on (a white thumb off shone on dark)
       // off-scale: the thumb (16) sits 2 pt inside its track (20)
-      trackClass="h-5 w-9 shrink-0 justify-center rounded-full bg-input px-0.5 checked:bg-primary motion-safe:transition-colors"
-      thumbClass="h-4 w-4 rounded-full bg-switch-thumb shadow-sm checked:translate-x-4 motion-safe:transition-transform"
+      trackClass={`h-5 w-9 shrink-0 justify-center rounded-full bg-input px-0.5 checked:bg-primary ${TRANSITION}`}
+      thumbClass={`h-4 w-4 rounded-full bg-switch-thumb ${SHADOW.control} checked:translate-x-4 checked:bg-primary-foreground ${GLIDE}`}
     >
       <View class="flex-1">
-        <Text class="text-body text-foreground">{props.label}</Text>
+        <Text class={TEXT.body}>{props.label}</Text>
         <If when={props.hint}>
-          <Text class="text-small text-muted-foreground">{props.hint}</Text>
+          <Text class={TEXT.note}>{props.hint}</Text>
         </If>
       </View>
     </Switch>
@@ -1096,11 +1356,11 @@ export function Check(props: { label: string; checked: boolean; onChange: (v: bo
       checked={props.checked}
       accessibilityLabel={props.label}
       onChange={({ checked }) => props.onChange(checked)}
-      class={`flex-row items-center gap-2 rounded-(--radius-sm) ${FOCUS}`}
-      indicatorClass="h-4 w-4 items-center justify-center rounded-sm border border-input checked:bg-primary checked:border-primary"
-      indicator={<Text class="text-small text-primary-foreground">✓</Text>}
+      class={`flex-row items-center gap-2 rounded-(--radius-sm) ${DISABLED} ${FOCUS}`}
+      indicatorClass={`h-4 w-4 items-center justify-center rounded-sm border border-input bg-background checked:border-primary checked:bg-primary ${TRANSITION}`}
+      indicator={<Icon name="check" size={ICON.small} stroke={3} tint="primary-foreground" />}
     >
-      <Text class="text-body text-foreground">{props.label}</Text>
+      <Text class={TEXT.body}>{props.label}</Text>
     </BaseCheckbox>
   );
 }
@@ -1110,7 +1370,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
   return (
     <View class={`${props.inline ? "flex-row items-center gap-2" : "gap-1"} ${props.class ?? ""}`}>
       <If when={props.label}>
-        <Text class="text-small text-muted-foreground">{props.label}</Text>
+        <Text class={TEXT.note}>{props.label}</Text>
       </If>
       <Select
         testID={props.testID}
@@ -1121,16 +1381,18 @@ export function Choice(props: { label?: string; value: string | null; items: { v
         onChange={({ value }) => value !== null && props.onChange(value)}
         // below its trigger (Linux, Windows): a gap, as every other popup has
         offset={4}
-        popupClass={POPUP}
+        popupClass={`${POPUP} ${POPUP_MOTION.class}`}
         popupStyle={glass}
-        itemClass="rounded-sm px-2 py-1 text-body text-popover-foreground focus:bg-accent selected:font-bold"
+        popupStartingClass={POPUP_MOTION.starting}
+        popupEndingClass={POPUP_MOTION.ending}
+        itemClass={`${ROWS.popup} text-body text-popover-foreground selected:font-bold`}
         trigger={
-          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${props.inline ? WIDTH.choice : ""} ${FOCUS}`}>
-            <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-1">
+          <View class={`h-8 flex-row items-center justify-between gap-2 rounded-(--radius) border border-input bg-background px-2 hover:border-ring/60 ${TRANSITION} ${props.inline ? WIDTH.choice : ""} ${FOCUS}`}>
+            <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-1`}>
               {title()}
             </Text>
             <View class="shrink-0">
-              <Icon name="chevrons-up-down" size={12} />
+              <Icon name="chevrons-up-down" size={ICON.small} />
             </View>
           </View>
         }
@@ -1145,7 +1407,7 @@ export function Choice(props: { label?: string; value: string | null; items: { v
  * not come and go with what they would show. */
 export function Segmented(props: { value: string; items: { value: string; title: string; icon?: IconName; disabled?: boolean; why?: string }[]; onChange: (v: string) => void; testID?: string; class?: string }) {
   return (
-    <Tabs testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`} indicatorClass="inset-y-0.5 rounded-(--radius-sm) bg-segment shadow-sm motion-safe:transition-all motion-safe:duration-200">
+    <Tabs testID={props.testID} class={`${CONTROL.track} ${props.class ?? ""}`} indicatorClass={`inset-y-0.5 rounded-(--radius-sm) bg-segment ${SHADOW.control} ${GLIDE}`}>
       <Each of={props.items} key={(i) => i.value}>
         {(item) => (
           <Tab
@@ -1154,12 +1416,12 @@ export function Segmented(props: { value: string; items: { value: string; title:
             selected={props.value === item().value}
             disabled={item().disabled}
             onPress={() => props.onChange(item().value)}
-            class={`group ${CONTROL.segment} disabled:opacity-40 ${FOCUS}`}
+            class={`group ${CONTROL.segment} hover:bg-foreground/5 ${DISABLED} disabled:hover:bg-transparent ${PRESS.control} ${FOCUS}`}
           >
             <If when={item().icon}>
-              <Icon name={item().icon!} size={12} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
+              <Icon name={item().icon!} size={ICON.small} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
-            <Text class="text-small text-muted-foreground group-selected:text-foreground">{item().title}</Text>
+            <Text class={`${TEXT.note} group-selected:text-foreground`}>{item().title}</Text>
           </Tab>
         )}
       </Each>
@@ -1181,12 +1443,12 @@ export function Options(props: { value: string; items: { value: string; title: s
             accessibilityLabel={item().title}
             checked={props.value === item().value}
             onChange={() => props.onChange(item().value)}
-            class={`group ${CONTROL.segment} checked:bg-segment checked:shadow-sm ${FOCUS}`}
+            class={`group ${CONTROL.segment} hover:bg-foreground/5 checked:bg-segment checked:${SHADOW.control} ${PRESS.control} ${FOCUS}`}
           >
             <If when={item().icon}>
-              <Icon name={item().icon!} size={12} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
+              <Icon name={item().icon!} size={ICON.small} tint={props.value === item().value ? "foreground" : "muted-foreground"} />
             </If>
-            <Text class="text-small text-muted-foreground group-checked:text-foreground">{item().title}</Text>
+            <Text class={`${TEXT.note} group-checked:text-foreground`}>{item().title}</Text>
           </Radio>
         )}
       </Each>
@@ -1194,10 +1456,9 @@ export function Options(props: { value: string; items: { value: string; title: s
   );
 }
 
-/** A status mark: a small dot in a status color, with its meaning for screen readers. */
-export function Dot(props: { tone: "ok" | "miss" | "client" | "server" | "refused" | "injected" | "live"; label?: string }) {
-  const bg = { ok: "bg-status-ok", miss: "bg-status-miss", client: "bg-status-client", server: "bg-status-server", refused: "bg-status-refused", injected: "bg-status-injected", live: "bg-primary" }[props.tone];
-  return <View accessibilityLabel={props.label} class={`size-2 rounded-full ${bg}`} />;
+/** A status mark: the one dot (`DOT`) in its tone, with its meaning for screen readers. */
+export function Dot(props: { tone: Tone; label?: string }) {
+  return <View accessibilityLabel={props.label} class={`${DOT} ${TONE[props.tone].dot}`} />;
 }
 
 /** A titled group of settings or facts: a hairline-bounded surface. */
@@ -1209,7 +1470,7 @@ export function Section(props: { title?: string; description?: string; children:
           <View class="flex-1 gap-1">
             <Heading>{props.title}</Heading>
             <If when={props.description}>
-              <Text class="text-small text-muted-foreground">{props.description}</Text>
+              <Text class={TEXT.note}>{props.description}</Text>
             </If>
           </View>
           {props.action}
@@ -1222,21 +1483,54 @@ export function Section(props: { title?: string; description?: string; children:
   );
 }
 
-/** Progress: `value` is a fraction, 0–1 (`null` while how much is not known). */
-export function Bar(props: { value: number | null; label?: string }) {
+/** How far something has got: `value` a fraction, 0–1, or `null` while how
+ * much is not known. A known value glides to each new one (`TIMING.base`); an
+ * unknown one is a segment sweeping along the track, still under reduced
+ * motion. Screen readers hear a progress bar and its value (Native Shell's
+ * Progress). Not a chart's bar: that is the plots' `Bar`. */
+export function ProgressBar(props: { value: number | null; label?: string }) {
+  const width = signal(0);
+  const sweep = createAnimatedValue(0);
+  // the unknown's segment: a third of the track, from before its start to past its end, again and again
+  effect(() => {
+    const w = width();
+    if (props.value !== null || w === 0 || terminal() || reduceMotion()) return;
+    sweep.set(-w / 3);
+    const loop = Animated.loop(Animated.timing(sweep, { toValue: w, duration: 1400, easing: Easing.inOut(Easing.cubic) }), { resetBeforeIteration: true });
+    loop.start();
+    cleanup(() => loop.stop());
+  });
+  // a known value: a fill the track's width, slid out of the track's start by what is left; it glides once the
+  // track is measured (not from full as it first lays out)
+  const left = () => (props.value === null ? 0 : (1 - Math.min(1, Math.max(0, props.value))) * width());
+  const settled = signal(false);
+  effect(() => {
+    if (width() > 0 && !settled()) setTimeout(() => settled.set(true), 0);
+  });
   return (
     <View class="gap-1">
       <Progress
-        // Native Shell's Progress counts 0–100
+        // Native Shell's Progress counts 0–100 and gives the value to screen readers; a window's bar is drawn here,
+        // inside it (a terminal draws its own)
         value={props.value === null ? undefined : Math.min(100, Math.max(0, props.value * 100))}
         indeterminate={props.value === null}
         accessibilityLabel={props.label ?? t("common.progress")}
-        class="h-1.5 rounded-full"
-        trackClass="h-1.5 rounded-full bg-muted"
+        trackClass={terminal() ? "h-1.5 rounded-full bg-muted" : "hidden"}
         indicatorClass="h-1.5 rounded-full bg-primary"
-      />
+      >
+        <If when={!terminal()}>
+          <View class="h-1.5 overflow-hidden rounded-full bg-muted" onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
+            <If
+              when={props.value !== null}
+              else={<View class={`absolute bottom-0 top-0 left-0 rounded-full bg-primary ${reduceMotion() ? "w-full opacity-40" : "w-1/3"}`} style={reduceMotion() ? undefined : { translate: [sweep, 0] }} />}
+            >
+              <View class={`h-1.5 w-full rounded-full bg-primary ${settled() ? GLIDE : ""}`} style={{ translate: [-left(), 0] }} />
+            </If>
+          </View>
+        </If>
+      </Progress>
       <If when={props.label}>
-        <Text class="text-small text-muted-foreground">{props.label}</Text>
+        <Text class={TEXT.note}>{props.label}</Text>
       </If>
     </View>
   );
@@ -1250,7 +1544,7 @@ export function Empty(props: { text: string; title?: string; icon?: IconName; ch
   if (props.compact)
     return (
       <View testID={props.testID} class={`items-center justify-center p-3 ${props.class ?? ""}`}>
-        <Text class="text-center text-small text-muted-foreground">{props.text}</Text>
+        <Text class={`text-center ${TEXT.note}`}>{props.text}</Text>
       </View>
     );
   return (
@@ -1261,7 +1555,7 @@ export function Empty(props: { text: string; title?: string; icon?: IconName; ch
       <If when={props.title}>
         <Title center>{props.title}</Title>
       </If>
-      <Text class="max-w-[380px] text-center text-body text-muted-foreground">{props.text}</Text>
+      <Text class={`max-w-[380px] text-center ${TEXT.bodyQuiet}`}>{props.text}</Text>
       <If when={props.children}>
         <View class="mt-1 flex-row items-center gap-2">{props.children}</View>
       </If>
@@ -1274,8 +1568,8 @@ export function Empty(props: { text: string; title?: string; icon?: IconName; ch
 export function Loading(props: { text?: string; class?: string; testID?: string }) {
   return (
     <View testID={props.testID ?? "loading"} class={`flex-row items-center gap-2 ${props.class ?? ""}`}>
-      <View class="size-2 rounded-full bg-muted-foreground/60 motion-safe:animate-pulse" />
-      <Text class="text-small text-muted-foreground">{props.text ?? t("common.loading")}</Text>
+      <View class={`${DOT} bg-muted-foreground/60 motion-safe:animate-pulse`} />
+      <Text class={TEXT.note}>{props.text ?? t("common.loading")}</Text>
     </View>
   );
 }
@@ -1374,7 +1668,7 @@ export function sortRows<T>(rows: readonly T[], sort: DataTableSort | null, valu
  * first, whole, never clipped). With `onSelect` a row is chosen by a press
  * (by its place in `rows`, whatever the sort; again lets it go), marked as
  * `selected`. */
-export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number; end?: number[]; fill?: number; ranked?: number; selected?: number | null; onSelect?: (row: number | null) => void; label?: string; cell?: (c: { column: number; text: string; /** the row's cells, as text */ cells: string[] }) => JSX.Element | undefined; testID?: string }) {
+export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number; end?: number[]; fill?: number; ranked?: number; selected?: number | null; onSelect?: (row: number | null) => void; label?: string; cell?: (c: { column: number; text: string; /** the row's cells, as text */ cells: string[] }) => JSX.Element | undefined; testID?: string; /** inside a card or a chart: no box of its own, hairlines between its rows only */ bare?: boolean }) {
   const sort = signal<DataTableSort | null>(null);
   const width = signal(0);
   // the widths measured by Native Shell once the rows are in (CJK, mono and proportional alike);
@@ -1412,7 +1706,7 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
     const column = Number(c.key.slice(1));
     const own = props.cell?.({ column, text: c.text, cells: sorted()[c.row] ?? [] });
     const end = props.end?.includes(column);
-    const body = own ?? <Text class={`text-small text-foreground line-clamp-1 ${end ? "tabular-nums" : ""} ${props.mono ? "font-mono" : ""}`}>{c.text}</Text>;
+    const body = own ?? <Text class={`${TEXT.small} line-clamp-1 ${end ? "tabular-nums" : ""} ${props.mono ? "font-mono" : ""}`}>{c.text}</Text>;
     // figures line up at their cell's end, under their titles
     return end ? <View class="flex-1 items-end justify-center">{body}</View> : body;
   };
@@ -1427,13 +1721,14 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
       fontSize={TYPE.small}
       fontFamily={props.mono ? token("font-mono") : undefined}
       rowHeight={rowHeight(ROW.dense)}
-      classes={terminal() ? undefined : TABLE}
+      classes={terminal() ? undefined : props.bare ? BARE_TABLE : TABLE}
       renderCell={custom() ? cell : undefined}
+      renderHeaderCell={terminal() ? undefined : titleCells(columns)}
       accessibilityLabel={props.label}
       rowSelectable={!!props.onSelect}
-      rowClasses={props.onSelect ? order().map((i) => (i === props.selected ? "bg-selection" : "")) : undefined}
+      rowClasses={props.onSelect ? order().map((i) => (i === props.selected ? SELECTED : "")) : undefined}
       onRowPress={props.onSelect ? ({ row }) => { const i = order()[row]; if (i !== undefined) props.onSelect!(i === props.selected ? null : i); } : undefined}
-      class={CARD}
+      class={props.bare ? "" : CARD}
       onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}
       style={terminal() ? undefined : { height: (shown() + 1) * (rowHeight(ROW.dense) ?? 26) + 2 }}
     />
@@ -1456,26 +1751,56 @@ export function Recoverable(props: { children: JSX.Element }) {
   );
 }
 
-/** The first row of a bucket tool's sheet, built one way: what it looks at
- * (`scope`), its command and Cancel while it runs (`children`), and at the
- * row's end what else it offers (`end`: a `More`). One middle, small controls. */
-export function ToolBar(props: { scope?: string; children?: JSX.Element; end?: JSX.Element; testID?: string }) {
+/** The head of every Buckets section, built one way (`PageHeader`'s
+ * pattern): the section's title, what it looks at (`scope`: a bucket and
+ * prefix), then at the row's end its actions (`children`: its command,
+ * Cancel while it runs) and what else it offers (`end`: a `More`). One
+ * middle, small controls; a narrow pane wraps the actions under the title,
+ * never into it. */
+export function ToolBar(props: { title?: string; scope?: string; children?: JSX.Element; end?: JSX.Element; testID?: string }) {
   return (
-    <View testID={props.testID} class="min-h-8 flex-row flex-wrap items-center gap-2">
-      <If when={props.scope}>{(s) => <Path path={s()} max={40} class="shrink text-muted-foreground" />}</If>
-      {props.children}
-      {/* what ends the row is pushed to its end; without it, a field among the children may take the room */}
-      <If when={props.end}>
-        <View class="flex-1" />
-        {props.end}
+    <View testID={props.testID} class="min-h-8 flex-row flex-wrap items-center gap-x-3 gap-y-2">
+      <View class="min-w-0 shrink flex-row items-baseline gap-2">
+        <If when={props.title}>
+          <Title lines={1} class="shrink-0">
+            {props.title}
+          </Title>
+        </If>
+        <If when={props.scope}>{(s) => <Path path={s()} max={40} class="min-w-0 shrink text-muted-foreground" />}</If>
+      </View>
+      <View class="flex-1" />
+      <If when={props.children}>
+        <View class="flex-row flex-wrap items-center gap-2">{props.children}</View>
       </If>
+      {props.end}
     </View>
   );
 }
 
+/** A command in a menu: its words, its icon, what it runs. */
+export type MenuAction = { label: string; icon?: IconName; run: () => void; disabled?: boolean };
+/** The system's menu, of the app's commands (`MenuAction`) or of Native
+ * Shell's own items (a separator, a submenu, a checked item). With `anchor`
+ * (the button that opened it) it opens under that button, its start on the
+ * button's, as a menu from a button does; at a point (a context menu's
+ * `pagePosition`) there; without, at the pointer. Resolves when it closes.
+ * Where the system has no menus (a terminal, the web) it does nothing: what
+ * offers it there offers its commands another way. */
+export async function popupMenu(items: readonly (MenuAction | MenuItemSpec | false | null | undefined)[], anchor?: ViewRef | { x: number; y: number } | null): Promise<void> {
+  if (!isAvailable) return;
+  let at: { x: number; y: number } | undefined;
+  if (anchor && "measure" in anchor) {
+    const m = await anchor.measure().catch(() => null);
+    if (m) at = { x: m.pagePosition.x, y: m.pagePosition.y + m.bounds.size.height + 4 };
+  } else if (anchor) at = anchor;
+  const native = items.map((i) => (i && "run" in i ? { label: i.label, icon: i.icon ? iconSvg(i.icon) : undefined, disabled: i.disabled, onSelect: i.run } : i));
+  await Menu.popup(native, at);
+}
+
 /** What else a place offers (exports, copies): a `⋯` button opening the
- * system's menu; where there is none (the web), the commands as small buttons. */
-export function More(props: { actions: () => { label: string; icon?: IconName; run: () => void; disabled?: boolean }[]; testID?: string }) {
+ * system's menu under it; where there is none (the web), the commands as small buttons. */
+export function More(props: { actions: () => MenuAction[]; testID?: string }) {
+  let button: ViewRef | undefined;
   return (
     <If
       when={isAvailable}
@@ -1483,12 +1808,7 @@ export function More(props: { actions: () => { label: string; icon?: IconName; r
         <Each of={props.actions()}>{(a) => <Button small variant="outline" icon={a().icon} label={a().label} onPress={a().run} disabled={a().disabled} />}</Each>
       }
     >
-      <IconButton
-        icon="ellipsis"
-        label={t("common.more")}
-        testID={props.testID}
-        onPress={() => void Menu.popup(props.actions().map((a) => ({ label: a.label, icon: a.icon ? iconSvg(a.icon) : undefined, disabled: a.disabled, onSelect: a.run })))}
-      />
+      <IconButton ref={(r) => (button = r)} icon="ellipsis" label={t("common.more")} testID={props.testID} onPress={() => void popupMenu(props.actions(), button)} />
     </If>
   );
 }
@@ -1550,7 +1870,7 @@ export function ActionRow(props: { room: number; actions: () => { id: string; la
  * decided where it is placed. */
 export function Pressable(props: { label: string; onPress: () => void; children: JSX.Element; testID?: string }) {
   return (
-    <BaseButton testID={props.testID} accessibilityLabel={props.label} onPress={props.onPress} class={`rounded-(--radius-sm) px-1 py-1 hover:bg-muted active:bg-muted ${FOCUS}`}>
+    <BaseButton testID={props.testID} accessibilityLabel={props.label} onPress={props.onPress} class={`rounded-(--radius-sm) px-1 py-1 hover:bg-muted active:bg-muted ${PRESS.control} ${FOCUS}`}>
       {props.children}
     </BaseButton>
   );
@@ -1560,7 +1880,7 @@ export function Pressable(props: { label: string; onPress: () => void; children:
  * hears a link, and which one is the current place). */
 export function Crumb(props: { href: string; onOpen: () => void; current?: boolean; label: string; children: JSX.Element; testID?: string }) {
   return (
-    <Link testID={props.testID} href={props.href} openWith="app" onOpen={props.onOpen} current={props.current} accessibilityLabel={props.label} class={`flex-row items-center gap-1 rounded-(--radius-sm) px-1 py-1 hover:bg-muted ${FOCUS}`}>
+    <Link testID={props.testID} href={props.href} openWith="app" onOpen={props.onOpen} current={props.current} accessibilityLabel={props.label} class={`flex-row items-center gap-1 rounded-(--radius-sm) px-1 py-1 hover:bg-muted ${TRANSITION} ${FOCUS}`}>
       {props.children}
     </Link>
   );
@@ -1580,7 +1900,7 @@ export function Scrubber(props: { label: string; value: number; min: number; max
       class="h-6 justify-center"
       trackClass="h-1.5 rounded-full bg-muted"
       indicatorClass="h-1.5 rounded-full bg-primary"
-      thumbClass="size-4 rounded-full border border-border bg-background shadow"
+      thumbClass={`size-4 rounded-full border border-border bg-background ${SHADOW.control}`}
     />
   );
 }
@@ -1610,9 +1930,9 @@ export function InWindowMenu(props: { enabled: boolean; actions: () => { label: 
       <ContextMenu class={props.class} trigger={props.children} popupClass={`${POPUP} min-w-48`}>
         <Each of={props.actions()}>
           {(a) => (
-            <MenuItem onSelect={a().run} class="flex-row items-center gap-2 rounded-(--radius-sm) px-2 py-1 focus:bg-accent">
+            <MenuItem onSelect={a().run} class={`flex-row items-center gap-2 ${ROWS.popup}`}>
               <If when={a().icon}>{(_) => <Icon name={a().icon!} />}</If>
-              <Text class="text-body text-foreground">{a().label}</Text>
+              <Text class={TEXT.body}>{a().label}</Text>
             </MenuItem>
           )}
         </Each>

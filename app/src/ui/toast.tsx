@@ -12,8 +12,8 @@ import { batch, cleanup, computed, Overlay, signal, Text, untracked, View } from
 import { Toast, type ToastEntry, ToastManager, ToastStack } from "nsh/base";
 import { currentWindow, focusedWindow, isAvailable } from "nsh/desktop";
 import { t } from "../i18n";
-import { Icon, type IconName, type Tint } from "./icon";
-import { Button, EMPHASIS, glass, IconButton, POPUP, Strong, terminal, SURFACE } from "./kit";
+import { Icon, type IconName } from "./icon";
+import { Button, EMPHASIS, glass, IconButton, POPUP, Strong, terminal, SURFACE, TEXT, TONE, type Tone, TOAST_MOTION } from "./kit";
 
 export type ToastKind = "success" | "error" | "warning" | "info";
 
@@ -104,11 +104,12 @@ export function dismissToast(id: string) {
   run();
 }
 
-const KINDS: Record<ToastKind, { icon: IconName; tint: Tint; mark: string; text: string }> = {
-  success: { icon: "circle-check", tint: "status-ok", mark: "✓", text: "text-status-ok" },
-  error: { icon: "circle-x", tint: "destructive", mark: "✗", text: "text-destructive" },
-  warning: { icon: "triangle-alert", tint: "warn", mark: "!", text: "text-warn" },
-  info: { icon: "info", tint: "info", mark: "i", text: "text-info" },
+/** Each kind's icon, its mark in a terminal, and its tone in the kit's one table (`TONE`). */
+const KINDS: Record<ToastKind, { icon: IconName; mark: string; tone: Tone }> = {
+  success: { icon: "circle-check", mark: "✓", tone: "ok" },
+  error: { icon: "circle-x", mark: "✗", tone: "fail" },
+  warning: { icon: "triangle-alert", mark: "!", tone: "warn" },
+  info: { icon: "info", mark: "i", tone: "info" },
 };
 
 function Item(props: { entry: ToastEntry }) {
@@ -127,7 +128,7 @@ function Item(props: { entry: ToastEntry }) {
         swipeDirection={null}
         class="flex-1 flex-row items-center gap-1 px-1"
       >
-        <If when={kind()}>{(k) => <Text class={KINDS[k()].text}>{KINDS[k()].mark}</Text>}</If>
+        <If when={kind()}>{(k) => <Text class={TONE[KINDS[k()].tone].text}>{KINDS[k()].mark}</Text>}</If>
         <Strong class="text-foreground line-clamp-1">{content().title}</Strong>
         <If when={content().description}>
           <Text class="flex-1 text-muted-foreground line-clamp-1">{content().description}</Text>
@@ -147,7 +148,7 @@ function Item(props: { entry: ToastEntry }) {
       transitionStatus={props.entry.status}
       accessibilityLabel={[content().title, content().description].filter(Boolean).join(". ")}
       onDismissRequest={() => dismissToast(props.entry.id)}
-      class={`${POPUP} ${SURFACE.toast} flex-row items-start gap-2 px-3 py-3 motion-safe:transition-all motion-safe:duration-200 motion-safe:ease-out`}
+      class={`${POPUP} ${SURFACE.toast} flex-row items-start gap-2 px-3 py-3 ${TOAST_MOTION}`}
       style={glass}
       startingClass="opacity-0 translate-y-3"
       endingClass="opacity-0 scale-95"
@@ -156,14 +157,15 @@ function Item(props: { entry: ToastEntry }) {
       <If when={kind()}>
         {(k) => (
           <View class="pt-px">
-            <Icon name={KINDS[k()].icon} tint={KINDS[k()].tint} />
+            <Icon name={KINDS[k()].icon} tint={TONE[KINDS[k()].tone].icon} />
           </View>
         )}
       </If>
       <View class="min-w-0 flex-1 gap-1">
-        <Strong class="text-popover-foreground">{content().title}</Strong>
+        {/* its title regular, on one line: the icon says what kind it is */}
+        <Text class="text-body text-popover-foreground line-clamp-1">{content().title}</Text>
         <If when={content().description}>
-          <Text class="text-small text-muted-foreground line-clamp-3">{content().description}</Text>
+          <Text class={`${TEXT.note} line-clamp-3`}>{content().description}</Text>
         </If>
       </View>
       {/* what can be done about it, and Close: real buttons, with the keyboard's ring */}

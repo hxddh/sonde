@@ -15,9 +15,9 @@ import { FEW, kindStats, type SignalId, signalsOf } from "../signals";
 import { type Range, slicesOf } from "../range";
 import { type ChartRows, toCsv } from "../csv";
 import type { ProjectBudget, SessionView, Signals, Split, SplitBy, Stretch } from "../types";
-import { Await, Button, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable } from "./kit";
+import { Await, Button, DOT, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable, TEXT, TONE } from "./kit";
 import { findingMarks, StatusMark } from "./sessionview";
-import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, scatterSaid, kindsSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean } from "./plots";
+import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, scatterSaid, kindsSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean, trialLegend, bytesLegend, sizesLegend } from "./plots";
 
 /** The board's groups, in order: never more than these four. */
 const GROUPS = ["traffic", "latency", "errors", "where"] as const;
@@ -68,6 +68,7 @@ function Statuses(props: { signals: Signals; /** where the requests it counts be
   return (
     <View testID="statuses">
       <SimpleTable
+        bare
         columns={columns()}
         rows={rows()}
         max={8}
@@ -77,8 +78,11 @@ function Statuses(props: { signals: Signals; /** where the requests it counts be
           c.column === 0 ? (
             <StatusMark status={c.text === "—" ? null : Number(c.text)} code={c.cells[1]} />
           ) : injected() && c.column === 3 && c.text !== count(0) ? (
-            // emphasis: answers that were sonde's own, not the store's
-            <Text class={`tabular-nums text-small ${EMPHASIS} text-status-injected`}>{c.text}</Text>
+            // answers that were sonde's own, not the store's: marked by their tone's dot
+            <View class="flex-1 flex-row items-center justify-end gap-1">
+              <View class={`${DOT} ${TONE.injected.dot}`} />
+              <Text class={`tabular-nums ${TEXT.small}`}>{c.text}</Text>
+            </View>
           ) : undefined
         }
       />
@@ -129,6 +133,7 @@ export function GroupTable(props: { rows: GroupRow[]; title: string; currency: s
   return (
     <View class="gap-2">
       <SimpleTable
+        bare
         testID={props.testID}
         label={props.title}
         columns={columns()}
@@ -139,7 +144,15 @@ export function GroupTable(props: { rows: GroupRow[]; title: string; currency: s
         ranked={2}
         selected={at()}
         onSelect={props.onSelect ? (i) => props.onSelect!(i === null ? null : (props.rows[i]?.name ?? null)) : undefined}
-        cell={(c) => (c.column === 2 && c.text !== "0%" && c.text !== "—" ? <Text class="tabular-nums text-small text-status-server">{c.text}</Text> : undefined)}
+        // a share that failed: its dot in the failure's tone, the figure read as every other
+        cell={(c) =>
+          c.column === 2 && c.text !== "0%" && c.text !== "—" ? (
+            <View class="flex-1 flex-row items-center justify-end gap-1">
+              <View class={`${DOT} ${TONE.fail.dot}`} />
+              <Text class={`tabular-nums ${TEXT.small}`}>{c.text}</Text>
+            </View>
+          ) : undefined
+        }
       />
       <If when={props.rows.some((o) => o.few)}>
         <ChartNote testID={props.testID ? `${props.testID}-few` : undefined}>{t("byOp.few", { n: FEW })}</ChartNote>
@@ -296,7 +309,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       title: () => t("trialOver.title"),
       text: () => t("trialOver.text", { trial: duration(p().wallMs), clean: duration(props.clean!.profile.wallMs), n: faults().length }),
       how: () => t("trialOver.hint"),
-      legend: () => [{ label: t("trialOver.trial"), swatch: "bg-chart-1" }, { label: t("trialOver.clean"), swatch: "bg-muted-foreground" }, ...(faults().length ? [{ label: t("trialOver.faults"), swatch: "bg-status-injected" }] : [])],
+      legend: () => trialLegend(faults().length > 0),
       body: () => <TrialOverClean trial={p()} clean={props.clean!.profile} faults={faults()} domainMs={zoomMs()} />,
     },
     {
@@ -342,7 +355,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       title: () => t("bytesTime.title"),
       text: () => bytesSaid(sig(), zoom()),
       how: () => t("bytesTime.hint"),
-      legend: () => [{ label: t("bytesTime.up"), swatch: "bg-chart-1" }, { label: t("bytesTime.down"), swatch: "bg-chart-4" }],
+      legend: () => bytesLegend(sig()),
       rows: () => ({ columns: ["ms", "sent_bytes_per_s", "received_bytes_per_s"], rows: sig().bytes.up.map((u, i) => [i * sig().binMs, u, sig().bytes.down[i] ?? 0]) }),
       body: () => <BytesOverTime signals={sig()} range={zoom()} focus={focus} />,
     },
@@ -360,7 +373,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
           <Options testID="sizes-by" value={sizesBy()} items={[{ value: "count", title: t("sizes.byCount") }, { value: "speed", title: t("sizes.bySpeed") }]} onChange={(v) => sizesBy.set(v as "count" | "speed")} />
         </If>
       ),
-      legend: () => (sizesBy() === "speed" ? [] : [{ label: t("sizes.sent"), swatch: "bg-chart-1" }, { label: t("sizes.received"), swatch: "bg-chart-4" }]),
+      legend: () => (sizesBy() === "speed" && sa().sizes.throughput.length > 0 ? [] : sizesLegend(sa())),
       rows: () => ({ columns: ["up_to_bytes", "sent", "received"], rows: [...new Set([...sa().sizes.request, ...sa().sizes.response].map((b) => b.leBytes))].sort((a, b) => a - b).map((le) => [le, sa().sizes.request.find((b) => b.leBytes === le)?.count ?? 0, sa().sizes.response.find((b) => b.leBytes === le)?.count ?? 0]) }),
       body: () => (
         <If when={sizesBy() === "speed" && sa().sizes.throughput.length > 0} else={<Sizes signals={sa()} />}>
@@ -414,7 +427,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       legend: () => (latencyAs() === "heat" ? [{ label: t("latencyHeat.scale"), swatch: "bg-heat-high" }] : latencyLegend(p())),
       rows: () => ({ columns: ["ms", "requests", "p50_ms", "p95_ms", "p99_ms"], rows: p().rate.map((b) => [b.tMs, b.ok + b.miss + b.client + b.server, b.p50Ms, b.p95Ms, b.p99Ms]) }),
       body: () => (
-        <If when={latencyAs() === "heat"} else={<LatencyBand profile={p()} domainMs={zoomMs()} focus={focus} class={`${TICK_ROOM} ${PLOT} w-full`} testID="latency-over-time" axis budgetMs={p95Budget()} />}>
+        <If when={latencyAs() === "heat"} else={<LatencyBand profile={p()} domainMs={zoomMs()} focus={focus} class={`${TICK_ROOM} ${PLOT}`} testID="latency-over-time" axis budgetMs={p95Budget()} />}>
           <LatencyHeat profile={p()} range={zoom()} focus={focus} />
         </If>
       ),

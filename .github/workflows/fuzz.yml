@@ -42,7 +42,7 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with: { tool: cargo-fuzz }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { workspaces: "fuzz -> target", key: "fuzz-${{ matrix.target }}" }
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", workspaces: "fuzz -> target", key: "fuzz-${{ matrix.target }}" }
       # the corpus grown by earlier runs, under a key of its own each time
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

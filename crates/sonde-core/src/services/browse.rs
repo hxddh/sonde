@@ -286,7 +286,10 @@ const PARTIAL: &str = ".sonde-partial";
 
 /// A destination no file or download holds: `dest`, else `name (2).ext`,
 /// `name (3).ext`… Its partial file is created here, which reserves it.
-async fn reserve(dest: &std::path::Path) -> Result<(PathBuf, PathBuf, tokio::fs::File), S3Error> {
+async fn reserve(
+    dest: &std::path::Path,
+    partial: &mut Option<PathBuf>,
+) -> Result<(PathBuf, PathBuf, tokio::fs::File), S3Error> {
     let stem = dest
         .file_stem()
         .unwrap_or_default()
@@ -306,6 +309,9 @@ async fn reserve(dest: &std::path::Path) -> Result<(PathBuf, PathBuf, tokio::fs:
             continue;
         }
         let part = with_suffix(&to, PARTIAL);
+        // said before it is made: a download cancelled while the file is
+        // created still removes it
+        *partial = Some(part.clone());
         match tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -314,7 +320,10 @@ async fn reserve(dest: &std::path::Path) -> Result<(PathBuf, PathBuf, tokio::fs:
         {
             Ok(f) => return Ok((to, part, f)),
             // another download is writing this name
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                *partial = None;
+                continue;
+            }
             Err(e) => return Err(S3Error::config(format!("{}: {e}", part.display()))),
         }
     }
@@ -349,7 +358,7 @@ pub fn download(s: &Arc<Sonde>, endpoint: &str, bucket: &str, key: &str, dest: P
             };
             if r.is_err()
                 && let Some(p) = part
-                && let Err(e) = tokio::fs::remove_file(&p).await
+                && let Err(e) = remove_closing(&p).await
                 && e.kind() != std::io::ErrorKind::NotFound
             {
                 // said where the job shows: the file is the user's to remove
@@ -364,6 +373,22 @@ pub fn download(s: &Arc<Sonde>, endpoint: &str, bucket: &str, key: &str, dest: P
             r
         },
     )
+}
+
+/// Removes `path`, a file the cancelled download may still be closing: its
+/// handle is closed on a blocking thread after the download is dropped, and
+/// Windows removes no file that is open. Tried again for a moment.
+async fn remove_closing(path: &std::path::Path) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match tokio::fs::remove_file(path).await {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound && tries < 20 => {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            r => return r,
+        }
+    }
 }
 
 async fn fetch(
@@ -389,8 +414,7 @@ async fn fetch(
             .await
             .map_err(|e| S3Error::config(format!("{}: {e}", dir.display())))?;
     }
-    let (dest, part, mut file) = reserve(dest).await?;
-    *partial = Some(part.clone());
+    let (dest, part, mut file) = reserve(dest, partial).await?;
     let mut resp = resp;
     let mut written = 0u64;
     while let Some(chunk) = resp.chunk().await? {

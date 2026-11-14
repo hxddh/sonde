@@ -2,13 +2,13 @@
 // program (or the endpoint), what tells it from its neighbours, its time and
 // requests, and a mark of its requests over its time.
 
-import { type ContextMenuEvent, type JSX, List, Text, View } from "nsh";
+import { computed, type ContextMenuEvent, type JSX, List, Text, View } from "nsh";
 import { isAvailable } from "nsh/desktop";
 import { programOf, scrubCommand } from "../command";
 import { clock, day, hm } from "../format";
 import { t } from "../i18n";
 import type { SessionInfo } from "../types";
-import { Dot, Heading, InWindowMenu, ListRow, terminal } from "./kit";
+import { Dot, Heading, InWindowMenu, ListRow, terminal, TEXT } from "./kit";
 import { Sparkline } from "./plots";
 
 const DAY = 86400000;
@@ -64,18 +64,6 @@ export function SessionList(props: {
     return out;
   };
   const dayOf = (r: Row) => ("day" in r ? r.day : null);
-  // runs of one program are told apart: by the argument that differs, and where the
-  // command is the same to the letter, by the second they started
-  const told = () => {
-    const by = new Map<string, SessionInfo[]>();
-    for (const x of props.sessions) by.set(name(x), [...(by.get(name(x)) ?? []), x]);
-    const out = new Map<string, { args: string; twin: boolean }>();
-    for (const group of by.values()) {
-      const shown = tellApart(group.map(args));
-      group.forEach((x, i) => out.set(x.path, { args: shown[i], twin: group.some((y) => y !== x && args(y) === args(x)) }));
-    }
-    return out;
-  };
   const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
   // how many of a run's trials broke (none: nothing is said)
   const broke = (s: SessionInfo) => s.trials?.filter((x) => x.standing === "broke").length || null;
@@ -90,6 +78,24 @@ export function SessionList(props: {
     if (first.replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop() === p) return rest.join(" ");
     return c === p ? "" : c;
   };
+  // runs of one program are told apart: by the argument that differs, and where the
+  // command is the same to the letter, by the second they started
+  // (worked out once per list, each command read once: rows ask for it as they draw)
+  const told = computed(() => {
+    const by = new Map<string, { s: SessionInfo; args: string }[]>();
+    for (const s of props.sessions) {
+      const n = name(s);
+      by.set(n, [...(by.get(n) ?? []), { s, args: args(s) }]);
+    }
+    const out = new Map<string, { args: string; twin: boolean }>();
+    for (const group of by.values()) {
+      const shown = tellApart(group.map((x) => x.args));
+      const times = new Map<string, number>();
+      for (const x of group) times.set(x.args, (times.get(x.args) ?? 0) + 1);
+      group.forEach((x, i) => out.set(x.s.path, { args: shown[i], twin: (times.get(x.args) ?? 0) > 1 }));
+    }
+    return out;
+  });
   // where the system has no menus to pop up (a terminal, the web): the
   // same commands in Native Shell's own, on a right press or Shift+F10
   const inWindowMenu = (x: () => { s: SessionInfo; i: number }, body: JSX.Element) => (
@@ -115,21 +121,21 @@ export function SessionList(props: {
         <If when={x().s.live}>
           <Dot tone="live" label={t("timeline.live")} />
         </If>
-        <Text class="min-w-0 shrink text-body text-foreground line-clamp-1">{name(x().s)}</Text>
-        <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{told().get(x().s.path)?.args ?? args(x().s)}</Text>
+        <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{name(x().s)}</Text>
+        <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told().get(x().s.path)?.args ?? args(x().s)}</Text>
         {/* the same command run again: its time at the row's end, to the second */}
         <If when={told().get(x().s.path)?.twin}>
-          <Text testID="session-time" class="shrink-0 tabular-nums text-caption text-foreground">{clock(x().s.created, "s")}</Text>
+          <Text testID="session-time" class={`shrink-0 tabular-nums ${TEXT.caption}`}>{clock(x().s.created, "s")}</Text>
         </If>
       </View>
       <View class="flex-row items-center gap-2">
         {/* (a twin's time is at its row's end, to the second: not said twice) */}
-        <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{[told().get(x().s.path)?.twin ? "" : hm(x().s.created), x().s.endpoint, t("sessions.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
+        <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[told().get(x().s.path)?.twin ? "" : hm(x().s.created), x().s.endpoint, t("sessions.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
         {/* tried under faults: how many of its trials broke, quietly — the run itself is not what broke
             (in full to a screen reader) */}
         <If when={broke(x().s)}>
           {(n) => (
-            <Text testID="session-broke" class="shrink-0 text-caption text-muted-foreground" accessibilityLabel={t("trial.ofBrokeSaid", { n: n(), of: x().s.trials!.length })}>
+            <Text testID="session-broke" class={`shrink-0 ${TEXT.meta}`} accessibilityLabel={t("trial.ofBrokeSaid", { n: n(), of: x().s.trials!.length })}>
               {t("trial.ofBroke", { n: n(), of: x().s.trials!.length })}
             </Text>
           )}
@@ -152,16 +158,26 @@ export function SessionList(props: {
       keyExtractor={(r) => ("day" in r ? `day:${r.day}` : r.s.path)}
       scrollbar={false}
     >
-      {(r) => (
-        // a recycled cell: what it shows follows the item it is given
-        <If when={dayOf(r())} else={row(() => r() as { s: SessionInfo; i: number })}>
+      {(r) => {
+        // a recycled cell: what it shows follows the item it is given. A session's row reads the last session the
+        // cell was given: as the cell turns into a day's heading (a row deleted above it), the row's words are
+        // read once more before it goes, and must not read a heading as a session
+        let held: { s: SessionInfo; i: number } | undefined;
+        const session = () => {
+          const v = r();
+          if (!("day" in v)) held = v as { s: SessionInfo; i: number };
+          return held!;
+        };
+        return (
+        <If when={dayOf(r())} else={row(session)}>
           {(day) => (
             <View class="bg-sidebar px-2 pb-1 pt-2 terminal:bg-transparent">
               <Heading quiet>{day()}</Heading>
             </View>
           )}
         </If>
-      )}
+        );
+      }}
     </List>
   );
 }

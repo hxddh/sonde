@@ -7,7 +7,7 @@ import { vendorName } from "../labels";
 import { api, asError } from "../native";
 import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, startDemo } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
-import { Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert } from "../ui/kit";
+import { REVEAL, Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert, TEXT } from "../ui/kit";
 import { CELL, ConfigNotice, GRID } from "./Settings";
 
 type Draft = {
@@ -264,14 +264,17 @@ export function Endpoints() {
               <Heading class="min-w-0 shrink line-clamp-1">{e.name}</Heading>
               <Badge label={vendorName(e)} />
               <If when={endpoint() === e.id}>
-                <Badge label={t("endpoints.current")} tone="primary" />
+                <Badge label={t("endpoints.current")} tone="live" />
               </If>
             </View>
-            <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
+            <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
           </View>
-          <Button small variant="outline" icon="activity" label={r() === "running" ? t("endpoints.testing") : t("endpoints.test")} onPress={() => test(e.id)} disabled={r() === "running"} testID={`test-${e.id}`} />
-          <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
-          <IconButton icon="trash" label={t("endpoints.removeMenu")} onPress={() => void remove(e)} testID={`remove-${e.id}`} />
+          <Button small variant="outline" icon="activity" label={t("endpoints.test")} onPress={() => test(e.id)} loading={r() === "running"} testID={`test-${e.id}`} />
+          {/* its edit and removal under the pointer (or the keyboard) only */}
+          <View class={`flex-row items-center gap-1 ${REVEAL}`}>
+            <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
+            <IconButton icon="trash" label={t("endpoints.removeMenu")} onPress={() => void remove(e)} testID={`remove-${e.id}`} />
+          </View>
         </View>
         <If when={typeof r() === "object" ? (r() as ConnectivityReport) : null}>{(rep) => <TestResult report={rep()} />}</If>
       </View>
@@ -282,6 +285,10 @@ export function Endpoints() {
       <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
         <ConfigNotice />
         <PageHeader title={t("endpoints.title")}>
+          {/* a store to try sonde on beside one's own: offered while the demo is not the one in use (with none, the empty list offers it) */}
+          <If when={endpoints().length > 0 && endpoint() !== "demo"}>
+            <Button variant="ghost" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
+          </If>
           {/* one primary at a time: while a form is open its Save is the one, and these wait for it */}
           <Button variant="outline" label={t("endpoints.import")} onPress={() => mode.set("import")} disabled={mode() !== "list"} testID="import-endpoints" />
           <Button variant={mode() === "list" ? "primary" : "outline"} icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} disabled={mode() !== "list"} testID="add-endpoint" />
@@ -289,17 +296,20 @@ export function Endpoints() {
         {/* the form in place, a card of its own: a sheet in the Settings
             window would cover its tabs and lose its icons (nsh-issues) */}
         <If when={form()}>{(f) => <Card testID="endpoint-form-card">{f()}</Card>}</If>
-        <If when={endpoints().length > 0} else={<Empty icon="server" text={t("endpoints.noneYet")} />}>
+        <If
+          when={endpoints().length > 0}
+          else={
+            <Empty icon="server" text={t("endpoints.noneYet")}>
+              <Button variant="outline" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
+            </Empty>
+          }
+        >
           <Card pad="none">
             <Each of={endpoints()} key={(e) => e.id}>
               {(e, i) => <Row stack first={i() === 0}>{row(e())}</Row>}
             </Each>
           </Card>
         </If>
-        {/* a store to try sonde on, with or without endpoints of one's own */}
-        <View class="flex-row">
-          <Button small variant="ghost" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
-        </View>
       </View>
     </Page>
   );

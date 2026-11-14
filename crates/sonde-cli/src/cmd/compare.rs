@@ -279,8 +279,10 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         sonde_proxy::program::key_of(&hb),
     );
     let mut c = sonde_proxy::profile::compare_runs(&ra, &rb);
+    c.waiting_known = !ha.whole_seconds && !hb.whole_seconds;
     c.same_program = ka.is_some() && ka == kb;
     if c.same_program {
+        c = c.of_commands(ha.command.as_deref(), hb.command.as_deref());
         // a finding fixed by the earlier run or one before it is back, not new
         if let (Some(k), Ok(kept)) = (
             &ka,
@@ -308,15 +310,28 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     let n = |v: f64| output::grouped(v.round().max(0.0) as u64);
     use super::fixloop::moved as change;
     if !c.same_program {
+        let which = if ka.is_none() && kb.is_none() {
+            "neither is a run of a program (an import, a replay)"
+        } else {
+            "two different programs"
+        };
         println!(
             "{}",
             paint(
-                "two different programs: their figures compare, their findings do not",
+                &format!("{which}: their figures compare, their findings do not"),
                 "33",
                 color
             )
         );
     }
+    // the waiting of times to the second is not known: never shown as a figure
+    let waiting = |a: f64, b: f64| {
+        if c.waiting_known {
+            change(a, b, ms_text)
+        } else {
+            "— (not known: times to the second)".to_string()
+        }
+    };
     let failed = match exits {
         (_, Some(x)) => Some(format!(
             "the run failed (exit {x}); its findings are not compared"
@@ -329,20 +344,33 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     if let Some(t) = failed {
         println!("{}", paint(&t, "33", color));
     }
+    if let Some(ch) = &c.command_changed {
+        println!("{}", paint(&super::fixloop::command_line(ch), "33", color));
+    }
     // nothing moved: said once, before the figures that show it
     let unchanged = c.requests.0 == c.requests.1
         && c.errors.0 == c.errors.1
-        && ms_text(c.waiting_ms.0) == ms_text(c.waiting_ms.1)
+        && (!c.waiting_known || ms_text(c.waiting_ms.0) == ms_text(c.waiting_ms.1))
         && c.cost.0 == c.cost.1
         && c.findings
             .iter()
             .all(|f| f.state == sonde_proxy::fixloop::State::Open)
         && c.groups.iter().all(|g| g.requests.0 == g.requests.1);
     if unchanged {
+        // only what was compared is said to be the same
+        let mut same = vec!["requests"];
+        if c.waiting_known {
+            same.push("waiting");
+        }
+        same.extend(["errors", "cost"]);
+        if c.same_program && c.failed.is_none() {
+            same.push("findings");
+        }
+        let last = same.pop().unwrap_or_default();
         println!(
             "{}",
             paint(
-                "no change: the same requests, waiting, errors, cost and findings",
+                &format!("no change: the same {} and {last}", same.join(", ")),
                 "1",
                 color
             )
@@ -360,10 +388,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
         "  requests   {}",
         change(c.requests.0 as f64, c.requests.1 as f64, n)
     );
-    println!(
-        "  waiting    {}",
-        change(c.waiting_ms.0, c.waiting_ms.1, ms_text)
-    );
+    println!("  waiting    {}", waiting(c.waiting_ms.0, c.waiting_ms.1));
     println!("  took       {}", change(c.wall_ms.0, c.wall_ms.1, ms_text));
     println!(
         "  errors     {}",
@@ -378,7 +403,10 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     let changed: Vec<&sonde_proxy::profile::GroupChange> = c
         .groups
         .iter()
-        .filter(|g| g.requests.0 != g.requests.1 || (g.waiting_ms.0 - g.waiting_ms.1).abs() >= 1.0)
+        .filter(|g| {
+            g.requests.0 != g.requests.1
+                || (c.waiting_known && (g.waiting_ms.0 - g.waiting_ms.1).abs() >= 1.0)
+        })
         .collect();
     let rows: Vec<Vec<String>> = changed
         .iter()
@@ -395,7 +423,11 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
                     output::grouped(g.requests.0 as u64),
                     output::grouped(g.requests.1 as u64)
                 ),
-                format!("{} → {}", ms_text(g.waiting_ms.0), ms_text(g.waiting_ms.1)),
+                if c.waiting_known {
+                    format!("{} → {}", ms_text(g.waiting_ms.0), ms_text(g.waiting_ms.1))
+                } else {
+                    "—".into()
+                },
             ]
         })
         .collect();
@@ -405,7 +437,7 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
             println!("{more}");
         }
     }
-    for line in super::fixloop::change_lines(&c.findings, color) {
+    for line in super::fixloop::change_lines(&c.findings, c.command_changed.as_deref(), color) {
         println!("{line}");
     }
     Ok(0)
@@ -431,7 +463,7 @@ fn runs_compared(
             super::sessions::resolve(s, after),
         ))),
         [one] => before_of(&super::sessions::resolve(s, one)),
-        _ => before_of(&newest_session(s)?),
+        _ => before_of(&which_run(s, project_name().as_deref())?.0),
     }
 }
 

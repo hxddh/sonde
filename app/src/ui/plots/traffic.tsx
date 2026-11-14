@@ -8,8 +8,8 @@ import { bytes, count, duration, rate, transfer } from "../../format";
 import { t } from "../../i18n";
 import { bytesRate, sizeLabel, sizeRange } from "../../signals";
 import type { Profile, Signals } from "../../types";
-import { AXIS_LABEL, BUCKET_TICK, BAR_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, TIME_TICK, TOP_LABEL, type Tone, VALUE_TICK_END, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, GRID, OUTCOMES, ZERO_SLIVER } from "./system";
-import { EMPHASIS, terminal, textual, SimpleTable } from "../kit";
+import { AXIS_LABEL, CROSS_BAND, ChartNote, ChartTip, type Focus, statusTone, GUTTER, HOVER, INACTIVE, LABEL, Legend, MOTION, NoneInStretch, PITCH, PLOT, TICK_ROOM, type Outcome, axisName, groupName, injectedLegend, nearest, pct, rowsHeight, stretch, tipValue, toneOf, tones, type LegendItem, MARK, TIP, TimeAxis, ValueAxis, sessionSpan, BARS, CELLS, DASH, FOCUS_RULE, GRID, HEADROOM, OUTCOMES, STROKE, ZERO_SLIVER } from "./system";
+import { terminal, textual, SimpleTable, TEXT, TONE } from "../kit";
 import { bytesSaid, lanesSaid } from "./answers";
 
 // --- what ran at once ----------------------------------------------------------------
@@ -36,35 +36,30 @@ export const requestsOf = (p: Profile) => p.rate.reduce((n, b) => n + b.ok + b.m
 const LANES = 24;
 const LANE_BINS = 96;
 /** Outcomes from quiet to worst: a cell that holds several requests shows the worst. */
-const WORST: Record<Tone, number> = { ok: 0, miss: 1, client: 2, server: 3, injected: 4 };
+const WORST: Record<Outcome, number> = { ok: 0, miss: 1, client: 2, fail: 3, injected: 4 };
 
 /** The lanes' cells over `domain`, cut in `bins` slices: one cell per slice
  * and lane, with how many requests it holds (`n`), the worst outcome among
  * them (`tone` — a failure is never painted over), and the request it stands
  * for (`sample`, an index into `samples`: the worst, the earliest of those).
- * Requests of a lane alternate two shades (`alt`) so two in a row read as
- * two; cells that hold several alternate by slice. In order of lane, then slice. */
-export function laneCells(samples: { tMs: number; ms: number; lane: number; status?: number | null; id?: number }[], domain: [number, number], bins: number, lanes: number, injected?: Set<number>): { bin: number; lane: number; n: number; tone: Tone; alt: boolean; sample: number }[] {
+ * One tone per outcome. In order of lane, then slice. */
+export function laneCells(samples: { tMs: number; ms: number; lane: number; status?: number | null; id?: number }[], domain: [number, number], bins: number, lanes: number, injected?: Set<number>): { bin: number; lane: number; n: number; tone: Outcome; sample: number }[] {
   const [a, b] = domain;
   const w = (b - a) / bins;
   const order = samples.map((_, i) => i).sort((i, j) => samples[i].tMs - samples[j].tMs || i - j);
-  const turn = new Map<number, number>();
-  const cells = new Map<number, { bin: number; lane: number; n: number; tone: Tone; alt: boolean; sample: number }>();
+  const cells = new Map<number, { bin: number; lane: number; n: number; tone: Outcome; sample: number }>();
   for (const i of order) {
     const x = samples[i];
     if (x.lane >= lanes || x.tMs >= b || x.tMs + x.ms < a) continue;
-    const n = (turn.get(x.lane) ?? 0) + 1;
-    turn.set(x.lane, n);
     const tone = toneOf(x, injected);
     const from = Math.max(0, Math.floor((x.tMs - a) / w));
     const to = Math.min(bins - 1, Math.floor((x.tMs + Math.max(x.ms, 0) - a) / w));
     for (let k = from; k <= to; k++) {
       const at = x.lane * bins + k;
       const c = cells.get(at);
-      if (!c) cells.set(at, { bin: k, lane: x.lane, n: 1, tone, alt: n % 2 === 0, sample: i });
+      if (!c) cells.set(at, { bin: k, lane: x.lane, n: 1, tone, sample: i });
       else {
         c.n += 1;
-        c.alt = k % 2 === 1;
         // the earliest of the worst: later ones of the same outcome do not take its place
         if (WORST[tone] > WORST[c.tone]) (c.tone = tone), (c.sample = i);
       }
@@ -102,7 +97,7 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
   const label = () => lanesSaid(props.profile, props.domainMs);
   const bins = Array.from({ length: LANE_BINS }, (_, i) => `${i}`);
   return (
-    <If when={!terminal() && all().length > 1} else={<Text class="text-small text-muted-foreground">{label()}</Text>}>
+    <If when={!terminal() && all().length > 1} else={<Text class={TEXT.note}>{label()}</Text>}>
       <View class="gap-2">
         <If when={rows().length > 0} else={<NoneInStretch />}>
         <BaseButton
@@ -134,16 +129,13 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
             // not rows of names: a few lanes are tall, many are thin, about the height of the chart beside it either way
             style={{ height: lanes() * Math.max(8, Math.min(PITCH, Math.round(176 / lanes()))) + 6 }}
           >
-            <Cell x={(_, i) => (rows()[i]?.alt ? (undefined as unknown as string) : (rows()[i]?.x ?? ""))} y="y" color="tone" inactiveOpacity={INACTIVE} hoverCellClass={HOVER} />
-            <Cell x={(_, i) => (rows()[i]?.alt ? rows()[i].x : (undefined as unknown as string))} y="y" color="tone" inactiveOpacity={INACTIVE} style={{ opacity: 0.6 }} hoverCellClass={HOVER} />
+            <Cell x="x" y="y" color="tone" inactiveOpacity={INACTIVE} hoverCellClass={HOVER} />
             <TimeAxis domain={domain()} slices={LANE_BINS} />
           </Plot>
         </BaseButton>
         </If>
         {/* the outcomes the session had, and only those: no "Failed" under a run that never failed */}
         <Legend items={[...OUTCOMES.filter((o) => all().some((x) => toneOf(x, marked()) === o.tone)).map((o) => ({ label: t(o.key), swatch: o.swatch })), ...injectedLegend(props.injected)]}>
-          {/* the second shade the cells are drawn in: named, as every colour a chart draws */}
-          <ChartNote testID="lanes-shade">{t("lanes.shade")}</ChartNote>
           <If when={all().length < total()}>
             <ChartNote testID="lanes-sampled">{t("plots.sampled", { n: count(all().length), of: count(total()) })}</ChartNote>
           </If>
@@ -159,6 +151,8 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
 // --- the shape of a session ---------------------------------------------------
 
 type Slice = { tMs: number; ok: number; miss: number; client: number; server: number; injected: number; inFlight: number };
+/** A slice's count of each outcome, by its field (a failure is the store's: `server`). */
+const FIELD: Record<Exclude<Outcome, "injected">, "ok" | "miss" | "client" | "server"> = { ok: "ok", miss: "miss", client: "client", fail: "server" };
 
 /** The session's slices with the most requests in flight in each. A fault
  * scenario's answers (`injected`, by id) are counted apart, in their own
@@ -174,7 +168,7 @@ export function slices(p: Profile, injected?: number[]): Slice[] {
       if (!marked.has(x.id)) continue;
       const i = Math.min(Math.floor(x.tMs / p.binMs), p.rate.length - 1);
       const c = apart.get(i) ?? { ok: 0, miss: 0, client: 0, server: 0 };
-      c[statusTone(x.status ?? null) as "ok" | "miss" | "client" | "server"] += 1;
+      c[FIELD[statusTone(x.status ?? null) as Exclude<Outcome, "injected">]] += 1;
       apart.set(i, c);
     }
   return p.rate.map((b, i) => {
@@ -211,8 +205,8 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
     return props.range ? all.slice(props.range[0], props.range[1] + 1) : all;
   };
   const top = () => Math.max(1, ...rows().map((r) => r.ok + r.miss + r.client + r.server + r.injected));
-  // the plot's own top: a fifth over the busiest slice where the scale is written
-  const room = () => (props.axis && !props.strip ? 1.2 : 1);
+  // the plot's own top: room over the busiest slice for the scale's words, where it is written
+  const room = () => (props.axis && !props.strip ? HEADROOM.plot : 1);
   const ceiling = () => top() * room();
   // the most in flight: the session's own figure (`peak`, what the In flight tile says) while
   // the whole session shows, the stretch's own when zoomed
@@ -248,7 +242,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
   };
   // a slice pressed, or the stretch chosen (`picked`): what it leaves out turns quiet, it does not go
   const on = (i: number) => (props.slice != null ? props.slice === i + from() : !props.picked || (i + from() >= props.picked[0] && i + from() <= props.picked[1]));
-  const tone = (x: Tone) => (d: Slice, i: number) => (on(i) ? x : "dim");
+  const tone = (x: Outcome) => (d: Slice, i: number) => (on(i) ? x : "dim");
   const tip = () => {
     const i = hovered();
     const r = i === null ? null : rows()[i];
@@ -278,7 +272,7 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
         <Plot
           data={rows()}
           xScale={{ type: "band", ...BARS.slices }}
-          // headroom over the busiest slice where the scale is written: its chip stands over the peak's line, clear of the bars
+          // headroom over the busiest slice where the scale is written: its words stand over the peak's line, clear of the bars
           yScale={{ type: "linear", domain: [0, ceiling()] }}
           y2Scale={{ type: "linear", domain: [0, Math.max(1, flightTop()) * room()] }}
           alignTicks={false}
@@ -300,10 +294,10 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
           <Bar value="ok" stack="r" color={tone("ok")} />
           <Bar value="miss" stack="r" color={tone("miss")} />
           <Bar value="client" stack="r" color={tone("client")} />
-          <Bar value="server" stack="r" color={tone("server")} />
+          <Bar value="server" stack="r" color={tone("fail")} />
           {/* what sonde answered in the store's place: its own tone, never a failure's */}
           <Bar value="injected" stack="r" color={tone("injected")} cornerRadii={TIP.up} />
-          <Line y="inFlight" scale="y2" curve="stepAfter" class="stroke-foreground/30 stroke-[1.25]" hoverDotClass="hidden" />
+          <Line y="inFlight" scale="y2" curve="stepAfter" class={`${IN_FLIGHT.stroke} ${STROKE.line}`} hoverDotClass="hidden" />
           {/* full width: when (from the session's start) and how many at once */}
           <If when={props.axis}>
             <TimeAxis domain={shownMs()} slices={rows().length} />
@@ -312,26 +306,27 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
               what is shown (the whole session's is the In flight tile's number) */}
           <If when={props.axis && !props.strip}>
             <ValueAxis peak={top()} say={(v) => t("shape.peak", { n: count(v) })} />
-            <PlotAxis placement="right" scale="y2" labelPlacement="inside" tickValues={[flightTop()]} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass={VALUE_TICK_END} />
+            <PlotAxis placement="right" scale="y2" labelPlacement="inside" tickValues={[flightTop()]} format={(v) => (Math.round(v) > 0 ? t("profile.inFlightN", { n: Math.round(v) }) : "")} labelClass={LABEL.peakEnd} />
           </If>
           {/* the moment another chart rests on */}
-          <Rule value={(_, i) => (i === focused() ? ceiling() : (undefined as unknown as number))} class="stroke-foreground/40 stroke-1" />
+          <Rule value={(_, i) => (i === focused() ? ceiling() : (undefined as unknown as number))} class={FOCUS_RULE} />
           {/* where sonde answered in the store's place */}
           <If when={faulted().size > 0}>
-            <Rule value={(_, i) => (faulted().has(i) ? ceiling() : (undefined as unknown as number))} class="stroke-status-injected stroke-[1.5]" />
+            <Rule value={(_, i) => (faulted().has(i) ? ceiling() : (undefined as unknown as number))} class={`stroke-status-injected ${STROKE.line}`} />
           </If>
           {/* where each finding begins */}
           <If when={props.annotate && marked().size > 0}>
-            <Rule value={(_, i) => (marked().has(i) ? ceiling() : (undefined as unknown as number))} class="stroke-warn/70 stroke-1" style={{ strokeDasharray: "2 2" }} />
+            <Rule value={(_, i) => (marked().has(i) ? ceiling() : (undefined as unknown as number))} class={`stroke-warn/70 ${STROKE.hair}`} style={{ strokeDasharray: DASH.mark }} />
             {/* (a mark near the plot's edge is set from that edge, so its numbers are not cut) */}
-            <PlotLabel /* emphasis: a finding's number over its slice */ class={`tabular-nums text-caption ${EMPHASIS} text-warn`} texts={[...marked()].map(([i, ns]) => ({ text: ns.join(", "), x: i, y: ceiling(), align: i < 2 ? ("left" as const) : i > rows().length - 3 ? ("right" as const) : ("center" as const), class: "-translate-y-full pb-1" }))} />
+            <PlotLabel class={LABEL.mark} texts={[...marked()].map(([i, ns]) => ({ text: ns.join(", "), x: i, y: ceiling(), align: i < 2 ? ("left" as const) : i > rows().length - 3 ? ("right" as const) : ("center" as const), class: "-translate-y-full pb-1" }))} />
           </If>
           {/* the busiest moment, named where it happened */}
-          {/* (left out where a finding's number stands near it: the two would cross; Time says it too) */}
-          <If when={props.annotate && peakBin() !== null && ![...marked().keys()].some((i) => Math.abs(i - peakBin()!) <= Math.max(3, rows().length / 12))}>
+          {/* (left out where a finding's number stands near it: the two would cross; Time says it too; and where
+              the axis is drawn, whose far edge says the most in flight already) */}
+          <If when={props.annotate && !(props.axis && !props.strip) && peakBin() !== null && ![...marked().keys()].some((i) => Math.abs(i - peakBin()!) <= Math.max(3, rows().length / 12))}>
             <PlotLabel
               scale="y2"
-              class="tabular-nums text-caption text-foreground"
+              class={LABEL.figureStrong}
               texts={[{ text: t("profile.peakLabel", { n: props.profile.peakInFlight }), x: peakBin()!, y: props.profile.peakInFlight, align: "center", class: "-translate-y-full pb-1" }]}
             />
           </If>
@@ -346,16 +341,16 @@ export function SessionShape(props: { profile: Profile; slice?: number | null; o
  * numbers. The whole legend of the timeline. */
 export function shapeLegend(p: Profile, marks: boolean, injected?: number[]): LegendItem[] {
   const all = slices(p, injected);
-  const had = (k: "miss" | "client" | "server") => all.some((b) => b[k] > 0);
+  const had = (o: Exclude<Outcome, "injected">) => all.some((b) => b[FIELD[o]] > 0);
   return [
-    { label: t("flows.ok"), swatch: "bg-bar" },
-    ...(had("miss") ? [{ label: t("flows.notfound"), swatch: "bg-status-miss" }] : []),
-    ...(had("client") ? [{ label: t("flows.clienterror"), swatch: "bg-status-client" }] : []),
-    ...(had("server") ? [{ label: t("lanes.failed"), swatch: "bg-status-server" }] : []),
-    { label: t("shape.inFlightLine"), swatch: "bg-foreground/30" },
-    ...(marks ? [{ label: t("shape.findingMarks"), swatch: "bg-warn" }] : []),
+    ...OUTCOMES.filter((o) => had(o.tone)).map((o) => ({ label: t(o.key), swatch: o.swatch })),
+    { label: t("shape.inFlightLine"), swatch: IN_FLIGHT.swatch, line: "solid" as const },
+    ...(marks ? [{ label: t("shape.findingMarks"), swatch: TONE.warn.fill }] : []),
   ];
 }
+
+/** The line of requests in flight over a session's slices, and its legend's stroke: quiet, and seen on the card in dark too. */
+const IN_FLIGHT = { stroke: "stroke-muted-foreground/80", swatch: "border-muted-foreground/80" } as const;
 
 /** When a fault scenario answered a request, in ms from the session's start:
  * the injected requests among those the session keeps (`samples`). */
@@ -369,15 +364,15 @@ export function faultMoments(p: Profile, injected: number[] | undefined): number
 
 /** A session's requests over its time, a few points high: drawn once per
  * session, kept as it is when its row scrolls away and back. */
-export function Sparkline(props: { shape: number[]; id: string; class?: string; /** its tone: a signal's own (failures in the server's), or quiet (the run before, beside the run after) */ tone?: "plain" | "bad" | "client" | "injected" | "quiet"; /** what it draws: counts as bars (the default), a level as steps (requests in flight), a measure as a line (latency) */ kind?: "bars" | "steps" | "line"; /** shown whole at once: a mark beside a figure does not draw itself in */ still?: boolean }) {
+export function Sparkline(props: { shape: number[]; id: string; class?: string; /** its tone: a signal's own (failures in the server's), or quiet (the run before, beside the run after) */ tone?: "plain" | "fail" | "client" | "injected" | "quiet"; /** what it draws: counts as bars (the default), a level as steps (requests in flight), a measure as a line (latency) */ kind?: "bars" | "steps" | "line"; /** shown whole at once: a mark beside a figure does not draw itself in */ still?: boolean }) {
   const rows = () => props.shape.map((n, i) => ({ i, n }));
-  const stroke = () => (props.tone === "bad" ? "stroke-status-server" : props.tone === "client" ? "stroke-status-client" : props.tone === "injected" ? "stroke-status-injected" : props.tone === "quiet" ? "stroke-muted-foreground" : "stroke-chart-1");
-  const fill = () => (props.tone === "bad" ? "fill-status-server" : props.tone === "client" ? "fill-status-client" : props.tone === "injected" ? "fill-status-injected" : props.tone === "quiet" ? "fill-muted-foreground" : "fill-chart-1");
+  const stroke = () => (props.tone === "fail" ? "stroke-status-server" : props.tone === "client" ? "stroke-status-client" : props.tone === "injected" ? "stroke-status-injected" : props.tone === "quiet" ? "stroke-muted-foreground" : "stroke-chart-1");
+  const fill = () => (props.tone === "fail" ? "fill-status-server" : props.tone === "client" ? "fill-status-client" : props.tone === "injected" ? "fill-status-injected" : props.tone === "quiet" ? "fill-muted-foreground" : "fill-chart-1");
   const plot = () => (
     <Plot data={rows()} xScale={{ type: "band", ...BARS.buckets }} yScale={{ type: "linear", domain: [0, Math.max(1, ...props.shape)] }} interactive={false} accessibilityLabel="" appearGeneration={props.still ? undefined : 1} motion={props.still ? undefined : MOTION} class={props.class ?? MARK.row}>
       {/* a baseline, so a few bars read as bars on a line and not as stray ticks */}
-      <Grid y={[0]} class="stroke-muted-foreground/50" />
-      <If when={(props.kind ?? "bars") === "bars"} else={<Line y="n" curve={props.kind === "steps" ? "stepAfter" : "linear"} class={`${stroke()} stroke-[1.5]`} hoverDotClass="hidden" />}>
+      <Grid y={[0]} class={`stroke-muted-foreground/50 ${STROKE.hair}`} />
+      <If when={(props.kind ?? "bars") === "bars"} else={<Line y="n" curve={props.kind === "steps" ? "stepAfter" : "linear"} class={`${stroke()} ${STROKE.line}`} hoverDotClass="hidden" />}>
         <Bar value="n" class={fill()} cornerRadii={TIP.mark} />
       </If>
     </Plot>
@@ -417,8 +412,9 @@ export function liveFigures(p: Profile, windowMs = 1000) {
 export function BytesOverTime(props: { signals: Signals; range?: [number, number] | null; focus?: Focus }) {
   const s = () => props.signals;
   const rows = () => stretch(s().bytes.up.map((up, i) => ({ tMs: i * s().binMs, up, down: -(s().bytes.down[i] ?? 0) })), props.range);
-  const top = () => Math.max(1, ...rows().map((r) => r.up)) * 1.2;
-  const bottom = () => Math.min(-1, ...rows().map((r) => r.down)) * 1.2;
+  // room for the scale's words over the most sent and under the most received: each half a plot of its own
+  const top = () => Math.max(1, ...rows().map((r) => r.up)) * HEADROOM.strip;
+  const bottom = () => Math.min(-1, ...rows().map((r) => r.down)) * HEADROOM.strip;
   const hovered = signal<number | null>(null);
   const label = () => bytesSaid(s(), props.range);
   const tip = () => {
@@ -452,14 +448,25 @@ export function BytesOverTime(props: { signals: Signals; range?: [number, number
           {/* one stem per slice: received hangs under the axis (from its depth up to zero), sent stands on it */}
           <Bar value={(d) => -d.down} base="down" stack="bytes" class="fill-chart-4" cornerRadii={TIP.down} inactiveOpacity={INACTIVE} />
           <Bar value="up" stack="bytes" class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} />
-          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} base={bottom()} class="stroke-foreground/40 stroke-1" />
+          <Rule value={(_, i) => (i === focused() ? top() : (undefined as unknown as number))} base={bottom()} class={FOCUS_RULE} />
           <TimeAxis domain={[rows()[0]?.tMs ?? 0, (rows()[rows().length - 1]?.tMs ?? 0) + s().binMs]} slices={rows().length} />
           {/* zero, and the most a second each way */}
-          <ValueAxis peak={top() / 1.2} low={bottom() < -1.2 ? bottom() / 1.2 : undefined} say={bytesRate} />
+          <ValueAxis peak={top() / HEADROOM.strip} low={bottom() < -HEADROOM.strip ? bottom() / HEADROOM.strip : undefined} say={bytesRate} />
         </Plot>
       </If>
     </If>
   );
+}
+
+/** What the bytes chart draws: sent above the line, received under it, each where any moved. */
+export function bytesLegend(s: Signals): LegendItem[] {
+  return [...(s.bytes.upBytes > 0 ? [{ label: t("bytesTime.up"), swatch: "bg-chart-1" }] : []), ...(s.bytes.downBytes > 0 ? [{ label: t("bytesTime.down"), swatch: "bg-chart-4" }] : [])];
+}
+
+/** What the sizes chart draws: the bodies sent and received, each where there were any. */
+export function sizesLegend(s: Signals): LegendItem[] {
+  const any = (list: Signals["sizes"]["request"]) => list.some((b) => b.count > 0);
+  return [...(any(s.sizes.request) ? [{ label: t("sizes.sent"), swatch: "bg-chart-1" }] : []), ...(any(s.sizes.response) ? [{ label: t("sizes.received"), swatch: "bg-chart-4" }] : [])];
 }
 
 /** How large the bodies were: requests sent and answers received, a pair of
@@ -492,7 +499,7 @@ export function Sizes(props: { signals: Signals }) {
         testID="sizes"
         data={rows()}
         xScale={{ type: "band", ...BARS.buckets }}
-        yScale={{ type: "linear", domain: [0, Math.max(1, ...rows().map((r) => Math.max(r.up, r.down))) * 1.22] }}
+        yScale={{ type: "linear", domain: [0, Math.max(1, ...rows().map((r) => Math.max(r.up, r.down))) * HEADROOM.plot] }}
         accessibilityLabel={label()}
         accessibilityValue={tipValue(tip())}
         appearGeneration={1}
@@ -504,9 +511,9 @@ export function Sizes(props: { signals: Signals }) {
         onHoverChange={({ index }) => hovered.set(index)}
         class={`${TICK_ROOM} ${PLOT} w-full`}
       >
-        <Bar value={(r) => shown(r, r.up)} class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].up)} labelClass={TOP_LABEL} />
-        <Bar value={(r) => shown(r, r.down)} class="fill-chart-4" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].down)} labelClass={TOP_LABEL} />
-        <PlotAxis tickValues={ticks()} format={(i) => rows()[i]?.name ?? ""} labelClass={BUCKET_TICK} />
+        <Bar value={(r) => shown(r, r.up)} class="fill-chart-1" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].up)} labelClass={LABEL.top} />
+        <Bar value={(r) => shown(r, r.down)} class="fill-chart-4" cornerRadii={TIP.up} inactiveOpacity={INACTIVE} label={(_, i) => n(rows()[i], rows()[i].down)} labelClass={LABEL.top} />
+        <PlotAxis tickValues={ticks()} format={(i) => rows()[i]?.name ?? ""} labelClass={LABEL.bucket} />
         {/* every bar says its own count over itself: the scale writes zero alone (no peak chip) */}
         <ValueAxis marked peak={Math.max(1, ...rows().map((r) => Math.max(r.up, r.down)))} say={(v) => t("sizes.peak", { n: count(v) })} />
       </Plot>
@@ -544,7 +551,7 @@ export function Throughput(props: { signals: Signals; max?: number }) {
         class={GUTTER}
         style={{ height: rowsHeight(rows().length) }}
       >
-        <Bar value="mibPerSec" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} stagger={0.3} label={(_, i) => speed(rows()[i].mibPerSec)} labelClass={BAR_LABEL} />
+        <Bar value="mibPerSec" class="fill-chart-1" cornerRadii={TIP.across} inactiveOpacity={INACTIVE} stagger={0.3} label={(_, i) => speed(rows()[i].mibPerSec)} labelClass={LABEL.bar} />
         <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.name ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
     </If>

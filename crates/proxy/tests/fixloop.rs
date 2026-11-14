@@ -398,6 +398,51 @@ fn back_is_judged_by_the_runs_compared_not_by_later_ones() {
     assert_eq!(state_of(&back.findings, "obs.hot"), State::Back);
 }
 
+/// 20.0 credited `--limit 30` then `--limit 5` as a fix that saved 25
+/// requests: a named program whose command changed says so, and less, more
+/// and fixed count no saving.
+#[test]
+fn a_changed_command_is_said_and_saves_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |minute: i64, limit: u64, records: &[Record]| {
+        let (path, mut header) = job(dir.path(), minute);
+        header.command = Some(format!("python job.py --limit {limit}"));
+        write_session(&path, &header, records);
+        sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(0));
+        fixloop::since_last(
+            dir.path(),
+            &path,
+            &header,
+            records,
+            run_of(records),
+            &|_: &str| RequestPrices::default(),
+        )
+        .unwrap()
+    };
+    at(1, 200, &hot(200));
+    let less = at(2, 20, &hot(20));
+    let c = less.change.as_ref().unwrap();
+    assert_eq!(c.command_changed.as_deref(), Some("--limit 200 → 20"));
+    let f = less
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.hot"))
+        .unwrap();
+    assert_eq!(f.state, State::Less);
+    assert!(f.measured.is_none() && f.saved.is_none(), "{f:#?}");
+    let fixed = at(3, 1, &hot(1));
+    let f = fixed
+        .findings
+        .iter()
+        .find(|f| f.identity.starts_with("obs.hot"))
+        .unwrap();
+    assert_eq!(f.state, State::Fixed);
+    assert!(f.measured.is_none() && f.saved.is_none(), "{f:#?}");
+    // the same command again: a fix is counted as before
+    let again = at(4, 1, &hot(1));
+    assert!(again.change.unwrap().command_changed.is_none());
+}
+
 /// Less is kept: over its threshold again it is back, not new.
 #[test]
 fn less_is_kept_and_over_its_threshold_again_is_back() {

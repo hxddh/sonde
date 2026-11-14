@@ -30,6 +30,57 @@ pub fn program_key(command: Option<&str>) -> Option<String> {
     Some(crate::profile::stable_words(&words.join(" ")))
 }
 
+/// What changed between two runs' commands beyond what a program's key
+/// leaves out (a date, an id): the words that differ, after the option they
+/// follow, `--limit 200 → 20`. A named program's runs may differ so; less of
+/// a finding then is a smaller workload, not a fix. None when the commands
+/// are the same by their key, or either is not known. Secrets are hidden.
+pub fn command_change(a: Option<&str>, b: Option<&str>) -> Option<String> {
+    let (a, b) = (a?, b?);
+    let (ka, kb) = (program_key(Some(a))?, program_key(Some(b))?);
+    if ka == kb {
+        return None;
+    }
+    let words = |c: &str| -> Vec<String> {
+        shell_words(c)
+            .iter()
+            .map(|w| without_trial(&unquote(&scrub_word(w))))
+            .flat_map(|w| w.split_whitespace().map(String::from).collect::<Vec<_>>())
+            .collect()
+    };
+    let (wa, wb) = (words(a), words(b));
+    if wa == wb {
+        return None;
+    }
+    let same = wa.iter().zip(&wb).take_while(|(x, y)| x == y).count();
+    let tail = wa[same..]
+        .iter()
+        .rev()
+        .zip(wb[same..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let part = |w: &[String]| -> String {
+        let t = w.join(" ");
+        if t.is_empty() {
+            "—".into()
+        } else if t.chars().count() > 40 {
+            format!("{}…", t.chars().take(39).collect::<String>())
+        } else {
+            t
+        }
+    };
+    let option = same
+        .checked_sub(1)
+        .map(|i| &wa[i])
+        .filter(|w| w.starts_with('-'))
+        .map_or(String::new(), |w| format!("{w} "));
+    Some(format!(
+        "{option}{} → {}",
+        part(&wa[same..wa.len() - tail]),
+        part(&wb[same..wb.len() - tail])
+    ))
+}
+
 /// A word without the trial's place in it (`{trial}`, `$SONDE_TRIAL`,
 /// `${SONDE_TRIAL}`, `%SONDE_TRIAL%`) and the one separator before it:
 /// `s3://b/etl-{trial}/` is `s3://b/etl/`.
@@ -206,6 +257,62 @@ pub fn program_name(command: &str) -> Option<String> {
         first.get_or_insert(name);
     }
     first
+}
+
+/// A short name for a program from its command: the script an interpreter
+/// runs (`etl` of `python etl.py --day 2`), else the program itself. Letters,
+/// digits, `-` and `_`: what `check --init` names a program, and what its
+/// session files are named by.
+pub fn short_name(command: &str) -> Option<String> {
+    const INTERPRETERS: &[&str] = &[
+        "python", "python3", "node", "ruby", "java", "bash", "sh", "deno", "bun", "perl", "php",
+        "uv", "poetry", "npx", "dotnet",
+    ];
+    let program = program_name(command)?;
+    let stem = |f: &str| {
+        let name = f.rsplit(['/', '\\']).next().unwrap_or(f);
+        name.split('.').next().unwrap_or(name).to_string()
+    };
+    let base = program.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    let mut name = stem(&program);
+    if INTERPRETERS.contains(&base) || INTERPRETERS.contains(&program.as_str()) {
+        // what it runs: the first word after it that is a file, not an option
+        let after = command
+            .split_whitespace()
+            .skip_while(|w| !w.ends_with(&program));
+        if let Some(script) = after
+            .skip(1)
+            .find(|w| !w.starts_with('-') && w.contains('.') && !w.contains('='))
+        {
+            name = stem(script);
+        }
+    }
+    safe_name(&name)
+}
+
+/// A name with letters, digits, `-` and `_` only (each other character a
+/// `-`, none at either end): none when nothing is left.
+fn safe_name(name: &str) -> Option<String> {
+    let name: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let name = name.trim_matches('-').to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// What a run's session file is named by, after its time: the program's
+/// name (`--name`, `[program] name`), else its command's short name
+/// ([`short_name`]: `etl` of `python3 etl.py`, not `python3`).
+pub fn file_stem(name: Option<&str>, command: Option<&str>) -> Option<String> {
+    name.and_then(safe_name)
+        .or_else(|| command.and_then(short_name))
 }
 
 /// The command with the value of every variable it sets hidden
@@ -885,6 +992,28 @@ pub fn md_text(t: &str) -> String {
     out
 }
 
+/// A sentence of sonde's own with code spans in it (``program `etl.py` ``), as
+/// Markdown: each span kept a span, its text as written (a backslash in a
+/// span is shown, not read as an escape), the rest as [`md_text`]. A
+/// sentence whose backticks do not pair is all text.
+pub fn md_said(t: &str) -> String {
+    let parts: Vec<&str> = t.split('`').collect();
+    if parts.len().is_multiple_of(2) {
+        return md_text(t);
+    }
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if i % 2 == 0 {
+                md_text(p)
+            } else {
+                format!("`{}`", p.replace(['\n', '\r'], " "))
+            }
+        })
+        .collect()
+}
+
 /// A check as a pull request's comment (`sonde check -f markdown`, and the
 /// app's preview of it): the verdicts, since which run, what is new, what is
 /// expected, and the run's findings with the code that sent their requests.
@@ -1102,18 +1231,18 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
     if let Some((code, why)) = m.failed {
         md.push_str(&format!("\n> ❌ **The program failed** (exit {code})"));
         match why {
-            Some(w) => md.push_str(&format!(": {}\n", md_text(w))),
+            Some(w) => md.push_str(&format!(": {}\n", md_said(w))),
             None => md.push('\n'),
         }
     }
     if let Some(t) = m.since {
-        md.push_str(&format!("\n{}\n", md_text(t)));
+        md.push_str(&format!("\n{}\n", md_said(t)));
     }
     if let Some(why) = m.no_baseline {
         md.push_str(&format!(
             "\n> ⚠️ {}: nothing was compared\n",
             // what is missing, not how to set one on this machine
-            md_text(why.split(": ").next().unwrap_or(why))
+            md_said(why.split(": ").next().unwrap_or(why))
         ));
     }
     // a baseline's rows are said as what changed, below
@@ -1544,10 +1673,28 @@ mod tests {
     }
 
     #[test]
+    fn a_session_file_is_named_by_its_program_not_its_interpreter() {
+        // 20.0 named every Python run `…-python3.sonde`
+        assert_eq!(
+            file_stem(None, Some("python3 etl.py --day 1")).as_deref(),
+            Some("etl")
+        );
+        assert_eq!(
+            file_stem(Some("nightly etl"), Some("python3 etl.py")).as_deref(),
+            Some("nightly-etl")
+        );
+        assert_eq!(
+            file_stem(None, Some("./load --all")).as_deref(),
+            Some("load")
+        );
+        assert_eq!(file_stem(None, None), None);
+    }
+
+    #[test]
     fn programs_are_their_commands_and_replays_are_none() {
         assert_eq!(
             program_key(Some("  python3  etl.py  --day 1 ")).as_deref(),
-            Some("python3 etl.py --day {n}")
+            Some("python3 etl.py --day 1")
         );
         assert_eq!(
             program_key(Some("sh -c 'aws s3 cp job1.py s3://b/x'")).as_deref(),
@@ -1593,6 +1740,62 @@ mod tests {
             key("python etl.py --day tue")
         );
         assert_ne!(key("python load.py"), key("python etl.py"));
+        // a number is an argument: a smaller workload is another command
+        assert_ne!(
+            key("python etl.py --limit 30"),
+            key("python etl.py --limit 5")
+        );
+        assert_ne!(
+            key("python etl.py --limit=30"),
+            key("python etl.py --limit=5")
+        );
+        // a value that is a date, a time or an id goes, as an option's too
+        assert_eq!(
+            key("python etl.py --date=2026-11-14"),
+            key("python etl.py --date=2026-11-13")
+        );
+        assert_eq!(
+            key("python etl.py --since 1731542400"),
+            key("python etl.py --since 1731628800")
+        );
+        assert_eq!(
+            key("./job --run job-3fa2b1c9"),
+            key("./job --run job-0e02b2c3")
+        );
+        // a Hive folder in a path: its date goes, its hour is an argument
+        assert_eq!(
+            key("etl s3://b/in/date=2026-11-13/"),
+            key("etl s3://b/in/date=2026-11-14/")
+        );
+        assert_eq!(key("python3 job1.py"), "python3 job1.py");
+    }
+
+    #[test]
+    fn a_changed_command_says_the_words_that_changed() {
+        let change = |a: &str, b: &str| command_change(Some(a), Some(b));
+        assert_eq!(
+            change("python etl.py --limit 200", "python etl.py --limit 20").as_deref(),
+            Some("--limit 200 → 20")
+        );
+        assert_eq!(
+            change("python etl.py --limit 200 --v", "python etl.py --v").as_deref(),
+            Some("--limit 200 → —")
+        );
+        assert_eq!(
+            change("python a.py s3://b/x", "python b.py s3://b/x").as_deref(),
+            Some("a.py → b.py")
+        );
+        // what a program's key leaves out is no change
+        assert_eq!(
+            change("etl --date 2026-11-13", "etl --date 2026-11-14"),
+            None
+        );
+        assert_eq!(change("etl", "etl"), None);
+        // a secret never shows
+        assert_eq!(
+            change("TOKEN=abc etl", "TOKEN=xyz etl --all").as_deref(),
+            Some("— → --all")
+        );
     }
 
     #[test]
@@ -1902,7 +2105,7 @@ mod tests {
             },
         );
         assert!(
-            md.contains("> ⚠️ no baseline yet for program \\`etl\\`: nothing was compared"),
+            md.contains("> ⚠️ no baseline yet for program `etl`: nothing was compared"),
             "{md}"
         );
         // a note of the baseline's that is a warning now is not new: the

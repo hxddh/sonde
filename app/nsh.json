@@ -1,8 +1,8 @@
 {
   "name": "sonde",
   "id": "dev.sonde.app",
-  "version": "20.0.0",
-  "build": 21,
+  "version": "21.0.0",
+  "build": 22,
   "icon": {
     "macos": "assets/icon-macos.png",
     "windows": "assets/icon-fill.png",
@@ -23,14 +23,24 @@
   "theme": "theme.json",
   "tailwind": {
     "fontSize": {
-      "caption": 11,
-      "small": 12,
-      "body": 13,
-      "heading": 15,
-      "title": 20
+      "caption": [11, 1.4545455],
+      "caption-cjk": [12, 1.3333334],
+      "small": [12, 1.5],
+      "body": [13, 1.5384616],
+      "heading": [15, 1.4666667],
+      "title": [20, 1.4]
+    },
+    "shadow": {
+      "control": "0 1px 2px rgb(0 0 0 / 0.10)",
+      "popup": "0 0 0 0.5px rgb(0 0 0 / 0.04), 0 4px 12px rgb(0 0 0 / 0.10), 0 1px 3px rgb(0 0 0 / 0.06)",
+      "modal": "0 0 0 0.5px rgb(0 0 0 / 0.05), 0 16px 48px rgb(0 0 0 / 0.20), 0 2px 8px rgb(0 0 0 / 0.08)"
+    },
+    "ease": {
+      "standard": [0.22, 1, 0.36, 1]
     }
   },
   "capabilities": {
+    "application": true,
     "clipboard": true,
     "notifications": true,
     "windows": true,

@@ -14,8 +14,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Native Shell, pinned (docs/decisions.md D-002): the tag v0.5.0
-  NSH_REV: f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1
+  # Native Shell, pinned (docs/decisions.md D-207): its main at 2ca3b80
+  NSH_REV: 2ca3b8005cf00907c8c501ad9ba5f21f576fee84
 
 jobs:
   plan:
@@ -63,28 +63,72 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        id: rust
         with: { targets: wasm32-unknown-unknown }
+      # the same page while its sources, Native Shell and Rust are the same:
+      # kept, and built again only when one of them changed
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: built
+        with:
+          path: viewer/.nsh/out/sonde-viewer
+          key: viewer-${{ env.NSH_REV }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('viewer/**', 'app/src/**', 'app/locales/**', 'app/theme.json') }}
       # `nsh package --target web` needs Native Shell's web runtime, which an
-      # installed nsh does not carry: a checkout's nsh builds it.
+      # installed nsh does not carry: in a checkout's target, nsh builds it
       - name: Native Shell checkout at the pinned commit
+        if: steps.built.outputs.cache-hit != 'true'
         run: |
           git init -q "$RUNNER_TEMP/nsh" && cd "$RUNNER_TEMP/nsh"
           git fetch -q --depth 1 https://github.com/longbridge/nsh "$NSH_REV" && git checkout -q FETCH_HEAD
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { key: viewer, workspaces: "${{ runner.temp }}/nsh -> target" }
-      - run: sudo apt-get update -q && sudo apt-get install -y -q llvm
+        if: steps.built.outputs.cache-hit != 'true'
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", key: viewer, workspaces: "${{ runner.temp }}/nsh -> target" }
+      - uses: ./.github/actions/nsh
+        if: steps.built.outputs.cache-hit != 'true'
+        with: { rev: "${{ env.NSH_REV }}" }
+      - if: steps.built.outputs.cache-hit != 'true'
+        run: sudo apt-get update -q && sudo apt-get install -y -q llvm
       - name: Build the viewer
+        if: steps.built.outputs.cache-hit != 'true'
         run: |
-          cargo build --release --locked --manifest-path "$RUNNER_TEMP/nsh/Cargo.toml" -p nsh-cli
-          cd viewer && "$RUNNER_TEMP/nsh/target/release/nsh" package App.tsx --target web
-          ls -la .nsh/out/sonde-viewer
+          # the installed nsh is this commit's nsh-cli: in the checkout's
+          # target/release it builds the web runtime from the checkout, with
+          # no build of its own (else, said, the checkout's is built)
+          nsh="$RUNNER_TEMP/nsh/target/release/nsh"
+          mkdir -p "$(dirname "$nsh")" && cp "$(command -v nsh)" "$nsh"
+          if ! (cd viewer && "$nsh" package App.tsx --target web); then
+            echo "::warning title=Viewer::the installed nsh did not build the web runtime: building the checkout's nsh-cli"
+            cargo build --release --locked --manifest-path "$RUNNER_TEMP/nsh/Cargo.toml" -p nsh-cli
+            (cd viewer && "$nsh" package App.tsx --target web)
+          fi
+          ls -la viewer/.nsh/out/sonde-viewer
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonde-viewer
           path: viewer/.nsh/out/sonde-viewer
 
+  bundle:
+    # the app's bundle the terminal binary embeds (`sonde tui`): JavaScript,
+    # the same for every platform, built once (a terminal build then needs
+    # no Native Shell of its own)
+    needs: plan
+    if: needs.plan.outputs.terminal != '[]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", key: bundle, workspaces: ". -> target\napp/.nsh/rust -> ../../target" }
+      - uses: ./.github/actions/nsh
+        with: { rev: "${{ env.NSH_REV }}" }
+      - name: Bundle the app
+        run: cd app && nsh build App.tsx --release && ls -la .nsh/out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sonde-bundle
+          path: app/.nsh/out
+
   terminal:
-    needs: [plan, viewer]
+    needs: [plan, viewer, bundle]
     if: needs.plan.outputs.terminal != '[]'
     strategy:
       fail-fast: false
@@ -98,14 +142,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with: { targets: "${{ matrix.target }}" }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { key: "${{ matrix.target }}" }
-      - uses: ./.github/actions/nsh
-        with: { rev: "${{ env.NSH_REV }}" }
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", key: "${{ matrix.target }}" }
       - name: musl toolchain
         if: contains(matrix.target, 'musl')
         run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
-      - name: Bundle the app
-        run: cd app && nsh build App.tsx --release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: sonde-bundle, path: app/.nsh/out }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - name: Build sonde (CLI + TUI)
@@ -163,7 +205,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { key: "desktop-${{ matrix.target }}" }
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}", key: "desktop-${{ matrix.target }}" }
       - if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev libwebkitgtk-6.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev clang
       - uses: ./.github/actions/nsh
@@ -193,6 +235,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}" }
       - uses: ./.github/actions/nsh
         with: { rev: "${{ env.NSH_REV }}" }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

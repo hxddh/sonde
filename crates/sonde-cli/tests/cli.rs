@@ -34,6 +34,15 @@ fn a_mistake_in_the_command_is_a_usage_error_and_help_is_not() {
     let help = sonde(t.path(), &["--help"]);
     assert_eq!(help.status.code(), Some(0));
     assert!(stdout(&help).contains("Usage"));
+    // the usage of a missing argument names what is required, not the
+    // directories the environment gives (20.0 named them as required)
+    let missing = sonde(t.path(), &["bucket", "size"]);
+    assert_eq!(missing.status.code(), Some(64));
+    assert!(
+        stderr(&missing).contains("Usage: sonde bucket size --bucket <BUCKET>\n"),
+        "{}",
+        stderr(&missing)
+    );
 }
 
 #[test]
@@ -98,7 +107,7 @@ fn the_demo_records_a_session_that_every_command_reads() {
     let mut lines = csv.lines();
     assert_eq!(
         lines.next(),
-        Some("session,recorded,program,endpoint,requests,took,errors,trials,size")
+        Some("session,recorded,program,endpoint,requests,took,errors,exit,trials,size")
     );
     let name = lines.next().unwrap().split(',').next().unwrap().to_string();
     assert!(lines.next().is_none());
@@ -408,36 +417,6 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
     assert_eq!(o.status.code(), Some(0), "{md}");
     assert!(md.contains("**Against the baseline**"), "{md}");
     assert!(md.contains("[The report](https://x.test/r)"), "{md}");
-    // the program's status heads it; JSON says it too
-    let o = sonde(
-        t.path(),
-        &[
-            "check",
-            &names[1],
-            "--max-requests",
-            "1000",
-            "-f",
-            "markdown",
-            "--program-exit",
-            "3",
-        ],
-    );
-    let md = stdout(&o);
-    assert!(md.contains("> ❌ **The program failed** (exit 3)"), "{md}");
-    let o = sonde(
-        t.path(),
-        &[
-            "check",
-            &names[1],
-            "--max-requests",
-            "1000",
-            "-f",
-            "json",
-            "--program-exit",
-            "3",
-        ],
-    );
-    assert!(stdout(&o).contains("\"programExit\": 3"), "{}", stdout(&o));
 }
 
 #[test]
@@ -700,14 +679,14 @@ fn a_folder_of_logs_is_imported_as_one_session() {
     // named by the store the log is of, not by the folder it was in
     assert!(shown.contains("to s3.amazonaws.com"), "{shown}");
 
-    // a folder with no log in it is a mistake in the command
+    // a folder with nothing in it is nothing to import: bad data
     let none = t.path().join("none");
     std::fs::create_dir(&none).unwrap();
     assert_eq!(
         sonde(t.path(), &["import", none.to_str().unwrap()])
             .status
             .code(),
-        Some(64)
+        Some(65)
     );
 }
 
@@ -863,6 +842,14 @@ fn run_exits_as_a_shell_would_when_a_signal_ends_the_program() {
         "{}",
         stdout(&s)
     );
+    // and listed with its exit, not as a clean run
+    let listed = sonde(t.path(), &["sessions", "-f", "json"]);
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&listed)).unwrap();
+    assert_eq!(doc[0]["exit"], 143, "{doc}");
+    let table = stdout(&sonde(t.path(), &["sessions"]));
+    let (head, row) = (table.lines().next().unwrap(), table.lines().nth(2).unwrap());
+    let at = head.find("exit").expect("an exit column");
+    assert!(row[at..].starts_with("143"), "{table}");
 }
 
 fn stderr(o: &Output) -> String {
@@ -933,6 +920,35 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
     let o = sonde(t.path(), &["import", "nosuchdir"]);
     assert_eq!(o.status.code(), Some(64));
     assert!(stderr(&o).contains("nosuchdir"), "{}", stderr(&o));
+}
+
+/// 20.0 compared two imports of one log as "two different programs" and
+/// then "the same … findings", with a waiting `show` says is not known.
+#[test]
+fn two_imports_compare_without_contradicting_themselves() {
+    let t = tempfile::tempdir().unwrap();
+    let log = t.path().join("access.log");
+    std::fs::write(&log, A_LOG_LINE.repeat(3)).unwrap();
+    let (a, b) = (t.path().join("a.sonde"), t.path().join("b.sonde"));
+    for f in [&a, &b] {
+        let o = sonde(
+            t.path(),
+            &["import", log.to_str().unwrap(), "-o", f.to_str().unwrap()],
+        );
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    }
+    let (a, b) = (a.to_str().unwrap(), b.to_str().unwrap());
+    let text = stdout(&sonde(t.path(), &["compare", a, b]));
+    assert!(text.contains("neither is a run of a program"), "{text}");
+    assert!(!text.contains("two different programs"), "{text}");
+    assert!(
+        text.contains("no change: the same requests, errors and cost\n"),
+        "{text}"
+    );
+    assert!(text.contains("waiting    — (not known"), "{text}");
+    let doc: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["compare", a, b, "-f", "json"]))).unwrap();
+    assert_eq!(doc["waitingKnown"], false, "{doc}");
 }
 
 #[test]
@@ -1490,13 +1506,13 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
     let monday = session_of(
         t.path(),
         "monday.sonde",
-        "python etl.py --day 1",
+        "python etl.py --date 2026-11-09",
         "2026-11-09T02:00:00Z",
     );
     let tuesday = session_of(
         t.path(),
         "tuesday.sonde",
-        "python etl.py --day 2",
+        "python etl.py --date 2026-11-10",
         "2026-11-10T02:00:00Z",
     );
     let set = sonde(
@@ -2024,8 +2040,8 @@ fn sonde_in(dirs: &Path, cwd: &Path, args: &[&str]) -> Output {
 }
 
 /// 19.0 passed `check --program-exit 3` "within budget": a run whose
-/// program failed fails its check in every format, by the exit CI passes or
-/// the one the run kept; and it is no baseline, nor `--init`'s source.
+/// program failed fails its check in every format, by the exit the run
+/// kept; and it is no baseline, nor `--init`'s source.
 #[test]
 fn check_fails_a_run_whose_program_failed() {
     let t = tempfile::tempdir().unwrap();
@@ -2034,18 +2050,13 @@ fn check_fails_a_run_whose_program_failed() {
     let ok = sonde_in(t.path(), &w, &["run", "--demo", "--", "true"]);
     assert_eq!(ok.status.code(), Some(0), "{}", stderr(&ok));
     let budget = ["--max-requests", "100"];
-    // CI says the program failed: the run did not
+    // the flag is gone: the session keeps the exit
     let c = sonde_in(
         t.path(),
         &w,
         &[&["check", "--program-exit", "3"][..], &budget].concat(),
     );
-    assert_eq!(c.status.code(), Some(1), "{}", stdout(&c));
-    assert!(
-        stdout(&c).contains("the program failed (exit 3)"),
-        "{}",
-        stdout(&c)
-    );
+    assert_eq!(c.status.code(), Some(64), "{}", stdout(&c));
     // the run kept that its program failed
     let failed = sonde_in(t.path(), &w, &["run", "--demo", "--", "sh", "-c", "exit 3"]);
     assert_eq!(failed.status.code(), Some(3), "{}", stderr(&failed));
@@ -2061,6 +2072,13 @@ fn check_fails_a_run_whose_program_failed() {
             "{format}: {}",
             stdout(&c)
         );
+        if format == "markdown" {
+            assert!(
+                stdout(&c).contains("> ❌ **The program failed** (exit 3)"),
+                "{}",
+                stdout(&c)
+            );
+        }
         if format == "json" {
             let j: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
             assert_eq!(j["passed"], false);
@@ -2106,14 +2124,54 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
         "{}",
         stderr(&ck)
     );
-    // nothing recorded here: refused, not another's
-    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
-    assert_eq!(ck.status.code(), Some(64), "{}", stdout(&ck));
+    // show, compare and share take the same run: this folder's, not the newest
+    let shown = sonde_in(t.path(), &a, &["show", "--summary", "-f", "json"]);
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
+    assert_eq!(doc["session"]["command"], "true", "{doc}");
+    let compared = sonde_in(t.path(), &a, &["compare"]);
     assert!(
-        stderr(&ck).contains("no program was recorded in this folder"),
+        stdout(&compared).contains("first run of `true`")
+            || stderr(&compared).contains("first run of `true`"),
+        "{}{}",
+        stdout(&compared),
+        stderr(&compared)
+    );
+    // nothing recorded here: the newest run, said so (and it failed)
+    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
+    assert_eq!(ck.status.code(), Some(1), "{}", stdout(&ck));
+    assert!(
+        stderr(&ck)
+            .contains("the newest run (program `sh -c exit 3`; none was recorded in this folder)"),
         "{}",
         stderr(&ck)
     );
+    // and this folder's sonde.toml is not its budget: it is another program's run
+    std::fs::write(c.join("sonde.toml"), "[check]\nmax-requests = 0\n").unwrap();
+    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
+    let err = stderr(&ck);
+    assert!(
+        err.contains("recorded outside the folder of")
+            && err.contains("its [check] is not applied"),
+        "{err}"
+    );
+    assert!(!stdout(&ck).contains("≤ 0"), "{}", stdout(&ck));
+    // the same run named: the same
+    let other = err
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("checking ")
+                .and_then(|l| l.rsplit(": ").next())
+        })
+        .unwrap()
+        .to_string();
+    let ck = sonde_in(t.path(), &c, &["check", &other]);
+    assert!(
+        stderr(&ck).contains("its [check] is not applied"),
+        "{}",
+        stderr(&ck)
+    );
+    assert_eq!(ck.status.code(), Some(1), "the run failed: {}", stdout(&ck));
+    std::fs::remove_file(c.join("sonde.toml")).unwrap();
     // a project's program by its name, wherever it ran
     std::fs::write(c.join("sonde.toml"), "[program]\nname = \"true\"\n").unwrap();
     let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
@@ -2144,6 +2202,12 @@ fn check_init_names_the_action_at_this_major_version() {
     let major = env!("CARGO_PKG_VERSION").split('.').next().unwrap();
     assert!(
         stderr(&c).contains(&format!("uses: hxddh/sonde@v{major}\n")),
+        "{}",
+        stderr(&c)
+    );
+    // `true` sends nothing: a budget of no requests is said for what it is
+    assert!(
+        stderr(&c).contains("its SDK probably did not use the endpoint"),
         "{}",
         stderr(&c)
     );
@@ -2294,6 +2358,35 @@ fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
     );
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     assert_ne!(std::fs::read(&out).unwrap(), b"mine");
+    // the same for every command that writes a file it is given
+    let log = t.path().join("access.log");
+    std::fs::write(&log, A_LOG_LINE).unwrap();
+    let mine = t.path().join("mine.txt");
+    let m_ = mine.to_str().unwrap();
+    for args in [
+        vec!["import", log.to_str().unwrap(), "-o", m_],
+        vec!["share", o_, "--html", "-o", m_],
+        vec!["share", o_, "--otlp", "-o", m_],
+    ] {
+        std::fs::write(&mine, "mine").unwrap();
+        let o = sonde(t.path(), &args);
+        assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
+        assert!(
+            stderr(&o).contains("--force writes over it"),
+            "{}",
+            stderr(&o)
+        );
+        assert_eq!(std::fs::read_to_string(&mine).unwrap(), "mine", "{args:?}");
+        let forced = [args.clone(), vec!["--force"]].concat();
+        let o = sonde(t.path(), &forced);
+        assert_eq!(o.status.code(), Some(0), "{forced:?}: {}", stderr(&o));
+        assert_ne!(std::fs::read_to_string(&mine).unwrap_or_default(), "mine");
+    }
+    // an import with nothing in it is bad data
+    let empty = t.path().join("empty.log");
+    std::fs::write(&empty, "\n").unwrap();
+    let o = sonde(t.path(), &["import", empty.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(65), "{}", stderr(&o));
     // two at once, one file
     let both = t.path().join("both.sonde");
     let b_ = both.to_str().unwrap().to_string();
@@ -2359,8 +2452,13 @@ fn a_run_ended_by_sigterm_says_the_code_it_exits_with() {
     assert!(killed.success());
     let o = child.wait_with_output().unwrap();
     assert_eq!(o.status.code(), Some(143), "{}", stderr(&o));
-    assert!(stderr(&o).contains("(exit 143)"), "{}", stderr(&o));
-    assert!(!stderr(&o).contains("137"), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("sonde was sent SIGTERM: the program was stopped (exit 143)"),
+        "{}",
+        stderr(&o)
+    );
+    // (not killed: no exit 137 said; the session's name holds the time, its digits any)
+    assert!(!stderr(&o).contains("exit 137"), "{}", stderr(&o));
 }
 
 /// A CloudTrail file cut short is bad data (65), said where it broke.

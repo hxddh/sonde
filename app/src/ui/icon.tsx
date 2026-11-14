@@ -21,6 +21,7 @@ export type Tint =
   | "status-client"
   | "status-server"
   | "status-refused"
+  | "status-injected"
   | "warn"
   | "info"
   | "pass"

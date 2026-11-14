@@ -47,6 +47,10 @@
       "trials": {
         "type": "string",
         "description": "Its last trial, in short."
+      },
+      "exit": {
+        "type": "integer",
+        "description": "How its program exited (128 + a signal; 143 when sonde was sent SIGTERM); absent when not known (a proxy's, a replay's, an import's)."
       }
     },
     "required": [

@@ -23,7 +23,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "20.0.0"
+version = "21.0.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/hxddh/sonde"
@@ -86,12 +86,12 @@ async-trait = "0.1"
 tempfile = "3"
 
 # Native Shell, pinned to one commit of longbridge/nsh (see docs/decisions.md D-002):
-# the tag v0.5.0.
-nsh-core = { git = "https://github.com/longbridge/nsh", rev = "f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1" }
-nsh-base = { git = "https://github.com/longbridge/nsh", rev = "f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1" }
-nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1" }
-nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1" }
-nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1" }
+# its main at 2ca3b80 (after v0.5.1): popups that come and go, quit requests, first baselines.
+nsh-core = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
+nsh-base = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
+nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
+nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
+nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
 
 [profile.release]
 lto = "thin"

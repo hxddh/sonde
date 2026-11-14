@@ -29,7 +29,7 @@ const AREA: Record<Area, Key> = {
 export const areaLabel = (a: Area) => t(AREA[a]);
 export const sectionLabel = (s: Section) => t(LABEL[s]);
 
-export const verdictTone = (v: Verdict): Tone => (v === "pass" ? "pass" : v === "fail" ? "fail" : v === "differs" ? "differs" : v === "unsupported" ? "unsupported" : v === "error" ? "warn" : "neutral");
+export const verdictTone = (v: Verdict): Tone => (v === "pass" ? "ok" : v === "fail" ? "fail" : v === "differs" || v === "error" ? "warn" : "quiet");
 
 export const verdictLabel = (v: Verdict) => t(`verdict.${v}` as Key);
 

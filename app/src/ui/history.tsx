@@ -3,7 +3,7 @@
 
 import { type JSX, List, resource, Scroll, signal, Text, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
-import { count, date, day, duration, factor, hm, money } from "../format";
+import { costColumn, count, date, day, duration, factor, hm, money } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { scenarioLabel } from "../trials";
@@ -11,7 +11,7 @@ import { api } from "../native";
 import { copy, report, sessionsChanged, sessionsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH } from "./kit";
+import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH, TEXT } from "./kit";
 import { cost, RunTrend, Sparkline } from "./plots";
 import { tellApart } from "./sessionlist";
 import { programOf, scrubCommand } from "./sessionview";
@@ -19,7 +19,7 @@ import { programOf, scrubCommand } from "./sessionview";
 export { scenarioLabel };
 
 
-export const STANDING = { survived: "pass", degraded: "warn", broke: "fail", untested: "neutral", refused: "refused" } as const;
+export const STANDING = { survived: "ok", degraded: "warn", broke: "fail", untested: "quiet", refused: "refused" } as const;
 
 /** The standings "Try again what broke" takes up: what did not survive, and what the policy refused (never judged). */
 export const AGAIN: Trial["standing"][] = ["broke", "degraded", "refused"];
@@ -122,8 +122,8 @@ export function TrialWhere(props: { trial: Trial; /** its advice was said under 
               {/* the request, then (after a dot) the program's line when the run named its callers */}
               <Text class="min-w-0 flex-1 text-small leading-5 text-foreground">
                 {`${x().kind} `}
-                <Text class="font-mono text-caption text-foreground">{x().key}</Text>
-                <If when={x().caller}>{(c) => <Text class="font-mono text-caption text-muted-foreground">{` · ${c()}`}</Text>}</If>
+                <Text class={TEXT.code}>{x().key}</Text>
+                <If when={x().caller}>{(c) => <Text class={TEXT.codeQuiet}>{` · ${c()}`}</Text>}</If>
               </Text>
             </View>
           )}
@@ -188,11 +188,11 @@ export function TrialRow(props: { trial: Trial; first: boolean; sameAs?: Trial |
     >
       <View class={`min-w-0 flex-1 gap-1 ${x().session ? "" : "opacity-60"}`}>
         <View class="flex-row flex-wrap items-baseline gap-x-2">
-          <Text class="text-body text-foreground">{scenarioLabel(x().scenario)}</Text>
-          <Text testID="trial-id" class="font-mono text-caption text-muted-foreground">{trialAsked(x())}</Text>
+          <Text class={TEXT.body}>{scenarioLabel(x().scenario)}</Text>
+          <Text testID="trial-id" class={TEXT.codeQuiet}>{trialAsked(x())}</Text>
         </View>
         {/* the scenario over the program's runs: how many stood so, since when */}
-        <If when={trialSince(x())}>{(h) => <Text testID={props.historyID} class="text-small text-foreground">{h()}</Text>}</If>
+        <If when={trialSince(x())}>{(h) => <Text testID={props.historyID} class={TEXT.small}>{h()}</Text>}</If>
         {/* what it found, and why it is not "survived": one quiet line */}
         <If when={[trialText(x()), ...(x().standing === "survived" ? [] : trialReasons(x()))].filter(Boolean).join(" · ")}>
           {(line) => <Muted class="text-small">{line()}</Muted>}
@@ -202,7 +202,7 @@ export function TrialRow(props: { trial: Trial; first: boolean; sameAs?: Trial |
           <TrialWhere trial={x()} sameAs={props.sameAs} />
         </If>
         <If when={!x().session}>
-          <Muted class="text-caption">{t("trial.sessionGone")}</Muted>
+          <Muted class={TEXT.captionSize}>{t("trial.sessionGone")}</Muted>
         </If>
       </View>
     </ListRow>
@@ -231,7 +231,7 @@ function Verdicts(props: { h: ProgramHistory }) {
           <Muted class="text-small">{t("history.commentHint")}</Muted>
           <Card pad="none">
             <Scroll style={{ maxHeight: SIZES.dialogScroll }} contentClass="p-4">
-              <TextView testID="comment-markdown" markdown={props.h.markdown!} class="text-body text-foreground" />
+              <TextView testID="comment-markdown" markdown={props.h.markdown!} class={TEXT.body} />
             </Scroll>
           </Card>
           <Actions>
@@ -261,7 +261,7 @@ function SinceRow(props: { h: ProgramHistory }) {
   return (
     <View testID="history-since" class="flex-row items-center gap-2">
       <Icon name="git-compare-arrows" tint="warn" />
-      <Text class="min-w-0 flex-1 tabular-nums text-small text-foreground">{text()}</Text>
+      <Text class={`min-w-0 flex-1 tabular-nums ${TEXT.small}`}>{text()}</Text>
       <If when={!terminal() && canDiff()}>
         <Button small variant="outline" icon="git-compare-arrows" label={t("history.codeChangeOpen")} onPress={() => open.set(true)} testID="history-code-change" />
       </If>
@@ -282,12 +282,14 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
   );
   const ext = (p: string) => p.split(".").pop() ?? "";
   return (
-    <Modal open size="wide" onClose={props.onClose} testID="code-change">
+    // one frame while its change loads and once it is there: the dialog keeps its size
+    <Modal open steady size="wide" onClose={props.onClose} testID="code-change">
       <Title>{t("history.codeChange")}</Title>
+      <ModalBody>
       <Await loading={change.loading()} error={change.error()} retry={() => change.refetch()}>
         <If when={change()}>
           {(x) => (
-            <Scroll style={{ maxHeight: SIZES.dialogScroll }} contentClass="gap-3">
+            <View class="gap-3">
               <Muted class="font-mono text-small">{`${x().from.slice(0, 7)} → ${x().to.slice(0, 7)}`}</Muted>
               <If when={x().files.length} else={<Muted>{t("history.noCodeChange")}</Muted>}>
                 <Each of={x().files} key={(f) => f.path}>
@@ -312,12 +314,13 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
               <If when={x().more > 0}>
                 <Muted class="text-small">{t("history.moreFiles", { n: x().more })}</Muted>
               </If>
-            </Scroll>
+            </View>
           )}
         </If>
       </Await>
+      </ModalBody>
       <Actions>
-        <Button variant="outline" label={t("common.close")} onPress={props.onClose} testID="code-change-close" />
+        <Button variant="primary" label={t("common.close")} onPress={props.onClose} testID="code-change-close" />
       </Actions>
     </Modal>
   );
@@ -350,6 +353,9 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
     }
   };
   const n = (v: number) => count(Math.round(v));
+  // the runs' costs in one unit, said once in the trend's name
+  const currencyOf = (h: ProgramHistory) => h.runs[0]?.currency ?? "USD";
+  const costs = (h: ProgramHistory) => costColumn(shown(h).runs.map((r) => r.cost), currencyOf(h));
   // a moment's day on the reader's calendar, as the picker's days are: YYYY-MM-DD
   const localDay = (at: string | number) => {
     const d = new Date(at);
@@ -394,16 +400,18 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                   accessibilityLabel={t("history.range")}
                   align="end"
                   offset={4}
-                  popupClass={`${POPUP} p-2`}
+                  popupClass={`${POPUP} p-2 ${POPUP_MOTION.class}`}
+                  popupStartingClass={POPUP_MOTION.starting}
+                  popupEndingClass={POPUP_MOTION.ending}
                   contentClass="flex-row gap-2"
                   presetsClass="gap-1"
-                  presetClass="rounded-(--radius-sm) px-2 py-1 text-small text-foreground hover:bg-muted"
-                  itemClass="size-8 items-center justify-center rounded-(--radius-sm) text-small text-foreground hover:bg-muted selected:bg-primary selected:text-primary-foreground"
+                  presetClass={`rounded-(--radius-sm) px-2 py-1 ${TEXT.small} hover:bg-muted`}
+                  itemClass={`size-8 items-center justify-center rounded-(--radius-sm) ${TEXT.small} hover:bg-muted selected:bg-primary selected:text-primary-foreground`}
                   trigger={
                     // a small outline button, as the baseline's beside it
                     <View testID="history-range" class={CONTROL.trigger}>
                       <Icon name="calendar-clock" />
-                      <Text class="text-small text-foreground">{rangeText()}</Text>
+                      <Text class={TEXT.small}>{rangeText()}</Text>
                       <Icon name="chevron-down" size={ICON.small} />
                     </View>
                   }
@@ -436,10 +444,11 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                 else={<SimpleTable columns={[t("column.time"), t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={shown(x()).runs.map((r) => [date(r.created), n(r.requests), duration(r.waitingMs), cost(r.cost, r.currency)])} />}
               >
                 <View class="flex-row flex-wrap gap-3">
-                  <RunTrend history={shown(x())} measure="requests" title={t("figure.requests")} format={n} onOpen={props.onOpen} />
+                  {/* each named as a tile is (a capital, the thing counted), the cost's unit in its name so its figure is short */}
+                  <RunTrend history={shown(x())} measure="requests" title={t("trend.requests")} format={n} onOpen={props.onOpen} />
                   {/* the project's own limit on the waiting (sonde.toml's max-waiting), as a line */}
-                  <RunTrend history={shown(x())} measure="waitingMs" title={t("profile.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
-                  <RunTrend history={shown(x())} measure="cost" title={t("profile.cost")} format={(v) => cost(v, x().runs[0]?.currency ?? "USD")} onOpen={props.onOpen} />
+                  <RunTrend history={shown(x())} measure="waitingMs" title={t("trend.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
+                  <RunTrend history={shown(x())} measure="cost" title={t("trend.cost", { unit: costs(x()).unit })} format={(v) => costColumn([v, ...shown(x()).runs.map((r) => r.cost)], currencyOf(x())).figures[0]} onOpen={props.onOpen} />
                   <RunTrend history={shown(x())} measure="warnings" title={t("obs.warnings")} format={n} onOpen={props.onOpen} />
                 </View>
               </If>
@@ -506,15 +515,15 @@ export function ProgramList(props: { onOpen: (path: string) => void; /** the pla
               >
                 {/* (as a run's row: the same insets, the name and what tells it apart on its first line) */}
                 <View class="flex-row items-center gap-2">
-                  <Text class="min-w-0 shrink text-body text-foreground line-clamp-1">{nameOf(p())}</Text>
-                  <Text class="min-w-0 flex-1 font-mono text-caption text-muted-foreground line-clamp-1">{told(list()).get(p().program) ?? ""}</Text>
+                  <Text class={`min-w-0 shrink ${TEXT.body} line-clamp-1`}>{nameOf(p())}</Text>
+                  <Text class={`min-w-0 flex-1 ${TEXT.codeQuiet} line-clamp-1`}>{told(list()).get(p().program) ?? ""}</Text>
                   <If when={p().regressed}>
                     <View testID="program-regressed"><Badge label={t("programs.regressed")} tone="warn" /></View>
                   </If>
                 </View>
                 <View class="flex-row items-center gap-2">
                   {/* how often it runs, and what a month of it costs at that pace */}
-                  <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{[t("programs.runs", { n: p().runs }), day(p().created), p().monthly ? t("programs.monthly", { cost: money(p().monthly!.cost, p().points[0]?.currency ?? "USD") }) : ""].filter(Boolean).join(" · ")}</Text>
+                  <Text class={`min-w-0 flex-1 ${TEXT.meta} line-clamp-1`}>{[t("programs.runs", { n: p().runs }), day(p().created), p().monthly ? t("programs.monthly", { cost: money(p().monthly!.cost, p().points[0]?.currency ?? "USD") }) : ""].filter(Boolean).join(" · ")}</Text>
                   <If when={p().points.length > 1}>
                     <Sparkline shape={p().points.map((x) => x.requests)} id={`program:${p().program}`} />
                   </If>

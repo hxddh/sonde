@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: hxddh/sonde@v20
+      - uses: hxddh/sonde@v21
         with:
           run: python etl.py --day 2
           run-args: --url ${{ vars.S3_URL }}
@@ -51,7 +51,7 @@ requests and findings (its times are not meaningful: leave `max-waiting` and `ma
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
 | `fail` | `true` | |
-| `version` | the action's tag; at a branch or commit, its own major | `20.0.0`, `20`, `latest`, `path`. Tag `@v20` installs the newest 20.x; `@v20.0.0` that release. `latest` is refused at a branch or commit. |
+| `version` | the action's tag; at a branch or commit, its own major | `21.0.0`, `21`, `latest`, `path`. Tag `@v21` installs the newest 21.x; `@v21.0.0` that release. `latest` is refused at a branch or commit. |
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 
@@ -81,7 +81,7 @@ Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
 | Part | When |
 |---|---|
 | Heading | Always: the verdict, as every format closes. |
-| `> ❌ The program failed` | `--program-exit` not 0 (the Action passes `sonde run`'s): its status, and the first request the recording policy refused, if one was. |
+| `> ❌ The program failed` | the run's program exited other than 0 (kept with the session): its status, and the first request the recording policy refused, if one was. |
 | Since | Past the baseline over several runs (needs the runs, so local history; not in a fresh runner). |
 | `> ⚠️ no baseline yet` | A baseline asked for and none found. |
 | Failed rows | Budget rows that failed; never a row that passed. Without a baseline, its failed rows too. |

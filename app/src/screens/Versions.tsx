@@ -7,7 +7,8 @@ import { t } from "../i18n";
 import { api } from "../native";
 import { bucket, endpoint, report, versionKey } from "../store";
 import type { Plan, Timeline } from "../types";
-import { Await, Badge, Button, Card, Dot, Empty, Field, Heading, IconButton, KeyValue, Notice, Path, Row, terminal, ToolBar, WIDTH } from "../ui/kit";
+import { sectionLabel } from "../labels";
+import { REVEAL, Await, Badge, Button, Card, Dot, Empty, Field, Heading, IconButton, KeyValue, Notice, Path, Row, terminal, ToolBar, WIDTH, TEXT } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { versioningLabel } from "../ui/overview";
@@ -58,14 +59,17 @@ export function Versions() {
   return (
     <Scroll testID="screen-versions" class="flex-1" contentClass="gap-4 p-4">
       {/* what it looks at is typed here: a key, and Return (or the button) reads its history */}
-      <ToolBar>
+      <ToolBar title={terminal() ? undefined : sectionLabel("versions")} scope={terminal() ? undefined : `${bucket() ?? ""}/`}>
         <If when={terminal()}>
           <EndpointPicker />
           <BucketPicker />
         </If>
-        <Field bare class="min-w-48 flex-1" label={t("versions.key")} placeholder={t("versions.key")} value={keyDraft()} onChange={(v) => keyDraft.set(v)} onSubmit={load} mono testID="version-key" />
-        <Button variant={shown() ? "outline" : "primary"} label={t("common.refresh")} onPress={load} disabled={!bucket()} testID="load-versions" />
       </ToolBar>
+      <View class="flex-row items-center gap-2">
+        <Field bare class="min-w-48 flex-1" label={t("versions.key")} placeholder={t("versions.key")} value={keyDraft()} onChange={(v) => keyDraft.set(v)} onSubmit={load} mono testID="version-key" />
+        {/* named by what it does: the key's history, shown (again) */}
+        <Button variant={shown() ? "outline" : "primary"} label={t("versions.show")} onPress={load} disabled={!bucket()} testID="load-versions" />
+      </View>
       {/* the bucket's settings: there from the start, filled in when they are known */}
       <Card>
         <KeyValue
@@ -83,7 +87,7 @@ export function Versions() {
               <View class="gap-3" testID="timeline">
                 <View class="flex-row items-baseline gap-2">
                   <Heading count={tl().versions.length}>{t("browse.versions")}</Heading>
-                  <Text class="min-w-0 flex-1 text-small text-muted-foreground line-clamp-1">{`${t("versions.noncurrent")}: ${bytes(tl().noncurrentBytes)}`}</Text>
+                  <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{`${t("versions.noncurrent")}: ${bytes(tl().noncurrentBytes)}`}</Text>
                 </View>
                 <If when={tl().deleted}>
                   <Notice tone="warn" text={t("versions.deleted")}>
@@ -104,9 +108,9 @@ export function Versions() {
                           </View>
                           <View class="min-w-0 flex-1 gap-1">
                             <View class="flex-row items-center gap-2">
-                              <Text class="text-body text-foreground">{date(v().lastModified)}</Text>
+                              <Text class={TEXT.body}>{date(v().lastModified)}</Text>
                               <If when={v().isLatest}>
-                                <Badge label={t("versions.latest")} tone="primary" />
+                                <Badge label={t("versions.latest")} tone="live" />
                               </If>
                               <If when={v().isDeleteMarker}>
                                 <Badge label={t("versions.deleteMarker")} tone="warn" />
@@ -116,7 +120,10 @@ export function Versions() {
                           </View>
                           {/* sizes in one column, at its end */}
                           <Text class={`${WIDTH.size} shrink-0 text-right text-small tabular-nums text-muted-foreground`}>{v().isDeleteMarker ? "" : bytes(v().size)}</Text>
-                          <IconButton icon="trash" label={t("versions.deleteVersionOpen")} onPress={() => del(v().versionId, v().size)} />
+                          {/* its removal under the pointer or the keyboard only */}
+                          <View class={REVEAL}>
+                            <IconButton icon="trash" label={t("versions.deleteVersionOpen")} onPress={() => del(v().versionId, v().size)} />
+                          </View>
                         </Row>
                       )}
                     </List>

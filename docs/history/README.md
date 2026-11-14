@@ -1,6 +1,6 @@
 # History
 
-Past release comparisons and reviews, kept for reference.
+Past release comparisons, reviews and decisions, kept for reference.
 
 | File | What |
 |---|---|
@@ -19,4 +19,6 @@ Past release comparisons and reviews, kept for reference.
 | [plan-18.0.md](plan-18.0.md) | 18.0 planned |
 | [review-18.0.md](review-18.0.md) | 18.0 reviewed, 19.0 proposed |
 | [review-19.0.md](review-19.0.md) | 19.0 reviewed, 20.0 proposed |
+| [review-20.0.md](review-20.0.md) | 20.0 reviewed, 21.0 proposed |
 | [changelog-0-18.md](changelog-0-18.md) | the changelog of 0.1 to 18.0 |
+| [decisions-superseded.md](decisions-superseded.md) | the decisions a later one replaced |

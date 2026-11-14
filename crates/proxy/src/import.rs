@@ -145,6 +145,9 @@ impl Parts {
     /// Reads one file's text. An error leaves what was read before as it
     /// was: the text is no source sonde reads, or another than the first's.
     pub fn add(&mut self, text: &str) -> Result<(), String> {
+        if text.trim().is_empty() {
+            return Err(format!("{EMPTY}: the file is empty"));
+        }
         let source = detect(text).ok_or("not an S3 server access log, CloudTrail file or HAR")?;
         match self.source {
             Some(first) if first != source => {
@@ -190,7 +193,7 @@ impl Parts {
             }
         }
         if records.is_empty() {
-            return Err(format!("no S3 requests in this {}", source.name()));
+            return Err(format!("{EMPTY}: no S3 requests in this {}", source.name()));
         }
         // (stable: requests of one moment stay in the log's order)
         records.sort_by_key(|r| r.time);
@@ -308,7 +311,7 @@ pub fn import_dir(dir: &std::path::Path, name: &str) -> Result<ImportedDir, Stri
     walk(dir, &mut files).map_err(|e| e.to_string())?;
     files.sort();
     if files.is_empty() {
-        return Err("no files in this folder".into());
+        return Err(format!("{EMPTY}: no files in this folder"));
     }
     let mut parts = Parts::default();
     let (mut read, mut left_out) = (0, Vec::new());
@@ -559,12 +562,18 @@ const TRAIL_QUERY: &[&str] = &[
 ];
 
 /// How an import's error begins when the file is not what it says it is
-/// (bad data, 65), not the wrong file (64): [`is_broken`].
+/// (bad data, 65), not the wrong file (64): [`is_bad_data`].
 const BROKEN: &str = "the file breaks";
 
-/// Whether an import's error is a file broken part way ([`BROKEN`]).
-pub fn is_broken(error: &str) -> bool {
-    error.starts_with(BROKEN)
+/// How an import's error begins when there is nothing in it to import (an
+/// empty file or folder, a log of no S3 requests): bad data too.
+const EMPTY: &str = "nothing to import";
+
+/// Whether an import's error is bad data (65): a file broken part way
+/// ([`BROKEN`]) or nothing to import ([`EMPTY`]); else it is the wrong
+/// file (64).
+pub fn is_bad_data(error: &str) -> bool {
+    error.starts_with(BROKEN) || error.starts_with(EMPTY)
 }
 
 /// CloudTrail S3 data events (`{"Records": [...]}`, or one event per line).
@@ -1273,7 +1282,7 @@ mod tests {
         );
         let upload = eps
             .iter()
-            .find(|e| e.kind == crate::episode::Kind::Multipart && e.records.len() == 3);
+            .find(|e| e.shape == crate::episode::Shape::Multipart && e.records.len() == 3);
         assert!(upload.is_some(), "{eps:?}");
     }
 
@@ -1302,10 +1311,13 @@ mod tests {
         let Err(e) = import(cut, "trail") else {
             panic!("a cut document read as whole");
         };
-        assert!(is_broken(&e), "{e}");
+        assert!(is_bad_data(&e), "{e}");
         assert!(e.contains("at line 3, column"), "{e}");
         // the wrong file is not broken
-        assert!(!is_broken(&import("hello", "x").unwrap_err()));
+        assert!(!is_bad_data(&import("hello", "x").unwrap_err()));
+        // nothing to import is bad data too
+        assert!(is_bad_data(&import("", "x").unwrap_err()));
+        assert!(is_bad_data(&import(" \n\n", "x").unwrap_err()));
     }
 
     #[test]

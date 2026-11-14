@@ -51,16 +51,17 @@ samples = []
 for _ in range(3):
     t0 = time.time()
     pid, fd, screen, stream = start([sonde, "tui", "--demo", "--fps"])
-    first = until(fd, stream, screen, "Compatibility", 20)
+    first = until(fd, stream, screen, "Buckets", 20)
     samples.append(first * 1000)
     if len(samples) < 3: os.kill(pid, 9); os.waitpid(pid, 0)
 idle = rss(pid)
 # Browse › demo-large, flat, load all
 send(fd, "3"); until(fd, stream, screen, "Choose a bucket", 10)
-for k in ["\t", "\t", "\t", "\r"]: send(fd, k); pump(fd, stream, 0.4)
+# the bucket's menu (past the place's sections and the endpoint's), its second bucket
+for k in ["\t", "\t", "\t", "\t", "\r"]: send(fd, k); pump(fd, stream, 0.4)
 send(fd, "\x1b[B"); pump(fd, stream, 0.3); send(fd, "\r")
 until(fd, stream, screen, "logs/", 10)
-for k in ["\t", "\t"]: send(fd, k); pump(fd, stream, 0.3)
+for k in ["\t", "\t", "\t"]: send(fd, k); pump(fd, stream, 0.3)
 send(fd, " ")  # the Flat switch
 pump(fd, stream, 1.5)
 send(fd, "\t"); pump(fd, stream, 0.3); send(fd, "\r")  # Load all

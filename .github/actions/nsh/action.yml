@@ -10,7 +10,8 @@ runs:
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       id: cache
       with:
-        path: ~/.cargo/bin/nsh
+        # (nsh.exe on Windows: a path that is not there saves nothing)
+        path: ${{ runner.os == 'Windows' && '~/.cargo/bin/nsh.exe' || '~/.cargo/bin/nsh' }}
         key: nsh-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rev }}
     - if: steps.cache.outputs.cache-hit != 'true'
       shell: bash

@@ -52,10 +52,10 @@ pub struct RunArgs {
     /// `{trial}` and SONDE_TRIAL are as with --trial.
     #[arg(long = "fault", value_name = "SCENARIO")]
     faults: Vec<String>,
-    /// With --trial: try again only what did not survive. A fresh clean
-    /// run, then the scenarios that broke, degraded or were refused by the
-    /// policy in this program's last trials (`sonde run --trial --again -- …`).
-    #[arg(long, requires = "trial", conflicts_with = "faults")]
+    /// A trial of only what did not survive (--trial is implied): a fresh
+    /// clean run, then the scenarios that broke, degraded or were refused by
+    /// the policy in this program's last trials (`sonde run --again -- …`).
+    #[arg(long, conflicts_with = "faults")]
     again: bool,
     /// The program's name: its runs and its baseline go by it, whatever the
     /// command's arguments are this time (default: `name` under `[program]`
@@ -269,14 +269,8 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             "run: unknown option {first} (the command goes after `--`: sonde run [OPTIONS] -- COMMAND)"
         )));
     }
-    if let Some(out) = &a.rec.out
-        && !a.force
-        && out.symlink_metadata().is_ok()
-    {
-        return Err(super::usage(format!(
-            "-o {}: the file is there; --force writes over it",
-            out.display()
-        )));
+    if let Some(out) = &a.rec.out {
+        refuse_existing(out, a.force)?;
     }
     // `--demo` alone: the tour, a program of sonde's own
     if a.demo && a.command.is_empty() {
@@ -363,7 +357,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             return Ok(64);
         }
     }
-    let trying = a.trial || !asked.is_empty();
+    let trying = a.trial || a.again || !asked.is_empty();
     let ctx = RunCtx {
         trying,
         name: a.name.clone().or(project.file.program.name.clone()),
@@ -421,9 +415,11 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     let dir = runs_dir(&file);
     let color = std::io::stderr().is_terminal();
     eprintln!(
-        "\nTrial: the command runs {} more time{}, each under one scenario.",
-        scenarios.len(),
-        if scenarios.len() == 1 { "" } else { "s" }
+        "\nTrial: the command runs {}.",
+        match scenarios.len() {
+            1 => "once more, under the scenario".to_string(),
+            n => format!("{n} more times, each under one scenario"),
+        }
     );
     let mut trials = Vec::new();
     let mut interrupted = None;
@@ -565,7 +561,7 @@ fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_proxy::trial::Trial]) -
     let q = |w: &str| sonde_proxy::program::shell_join(&[w.to_string()]);
     let mut words = vec!["sonde run".to_string()];
     if a.faults.is_empty() {
-        words.push("--trial --again".into());
+        words.push("--again".into());
     } else {
         for t in trials.iter().filter(|t| {
             matches!(
@@ -910,8 +906,12 @@ async fn run_once(
             false,
             since.as_ref(),
         );
-        if session.records.is_empty() {
-            eprintln!("{}", NO_REQUESTS);
+        // stopped from outside: said as such, not as a program that failed
+        // (nor as one that sent nothing)
+        match stopped_text(signal) {
+            Some(why) => eprintln!("{}", paint(&why, "33", color)),
+            None if session.records.is_empty() => eprintln!("{}", NO_REQUESTS),
+            None => {}
         }
     }
     // what it wrote is the program's to write over next time
@@ -1016,6 +1016,16 @@ fn signal_group(child: &tokio::process::Child, kill: bool) -> bool {
 #[cfg(not(unix))]
 fn signal_group(_child: &tokio::process::Child, _kill: bool) -> bool {
     false
+}
+
+/// What a run stopped by a signal sonde was sent says: `sonde was sent
+/// SIGTERM: the program was stopped (exit 143)`.
+fn stopped_text(signal: Option<i32>) -> Option<String> {
+    match signal? {
+        15 => Some("sonde was sent SIGTERM: the program was stopped (exit 143)".into()),
+        2 => Some("interrupted (Ctrl-C): the program was stopped (exit 130)".into()),
+        _ => None,
+    }
 }
 
 /// The program's exit code as a shell gives it: its own, or 128 and the

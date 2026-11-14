@@ -60,21 +60,14 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 // (bin_name: "Usage: sonde", not the file's name, "sonde.exe" on Windows)
 #[command(name = "sonde", bin_name = "sonde", version, about = "See what your software does to S3: its requests recorded, read as operations, replayed elsewhere", long_about = None)]
 pub struct Cli {
+    // (the variables are read by sonde_core's Paths, not by clap: an option
+    // clap takes from the environment is "used", and its usage line for a
+    // missing argument would name it as required)
     /// Configuration directory (default: $SONDE_CONFIG_DIR or the platform's).
-    #[arg(
-        long,
-        global = true,
-        env = "SONDE_CONFIG_DIR",
-        help_heading = "Global options"
-    )]
+    #[arg(long, global = true, help_heading = "Global options")]
     config_dir: Option<std::path::PathBuf>,
-    /// Data directory (sessions, scans, probe runs, audit log).
-    #[arg(
-        long,
-        global = true,
-        env = "SONDE_DATA_DIR",
-        help_heading = "Global options"
-    )]
+    /// Data directory: sessions, scans, probe runs, audit log (default: $SONDE_DATA_DIR or the platform's).
+    #[arg(long, global = true, help_heading = "Global options")]
     data_dir: Option<std::path::PathBuf>,
     /// Use an endpoint not in the configuration: its URL (credentials from the AWS default chain).
     #[arg(long, global = true, help_heading = "Global options")]

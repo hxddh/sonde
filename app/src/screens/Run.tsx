@@ -4,9 +4,9 @@
 // over a band of live figures. When it ends, a toast and a notification
 // say how, and the session opens lined up with the output.
 
-import { batch, cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View } from "nsh";
+import { batch, cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View, type ViewRef } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
-import { isAvailable, Menu } from "nsh/desktop";
+import { isAvailable } from "nsh/desktop";
 import { change, count, duration, percent, rate } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
@@ -18,7 +18,7 @@ import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { TrialDialog } from "../ui/trial";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, More, SURFACE, WIDTH, PANE } from "../ui/kit";
+import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, popupMenu, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, SPLIT_GAP, Title, ActionRow, More, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, sessionStory, STRIP } from "../ui/plots";
@@ -39,9 +39,10 @@ function CommandBar() {
     if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
     start(command(), id);
   };
+  let recentButton: ViewRef | undefined;
   const recent = () => {
     if (!isAvailable || !history().length) return;
-    void Menu.popup(history().map((c) => ({ label: scrubCommand(c), onSelect: () => command.set(c) })));
+    void popupMenu(history().map((c) => ({ label: scrubCommand(c), run: () => command.set(c) })), recentButton);
   };
   if (terminal()) {
     return (
@@ -73,10 +74,10 @@ function CommandBar() {
           placeholder={t("run.placeholder")}
           onChange={(v) => command.set(v)}
           onSubmit={run}
-          leading={<Text class="font-mono text-body text-muted-foreground">$</Text>}
+          leading={<Text class={`font-mono ${TEXT.bodyQuiet}`}>$</Text>}
           trailing={
             <If when={history().length > 0 && isAvailable}>
-              <IconButton inField icon="clock" label={t("run.recent")} onPress={recent} testID="run-history" />
+              <IconButton ref={(r) => (recentButton = r)} inField icon="clock" label={t("run.recent")} onPress={recent} testID="run-history" />
             </If>
           }
         />
@@ -85,12 +86,15 @@ function CommandBar() {
           <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
         </If>
       </View>
-      {/* where it runs, where its requests go, what it may do: one row, one height */}
+      {/* where it runs and what it may do: one row, one height (where its requests go is the title bar's
+          endpoint, said once; only its absence is said here) */}
       <View class="flex-row flex-wrap items-center gap-x-3 gap-y-2">
         <Field bare small mono class={WIDTH.long} testID="run-cwd" label={t("run.cwd")} value={cwd()} placeholder={t("run.cwdHome")} onChange={(v) => cwd.set(v)} leading={<Icon name="folder" />} />
         <View class="min-w-0 flex-1 flex-row items-center gap-2">
-          <Icon name="server" />
-          <Text class="min-w-0 flex-1 text-small text-muted-foreground line-clamp-1">{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
+          <If when={!ep()}>
+            <Icon name="server" />
+            <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{t("run.chooseEndpoint")}</Text>
+          </If>
         </View>
         <Options testID="run-policy" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
       </View>
@@ -135,7 +139,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   // the errors in the tone their rows are drawn in: the client's where every one was a 4xx
   const errorTone = () => {
     const c = props.view?.signals?.errors.counts;
-    return c && c.client > 0 && c.server + c.transport === 0 ? "client" : "bad";
+    return c && c.client > 0 && c.server + c.transport === 0 ? "client" : "fail";
   };
   // once it ended: held to its program's baseline, as sonde check would
   const verdict = resource(
@@ -162,14 +166,8 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   };
   // (8 before the primary; never less than nothing)
   const room = () => Math.max(0, (widths().next ?? 0) - (widths().primary ?? 0) - 8);
-  // the loop's two next steps ("See the whole run", "Try under faults…") are labelled at every width: where
-  // they do not fit beside the primary (with a `⋯` for the rest), they take the row's whole width by their
-  // words, and the rest's `⋯` and the primary a line under them. (Their widths are those measured with their
-  // icons, beside the primary: what the choice is made on does not change with it.)
-  const actionWidths = signal<Record<string, number>>({});
-  const core = () => others().slice(0, 2);
-  const needs = () => core().reduce((n, a) => n + (actionWidths()[a.id] ?? 0) + 8, 0) + (others().length > core().length ? 36 : 0);
-  const stacked = () => core().length > 0 && core().every((a) => actionWidths()[a.id] !== undefined) && room() < needs();
+  // (one row at every width: what does not fit beside the primary is behind its `⋯`, so a short window keeps
+  // the operations' rows)
   // the one Run of the place once a run ended: its command again, or the field's command when it was
   // changed since (the field's Return runs the same). It stays on Run: what changed since this run is
   // said here, under the band, with the way to compare the two
@@ -218,7 +216,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
         >
           {(done) => (
             <View class="flex-row items-center gap-2">
-              <Dot tone={done().killed ? "refused" : done().exit === 0 ? "ok" : "server"} />
+              <Dot tone={done().killed ? "refused" : done().exit === 0 ? "ok" : "fail"} />
               <Strong>{done().killed ? t("run.killed") : t("run.exited", { code: `${done().exit ?? "?"}` })}</Strong>
             </View>
           )}
@@ -252,7 +250,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
             </If>
           )}
         </If>
-        <If when={verdictText()}>{(v) => <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "pass" : "fail"} />}</If>
+        <If when={verdictText()}>{(v) => <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "ok" : "fail"} />}</If>
       </View>
       <If when={trying() && r() && !r()!.removed}>
         <TrialDialog
@@ -279,17 +277,14 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
       </If>
       {/* once it ended, a row of its own: the loop's next steps by their words, then the one Run of the place */}
       <If when={r() && !terminal()}>
-        <View class={stacked() ? "gap-2" : "flex-row items-center gap-2"} onLayout={measure("next")}>
+        <View class="flex-row items-center gap-2" onLayout={measure("next")}>
           {/* a run that sent nothing kept no session (the toast said so): it is only run again */}
-          <View class={stacked() ? "flex-row items-center" : "min-w-0 flex-1 flex-row items-center"}>
+          <View class="min-w-0 flex-1 flex-row items-center">
             <If when={!r()!.removed}>
-              <ActionRow testID="run-actions" room={stacked() ? (widths().next ?? 0) : room()} actions={stacked() ? core : others} plain={stacked()} onWidths={(w) => !stacked() && actionWidths.set({ ...actionWidths(), ...w })} />
+              <ActionRow testID="run-actions" room={room()} actions={others} />
             </If>
           </View>
           <View class="flex-row items-center justify-end gap-2">
-            <If when={stacked() && !r()!.removed && others().length > core().length}>
-              <More testID="run-actions-more" actions={() => others().slice(core().length)} />
-            </If>
             <View class="shrink-0" onLayout={measure("primary")}>
               <Button small variant="primary" icon="play" label={same() ? t("sessions.runAgain") : t("run.start")} onPress={runNext} disabled={!!running() || (!same() && (!command().trim() || !endpoint()))} testID="run-again-band" />
             </View>
@@ -323,7 +318,7 @@ function LivePanel(props: { profile: Profile }) {
     <Chart testID="live" class="shrink-0" title={t("live.title")} text={t("live.latency")}>
       <View class="flex-row items-center gap-6">
         <Figure small testID="live-rate" value={rate(f().perSecond)} label={t("live.perSecond")} />
-        <Figure small testID="live-failed" value={percent(f().failedShare)} label={t("live.failed")} tone={f().failedShare > 0 ? "bad" : "plain"} />
+        <Figure small testID="live-failed" value={percent(f().failedShare)} label={t("live.failed")} tone={f().failedShare > 0 ? "fail" : "plain"} />
         <Figure small testID="live-in-flight" value={count(f().inFlight)} label={t("live.inFlight")} />
         <Figure small testID="live-p95" value={duration(f().p95)} label={t("live.p95")} />
       </View>
@@ -332,7 +327,7 @@ function LivePanel(props: { profile: Profile }) {
           {/* the last 30 seconds, sliding as the run goes */}
           <SessionShape profile={props.profile} range={liveRange(props.profile)} focus={focus} class={`${STRIP} min-w-0 flex-1`} testID="run-shape" />
           <View class="min-w-0 flex-1">
-            <LatencyBand profile={props.profile} domainMs={[Math.max(0, props.profile.wallMs - LIVE_WINDOW_MS), Math.max(props.profile.wallMs, 1)]} focus={focus} class={`${STRIP} w-full`} testID="run-band" />
+            <LatencyBand profile={props.profile} domainMs={[Math.max(0, props.profile.wallMs - LIVE_WINDOW_MS), Math.max(props.profile.wallMs, 1)]} focus={focus} class={STRIP} testID="run-band" />
           </View>
         </View>
       </If>
@@ -409,7 +404,7 @@ function NoRequests() {
   return (
     <View testID="run-no-requests" class={terminal() ? "gap-1" : "flex-1 items-center justify-center gap-3 p-6"}>
       <Title center={!terminal()}>{t("run.noneTitle")}</Title>
-      <Text class={terminal() ? "text-muted-foreground" : `${SURFACE.note} text-center text-body text-muted-foreground`}>{t("run.noneText")}</Text>
+      <Text class={terminal() ? "text-muted-foreground" : `${SURFACE.note} text-center ${TEXT.bodyQuiet}`}>{t("run.noneText")}</Text>
       <Card class={SURFACE.noteCard}>
         <KeyValue
           mono
@@ -423,7 +418,7 @@ function NoRequests() {
           ]}
         />
       </Card>
-      <Text class={terminal() ? "text-muted-foreground" : `${SURFACE.note} text-center text-small text-muted-foreground`}>{t("run.noneKeys")}</Text>
+      <Text class={terminal() ? "text-muted-foreground" : `${SURFACE.note} text-center ${TEXT.note}`}>{t("run.noneKeys")}</Text>
     </View>
   );
 }
@@ -453,7 +448,7 @@ function Intro() {
             <Each of={history().slice(0, 5)}>
               {(c) => (
                 <ListRow label={scrubCommand(c())} onPress={() => command.set(c())}>
-                  <Text class="flex-1 font-mono text-small text-foreground line-clamp-1">{scrubCommand(c())}</Text>
+                  <Text class={`flex-1 font-mono ${TEXT.small} line-clamp-1`}>{scrubCommand(c())}</Text>
                 </ListRow>
               )}
             </Each>
@@ -480,8 +475,8 @@ function Recent() {
           <Each of={history().slice(0, 30)}>
             {(c) => (
               <ListRow lines={2} label={scrubCommand(c())} selected={command() === c()} onPress={() => command.set(c())}>
-                <Text class="text-body text-foreground line-clamp-1">{programOf(c()) ?? scrubCommand(c())}</Text>
-                <Text class="font-mono text-caption text-muted-foreground line-clamp-1">{scrubCommand(c())}</Text>
+                <Text class={`${TEXT.body} line-clamp-1`}>{programOf(c()) ?? scrubCommand(c())}</Text>
+                <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{scrubCommand(c())}</Text>
               </ListRow>
             )}
           </Each>
@@ -503,7 +498,7 @@ export function Run() {
         <If
           when={terminal()}
           else={
-            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("run.resizeOperations")}>
+            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_GAP} handleAccessibilityLabel={t("run.resizeOperations")}>
               <ResizablePanel minSize={done() ? PANE.terminalDone : PANE.terminalLeast}>
                 <View class="flex-1 pr-2">
                   <ProgramTerminal />

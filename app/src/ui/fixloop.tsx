@@ -12,7 +12,7 @@ import { say } from "../phrases";
 import { api } from "../native";
 import type { FindingChange, SinceLast } from "../types";
 import { Icon } from "./icon";
-import { Button, Card, EMPHASIS, ICON, Row } from "./kit";
+import { Button, Card, EMPHASIS, ICON, Row, TEXT } from "./kit";
 import { type FindingState, StateBadge } from "./sessionview";
 
 /** What acting on a finding saved, measured, against the predicted ("saved 40 requests (predicted 42)"); null when nothing was measured. */
@@ -79,7 +79,7 @@ export function SinceRun(props: { since: SinceLast | null | undefined; max?: num
           <Row first stack>
             <View class="flex-row items-center gap-3">
               <Icon name="git-compare-arrows" />
-              <Text class="min-w-0 flex-1 text-body text-foreground line-clamp-2">
+              <Text class={`min-w-0 flex-1 ${TEXT.body} line-clamp-2`}>
                 {/* emphasis: the section's name before what it says */}
                 <Text class={EMPHASIS}>{t("fix.since")}</Text>
                 <If when={tally()}>{(n) => <Text class="text-muted-foreground">{` · ${n()}`}</Text>}</If>
@@ -88,7 +88,7 @@ export function SinceRun(props: { since: SinceLast | null | undefined; max?: num
                 <Button small variant="outline" icon="git-compare-arrows" label={t("fix.compare")} onPress={() => props.onCompare?.()} testID="since-compare" />
               </If>
             </View>
-            <If when={changeLine(x())}>{(l) => <Text testID="since-change" class="tabular-nums text-small text-muted-foreground line-clamp-2">{l()}</Text>}</If>
+            <If when={changeLine(x())}>{(l) => <Text testID="since-change" class={`tabular-nums ${TEXT.note} line-clamp-2`}>{l()}</Text>}</If>
           </Row>
           <Each of={shown()} key={(f) => f.identity}>
             {(f, i) => (
@@ -102,7 +102,7 @@ export function SinceRun(props: { since: SinceLast | null | undefined; max?: num
                     {(v) => (
                       <View class="flex-row items-center gap-1">
                         <Icon name="trending-down" size={ICON.small} tint="status-ok" />
-                        <Text testID={`since-saved-${i()}`} class="tabular-nums text-small text-status-ok">{v()}</Text>
+                        <Text testID={`since-saved-${i()}`} class={`tabular-nums ${TEXT.note}`}>{v()}</Text>
                       </View>
                     )}
                   </If>

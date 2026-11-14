@@ -10,7 +10,8 @@ import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report } from "../store";
 import { here, LAYOUT_LABEL, remember } from "../ui/overview";
 import type { Detection, Layout, Snapshot } from "../types";
-import { Await, Badge, Bar, Button, Card, Choice, Empty, Field, Heading, KeyValue, More, Muted, Path, ROW, rowHeight, SimpleTable, terminal, ToolBar, Scrubber, WIDTH } from "../ui/kit";
+import { sectionLabel } from "../labels";
+import { REVEAL, Await, Badge, ProgressBar, Button, Card, Choice, Empty, Field, Heading, KeyValue, More, Muted, Path, ROW, rowHeight, SimpleTable, terminal, ToolBar, Scrubber, WIDTH, TEXT } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const LABEL = LAYOUT_LABEL;
@@ -47,7 +48,7 @@ function Replay(props: { job: string; layout: Layout }) {
         <If when={state()}>
           {(s) => (
             <View class="gap-2">
-              <Text class="text-body text-foreground">
+              <Text class={TEXT.body}>
                 {t("layouts.stateAt", { time: date(new Date(at()).toISOString()) })} — {s().label}
               </Text>
               <KeyValue rows={s().facts.map((f) => [core(f.labelText, f.label), core(f.valueText, f.value)])} />
@@ -55,7 +56,7 @@ function Replay(props: { job: string; layout: Layout }) {
                 {(tb) => (
                   <View class="gap-1">
                     <Muted>{tb().title}</Muted>
-                    <SimpleTable mono max={40} columns={tb().columns} rows={tb().rows} />
+                    <SimpleTable bare mono max={40} columns={tb().columns} rows={tb().rows} />
                   </View>
                 )}
               </Each>
@@ -122,6 +123,7 @@ export function Layouts() {
   return (
     <Scroll testID="screen-layouts" class="flex-1" contentClass="gap-4 p-4">
       <ToolBar
+        title={terminal() ? undefined : sectionLabel("layouts")}
         scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}
         // the measure that needs no known layout: any prefix's write cadence
         end={<More testID="layout-more" actions={() => [{ label: t("layouts.generic"), icon: "timer", run: () => void analyze("generic", pfx()), disabled: !bucket() || busy() }]} />}
@@ -137,7 +139,7 @@ export function Layouts() {
         </If>
       </ToolBar>
       {/* a job over what is already shown (scanning again, decoding a layout) */}
-      <If when={found() && progress()}>{(p) => <Bar value={null} label={p()} />}</If>
+      <If when={found() && progress()}>{(p) => <ProgressBar value={null} label={p()} />}</If>
       <Await loading={!found() && busy()} error={failure()} retry={detect} waiting={progress() ?? undefined} testID="layouts">
         <If when={found()} else={<Empty icon="boxes" text={bucket() ? t("layouts.notScanned") : t("common.chooseBucket")} />}>
           {(f) => (
@@ -146,11 +148,19 @@ export function Layouts() {
               <If when={f().length > 0} else={<Muted>{t("layouts.noneFound")}</Muted>}>
                 <Each of={f()}>
                   {(d) => (
-                    <View class="flex-row items-center gap-2">
-                      <Badge label={LABEL[d().format] ?? d().format} tone="primary" />
-                      <Path path={d().root || "/"} class="min-w-0 flex-1 text-foreground" />
-                      <Text class="shrink text-small text-muted-foreground line-clamp-1">{d().evidence}</Text>
-                      <Button small label={t("layouts.decode")} onPress={() => analyze(d().format, d().root)} disabled={busy()} testID={`analyze-${d().format}`} />
+                    // a row each: what it is and where, and under them what gave it away (whole names at any
+                    // width: no column cuts a name to make room for the next); Decode under the pointer or the keyboard
+                    <View class="group min-h-7 flex-row items-center gap-3 py-1">
+                      <View class="min-w-0 flex-1 gap-1">
+                        <View class="flex-row items-center gap-2">
+                          <Text class={`shrink-0 ${TEXT.body}`}>{LABEL[d().format] ?? d().format}</Text>
+                          <Path path={d().root || "/"} class="min-w-0 flex-1 text-muted-foreground" />
+                        </View>
+                        <Text class={`${TEXT.note} line-clamp-1`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>{d().evidence}</Text>
+                      </View>
+                      <View class={REVEAL}>
+                        <Button small variant="ghost" label={t("layouts.decode")} onPress={() => analyze(d().format, d().root)} disabled={busy()} testID={`analyze-${d().format}`} />
+                      </View>
                     </View>
                   )}
                 </Each>
@@ -167,10 +177,10 @@ export function Layouts() {
                 <View class="min-w-0 flex-1">
                   <Heading>{LABEL[l().layout.format] ?? l().layout.format}</Heading>
                 </View>
-                <If when={l().layout.formatVersion}>{(v) => <Badge label={v()} />}</If>
-                <Badge label={`${t("du.objects", { n: count(l().layout.objects) })} · ${bytes(l().layout.bytes)}`} />
+                {/* its version and how much it holds: one quiet line, not two pills */}
+                <Text class={`shrink-0 ${TEXT.note}`}>{[l().layout.formatVersion, `${t("du.objects", { n: count(l().layout.objects) })} · ${bytes(l().layout.bytes)}`].filter(Boolean).join(" · ")}</Text>
               </View>
-              <Text class="text-body text-foreground">{core(l().layout.headlineText, l().layout.headline)}</Text>
+              <Text class={TEXT.body}>{core(l().layout.headlineText, l().layout.headline)}</Text>
               <If when={!l().layout.decoded}>
                 <View class="flex-row">
                   <Badge tone="info" label={t("layouts.notDecoded")} />
@@ -185,7 +195,7 @@ export function Layouts() {
                   {(i) => (
                     <View class="flex-row gap-2">
                       <Badge label={severityLabel(i().severity)} tone={tone(i().severity)} />
-                      <Text class="flex-1 text-body text-foreground">{core(i().messageText, i().message)}</Text>
+                      <Text class={`flex-1 ${TEXT.body}`}>{core(i().messageText, i().message)}</Text>
                     </View>
                   )}
                 </Each>
@@ -196,7 +206,7 @@ export function Layouts() {
               {(tb) => (
                 <Card>
                   <Heading>{tb().title}</Heading>
-                  <SimpleTable mono max={100} columns={tb().columns} rows={tb().rows} />
+                  <SimpleTable bare mono max={100} columns={tb().columns} rows={tb().rows} />
                 </Card>
               )}
             </Each>
@@ -205,9 +215,9 @@ export function Layouts() {
               <List each={l().layout.timeline} estimatedItemSize={ROW.dense} viewport="parent">
                 {(e) => (
                   <View class="flex-row items-center gap-3" style={{ height: rowHeight(ROW.dense) }}>
-                    <Text class={`${WIDTH.date} shrink-0 text-small text-muted-foreground`}>{date(e().time)}</Text>
-                    <Badge label={kindLabel(e().kind)} tone={e().kind === "fence" || e().kind === "gap" ? "warn" : "neutral"} />
-                    <Text class="flex-1 text-small text-foreground line-clamp-1">{`${core(e().labelText, e().label)}${e().detail ? ` — ${core(e().detailText, e().detail)}` : ""}`}</Text>
+                    <Text class={`${WIDTH.date} shrink-0 ${TEXT.note}`}>{date(e().time)}</Text>
+                    <Badge label={kindLabel(e().kind)} tone={e().kind === "fence" || e().kind === "gap" ? "warn" : "quiet"} />
+                    <Text class={`flex-1 ${TEXT.small} line-clamp-1`}>{`${core(e().labelText, e().label)}${e().detail ? ` — ${core(e().detailText, e().detail)}` : ""}`}</Text>
                   </View>
                 )}
               </List>

@@ -22,9 +22,14 @@ pub struct ShareArgs {
     /// (a session, `auto` for its program's baseline, or an https URL).
     #[arg(long, value_name = "FILE|auto|URL")]
     baseline: Option<String>,
-    /// Where to write the site (default: `<session>-share/` here).
+    /// Where to write the site (default: `<session>-share/` here), or the
+    /// file of --html or --otlp.
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
+    /// With -o and --html or --otlp: write over the file if it is there
+    /// (else it is refused).
+    #[arg(long, requires = "out")]
+    force: bool,
     /// Serve it on 127.0.0.1 instead of writing it, until Ctrl-C.
     #[arg(long)]
     serve: bool,
@@ -111,9 +116,18 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
         eprintln!("two runs, or --baseline: not both");
         return Ok(64);
     }
+    // a file it is given is not written over unasked (a site's folder is
+    // written into)
+    if let Some(out) = &a.out {
+        if a.html || a.otlp {
+            super::record::refuse_existing(out, a.force)?;
+        } else if a.force {
+            return Err(super::usage("--force is for the file of --html or --otlp"));
+        }
+    }
     let file = match a.files.last() {
         Some(f) => super::sessions::resolve(s, f),
-        None => super::record::newest_session(s)?,
+        None => super::record::which_run(s, super::record::project_name().as_deref())?.0,
     };
     if !file.exists() {
         return Err(super::usage(format!(

@@ -10,7 +10,7 @@ import { api } from "../native";
 import { copy } from "../store";
 import type { KeyRequest, RequestRecord } from "../types";
 import { Icon } from "./icon";
-import { Button, Card, Disclosure, ICON, ListRow, Muted, WIDTH } from "./kit";
+import { Button, Card, Disclosure, ICON, ListRow, Muted, WIDTH, TEXT } from "./kit";
 import { RecordView } from "./record";
 import { StatusMark } from "./sessionview";
 
@@ -80,7 +80,7 @@ function KeyHistory(props: { path: string; bucket: string; keyName: string; at: 
                 trailing={
                   // its time, then (another request than the one shown) the chevron, at the row's end
                   <>
-                    <Text class="shrink-0 tabular-nums text-small text-muted-foreground">{duration(x().latencyMs)}</Text>
+                    <Text class={`shrink-0 tabular-nums ${TEXT.note}`}>{duration(x().latencyMs)}</Text>
                     {/* (the one shown keeps the chevron's room, so the times stand in one column) */}
                     <View class={x().id === props.at ? "opacity-0" : ""}>
                       <Icon name="chevron-right" size={ICON.small} />
@@ -91,14 +91,14 @@ function KeyHistory(props: { path: string; bucket: string; keyName: string; at: 
                 <View class={WIDTH.status}>
                   <StatusMark status={x().status} injected={x().injected} />
                 </View>
-                <Text class="min-w-0 flex-1 text-small text-foreground line-clamp-1">{x().kind}</Text>
-                <Text class="shrink-0 font-mono text-caption text-muted-foreground">{clock(x().time, "ms")}</Text>
+                <Text class={`min-w-0 flex-1 ${TEXT.small} line-clamp-1`}>{x().kind}</Text>
+                <Text class={`shrink-0 ${TEXT.codeQuiet}`}>{clock(x().time, "ms")}</Text>
               </ListRow>
             )}
           </Each>
         </Card>
         <If when={shown().total > shown().rows.length}>
-          <Muted class="text-caption">{t("keyHistory.more", { n: count(shown().rows.length), of: count(shown().total) })}</Muted>
+          <Muted class={TEXT.captionSize}>{t("keyHistory.more", { n: count(shown().rows.length), of: count(shown().total) })}</Muted>
         </If>
       </Disclosure>
     </If>

@@ -51,7 +51,23 @@ pub struct Summary {
     pub operations: Vec<OpStats>,
     /// Error responses by status and S3 code, most frequent first.
     pub error_codes: Vec<(String, u64)>,
+    /// The first requests the recording's policy refused (of [`Self::refused`]):
+    /// what a summary names, with the policy and the flag that lifts it.
+    #[serde(skip)]
+    pub refusals: Vec<Refusal>,
 }
+
+/// A request the recording's policy refused, as a summary names it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Refusal {
+    /// `no-delete`, `read-only`.
+    pub policy: String,
+    /// The S3 call and what it named: `DeleteObject demo/old/report.csv`.
+    pub request: String,
+}
+
+/// How many refused requests a summary names.
+pub const REFUSALS_NAMED: usize = 3;
 
 fn s3_code(body: &str) -> Option<&str> {
     let start = body.find("<Code>")? + 6;
@@ -103,6 +119,23 @@ pub fn summarize(records: &[Record]) -> Summary {
             s.errors += 1;
             if refused {
                 s.refused += 1;
+                if s.refusals.len() < REFUSALS_NAMED {
+                    let header = |n: &str| {
+                        r.response_headers
+                            .iter()
+                            .find(|h| h.name.eq_ignore_ascii_case(n))
+                            .map(|h| h.value.to_string())
+                    };
+                    let target = match (r.bucket.as_deref(), r.key.as_deref()) {
+                        (Some(b), Some(k)) => format!(" {b}/{k}"),
+                        (Some(b), None) => format!(" {b}"),
+                        _ => String::new(),
+                    };
+                    s.refusals.push(Refusal {
+                        policy: header("x-sonde-policy").unwrap_or_default(),
+                        request: format!("{}{target}", r.operation),
+                    });
+                }
             }
             let what = match (r.status, r.error_body.as_deref().and_then(s3_code)) {
                 _ if refused => "refused by sonde".to_string(),
@@ -219,7 +252,7 @@ pub const COUNTED_VERSION: u32 = 3;
 /// raised whenever what they hold changes between versions (a finding, a
 /// warning, how waiting or cost is reckoned). A test reckons the fixtures'
 /// figures and fails, saying so, when they change and this does not.
-pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+4");
+pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+5");
 pub const SHAPE_BINS: usize = 24;
 
 /// Removes a session's counts: when the session is removed or replaced.
@@ -530,7 +563,12 @@ mod tests {
         let mut slow = rec("GetObject", 503, 80.0, 100);
         slow.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         let mut refused = rec("DeleteObject", 403, 0.0, 150);
-        refused.response_headers = vec![Header::new("x-sonde-proxy", "refused")];
+        refused.response_headers = vec![
+            Header::new("x-sonde-proxy", "refused"),
+            Header::new("x-sonde-policy", "no-delete"),
+        ];
+        refused.bucket = Some("b".into());
+        refused.key = Some("old.csv".into());
         let s = summarize(&[
             rec("GetObject", 200, 10.0, 0),
             Record {
@@ -556,6 +594,14 @@ mod tests {
         assert_eq!(s.operations[0].max_ms, 80.0);
         assert!(s.error_codes.contains(&("503 SlowDown".into(), 1)));
         assert!(s.error_codes.contains(&("refused by sonde".into(), 1)));
+        // the refused request is named, with the policy that refused it
+        assert_eq!(
+            s.refusals,
+            [Refusal {
+                policy: "no-delete".into(),
+                request: "DeleteObject b/old.csv".into()
+            }]
+        );
         assert_eq!(summarize(&[]), Summary::default());
     }
 
@@ -720,9 +766,11 @@ mod tests {
         let prices = crate::profile::RequestPrices::default();
         let mut all = String::new();
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        // the sessions alone: a lock or a state file another test's reading leaves beside them is not one
         let mut names: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|x| x == "sonde"))
             .collect();
         names.sort();
         for path in names {
@@ -738,7 +786,7 @@ mod tests {
         }
         // (what they hold is there to change: warnings among them)
         assert!(all.contains("\"warnings\":[\""), "{all}");
-        const FIGURES: u64 = 0x1502_83a9_ed7c_2d73;
+        const FIGURES: u64 = 0x6123_73ef_0572_c511;
         assert_eq!(
             h, FIGURES,
             "the figures a run keeps changed: raise the number in `ANALYSIS` (summary.rs) and set FIGURES to {h:#x}"

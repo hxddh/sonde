@@ -3,14 +3,14 @@
 
 import { computed, effect, resource, Scroll, signal, Text, untracked, View } from "nsh";
 import { DataTable, DiffView } from "nsh/base";
-import { change, clock, count, date, day, duration, hm, percent, rate, costParts } from "../format";
+import { change, clock, count, date, day, dayRange, duration, hm, percent, rate, costParts } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { api } from "../native";
 import { endpoint, endpoints, go, reading, report, sessionsChanged } from "../store";
 import type { LatencyChange, RunChange, SessionInfo, Signals } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH } from "./kit";
+import { titleCells, DOT, TONE, Actions, Await, Back, Badge, Button, Card, Check, Choice, Disclosure, Empty, Heading, ICON, Modal, Muted, Notice, PageHeader, Row, ROW, rowHeight, Stat, TABLE, terminal, Tiles, type TileLook, Title, TYPE, EMPHASIS, SIZES, SURFACE, COLUMN, WIDTH, TEXT } from "./kit";
 import { changedFindings, savedText } from "./fixloop";
 import { StateBadge } from "./sessionview";
 import { fileName, sessionName } from "./manage";
@@ -70,7 +70,7 @@ function ChangeTiles(props: { change: RunChange; signals?: [Signals, Signals] | 
     // (a figure kept with its unit: a tile's line wraps between figures, never inside one — "~93 / ms")
     const detail = () => [!known() ? "" : same() ? t("compare.sameBoth") : f().a === 0 ? "" : change(f().a!, f().b!), f().detail?.() ?? ""].filter(Boolean).join(" · ").replace(/(\d) (ms|s|min|h|B|KiB|MiB|GiB)\b/g, "$1\u00a0$2");
     // a figure of too few requests to tell is no better and no worse: plain
-    const tone = () => (!known() || same() || !c().sameProgram || f().few?.[0] || f().few?.[1] ? "plain" : f().b! < f().a! ? "ok" : "bad");
+    const tone = () => (!known() || same() || !c().sameProgram || f().few?.[0] || f().few?.[1] ? "plain" : f().b! < f().a! ? "ok" : "fail");
     const lines = () => (f().series && s() && !handful(s()![0]) && !handful(s()![1]) ? [f().series!(s()![0]), f().series!(s()![1])] : null);
     return (
       <Stat
@@ -132,7 +132,7 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean; /** 
         </If>
         {/* both runs' latency: where the curves part says for which requests it changed */}
         <If when={c().latency && c().latency![0].length > 1 && c().latency![1].length > 1}>
-          <Chart title={t("cdf.title")} text={t("cdf.hint")} legend={[{ label: t("profile.before"), swatch: "bg-muted-foreground/70" }, { label: t("profile.after"), swatch: "bg-chart-1" }]}>
+          <Chart title={t("cdf.title")} text={t("cdf.hint")} legend={[{ label: t("profile.before"), swatch: "border-muted-foreground/70", line: "dashed" }, { label: t("profile.after"), swatch: "border-chart-1", line: "solid" }]}>
             <DistributionCompare latency={c().latency!} names={[t("profile.before"), t("profile.after")]} />
           </Chart>
         </If>
@@ -149,12 +149,12 @@ export function RunChangeView(props: { change: RunChange; inline?: boolean; /** 
                     <View class="min-w-0 flex-1 gap-1">
                       <Text class="text-body leading-5 text-foreground">{say(f().phrases, f().text)}</Text>
                       {/* less: as it read in the run before */}
-                      <If when={f().state === "less" ? f().was : null}>{(w) => <Text class="text-small text-muted-foreground">{t("fix.was", { text: say(w().phrases, w().text) })}</Text>}</If>
+                      <If when={f().state === "less" ? f().was : null}>{(w) => <Text class={TEXT.note}>{t("fix.was", { text: say(w().phrases, w().text) })}</Text>}</If>
                       <If when={savedText(f())}>
                         {(v) => (
                           <View class="flex-row items-center gap-1">
                             <Icon name="trending-down" size={ICON.small} tint="status-ok" />
-                            <Text testID={`compare-saved-${i()}`} class="tabular-nums text-small text-status-ok">{v()}</Text>
+                            <Text testID={`compare-saved-${i()}`} class={`tabular-nums ${TEXT.note}`}>{v()}</Text>
                           </View>
                         )}
                       </If>
@@ -214,7 +214,7 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
     if (!a || !b) return `${a ? sessionName(a) : fileName(props.a)} → ${b ? sessionName(b) : fileName(props.b)}`;
     if (sessionName(a) !== sessionName(b)) return `${sessionName(a)} · ${date(a.created)} → ${sessionName(b)} · ${date(b.created)}`;
     // one program on one day: the day once, and the two times (to the second where they share a minute)
-    if (day(a.created) !== day(b.created)) return `${sessionName(a)} · ${date(a.created)} → ${date(b.created)}`;
+    if (day(a.created) !== day(b.created)) return `${sessionName(a)} · ${dayRange(a.created, b.created)}`;
     const fine = hm(a.created) === hm(b.created) ? "s" : "m";
     return `${sessionName(a)} · ${day(a.created)} · ${clock(a.created, fine)} → ${clock(b.created, fine)}`;
   };
@@ -261,7 +261,7 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
   // one view: a replay's answers first, then before and after; the transcripts, request by request, on demand
   const answersPart = (d: Answers) => (
     <View class="gap-4">
-      <Text class="text-body text-foreground" testID="compare-summary">
+      <Text class={TEXT.body} testID="compare-summary">
         {t("compare.summary", { n: d.comparison.compared, same: d.comparison.same })}
         {d.comparison.differences.length ? ` · ${t("compare.differ", { n: d.comparison.differences.reduce((s, x) => s + x.count, 0) })}` : ""}
       </Text>
@@ -278,8 +278,8 @@ function ComparePair(props: { a: string; b: string; onClose: () => void }) {
                 <View class="shrink-0">
                   <Badge label={t("compare.times", { n: x().count })} tone="fail" />
                 </View>
-                <Text class="text-body text-foreground">{x().kind}</Text>
-                <Text class="font-mono text-small text-foreground">{`${x().original} → ${x().replay}`}</Text>
+                <Text class={TEXT.body}>{x().kind}</Text>
+                <Text class={`font-mono ${TEXT.small}`}>{`${x().original} → ${x().replay}`}</Text>
                 <Muted class="min-w-0 flex-1 text-small line-clamp-1">{[x().example, x().conditions.join(", ")].filter(Boolean).join(" · ")}</Muted>
               </Row>
             )}
@@ -370,6 +370,7 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
       <Card pad="none">
       <DataTable
         columns={columns()}
+        renderHeaderCell={terminal() ? undefined : titleCells(columns)}
         data={rows()}
         // the stores under one heading
         groups={[[{ label: "", span: 2 }, { label: t("matrix.stores"), span: props.runs.length }]]}
@@ -383,9 +384,15 @@ function StoreMatrix(props: { runs: StoreRun[]; onOpen: (path: string) => void }
                 const k = c.row > 0 && c.key.startsWith("s") ? kinds()[c.row - 1] : null;
                 const v = k ? p95(props.runs[Number(c.key.slice(1))], k) : undefined;
                 const r = k && v !== undefined && k.p95Ms[0] > 0 ? v / k.p95Ms[0] : 1;
-                // emphasis: a figure much slower or much faster than the recording's stands out in its tone
-                const tone = r >= 1.5 ? `text-status-server ${EMPHASIS}` : r <= 0.67 ? `text-status-ok ${EMPHASIS}` : c.key === "what" ? "text-foreground" : "text-muted-foreground";
-                return <Text class={`flex-1 px-2 tabular-nums text-body ${c.key === "what" ? "" : "text-right"} ${tone}`}>{c.text}</Text>;
+                // a figure much slower or much faster than the recording's: read at full colour, its dot in its tone
+                const mark = r >= 1.5 ? TONE.fail.dot : r <= 0.67 ? TONE.ok.dot : null;
+                if (c.key === "what") return <Text class={`flex-1 px-2 ${TEXT.body}`}>{c.text}</Text>;
+                return (
+                  <View class="flex-1 flex-row items-center justify-end gap-1 px-2">
+                    <If when={mark}>{(m) => <View class={`${DOT} ${m()}`} />}</If>
+                    <Text class={`tabular-nums text-body ${mark ? "text-foreground" : "text-muted-foreground"}`}>{c.text}</Text>
+                  </View>
+                );
               }
         }
         classes={terminal() ? undefined : { ...TABLE, cell: "px-0" }}
@@ -480,7 +487,7 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
       <If when={plan()}>
         {(p) => (
           <View class="gap-1" testID="replay-plan">
-            <Text class="text-body text-foreground">{t("replay.plan", { n: p().plan.requests, writes: t("replay.writes", { n: p().plan.writes }), deletes: t("replay.deletes", { n: p().plan.deletes }), prefix: p().prefix, buckets: p().buckets.join(", ") })}</Text>
+            <Text class={TEXT.body}>{t("replay.plan", { n: p().plan.requests, writes: t("replay.writes", { n: p().plan.writes }), deletes: t("replay.deletes", { n: p().plan.deletes }), prefix: p().prefix, buckets: p().buckets.join(", ") })}</Text>
             <Muted class="text-small">{t("replay.cleanup", { prefix: p().prefix })}</Muted>
             <Each of={Object.entries(p().plan.skipped)}>{(e) => <Muted class="text-small">{`${count(e()[1])} × ${e()[0]}`}</Muted>}</Each>
           </View>
@@ -491,13 +498,13 @@ export function ReplayDialog(props: { path: string; open: boolean; onClose: () =
         when={!runs()}
         else={
           <Actions>
-            <Button variant="outline" label={t("common.close")} onPress={props.onClose} testID="replay-close" />
+            <Button variant="primary" label={t("common.close")} onPress={props.onClose} testID="replay-close" />
           </Actions>
         }
       >
         <Actions>
           <Button variant="ghost" label={t("common.cancel")} onPress={props.onClose} testID="replay-cancel" />
-          <Button variant="primary" label={busy() ? t("replay.running") : t("replay.run")} onPress={run} disabled={busy() || !plan()} testID="replay-run" />
+          <Button variant="primary" label={t("replay.run")} onPress={run} loading={busy()} disabled={!plan()} testID="replay-run" />
         </Actions>
       </If>
     </Modal>

@@ -2,14 +2,14 @@
 // (an in-memory terminal, the real Cell renderer and keyboard).
 
 import { expect, open, test } from "nsh/test";
-import { place } from "./helpers";
+import { openDemo, place } from "./helpers";
 
 const term = { width: 960, height: 640 };
 
 async function demo() {
   const app = await open("../App.tsx", term);
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await app.back();
   return app;
@@ -90,13 +90,9 @@ test("sessions in a terminal: sessions › operations › requests › request",
   await app.press("id:open-example");
   await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.waitFor("text:/172 requests · 34 operations/");
-  // the session in a sentence, and its findings narrowing the operations, as on the desktop
+  // the session in a sentence; nothing to act on (no copy kept would answer as SlateDB's store does), as on the desktop
   await app.waitFor("id:session-story");
-  await app.waitFor("id:observation-0");
-  await app.press("id:observation-0");
-  await app.waitFor("text:/ of 34 operations/");
-  await app.press("id:observation-0");
-  await app.waitUntil(() => !app.shows("text:/ of 34 operations/"));
+  expect(app.shows("id:observation-0")).toBe(false);
   await app.press("text:WAL 1 written empty (fencing marker)");
   await app.waitFor("id:operation-detail");
   await app.press("id:op-request-1");
