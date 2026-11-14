@@ -43,7 +43,7 @@ requests and findings (its times are not meaningful: leave `max-waiting` and `ma
 |---|---|---|
 | `run` | (required) | The command, as typed. |
 | `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--policy allow`, `--demo`. |
-| `name` | | The program's name (else `[program] name` in `sonde.toml`, else the command). |
+| `name` | | The program's name (else `[program] name` in `sonde.toml` for the program it `runs`, else what the command runs). |
 | `check-args` | | `sonde check` flags: `--tolerance 5`, `--no-new-warnings`, `--max-requests N`. |
 | `config` | found upward | `sonde.toml`. |
 | `baseline` | `auto` | `none`, a session path, or an https URL. |

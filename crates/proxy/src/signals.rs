@@ -297,6 +297,38 @@ fn took_ms(r: &Record) -> f64 {
 /// as that poll; the SDKs' own backoff grows or is jittered.)
 fn retries_of(records: &[Record]) -> Vec<bool> {
     let mut again = vec![false; records.len()];
+    for (_, retry) in retry_links(records) {
+        again[retry] = true;
+    }
+    again
+}
+
+/// A request's name, as its retry repeats it: [`crate::fault::identity_of`]
+/// and its `Range` (two ranges of one object are two requests).
+pub(crate) fn request_name(r: &Record) -> String {
+    let range = r
+        .request_headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("range"))
+        .map_or("", |h| h.value.trim());
+    format!("{} {range}", crate::fault::identity_of(r))
+}
+
+/// Which records are requests the program gave up on: a failure (not a
+/// miss) that no retry followed ([`retries_of`] has the rule). A request
+/// retried until it succeeded is none; one that failed after its retries,
+/// or was never sent again, is one, counted once, by its last attempt.
+pub fn gave_up(records: &[Record]) -> Vec<bool> {
+    let mut failed: Vec<bool> = records.iter().map(is_failure).collect();
+    for (failure, _) in retry_links(records) {
+        failed[failure] = false;
+    }
+    failed
+}
+
+/// Each retry, as (the failure, the record that sent it again), by index.
+fn retry_links(records: &[Record]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
     // only the places a failure was at are named: naming every request of a
     // large session would cost more than the rest of this pass
     let places: std::collections::HashSet<(Option<&str>, Option<&str>)> = records
@@ -305,7 +337,7 @@ fn retries_of(records: &[Record]) -> Vec<bool> {
         .map(|r| (r.bucket.as_deref(), r.key.as_deref()))
         .collect();
     if places.is_empty() {
-        return again;
+        return out;
     }
     let mut groups: std::collections::HashMap<String, Vec<usize>> =
         std::collections::HashMap::new();
@@ -313,15 +345,7 @@ fn retries_of(records: &[Record]) -> Vec<bool> {
         if !places.contains(&(r.bucket.as_deref(), r.key.as_deref())) {
             continue;
         }
-        let range = r
-            .request_headers
-            .iter()
-            .find(|h| h.name.eq_ignore_ascii_case("range"))
-            .map_or("", |h| h.value.trim());
-        groups
-            .entry(format!("{} {range}", crate::fault::identity_of(r)))
-            .or_default()
-            .push(i);
+        groups.entry(request_name(r)).or_default().push(i);
     }
     for group in groups.values_mut() {
         if !group
@@ -367,14 +391,12 @@ fn retries_of(records: &[Record]) -> Vec<bool> {
                 && waits[0] >= POLL_MIN_US
                 && (waits[waits.len() - 1] - waits[0]) * 10 <= mid;
             if !poll {
-                for l in chain {
-                    again[group[l.1]] = true;
-                }
+                out.extend(chain.iter().map(|l| (group[l.0], group[l.1])));
             }
             i = j;
         }
     }
-    again
+    out
 }
 
 /// The smallest body whose transfer is timed against its size: under it the

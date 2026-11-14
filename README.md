@@ -66,30 +66,23 @@ Windows; the app as `.dmg`, a Linux tarball (GTK 4) and a Windows zip. Checksums
 ## Use
 
 ```sh
-sonde run --demo                        # a tour on a built-in store, no account needed
-sonde run --demo -- python etl.py       # your program on the built-in store, no account needed
-sonde endpoints import                  # your ~/.aws/config profiles
-sonde run -- python etl.py              # record
-sonde show                              # read the newest run of this folder's program
+sonde run --demo                        # the tour: a finding, its line of code, its fix, the fix measured
+sonde run -- python etl.py              # your program's requests, sent on with your AWS credentials
 sonde run -- python etl.py              # after a change: what is fixed, and what it saved
-sonde show --by prefix                  # where the slow requests are
 sonde run --trial -- python etl.py 's3://scratch/{trial}/'   # the same under faults
-sonde run --again -- python etl.py 's3://scratch/{trial}/'   # after a fix: only what broke
 sonde check --init && sonde check       # a budget for CI
-sonde compare before.sonde after.sonde
-sonde import access.log
-sonde share --html --redact -o run.html # one page, names replaced, safe to send
-sonde tui                               # the terminal UI
 ```
+
+Another store: `sonde endpoints add ID URL`, or `--url URL` for one run. The built-in one: `sonde run --demo -- …`.
 
 Every command, its formats and exit codes: [docs/cli.md](docs/cli.md).
 
 ## Good to know
 
-- **What a recorded program may do**: by default `no-delete` — no deletes, no overwriting objects it did not write,
-  no bucket policy or versioning changes. `--policy allow` lifts it, `--policy read-only` allows only reads
-  ([recording](docs/recording.md)). On a store that ignores `If-None-Match`, use `--policy read-only`. A safety net,
-  not a sandbox: the program runs with your rights ([security](docs/security.md#run)).
+- **What a recorded program may do**: by default `no-delete` — no deletes (but of what it made), aborts, lifecycle,
+  bucket policy or versioning changes; writes go through. `--policy allow` lifts it, `--policy read-only` allows only
+  reads ([recording](docs/recording.md)). A safety net, not a sandbox: the program runs with your rights
+  ([security](docs/security.md#run)).
 - **A trial runs the program again**, once per scenario: point it at scratch paths with `{trial}` in a key, or
   every run writes over the last ([trials](docs/trials.md)).
 - sonde's own destructive actions (aborting uploads, deleting versions) are each a dry run and a typed

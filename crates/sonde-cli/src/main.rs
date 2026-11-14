@@ -201,6 +201,13 @@ fn scoped(mut cmd: clap::Command) -> clap::Command {
     cmd
 }
 
+/// What `sonde` alone prints: the tour, a real run, and where to read more.
+const START: &str = "\
+sonde run --demo               a finding, its line of code and its fix, then the fix measured
+sonde run -- <your command>    your program's S3 requests (AWS credentials, or an endpoint: sonde endpoints add)
+sonde help                     every command; docs: https://github.com/hxddh/sonde/tree/main/docs
+";
+
 fn main() -> ExitCode {
     // `sonde … | head`: a closed pipe ends the output quietly. What sonde
     // writes goes through output::Stdout and runs on to its exit code; a
@@ -219,6 +226,11 @@ fn main() -> ExitCode {
         }
         previous(info);
     }));
+    // `sonde` alone: where to start
+    if std::env::args_os().len() == 1 {
+        print!("{START}");
+        return ExitCode::SUCCESS;
+    }
     // a mistake in the command is a usage error (64), as docs/cli.md says; help and --version are not
     let parsed = grouped(Cli::command())
         .try_get_matches()

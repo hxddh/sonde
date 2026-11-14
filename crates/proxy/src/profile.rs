@@ -1431,15 +1431,11 @@ pub struct PrefixChange {
 }
 
 impl RunChange {
-    /// Says whether the two runs are of one program (`command`s by
-    /// [`crate::program::program_key`]); across programs the findings
-    /// gone and new are left out.
+    /// Says whether the two runs are of one program (their
+    /// [`crate::program::key_of`]); across programs the findings gone and
+    /// new are left out.
     pub fn of_programs(mut self, a: Option<&str>, b: Option<&str>) -> Self {
-        let (ka, kb) = (
-            crate::program::program_key(a),
-            crate::program::program_key(b),
-        );
-        self.same_program = ka.is_some() && ka == kb;
+        self.same_program = a.is_some() && a == b;
         if !self.same_program {
             self.resolved.clear();
             self.appeared.clear();
@@ -1580,27 +1576,12 @@ pub const IDENTITY_RULES: u32 = 2;
 /// `v{n}`). Two findings of one run that read the same once so are told
 /// apart by their keys as they were ([`Run::with`]).
 pub fn stable(s: &str) -> String {
-    stable_with(s, true)
-}
-
-/// [`stable`] for a command line: only what is never the same twice is
-/// taken out, a date `{date}`, a time `{time}`, a UUID `{uuid}`, an id
-/// `{id}` (a hex word, a long mixed one, a number of ten digits or more),
-/// wherever it is (`--date=2026-11-14`). A number is an argument
-/// (`--limit 30` and `--limit 5` are two commands), and `python3`, `s3://`
-/// and `job1.py` stay what they say.
-pub fn stable_words(s: &str) -> String {
-    stable_with(s, false)
-}
-
-fn stable_with(s: &str, digits_in_words: bool) -> String {
     let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < b.len() {
-        // a folder or file `name=value` (Hive's partitions): its value (of
-        // a key; a command's values are taken out only by what they are)
-        if digits_in_words && (i == 0 || b[i - 1] == b'/') {
+        // a folder or file `name=value` (Hive's partitions): its value
+        if i == 0 || b[i - 1] == b'/' {
             let seg = s[i..].find('/').map_or(&s[i..], |e| &s[i..i + e]);
             if let Some((name, value)) = seg.split_once('=')
                 && !name.is_empty()
@@ -1641,10 +1622,6 @@ fn stable_with(s: &str, digits_in_words: bool) -> String {
         if (w.len() >= 6 && hex && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
             || (w.len() >= 20 && has(u8::is_ascii_digit) && has(u8::is_ascii_alphabetic))
         {
-            out.push_str("{id}");
-        } else if !digits_in_words && (has(u8::is_ascii_alphabetic) || w.len() < 10) {
-            out.push_str(w);
-        } else if !digits_in_words {
             out.push_str("{id}");
         } else {
             // each run of digits

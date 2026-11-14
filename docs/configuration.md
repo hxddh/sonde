@@ -106,7 +106,8 @@ one of three or a scenario sonde cannot run is an error (exit 64), in the CLI an
 
 ```toml
 [program]
-name = "nightly-etl"      # runs, baseline, trial verdicts go by it, whatever the arguments
+name = "nightly-etl"      # runs, baseline and trial verdicts go by it
+runs = "etl"              # for the commands that run it (`python3 etl.py 5`); others go by their own
 
 [check]                   # `sonde check`: cli.md
 max-requests = 5000
@@ -124,7 +125,7 @@ fault = "503 SlowDown"
 on = ["PutObject"]
 ```
 
-- `[program]`: without a name, a program is its command with what changes between runs left out ([cli](cli.md)).
+- `[program]`: both keys or neither; without it, a program is what its command runs ([cli](cli.md)).
 - `[check]`: every key in [cli.md](cli.md#sonde-check).
 - `[record] policy`: what each policy refuses is in [recording](recording.md#what-a-recorded-program-may-do). In the
   app, Run's own choice starts at `no-delete`; the project's policy may narrow it, never widen it.

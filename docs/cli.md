@@ -13,17 +13,18 @@
 | Streams | The answer on stdout; hints, progress and `run`'s summary on stderr. Ctrl+C cancels the running job. |
 | A session argument | A path or a name, resolved in order: a file; `sessions/<name>[.sonde]`; `sessions/trials/<name>` (e.g. `20261108-073328-etl.slowdown`). Not found: usage error naming where it looked. |
 | Which run | When none is named, `show`, `compare`, `share` and `check` take the same: the newest run of `[program] name` (none: an error), else the newest recorded in this folder (the session's `cwd`), else the newest of any; runs from `run` or `proxy` only (never a replay, import or trial). `check` says which it took. A `sonde.toml` is applied only to its own program's runs (by its name, else recorded in its folder or below): `check` of another's says so and leaves its `[check]` out (one given with `--config` is applied). |
-| A program | `[program] name` in `sonde.toml`, or `--name`; else its command with each date, time, UUID and id said as what it is (`etl.py --date 2026-11-14` is `etl.py --date {date}`; an id is a hex word, a long mixed word or ten digits or more) and a trial's place (`{trial}`, `$SONDE_TRIAL`) left out. Other numbers stay (`--limit 30` and `--limit 5` are two programs), as do the digits in a name (`python3`, `job1.py`). Runs, baselines, trial verdicts and `no-delete`'s ledger go by it. |
-| Size | Sessions are streamed and analysed once; `compare` reads one session at a time, so two cost what one does. Memory grows with the requests ([what a million cost](dev/performance.md#large-sessions)). |
+| A program | `--name`, else `sonde.toml`'s `[program] name` for the program it `runs`, else what the command runs: the script an interpreter runs (`etl` for `python3 etl.py 5`), else the program (`load` for `./load --all`). Its arguments are not part of it: a run with others is another run of it, and the [fix loop](#the-fix-loop) says the command changed. Runs, baselines and trial verdicts go by it. |
+| Size | Sessions are streamed and analysed once; `compare` reads one session at a time, so two cost what one does. Memory grows with the requests ([what a million cost](performance.md#large-sessions)). |
 | `.index.jsonl` | One per sessions folder: each session's counts (requests, time, errors, program, figures once checked), its trials' verdicts and its exit code. Read by `sessions`, the app and `check`'s history. Counted again when missing, when the session's length or mtime (ns) changed, or the analysis changed; forgotten with the session. A session with a bad middle line is listed with `!` (`unreadable` in JSON). |
 
 ## Record
 
 | Command | Does |
 |---|---|
-| `sonde run [-e E \| --demo] [--policy P] [--tls] [--live] [--no-callers] [--name N] [-o FILE [--force]] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary as `show` does, ending with the change since the program's run before ([fix loop](#the-fix-loop)); how to point each SDK at sonde when nothing was sent. Exits with the command's status (128 + signal; 143 when sonde is sent SIGTERM, said as such). An unknown option before `--`, or no endpoint, is a usage error (64); a command that cannot start leaves no session (70). |
+| `sonde` | Three lines: the tour, a real run, where to read more. |
+| `sonde run [-e E \| --demo] [--policy P] [--tls] [--live] [--no-callers] [--name N] [-o FILE [--force]] -- CMD…` | Runs `CMD` against a local endpoint that re-signs and records its S3 requests ([recording](recording.md)). Prints the summary as `show` does, ending with the change since the program's run before ([fix loop](#the-fix-loop)); how to point each SDK at sonde when nothing was sent. Exits with the command's status (128 + signal; 143 when sonde is sent SIGTERM, said as such). With no endpoint configured it goes where an AWS SDK would: the default credential chain and region (`AWS_REGION`, the profile's, else us-east-1; `AWS_ENDPOINT_URL` if set), said on stderr. An unknown option before `--`, or no endpoint and no AWS credentials, is a usage error (64); a command that cannot start leaves no session (70). |
 | ↳ `-o FILE` | Without it: `sessions/<time>-<name>.sonde`, named by the program (`--name`, `[program] name`), else by what its command runs (`etl` of `python3 etl.py`). With it: the session there. A file there is refused (64) unless `--force`. Recorded beside it and put in place at the end: two runs given one file each keep their own (the second under a fresh name, said). |
-| ↳ `--demo` | The built-in store (buckets `demo`, `demo-large`, `demo-layouts`), in sonde's process, fresh each run: a first run with no account, or a CI check of requests and findings with no secrets. Its times are not meaningful (said on stderr). Without a command: a tour, a small program of sonde's own recorded and explained (`-o` taken; `sonde show --app` opens it in the app). |
+| ↳ `--demo` | The built-in store (buckets `demo`, `demo-large`, `demo-layouts`), in sonde's process, fresh each run: a first run with no account, or a CI check of requests and findings with no secrets. Its times are not meaningful (said on stderr). Without a command, the tour: a small export job (written to `<data>/tour/export.py`) played by sonde as boto3 sends it, recorded and shown with its finding, the line that sent it and the fix; then the job with that fix (`export-fixed.py`) recorded again, ending `✓ fixed … (predicted …)`. Two runs of program `tour` (with `-o FILE`, the fixed one beside it as `FILE-fixed.sonde`). |
 | ↳ `--policy no-delete\|read-only\|allow` | Default `[record] policy` in `sonde.toml`, else `no-delete` ([what it refuses](recording.md#what-a-recorded-program-may-do)). |
 | ↳ `--tls` | Also serve TLS, with a certificate the program is told to trust (`[record] tls = true`). |
 | ↳ `--live` | Each request on stderr as it happens. |
@@ -34,7 +35,7 @@
 | ↳ `--fault S` | Repeatable: `slowdown`, `error`, `skew`, `lost-answer`, `fail-complete`, `complete-500`, `cut-body`, `slow-first-byte`, `lost-race`, `stale-list`, `slow`, `s3-limits`, or a `sonde.toml` scenario. `slowdown:N` / `error:N` (1–5) fail the first N attempts. |
 | `sonde proxy [--listen ADDR] [--allow-remote] [--policy P] [--tls] [-o FILE]` | The same endpoint, standing (default `127.0.0.1:9000`): prints the variables to set, then each request; its summary at Ctrl-C. Loopback only unless `--allow-remote`. |
 | ↳ `--rotate MIN`, `--alert URL` | Left running: a status line for the last minute (rate, errors, p95) instead of each request, each new warning finding, a new session file every `--rotate` minutes (the finished one gzipped). A file over `sonde.toml`'s budget is said on stderr. `--alert` posts warnings and over-budget files to a webhook as `{"text": …}` (Slack, Teams, Mattermost). |
-| `sonde import s3://B/PREFIX [-e E] [--follow [--every 15m]] [--alert URL]` | Production from its S3 access logs or CloudTrail files (GET and LIST only, no proxy): what arrived since the last import of that prefix, a session of program `logs of s3://…` (history, baseline, `check`), held to `sonde.toml`'s budget only when its `[program] name` is that program; `--follow` keeps reading, a session a pass, until Ctrl-C. Position is kept; an upload not completed yet waits (up to a day of the logs' time) and is read with the pass that completes it. One pass exits 1 over budget, 70 when the logs cannot be listed, none could be read, the prefix holds no files or none is a log; nothing new since the last pass is said, exit 0. |
+| `sonde import s3://B/PREFIX [-e E] [--follow [--every 15m]] [--alert URL]` | Production from its S3 access logs or CloudTrail files (GET and LIST only, no proxy): what arrived since the last import of that prefix, a session of program `logs of s3://…` (history, baseline, `check`), held to `sonde.toml`'s budget only when its `[program] runs` is that program; `--follow` keeps reading, a session a pass, until Ctrl-C. Position is kept; an upload not completed yet waits (up to a day of the logs' time) and is read with the pass that completes it. One pass exits 1 over budget, 70 when the logs cannot be listed, none could be read, the prefix holds no files or none is a log; nothing new since the last pass is said, exit 0. |
 | `sonde import FILE\|FOLDER [-o FILE [--force]]` | An S3 access log, CloudTrail (`{"Records": …}` or one event a line) or HAR, gzipped or not, as a session. A folder is every file under it, in name order, as one session. Skipped lines and events (not requests, unreadable, a HAR's other hosts, another service's CloudTrail events) are counted on stderr. Named by the store's host. Whole-second log times are spread evenly over their second (`wholeSeconds` in the header, a line in `show`), so in-flight counts, the waiting, "one after another" and a throttling finding's in-flight figure are not given. Times not recorded (CloudTrail) are "—". Upload parts with no create in the file are not "never completed". A HAR's `timings.wait` is the first byte. |
 
 ## Read a run
@@ -60,18 +61,18 @@
 
 | Option | |
 |---|---|
-| `--max-requests N`, `--max-waiting T`, `--max-cost X`, `--max-errors N`, `--max-p95 T` | Budget. Times as `2s`, `250ms` or ms. |
+| `--max-requests N`, `--max-waiting T`, `--max-cost X`, `--max-errors N`, `--max-p95 T` | Budget. Times as `2s`, `250ms` or ms. An error is a request that failed after its retries (a 503 retried into a 200 is none; a miss is none). |
 | `--baseline FILE\|auto\|https://…` | `auto`: the baseline set for the run's program (`sessions/baselines.json`, shared with the app). A URL is fetched (CI artifact, presigned). |
 | `--set-baseline` | Make this run its program's baseline (refused for a run that failed: 64). |
 | `--tolerance PCT` | Growth allowed over the baseline (10). |
 | `--no-new-warnings` | Fail on a warning the baseline did not have. |
 | `--config FILE` | Default: `sonde.toml` here or in a folder above, up to the repository root. Flags win. |
 | `--report-url URL` | `-f markdown` only: the link the comment ends with (the HTML report). |
-| `--init` | Write a `sonde.toml` this run passes: counts with 10% room, times commented out beside their measured values, a `[program] name` from the command when there is none (`etl` for `python etl.py --day 2`); the baseline, trial verdicts and findings kept under the command move to that name. No trials. Refused for a run that failed (64). Prints the workflow step, `uses: hxddh/sonde@vN` at this sonde's major version. |
+| `--init` | Write a `sonde.toml` this run passes: counts with 10% room, times commented out beside their measured values. No trials. Refused for a run that failed or sent nothing (64). Prints the workflow step, `uses: hxddh/sonde@vN` at this sonde's major version. |
 
 - Output names the session and program first. A trial row is `pass` / `warn` / `FAIL` / `skip` (survived / degraded / broke / untested). A failed row says by how much (`+23%`) over its limit or the baseline's figure.
-- Closing verdict, in every format: `within budget` / `over budget`, `within its baseline` / `past its baseline` (joined with `and`), then `, and broke under a trial`; trials alone: `broke under a trial` / `did not break under its trials`. A program that failed comes first: `the program failed (exit 3); within budget`.
-- No baseline set yet: the budget alone decides; said in every format: `no baseline yet` on stderr and in the verdict, `noBaseline` in JSON, a quoted line in markdown, a `::warning` with `-f github`. It names a baseline of the same program under other arguments if there is one. A baseline of another program is named on stderr.
+- Closing verdict, in every format: `within budget` / `over budget`, `within its baseline` / `past its baseline` (joined with `and`), then `, and broke under a trial`; trials alone: `broke under a trial` / `did not break under its trials`. A program that failed comes first: `the program failed (exit 3); within budget`. A run of no request fails as `nothing reached sonde`, against a budget or a baseline (its client went around sonde; `run` says so too).
+- No baseline set yet: the budget alone decides; said in every format: `no baseline yet` on stderr and in the verdict, `noBaseline` in JSON, a quoted line in markdown, a `::warning` with `-f github`. A baseline of another program is named on stderr.
 - Past a baseline over several runs: since which run, and the commits around it (`git`, else `GITHUB_SHA`), once (`past the baseline since a1b2c3d, 2 runs ago; within at 9f8e7d6`; this run the first past: `the run before, at 9f8e7d6, was within it`).
 - `-f json`: `trials`, `passed` (whole check), `verdict`, `check` (rows, each with `passed`). `-f markdown`: a pull-request comment ([what it says](ci.md#the-comment)). `-f github`: Actions annotations, findings on the line that sent their requests.
 - `--baseline auto` with none set and no budget: nothing checked, exit 0. Usage error (64): nothing to check (no
@@ -137,7 +138,8 @@ other key is an error.
 
 ```toml
 [program]
-name = "nightly-etl"      # runs and baseline go by it, whatever the arguments
+name = "nightly-etl"      # runs, baseline and trial verdicts go by it
+runs = "etl"              # for the commands that run it (`python3 etl.py 5`)
 
 [check]
 max-requests = 5000
@@ -199,7 +201,7 @@ Between a run and the program's run before it that did not fail, by its counts (
 Each kind of failure (status and S3 code, `no answer`; throttling is its own finding) is compared too: one whose count
 moved is a finding of the change, `obs.errors|500 InternalError`, new, more, less or fixed.
 
-A named program whose command changed between the two runs beyond its dates and ids says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix.
+A program whose command changed between the two runs (beyond a trial's place) says so first (`the command changed (--limit 200 → 20)`, `commandChanged` in JSON), and so does each finding fixed, less or more, with no saving counted: a smaller workload is not a fix.
 
 A finding of time alone (requests one after another) is judged by its requests: about as many of them (a fifth
 either way) is open, whatever their timing. A run that failed (its exit code is not 0) is not compared: `the run failed (exit 3);

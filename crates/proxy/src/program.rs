@@ -7,40 +7,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::episode::Observation;
 use crate::profile::Profile;
-use crate::summary::is_miss;
 use reqlog::Record;
 
-/// The program a session ran, as runs of it are grouped: its command's
-/// words (quotes undone, spaces collapsed) with what changes from run to run
-/// said as what it is ([`crate::profile::stable`]: `etl.py --date
-/// 2026-11-14` and `--date 2026-11-13` are one program), and a trial's place
-/// left out (`{trial}`, `$SONDE_TRIAL`: adding one keeps the program's
-/// history). A replay, an imported log or a recording without a command has
-/// none.
+/// The program a session ran, as runs of it are grouped: what its command
+/// runs ([`short_name`]: `etl` for `python3 etl.py 5`), whatever its
+/// arguments; a log source's imports are its own (`logs of s3://b/logs/`,
+/// [`LOGS_OF`]). A replay, a file imported once or a recording without a
+/// command has none.
 pub fn program_key(command: Option<&str>) -> Option<String> {
     let c = command?.trim();
     if c.is_empty() || c.starts_with("replay of ") || c.starts_with("imported from ") {
         return None;
     }
-    let words: Vec<String> = shell_words(c)
-        .iter()
-        .map(|w| without_trial(&unquote(w)))
-        .collect();
-    let words: Vec<&str> = words.iter().flat_map(|w| w.split_whitespace()).collect();
-    Some(crate::profile::stable_words(&words.join(" ")))
+    if c.starts_with(LOGS_OF) {
+        return Some(c.to_string());
+    }
+    short_name(c)
 }
 
-/// What changed between two runs' commands beyond what a program's key
-/// leaves out (a date, an id): the words that differ, after the option they
-/// follow, `--limit 200 → 20`. A named program's runs may differ so; less of
-/// a finding then is a smaller workload, not a fix. None when the commands
-/// are the same by their key, or either is not known. Secrets are hidden.
+/// The command of a log source's imports, before its place: their runs make
+/// a history and `sonde check` holds them to a baseline like any program's.
+pub const LOGS_OF: &str = "logs of ";
+
+/// What changed between two runs' commands: the words that differ, after
+/// the option they follow, `--limit 200 → 20`. Runs of one program may
+/// differ so; less of a finding then is a smaller workload, not a fix. A
+/// trial's place (`{trial}`, `$SONDE_TRIAL`) is no change. None when the
+/// words are the same, or either is not known. Secrets are hidden.
 pub fn command_change(a: Option<&str>, b: Option<&str>) -> Option<String> {
     let (a, b) = (a?, b?);
-    let (ka, kb) = (program_key(Some(a))?, program_key(Some(b))?);
-    if ka == kb {
-        return None;
-    }
     let words = |c: &str| -> Vec<String> {
         shell_words(c)
             .iter()
@@ -99,9 +94,8 @@ fn without_trial(word: &str) -> String {
     w
 }
 
-/// The program a session is a run of: the name it was given, else its
-/// command ([`program_key`]). A named program keeps its runs and its
-/// baseline when an argument or the interpreter's path changes.
+/// The program a session is a run of: the name it was given, else what its
+/// command runs ([`program_key`]).
 pub fn key_of(header: &crate::session::SessionHeader) -> Option<String> {
     // (a replay or an import of a named run is still none)
     program_key(header.command.as_deref())?;
@@ -259,10 +253,11 @@ pub fn program_name(command: &str) -> Option<String> {
     first
 }
 
-/// A short name for a program from its command: the script an interpreter
-/// runs (`etl` of `python etl.py --day 2`), else the program itself. Letters,
-/// digits, `-` and `_`: what `check --init` names a program, and what its
-/// session files are named by.
+/// What a command runs, by a short name: the script an interpreter runs
+/// (`etl` of `python etl.py --day 2`), else the program itself (`load` of
+/// `./load --all`). Letters, digits, `-` and `_`: a program without a name
+/// of its own goes by it ([`program_key`]), and its session files are named
+/// by it.
 pub fn short_name(command: &str) -> Option<String> {
     const INTERPRETERS: &[&str] = &[
         "python", "python3", "node", "ruby", "java", "bash", "sh", "deno", "bun", "perl", "php",
@@ -429,47 +424,6 @@ pub fn write_baselines(
     reqlog::private::replace(&dir.join("baselines.json"), serde_json::to_vec_pretty(all)?)
 }
 
-/// What a program keeps beside its runs, by its key: its baseline, its
-/// trials' verdicts, its findings, what it wrote.
-pub const KEPT_BY_PROGRAM: &[&str] = &[
-    "baselines.json",
-    "verdicts.json",
-    "findings.json",
-    "written.json",
-];
-
-/// Moves what program `from` keeps in `dir` ([`KEPT_BY_PROGRAM`]) to
-/// program `to`: a program given a name keeps its baseline and history.
-/// What `to` keeps already stays. Returns the files it moved something in.
-pub fn rename_program(
-    dir: &std::path::Path,
-    from: &str,
-    to: &str,
-) -> std::io::Result<Vec<&'static str>> {
-    let mut moved = Vec::new();
-    for name in KEPT_BY_PROGRAM {
-        let path = dir.join(name);
-        let _held = crate::index::hold(dir, name.trim_end_matches(".json"));
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
-        };
-        let mut all: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&bytes)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        if all.contains_key(to) {
-            continue;
-        }
-        let Some(kept) = all.remove(from) else {
-            continue;
-        };
-        all.insert(to.to_string(), kept);
-        reqlog::private::replace(&path, serde_json::to_vec_pretty(&all)?)?;
-        moved.push(*name);
-    }
-    Ok(moved)
-}
-
 /// A run, by the figures that move when the program changes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -481,6 +435,9 @@ pub struct RunPoint {
     pub wall_ms: f64,
     pub cost: f64,
     pub currency: String,
+    /// Requests that failed after their retries (a miss is no failure, and
+    /// an attempt retried until it succeeded is none): what `max-errors`
+    /// holds a run to ([`crate::signals::gave_up`]).
     pub errors: usize,
     pub warnings: usize,
     pub findings: usize,
@@ -508,9 +465,9 @@ pub fn run_point(
         p95_ms: profile.p95_ms,
         cost: profile.cost.amount,
         currency: profile.cost.currency.clone(),
-        errors: records
-            .iter()
-            .filter(|r| r.is_error() && !is_miss(r))
+        errors: crate::signals::gave_up(records)
+            .into_iter()
+            .filter(|&g| g)
             .count(),
         warnings: findings.iter().filter(|o| o.level == "warn").count(),
         findings: findings.len(),
@@ -524,12 +481,18 @@ pub fn run_point(
 /// The figures a budget holds a run to, kept as its requests arrive: a
 /// proxy left running holds eight bytes a request (its latency, for the
 /// p95) and the stretches of time with a request in flight, not the records.
-/// The same figures as [`run_point`] of the same records.
+/// The same figures as [`run_point`] of the same records, but for a
+/// failure's retry, which is known here as it arrives: the next request of
+/// the failure's name once it was answered, within a minute (without the
+/// rule that tells a program's poll from an SDK's retries).
 #[derive(Debug, Clone)]
 pub struct RunFigures {
     prices: crate::profile::RequestPrices,
     requests: usize,
     errors: usize,
+    /// Failures a retry is owed for, by the request's name: when each was
+    /// answered (µs). Counted in `errors` until their retry comes.
+    owed: std::collections::HashMap<String, i64>,
     cost: f64,
     latencies: Vec<f64>,
     /// Disjoint stretches with a request in flight, start to end, in µs.
@@ -544,6 +507,7 @@ impl RunFigures {
             prices,
             requests: 0,
             errors: 0,
+            owed: Default::default(),
             cost: 0.0,
             latencies: Vec::new(),
             busy: Default::default(),
@@ -557,11 +521,26 @@ impl RunFigures {
 
     pub fn add(&mut self, r: &Record) {
         self.requests += 1;
-        self.errors += usize::from(r.is_error() && !is_miss(r));
-        self.cost += crate::profile::price(r, &self.prices);
-        self.latencies.push(r.latency_ms.max(0.0));
         let mut start = r.time.timestamp_micros();
         let mut end = start + r.latency_us();
+        // a failure retried is a request that went on: no longer one that failed
+        let name = crate::signals::request_name(r);
+        if let Some(&told) = self.owed.get(&name)
+            && start >= told
+        {
+            self.owed.remove(&name);
+            if start - told <= crate::signals::RETRY_WINDOW_US {
+                self.errors -= 1;
+            }
+        }
+        if crate::summary::is_failure(r) {
+            self.errors += 1;
+            if crate::episode::retryable(r) {
+                self.owed.insert(name, end);
+            }
+        }
+        self.cost += crate::profile::price(r, &self.prices);
+        self.latencies.push(r.latency_ms.max(0.0));
         self.span = Some(match self.span {
             Some((s, e)) => (s.min(start), e.max(end)),
             None => (start, end),
@@ -678,6 +657,9 @@ impl Verdict {
 #[serde(rename_all = "camelCase")]
 pub struct Check {
     pub passed: bool,
+    /// The run recorded no request: nothing reached sonde (the program's
+    /// client went elsewhere). It fails, whatever it is held to.
+    pub empty: bool,
     pub verdicts: Vec<Verdict>,
     /// Warnings the baseline did not have, as they read.
     pub new_warnings: Vec<String>,
@@ -922,8 +904,10 @@ pub fn check(
             });
         }
     }
+    let empty = r.requests == 0;
     Check {
-        passed: v.iter().all(|x| x.ok),
+        passed: !empty && v.iter().all(|x| x.ok),
+        empty,
         verdicts: v,
         new_warnings,
         expected: run
@@ -1021,6 +1005,9 @@ pub fn check_markdown(
 /// broke under a trial failed whatever its figures.
 pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     use crate::trial::Standing;
+    if c.empty {
+        return NOTHING_REACHED.into();
+    }
     let broke = trials.iter().any(|t| t.standing == Standing::Broke);
     let tried = trials
         .iter()
@@ -1053,6 +1040,9 @@ pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     }
 }
 
+/// The verdict on a run that recorded no request.
+pub const NOTHING_REACHED: &str = "nothing reached sonde";
+
 /// [`check_closing`] of a run whose program may have failed (`exit`, not
 /// 0): a failed run is said to have failed first, whatever its figures.
 pub fn run_closing(c: &Check, trials: &[crate::trial::Trial], exit: Option<i32>) -> String {
@@ -1070,10 +1060,10 @@ pub fn run_passed(c: &Check, trials: &[crate::trial::Trial], exit: Option<i32>) 
     exit.is_none() && check_passed(c, trials)
 }
 
-/// Whether a check, with the run's trials, passed: every row of the budget
-/// and the baseline, and no trial that broke.
+/// Whether a check, with the run's trials, passed: a run that reached
+/// sonde, every row of the budget and the baseline, and no trial that broke.
 pub fn check_passed(c: &Check, trials: &[crate::trial::Trial]) -> bool {
-    c.verdicts.iter().all(|v| v.ok)
+    c.passed
         && !trials
             .iter()
             .any(|t| t.standing == crate::trial::Standing::Broke)
@@ -1481,6 +1471,51 @@ mod tests {
         (run_point("x", "", rs, &p, &o), p, o)
     }
 
+    /// `max-errors` counts the requests that failed after their retries:
+    /// one 503 retried into a 200 against real S3 fails no budget.
+    #[test]
+    fn an_error_is_a_request_that_failed_after_its_retries() {
+        let at = |id: u64, ms: i64, key: &str, status: u16| {
+            let mut r = rec(id, key);
+            r.time += chrono::Duration::milliseconds(ms);
+            r.status = Some(status);
+            r
+        };
+        let errors = |rs: &[Record]| {
+            let mut f = RunFigures::new(RequestPrices::default());
+            rs.iter().for_each(|r| f.add(r));
+            let p = point(rs).0;
+            assert_eq!(f.point().errors, p.errors, "kept as they arrive, the same");
+            p.errors
+        };
+        let mut rs: Vec<Record> = (0..20).map(|i| at(i, i as i64 * 100, "k", 200)).collect();
+        assert_eq!(errors(&rs), 0);
+        // a 503, sent again 50 ms later and answered
+        rs.push(at(30, 2500, "hot", 503));
+        rs.push(at(31, 2560, "hot", 200));
+        assert_eq!(errors(&rs), 0);
+        let c = check(
+            (&point(&rs).0, &rs, &point(&rs).1, &point(&rs).2),
+            None,
+            &Budget {
+                max_errors: Some(0),
+                ..Default::default()
+            },
+        );
+        assert!(c.passed, "{c:#?}");
+        // retried twice and failed again: one request lost, not three
+        rs.push(at(40, 4000, "lost", 503));
+        rs.push(at(41, 4100, "lost", 503));
+        rs.push(at(42, 4300, "lost", 503));
+        assert_eq!(errors(&rs), 1);
+        // a 403 is not sent again: it failed
+        rs.push(at(50, 5000, "secret", 403));
+        assert_eq!(errors(&rs), 2);
+        // a miss is no failure
+        rs.push(at(60, 6000, "none", 404));
+        assert_eq!(errors(&rs), 2);
+    }
+
     #[test]
     fn figures_kept_as_requests_arrive_are_those_of_the_records() {
         let mut rs = Vec::new();
@@ -1679,84 +1714,29 @@ mod tests {
         assert_eq!(file_stem(None, None), None);
     }
 
+    /// A program is what its command runs, whatever its arguments: a run
+    /// with another date, number or id is another run of it.
     #[test]
-    fn programs_are_their_commands_and_replays_are_none() {
-        assert_eq!(
-            program_key(Some("  python3  etl.py  --day 1 ")).as_deref(),
-            Some("python3 etl.py --day 1")
-        );
-        assert_eq!(
-            program_key(Some("sh -c 'aws s3 cp job1.py s3://b/x'")).as_deref(),
-            Some("sh -c aws s3 cp job1.py s3://b/x")
-        );
-        assert_eq!(program_key(Some("replay of etl")), None);
-        assert_eq!(program_key(Some("imported from CloudTrail")), None);
-        assert_eq!(program_key(None), None);
-    }
-
-    /// What changes from one run of a command to the next is not another
-    /// program: a date, a scratch folder's id, a trial's place.
-    #[test]
-    fn a_program_is_its_command_with_what_changes_between_runs_left_out() {
-        let key = |c: &str| program_key(Some(c)).unwrap();
-        assert_eq!(
-            key("python etl.py --date 2026-11-14"),
-            key("python etl.py --date 2026-11-13")
-        );
-        assert_eq!(
-            key("python etl.py --date 2026-11-14"),
-            "python etl.py --date {date}"
-        );
-        assert_eq!(
-            key("./load --run 3fa2b1c9-58cc-4372-a567-0e02b2c3d479"),
-            key("./load --run 0e02b2c3-58cc-4372-a567-3fa2b1c9d479")
-        );
-        // a trial's place, in the command or by its variable: the program
-        // it was before one was added
-        assert_eq!(
-            key("python etl.py 's3://scratch/etl-{trial}/'"),
-            key("python etl.py s3://scratch/etl/")
-        );
-        assert_eq!(
-            key("python etl.py --prefix={trial}"),
-            key("python etl.py --prefix")
-        );
-        assert_eq!(key("sh -c 'etl $SONDE_TRIAL'"), key("sh -c etl"));
-        assert_eq!(key("python etl.py {trial}"), key("python etl.py"));
-        // what does not change stays: two programs stay two
-        assert_ne!(
-            key("python etl.py --day mon"),
-            key("python etl.py --day tue")
-        );
+    fn a_program_is_what_its_command_runs() {
+        let key = |c: &str| program_key(Some(c));
+        for (command, program) in [
+            ("python3 etl.py 5", "etl"),
+            ("  python3  etl.py  --day 1 ", "etl"),
+            ("/opt/py3.13/bin/python etl.py --date 2026-11-14", "etl"),
+            ("AWS_PROFILE=x python -u jobs/load.py --limit 30", "load"),
+            ("node dist/sync.mjs", "sync"),
+            ("./load --all", "load"),
+            ("sh get.sh", "get"),
+            ("aws s3 ls", "aws"),
+            ("logs of s3://b/logs/", "logs of s3://b/logs/"),
+        ] {
+            assert_eq!(key(command).as_deref(), Some(program), "{command}");
+        }
+        assert_eq!(key("python etl.py 20"), key("python etl.py 5"));
         assert_ne!(key("python load.py"), key("python etl.py"));
-        // a number is an argument: a smaller workload is another command
-        assert_ne!(
-            key("python etl.py --limit 30"),
-            key("python etl.py --limit 5")
-        );
-        assert_ne!(
-            key("python etl.py --limit=30"),
-            key("python etl.py --limit=5")
-        );
-        // a value that is a date, a time or an id goes, as an option's too
-        assert_eq!(
-            key("python etl.py --date=2026-11-14"),
-            key("python etl.py --date=2026-11-13")
-        );
-        assert_eq!(
-            key("python etl.py --since 1731542400"),
-            key("python etl.py --since 1731628800")
-        );
-        assert_eq!(
-            key("./job --run job-3fa2b1c9"),
-            key("./job --run job-0e02b2c3")
-        );
-        // a Hive folder in a path: its date goes, its hour is an argument
-        assert_eq!(
-            key("etl s3://b/in/date=2026-11-13/"),
-            key("etl s3://b/in/date=2026-11-14/")
-        );
-        assert_eq!(key("python3 job1.py"), "python3 job1.py");
+        assert_eq!(key("replay of etl"), None);
+        assert_eq!(key("imported from CloudTrail"), None);
+        assert_eq!(program_key(None), None);
     }
 
     #[test]
@@ -1774,12 +1754,14 @@ mod tests {
             change("python a.py s3://b/x", "python b.py s3://b/x").as_deref(),
             Some("a.py → b.py")
         );
-        // what a program's key leaves out is no change
+        // an argument of one program is a change, a date as any other
         assert_eq!(
-            change("etl --date 2026-11-13", "etl --date 2026-11-14"),
-            None
+            change("etl --date 2026-11-13", "etl --date 2026-11-14").as_deref(),
+            Some("--date 2026-11-13 → 2026-11-14")
         );
         assert_eq!(change("etl", "etl"), None);
+        // a trial's place is none
+        assert_eq!(change("etl s3://b/x-{trial}/", "etl s3://b/x/"), None);
         // a secret never shows
         assert_eq!(
             change("TOKEN=abc etl", "TOKEN=xyz etl --all").as_deref(),
@@ -1962,7 +1944,7 @@ mod tests {
     fn a_named_program_is_its_name_whatever_its_command() {
         let mut h =
             crate::session::SessionHeader::new("e", "", "", Some("python etl.py /tmp/a".into()));
-        assert_eq!(key_of(&h).as_deref(), Some("python etl.py /tmp/a"));
+        assert_eq!(key_of(&h).as_deref(), Some("etl"));
         h.name = Some("nightly-etl".into());
         assert_eq!(key_of(&h).as_deref(), Some("nightly-etl"));
         h.command = Some("/opt/py3.13/bin/python etl.py /tmp/b".into());
@@ -1980,12 +1962,12 @@ mod tests {
     #[test]
     fn the_warnings_row_says_it_counts_the_new_ones() {
         let quiet: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
-        // a run with a warning its baseline has too
+        // a run with a warning its baseline has too: a request it gave up
+        // on after a 503
         let mut warned = quiet.clone();
         let mut failed = rec(50, "k0");
         failed.status = Some(503);
         warned.push(failed);
-        warned.push(rec(51, "k0"));
         let (p, pr, o) = point(&warned);
         assert!(o.iter().any(|f| f.level == "warn"), "{o:#?}");
         let c = check(

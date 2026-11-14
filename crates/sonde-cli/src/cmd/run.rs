@@ -20,8 +20,8 @@ pub struct RunArgs {
     /// Send the requests to the built-in demo store (buckets `demo`,
     /// `demo-large`, `demo-layouts`): no account or secrets needed. It lives
     /// in this process and starts afresh each run; its times are not
-    /// meaningful. Without a command: a tour, a small program of sonde's own
-    /// recorded and explained.
+    /// meaningful. Without a command: the tour, a small job's finding with
+    /// its line of code and fix, then the job fixed and the saving measured.
     #[arg(long, conflicts_with = "endpoint")]
     demo: bool,
     /// Print each request on stderr as it happens.
@@ -57,9 +57,9 @@ pub struct RunArgs {
     /// the policy in this program's last trials (`sonde run --again -- …`).
     #[arg(long, conflicts_with = "faults")]
     again: bool,
-    /// The program's name: its runs and its baseline go by it, whatever the
-    /// command's arguments are this time (default: `name` under `[program]`
-    /// in sonde.toml, else the command itself).
+    /// The program's name: its runs, baseline and trial verdicts go by it
+    /// (default: sonde.toml's `[program] name` for the program it `runs`,
+    /// else what the command runs: `etl` for `python3 etl.py 5`).
     #[arg(long)]
     name: Option<String>,
     /// With -o: write over the file if it is there (else a run refuses it).
@@ -144,9 +144,9 @@ struct RunCtx {
     /// The runs name the code that sent each request: unless
     /// `--no-callers` or `[record] name-callers = false`.
     callers: bool,
-    /// What the runs wrote: a trial's runs may write again what the clean
-    /// run wrote, under no-delete as under allow.
-    written: Arc<sonde_proxy::Written>,
+    /// What the runs made: a trial's runs may remove what the clean run
+    /// made, under no-delete as under allow.
+    made: Arc<sonde_proxy::Made>,
 }
 
 /// The most of a clean run's input kept in memory for the runs after it:
@@ -272,7 +272,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     if let Some(out) = &a.rec.out {
         refuse_existing(out, a.force)?;
     }
-    // `--demo` alone: the tour, a program of sonde's own
+    // `--demo` alone: the tour
     if a.demo && a.command.is_empty() {
         if cli.url.is_some() {
             return Err(super::usage("--demo and --url name two stores: give one"));
@@ -313,19 +313,18 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         }
     }
     // what to try again is known before anything runs
+    // the program's name, when it has one of its own
+    let command = sonde_proxy::program::shell_join(&a.command);
+    let name = a
+        .name
+        .as_deref()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .or_else(|| project.file.program.name_for(&command));
     if a.again {
-        // (trimmed as the name is when kept)
-        let program = a
-            .name
+        let program = name
             .clone()
-            .or(project.file.program.name.clone())
-            .map(|n| n.trim().to_string())
-            .filter(|n| !n.is_empty())
-            .or_else(|| {
-                sonde_proxy::program::program_key(Some(&sonde_proxy::program::shell_join(
-                    &a.command,
-                )))
-            })
+            .or_else(|| sonde_proxy::program::program_key(Some(&command)))
             .unwrap_or_default();
         let dir = match &a.rec.out {
             Some(out) => runs_dir(out),
@@ -360,7 +359,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     let trying = a.trial || a.again || !asked.is_empty();
     let ctx = RunCtx {
         trying,
-        name: a.name.clone().or(project.file.program.name.clone()),
+        name,
         input: (trying && !std::io::stdin().is_terminal()).then(Default::default),
         stop: Stop::listen(),
         rec: Recording {
@@ -368,7 +367,7 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
             ..rec
         },
         callers: !a.no_callers && project.file.record.name_callers != Some(false),
-        written: Arc::default(),
+        made: Arc::default(),
     };
     if trying && !names_its_place(&a.command) {
         eprintln!(
@@ -687,7 +686,7 @@ async fn run_once(
         &Of {
             name: ctx.name.clone(),
             under,
-            written: Some(ctx.written.clone()),
+            made: Some(ctx.made.clone()),
         },
     )
     .await?;
@@ -699,10 +698,10 @@ async fn run_once(
     // in the command (and SONDE_TRIAL) is "clean", then the scenario's name.
     // A run that no trial follows is left as it was written.
     let trial = under.map_or("clean", |u| u.scenario.name.as_str());
-    // keys under the run's own place are its own to write over
+    // keys under the run's own place are its own to remove
     if ctx.trying {
         for place in sonde_proxy::trial::places(&a.command, trial) {
-            ctx.written.own_place(&place);
+            ctx.made.own_place(&place);
         }
     }
     let placed = |word: &String| {
@@ -917,10 +916,6 @@ async fn run_once(
             None => {}
         }
     }
-    // what it wrote is the program's to write over next time
-    if let Err(e) = ctx.written.keep() {
-        eprintln!("warning: what the program wrote could not be kept for its next run: {e}");
-    }
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();
     drop(started);
@@ -1043,7 +1038,7 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 
 /// What to try when a program sent sonde nothing: most SDKs read
 /// AWS_ENDPOINT_URL, some need the endpoint said their own way.
-const NO_REQUESTS: &str = "\nThe program sent sonde no requests. sonde set AWS_ENDPOINT_URL, which current SDKs read; some need it said their own way:
+const NO_REQUESTS: &str = "\nNothing reached sonde: the program sent it no requests. sonde set AWS_ENDPOINT_URL, which current SDKs read; some need it said their own way:
   boto3 / botocore    1.28 or newer, or boto3.client(\"s3\", endpoint_url=os.environ[\"AWS_ENDPOINT_URL\"])
   AWS CLI             v2.13 or newer, or --endpoint-url \"$AWS_ENDPOINT_URL\"
   Go SDK v2           1.20 or newer (aws-sdk-go v1 does not read it)

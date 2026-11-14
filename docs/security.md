@@ -66,9 +66,8 @@ would without sonde.
 - The command gets a local endpoint and throwaway keys, never sonde's credentials; `AWS_SESSION_TOKEN`,
   `AWS_PROFILE` and similar are removed.
 - What it may do is the recording policy ([recording](recording.md#what-a-recorded-program-may-do)):
-  - `no-delete` (default): no deletes, aborts, lifecycle rules, bucket policies, versioning suspension, or overwrites
-    of objects that neither this recording nor this program's earlier recordings wrote. Overwrites are refused by the store via `If-None-Match: *`; a store that
-    ignores it overwrites anyway, so use `read-only` there.
+  - `no-delete` (default): no deletes, aborts, lifecycle rules, bucket policies or versioning suspension, but of
+    what the recording made itself. Writes go through, over an object or not: use `read-only` to keep what is there.
   - `read-only`: GET and HEAD only.
   - `allow` (`--policy allow`, `[record] policy = "allow"`): everything.
 - `sonde.toml` may set the policy when no flag does (sonde warns on stderr when it allows deletes); in the app it may

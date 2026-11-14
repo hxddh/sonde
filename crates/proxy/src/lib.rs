@@ -63,9 +63,9 @@ type Out = BoxBody<Bytes, std::io::Error>;
 pub enum Policy {
     /// Everything.
     Allow,
-    /// Nothing that removes or replaces data: deletes, aborts, lifecycle
-    /// rules, bucket policies, versioning suspended, and a write over an
-    /// object the recording did not write itself ([`Written`]).
+    /// Nothing that removes data: deletes, aborts, lifecycle rules, bucket
+    /// policies, versioning suspended, but for what the recording made
+    /// itself ([`Made`]). Writes go through, over an object or not.
     #[default]
     NoDelete,
     /// GET and HEAD only.
@@ -131,112 +131,47 @@ impl Policy {
     }
 }
 
-/// Whether `op` writes an object whole at its key (and so may write over one).
+/// Whether `op` writes an object whole at its key.
 pub fn writes_object(op: &str) -> bool {
     matches!(op, "PutObject" | "CompleteMultipartUpload" | "CopyObject")
 }
 
-/// The objects a recording may write over under no-delete (bucket, key):
-/// what it wrote, what earlier recordings of the same program wrote
-/// ([`Written::remember`]), and what is under a trial's own place
-/// ([`Written::own_place`]). A program that writes a key twice, a run that
-/// rewrites its last run's outputs, and a trial's runs after its clean run
-/// all write over only their own.
+/// What a recording made itself, which no-delete lets it remove: objects
+/// (and their versions) it wrote, uploads it started, buckets it created,
+/// and what is under a trial's own place ([`Made::own_place`]). A program
+/// that writes a temporary file and deletes it, or aborts its own upload,
+/// runs under no-delete as it does anywhere.
 #[derive(Debug, Default)]
-pub struct Written {
-    keys: parking_lot::Mutex<std::collections::HashSet<(String, String)>>,
-    /// What this recording wrote, in order, once each: what
-    /// [`Written::keep`] adds to the program's.
-    fresh: parking_lot::Mutex<(Vec<String>, std::collections::HashSet<String>)>,
+pub struct Made {
+    objects: parking_lot::Mutex<std::collections::HashSet<(String, String)>>,
+    versions: parking_lot::Mutex<std::collections::HashSet<(String, String, String)>>,
+    uploads: parking_lot::Mutex<std::collections::HashSet<(String, String, String)>>,
+    buckets: parking_lot::Mutex<std::collections::HashSet<String>>,
     /// Prefixes of `key` or `bucket/key` that are a trial's own place.
     places: parking_lot::Mutex<Vec<String>>,
-    /// Where the program's set is kept: the folder, the program, the endpoint.
-    kept: parking_lot::Mutex<Option<(std::path::PathBuf, String, String)>>,
-    /// What this recording made itself, which no-delete lets it remove.
-    made: parking_lot::Mutex<Made>,
 }
 
-/// What one recording made: objects (and their versions), uploads, buckets.
-#[derive(Debug, Default)]
-struct Made {
-    objects: std::collections::HashSet<(String, String)>,
-    versions: std::collections::HashSet<(String, String, String)>,
-    uploads: std::collections::HashSet<(String, String, String)>,
-    buckets: std::collections::HashSet<String>,
-}
-
-/// The most objects kept per program and endpoint: past it, the ones
-/// written longest ago are forgotten (and refused again).
-pub const WRITTEN_KEPT: usize = 100_000;
-
-/// The file beside a program's runs that keeps what each program wrote.
-pub fn written_file(dir: &std::path::Path) -> std::path::PathBuf {
-    dir.join("written.json")
-}
-
-/// Program → endpoint → `bucket/key`, the newest last.
-type WrittenMap =
-    std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<String>>>;
-
-fn read_written(dir: &std::path::Path) -> WrittenMap {
-    std::fs::read(written_file(dir))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
-}
-
-impl Written {
-    /// What `records` wrote: a trial's runs may write again what its clean
-    /// run wrote, which that run's policy let through.
-    pub fn of(records: &[Record]) -> Written {
-        let w = Written::default();
-        for r in records {
-            if writes_object(&r.kind)
-                && r.status.is_some_and(|s| (200..300).contains(&s))
-                && let (Some(b), Some(k)) = (&r.bucket, &r.key)
-            {
-                w.add(b, k);
-            }
-        }
-        w
-    }
-
-    /// Takes in what earlier recordings of `program` on `endpoint` wrote,
-    /// kept in `dir` (beside its runs), and keeps there what this one
-    /// writes ([`Written::keep`]). A file that does not read is taken as
-    /// none, and written anew.
-    pub fn remember(&self, dir: &std::path::Path, program: &str, endpoint: &str) {
-        let all = read_written(dir);
-        if let Some(keys) = all.get(program).and_then(|e| e.get(endpoint)) {
-            let mut set = self.keys.lock();
-            for bk in keys {
-                if let Some((b, k)) = bk.split_once('/') {
-                    set.insert((b.to_string(), k.to_string()));
+impl Made {
+    /// What `records` made: a trial's runs may remove what its clean run
+    /// made, as that run could.
+    pub fn of(records: &[Record]) -> Made {
+        let m = Made::default();
+        for r in records.iter().filter(|r| !r.is_error()) {
+            let header = |n: &str| {
+                r.response_headers
+                    .iter()
+                    .find(|h| h.name.eq_ignore_ascii_case(n))
+                    .map(|h| h.value.as_str())
+            };
+            match (r.bucket.as_deref(), r.key.as_deref()) {
+                (Some(b), Some(k)) if writes_object(&r.kind) => {
+                    m.object(b, k, header("x-amz-version-id"))
                 }
+                (Some(b), None) if r.kind == "CreateBucket" => m.bucket(b),
+                _ => {}
             }
         }
-        *self.kept.lock() = Some((dir.to_path_buf(), program.into(), endpoint.into()));
-    }
-
-    /// Adds what this recording wrote to its program's, when it has one
-    /// ([`Written::remember`]): the newest last, at most [`WRITTEN_KEPT`].
-    pub fn keep(&self) -> std::io::Result<()> {
-        let Some((dir, program, endpoint)) = self.kept.lock().clone() else {
-            return Ok(());
-        };
-        let fresh = self.fresh.lock();
-        let (order, set) = &*fresh;
-        if order.is_empty() {
-            return Ok(());
-        }
-        let _held = crate::index::hold(&dir, "written");
-        let mut all = read_written(&dir);
-        let keys = all.entry(program).or_default().entry(endpoint).or_default();
-        keys.retain(|k| !set.contains(k));
-        keys.extend(order.iter().cloned());
-        let over = keys.len().saturating_sub(WRITTEN_KEPT);
-        keys.drain(..over);
-        reqlog::private::replace(&written_file(&dir), serde_json::to_vec(&all)?)
+        m
     }
 
     /// Keys under `place` (a prefix of the key, or of `bucket/key`, ending
@@ -248,56 +183,46 @@ impl Written {
         }
     }
 
-    pub fn has(&self, bucket: &str, key: &str) -> bool {
-        if self
-            .keys
+    /// The recording wrote `bucket/key` (as `version`, when the bucket
+    /// keeps versions): it may delete it.
+    pub fn object(&self, bucket: &str, key: &str, version: Option<&str>) {
+        self.objects
             .lock()
-            .contains(&(bucket.to_string(), key.to_string()))
-        {
-            return true;
-        }
-        self.in_place(bucket, key)
-    }
-
-    /// The recording wrote `bucket/key` itself (as `version`, when the
-    /// bucket keeps versions): it may write it again, and delete it.
-    pub fn made(&self, bucket: &str, key: &str, version: Option<&str>) {
-        self.add(bucket, key);
-        let mut m = self.made.lock();
-        m.objects.insert((bucket.to_string(), key.to_string()));
+            .insert((bucket.to_string(), key.to_string()));
         if let Some(v) = version.filter(|v| !v.is_empty() && *v != "null") {
-            m.versions
+            self.versions
+                .lock()
                 .insert((bucket.to_string(), key.to_string(), v.to_string()));
         }
     }
 
     /// The recording started upload `id` of `bucket/key`: it may abort it.
-    pub fn made_upload(&self, bucket: &str, key: &str, id: &str) {
-        self.made
+    pub fn upload(&self, bucket: &str, key: &str, id: &str) {
+        self.uploads
             .lock()
-            .uploads
             .insert((bucket.to_string(), key.to_string(), id.to_string()));
     }
 
     /// The recording created `bucket`: it may delete it.
-    pub fn made_bucket(&self, bucket: &str) {
-        self.made.lock().buckets.insert(bucket.to_string());
+    pub fn bucket(&self, bucket: &str) {
+        self.buckets.lock().insert(bucket.to_string());
     }
 
     /// Whether removing `bucket/key` (its `version`, if named) takes only
     /// what this recording made: an object it wrote (or one under a trial's
     /// own place), a version it wrote.
     fn own_object(&self, bucket: &str, key: &str, version: Option<&str>) -> bool {
-        let m = self.made.lock();
         match version {
-            Some(v) => m
-                .versions
-                .contains(&(bucket.to_string(), key.to_string(), v.to_string())),
+            Some(v) => {
+                self.versions
+                    .lock()
+                    .contains(&(bucket.to_string(), key.to_string(), v.to_string()))
+            }
             None => {
-                m.objects.contains(&(bucket.to_string(), key.to_string())) || {
-                    drop(m);
-                    self.in_place(bucket, key)
-                }
+                self.objects
+                    .lock()
+                    .contains(&(bucket.to_string(), key.to_string()))
+                    || self.in_place(bucket, key)
             }
         }
     }
@@ -317,9 +242,8 @@ impl Written {
         let q = |n: &str| query.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
         match (op, bucket, key) {
             ("AbortMultipartUpload", Some(b), Some(k)) => q("uploadId").is_some_and(|id| {
-                self.made
+                self.uploads
                     .lock()
-                    .uploads
                     .contains(&(b.to_string(), k.to_string(), id.to_string()))
             }),
             ("DeleteObject", Some(b), Some(k)) => self.own_object(b, k, q("versionId")),
@@ -330,7 +254,7 @@ impl Written {
                         .all(|(k, v)| self.own_object(b, k, v.as_deref()))
                 })
             }
-            ("DeleteBucket", Some(b), None) => self.made.lock().buckets.contains(b),
+            ("DeleteBucket", Some(b), None) => self.buckets.lock().contains(b),
             _ => false,
         }
     }
@@ -345,17 +269,6 @@ impl Written {
             .lock()
             .iter()
             .any(|p| under(key, p) || under(&full, p))
-    }
-
-    fn add(&self, bucket: &str, key: &str) {
-        self.keys
-            .lock()
-            .insert((bucket.to_string(), key.to_string()));
-        let bk = format!("{bucket}/{key}");
-        let (order, set) = &mut *self.fresh.lock();
-        if set.insert(bk.clone()) {
-            order.push(bk);
-        }
     }
 }
 
@@ -432,8 +345,8 @@ pub struct ProxyConfig {
     /// TLS as well as plain HTTP, on the same port (a connection that opens
     /// with a TLS handshake is answered in TLS).
     pub tls: Option<Arc<tls::Tls>>,
-    /// What the recording wrote, which no-delete lets it write again.
-    pub written: Arc<Written>,
+    /// What the recording made, which no-delete lets it remove.
+    pub made: Arc<Made>,
 }
 
 /// A fresh client key and secret: the key names the proxy, the secret is 32
@@ -469,7 +382,7 @@ impl Default for ProxyConfig {
             allow_remote: false,
             faults: None,
             tls: None,
-            written: Arc::default(),
+            made: Arc::default(),
         }
     }
 }
@@ -1210,58 +1123,6 @@ pub fn refused_by_policy(r: &Record) -> bool {
         .any(|h| h.name.eq_ignore_ascii_case("x-sonde-policy"))
 }
 
-/// Whether `bucket/key` is in the store: a HEAD of sonde's own, signed
-/// with the endpoint's credentials. Not a request of the program's, so not
-/// recorded.
-async fn stored(shared: &Shared, bucket: &str, key: &str) -> Result<bool, String> {
-    let client = &shared.client;
-    let cfg = client.config();
-    let (origin, path, host) = client.address(&cfg.endpoint, Some(bucket), Some(key));
-    let mut headers = vec![("host".to_string(), host)];
-    if let Some(creds) = client.credentials().await.map_err(|e| e.to_string())? {
-        sigv4::sign_headers(
-            &mut headers,
-            "HEAD",
-            &path,
-            &[],
-            sigv4::EMPTY_SHA256,
-            &cfg.region,
-            "s3",
-            Utc::now(),
-            &creds,
-        );
-    }
-    let url = format!("{origin}{path}");
-    let send = async {
-        if s3raw::has_dot_segment(key) {
-            let empty = reqwest::Body::from(Vec::new());
-            return asis::send(
-                &http::Method::HEAD,
-                &url,
-                &headers,
-                empty,
-                cfg.ca_pem.as_deref(),
-            )
-            .await;
-        }
-        let mut rb = client.http_streaming().head(&url);
-        for (k, v) in &headers {
-            if !k.eq_ignore_ascii_case("host") {
-                rb = rb.header(k.as_str(), v.as_str());
-            }
-        }
-        rb.send().await.map_err(|e| e.to_string())
-    };
-    let resp = tokio::time::timeout(cfg.timeout, send)
-        .await
-        .map_err(|_| "no answer".to_string())??;
-    match resp.status().as_u16() {
-        200..=299 => Ok(true),
-        404 => Ok(false),
-        s => Err(format!("the store answered {s}")),
-    }
-}
-
 fn header_value(headers: &http::HeaderMap, name: &str) -> String {
     headers
         .get(name)
@@ -1308,7 +1169,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
 
     // the request as the application saw it: from its arrival (a buffered
     // body's upload included) to the answer
-    let mut received = Instant::now();
+    let received = Instant::now();
     let mut record = Record {
         id: 0,
         time: Utc::now(),
@@ -1407,7 +1268,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let mut judge_batch = false;
     if let Some(mode) = shared.cfg.policy.refuses(&method, &operation, &query) {
         let own = mode == "no-delete"
-            && shared.cfg.written.may_remove(
+            && shared.cfg.made.may_remove(
                 &operation,
                 bucket.as_deref(),
                 key.as_deref(),
@@ -1420,49 +1281,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             return Ok(refuse(&shared, record, msg));
         }
     }
-
-    // under no-delete, an object already there is written over only if
-    // this recording wrote it: a copy's target is looked for first (a HEAD
-    // of sonde's own, not recorded and not timed), a write that says no
-    // condition goes with `If-None-Match: *` and the store's 412 is the
-    // refusal. A write on `If-Match` names an object already there.
-    let mut guarded = false;
-    let mut looked = std::time::Duration::ZERO;
-    if shared.cfg.policy == Policy::NoDelete
-        && writes_object(&operation)
-        && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
-        && !shared.cfg.written.has(b, k)
-    {
-        let said = |n: &str| app_headers.iter().any(|(h, _)| h.eq_ignore_ascii_case(n));
-        let over = |why: &str| {
-            format!(
-                "sonde refused {operation}: {b}/{k} {why}, and the proxy runs in no-delete mode (--policy allow lets a program write over it)"
-            )
-        };
-        if said("if-match") {
-            return Ok(refuse(
-                &shared,
-                record,
-                over("is an object this recording did not write"),
-            ));
-        }
-        if operation == "CopyObject" {
-            let at = Instant::now();
-            let found = stored(&shared, b, k).await;
-            looked = at.elapsed();
-            match found {
-                Ok(false) => {}
-                Ok(true) => return Ok(refuse(&shared, record, over("was there before"))),
-                Err(e) => {
-                    let why = format!("may be there already (looking for it: {e})");
-                    return Ok(refuse(&shared, record, over(&why)));
-                }
-            }
-        } else {
-            guarded = !said("if-none-match");
-        }
-    }
-    received += looked;
 
     let content_sha = header_value(&parts.headers, "x-amz-content-sha256");
     let length: Option<u64> = header_value(&parts.headers, "content-length").parse().ok();
@@ -1535,7 +1353,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         }
     }
     if judge_batch
-        && !shared.cfg.written.may_remove(
+        && !shared.cfg.made.may_remove(
             &operation,
             bucket.as_deref(),
             key.as_deref(),
@@ -1639,10 +1457,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         .filter(|(k, _)| !DROP_REQUEST.contains(&k.to_ascii_lowercase().as_str()))
         .cloned()
         .collect();
-    // (signed, sent, and not on the record: the program did not ask it)
-    if guarded {
-        out.push(("if-none-match".into(), "*".into()));
-    }
     // no time for the whole exchange (a large body takes what it takes), only
     // for one that has stopped moving
     let idle = cfg.timeout;
@@ -1837,18 +1651,6 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     record.status = Some(status.as_u16());
     s3raw::fill_ids(&mut record, &headers);
     record.response_headers = headers.iter().map(|(k, v)| Header::new(k, v)).collect();
-    if guarded && status.as_u16() == 412 {
-        drain(resp, idle).await;
-        record
-            .response_headers
-            .push(Header::new("x-sonde-store-status", status.as_str()));
-        record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
-        let (b, k) = (bucket.unwrap_or_default(), key.unwrap_or_default());
-        let msg = format!(
-            "sonde refused {operation}: {b}/{k} was there before, and the proxy runs in no-delete mode (--policy allow lets a program write over it)"
-        );
-        return Ok(refuse(&shared, record, msg));
-    }
     if status.is_success()
         && writes_object(&operation)
         && let (Some(b), Some(k)) = (bucket.as_deref(), key.as_deref())
@@ -1857,13 +1659,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .iter()
             .find(|(n, _)| n.eq_ignore_ascii_case("x-amz-version-id"))
             .map(|(_, v)| v.as_str());
-        shared.cfg.written.made(b, k, version);
+        shared.cfg.made.object(b, k, version);
     }
     if status.is_success()
         && operation == "CreateBucket"
         && let (Some(b), None) = (bucket.as_deref(), key.as_deref())
     {
-        shared.cfg.written.made_bucket(b);
+        shared.cfg.made.bucket(b);
     }
     // a fault that needed the store's answer first, and cannot be done to
     // this one, was no fault: the answer goes through as the store's own
@@ -2041,7 +1843,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         };
         if let Ok(started) = s3raw::xml::initiate_multipart_upload(&String::from_utf8_lossy(&body))
         {
-            shared.cfg.written.made_upload(b, k, &started.upload_id);
+            shared.cfg.made.upload(b, k, &started.upload_id);
         }
         record.response_bytes = Some(body.len() as u64);
         record.first_byte_ms = Some(record.latency_ms);
@@ -2510,39 +2312,15 @@ mod budget_tests {
     }
 
     #[test]
-    fn a_program_writes_over_what_its_earlier_runs_and_its_trial_places_hold() {
-        let dir = tempfile::tempdir().unwrap();
-        let dir = dir.path();
-        let first = Written::default();
-        first.remember(dir, "python etl.py", "http://s");
-        first.add("data", "out/1");
-        first.keep().unwrap();
-        let next = Written::default();
-        next.remember(dir, "python etl.py", "http://s");
-        assert!(next.has("data", "out/1"), "the program's last run wrote it");
-        assert!(!next.has("data", "out/2"));
-        for (program, endpoint) in [
-            ("python other.py", "http://s"),
-            ("python etl.py", "http://t"),
-        ] {
-            let other = Written::default();
-            other.remember(dir, program, endpoint);
-            assert!(!other.has("data", "out/1"), "{program} on {endpoint}");
-        }
-        // what it writes this time is kept beside what it wrote before
-        next.add("data", "out/2");
-        next.keep().unwrap();
-        let third = Written::default();
-        third.remember(dir, "python etl.py", "http://s");
-        assert!(third.has("data", "out/1") && third.has("data", "out/2"));
-        // a trial's place is its own, to a word's end
-        let w = Written::default();
-        w.own_place("tclean");
-        w.own_place("b/etl-slowdown");
-        assert!(w.has("data", "tclean/x") && w.has("data", "tclean"));
-        assert!(!w.has("data", "tcleanup/x"));
-        assert!(w.has("b", "etl-slowdown/k") && !w.has("c", "etl-slowdown/k"));
-        // nothing remembered: nothing kept
-        Written::default().keep().unwrap();
+    fn a_trials_place_is_its_own_to_a_words_end() {
+        let m = Made::default();
+        m.own_place("tclean");
+        m.own_place("b/etl-slowdown");
+        let removes = |b: &str, k: &str| m.may_remove("DeleteObject", Some(b), Some(k), &[], None);
+        assert!(removes("data", "tclean/x") && removes("data", "tclean"));
+        assert!(!removes("data", "tcleanup/x"));
+        assert!(removes("b", "etl-slowdown/k") && !removes("c", "etl-slowdown/k"));
+        m.object("data", "tmp/part", None);
+        assert!(removes("data", "tmp/part") && !removes("data", "tmp/other"));
     }
 }

@@ -1764,6 +1764,12 @@ impl<V> ById<V> {
 }
 
 /// What stands out across a session's requests and episodes.
+/// The share of a run's requests throttled from which throttling is a
+/// warning even when every throttled request was retried and got through:
+/// the retries alone then add as many requests as `sonde check` lets a run
+/// grow past its baseline by default ([`crate::program::DEFAULT_TOLERANCE`]).
+pub const THROTTLED_SHARE: f64 = crate::program::DEFAULT_TOLERANCE;
+
 pub fn observations(records: &[Record], episodes: &[Episode]) -> Vec<Observation> {
     observations_at(records, episodes, false)
 }
@@ -2170,10 +2176,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     }
     // throttled: and how many requests were in flight when it happened
     // (the store's own: a 503 sonde answered in its place asks for nothing)
-    let throttled: Vec<&Record> = records
-        .iter()
-        .filter(|r| matches!(r.status, Some(503) | Some(429)) && !sondes_fault(r))
-        .collect();
+    let is_throttle = |r: &Record| matches!(r.status, Some(503) | Some(429)) && !sondes_fault(r);
+    let throttled: Vec<&Record> = records.iter().filter(|r| is_throttle(r)).collect();
     if !throttled.is_empty() {
         let n = throttled.len();
         let mut starts: Vec<i64> = records.iter().map(|r| r.time.timestamp_micros()).collect();
@@ -2212,7 +2216,22 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
                 &[("n", n.to_string()), ("s", plural(n))],
             )
         };
-        out.push(warn(phrase, of_records(&mut throttled.iter().map(|r| r.id))).weigh(n, 0, total));
+        // a warning when it cost the program a request (one it gave up on),
+        // or when the retries alone are as many more requests as a check's
+        // baseline lets a run grow by ([`THROTTLED_SHARE`]); throttles
+        // retried away below that are the store pacing a burst: a note
+        let gave_up = crate::signals::gave_up(records);
+        let lost = records
+            .iter()
+            .zip(&gave_up)
+            .any(|(r, &g)| g && is_throttle(r));
+        let ids = of_records(&mut throttled.iter().map(|r| r.id));
+        let o = if lost || n as f64 >= THROTTLED_SHARE * total as f64 {
+            warn(phrase, ids)
+        } else {
+            info(phrase, ids)
+        };
+        out.push(o.weigh(n, 0, total));
     }
     // a prefix near what S3 serves one prefix a second
     {
@@ -2400,12 +2419,14 @@ fn written_between(
 }
 
 /// The keys (bucket, key) whose every read would be answered the same by a
-/// copy kept from the first: each found (no miss, no failure), whole (no
-/// range or part: those are the parallel reading of one object), of one
-/// ETag where the store said it, and with no write to the key between the
-/// first read and the last. A key rewritten between its reads would be
-/// answered stale by a cache, and a miss is not kept by one (an exception
-/// is not cached; a key polled for appears): neither is a hot key to cache.
+/// copy kept from the first: each found (no miss), whole (no range or
+/// part: those are the parallel reading of one object), of one ETag where
+/// the store said it, and with no write to the key between the first read
+/// and the last. A key rewritten between its reads would be answered stale
+/// by a cache, and a miss is not kept by one (an exception is not cached; a
+/// key polled for appears): neither is a hot key to cache. A read that
+/// failed otherwise (throttled, a 500) said nothing of the key, and is
+/// passed over: a cache would not have sent it.
 fn unchanging_reads<'a>(
     records: &'a [Record],
     writes: &std::collections::HashMap<&str, Vec<(Order, &str)>>,
@@ -2416,13 +2437,16 @@ fn unchanging_reads<'a>(
         let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
             continue;
         };
+        if crate::summary::is_failure(r) {
+            continue;
+        }
         let at = (r.time, r.id);
         let whole = header(r, "range").is_none() && query(r, "partNumber").is_none();
         let etag = response_header(r, "etag");
         let e = reads.entry((b, k)).or_insert((at, at, true, etag));
         e.0 = e.0.min(at);
         e.1 = e.1.max(at);
-        e.2 &= whole && !r.is_error() && (etag.is_none() || e.3.is_none() || etag == e.3);
+        e.2 &= whole && !is_miss(r) && (etag.is_none() || e.3.is_none() || etag == e.3);
         e.3 = e.3.or(etag);
     }
     reads
@@ -2661,6 +2685,61 @@ mod tests {
         assert_eq!(retry.outcome, Outcome::Ok);
         // retrying is right: no finding of its own (18.0)
         assert!(observations(&[], &eps).is_empty());
+    }
+
+    /// Throttling is a warning when a request gave up after its retries, or
+    /// when throttles reach a tenth of the requests; one 503 retried away
+    /// is a note (real S3 throttles now and then).
+    #[test]
+    fn throttling_retried_away_is_a_note_and_one_given_up_on_a_warning() {
+        let level = |rs: &[Record]| {
+            observations(rs, &episodes(rs))
+                .into_iter()
+                .find(|o| o.phrases[0].key.starts_with("obs.throttled"))
+                .map(|o| o.level)
+        };
+        let mut rs: Vec<Record> = (0..30u64)
+            .map(|i| {
+                rec(
+                    i,
+                    i as i64 * 100,
+                    "GET",
+                    "GetObject",
+                    Some(&format!("k{i}")),
+                    200,
+                )
+            })
+            .collect();
+        let mut retried = rs.clone();
+        retried.push(rec(40, 5000, "GET", "GetObject", Some("z"), 503));
+        retried.push(rec(41, 5100, "GET", "GetObject", Some("z"), 200));
+        assert_eq!(level(&retried), Some("info"));
+        // the same 503, never sent again: the program lost a request
+        let mut lost = rs.clone();
+        lost.push(rec(40, 5000, "GET", "GetObject", Some("z"), 503));
+        assert_eq!(level(&lost), Some("warn"));
+        // a tenth of the requests throttled, each retried: a warning
+        for i in 0..4u64 {
+            let key = format!("t{i}");
+            rs.push(rec(
+                50 + 2 * i,
+                6000 + i as i64 * 300,
+                "GET",
+                "GetObject",
+                Some(&key),
+                503,
+            ));
+            rs.push(rec(
+                51 + 2 * i,
+                6100 + i as i64 * 300,
+                "GET",
+                "GetObject",
+                Some(&key),
+                200,
+            ));
+        }
+        assert!(4.0 >= THROTTLED_SHARE * rs.len() as f64);
+        assert_eq!(level(&rs), Some("warn"));
     }
 
     #[test]
@@ -3327,9 +3406,11 @@ mod tests {
         };
         let listing = is_listing(saved[0]);
         // the read kept: the first of those that read what the saved ones do
+        // (a throttled read answered nothing to keep)
         let first = records
             .iter()
             .filter(|r| crate::profile::is_read(r) && is_listing(r) == listing)
+            .filter(|r| !crate::summary::is_failure(r))
             .filter(|r| place(r) == place(saved[0]))
             .min_by_key(|r| (r.time, r.id))
             .unwrap();
@@ -3348,6 +3429,7 @@ mod tests {
         !changed
             && saved
                 .iter()
+                .filter(|r| !crate::summary::is_failure(r))
                 .all(|r| r.status == first.status && etag(r) == etag(first))
     }
 
@@ -3425,6 +3507,17 @@ mod tests {
             })
             .collect();
         assert!(hot(&other).is_empty());
+        // some reads throttled: they said nothing of the key, and a cache
+        // would not have sent them either
+        let throttled: Vec<Record> = (1..=15)
+            .map(|i| get(i, "conf.json", if i % 4 == 0 { 503 } else { 200 }))
+            .collect();
+        assert_eq!(hot(&throttled).len(), 1);
+        assert_eq!(hot(&throttled)[0].phrases[0].args["n"], "15");
+        // missed once among them: a key polled for, not one to cache
+        let mut polled = throttled.clone();
+        polled.push(get(16, "conf.json", 404));
+        assert!(hot(&polled).is_empty());
         // looked up and not found each time: lru_cache keeps no exception,
         // and a key polled for may appear
         let missing: Vec<Record> = (1..=12).map(|i| get(i, "nothing/here", 404)).collect();

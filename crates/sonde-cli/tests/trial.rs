@@ -330,6 +330,21 @@ async fn program(what: &str) -> i32 {
             let second = ok(app.send_raw(put(&key, "done")).await);
             if retries && !(first && second) { 1 } else { 0 }
         }
+        // writes its state under its place; when that fails, it never tries
+        // again and clears its place's lock, which it did not make
+        "never-cleans" => {
+            let place = match given() {
+                k if k.is_empty() => format!("etl-{}", env("SONDE_TRIAL")),
+                k => k,
+            };
+            if !ok(app.send_raw(put(&format!("{place}/state"), "done")).await) {
+                let lock = S3Request::new("DeleteObject", http::Method::DELETE)
+                    .bucket("data")
+                    .key(&format!("{place}/lock"));
+                let _ = app.send_raw(lock).await;
+            }
+            0
+        }
         // a write, and a batch of deletes it does not hold the store to
         "tolerant-batches" => {
             if !ok(app.send_raw(put("a", "1")).await) {
@@ -1188,7 +1203,8 @@ async fn a_sonde_toml_that_says_what_sonde_does_not_know_is_an_error() {
             "[[scenario]]\nname = \"x\"\nfault = \"503 Slow Down extra\"\n",
             "one word too many",
         ),
-        ("[program]\nname = \"\"\n", "a program's name"),
+        ("[program]\nname = \"\"\n", "an empty name"),
+        ("[program]\nname = \"nightly\"\n", "needs `runs`"),
         ("[chek]\nmax-requests = 3\n", "chek"),
         (
             "[check]\nmax-waiting = \"soon\"\nmax-requests = 3\n",
@@ -1236,7 +1252,13 @@ async fn a_sonde_toml_that_says_what_sonde_does_not_know_is_an_error() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
     let b = Bench::new().await;
-    std::fs::write(b.path("sonde.toml"), "[program]\nname = \"nightly\"\n").unwrap();
+    // the name is for the program this test's binary is
+    let runs = sonde_proxy::program::program_key(Some(&the_program_command().join(" "))).unwrap();
+    std::fs::write(
+        b.path("sonde.toml"),
+        format!("[program]\nname = \"nightly\"\nruns = \"{runs}\"\n"),
+    )
+    .unwrap();
     let run = |key: &'static str| {
         let mut c = b.sonde(Some("key"));
         c.args(["run", "--"]).args(the_program_command()).arg(key);
@@ -1281,9 +1303,9 @@ async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
     );
 }
 
-/// A program without a name is its command with what changes between runs
-/// left out: run with another date it is the same program, so under
-/// `no-delete` it writes over what it wrote, and its runs are one history.
+/// A program without a name is what its command runs: run with another date
+/// it is the same program, its runs one history, and the fix loop says the
+/// command changed.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unnamed_program_run_with_another_date_is_the_same_program() {
     let b = Bench::new().await;
@@ -1304,11 +1326,15 @@ async fn an_unnamed_program_run_with_another_date_is_the_same_program() {
     let rows: serde_json::Value = serde_json::from_str(&list.stdout).unwrap();
     assert_eq!(rows[0]["program"], rows[1]["program"], "{rows:#}");
     assert!(
-        rows[0]["program"]
-            .as_str()
-            .unwrap()
-            .ends_with("E2E_KEY=out/latest {date}"),
+        rows[0]["program"].as_str().unwrap().starts_with("trial-"),
         "{rows:#}"
+    );
+    assert!(
+        second
+            .stderr
+            .contains("the command changed (2026-11-13 → 2026-11-14)"),
+        "{}",
+        second.stderr
     );
 }
 
@@ -2247,45 +2273,44 @@ async fn an_input_too_large_to_hold_is_fed_to_every_run_all_the_same() {
     );
 }
 
+/// By default (no-delete) a program writes what it writes, over an object
+/// there before or not, and deletes nothing it did not make.
 #[tokio::test(flavor = "multi_thread")]
-async fn by_default_a_run_writes_again_only_what_it_wrote_and_deletes_nothing() {
+async fn by_default_a_run_writes_over_what_is_there_and_deletes_nothing() {
     let b = Bench::new().await;
-    // a trial under the default policy: each run writes again what the
-    // clean run wrote
     let o = b
         .run(Some("retrying"), &["run", "--trial", "-o", "run.sonde"])
         .await;
     assert_eq!(o.code, Some(0), "{}", o.stderr);
     assert!(o.stderr.contains("did not break"), "{}", o.stderr);
-    // run again: the program writes over what its last run wrote
-    let again = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
-    assert_eq!(again.code, Some(0), "{}", again.stderr);
-    assert!(b.path("written.json").is_file(), "kept beside its runs");
-    // another program may not: what is there is not its own
+    // another program writes over what the first wrote, on the first try
     let other = b
         .run(
             Some("retrying"),
             &["run", "--name", "other", "-o", "other.sonde"],
         )
         .await;
-    assert_eq!(other.code, Some(1), "{}", other.stderr);
-    let s = sonde_proxy::session::Session::open(&b.path("other.sonde")).unwrap();
+    assert_eq!(other.code, Some(0), "{}", other.stderr);
+    assert!(!b.path("data/sessions/written.json").exists());
+    // deletes are refused by default
+    let deletes = b
+        .run(Some("batches"), &["run", "-o", "deletes.sonde"])
+        .await;
+    assert_eq!(deletes.code, Some(1), "{}", deletes.stderr);
+    let s = sonde_proxy::session::Session::open(&b.path("deletes.sonde")).unwrap();
     let refused = s.records.iter().find(|r| r.status == Some(403)).unwrap();
     assert!(
         refused
             .error_body
             .as_deref()
-            .is_some_and(|e| e.contains("no-delete") && e.contains("data/a")),
+            .is_some_and(|e| e.contains("no-delete")),
         "{refused:?}"
     );
     assert_eq!(b.store.state.lock().buckets["data"]["a"].0, b"1");
     // the project may let it, and sonde says so; a flag is over the file
     std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"allow\"\n").unwrap();
     let allowed = b
-        .run(
-            Some("retrying"),
-            &["run", "--name", "other", "-o", "o.sonde"],
-        )
+        .run(Some("batches"), &["run", "-o", "allowed.sonde"])
         .await;
     assert_eq!(allowed.code, Some(0), "{}", allowed.stderr);
     assert!(
@@ -2295,25 +2320,11 @@ async fn by_default_a_run_writes_again_only_what_it_wrote_and_deletes_nothing() 
     );
     let flag = b
         .run(
-            Some("retrying"),
-            &[
-                "run",
-                "--policy",
-                "no-delete",
-                "--name",
-                "third",
-                "-o",
-                "again.sonde",
-            ],
+            Some("batches"),
+            &["run", "--policy", "no-delete", "-o", "flag.sonde"],
         )
         .await;
     assert_eq!(flag.code, Some(1), "{}", flag.stderr);
-    // deletes are refused by default
-    std::fs::remove_file(b.path("sonde.toml")).unwrap();
-    let deletes = b
-        .run(Some("batches"), &["run", "-o", "deletes.sonde"])
-        .await;
-    assert_eq!(deletes.code, Some(1), "{}", deletes.stderr);
     std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"everything\"\n").unwrap();
     let wrong = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
     assert_eq!(wrong.code, Some(64), "{}", wrong.stderr);
@@ -2337,12 +2348,7 @@ async fn a_program_rewrites_its_own_outputs_and_a_trial_is_tried_again_under_no_
         assert_eq!(o.code, Some(0), "trial {n}: {}", o.stderr);
         assert!(o.stderr.contains("did not break"), "{}", o.stderr);
     }
-    // with nothing remembered (a trial of before), the `{trial}` place
-    // alone is the trial's own
-    std::fs::remove_file(b.path("data/sessions/written.json")).unwrap();
-    let o = run_keyed(&b, "key", "t{trial}/x", &["run", "--trial"]).await;
-    assert_eq!(o.code, Some(0), "{}", o.stderr);
-    // but not a key outside it, which this program never wrote
+    // and a key it never wrote, there before: written over (yesterday's output)
     b.store
         .state
         .lock()
@@ -2351,8 +2357,8 @@ async fn a_program_rewrites_its_own_outputs_and_a_trial_is_tried_again_under_no_
         .or_default()
         .insert("theirs".into(), (b"keep".to_vec(), "\"t\"".into()));
     let o = run_keyed(&b, "key", "theirs", &["run"]).await;
-    assert_eq!(o.code, Some(1), "{}", o.stderr);
-    assert_eq!(b.store.state.lock().buckets["data"]["theirs"].0, b"keep");
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    assert_ne!(b.store.state.lock().buckets["data"]["theirs"].0, b"keep");
 }
 
 /// A scenario the policy refused is "refused", never "broke", and is tried
@@ -2360,17 +2366,17 @@ async fn a_program_rewrites_its_own_outputs_and_a_trial_is_tried_again_under_no_
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refusal_by_the_policy_under_a_trial_is_its_own_outcome() {
     let b = Bench::new().await;
-    // what the trial's run will write is there, and not the program's
+    // what the trial's run will delete is there, and not the program's
     b.store
         .state
         .lock()
         .buckets
         .entry("data".into())
         .or_default()
-        .insert("etl-slowdown/state".into(), (b"x".to_vec(), "\"x\"".into()));
+        .insert("etl-slowdown/lock".into(), (b"x".to_vec(), "\"x\"".into()));
     let o = b
         .run(
-            Some("placed"),
+            Some("never-cleans"),
             &["run", "--fault", "slowdown", "-o", "run.sonde"],
         )
         .await;

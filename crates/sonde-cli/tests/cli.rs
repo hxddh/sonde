@@ -9,13 +9,56 @@ fn sonde(dirs: &Path, args: &[&str]) -> Output {
         .args(args)
         .env("SONDE_CONFIG_DIR", dirs.join("config"))
         .env("SONDE_DATA_DIR", dirs.join("data"))
-        .env("AWS_EC2_METADATA_DISABLED", "true")
+        .no_aws(dirs)
         .output()
         .unwrap()
 }
 
+/// No AWS configuration of the machine's: no credentials in the
+/// environment, no `~/.aws` files, no instance role.
+trait NoAws {
+    fn no_aws(&mut self, dirs: &Path) -> &mut Self;
+}
+
+impl NoAws for Command {
+    fn no_aws(&mut self, dirs: &Path) -> &mut Self {
+        for k in [
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_PROFILE",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+            "AWS_ENDPOINT_URL",
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_WEB_IDENTITY_TOKEN_FILE",
+            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+        ] {
+            self.env_remove(k);
+        }
+        self.env("AWS_CONFIG_FILE", dirs.join("aws-config"))
+            .env("AWS_SHARED_CREDENTIALS_FILE", dirs.join("aws-credentials"))
+            .env("AWS_EC2_METADATA_DISABLED", "true")
+    }
+}
+
 fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+/// `sonde` alone says where to start, in three lines: the tour, a real
+/// run, where to read more.
+#[test]
+fn sonde_alone_prints_where_to_start() {
+    let t = tempfile::tempdir().unwrap();
+    let o = sonde(t.path(), &[]);
+    assert_eq!(o.status.code(), Some(0));
+    let lines: Vec<String> = stdout(&o).lines().map(String::from).collect();
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(lines[0].starts_with("sonde run --demo "));
+    assert!(lines[1].starts_with("sonde run -- <your command> "));
+    assert!(lines[2].contains("docs"));
 }
 
 #[test]
@@ -90,18 +133,34 @@ fn the_demo_records_a_session_that_every_command_reads() {
         "{}",
         String::from_utf8_lossy(&demo.stderr)
     );
-    // the answer is on stdout, the hints on stderr
+    // the whole loop on stdout: a finding, its line of code, its fix, and
+    // the job fixed, measured against the prediction
     let out = stdout(&demo);
+    for said in [
+        "checked with HEAD and then read with GET",
+        "    at export.py:18 read_reports (3 requests)",
+        "    fix for boto3:",
+        "The same job with that fix",
+    ] {
+        assert!(out.contains(said), "no {said:?} in {out}");
+    }
+    let last = out.lines().last().unwrap();
     assert!(
-        out.contains("checked with HEAD and then read with GET"),
+        last.starts_with("  ✓ fixed") && last.ends_with("saved 3 requests (predicted 3)"),
         "{out}"
     );
-    assert!(String::from_utf8_lossy(&demo.stderr).contains("sonde run --"));
+    // the job it names is there, the line it names holds the HEAD
+    let job = std::fs::read_to_string(t.path().join("data/tour/export.py")).unwrap();
+    assert!(
+        job.lines().nth(17).unwrap().contains("s3.head_object"),
+        "{job}"
+    );
 
+    // the newest run is the fixed one: no finding left
     let json = sonde(t.path(), &["show", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(v["requests"].as_array().unwrap().len(), 28);
-    assert!(v["findings"].as_array().unwrap().len() >= 2, "{v}");
+    assert_eq!(v["requests"].as_array().unwrap().len(), 9);
+    assert!(v["findings"].as_array().unwrap().is_empty(), "{v}");
 
     let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
     let mut lines = csv.lines();
@@ -110,6 +169,10 @@ fn the_demo_records_a_session_that_every_command_reads() {
         Some("session,recorded,program,endpoint,requests,took,errors,exit,trials,size")
     );
     let name = lines.next().unwrap().split(',').next().unwrap().to_string();
+    assert!(
+        lines.next().unwrap().contains("-tour.sonde"),
+        "the first run"
+    );
     assert!(lines.next().is_none());
 
     // a session by its name alone
@@ -118,14 +181,14 @@ fn the_demo_records_a_session_that_every_command_reads() {
         &["show", name.trim_end_matches(".sonde"), "--summary"],
     );
     assert_eq!(by_name.status.code(), Some(0));
-    assert!(stdout(&by_name).contains("28 requests"));
+    assert!(stdout(&by_name).contains("9 requests"));
 
     // the same run against itself: no change
     let path = t.path().join("data/sessions").join(&name);
     let p = path.to_str().unwrap();
     let same = stdout(&sonde(t.path(), &["compare", p, p]));
     assert!(same.starts_with("no change"), "{same}");
-    assert!(same.contains("requests   28 (no change)"), "{same}");
+    assert!(same.contains("requests   9 (no change)"), "{same}");
     assert!(!same.contains("0%"), "{same}");
 }
 
@@ -133,24 +196,15 @@ fn the_demo_records_a_session_that_every_command_reads() {
 fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
     let t = tempfile::tempdir().unwrap();
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
-    let out = stdout(&sonde(t.path(), &["show", "--all"]));
-    // what sonde reads from requests, each once in the tour
+    let first = tour_first(t.path());
+    let out = stdout(&sonde(t.path(), &["show", &first, "--all"]));
+    // what sonde reads from requests: four lookups are one operation
     for line in [
         "4 lookups in demo/tour/, none found",
-        "multipart upload demo/tour/export.csv · 5 parts",
-        "commit 0 · 3 files",
-        "PutObject tour/summary.json retried 1× after 503 SlowDown",
-        "listed demo/tour/ in 3 pages",
-        "28 requests (11 operations)",
-    ] {
-        assert!(out.contains(line), "no {line:?} in:\n{out}");
-    }
-    // and at least two findings to act on
-    for finding in [
-        "1 request throttled (503 SlowDown or 429)",
+        "12 requests (9 operations) from boto3 1.35",
         "3 objects under demo/reports/ were checked with HEAD and then read with GET",
     ] {
-        assert!(out.contains(finding), "no {finding:?} in:\n{out}");
+        assert!(out.contains(line), "no {line:?} in:\n{out}");
     }
 }
 
@@ -271,7 +325,7 @@ fn check_holds_a_run_to_its_programs_baseline() {
     );
     // over a budget is exit 1
     assert_eq!(
-        sonde(t.path(), &["check", "--max-requests", "10"])
+        sonde(t.path(), &["check", "--max-requests", "5"])
             .status
             .code(),
         Some(1)
@@ -279,7 +333,7 @@ fn check_holds_a_run_to_its_programs_baseline() {
     // the baseline survives pruning
     let pruned = sonde(
         t.path(),
-        &["sessions", "prune", "--keep", "0", "--confirm", "1"],
+        &["sessions", "prune", "--keep", "0", "--confirm", "3"],
     );
     assert_eq!(pruned.status.code(), Some(0), "{}", stderr(&pruned));
     assert_eq!(
@@ -299,7 +353,7 @@ fn show_by_splits_the_operations_table_and_names_the_sdk() {
     let out = stdout(&o);
     let lines: Vec<&str> = out.lines().collect();
     // the head line names the SDK; then one table, split
-    assert!(lines[1].contains(" from sonde "), "{out}");
+    assert!(lines[1].contains(" from boto3 "), "{out}");
     assert!(
         lines[2].starts_with("kind") && lines[2].contains("p99") && lines[2].contains("cost"),
         "{out}"
@@ -307,7 +361,7 @@ fn show_by_splits_the_operations_table_and_names_the_sdk() {
     assert!(lines.iter().any(|l| l.starts_with("HeadObject")), "{out}");
     // the summary's head line names it too
     let summary = stdout(&sonde(t.path(), &["show", "--summary"]));
-    assert!(summary.contains(" from sonde "), "{summary}");
+    assert!(summary.contains(" from boto3 "), "{summary}");
     // a dimension it does not know, and a flag it would ignore
     assert_eq!(
         sonde(t.path(), &["show", "--by", "bucket"]).status.code(),
@@ -425,7 +479,7 @@ fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
     let name = csv.lines().nth(1).unwrap().split(',').next().unwrap();
-    let c = sonde(t.path(), &["check", "--max-requests", "20"]);
+    let c = sonde(t.path(), &["check", "--max-requests", "6"]);
     assert_eq!(c.status.code(), Some(1));
     let out = stdout(&c);
     let first = out.lines().next().unwrap();
@@ -433,14 +487,14 @@ fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
         first.starts_with(&format!("session {name} · recorded 20")),
         "{out}"
     );
-    // 28 requests against 20
+    // 9 requests against 6
     let fail = out.lines().find(|l| l.starts_with("FAIL")).unwrap();
     assert!(
-        fail.contains("requests") && fail.trim_end().ends_with("+40%"),
+        fail.contains("requests") && fail.trim_end().ends_with("+50%"),
         "{out}"
     );
 
-    // the demo warns (a retry); against itself none of it is new, and the row says so
+    // against itself no warning is new, and the row says so
     let same = sonde(
         t.path(),
         &["check", "--baseline", name, "--no-new-warnings"],
@@ -517,7 +571,7 @@ fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(
-        cells.contains("| **FAIL** +2700% | requests | 28 | ≤ 1 |"),
+        cells.contains("| **FAIL** +800% | requests | 9 | ≤ 1 |"),
         "{md}"
     );
     // a row that passed is not repeated in a comment
@@ -856,17 +910,34 @@ fn stderr(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
 }
 
-/// The name of the one session of the demo.
+/// The name of the tour's newest session (its fixed run, the one a command
+/// without one takes).
 fn demo_session(dirs: &Path) -> String {
     assert_eq!(sonde(dirs, &["run", "--demo"]).status.code(), Some(0));
-    std::fs::read_dir(dirs.join("data/sessions"))
+    tour_runs(dirs)[0].clone()
+}
+
+/// The tour's sessions by name, newest first.
+fn tour_runs(dirs: &Path) -> Vec<String> {
+    let listed: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(dirs, &["sessions", "-f", "json"]))).unwrap();
+    listed
+        .as_array()
         .unwrap()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .find(|n| n.ends_with(".sonde"))
-        .unwrap()
-        .trim_end_matches(".sonde")
-        .to_string()
+        .iter()
+        .map(|r| {
+            r["name"]
+                .as_str()
+                .unwrap()
+                .trim_end_matches(".sonde")
+                .to_string()
+        })
+        .collect()
+}
+
+/// The newest tour's first run: the job before its fix, with its finding.
+fn tour_first(dirs: &Path) -> String {
+    tour_runs(dirs)[1].clone()
 }
 
 const A_LOG_LINE: &str = "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a \"GET /lake/t/a HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n";
@@ -893,7 +964,7 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
         ],
     );
     assert_eq!(r.status.code(), Some(77), "{}", stderr(&r));
-    assert!(stderr(&r).contains("Replay 28 requests"), "{}", stderr(&r));
+    assert!(stderr(&r).contains("Replay 9 requests"), "{}", stderr(&r));
     // a name that is no session is said, with where it was looked for
     for args in [
         vec!["compare", "nosuch", name.as_str()],
@@ -962,7 +1033,7 @@ fn the_newest_session_is_the_newest_recording_not_an_import() {
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let shown = sonde(t.path(), &["show", "--summary", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
-    assert_eq!(v["summary"]["requests"], 28, "the demo's, not the import's");
+    assert_eq!(v["summary"]["requests"], 9, "the demo's, not the import's");
     let checked = sonde(t.path(), &["check", "--max-requests", "100"]);
     assert!(stdout(&checked).contains(&name), "{}", stdout(&checked));
     // the import is still a session, read by its name
@@ -980,7 +1051,7 @@ fn the_newest_session_is_the_newest_recording_not_an_import() {
         .iter()
         .find(|r| r["name"].as_str().unwrap().starts_with(&name))
         .unwrap();
-    assert_eq!(demo["requests"], 28);
+    assert_eq!(demo["requests"], 9);
     assert!(demo["seconds"].is_number() && demo["errors"].is_number());
 }
 
@@ -1168,6 +1239,95 @@ fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::pat
     file
 }
 
+/// With nothing configured, a recording goes where an AWS SDK would: the
+/// default credential chain and region, said; without credentials either,
+/// the usage error says both ways.
+#[test]
+fn with_no_endpoint_a_run_goes_where_the_aws_default_chain_says() {
+    let t = tempfile::tempdir().unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(["run", "--", "true"])
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .no_aws(t.path())
+        .env("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE")
+        .env("AWS_SECRET_ACCESS_KEY", "secret")
+        .env("AWS_REGION", "eu-west-1")
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains(
+            "no endpoint configured: the AWS default credentials and region eu-west-1 (AWS_REGION) → https://s3.eu-west-1.amazonaws.com"
+        ),
+        "{}",
+        stderr(&o)
+    );
+    let o = sonde(t.path(), &["run", "--", "true"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("no credentials found"),
+        "{}",
+        stderr(&o)
+    );
+}
+
+/// A run of no request is a program whose S3 client went around sonde:
+/// `check` fails it, against a baseline or a budget, and `run` says so.
+#[test]
+fn nothing_reached_sonde_fails_the_check_and_run_says_so() {
+    let t = tempfile::tempdir().unwrap();
+    let base = session_of(
+        t.path(),
+        "base.sonde",
+        "python etl.py",
+        "2026-11-01T10:00:00Z",
+    );
+    let header = std::fs::read_to_string(&base).unwrap();
+    let empty = t.path().join("data/sessions/empty.sonde");
+    std::fs::write(&empty, format!("{}\n", header.lines().next().unwrap())).unwrap();
+    let base = base.to_string_lossy().into_owned();
+    let empty = empty.to_string_lossy().into_owned();
+    for args in [
+        vec!["check", &empty, "--baseline", &base],
+        vec!["check", &empty, "--max-requests", "100"],
+        vec!["check", &empty, "--baseline", &base, "-f", "markdown"],
+    ] {
+        let o = sonde(t.path(), &args);
+        assert_eq!(o.status.code(), Some(1), "{args:?}: {}", stdout(&o));
+        assert!(
+            stdout(&o).contains("nothing reached sonde"),
+            "{}",
+            stdout(&o)
+        );
+        assert!(stderr(&o).contains("recorded no request"), "{}", stderr(&o));
+    }
+    let gh = sonde(
+        t.path(),
+        &["check", &empty, "--max-errors", "0", "-f", "github"],
+    );
+    assert_eq!(gh.status.code(), Some(1));
+    assert!(stdout(&gh).starts_with("::error title=sonde check::nothing reached sonde"));
+    let json = sonde(
+        t.path(),
+        &["check", &empty, "--max-errors", "0", "-f", "json"],
+    );
+    let doc: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(
+        (doc["passed"].as_bool(), doc["check"]["empty"].as_bool()),
+        (Some(false), Some(true))
+    );
+    // no figures to hold another run to
+    let set = sonde(t.path(), &["check", &empty, "--set-baseline"]);
+    assert_eq!(set.status.code(), Some(64));
+    let ran = sonde(t.path(), &["run", "--demo", "--", "true"]);
+    assert!(
+        stderr(&ran).contains("Nothing reached sonde"),
+        "{}",
+        stderr(&ran)
+    );
+}
+
 /// `sonde check | head`: the reader gone before a line is written, the
 /// command still ends with its own exit code, not 0.
 #[cfg(unix)]
@@ -1191,9 +1351,9 @@ fn an_exit_code_survives_a_closed_pipe() {
         o.status.code()
     };
     for _ in 0..3 {
-        assert_eq!(closed(&["check", "--max-requests", "10"]), Some(1));
+        assert_eq!(closed(&["check", "--max-requests", "5"]), Some(1));
         assert_eq!(
-            closed(&["check", "--max-requests", "10", "-f", "json"]),
+            closed(&["check", "--max-requests", "5", "-f", "json"]),
             Some(1)
         );
         assert_eq!(closed(&["show", "--all"]), Some(0));
@@ -1209,12 +1369,7 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     // (a program's own state, one file per folder, is no session's)
     let counted = || sonde_proxy::index::get(&file).counted.is_some();
     assert!(counted());
-    let per_program = [
-        "findings.json",
-        "verdicts.json",
-        "written.json",
-        "baselines.json",
-    ];
+    let per_program = ["findings.json", "verdicts.json", "baselines.json"];
     let beside: Vec<String> = std::fs::read_dir(file.parent().unwrap())
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -1224,13 +1379,13 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     assert!(beside.is_empty(), "{beside:?}");
     let listed: serde_json::Value =
         serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
-    assert_eq!(listed[0]["requests"], 28, "{listed}");
-    assert_eq!(listed[0]["program"], "sonde run --demo");
+    assert_eq!(listed[0]["requests"], 9, "{listed}");
+    assert_eq!(listed[0]["program"], "tour");
     assert!(listed[0]["seconds"].as_f64().unwrap() > 0.0);
     // one that is missing is made by the listing
     sonde_proxy::index::set(&file, sonde_proxy::index::Change::NoCounted);
     assert!(!counted());
-    assert!(stdout(&sonde(t.path(), &["sessions"])).contains("sonde run --demo"));
+    assert!(stdout(&sonde(t.path(), &["sessions"])).contains("tour"));
     assert!(counted());
     // nothing past the newest five: said, not silence
     let kept = sonde(
@@ -1238,7 +1393,7 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
         &["sessions", "prune", "--keep", "5", "--confirm", "0"],
     );
     assert!(
-        stdout(&kept).contains("nothing to remove: 1 session here"),
+        stdout(&kept).contains("nothing to remove: 2 sessions here"),
         "{}",
         stdout(&kept)
     );
@@ -1246,12 +1401,12 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     // a dry run that would delete: 4, and nothing deleted
     let dry = sonde(t.path(), &["sessions", "prune", "--keep", "0"]);
     assert_eq!(dry.status.code(), Some(4), "{}", stdout(&dry));
-    assert!(stderr(&dry).contains("--confirm 1"), "{}", stderr(&dry));
+    assert!(stderr(&dry).contains("--confirm 2"), "{}", stderr(&dry));
     assert!(file.is_file());
     // a count that is not the dry run's deletes nothing: refused, 77
     let wrong = sonde(
         t.path(),
-        &["sessions", "prune", "--keep", "0", "--confirm", "2"],
+        &["sessions", "prune", "--keep", "0", "--confirm", "3"],
     );
     assert_eq!(wrong.status.code(), Some(77), "{}", stderr(&wrong));
     assert!(file.is_file());
@@ -1259,7 +1414,7 @@ fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
     // removed, and what was counted of it with it
     let gone = sonde(
         t.path(),
-        &["sessions", "prune", "--keep", "0", "--confirm", "1"],
+        &["sessions", "prune", "--keep", "0", "--confirm", "2"],
     );
     assert!(stdout(&gone).contains("deleted "), "{}", stdout(&gone));
     assert!(!file.exists() && !counted());
@@ -1425,7 +1580,7 @@ fn a_trials_session_is_found_by_its_name() {
     ] {
         let o = sonde(t.path(), &["show", name, "--summary"]);
         assert_eq!(o.status.code(), Some(0), "{name}: {}", stderr(&o));
-        assert!(stdout(&o).contains("28 requests"), "{name}");
+        assert!(stdout(&o).contains("9 requests"), "{name}");
     }
 }
 
@@ -1520,8 +1675,7 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
         &["check", monday.to_str().unwrap(), "--set-baseline"],
     );
     assert_eq!(set.status.code(), Some(0), "{}", stderr(&set));
-    // the next day's run is the same program: its argument is a value that
-    // changes between runs, so Monday's baseline holds it
+    // the next day's run is the same program, `etl`: Monday's baseline holds it
     let c = sonde(
         t.path(),
         &[
@@ -1560,7 +1714,7 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
         "{}",
         stdout(&c)
     );
-    // and `check --init` gives the program the name its runs then share
+    // a program is what its command runs: `check --init` writes no name
     let cfg = t.path().join("sonde.toml");
     let init = sonde(
         t.path(),
@@ -1573,16 +1727,7 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
         ],
     );
     assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
-    assert!(
-        stderr(&init).contains("[program] name = \"etl\""),
-        "{}",
-        stderr(&init)
-    );
-    assert!(
-        std::fs::read_to_string(&cfg)
-            .unwrap()
-            .contains("[program]\nname = \"etl\"\n")
-    );
+    assert!(!std::fs::read_to_string(&cfg).unwrap().contains("[program]"));
 }
 
 #[test]
@@ -1837,61 +1982,6 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert!(!c.contains("✓ fixed"), "{c}");
 }
 
-/// `check --init` names a program: what was kept under its command goes
-/// with it, its baseline and its trials' verdicts.
-#[test]
-fn check_init_carries_the_baseline_and_verdicts_to_the_programs_name() {
-    let t = tempfile::tempdir().unwrap();
-    let run = session_of(
-        t.path(),
-        "run.sonde",
-        "python etl.py",
-        "2026-11-09T02:00:00Z",
-    );
-    let set = sonde(
-        t.path(),
-        &["check", run.to_str().unwrap(), "--set-baseline"],
-    );
-    assert_eq!(set.status.code(), Some(0), "{}", stderr(&set));
-    let dir = t.path().join("data/sessions");
-    std::fs::write(
-        dir.join("verdicts.json"),
-        r#"{"python etl.py":{"slowdown":[{"at":"2026-11-09T02:00:00Z","standing":"broke","run":"run.sonde"}]}}"#,
-    )
-    .unwrap();
-    let cfg = t.path().join("sonde.toml");
-    let init = sonde(
-        t.path(),
-        &[
-            "check",
-            run.to_str().unwrap(),
-            "--init",
-            "--config",
-            cfg.to_str().unwrap(),
-        ],
-    );
-    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
-    assert!(
-        stderr(&init).contains(
-            "what was kept for `python etl.py` (baselines.json, verdicts.json) now goes by \"etl\""
-        ),
-        "{}",
-        stderr(&init)
-    );
-    let read = |f: &str| -> serde_json::Value {
-        serde_json::from_slice(&std::fs::read(dir.join(f)).unwrap()).unwrap()
-    };
-    assert_eq!(
-        read("baselines.json"),
-        serde_json::json!({"etl": "run.sonde"})
-    );
-    assert_eq!(
-        read("verdicts.json")["etl"]["slowdown"][0]["standing"],
-        "broke"
-    );
-    assert!(read("verdicts.json").get("python etl.py").is_none());
-}
-
 /// `[check] expect` names findings by identity: words of a finding's text,
 /// or a kind sonde does not find, are a mistake in sonde.toml.
 #[test]
@@ -2028,13 +2118,24 @@ fn an_endpoint_id_taken_is_refused_and_test_says_how_to_name_one() {
 }
 
 /// `sonde` run from the folder `cwd`, its data and settings in `dirs`.
+/// A program in `cwd` that sends one request through sonde, signed as
+/// sonde told it (`sh get.sh`): a run that reached sonde.
+fn one_request(cwd: &Path) -> [&'static str; 2] {
+    std::fs::write(
+        cwd.join("get.sh"),
+        "curl -s -o /dev/null --aws-sigv4 aws:amz:us-east-1:s3 --user \"$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY\" \"$AWS_ENDPOINT_URL/demo/reports/2026-q1.csv\"\n",
+    )
+    .unwrap();
+    ["sh", "get.sh"]
+}
+
 fn sonde_in(dirs: &Path, cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_sonde"))
         .args(args)
         .current_dir(cwd)
         .env("SONDE_CONFIG_DIR", dirs.join("config"))
         .env("SONDE_DATA_DIR", dirs.join("data"))
-        .env("AWS_EC2_METADATA_DISABLED", "true")
+        .no_aws(dirs)
         .output()
         .unwrap()
 }
@@ -2112,7 +2213,11 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     for d in [&a, &b, &c] {
         std::fs::create_dir_all(d).unwrap();
     }
-    let r = sonde_in(t.path(), &a, &["run", "--demo", "--", "true"]);
+    let r = sonde_in(
+        t.path(),
+        &a,
+        &[&["run", "--demo", "--"][..], &one_request(&a)].concat(),
+    );
     assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
     // another program, later, elsewhere
     let r = sonde_in(t.path(), &b, &["run", "--demo", "--", "sh", "-c", "exit 3"]);
@@ -2120,18 +2225,18 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     let ck = sonde_in(t.path(), &a, &["check", "--max-requests", "100"]);
     assert_eq!(ck.status.code(), Some(0), "{}{}", stdout(&ck), stderr(&ck));
     assert!(
-        stderr(&ck).contains("the newest run of program `true` recorded in this folder"),
+        stderr(&ck).contains("the newest run of program `get` recorded in this folder"),
         "{}",
         stderr(&ck)
     );
     // show, compare and share take the same run: this folder's, not the newest
     let shown = sonde_in(t.path(), &a, &["show", "--summary", "-f", "json"]);
     let doc: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
-    assert_eq!(doc["session"]["command"], "true", "{doc}");
+    assert_eq!(doc["session"]["command"], "sh get.sh", "{doc}");
     let compared = sonde_in(t.path(), &a, &["compare"]);
     assert!(
-        stdout(&compared).contains("first run of `true`")
-            || stderr(&compared).contains("first run of `true`"),
+        stdout(&compared).contains("first run of `get`")
+            || stderr(&compared).contains("first run of `get`"),
         "{}{}",
         stdout(&compared),
         stderr(&compared)
@@ -2140,8 +2245,7 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
     assert_eq!(ck.status.code(), Some(1), "{}", stdout(&ck));
     assert!(
-        stderr(&ck)
-            .contains("the newest run (program `sh -c exit 3`; none was recorded in this folder)"),
+        stderr(&ck).contains("the newest run (program `sh`; none was recorded in this folder)"),
         "{}",
         stderr(&ck)
     );
@@ -2172,16 +2276,40 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     );
     assert_eq!(ck.status.code(), Some(1), "the run failed: {}", stdout(&ck));
     std::fs::remove_file(c.join("sonde.toml")).unwrap();
-    // a project's program by its name, wherever it ran
-    std::fs::write(c.join("sonde.toml"), "[program]\nname = \"true\"\n").unwrap();
+    // a project's name for its program: given to the commands that run it,
+    // not to another command run here
+    std::fs::write(
+        c.join("sonde.toml"),
+        "[program]\nname = \"fetch\"\nruns = \"get\"\n",
+    )
+    .unwrap();
+    let r = sonde_in(
+        t.path(),
+        &c,
+        &[&["run", "--demo", "--"][..], &one_request(&c)].concat(),
+    );
+    assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
+    let r = sonde_in(t.path(), &c, &["run", "--demo", "--", "sh", "-c", "exit 0"]);
+    assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
+    let listed: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
+    assert_eq!(
+        (listed[0]["program"].as_str(), listed[1]["program"].as_str()),
+        (Some("sh"), Some("fetch")),
+        "{listed}"
+    );
     let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
     assert_eq!(ck.status.code(), Some(0), "{}", stderr(&ck));
     assert!(
-        stderr(&ck).contains("the newest run of program \"true\" ([program] name in sonde.toml)"),
+        stderr(&ck).contains("the newest run of program \"fetch\" ([program] name in sonde.toml)"),
         "{}",
         stderr(&ck)
     );
-    std::fs::write(c.join("sonde.toml"), "[program]\nname = \"etl\"\n").unwrap();
+    std::fs::write(
+        c.join("sonde.toml"),
+        "[program]\nname = \"etl\"\nruns = \"etl\"\n",
+    )
+    .unwrap();
     let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
     assert_eq!(ck.status.code(), Some(64));
     assert!(
@@ -2195,19 +2323,17 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
 #[test]
 fn check_init_names_the_action_at_this_major_version() {
     let t = tempfile::tempdir().unwrap();
-    let r = sonde_in(t.path(), t.path(), &["run", "--demo", "--", "true"]);
+    let r = sonde_in(
+        t.path(),
+        t.path(),
+        &[&["run", "--demo", "--"][..], &one_request(t.path())].concat(),
+    );
     assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
     let c = sonde_in(t.path(), t.path(), &["check", "--init"]);
     assert_eq!(c.status.code(), Some(0), "{}", stderr(&c));
     let major = env!("CARGO_PKG_VERSION").split('.').next().unwrap();
     assert!(
         stderr(&c).contains(&format!("uses: hxddh/sonde@v{major}\n")),
-        "{}",
-        stderr(&c)
-    );
-    // `true` sends nothing: a budget of no requests is said for what it is
-    assert!(
-        stderr(&c).contains("its SDK probably did not use the endpoint"),
         "{}",
         stderr(&c)
     );

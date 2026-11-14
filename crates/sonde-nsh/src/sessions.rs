@@ -26,8 +26,6 @@ struct Recording {
     writer: Arc<SessionWriter>,
     /// The runtime it began on: where it is finished, from a handler that is in none.
     runtime: tokio::runtime::Handle,
-    /// What it wrote, kept for its program's next run when it has one.
-    written: Arc<sonde_proxy::Written>,
 }
 
 /// How long a stopping recording waits for the requests in flight (the
@@ -50,7 +48,6 @@ impl Recording {
         self.proxy.shutdown(grace).await;
         let _ = self.writer.flush();
         let lost = self.writer.not_written();
-        let _ = self.written.keep();
         let file = self.path.clone();
         drop(self);
         // finished: a tenth of its size; still a .sonde file every reader opens
@@ -241,8 +238,8 @@ struct Under {
     scenario: sonde_proxy::fault::Scenario,
     of: String,
     path: PathBuf,
-    /// What the clean run wrote: no-delete lets the trial write it again.
-    written: Arc<sonde_proxy::Written>,
+    /// What the clean run made: no-delete lets the trial remove it.
+    made: Arc<sonde_proxy::Made>,
 }
 
 /// Starts a recording: a local endpoint forwarding to `endpoint`; `under`
@@ -275,10 +272,15 @@ async fn begin(
         p => Some(policy_of(p)?),
     };
     let policy = run_policy(asked, cwd.as_deref())?;
+    // the project's name for the program, when the command runs it (as the CLI)
+    let program = match &command {
+        Some(c) => project_in(cwd.as_deref())?.and_then(|p| p.file.program.name_for(c)),
+        None => None,
+    };
     let dir = s.paths().sessions();
     std::fs::create_dir_all(&dir).map_err(err_msg)?;
-    // named as the CLI names it: by what the command runs (`etl` for `python3 etl.py`)
-    let name = sonde_proxy::program::file_stem(None, command.as_deref())
+    // named as the CLI names it: by the program (`etl` for `python3 etl.py`)
+    let name = sonde_proxy::program::file_stem(program.as_deref(), command.as_deref())
         .unwrap_or_else(|| "recording".into());
     let path = match &under {
         Some(u) => u.path.clone(),
@@ -292,6 +294,7 @@ async fn begin(
     if let Some(dir) = &cwd {
         header = header.ran_in(dir);
     }
+    header.name = program;
     if let Some(u) = &under {
         header.scenario = Some(u.scenario.name.clone());
         header.trial_of = Some(u.of.clone());
@@ -299,22 +302,12 @@ async fn begin(
     let faults = under
         .as_ref()
         .map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario)));
-    let written = under
-        .as_ref()
-        .map(|u| u.written.clone())
-        .unwrap_or_default();
-    // under no-delete a program may write over what its earlier runs wrote
-    if under.is_none()
-        && let Some(program) = sonde_proxy::program::key_of(&header)
-    {
-        written.remember(&dir, &program, cfg.endpoint.as_str());
-    }
+    let made = under.as_ref().map(|u| u.made.clone()).unwrap_or_default();
     let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
     let started = background({
         let log = log.clone();
-        let written = written.clone();
         async move {
             Proxy::start(
                 client,
@@ -322,7 +315,7 @@ async fn begin(
                 ProxyConfig {
                     policy,
                     faults,
-                    written,
+                    made,
                     ..Default::default()
                 },
             )
@@ -347,7 +340,6 @@ async fn begin(
         log,
         writer,
         runtime: tokio::runtime::Handle::current(),
-        written,
     });
     Ok(view)
 }
@@ -1298,14 +1290,11 @@ async fn try_under(
     let file = file.to_path_buf();
     let of = of.to_string();
     let policy = policy.to_string();
-    // each run may write again what the clean run and the program's earlier
-    // runs wrote, and what is under its own `{trial}` place
-    let written = Arc::new(sonde_proxy::Written::of(&clean.records));
+    // each run may remove what the clean run made, and what is under its
+    // own `{trial}` place
+    let made = Arc::new(sonde_proxy::Made::of(&clean.records));
     let runs = file.parent().unwrap_or(Path::new(".")).to_path_buf();
     let program = sonde_proxy::program::key_of(&clean.header);
-    if let Some(p) = &program {
-        written.remember(&runs, p, &clean.header.url);
-    }
     let words: Vec<String> = plan
         .command
         .split_whitespace()
@@ -1313,7 +1302,7 @@ async fn try_under(
         .collect();
     for name in std::iter::once("clean").chain(chosen.iter().map(|s| s.name.as_str())) {
         for place in sonde_proxy::trial::places(&words, name) {
-            written.own_place(&place);
+            made.own_place(&place);
         }
     }
     // a new trial replaces the last one's verdicts and sessions
@@ -1330,7 +1319,7 @@ async fn try_under(
             ),
             of: of.clone(),
             scenario: scenario.clone(),
-            written: written.clone(),
+            made: made.clone(),
         };
         let ran = run_recorded(
             &plan.command,
@@ -1876,13 +1865,13 @@ impl Sessions {
                 if let Some(a) = against {
                     run.measure(&s.records, a);
                 }
-                Ok::<_, String>((s.header.command.clone(), run))
+                Ok::<_, String>((sonde_proxy::program::key_of(&s.header), run))
             };
-            let (ca, a) = run(&before, None)?;
-            let (cb, b) = run(&after, Some(&a))?;
+            let (ka, a) = run(&before, None)?;
+            let (kb, b) = run(&after, Some(&a))?;
             Ok(to_json(
                 sonde_proxy::profile::compare_runs(&a, &b)
-                    .of_programs(ca.as_deref(), cb.as_deref())
+                    .of_programs(ka.as_deref(), kb.as_deref())
                     .of_exits((
                         sonde_proxy::fixloop::failed(Path::new(&before)),
                         sonde_proxy::fixloop::failed(Path::new(&after)),
@@ -2841,7 +2830,6 @@ mod tests {
             log,
             writer,
             runtime: tokio::runtime::Handle::current(),
-            written: Arc::default(),
         };
         let (file, lost) = recording.finish().await;
         assert_eq!(Path::new(&file), path);
@@ -3228,14 +3216,8 @@ mod tests {
             ("earlier.sonde", &before, day),
             ("20260101-000000-job.sonde", &verdict, chrono::Utc::now()),
         ] {
-            sonde_proxy::trial::record(
-                dir.path(),
-                "python job.py",
-                run,
-                at,
-                std::slice::from_ref(t),
-            )
-            .unwrap();
+            sonde_proxy::trial::record(dir.path(), "job", run, at, std::slice::from_ref(t))
+                .unwrap();
         }
         let view = view_of(&clean).unwrap();
         let history = view["trials"][0]["history"].as_array().unwrap();

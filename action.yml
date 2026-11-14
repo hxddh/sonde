@@ -13,7 +13,7 @@ inputs:
     description: Flags for `sonde run` (`--url https://s3.eu-west-1.amazonaws.com --region eu-west-1`, `--policy allow`, `--demo`).
     default: ""
   name:
-    description: The program's name (default `[program] name` in sonde.toml, else its command).
+    description: The program's name (default `[program] name` in sonde.toml for the program it `runs`, else what the command runs).
     default: ""
   check-args:
     description: Flags for `sonde check` (`--no-new-warnings`, `--tolerance 5`, `--max-requests 5000`).

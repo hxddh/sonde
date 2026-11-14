@@ -1,6 +1,6 @@
 //! What each recording policy lets through to a store: no-delete refuses
-//! deletes, bucket policies, versioning suspended, and a write over an
-//! object the recording did not write itself.
+//! deletes, aborts, lifecycle rules, bucket policies and versioning
+//! suspended, and lets every write through.
 
 mod common;
 
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use common::MiniS3;
 use reqlog::RequestLog;
 use s3raw::{Body, ClientConfig, Credentials, S3Client, S3Request, StaticProvider};
-use sonde_proxy::{Policy, Proxy, ProxyConfig, Written};
+use sonde_proxy::{Policy, Proxy, ProxyConfig};
 
 fn keyed(url: &str, key: &str, secret: &str) -> S3Client {
     let mut cfg = ClientConfig::new("t", url, "us-east-1").unwrap();
@@ -24,12 +24,8 @@ fn keyed(url: &str, key: &str, secret: &str) -> S3Client {
 
 /// A store holding `data/old` (written before the recording), a proxy in
 /// front of it under `policy`, and the program's client.
-async fn bench(
-    policy: Policy,
-    honor: bool,
-    written: Written,
-) -> (MiniS3, Proxy, S3Client, RequestLog) {
-    let store = MiniS3::start(honor).await;
+async fn bench(policy: Policy) -> (MiniS3, Proxy, S3Client, RequestLog) {
+    let store = MiniS3::start(true).await;
     let direct = keyed(&store.url, "k", "s");
     direct
         .send_raw(S3Request::new("CreateBucket", http::Method::PUT).bucket("data"))
@@ -42,7 +38,6 @@ async fn bench(
         log.clone(),
         ProxyConfig {
             policy,
-            written: Arc::new(written),
             ..Default::default()
         },
     )
@@ -118,108 +113,66 @@ fn copy(from: &str, to: &str) -> S3Request {
         .header("x-amz-copy-source", format!("/data/{from}"))
 }
 
+/// A program that rewrites yesterday's output runs on the first try: under
+/// no-delete every write goes through, over an object there before or not,
+/// as the program sent it (no condition added, no lookup of sonde's own).
 #[tokio::test]
-async fn no_delete_writes_new_objects_and_its_own_again_but_never_over_one_there_before() {
-    let (store, _proxy, app, log) = bench(Policy::NoDelete, true, Written::default()).await;
-    // new, then its own again: a program that writes a key twice
+async fn no_delete_lets_every_write_through_as_it_was_sent() {
+    let (store, _proxy, app, log) = bench(Policy::NoDelete).await;
     assert_eq!(app.send_raw(put("new", "1")).await.unwrap().status, 200);
-    assert_eq!(app.send_raw(put("new", "2")).await.unwrap().status, 200);
-    assert_eq!(body_of(&store, "new").as_deref(), Some("2"));
-    // there before: the store's 412 is sonde's refusal
-    let over = app.send_raw(put("old", "after")).await.unwrap();
-    assert_eq!(over.status, 403, "{}", over.text());
-    assert!(over.text().contains("no-delete"), "{}", over.text());
-    assert!(over.text().contains("--policy allow"), "{}", over.text());
-    assert_eq!(body_of(&store, "old").as_deref(), Some("before"));
-    // the If-None-Match was sonde's: not on the record, which says refused
-    let rec = log
-        .list(&reqlog::Filter::default(), 100)
-        .into_iter()
-        .find(|r| r.status == Some(403))
-        .unwrap();
-    assert!(
-        !rec.request_headers
-            .iter()
-            .any(|h| h.name.eq_ignore_ascii_case("if-none-match")),
-        "{rec:?}"
-    );
-    assert!(
-        rec.response_headers
-            .iter()
-            .any(|h| h.name == "x-sonde-proxy" && h.value == "refused")
-    );
+    assert_eq!(app.send_raw(put("old", "after")).await.unwrap().status, 200);
+    assert_eq!(body_of(&store, "old").as_deref(), Some("after"));
+    assert_eq!(upload(&app, "old").await, 200);
+    assert_eq!(app.send_raw(copy("new", "old")).await.unwrap().status, 200);
+    assert!(store.sent("HEAD").is_empty(), "sonde looked for nothing");
     // a program's own condition is its own: a 412 stays a 412
     let lost = app
         .send_raw(put("old", "x").header("if-none-match", "*"))
         .await
         .unwrap();
     assert_eq!(lost.status, 412);
-    // If-Match names an object there: refused before the store is asked
-    let sent = store.sent("PUT").len();
-    let cas = app
-        .send_raw(put("old", "x").header("if-match", "\"e\""))
-        .await
-        .unwrap();
-    assert_eq!(cas.status, 403);
-    assert_eq!(store.sent("PUT").len(), sent);
+    assert!(
+        log.list(&reqlog::Filter::default(), 100)
+            .iter()
+            .all(|r| r.status != Some(403)),
+        "nothing refused"
+    );
+    // a delete of what the recording did not make is refused, and reaches
+    // no store (what it wrote, `old` now among it, it may remove)
+    let sent = store.sent("DELETE").len();
+    let del = S3Request::new("DeleteObject", http::Method::DELETE)
+        .bucket("data")
+        .key("theirs");
+    let refused = app.send_raw(del).await.unwrap();
+    assert_eq!(refused.status, 403, "{}", refused.text());
+    assert!(refused.text().contains("no-delete"), "{}", refused.text());
+    assert_eq!(store.sent("DELETE").len(), sent);
 }
 
 #[tokio::test]
-async fn no_delete_refuses_a_completion_or_a_copy_over_an_object_there_before() {
-    let (store, _proxy, app, _log) = bench(Policy::NoDelete, true, Written::default()).await;
-    assert_eq!(upload(&app, "parts").await, 200);
-    assert_eq!(upload(&app, "parts").await, 200, "its own, again");
-    assert_eq!(upload(&app, "old").await, 403);
-    assert_eq!(body_of(&store, "old").as_deref(), Some("before"));
-    // a copy's target is looked for first
-    assert_eq!(
-        app.send_raw(copy("old", "copied")).await.unwrap().status,
-        200
-    );
-    assert_eq!(
-        app.send_raw(copy("old", "copied")).await.unwrap().status,
-        200
-    );
-    let over = app.send_raw(copy("new-ish", "old")).await.unwrap();
-    assert_eq!(over.status, 403, "{}", over.text());
-    assert_eq!(body_of(&store, "old").as_deref(), Some("before"));
-}
-
-#[tokio::test]
-async fn a_trial_may_write_again_what_its_clean_run_wrote() {
-    let mut clean = reqlog::Record {
+async fn a_trial_may_remove_what_its_clean_run_made() {
+    let clean = reqlog::Record {
         kind: "PutObject".into(),
         bucket: Some("data".into()),
-        key: Some("old".into()),
+        key: Some("tmp/part".into()),
         status: Some(200),
         ..Default::default()
     };
-    let refused = reqlog::Record {
-        key: Some("other".into()),
-        status: Some(403),
-        ..clean.clone()
-    };
-    clean.id = 1;
-    let (store, _proxy, app, _log) =
-        bench(Policy::NoDelete, true, Written::of(&[clean, refused])).await;
-    assert_eq!(app.send_raw(put("old", "again")).await.unwrap().status, 200);
-    assert_eq!(body_of(&store, "old").as_deref(), Some("again"));
+    let made = sonde_proxy::Made::of(&[clean]);
+    let removes = |k: &str| made.may_remove("DeleteObject", Some("data"), Some(k), &[], None);
+    assert!(removes("tmp/part") && !removes("old"));
 }
 
 #[tokio::test]
-async fn allow_writes_over_anything_and_a_store_without_conditions_is_not_guarded() {
-    let (store, _proxy, app, _log) = bench(Policy::Allow, true, Written::default()).await;
-    assert_eq!(app.send_raw(put("old", "after")).await.unwrap().status, 200);
-    assert_eq!(body_of(&store, "old").as_deref(), Some("after"));
-    // a store that ignores If-None-Match writes over: docs/security.md says so
-    let (store, _proxy, app, _log) = bench(Policy::NoDelete, false, Written::default()).await;
+async fn allow_writes_over_anything() {
+    let (store, _proxy, app, _log) = bench(Policy::Allow).await;
     assert_eq!(app.send_raw(put("old", "after")).await.unwrap().status, 200);
     assert_eq!(body_of(&store, "old").as_deref(), Some("after"));
 }
 
 #[tokio::test]
 async fn no_delete_refuses_a_bucket_policy_and_versioning_suspended() {
-    let (store, _proxy, app, _log) = bench(Policy::NoDelete, true, Written::default()).await;
+    let (store, _proxy, app, _log) = bench(Policy::NoDelete).await;
     let setting = |sub: &str, body: &str| {
         S3Request::new("PutBucket", http::Method::PUT)
             .bucket("data")

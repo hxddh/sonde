@@ -42,7 +42,8 @@ pub struct CheckArgs {
     /// At most this request cost (in the settings' currency).
     #[arg(long)]
     max_cost: Option<f64>,
-    /// At most this many failed requests.
+    /// At most this many requests that failed after their retries (a miss
+    /// is no failure).
     #[arg(long)]
     max_errors: Option<usize>,
     /// 95% of the requests within this long: ms, or `250ms`, `2s`.
@@ -114,12 +115,7 @@ fn of_project(h: &SessionHeader, project: &Path, name: Option<&str>) -> bool {
 
 /// `sonde check --init`: a `sonde.toml` whose `[check]` this run passes,
 /// with room to grow, and the CI step that holds every run to it.
-fn init_project(
-    a: &CheckArgs,
-    run: &sonde_proxy::program::RunPoint,
-    header: &SessionHeader,
-    dirs: &[PathBuf],
-) -> anyhow::Result<i32> {
+fn init_project(a: &CheckArgs, run: &sonde_proxy::program::RunPoint) -> anyhow::Result<i32> {
     let path = a
         .config
         .clone()
@@ -130,12 +126,6 @@ fn init_project(
             path.display()
         );
         return Ok(64);
-    }
-    // a budget of nothing is a program whose requests went elsewhere
-    if run.requests == 0 {
-        eprintln!(
-            "warning: the run sent sonde no requests, so max-requests = 0: its SDK probably did not use the endpoint sonde gave it (AWS_ENDPOINT_URL; `sonde run` lists how each SDK is pointed at it). Record a run that sends its requests, then `check --init` again"
-        );
     }
     let tolerance = a.tolerance.unwrap_or(10.0);
     let grow = 1.0 + tolerance / 100.0;
@@ -150,19 +140,7 @@ fn init_project(
     } else {
         "0.0001".into()
     };
-    // a program without a name goes by its command (what changes between
-    // runs left out): another argument and it is another program, with no
-    // baseline. One is written for it
-    let named = header.name.as_deref().is_some_and(|n| !n.trim().is_empty());
-    let name = (!named)
-        .then(|| {
-            header
-                .command
-                .as_deref()
-                .and_then(sonde_proxy::program::short_name)
-        })
-        .flatten();
-    let mut text = [
+    let text = [
         "# sonde check: what a run of this program may use against S3.".to_string(),
         format!(
             "# Made from a run of {}; edit freely.",
@@ -190,11 +168,6 @@ fn init_project(
         String::new(),
     ]
     .join("\n");
-    if let Some(name) = &name {
-        text.push_str(&format!(
-            "\n# the name this program's runs and its baseline go by, whatever its arguments\n[program]\nname = \"{name}\"\n"
-        ));
-    }
     std::fs::write(&path, text)?;
     eprintln!(
         "wrote {}: a [check] this run passes ({}, {} of room)",
@@ -202,26 +175,6 @@ fn init_project(
         output::count(run.requests, "request"),
         format_args!("{tolerance}%")
     );
-    if let Some(name) = &name {
-        eprintln!(
-            "  and [program] name = \"{name}\": later runs (`sonde run`, here) and their baseline go by it, not by the command's arguments"
-        );
-        // what the program kept under its command goes with it
-        let mut moved = Vec::new();
-        if let Some(old) = sonde_proxy::program::key_of(header) {
-            for dir in dirs {
-                moved.extend(sonde_proxy::program::rename_program(dir, &old, name)?);
-            }
-            moved.sort();
-            moved.dedup();
-            if !moved.is_empty() {
-                eprintln!(
-                    "  what was kept for `{old}` ({}) now goes by \"{name}\"",
-                    moved.join(", ")
-                );
-            }
-        }
-    }
     eprintln!("  no trials: `sonde run --trial` tries the program under faults");
     let uses = action_line();
     eprintln!(
@@ -559,13 +512,22 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         );
         return Ok(64);
     }
+    // a run that sent nothing is no program's figures to hold another to
+    if run.0.requests == 0 && (a.init || a.set_baseline) {
+        eprintln!(
+            "{}: the run recorded no request, so it is no {}. {}",
+            sonde_proxy::program::NOTHING_REACHED,
+            if a.init {
+                "budget's source"
+            } else {
+                "baseline"
+            },
+            NOT_THROUGH_SONDE
+        );
+        return Ok(64);
+    }
     if a.init {
-        // the run's folder, and the data directory's when it is another
-        let mut dirs = vec![sonde_proxy::fixloop::folder_of(&file)];
-        if dirs[0].canonicalize().ok() != dir.canonicalize().ok() && dir.is_dir() {
-            dirs.push(dir.clone());
-        }
-        return init_project(a, &run.0, &header, &dirs);
+        return init_project(a, &run.0);
     }
     if a.set_baseline {
         let Some(key) = &program else {
@@ -622,7 +584,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             if found.is_none() {
                 // no baseline yet is not a mistake: a first run in CI has
                 // none. The budget is checked, and this is said
-                no_baseline = Some(no_baseline_text(program.as_deref(), &header, &all));
+                no_baseline = Some(no_baseline_text(program.as_deref()));
             }
             found
         }
@@ -705,13 +667,21 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         }
         _ => run_closing(&c, &trials, failed),
     };
+    // nothing reached sonde: said on stderr in every format, the verdict says it too
+    if c.empty {
+        eprintln!(
+            "{}: the run recorded no request. {}",
+            sonde_proxy::program::NOTHING_REACHED,
+            NOT_THROUGH_SONDE
+        );
+    }
     // setting a baseline alone is a whole command
     if c.verdicts.is_empty() && trials.is_empty() && a.set_baseline {
         return Ok(0);
     }
     // nothing to hold the run to is a mistake in the command, in every
     // format; a program that failed is held to its exit
-    if c.verdicts.is_empty() && trials.is_empty() && failed.is_none() {
+    if c.verdicts.is_empty() && trials.is_empty() && failed.is_none() && !c.empty {
         // with `baseline = "auto"` and no baseline yet there is nothing to
         // hold the run to, and nothing wrong with it: the first run passes
         // (the other formats say it below, as they say any verdict: a
@@ -730,9 +700,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     // which program this is, and what it goes by: a baseline is a program's
     let named = match (&program, header.name.as_deref().map(str::trim)) {
         (Some(p), Some(n)) if !n.is_empty() => format!("program {p} (its name)"),
-        (Some(p), _) => format!(
-            "program `{p}` (its command; a name of its own: `name` under [program] in sonde.toml, or `sonde run --name`)"
-        ),
+        (Some(p), _) => format!("program `{p}` (what its command runs)"),
         (None, _) => "no program (the session ran no command)".to_string(),
     };
     // past the baseline: since which run, and the commits around it
@@ -799,6 +767,15 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         // pass in silence
         if let Some(why) = &no_baseline {
             println!("::warning title=sonde check::{}", gh_escape(why));
+        }
+        if c.empty {
+            println!(
+                "::error title=sonde check::{}",
+                gh_escape(&format!(
+                    "{}: the run recorded no request. {NOT_THROUGH_SONDE}",
+                    sonde_proxy::program::NOTHING_REACHED
+                ))
+            );
         }
         if let Some(x) = failed {
             println!(
@@ -974,40 +951,17 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     Ok(if passed { 0 } else { 1 })
 }
 
-/// Why `baseline = "auto"` found none: which program this is and, when a
-/// baseline is set for the same program run with other arguments, that one
-/// and how to give the program a name the two share.
-fn no_baseline_text(
-    program: Option<&str>,
-    header: &SessionHeader,
-    baselines: &std::collections::BTreeMap<String, String>,
-) -> String {
-    let Some(key) = program else {
-        return "no baseline yet: this session ran no command, so it is no program's run"
-            .to_string();
-    };
-    let mut text = format!(
-        "no baseline yet for program `{key}`: set one with `sonde check FILE --set-baseline` or in the app"
-    );
-    // the same executable and script under another key: its arguments differ
-    let named = header.name.as_deref().is_some_and(|n| !n.trim().is_empty());
-    let of = |command: &str| {
-        (
-            sonde_proxy::program::program_name(command),
-            sonde_proxy::program::short_name(command),
-        )
-    };
-    if !named
-        && let Some(other) = baselines
-            .keys()
-            .find(|k| k.as_str() != key && of(k) == of(key) && of(key).0.is_some())
-    {
-        let name = sonde_proxy::program::short_name(key).unwrap_or_else(|| "NAME".into());
-        text.push_str(&format!(
-            "\n  there is one for `{other}`: the same program with other arguments. A program without a name goes by its whole command; give it one and its runs share a baseline: `name = \"{name}\"` under [program] in sonde.toml, or `sonde run --name {name}`"
-        ));
+/// Why a run records nothing, and where to look.
+const NOT_THROUGH_SONDE: &str = "The program's S3 client did not use the endpoint sonde gave it (AWS_ENDPOINT_URL; `sonde run` says how each SDK is pointed at it), or it sent nothing.";
+
+/// Why `baseline = "auto"` found none: which program this is.
+fn no_baseline_text(program: Option<&str>) -> String {
+    match program {
+        Some(key) => format!(
+            "no baseline yet for program `{key}`: set one with `sonde check FILE --set-baseline` or in the app"
+        ),
+        None => "no baseline yet: this session ran no command, so it is no program's run".into(),
     }
-    text
 }
 
 /// A session by name and time, as `sonde check` says which run it judged:

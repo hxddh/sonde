@@ -297,10 +297,10 @@ fn template(key: &str) -> &'static str {
             "refused by the recording policy ({policy}): {n} request{s} more than in the clean run, so what the program does under the fault cannot be told"
         }
         "trial.advice.policy" => {
-            "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program write over what it finds (--policy allow)"
+            "give each run a place of its own (the trial's name, SONDE_TRIAL, in its keys), or let the program delete what it finds (--policy allow)"
         }
         "trial.advice.policy.placed" => {
-            "the run has a place of its own already: let the program delete or write over what it finds there (--policy allow)"
+            "the run has a place of its own already: let the program delete what it finds there (--policy allow)"
         }
         "trial.why.refused.made" => {
             "the retried {op} was answered {answer}: the store had made the first attempt"
