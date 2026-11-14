@@ -1851,6 +1851,7 @@ async fn a_body_cut_short_is_read_again_or_taken_for_the_whole() {
             &[
                 "show",
                 b.path("trials/retries.cut-body.sonde").to_str().unwrap(),
+                "--requests",
                 "-f",
                 "json",
             ],
