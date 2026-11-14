@@ -287,16 +287,25 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     ]
                 })
                 .collect();
+            let mut heads = vec![
+                "session", "recorded", "program", "endpoint", "requests", "took", "errors",
+                "exit", "trials", "size",
+            ];
+            // a table has no column with nothing in it (no run's exit is
+            // known: imports, replays); a file's columns stay what they are
+            const EXIT: usize = 7;
+            if matches!(format, Format::Table) && all.iter().all(|r| r.exit.is_none()) {
+                heads.remove(EXIT);
+                for r in &mut rows {
+                    r.remove(EXIT);
+                }
+            }
             // a command may be a line long: in a terminal it is cut in its
             // middle so that every row fits (a file or a pipe gets it whole)
             if matches!(format, Format::Table)
                 && let Some(width) = terminal_width()
             {
                 const PROGRAM: usize = 2;
-                let heads = [
-                    "session", "recorded", "program", "endpoint", "requests", "took", "errors",
-                    "exit", "trials", "size",
-                ];
                 let others: usize = (0..heads.len())
                     .filter(|i| *i != PROGRAM)
                     .map(|i| {
@@ -313,14 +322,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     r[PROGRAM] = middle(&r[PROGRAM], room);
                 }
             }
-            output::print(
-                format,
-                &[
-                    "session", "recorded", "program", "endpoint", "requests", "took", "errors",
-                    "exit", "trials", "size",
-                ],
-                &rows,
-            );
+            output::print(format, &heads, &rows);
             for r in all.iter().filter(|r| r.unreadable.is_some()) {
                 eprintln!(
                     "sonde: {} is not a session: {} (`sonde show` refuses it; its other lines are counted)",

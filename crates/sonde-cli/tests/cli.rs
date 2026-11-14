@@ -34,6 +34,15 @@ fn a_mistake_in_the_command_is_a_usage_error_and_help_is_not() {
     let help = sonde(t.path(), &["--help"]);
     assert_eq!(help.status.code(), Some(0));
     assert!(stdout(&help).contains("Usage"));
+    // the usage of a missing argument names what is required, not the
+    // directories the environment gives (20.0 named them as required)
+    let missing = sonde(t.path(), &["bucket", "size"]);
+    assert_eq!(missing.status.code(), Some(64));
+    assert!(
+        stderr(&missing).contains("Usage: sonde bucket size --bucket <BUCKET>\n"),
+        "{}",
+        stderr(&missing)
+    );
 }
 
 #[test]
@@ -98,7 +107,7 @@ fn the_demo_records_a_session_that_every_command_reads() {
     let mut lines = csv.lines();
     assert_eq!(
         lines.next(),
-        Some("session,recorded,program,endpoint,requests,took,errors,trials,size")
+        Some("session,recorded,program,endpoint,requests,took,errors,exit,trials,size")
     );
     let name = lines.next().unwrap().split(',').next().unwrap().to_string();
     assert!(lines.next().is_none());
@@ -666,14 +675,14 @@ fn a_folder_of_logs_is_imported_as_one_session() {
     // named by the store the log is of, not by the folder it was in
     assert!(shown.contains("to s3.amazonaws.com"), "{shown}");
 
-    // a folder with no log in it is a mistake in the command
+    // a folder with nothing in it is nothing to import: bad data
     let none = t.path().join("none");
     std::fs::create_dir(&none).unwrap();
     assert_eq!(
         sonde(t.path(), &["import", none.to_str().unwrap()])
             .status
             .code(),
-        Some(64)
+        Some(65)
     );
 }
 

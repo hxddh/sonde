@@ -992,6 +992,28 @@ pub fn md_text(t: &str) -> String {
     out
 }
 
+/// A sentence of sonde's own with code spans in it (``program `etl.py` ``), as
+/// Markdown: each span kept a span, its text as written (a backslash in a
+/// span is shown, not read as an escape), the rest as [`md_text`]. A
+/// sentence whose backticks do not pair is all text.
+pub fn md_said(t: &str) -> String {
+    let parts: Vec<&str> = t.split('`').collect();
+    if parts.len() % 2 == 0 {
+        return md_text(t);
+    }
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if i % 2 == 0 {
+                md_text(p)
+            } else {
+                format!("`{}`", p.replace(['\n', '\r'], " "))
+            }
+        })
+        .collect()
+}
+
 /// A check as a pull request's comment (`sonde check -f markdown`, and the
 /// app's preview of it): the verdicts, since which run, what is new, what is
 /// expected, and the run's findings with the code that sent their requests.
@@ -1209,18 +1231,18 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
     if let Some((code, why)) = m.failed {
         md.push_str(&format!("\n> ❌ **The program failed** (exit {code})"));
         match why {
-            Some(w) => md.push_str(&format!(": {}\n", md_text(w))),
+            Some(w) => md.push_str(&format!(": {}\n", md_said(w))),
             None => md.push('\n'),
         }
     }
     if let Some(t) = m.since {
-        md.push_str(&format!("\n{}\n", md_text(t)));
+        md.push_str(&format!("\n{}\n", md_said(t)));
     }
     if let Some(why) = m.no_baseline {
         md.push_str(&format!(
             "\n> ⚠️ {}: nothing was compared\n",
             // what is missing, not how to set one on this machine
-            md_text(why.split(": ").next().unwrap_or(why))
+            md_said(why.split(": ").next().unwrap_or(why))
         ));
     }
     // a baseline's rows are said as what changed, below

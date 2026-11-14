@@ -415,9 +415,11 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
     let dir = runs_dir(&file);
     let color = std::io::stderr().is_terminal();
     eprintln!(
-        "\nTrial: the command runs {} more time{}, each under one scenario.",
-        scenarios.len(),
-        if scenarios.len() == 1 { "" } else { "s" }
+        "\nTrial: the command runs {}.",
+        match scenarios.len() {
+            1 => "once more, under the scenario".to_string(),
+            n => format!("{n} more times, each under one scenario"),
+        }
     );
     let mut trials = Vec::new();
     let mut interrupted = None;

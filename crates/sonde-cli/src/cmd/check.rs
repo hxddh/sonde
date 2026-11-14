@@ -1050,6 +1050,16 @@ mod tests {
             md_text("key `a|b` <b>x</b> @team *hot*"),
             "key \\`a\\|b\\` \\<b\\>x\\</b\\> @\u{2060}team \\*hot\\*"
         );
+        // sonde's own sentence keeps its code spans spans: 20.0 escaped
+        // their backticks, and the comment showed them
+        use sonde_proxy::program::md_said;
+        assert_eq!(
+            md_said("no baseline yet for program `python etl_job.py --x *`"),
+            "no baseline yet for program `python etl_job.py --x *`"
+        );
+        assert_eq!(md_said("a_b `c_d` e*"), "a\\_b `c_d` e\\*");
+        // unpaired: all text
+        assert_eq!(md_said("a `b"), "a \\`b");
     }
 
     #[test]

@@ -2149,7 +2149,7 @@ async fn a_scenario_named_twice_runs_once() {
     assert_eq!(o.code, Some(0), "{}", o.stderr);
     assert_eq!(trials(&b.path("run.sonde")).len(), 1);
     assert!(
-        o.stderr.contains("runs 1 more time,"),
+        o.stderr.contains("runs once more, under the scenario."),
         "once, not twice into one file: {}",
         o.stderr
     );
