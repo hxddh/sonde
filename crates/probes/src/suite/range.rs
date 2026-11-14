@@ -21,14 +21,7 @@ pub struct Bounds;
 #[async_trait]
 impl Probe for Bounds {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "range.bounds",
-            Category::Range,
-            "Range boundaries",
-            "GETs bytes=0-0, bytes=9-9, bytes=-3 (suffix), bytes=7- (open) and bytes=5-100 (past the end) of a 10-byte object.",
-            "206 Partial Content for each, with Content-Range bytes a-b/10; a range past the end is cut to the object (bytes 5-9/10).",
-            &[],
-        )
+        meta("range.bounds", Category::Range, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("range");
@@ -87,14 +80,7 @@ pub struct MultiRange;
 #[async_trait]
 impl Probe for MultiRange {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "range.multi",
-            Category::Range,
-            "Multiple ranges",
-            "GET with Range: bytes=0-1,4-5.",
-            "S3 does not serve multiple ranges: it ignores such a header and answers 200 with the whole object.",
-            &[],
-        )
+        meta("range.multi", Category::Range, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("multirange");
@@ -141,14 +127,7 @@ pub struct Unsatisfiable;
 #[async_trait]
 impl Probe for Unsatisfiable {
     fn meta(&self) -> ProbeMeta {
-        meta(
-            "range.unsatisfiable",
-            Category::Range,
-            "Range past the end",
-            "GET bytes=100-200 of a 10-byte object, and bytes=0- of an empty object.",
-            "416 InvalidRange with Content-Range: bytes */10; on an empty object 416 as well.",
-            &[],
-        )
+        meta("range.unsatisfiable", Category::Range, &[])
     }
     async fn run(&self, cx: &ProbeCx) {
         let k = cx.key("unsat");

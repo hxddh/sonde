@@ -1,6 +1,5 @@
 // The shapes sonde/native returns (serde JSON of sonde-core, probes and decoders).
 
-import type { CorePhrase } from "./corephrases";
 
 export interface EndpointView {
   id: string;
@@ -484,11 +483,15 @@ export interface RunInfo {
   trials?: { scenario: string; standing: Trial["standing"]; run: string | null }[];
 }
 
-/** A phrase of what sonde says: a key and its arguments (crates/proxy/src/phrase.rs). */
+/** A phrase of what sonde says of a run: a key and its arguments (crates/proxy/src/phrase.rs); its words are
+ * `phrase.<key>` of the locale files. */
 export interface Phrase {
   key: string;
   args: Record<string, string>;
 }
+
+/** What a service says (decoders' `Phrase`): its words are `core.<key>` of the locale files. */
+export type CorePhrase = { key: string; args?: Record<string, string> };
 
 /** What Group by splits the operations table by (crates/proxy/src/split.rs). */
 export type SplitBy = "kind" | "prefix" | "size" | "caller" | "sdk" | "status" | "key";

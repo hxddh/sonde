@@ -35,8 +35,9 @@ scripts/integration.sh                   # against Ceph RGW and RustFS in Docker
 ```
 
 Run the app's tests through `scripts/ui-tests.sh`, not `nsh test` alone: it keeps them off your own sonde data.
-Every word the app shows is in `app/locales` in English and Chinese. When the run format changes, set
-`RENAMES` in `scripts/fixtures.py`, run it, and commit the fixtures.
+Every word sonde says is in `app/locales` in English and Chinese: the app's, and the phrases Rust says (`phrase.*`,
+`core.*`; Rust reads the English there). When the run format changes, set `RENAMES` in `scripts/fixtures.py`, run
+it, and commit the fixtures.
 
 ## The tour and its pictures
 

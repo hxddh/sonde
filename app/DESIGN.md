@@ -469,5 +469,5 @@ written, not translated: `桶`, `未完成的上传`; a place, a tab, a button a
 their own (运行 the place Run, 运行记录 the place Runs, 启动 its button, 历史 a run's History tab; 操作 what
 a program did (an operation), 请求类型 a kind of request (GetObject: "kind of request", never "operation"), 动作 the palette's commands; 测试用桶 where probes write, 临时桶 what they may create; 未通过 a
 broke trial, 失败 a failed request, job or budget). What sonde says about a run comes from
-phrases (`src/phrases.ts`) in both languages: English from Rust's own templates, which `check-locales.py`
-holds the app's to, letter for letter.
+phrases, whose words in both languages are the locale files' `phrase.` and `core.` keys: Rust reads the English
+there too, so a sentence lives in one place.

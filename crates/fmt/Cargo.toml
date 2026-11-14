@@ -1,6 +1,6 @@
 [package]
 name = "sonde-fmt"
-description = "How sonde writes a size, a count and a length of time: one way, in every crate, the same as the app's format.ts."
+description = "How sonde writes a size, a count and a length of time, and its words in English: one way, in every crate, the same as the app's."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,5 +9,5 @@ license.workspace = true
 [lints]
 workspace = true
 
-[dev-dependencies]
+[dependencies]
 serde_json.workspace = true

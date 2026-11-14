@@ -48,23 +48,21 @@ pub(crate) fn write_refused(s: &Steps, labels: &[&str]) -> Option<Judgement> {
     ))
 }
 
-pub(crate) fn meta(
-    id: &str,
-    category: Category,
-    title: &str,
-    description: &str,
-    aws: &str,
-    needs: &[Needs],
-) -> ProbeMeta {
+/// A probe's catalog entry: its words are `core.probe.<id>.title`,
+/// `.description` and `.aws` of the app's locale files.
+pub(crate) fn meta(id: &str, category: Category, needs: &[Needs]) -> ProbeMeta {
+    let text = |part: &str| vec![Phrase::new(format!("probe.{id}.{part}"), &[])];
+    let (title_text, description_text, aws_behavior_text) =
+        (text("title"), text("description"), text("aws"));
     ProbeMeta {
         id: id.into(),
         category,
-        title: title.into(),
-        description: description.into(),
-        aws_behavior: aws.into(),
-        title_text: vec![Phrase::new(format!("probe.{id}.title"), &[])],
-        description_text: vec![Phrase::new(format!("probe.{id}.description"), &[])],
-        aws_behavior_text: vec![Phrase::new(format!("probe.{id}.aws"), &[])],
+        title: crate::phrase::en(&title_text),
+        description: crate::phrase::en(&description_text),
+        aws_behavior: crate::phrase::en(&aws_behavior_text),
+        title_text,
+        description_text,
+        aws_behavior_text,
         needs: needs.to_vec(),
     }
 }

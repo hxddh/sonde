@@ -18,7 +18,7 @@ crates/probes             40 probes, runner, run store, diff, matrix, reports �
 crates/decoders           SlateDB, Iceberg, lakeFS, Woodpecker, cadence       │ TSX counted)
 crates/s3raw              SigV4, addressing, retries, throttle, XML, ops      │
 crates/reqlog             records, redaction, ring buffer, HAR                │
-crates/fmt (sonde-fmt)    how a size, a count and a length of time are written ─┘
+crates/fmt (sonde-fmt)    a size, a count, a length of time; its English words ─┘
 hooks/java                the Java caller hook's sources (its jars are built into sonde-proxy)
 fuzz/                     cargo-fuzz targets for what sonde reads from others (not in the workspace)
 ```
@@ -74,7 +74,7 @@ output chunk; gzipped when finished). Then, in `sonde-proxy`:
 | `summary.rs` | counts kept in the folder's index, valid while file length, time and cache version match |
 | `index.rs` | one `.index.jsonl` per runs folder: counts, verdicts, exit codes; an appended log, compacted |
 | `view.rs` | analysed once, sent in pages (`Runs.view`, `Runs.episodes`): what crosses to the UI does not grow |
-| `phrase.rs` | each sentence as a key and arguments beside its English; the app and viewer render them per language (`app/src/phrases.ts`), falling back to English |
+| `phrase.rs` | each sentence as a key and arguments; its words, English included, are `phrase.<key>` of `app/locales` (read by `sonde-fmt`'s `words`), said per language by the app and viewer |
 
 Every size, count and duration in text comes from `sonde-fmt`, tested with the app's `format.ts` against
 `crates/fmt/cases.json`.

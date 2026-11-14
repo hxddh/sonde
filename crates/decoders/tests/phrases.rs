@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use decoders::phrase::{en, templates, untranslated};
+use decoders::phrase::en;
 use decoders::{DirSource, Layout, analyze, detect};
 
 async fn layouts() -> Vec<Layout> {
@@ -84,11 +84,4 @@ async fn the_phrase_fields_are_named_for_the_app() {
     assert!(json["facts"][0]["labelText"][0]["key"].is_string());
     assert!(json["issues"][0]["messageText"][0]["args"].is_object());
     assert!(json["timeline"][0]["labelText"].is_array());
-}
-
-#[test]
-fn every_key_has_a_chinese_template() {
-    let ts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/src/corephrases.ts");
-    let ts = std::fs::read_to_string(ts).unwrap();
-    assert_eq!(untranslated(&ts, &templates()), Vec::<String>::new());
 }
