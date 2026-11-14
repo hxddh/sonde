@@ -1667,7 +1667,7 @@ pub fn worst(trials: &[Trial]) -> Option<Standing> {
 /// The places a command gives a run of a trial named `name` (`clean`, or
 /// the scenario's): each word with `{trial}`, up to its last `{trial}` and
 /// past any `=` and `scheme://` (`--out=s3://b/etl-{trial}/` is
-/// `b/etl-clean`). Keys under them are that run's own ([`crate::Written::own_place`]).
+/// `b/etl-clean`). Keys under them are that run's own ([`crate::Made::own_place`]).
 pub fn places(command: &[String], name: &str) -> Vec<String> {
     command
         .iter()
