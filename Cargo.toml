@@ -81,7 +81,6 @@ uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
 flate2 = "1"
 apache-avro = { version = "0.17", default-features = false }
-flatbuffers = "24"
 async-trait = "0.1"
 tempfile = "3"
 
@@ -91,7 +90,6 @@ nsh-core = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c
 nsh-base = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
 nsh-engine = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
 nsh-platform-tui = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
-nsh-testing = { git = "https://github.com/longbridge/nsh", rev = "2ca3b8005cf00907c8c501ad9ba5f21f576fee84" }
 
 [profile.release]
 lto = "thin"

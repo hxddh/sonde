@@ -30,10 +30,6 @@ bytes.workspace = true
 tempfile.workspace = true
 futures.workspace = true
 reqwest.workspace = true
-flate2.workspace = true
-hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
 sonde-nsh = { workspace = true, optional = true }
 clap.workspace = true
 serde.workspace = true
@@ -56,6 +52,14 @@ base64 = { workspace = true, optional = true }
 rustix = { version = "1", features = ["process", "termios"] }
 
 [dev-dependencies]
-tempfile.workspace = true
-# the small S3 of the proxy's tests, which the trial tests run sonde against
+flate2.workspace = true
+# the small S3 of the proxy's tests (tests/common, by #[path]), which the trial
+# tests run sonde against
 parking_lot.workspace = true
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+[package.metadata.cargo-shear]
+# used by tests/common, which cargo shear does not follow through #[path]
+ignored = ["parking_lot", "hyper", "hyper-util", "http-body-util"]
