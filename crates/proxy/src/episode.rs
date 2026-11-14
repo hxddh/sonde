@@ -11,6 +11,8 @@
 //! point; a buffer that sits idle is flushed on its own (reads, or files
 //! written without a commit — which [`observations`] reports).
 
+use std::borrow::Cow;
+
 use chrono::{DateTime, Duration, Utc};
 use reqlog::Record;
 use serde::Serialize;
@@ -497,8 +499,10 @@ pub enum Outcome {
 }
 
 /// One operation: requests that belong together. Its title is its phrases
-/// ([`Episode::title`] the English of them, made when it is asked for: a
-/// session may have a million operations, and each would hold it twice).
+/// ([`Episode::title_text`], and [`Episode::title`] the English of them),
+/// made when they are asked for: a session may have a million operations,
+/// most of them one request, and each is held in 144 bytes
+/// ([`Ids`] and [`Title`] hold one request's in place).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Episode {
     pub shape: Shape,
@@ -506,21 +510,91 @@ pub struct Episode {
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
     /// Record ids, in time order.
-    pub records: Vec<u64>,
+    pub records: Ids,
     pub bytes_up: u64,
     pub bytes_down: u64,
     pub outcome: Outcome,
-    pub notes: Vec<String>,
     /// Its lookups (GET, HEAD) answered 404: not errors, and worth telling apart.
-    pub not_found: usize,
-    /// The title and the notes as phrases, for saying them in other languages.
-    pub title_text: Vec<Phrase>,
-    pub notes_text: Vec<Phrase>,
+    pub not_found: u32,
+    title: Title,
+    /// The notes as phrases ([`Episode::notes`] in English).
+    pub notes_text: Box<[Phrase]>,
+}
+
+/// An operation's title, as it is held.
+#[derive(Debug, Clone, PartialEq)]
+enum Title {
+    /// One request: `{op} {target}` (the target text its operations share),
+    /// and what follows it (a listing's prefix, a write's size).
+    Request {
+        op: reqlog::Name,
+        target: reqlog::Text,
+        more: Box<[Phrase]>,
+    },
+    Phrases(Box<[Phrase]>),
+}
+
+/// An operation's record ids: one is held in place, more in a list of their own.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Ids {
+    One(u64),
+    Many(Box<[u64]>),
+}
+
+impl std::ops::Deref for Ids {
+    type Target = [u64];
+    fn deref(&self) -> &[u64] {
+        match self {
+            Ids::One(id) => std::slice::from_ref(id),
+            Ids::Many(ids) => ids,
+        }
+    }
+}
+
+impl From<Vec<u64>> for Ids {
+    fn from(ids: Vec<u64>) -> Self {
+        match ids[..] {
+            [id] => Ids::One(id),
+            _ => Ids::Many(ids.into()),
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Ids {
+    type Item = &'a u64;
+    type IntoIter = std::slice::Iter<'a, u64>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<const N: usize> PartialEq<[u64; N]> for Ids {
+    fn eq(&self, other: &[u64; N]) -> bool {
+        **self == other[..]
+    }
+}
+
+impl PartialEq<Vec<u64>> for Ids {
+    fn eq(&self, other: &Vec<u64>) -> bool {
+        **self == other[..]
+    }
+}
+
+impl std::fmt::Debug for Ids {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl Serialize for Ids {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        (**self).serialize(s)
+    }
 }
 
 impl Serialize for Episode {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        /// The operation as it is written: its title in English too.
+        /// The operation as it is written: its title and notes in English too.
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Written<'a> {
@@ -533,24 +607,25 @@ impl Serialize for Episode {
             bytes_up: u64,
             bytes_down: u64,
             outcome: &'a Outcome,
-            notes: &'a [String],
-            not_found: usize,
-            title_text: &'a [Phrase],
+            notes: Vec<String>,
+            not_found: u32,
+            title_text: Vec<Phrase>,
             notes_text: &'a [Phrase],
         }
+        let title_text = self.title_text();
         Written {
             shape: &self.shape,
             format: &self.format,
-            title: self.title(),
+            title: crate::phrase::en(&title_text),
             start: &self.start,
             end: &self.end,
             records: &self.records,
             bytes_up: self.bytes_up,
             bytes_down: self.bytes_down,
             outcome: &self.outcome,
-            notes: &self.notes,
+            notes: self.notes(),
             not_found: self.not_found,
-            title_text: &self.title_text,
+            title_text,
             notes_text: &self.notes_text,
         }
         .serialize(s)
@@ -558,15 +633,36 @@ impl Serialize for Episode {
 }
 
 impl Episode {
-    /// Its title in English.
-    pub fn title(&self) -> String {
-        crate::phrase::en(&self.title_text)
+    /// Its title, as phrases.
+    pub fn title_text(&self) -> Vec<Phrase> {
+        match &self.title {
+            Title::Request { op, target, more } => {
+                let mut t = vec![p_shared(
+                    "request",
+                    &[("op", op.as_str().into()), ("target", target.clone())],
+                )];
+                t.extend(more.iter().cloned());
+                t
+            }
+            Title::Phrases(t) => t.to_vec(),
+        }
     }
 
-    /// Adds a note, in English and as a phrase.
+    /// Its title in English.
+    pub fn title(&self) -> String {
+        crate::phrase::en(&self.title_text())
+    }
+
+    /// Its notes in English.
+    pub fn notes(&self) -> Vec<String> {
+        self.notes_text.iter().map(Phrase::en).collect()
+    }
+
+    /// Adds a note.
     fn note(&mut self, phrase: Phrase) {
-        self.notes.push(phrase.en());
-        self.notes_text.push(phrase);
+        let mut notes = std::mem::take(&mut self.notes_text).into_vec();
+        notes.push(phrase);
+        self.notes_text = notes.into();
     }
 
     pub fn requests(&self) -> usize {
@@ -681,12 +777,11 @@ fn parent(key: &str) -> &str {
 }
 
 /// Builds an episode from records (any order).
-fn build(
-    shape: Shape,
-    format: Option<Format>,
-    title: Vec<Phrase>,
-    mut rs: Vec<&Record>,
-) -> Episode {
+fn build(shape: Shape, format: Option<Format>, title: Vec<Phrase>, rs: Vec<&Record>) -> Episode {
+    built(shape, format, Title::Phrases(title.into()), rs)
+}
+
+fn built(shape: Shape, format: Option<Format>, title: Title, mut rs: Vec<&Record>) -> Episode {
     rs.sort_by_key(|r| (r.time, r.id));
     let start = rs.first().map(|r| r.time).unwrap_or_default();
     let end = rs.iter().map(|r| end_of(r)).max().unwrap_or(start);
@@ -699,10 +794,10 @@ fn build(
     Episode {
         shape,
         format,
-        title_text: title,
+        title,
         start,
         end,
-        records: rs.iter().map(|r| r.id).collect(),
+        records: rs.iter().map(|r| r.id).collect::<Vec<u64>>().into(),
         bytes_up: rs.iter().map(|r| r.request_bytes.unwrap_or(0)).sum(),
         bytes_down: rs
             .iter()
@@ -710,9 +805,8 @@ fn build(
             .map(|r| r.response_bytes.unwrap_or(0))
             .sum(),
         outcome,
-        notes: Vec::new(),
-        notes_text: Vec::new(),
-        not_found: rs.iter().filter(|r| crate::summary::is_miss(r)).count(),
+        notes_text: Box::default(),
+        not_found: rs.iter().filter(|r| crate::summary::is_miss(r)).count() as u32,
     }
 }
 
@@ -726,7 +820,9 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     let mut sorted: Vec<&Record> = records.iter().collect();
     sorted.sort_by_key(|r| (r.time, r.id));
     let mut used = vec![false; sorted.len()];
-    let mut out = Vec::new();
+    // (room for an operation a request, the most there can be: what is not
+    // used is never touched, and given back at the end without a copy)
+    let mut out = Vec::with_capacity(records.len());
 
     // a completed multipart upload of a format's file is one write of it
     let tables = Tables::of(&sorted);
@@ -735,15 +831,17 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     units.extend(retries(&sorted, &tables, &mut used, &mut out));
 
     // what is left, in order: format steps, bursts of lookups, listings, single requests
-    let mut items: Vec<Vec<&Record>> = units;
+    // (a request on its own is a unit as it stands: no list is made of it)
+    let mut items: Vec<Cow<[&Record]>> = units.into_iter().map(Cow::Owned).collect();
     items.extend(
         sorted
             .iter()
             .enumerate()
             .filter(|(i, _)| !used[*i])
-            .map(|(_, r)| vec![*r]),
+            .map(|(_, r)| Cow::Borrowed(std::slice::from_ref(r))),
     );
-    items.sort_by_key(|u| (u[0].time, u[0].id));
+    drop(used);
+    items.sort_unstable_by_key(|u| (u[0].time, u[0].id));
     let mut buffers: Vec<(Format, Vec<&Record>)> = Vec::new();
     let mut probe: Vec<&Record> = Vec::new();
     let mut listing: Vec<&Record> = Vec::new();
@@ -767,7 +865,7 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
                     buffers.len() - 1
                 }
             };
-            buffers[pos].1.extend(unit);
+            buffers[pos].1.extend(unit.iter());
             if is_write(r) && part.as_ref().is_some_and(Part::commits) {
                 let (_, rs) = buffers.remove(pos);
                 out.extend(step(f, rs));
@@ -796,7 +894,8 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
         }
         alone.push(r);
     }
-    out.extend(singles(&alone));
+    let mut targets = Targets::default();
+    out.extend(alone.iter().map(|r| single(r, &mut targets)));
     for (f, rs) in buffers {
         out.push(loose(f, rs));
     }
@@ -806,7 +905,9 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     if !listing.is_empty() {
         out.push(flush_listing(listing));
     }
-    out.sort_by_key(|e| (e.start, e.records.first().copied()));
+    // (an operation's first request is its own: no two are equal)
+    out.sort_unstable_by_key(|e| (e.start, e.records.first().copied()));
+    out.shrink_to_fit();
     out
 }
 
@@ -825,41 +926,6 @@ fn flush_idle(
             i += 1;
         }
     }
-}
-
-/// Each request an operation of its own ([`single`]), on the cores there
-/// are: a session of a million requests is mostly these, and each is a
-/// title and its phrases to write. (The operations are sorted by their
-/// start afterwards: the order they are made in is not seen.)
-fn singles(rs: &[&Record]) -> Vec<Episode> {
-    const WORTH: usize = 20_000;
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
-    if threads < 2 || rs.len() < WORTH {
-        let mut targets = Targets::default();
-        return rs.iter().map(|r| single(r, &mut targets)).collect();
-    }
-    let each = rs.len().div_ceil(threads);
-    std::thread::scope(|scope| {
-        let parts: Vec<_> = rs
-            .chunks(each)
-            .map(|part| {
-                scope.spawn(move || {
-                    let mut targets = Targets::default();
-                    part.iter()
-                        .map(|r| single(r, &mut targets))
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        let mut out = Vec::with_capacity(rs.len());
-        for part in parts {
-            match part.join() {
-                Ok(made) => out.extend(made),
-                Err(panic) => std::panic::resume_unwind(panic),
-            }
-        }
-        out
-    })
 }
 
 /// Each request's target as text its operations share, by its bucket and
@@ -886,18 +952,22 @@ impl Targets {
     }
 }
 
+/// A request that is nothing more, an operation of its own: most of a large
+/// session, so its title is held as the request's own words ([`Title::Request`]).
 fn single(r: &Record, targets: &mut Targets) -> Episode {
-    let mut title = vec![p_shared(
-        "request",
-        &[("op", r.kind.as_str().into()), ("target", targets.of(r))],
-    )];
+    let mut more = Vec::new();
     if let Some(x) = query(r, "prefix").filter(|x| !x.is_empty()) {
-        title.push(p("request.prefix", &[("prefix", x.to_string())]));
+        more.push(p("request.prefix", &[("prefix", x.to_string())]));
     }
     if matches!(r.method.as_str(), "PUT" | "POST") && r.request_bytes.unwrap_or(0) > 0 {
-        title.push(p("size", &[("size", human(r.request_bytes.unwrap_or(0)))]));
+        more.push(p("size", &[("size", human(r.request_bytes.unwrap_or(0)))]));
     }
-    let mut e = build(Shape::Request, None, title, vec![r]);
+    let title = Title::Request {
+        op: r.kind,
+        target: targets.of(r),
+        more: more.into(),
+    };
+    let mut e = built(Shape::Request, None, title, vec![r]);
     conditional_note(&mut e, &[r]);
     e
 }
@@ -1713,13 +1783,14 @@ pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)>
         Format::Paimon,
     ] {
         let of_f: Vec<&Episode> = episodes.iter().filter(|e| e.format == Some(f)).collect();
-        let mut notes: Vec<&String> = of_f.iter().flat_map(|e| e.notes.iter()).collect();
+        let each: Vec<Vec<String>> = of_f.iter().map(|e| e.notes()).collect();
+        let mut notes: Vec<&String> = each.iter().flatten().collect();
         notes.sort();
         notes.dedup();
+        // writes only: reads never carry a write's note
+        let writes = each.iter().filter(|n| !n.is_empty()).count();
         for n in notes {
-            let with = of_f.iter().filter(|e| e.notes.contains(n)).count();
-            // writes only: reads never carry a write's note
-            let writes = of_f.iter().filter(|e| !e.notes.is_empty()).count();
+            let with = each.iter().filter(|e| e.contains(n)).count();
             if with >= 3 && with * 10 >= writes * 8 && !n.starts_with("after ") {
                 out.push((f, n.clone(), with, of_f.len()));
             }
@@ -2581,6 +2652,28 @@ mod tests {
     use reqlog::Header;
 
     #[test]
+    fn an_operation_of_one_request_is_small_and_titled_as_ever() {
+        assert_eq!(std::mem::size_of::<Episode>(), 144);
+        let r = Record {
+            id: 4,
+            kind: "PutObject".into(),
+            method: "PUT".into(),
+            bucket: Some("b".into()),
+            key: Some("k".into()),
+            request_bytes: Some(2048),
+            ..Default::default()
+        };
+        let e = single(&r, &mut Targets::default());
+        assert_eq!(
+            (e.records.clone(), e.title()),
+            (Ids::One(4), "PutObject b/k · 2.0 KiB".into())
+        );
+        let w = serde_json::to_value(&e).unwrap();
+        assert_eq!(w["records"], serde_json::json!([4]));
+        assert_eq!(w["titleText"][0]["args"]["target"], "b/k");
+    }
+
+    #[test]
     fn a_failures_retry_is_the_next_request_of_its_own_name_within_a_minute() {
         let at = |id: u64, ms: i64, key: &str, status: u16| Record {
             id,
@@ -3069,12 +3162,15 @@ mod tests {
         let records = [won, lost, refused];
         let eps = episodes(&records);
         assert_eq!(eps[0].title(), "commit 7");
-        assert_eq!(eps[0].notes, vec!["conditional create (If-None-Match: *)"]);
+        assert_eq!(
+            eps[0].notes(),
+            vec!["conditional create (If-None-Match: *)"]
+        );
         assert_eq!(
             eps[1].outcome,
             Outcome::Failed("412 PreconditionFailed".into())
         );
-        assert!(eps[1].notes.iter().any(|n| n.starts_with("lost a race")));
+        assert!(eps[1].notes().iter().any(|n| n.starts_with("lost a race")));
         assert_eq!(eps[2].outcome, Outcome::Refused);
         // the operation says the race; a writer that lost one is no finding (18.0)
         assert!(observations(&records, &eps).is_empty());

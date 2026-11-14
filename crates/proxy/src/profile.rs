@@ -1047,11 +1047,6 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
             .total_cmp(&a.0.waited_ms)
             .then(b.0.requests.cmp(&a.0.requests))
     });
-    let group_of: HashMap<u64, usize> = groups
-        .iter()
-        .enumerate()
-        .flat_map(|(i, (_, rs))| rs.iter().map(move |r| (r.id, i)))
-        .collect();
 
     // rate, by outcome
     let (bin, bins) = (tl.bin_ms, tl.bins);
@@ -1110,39 +1105,44 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         .collect();
     // ends before starts at one instant: a request answered as the next leaves
     events.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    // per slice its busiest moment, then where it ended (a burst's peak
+    // does not run on through the idle time after it), when every change
+    // would be more than the pane draws
+    let instants = events.chunk_by(|a, b| a.0 == b.0).count();
+    let slice = (instants > MAX_STEPS).then(|| ms(wall_us) / MAX_STEPS as f64);
     let mut n: i64 = 0;
     let mut steps: Vec<Step> = Vec::new();
+    let mut per: Vec<(f64, usize, usize)> = Vec::new();
     let (mut peak, mut peak_at) = (0usize, 0.0);
-    for (t, d) in events {
-        n = (n + d as i64).max(0);
-        let at = at_ms(t);
-        if n as usize > peak {
-            peak = n as usize;
-            peak_at = at;
-        }
-        match steps.last_mut() {
-            Some(s) if s.t_ms == at => s.n = n as usize,
-            _ => steps.push(Step {
-                t_ms: at,
-                n: n as usize,
-            }),
-        }
-    }
-    if steps.len() > MAX_STEPS {
-        // per slice its busiest moment, then where it ended: a burst's peak
-        // does not run on through the idle time after it
-        let slice = ms(wall_us) / MAX_STEPS as f64;
-        let mut per: Vec<(f64, usize, usize)> = Vec::with_capacity(MAX_STEPS + 1);
-        for s in steps {
-            let at = start + ((s.t_ms - start) / slice).floor() * slice;
-            match per.last_mut() {
-                Some(k) if k.0 == at => {
-                    k.1 = k.1.max(s.n);
-                    k.2 = s.n;
-                }
-                _ => per.push((at, s.n, s.n)),
+    for instant in events.chunk_by(|a, b| a.0 == b.0) {
+        let at = at_ms(instant[0].0);
+        for (_, d) in instant {
+            n = (n + *d as i64).max(0);
+            if n as usize > peak {
+                peak = n as usize;
+                peak_at = at;
             }
         }
+        // where the instant ends
+        let n = n as usize;
+        match slice {
+            None => match steps.last_mut() {
+                Some(s) if s.t_ms == at => s.n = n,
+                _ => steps.push(Step { t_ms: at, n }),
+            },
+            Some(slice) => {
+                let at = start + ((at - start) / slice).floor() * slice;
+                match per.last_mut() {
+                    Some(k) if k.0 == at => {
+                        k.1 = k.1.max(n);
+                        k.2 = n;
+                    }
+                    _ => per.push((at, n, n)),
+                }
+            }
+        }
+    }
+    if let Some(slice) = slice {
         steps = Vec::with_capacity(per.len() * 2);
         for (at, max, last) in per {
             steps.push(Step { t_ms: at, n: max });
@@ -1157,9 +1157,17 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
 
     // the requests one by one: all of them, or the slowest and an even
     // spread of the rest (in time order), so the picture is not only the tail
+    // (the group of each request sampled: what a request's group is asked for)
+    let group_of = |r: &Record| {
+        let key = (r.kind.as_str(), is_miss(r));
+        groups
+            .iter()
+            .position(|(g, _)| g.kind == key.0 && g.missed == key.1)
+            .unwrap_or(0)
+    };
     let sample = |r: &Record| Sample {
         id: r.id,
-        group: group_of[&r.id],
+        group: group_of(r),
         ms: r.latency_ms.max(0.0),
         t_ms: at_ms(start_us(r)),
         status: r.status,

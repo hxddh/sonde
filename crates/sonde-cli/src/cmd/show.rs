@@ -185,11 +185,10 @@ pub fn episode_line(
         Outcome::Failed(why) => line.push_str(&paint(&format!("  ✗ {why}"), "31", color)),
         Outcome::Refused => line.push_str(&paint("  refused by sonde", "33", color)),
     }
-    let notes: Vec<&str> = e
-        .notes
-        .iter()
+    let notes: Vec<String> = e
+        .notes()
+        .into_iter()
         .filter(|n| !hide.contains(n))
-        .map(String::as_str)
         .collect();
     if !notes.is_empty() {
         line.push_str(&paint(&format!("  · {}", notes.join(" · ")), "2", color));

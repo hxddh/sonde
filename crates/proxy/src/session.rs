@@ -1469,7 +1469,7 @@ mod tests {
         assert_eq!(eps.len(), 30_000);
         let targets: std::collections::HashSet<usize> = eps
             .iter()
-            .map(|e| at(&e.title_text[0].args["target"]))
+            .map(|e| at(&e.title_text()[0].args["target"]))
             .collect();
         // (one each in each batch, on each core it was made on)
         assert!(targets.len() < 100, "{}", targets.len());

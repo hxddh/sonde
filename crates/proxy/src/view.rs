@@ -245,7 +245,7 @@ impl Analysis {
         let e = self.episodes.get(index)?;
         let mut v = serde_json::to_value(e).ok()?;
         let o = v.as_object_mut()?;
-        if !e.title_text.is_empty() {
+        if !o["titleText"].as_array().is_none_or(Vec::is_empty) {
             o.remove("title");
         }
         if e.records.len() > records {
@@ -309,7 +309,7 @@ impl Analysis {
             }
             if let Some(text) = &key.text {
                 let holds = |t: &str| t.to_lowercase().contains(text.as_str());
-                if !holds(&e.title()) && !e.notes.iter().any(|n| holds(n)) {
+                if !holds(&e.title()) && !e.notes().iter().any(|n| holds(n)) {
                     return false;
                 }
             }
