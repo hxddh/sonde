@@ -15,7 +15,7 @@ import type { Policy } from "./session";
 import { report, sessionsChanged } from "../store";
 import { foldTrial, scenarioAbout, scenarioLabel, trialDone, type TrialStep, trialSteps } from "../trials";
 import type { Trial, TrialEvent, TrialPlan } from "../types";
-import { adviceOnce, AGAIN, STANDING, trialAsked, TrialRow } from "./history";
+import { AGAIN, STANDING, trialAsked, TrialVerdicts, type VerdictRow } from "./history";
 import { Icon } from "./icon";
 import { Actions, Badge, Button, Card, Check, ICON, Labeled, ListRow, Loading, Modal, ModalBody, Muted, Notice, Options, Path, Row, Title, TEXT } from "./kit";
 import { scrubCommand } from "./sessionview";
@@ -169,28 +169,12 @@ export function TrialDialog(props: {
     props.onOpen?.(session);
     props.onClose();
   };
-  // each distinct advice said once, under the first verdict that gives it
-  const same = () => adviceOnce((steps() ?? []).map((s) => s.trial));
-  const row = (s: () => TrialStep, i: () => number) => {
-    const session = () => (ended() && !ended()!.cancelled ? (s().trial?.session ?? null) : null);
-    // its verdict, drawn as the Runs pane draws it; done, and its session kept: a press opens it
-    return (
-      <If
-        when={s().trial}
-        else={
-          // before its verdict: the scenario, and how it stands so far
-          <ListRow divided top first={i() === 0} testID={`trial-step-${s().scenario}`} label={scenarioLabel(s().scenario)} disabled trailing={<View class="min-h-5 shrink-0 justify-center"><Badge label={s().state === "running" ? t("trial.running") : t("trial.waiting")} tone={s().state === "running" ? "info" : "quiet"} /></View>}>
-            <View class="min-w-0 flex-1 flex-row flex-wrap items-baseline gap-x-2">
-              <Text class={TEXT.body}>{scenarioLabel(s().scenario)}</Text>
-              <Text class={TEXT.codeQuiet}>{s().scenario}</Text>
-            </View>
-          </ListRow>
-        }
-      >
-        {(x) => <TrialRow trial={x()} first={i() === 0} sameAs={same()[i()]} onOpen={session() && props.onOpen ? () => open(session()!) : undefined} testID={`trial-step-${s().scenario}`} historyID={`trial-step-history-${s().scenario}`} />}
-      </If>
-    );
-  };
+  // the scenarios as the verdicts list them, drawn as the Runs pane draws them; done, and its run kept: a press opens it
+  const rows = (list: TrialStep[]): VerdictRow[] =>
+    list.map((s) => {
+      const session = ended() && !ended()!.cancelled ? (s.trial?.session ?? null) : null;
+      return { scenario: s.scenario, trial: s.trial ?? null, state: s.state, onOpen: session && props.onOpen ? () => open(session) : undefined };
+    });
   return (
     // one frame from its plan to its verdicts: as wide as a dialog that lists, as high as the window allows,
     // its body scrolling inside; it never jumps between sizes as it goes
@@ -286,11 +270,7 @@ export function TrialDialog(props: {
                 <If when={ended()?.cleanFailed !== undefined && ended()?.cleanFailed !== null}>
                   <Notice testID="trial-again-failed" tone="warn" text={t("trial.againFailed", { exit: ended()!.cleanFailed! })} />
                 </If>
-                <Card pad="none">
-                  <Each of={list()} key={(s) => s.scenario}>
-                    {(s, i) => row(s, i)}
-                  </Each>
-                </Card>
+                <TrialVerdicts rows={rows(list())} id="trial-step" historyID="trial-step-history" />
               </ModalBody>
             )}
           </If>

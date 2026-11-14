@@ -5,7 +5,6 @@
 // for the visual record CI keeps of each build.
 
 import { type App, open, test } from "nsh/test";
-import { runAction } from "./helpers";
 // what scripts/shots.sh tells the tour of this machine, as its VM has no environment (committed with none): `max`,
 // the largest window its screen holds, "WxH" ("" for any)
 import here from "./shots.env.json";
@@ -93,14 +92,6 @@ for (const v of variants) {
     // test's press in the hidden title bar's area does not reach the view
     // (FINDINGS 12). The sidebar holds the places and their lists at every
     // size: brought back if it was put away.
-    // a press that a busy window may let pass (it reads a long list of sessions again): pressed again until it shows
-    const pressUntil = async (press: string, shown: string) => {
-      for (let i = 0; i < 4; i++) {
-        await app.press(press);
-        if (await app.waitFor(shown, { timeout: 4000 }).then(() => true, () => false)) return;
-      }
-      await app.waitFor(shown, { timeout: 4000 });
-    };
     // A menu's items, once it is up (a native menu, on macOS, opens a moment after the press that asks for it)
     const menuItems = async () => {
       await app.waitUntil(() => (app.menu()?.length ?? 0) > 0, { timeout: 5000 }).catch(() => {});
@@ -133,6 +124,19 @@ for (const v of variants) {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
     };
+    // the palette's item `label` (in the tour's language), found by what is typed
+    const fromPalette = async (typed: string, label: string, zh: string) => {
+      await app.keyboard.press("mod+k");
+      await app.waitFor("id:palette-command");
+      await app.type("id:palette-command", typed);
+      await app.press(`id:palette-dialog >> text:${v.lang ? zh : label}`);
+      await app.waitFor("id:palette-command", { state: "gone" });
+    };
+    // a run that ended: its own view on Run, its header read
+    const ranView = async () => {
+      await app.waitFor("id:session-pane", { timeout: 30000 });
+      await app.waitFor("id:session-summary", { timeout: 10000 });
+    };
     // The screens that draw measured figures (a run's times, a trial's run over its clean run, two runs compared, a
     // program's runs) show committed sessions (tests/fixtures/sessions, which scripts/shots.sh puts in the tour's
     // data folder): `./nightly-report.sh` run on two mornings, before its fix and after (with a slowdown trial).
@@ -143,8 +147,7 @@ for (const v of variants) {
     // A run opened by its row's name (the first of that name in the list), the list brought down to it and back.
     const openRow = async (name: string, header: string) => {
       await go("sessions");
-      if (!app.shows("id:session-list") && !app.shows("id:program-list")) await app.keyboard.press("mod+b");
-      if (!app.shows("id:session-list")) await pressUntil("id:sessions-by-runs", "id:session-list");
+      if (!app.shows("id:session-list")) await app.keyboard.press("mod+b");
       for (let n = 0; n < 30 && !app.shows(`id:session-list >> text:${name}`); n++) await app.scroll("id:session-list", 800);
       await app.scroll("id:session-list", 800);
       await app.wait(300);
@@ -196,30 +199,30 @@ for (const v of variants) {
     // (the button follows the field a frame later)
     await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
     await app.press("id:run-start");
-    await app.waitFor("id:run-ended", { timeout: 20000 });
+    // (ended: its own view, or what to point at sonde when it reached no store)
+    await app.waitUntil(() => app.shows("id:session-pane") || app.shows("id:run-no-requests"), { timeout: 30000 });
     // (the other shell's form, should the sample not have said and the first have reached no store)
     if (!sure && (await app.wait(1500), app.shows("id:run-no-requests"))) {
       await app.clear("id:run-command");
       await enter(app, "id:run-command", command(!cmd, marker));
       await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
       await app.press("id:run-start");
-      await app.waitUntil(() => !app.shows("id:run-no-requests"), { timeout: 20000 });
-      await app.waitFor("id:run-ended", { timeout: 20000 });
+      await app.waitUntil(() => app.shows("id:session-pane"), { timeout: 30000 });
     }
-    // (the band says "no requests" until the session's figures are read)
-    await app.waitUntil(() => !app.shows("id:run-no-requests"), { timeout: 10000 }).catch(() => {
+    await ranView().catch(() => {
       throw new Error("the tour's program reached no store in either shell's form: the run has no requests to show");
     });
-    await shot("02b-ran");
-    // run again from the band's one Run, the program fixed meanwhile (its config not read again):
+    // the run's own view on Run, under the command bar, opened on its output
+    await charts("02b-ran");
+    // run again by the bar's one Run, the program fixed meanwhile (its config not read again):
     // what changed since the run before, the finding fixed with what it saved
-    await app.press("id:run-again-band");
+    await app.press("id:run-start");
     await app.waitFor("id:run-status", { timeout: 10000 });
-    await app.waitFor("id:run-ended", { timeout: 20000 });
+    await ranView();
     await app.waitFor("id:since-run", { timeout: 10000 });
     await charts("02bb-since");
-    // the same command under faults: said before it runs, followed as it goes, its verdicts
-    await runAction(app, "run-try");
+    // the same command under faults (from the view's ⋯): said before it runs, followed as it goes, its verdicts
+    await act("session-try", "Try under faults…", "在故障下试运行…");
     await app.waitFor("id:trial-plan", { timeout: 10000 });
     await shot("02e-trial-plan");
     await app.press("id:trial-start");
@@ -240,7 +243,7 @@ for (const v of variants) {
     await app.waitFor("id:trial-progress", { timeout: 10000 });
     await app.waitUntil(() => !app.shows("id:trial-cancel"), { timeout: 90000 });
     await shot("02gb-again-done");
-    // closed, the run opens on its Runs pane, where the verdicts stay, each with its history
+    // closed, the run's view opens on its History, where the verdicts stay, grouped by what to change
     await app.press("id:trial-close");
     await app.waitFor("id:history-trials", { timeout: 20000 });
     await shot("02h-runs-verdicts");
@@ -260,7 +263,7 @@ for (const v of variants) {
     await app.wait(600);
     await shot("02i-trial-session");
     // the run under faults over its clean run, on its Time pane: the committed run's slowdown trial, opened as the
-    // tour's was, from the run's Runs pane
+    // tour's was, from the run's History
     await fixture();
     await app.press("id:session-pane-mode-runs");
     await app.waitFor("id:trial-slowdown", { timeout: 10000 });
@@ -275,7 +278,7 @@ for (const v of variants) {
     await app.waitFor("id:session-summary", { timeout: 10000 });
     // the program's output lined up with what it did (the committed run kept its output)
     await app.waitUntil(() => app.enabled("id:session-pane-mode-aligned"), { timeout: 5000 }).catch(() => {
-      throw new Error("the committed run has no output to line up: With output is disabled (tests/fixtures/sessions)");
+      throw new Error("the committed run has no output to line up: Output is disabled (tests/fixtures/sessions)");
     });
     await app.press("id:session-pane-mode-aligned");
     await app.waitFor("id:output", { timeout: 5000 });
@@ -296,25 +299,13 @@ for (const v of variants) {
     await charts("02d-first-byte");
 
     await go("sessions");
-    // the programs run here, each over its runs: the committed program's runs beside the list (its run is the one shown)
-    await app.press("id:sessions-by-programs");
-    await app.waitFor("id:program-list", { timeout: 10000 });
-    await app.press("id:session-pane-mode-runs");
-    await app.waitFor("id:history-pane", { timeout: 10000 });
-    await app.wait(900);
-    await shot("03p-programs");
-    // (back on Operations: the example opens on the pane the runs were left on, and has no Runs of its own)
+    // (back on Operations: the example opens on the pane the run was left on, and has no History of its own)
     await app.press("id:session-pane-mode-operations");
     await app.wait(500);
-    await app.press("id:sessions-by-runs");
-    // (the runs' list back first: a press before it settles is undone as it chooses its first run)
-    if (!app.shows("id:session-list")) await pressUntil("id:sessions-by-runs", "id:session-list");
-    await app.wait(700);
     const wal = v.lang ? "text:查找最新的 WAL：探测了编号 1…128" : "text:looked for the newest WAL: probed ids 1…128";
-    // read off the interface's thread: there once its header is (a variant after the first
-    // opens on the example already, and reads it again as the list changes: let that settle;
-    // the example opened from its row when the list's settling undid the press)
-    await app.press("id:open-example");
+    // the example, from its one door after the welcome: the palette (read off the interface's thread: there once its
+    // header is; the example opened from its row when the list's settling undid the press)
+    await fromPalette("example", "Open the example", "打开示例");
     await app.wait(900);
     // (a press the list's settling undid: the example opened from its row instead)
     if (!(await app.waitFor(wal, { timeout: 5000 }).then(() => true, () => false))) {
@@ -465,13 +456,24 @@ for (const v of variants) {
     await shot("04e-confirm");
     await app.press("id:confirm-cancel");
     await app.waitFor("id:confirm-dialog", { state: "gone" });
-    // a key's versions over time: the next section in Buckets' one row
-    await app.press("id:store-section-versions");
-    await app.waitFor("id:screen-versions");
-    await app.type("id:version-key", "config/app.yaml");
-    await app.press("id:load-versions");
+    // a key's versions over time, from the objects: a deleted key lists nowhere, so the filter that finds none
+    // offers its versions by its name
+    await app.press("id:store-section-browse");
+    await app.waitFor("text:README.md", { timeout: 10000 });
+    await app.type("id:listing-filter", "config/app.yaml");
+    await app.waitFor("id:versions-of", { timeout: 10000 });
+    await shot("04ea-no-match");
+    await app.press("id:versions-of");
     await app.waitFor("id:timeline", { timeout: 10000 });
     await shot("04f-versions");
+    await app.press("id:detail-close");
+    await app.clear("id:listing-filter");
+    // a section's commands in the palette, each with its shortcut
+    await app.keyboard.press("mod+k");
+    await app.waitFor("id:palette-command");
+    await shot("04fa-palette-objects");
+    await app.keyboard.press("Escape");
+    await app.waitFor("id:palette-command", { state: "gone" });
     // why the bucket is this big
     await app.press("id:store-section-capacity");
     await app.waitFor("id:du-findings", { timeout: 15000 });
@@ -487,10 +489,6 @@ for (const v of variants) {
     await app.press("id:analyze-slatedb");
     await app.waitFor("id:layout-report", { timeout: 15000 });
     await shot("04h-layouts");
-    // the endpoint's compatibility: the last of Buckets' sections
-    await app.press("id:store-section-probes");
-    await app.waitFor("id:screen-probes");
-    await shot("04i-compat");
     await app.press("id:store-section-browse");
 
     await app.keyboard.press("mod+shift+a");
@@ -515,12 +513,18 @@ for (const v of variants) {
     await app.waitFor("id:ep-save");
     await new Promise((r) => setTimeout(r, 500));
     await settings("05d-endpoint-form");
-    await app.keyboard.press("Escape");
+    await app.press("id:ep-cancel");
+    // an endpoint's compatibility: every probe, in the bucket chosen in Buckets (filled in)
+    await app.press("id:compat-demo");
+    await app.waitFor("id:compat-dialog");
+    await settings("05e-compat");
+    await app.press("id:compat-close");
+    await app.waitFor("id:compat-dialog", { state: "gone" });
     await app.window("settings").pressClose();
     await app.keyboard.press("mod+k");
     await app.waitFor("id:palette-command");
     await shot("06-palette");
-    await app.type("id:palette-command", "ver");
+    await app.type("id:palette-command", "nightly");
     await shot("06b-palette-search");
     // a whole tour of the app: minutes on a slow runner, not seconds
   }, 300000);

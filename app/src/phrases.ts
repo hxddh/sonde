@@ -309,11 +309,21 @@ export function say(text: Phrase[] | undefined, fallback: string | undefined): s
 
 export const episodeTitle = (e: Pick<EpisodeRow, "titleText" | "title">) => say(e.titleText, e.title);
 
-/** An episode's notes, in the reader's language. Those most writes of a format share (`shared`, a
- * conditional create on every SlateDB write) were said once as a finding until 18.0; they are an
- * operation's own notes again, so `shared` no longer leaves them out. */
-export function episodeNotes(e: Pick<EpisodeRow, "notes" | "notesText">, _shared: string[]): string[] {
-  return e.notes.map((n, i) => say(e.notesText?.[i] ? [e.notesText[i]] : undefined, n));
+/** An episode's notes, in the reader's language, less those nearly every operation of its format has
+ * (`shared`, a conditional create on every SlateDB write): a table says those once, not on each row; the
+ * inspector, given none, says every note of its operation. */
+export function episodeNotes(e: Pick<EpisodeRow, "notes" | "notesText">, shared: string[]): string[] {
+  return e.notes.flatMap((n, i) => (shared.includes(n) ? [] : [say(e.notesText?.[i] ? [e.notesText[i]] : undefined, n)]));
+}
+
+/** The notes nearly every operation has, in the reader's language (from an operation of `rows` that carries
+ * each, else as the run gave it): said once over a table that leaves them out of its rows. */
+export function sharedNotes(rows: Pick<EpisodeRow, "notes" | "notesText">[], shared: string[]): string[] {
+  return shared.map((n) => {
+    const e = rows.find((r) => r.notes.includes(n));
+    const i = e ? e.notes.indexOf(n) : -1;
+    return say(e && i >= 0 && e.notesText?.[i] ? [e.notesText[i]] : undefined, n);
+  });
 }
 
 export const observationText = (o: Observation) => say(o.phrases, o.text);

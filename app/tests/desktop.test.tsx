@@ -19,7 +19,7 @@ test("a first launch welcomes; its demo makes Run ready; the sidebar hides and c
   expect(app.shows("id:sidebar")).toBe(true);
 });
 
-test("the demo opens from Settings › Endpoints too", async () => {
+test("the demo opens from the palette, its one door after the welcome", async () => {
   const app = await open("../App.tsx", desktop);
   await place(app, "endpoints");
   await openDemo(app);
@@ -44,16 +44,19 @@ test("Store: browse the demo bucket and show object details", async () => {
   await app.press("text:README.md");
   await app.waitFor("id:object-detail");
   await app.waitFor("text:Single-part upload (MD5 of the body)", { timeout: 10000 });
-  expect(app.shows("text:x-amz-request-id")).toBe(true);
+  // the response headers: the one section that opens
+  expect(app.shows("text:x-amz-request-id")).toBe(false);
+  await app.press("text:Response headers");
+  await app.waitFor("text:x-amz-request-id");
 });
 
 test("the palette goes anywhere", async () => {
   const app = await open("../App.tsx", desktop);
   await app.press("id:palette");
   await app.waitFor("id:palette-command");
-  await app.type("id:palette-command", "versions");
-  await app.press("text:Buckets › Versions");
-  await app.waitFor("id:screen-versions");
+  await app.type("id:palette-command", "uploads");
+  await app.press("text:Buckets › Incomplete uploads");
+  await app.waitFor("id:screen-multipart");
   expect(app.shows("id:palette-command")).toBe(false);
 });
 
@@ -67,7 +70,7 @@ test("updates: asking is the user's move; a development run is up to date", asyn
   await app.waitFor("text:sonde is up to date.", { timeout: 5000 });
 });
 
-test("a session file opens from Sessions: a picked .sonde, and a refusal for anything else", async () => {
+test("a run file opens from Runs: a picked .sonde, and a refusal for anything else", async () => {
   const app = await open("../App.tsx", desktop);
   await app.press("id:nav-sessions");
   const encode = (s: string) => new TextEncoder().encode(s);

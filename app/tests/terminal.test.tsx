@@ -2,7 +2,7 @@
 // (an in-memory terminal, the real Cell renderer and keyboard).
 
 import { expect, open, test } from "nsh/test";
-import { openDemo, place } from "./helpers";
+import { openDemo, openExample, place } from "./helpers";
 
 const term = { width: 960, height: 640 };
 
@@ -22,7 +22,7 @@ async function chooseBucket(app: Awaited<ReturnType<typeof open>>, name: string)
 
 test("home lists the places; digits open them", async () => {
   const app = await open("../App.tsx", term);
-  for (const name of ["Run", "Sessions", "Buckets", "Activity", "Settings"]) expect(app.shows(`text:${name}`)).toBe(true);
+  for (const name of ["Run", "Runs", "Buckets", "Activity", "Settings"]) expect(app.shows(`text:${name}`)).toBe(true);
   // with no endpoint yet, Store welcomes, and its demo opens the store
   await app.keyboard.press("3");
   await app.wait(300);
@@ -78,19 +78,19 @@ test("multipart and the guard", async () => {
   await place(app, "multipart");
   await chooseBucket(app, "demo");
   await app.press("id:mpu-scan");
-  await app.waitFor("text:3 incomplete uploads", { timeout: 10000 });
+  await app.waitFor("text:/older than 7 days/", { timeout: 10000 });
   await app.press("id:plan-abort");
   await app.waitFor("id:confirm-dialog");
   expect(app.enabled("id:confirm-run")).toBe(false);
 });
 
-test("sessions in a terminal: sessions › operations › requests › request", async () => {
+test("runs in a terminal: runs › operations › requests › request", async () => {
   const app = await open("../App.tsx", term);
   await place(app, "sessions");
-  await app.press("id:open-example");
+  await openExample(app);
   await app.waitFor("id:session-summary", { timeout: 10000 });
   await app.waitFor("text:/172 requests · 34 operations/");
-  // the session in a sentence; nothing to act on (no copy kept would answer as SlateDB's store does), as on the desktop
+  // the run in a sentence; nothing to act on (no copy kept would answer as SlateDB's store does), as on the desktop
   await app.waitFor("id:session-story");
   expect(app.shows("id:observation-0")).toBe(false);
   await app.press("text:WAL 1 written empty (fencing marker)");
@@ -112,7 +112,8 @@ test("run in a terminal: the program above, its operations below", async () => {
   // (the button follows the field a frame later)
   await app.waitUntil(() => app.enabled("id:run-start"), { timeout: 10000 });
   await app.press("id:run-start");
-  await app.waitFor("id:run-ended", { timeout: 20000 });
-  expect(app.shows("text:exited with 0")).toBe(true);
+  // once it ended, its own view under the command
+  await app.waitFor("id:session-summary", { timeout: 25000 });
+  expect(app.shows("id:run-command")).toBe(true);
   await app.waitFor("text:/GetObject demo\\/README\\.md/", { timeout: 5000 });
 });

@@ -7,7 +7,7 @@
 // shows as a timeline, replays on another endpoint, compares with another
 // session, and opens in a window of its own. In a terminal the levels stack.
 
-import { batch, cleanup, computed, effect, LayoutAnimation, reduceMotion, Scroll, signal, untracked, View, type ViewRef } from "nsh";
+import { batch, cleanup, computed, effect, type JSX, LayoutAnimation, reduceMotion, Scroll, signal, untracked, View, type ViewRef } from "nsh";
 import { createNavStack, NavStack, ResizablePanel, ResizablePanelGroup, type DataTableRef } from "nsh/base";
 import { isAvailable, type MenuItem, Window } from "nsh/desktop";
 import { count, duration, hm } from "../format";
@@ -15,11 +15,11 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { type SessionCommand, shownSessionCommands, away, chooseBucket, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
+import { type PlaceCommand, offerCommands, away, chooseBucket, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
 import type { LogLine, Observation, SessionInfo, SessionView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE } from "../ui/kit";
+import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { fileName, removeSession, rename, RenameDialog, sessionName, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
@@ -27,7 +27,7 @@ import { linesOf, Observations, OperationDetail, OperationsTable, OutputTable, S
 import { findingMarks, operationsText, storeFixOf } from "../ui/sessionview";
 import { episodeTitle } from "../phrases";
 import { programOf, ranCommand } from "../ui/sessionview";
-import { HistoryPane, ProgramList, scenarioLabel } from "../ui/history";
+import { HistoryPane, scenarioLabel } from "../ui/history";
 import { TrialDialog } from "../ui/trial";
 import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { type GroupBy, GroupByChoice, SplitTable } from "../ui/split";
@@ -61,7 +61,7 @@ const inspectorWidth = rememberedSize("sessions.inspector", PANE.inspector);
 
 /** One session: its figures, its operations (and output), the inspector, and what can be done with it. */
 
-export function SessionPane(props: { path: string; others: () => SessionInfo[]; tick: () => number; onBack?: () => void; onOpen?: (p: string) => void; inWindow?: boolean; /** shown only because it is the newest, not because anyone opened it */ passing?: boolean }) {
+export function SessionPane(props: { path: string; others: () => SessionInfo[]; tick: () => number; onBack?: () => void; onOpen?: (p: string) => void; inWindow?: boolean; /** on Run, under its command bar: the bar's Run is the one Run of the place */ inRun?: boolean; /** said under its header: how the program ended, where that is worth saying (Run's) */ note?: JSX.Element; /** shown only because it is the newest, not because anyone opened it */ passing?: boolean }) {
   // read here, whatever way led here: an empty run is not tidied away under its reader.
   // The newest session shown on a visit to the place was not opened by anyone: a run
   // the toast said was not kept is not kept by passing it
@@ -116,7 +116,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   // a program opened from the Programs list: its runs
   effect(() => {
     const o = paneOnOpen();
-    if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), filter.set(o.finding ?? null), paneOnOpen.set(null))));
+    if (o && o.path === props.path) untracked(() => batch(() => (pane.set(o.pane), paneOnOpen.set(null))));
   });
   // a link with a stretch of time: the Time pane, over it
   const linkRange = signal<Range | null>(null);
@@ -314,7 +314,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
   };
   const info = () => props.others().find((s) => s.path === props.path) ?? null;
   // the session's commands besides its one primary: behind ⋯, and in the palette while it is shown
-  const sessionCommands = (): SessionCommand[] => {
+  const sessionCommands = (): PlaceCommand[] => {
+    if (!view()) return [];
     const tryable = !terminal() && ranCommand(view()?.header.command) && !view()?.trial;
     return [
       // the same command under faults is asked first what will run (a trial is no run of its own)
@@ -323,12 +324,8 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       ...(isAvailable ? [{ id: "compare-open", label: t("compare.open"), icon: "git-compare-arrows" as const, run: (anchor?: ViewRef) => compareMenu(anchor) }] : []),
     ];
   };
-  effect(() => {
-    if (props.inWindow || !view()) return;
-    const list = sessionCommands();
-    untracked(() => shownSessionCommands.set(list));
-    cleanup(() => shownSessionCommands.set([]));
-  });
+  // (a run's own window has no palette)
+  if (!props.inWindow) offerCommands(() => t("palette.session"), sessionCommands);
   const moreMenu = () => {
     if (!isAvailable) return;
     const me = info();
@@ -482,7 +479,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     <View class="flex-row items-center gap-2">
       {/* the program again, after a change: it opens compared with this run */}
       {/* the built-in demo is not saved: running a demo session again starts it */}
-      <If when={ranCommand(view()?.header.command) && !view()?.trial && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
+      <If when={!props.inRun && ranCommand(view()?.header.command) && !view()?.trial && (view()!.header.endpoint === "demo" || endpoints().some((e) => e.id === view()!.header.endpoint))}>
         <Button
           small
           variant="primary"
@@ -546,7 +543,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
             <If when={props.onBack}>
               <Back label={t("timeline.sessions")} onPress={() => props.onBack?.()} testID="sessions-back" />
             </If>
-            <SessionHeader view={v()}>{trialNote(v)}</SessionHeader>
+            <SessionHeader view={v()}>{trialNote(v)}{props.note}</SessionHeader>
             {findings(v)}
             {actions()}
           </View>
@@ -563,6 +560,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
         <View class="shrink-0 px-4 pt-4">
           <SessionHeader view={v()} actions={actions} onSignal={showSignal} short={box().h < BREAK.short} folded={folded()}>
             {trialNote(v)}
+            {props.note}
             {/* what changed since the program's run before: what was fixed, with what it saved */}
             <If when={!v().trial}>
               <SinceRun since={since()} max={box().h < BREAK.short ? 0 : 2} onCompare={() => since()?.previous && compareWith.set(since()!.previous!)} />
@@ -766,11 +764,9 @@ function SessionWindow(props: { path: string }) {
   );
 }
 
-/** What the place was showing, kept while another place is on screen: the
- * session chosen, the search, and whether the list is of runs or programs. */
+/** What the place was showing, kept while another place is on screen: the run chosen and the search. */
 const selected = signal<string | null>(null);
 const query = signal("");
-const byProgram = signal(false);
 
 export function Sessions() {
   const sessions = signal<SessionInfo[]>(api.sessions.list());
@@ -817,16 +813,6 @@ export function Sessions() {
   }, 1000);
   cleanup(() => clearInterval(timer));
 
-  const example = () => {
-    try {
-      const p = api.sessions.example();
-      sessions.set(api.sessions.list());
-      selected.set(p);
-      sessionsChanged();
-    } catch (e) {
-      report(e);
-    }
-  };
   const shown = () => {
     const q = terminal() ? "" : query().trim().toLowerCase();
     if (!q) return sessions();
@@ -861,44 +847,12 @@ export function Sessions() {
       <If when={!terminal()}>
         <SideHeader title={t("nav.sessions")}>
           <IconButton icon="folder-open" label={t("sessions.openFile")} shortcut="mod+o" onPress={() => void openSessionFile()} testID="open-file" />
-          <IconButton icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
         </SideHeader>
-      </If>
-      <View class={terminal() ? "flex-row items-center gap-2" : "gap-2 px-2 pb-2"}>
-        {/* a run at a time, or a program over its runs */}
-        <View class="flex-row">
-        <Options
-          testID="sessions-by"
-          value={byProgram() ? "programs" : "runs"}
-          items={[
-            { value: "runs", title: t("sessions.byRun") },
-            { value: "programs", title: t("sessions.byProgram") },
-          ]}
-          onChange={(v) => byProgram.set(v === "programs")}
-        />
-        </View>
-        <If when={terminal()}>
-          <IconButton icon="scroll-text" label={t("timeline.example")} onPress={example} testID="open-example" />
-        </If>
-        {/* always there, over runs and over programs: a field that came and went moved the list */}
-        <If when={!terminal()}>
+        {/* always there: a field that came and went moved the list */}
+        <View class="px-2 pb-2">
           <SearchField small testID="session-search" value={query()} placeholder={t("sessions.search")} onChange={(v) => query.set(v)} />
-        </If>
-      </View>
-      <If when={!byProgram()} else={
-        // (inset as the runs are: a program's row lines up with a run's)
-        <View class={terminal() ? "flex-1" : "min-h-0 flex-1 px-2"}>
-        <ProgramList
-          query={terminal() ? "" : query()}
-          onOpen={(p) => {
-            batch(() => {
-              paneOnOpen.set({ path: p, pane: "runs" });
-              selected.set(p);
-            });
-          }}
-        />
         </View>
-      }>
+      </If>
       <If when={sessions().length > 0} else={<Empty compact text={t("timeline.empty")} />}>
         <If when={shown().length > 0} else={<Empty compact text={t("sessions.noMatch")} />}>
           <View class={terminal() ? "flex-1" : "min-h-0 flex-1 px-2"}>
@@ -916,7 +870,6 @@ export function Sessions() {
           />
           </View>
         </If>
-      </If>
       </If>
     </View>
   );
@@ -952,7 +905,6 @@ export function Sessions() {
   const nothing = () => (
     <Empty icon="list-clock" title={t("sessions.noneTitle")} text={t("sessions.noneText")} testID="sessions-empty">
       <Button variant="outline" icon="play" label={t("sessions.runOne")} onPress={() => go("run")} />
-      <Button variant="outline" icon="scroll-text" label={t("timeline.example")} onPress={example} testID={terminal() ? "open-example" : undefined} />
       <If when={!terminal()}>
         <Button variant="ghost" icon="folder-open" label={t("sessions.openFile")} onPress={() => void openSessionFile()} />
       </If>

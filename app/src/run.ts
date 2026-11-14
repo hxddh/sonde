@@ -6,7 +6,7 @@ import { announce, batch, effect, lifecycle, Notifications, platform, signal, St
 import { GlobalShortcut, isAvailable, Tray, Window } from "nsh/desktop";
 import { t } from "./i18n";
 import { api } from "./native";
-import { area, compareOnOpen, endpoint, go, notify, openSession, paneOnOpen, report, sessionsChanged, wasRead } from "./store";
+import { area, compareOnOpen, endpoint, go, notify, openSession, report, sessionsChanged, wasRead } from "./store";
 import type { RunResult } from "./types";
 import { iconSvg } from "./ui/icon";
 import { programOf, scrubCommand } from "./ui/sessionview";
@@ -22,12 +22,12 @@ export interface Running {
 /** The running program, or null. */
 export const running = signal<Running | null>(null);
 /** How the last run ended. */
-export const lastRun = signal<(RunResult & { command: string; killed: boolean; removed?: boolean; endpoint: string }) | null>(null);
+export const lastRun = signal<(RunResult & { command: string; killed: boolean; /** its recording is gone: not kept (it sent nothing), or deleted */ removed?: boolean; /** deleted by the user: Run is back at its start */ deleted?: boolean; endpoint: string }) | null>(null);
 
-/** A session deleted: if it was the last run's, Run stops offering it. */
+/** A run deleted: if it was the last one, Run stops showing it. */
 export function forgetRun(path: string) {
   const last = lastRun();
-  if (last?.path === path) lastRun.set({ ...last, removed: true });
+  if (last?.path === path) lastRun.set({ ...last, removed: true, deleted: true });
 }
 /** The newest command, for the field. */
 export const command = signal("");
@@ -112,15 +112,9 @@ export function resize(cols: number, rows: number) {
 async function tellTheUser(r: RunResult, cmd: string, killed: boolean, before: string | null) {
   try {
     const v = await api.sessions.view(r.path);
-    // run again from a session: this run, compared with the one before it
+    // run again from a run's view: this run, compared with the one before it, on Run (where its view opens)
     // (a run that made no request has nothing to compare)
-    if (before && !killed && v.summary.requests > 0) {
-      batch(() => {
-        compareOnOpen.set({ before, after: r.path });
-        openSession.set(r.path);
-        go("sessions");
-      });
-    }
+    if (before && !killed && v.summary.requests > 0) compareOnOpen.set({ before, after: r.path });
     // a run that made no request leaves nothing to read: it is not kept, unless asked
     if (v.summary.requests === 0) {
       let keep = false;
@@ -258,12 +252,11 @@ export function input(data: string) {
   if (running()) api.sessions.input(data);
 }
 
-/** Opens the last run in Sessions, lined up with its output. */
-export function openLastRun(go: (s: "sessions") => void, finding?: number) {
+/** Opens the last run in Runs, lined up with its output. */
+export function openLastRun(go: (s: "sessions") => void) {
   const r = lastRun();
   if (!r || r.removed) return;
   batch(() => {
-    if (finding !== undefined) paneOnOpen.set({ path: r.path, pane: "operations", finding });
     openSession.set(r.path);
     go("sessions");
   });
