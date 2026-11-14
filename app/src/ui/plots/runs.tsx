@@ -228,11 +228,9 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
     props.prefixes
       .filter((x) => x.requests[0] + x.requests[1] > 0)
       .map((x) => ({ id: x.prefix, parent: "", label: named().name(x.prefix), value: Math.max(x.requests[1], x.requests[0] > 0 && x.requests[1] === 0 ? x.requests[0] : 0), change: change(x.requests[0], x.requests[1]), x }));
-  // the areas with room for their name whole (and their figures under it): the others say nothing, their tooltip does
+  // the areas with room for their name whole: the others say nothing (their tooltip does), and Native Shell writes a figure only under a name
   const size = signal<[number, number]>([0, 0]);
   const room = computed(() => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, 0, (i) => rows()[i].label.length));
-  // (a value line is told its row, not its index)
-  const roomOf = (id: string) => room()[rows().findIndex((r) => r.id === id)];
   const hovered = signal<number | null>(null);
   // (the same in both runs: one figure)
   const line = (x: { requests: [number, number] }) => (x.requests[0] === x.requests[1] ? count(x.requests[1]) : t("prefixChange.line", { a: count(x.requests[0]), b: count(x.requests[1]) }));
@@ -269,8 +267,8 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
               paddingInner={TIP.areaGap}
               cornerRadii={TIP.area}
               inactiveOpacity={INACTIVE}
-              label={(_, i) => (room()[i] === "none" ? "" : rows()[i].label)}
-              valueLabel={(r) => (roomOf(r.id) === "both" ? line(rows().find((x) => x.id === r.id)!.x) : "")}
+              label={(_, i) => (room()[i] ? rows()[i].label : "")}
+              valueLabel={(_, __, i) => line(rows()[i]!.x)}
               // on a tile its change made dark, the words turn light (Native Shell marks it `data-dark`)
               labelClass={`${LABEL.area} data-dark:text-white`}
               valueLabelClass={`${LABEL.areaValue} data-dark:text-white/80`}

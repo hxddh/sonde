@@ -124,11 +124,9 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
     const r = hovered() === null ? null : rows()[hovered()!];
     return r ? { title: r.id.startsWith("g:") && nested() ? r.label : r.id, lines: [`${bytes(sizeOf(r))} · ${pct(sizeOf(r), total())}`] } : null;
   };
-  // the areas with room for their name whole (and their size under it): the others say nothing, their tooltip does
+  // the areas with room for their name whole: the others say nothing (their tooltip does), and Native Shell writes a figure only under a name
   const size = signal<[number, number]>([0, 0]);
   const room = computed(() => areasWithRoom(rows(), size()[0], size()[1], TIP.areaGap, nested() ? GROUP_BAND : 0, (i) => rows()[i].label.length));
-  // (a value line is told its row, not its index)
-  const roomOf = (id: string) => room()[rows().findIndex((r) => r.id === id)];
   return (
     <If when={!textual()} else={<BarChart items={props.items} />}>
       <Plot
@@ -157,8 +155,8 @@ export function PrefixMap(props: { items: { label: string; value: number }[]; te
           groupLabel="label"
           groupLabelClass={LABEL.group}
           inactiveOpacity={INACTIVE}
-          label={(_, i) => (room()[i] === "none" ? "" : rows()[i].label)}
-          valueLabel={(r, v) => (roomOf(r.id) === "both" ? `${bytes(v)} · ${pct(v, total())}` : "")}
+          label={(_, i) => (room()[i] ? rows()[i].label : "")}
+          valueLabel={(_, v) => `${bytes(v)} · ${pct(v, total())}`}
           labelClass={LABEL.area}
           valueLabelClass={LABEL.areaValue}
           hoverClass={HOVER}

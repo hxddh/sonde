@@ -540,14 +540,14 @@ function squarify(node: Area, x0: number, y0: number, x1: number, y1: number) {
 }
 
 /** Which leaves of a map of areas (`rows` in a Treemap's `id`/`parent`/`value`
- * form) have room for their words in a plot `width` by `height`: its name
- * whole (`name`), and its figure under it too (`both`). Laid out as Native
+ * form) have room for their name whole in a plot `width` by `height` (Native
+ * Shell writes the figure under it where that fits too). Laid out as Native
  * Shell lays a treemap out (d3's squarified tiling, siblings largest first,
  * `gap` between them and a band of `top` over a group's children). An area
  * without room says nothing: a name cut to "slat…" names nothing, and the
  * tooltip has it whole. `chars` is how wide a leaf's name is, in characters. */
-export function areasWithRoom(rows: { id: string; parent: string; value: number }[], width: number, height: number, gap: number, top: number, chars: (i: number) => number): ("both" | "name" | "none")[] {
-  const out: ("both" | "name" | "none")[] = rows.map(() => "none");
+export function areasWithRoom(rows: { id: string; parent: string; value: number }[], width: number, height: number, gap: number, top: number, chars: (i: number) => number): boolean[] {
+  const out = rows.map(() => false);
   if (!(width > 0 && height > 0)) return out;
   const ids = new Map(rows.map((r, i) => [r.id, i]));
   const made = rows.map((r, i): Area => ({ i, value: 0, children: [], x0: 0, y0: 0, x1: 0, y1: 0 }));
@@ -568,7 +568,7 @@ export function areasWithRoom(rows: { id: string; parent: string; value: number 
     }
   };
   place(root, 0);
-  // a name's line and a figure's, each a caption's line, in the label's padding (p-2)
+  // a name's line, a caption's, in the label's padding (p-2)
   const em = TYPE.caption * 0.62;
   const line = LEADING.caption;
   const pad = 8;
@@ -576,7 +576,7 @@ export function areasWithRoom(rows: { id: string; parent: string; value: number 
     if (n.i >= 0 && !n.children.length) {
       const w = n.x1 - n.x0 - 2 * pad;
       const h = n.y1 - n.y0 - 2 * pad;
-      out[n.i] = w >= chars(n.i) * em && h >= line ? (h >= 2 * line ? "both" : "name") : "none";
+      out[n.i] = w >= chars(n.i) * em && h >= line;
     }
     n.children.forEach(walk);
   };
