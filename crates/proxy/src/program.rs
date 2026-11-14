@@ -201,7 +201,7 @@ fn unquote(word: &str) -> String {
 /// Commands that set the stage for the program rather than being it.
 const STAGE: &[&str] = &[
     "cd", "sleep", "echo", "export", "set", "source", ".", "true", "time", "nice", "exec",
-    "printf", "wait", "nohup",
+    "printf", "wait", "nohup", "exit",
 ];
 
 /// The program a command runs, by name (`python` for
@@ -254,32 +254,71 @@ pub fn program_name(command: &str) -> Option<String> {
 }
 
 /// What a command runs, by a short name: the script an interpreter runs
-/// (`etl` of `python etl.py --day 2`), else the program itself (`load` of
-/// `./load --all`). Letters, digits, `-` and `_`: a program without a name
-/// of its own goes by it ([`program_key`]), and its session files are named
-/// by it.
+/// (`etl` of `python etl.py --day 2`, `pytest` of `python -m pytest`), the
+/// command a shell is given (`aws` of `sh -c 'aws s3 cp …'`), the image a
+/// container runs (`aws-cli` of `docker run amazon/aws-cli s3 ls`), else the
+/// program itself (`load` of `./load --all`). Letters, digits, `-` and `_`:
+/// a program without a name of its own goes by it ([`program_key`]), and its
+/// session files are named by it.
 pub fn short_name(command: &str) -> Option<String> {
     const INTERPRETERS: &[&str] = &[
-        "python", "python3", "node", "ruby", "java", "bash", "sh", "deno", "bun", "perl", "php",
-        "uv", "poetry", "npx", "dotnet",
+        "python", "python3", "node", "ruby", "java", "deno", "bun", "perl", "php", "uv", "poetry",
+        "npx", "dotnet",
     ];
+    const SHELLS: &[&str] = &["sh", "bash", "zsh", "dash"];
     let program = program_name(command)?;
     let stem = |f: &str| {
         let name = f.rsplit(['/', '\\']).next().unwrap_or(f);
         name.split('.').next().unwrap_or(name).to_string()
     };
     let base = program.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    // the words after the program's own, to the end of its part
+    let words: Vec<String> = shell_words(command).iter().map(|w| unquote(w)).collect();
+    let after: Vec<&str> = words
+        .iter()
+        .skip_while(|w| w.rsplit(['/', '\\']).next() != Some(program.as_str()))
+        .skip(1)
+        .take_while(|w| !is_separator(w))
+        .map(String::as_str)
+        .collect();
+    // (a shell that only sets the stage, `sh -c 'exit 3'`, is the shell)
+    if SHELLS.contains(&base)
+        && let Some(at) = after.iter().position(|w| *w == "-c")
+        && let Some(inner) = after.get(at + 1)
+        && program_name(inner).is_some_and(|p| !STAGE.contains(&p.as_str()))
+    {
+        return short_name(inner);
+    }
+    if matches!(base, "docker" | "podman")
+        && let Some(image) = crate::container::image(&after)
+    {
+        // `registry/amazon/aws-cli:2.40` is `aws-cli`
+        let last = image.rsplit('/').next().unwrap_or(image);
+        return safe_name(last.split([':', '@']).next().unwrap_or(last));
+    }
     let mut name = stem(&program);
-    if INTERPRETERS.contains(&base) || INTERPRETERS.contains(&program.as_str()) {
-        // what it runs: the first word after it that is a file, not an option
-        let after = command
-            .split_whitespace()
-            .skip_while(|w| !w.ends_with(&program));
-        if let Some(script) = after
-            .skip(1)
-            .find(|w| !w.starts_with('-') && w.contains('.') && !w.contains('='))
-        {
-            name = stem(script);
+    if INTERPRETERS.contains(&base)
+        || INTERPRETERS.contains(&program.as_str())
+        || SHELLS.contains(&base)
+    {
+        // what it runs: a module (-m), the first word after it that is a
+        // file, not an option; code given inline (-c, -e) has no name of its own
+        let mut it = after.iter();
+        while let Some(w) = it.next() {
+            match *w {
+                "-m" => {
+                    if let Some(m) = it.next() {
+                        name = m.to_string();
+                    }
+                    break;
+                }
+                "-c" | "-e" | "--eval" => break,
+                w if !w.starts_with('-') && w.contains('.') && !w.contains('=') => {
+                    name = stem(w);
+                    break;
+                }
+                _ => {}
+            }
         }
     }
     safe_name(&name)
@@ -371,57 +410,27 @@ pub fn shell_join(args: &[String]) -> String {
         .join(" ")
 }
 
-/// A map beside the sessions that is there and does not read.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Unreadable {
-    pub path: std::path::PathBuf,
-    pub why: String,
+/// Each program's baseline run, by its file name, as the folder's index
+/// keeps it ([`crate::index`]).
+pub fn baselines(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    crate::index::of(dir).folder.baselines.clone()
 }
 
-impl std::fmt::Display for Unreadable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} cannot be read ({}): fix or remove the file",
-            self.path.display(),
-            self.why
-        )
-    }
-}
-
-impl std::error::Error for Unreadable {}
-
-/// A JSON map beside the sessions (`titles.json`, `baselines.json`,
-/// `imports.json`): empty when there is none, an error when it is there and
-/// does not read. Read as empty, a file that is only damaged would say
-/// nothing is set, and the next write would drop every entry in it.
-pub fn read_map(
-    path: &std::path::Path,
-) -> Result<std::collections::BTreeMap<String, String>, Unreadable> {
-    let unreadable = |why: String| Unreadable {
-        path: path.to_path_buf(),
-        why,
-    };
-    match std::fs::read(path) {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| unreadable(e.to_string())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
-        Err(e) => Err(unreadable(e.to_string())),
-    }
-}
-
-/// Each program's baseline run, by file name: `baselines.json` beside the
-/// sessions. None set when there is no file; a damaged one is an error.
-pub fn read_baselines(
+/// Makes `run` (a file name in `dir`) the baseline of `program`; none: no baseline.
+pub fn set_baseline(
     dir: &std::path::Path,
-) -> Result<std::collections::BTreeMap<String, String>, Unreadable> {
-    read_map(&dir.join("baselines.json"))
-}
-
-pub fn write_baselines(
-    dir: &std::path::Path,
-    all: &std::collections::BTreeMap<String, String>,
+    program: &str,
+    run: Option<&str>,
 ) -> std::io::Result<()> {
-    reqlog::private::replace(&dir.join("baselines.json"), serde_json::to_vec_pretty(all)?)
+    crate::index::update(dir, |_| {
+        (
+            vec![(
+                program.to_string(),
+                crate::index::Change::Baseline(run.map(String::from)),
+            )],
+            (),
+        )
+    })
 }
 
 /// A run, by the figures that move when the program changes.
@@ -590,18 +599,14 @@ impl RunFigures {
 pub struct Budget {
     pub max_requests: Option<usize>,
     pub max_waiting_ms: Option<f64>,
-    pub max_cost: Option<f64>,
     pub max_errors: Option<usize>,
-    /// How long 95% of the requests may take at most, in ms.
-    pub max_p95_ms: Option<f64>,
     /// Findings the project expects (a habit it keeps on purpose): never a
     /// new warning. Each matches a finding's identity, its kind
     /// (`obs.hot`) or a part of its text.
     pub expect: Vec<String>,
     /// Against the baseline: requests, waiting and cost may grow this much.
+    /// A baseline also holds the run to no warning it did not have.
     pub tolerance: Option<f64>,
-    /// Against the baseline: no warning it did not have.
-    pub no_new_warnings: bool,
 }
 
 /// One line of a check.
@@ -843,14 +848,8 @@ pub fn check(
     if let Some(ms) = budget.max_waiting_ms {
         limit("waiting", r.waiting_ms, ms, "budget");
     }
-    if let Some(c) = budget.max_cost {
-        limit("cost", r.cost, c, "budget");
-    }
     if let Some(n) = budget.max_errors {
         limit("errors", r.errors as f64, n as f64, "budget");
-    }
-    if let Some(ms) = budget.max_p95_ms {
-        limit("p95", r.p95_ms, ms, "budget");
     }
     let mut new_warnings = Vec::new();
     if let Some(b) = baseline {
@@ -877,7 +876,7 @@ pub fn check(
             held("cost", r.cost, l.cost, base.cost);
             held("errors", r.errors as f64, l.errors, base.errors as f64);
         }
-        if budget.no_new_warnings {
+        {
             // a warning the baseline did not have as a warning: new, or grown from a note
             let was_warning: std::collections::HashSet<String> =
                 b.3.iter()
@@ -922,6 +921,26 @@ pub fn check(
 /// A length of time ([`sonde_fmt::duration`]).
 pub fn ms_text(ms: f64) -> String {
     sonde_fmt::duration(ms)
+}
+
+/// A cent: a request cost under it is no amount anyone acts on, so a change
+/// of one is said by its share alone ([`share_moved`]).
+pub const CENT: f64 = 0.01;
+
+/// How much a figure moved, as a share: `-9%`, `under 1%`, `no change`.
+pub fn share_moved(a: f64, b: f64) -> String {
+    if a == b {
+        return "no change".into();
+    }
+    if a <= 0.0 {
+        return "new".into();
+    }
+    let pct = (b - a) * 100.0 / a;
+    if pct.abs() < 0.5 {
+        "under 1%".into()
+    } else {
+        format!("{pct:+.0}%")
+    }
 }
 
 /// Money to two significant digits under a cent: a session's requests often
@@ -1023,9 +1042,9 @@ pub fn check_closing(c: &Check, trials: &[crate::trial::Trial]) -> String {
     };
     let held = match (of("budget"), of("baseline")) {
         (None, None) if c.verdicts.is_empty() => None,
-        (Some(false), Some(false)) => Some("over budget and past its baseline"),
+        (Some(false), Some(false)) => Some("over budget and over its baseline"),
         (Some(false), _) => Some("over budget"),
-        (_, Some(false)) => Some("past its baseline"),
+        (_, Some(false)) => Some("over its baseline"),
         (None, Some(true)) => Some("within its baseline"),
         (Some(true), Some(true)) => Some("within budget and its baseline"),
         _ => Some("within budget"),
@@ -1067,20 +1086,6 @@ pub fn check_passed(c: &Check, trials: &[crate::trial::Trial]) -> bool {
         && !trials
             .iter()
             .any(|t| t.standing == crate::trial::Standing::Broke)
-}
-
-/// A trial's mark in a check: `pass` survived, `warn` degraded (it got
-/// through, and not cleanly) or refused by the policy (not judged), `FAIL`
-/// broke, `skip` untested.
-pub fn trial_mark(s: crate::trial::Standing) -> &'static str {
-    use crate::trial::Standing;
-    match s {
-        Standing::Survived => "pass",
-        Standing::Degraded => "warn",
-        Standing::Broke => "FAIL",
-        Standing::Untested => "skip",
-        Standing::Refused => "warn",
-    }
 }
 
 /// A Markdown table whose columns line up as text too (a comment is read
@@ -1232,7 +1237,7 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         .filter(|v| !v.ok && !said_below(v))
         .map(|v| {
             vec![
-                format!("**FAIL** {}", v.over().unwrap_or_default()),
+                format!("**over** {}", v.over().unwrap_or_default()),
                 v.label().to_string(),
                 shown(v.what, v.value),
                 format!("≤ {}", shown(v.what, v.limit)),
@@ -1365,9 +1370,9 @@ pub fn check_comment(c: &Check, m: &Comment) -> String {
         .filter(|t| matches!(t.standing, Standing::Broke | Standing::Degraded))
         .map(|t| {
             vec![
-                match trial_mark(t.standing) {
-                    "FAIL" => "**FAIL**".to_string(),
-                    mark => mark.to_string(),
+                match t.standing {
+                    Standing::Broke => "**broke**".to_string(),
+                    s => s.label().to_string(),
                 },
                 md_text(&t.asked()),
                 md_text(&t.line()),
@@ -1436,19 +1441,13 @@ mod tests {
     }
 
     #[test]
-    fn damaged_baselines_are_an_error_and_missing_ones_are_none() {
+    fn a_programs_baseline_is_kept_in_the_folders_index() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(read_baselines(dir.path()).unwrap().is_empty(), "none set");
-        let mut all = std::collections::BTreeMap::new();
-        all.insert("python etl.py".to_string(), "a.sonde".to_string());
-        write_baselines(dir.path(), &all).unwrap();
-        assert_eq!(read_baselines(dir.path()).unwrap(), all);
-        // cut short: read as empty, the next write would drop every baseline
-        let f = dir.path().join("baselines.json");
-        std::fs::write(&f, "{\"python etl.py\": \"a.so").unwrap();
-        let e = read_baselines(dir.path()).unwrap_err();
-        assert_eq!(e.path, f);
-        assert!(e.to_string().contains("fix or remove the file"), "{e}");
+        assert!(baselines(dir.path()).is_empty(), "none set");
+        set_baseline(dir.path(), "etl", Some("a.sonde")).unwrap();
+        assert_eq!(baselines(dir.path())["etl"], "a.sonde");
+        set_baseline(dir.path(), "etl", None).unwrap();
+        assert!(baselines(dir.path()).is_empty());
     }
 
     fn rec(id: u64, key: &str) -> Record {
@@ -1629,7 +1628,7 @@ mod tests {
     }
 
     #[test]
-    fn an_expected_finding_is_never_new_and_p95_has_its_limit() {
+    fn an_expected_finding_is_never_new() {
         let base: Vec<Record> = (0..10).map(|i| rec(i + 1, &format!("k{i}"))).collect();
         let mut grown = base.clone();
         grown.extend((0..12).map(|i| rec(100 + i, "hot")));
@@ -1640,7 +1639,6 @@ mod tests {
                 (&pg, &grown, &prg, &og),
                 Some((&pb, &base, &prb, &ob)),
                 &Budget {
-                    no_new_warnings: true,
                     expect,
                     ..Default::default()
                 },
@@ -1683,17 +1681,6 @@ mod tests {
                 "{e}"
             );
         }
-        // 95% of the requests within a limit
-        let c = check(
-            (&pg, &grown, &prg, &og),
-            None,
-            &Budget {
-                max_p95_ms: Some(pg.p95_ms - 0.5),
-                ..Default::default()
-            },
-        );
-        let v = c.verdicts.iter().find(|v| v.what == "p95").unwrap();
-        assert!(!v.ok && !c.passed);
     }
 
     #[test]
@@ -1729,6 +1716,14 @@ mod tests {
             ("sh get.sh", "get"),
             ("aws s3 ls", "aws"),
             ("logs of s3://b/logs/", "logs of s3://b/logs/"),
+            // 21.0 named these `big`, `example` and `docker`
+            ("sh -c 'aws s3 cp big.bin s3://b/'", "aws"),
+            ("bash -c \"curl https://example.invalid\"", "curl"),
+            ("sh -c 'exit 3'", "sh"),
+            ("docker run --rm -e A amazon/aws-cli:2.40 s3 ls", "aws-cli"),
+            ("podman run -v a:b rclone/rclone ls", "rclone"),
+            ("python3 -m pytest tests/", "pytest"),
+            ("python3 -c 'import boto3; s3.get_object()'", "python3"),
         ] {
             assert_eq!(key(command).as_deref(), Some(program), "{command}");
         }
@@ -1780,7 +1775,6 @@ mod tests {
         let budget = Budget {
             max_requests: Some(50),
             tolerance: Some(0.1),
-            no_new_warnings: true,
             ..Default::default()
         };
         let ok = check(
@@ -1870,7 +1864,7 @@ mod tests {
         assert_eq!(row("waiting", "baseline").over(), None, "it passed");
         let md = check_markdown(&c, "USD", None, &[]);
         assert!(
-            squeezed(&md).contains("| **FAIL** +23% | requests | 123 | ≤ 100 | budget |"),
+            squeezed(&md).contains("| **over** +23% | requests | 123 | ≤ 100 | budget |"),
             "{md}"
         );
         // the columns line up as text: every row as long as the heading's
@@ -1882,7 +1876,7 @@ mod tests {
             "{md}"
         );
         assert!(
-            md.starts_with("### sonde: over budget and past its baseline"),
+            md.starts_with("### sonde: over budget and over its baseline"),
             "{md}"
         );
     }
@@ -1931,11 +1925,11 @@ mod tests {
         );
         assert!(!md.contains("over budget"), "{md}");
         assert!(
-            squeezed(&md).contains("| **FAIL** | slowdown | exited 1 \\| really |"),
+            squeezed(&md).contains("| **broke** | slowdown | exited 1 \\| really |"),
             "{md}"
         );
         assert!(
-            squeezed(&md).contains("| warn | slowdown |"),
+            squeezed(&md).contains("| degraded | slowdown |"),
             "degraded is not a pass: {md}"
         );
     }
@@ -1974,7 +1968,6 @@ mod tests {
             (&p, &warned, &pr, &o),
             Some((&p, &warned, &pr, &o)),
             &Budget {
-                no_new_warnings: true,
                 ..Default::default()
             },
         );
@@ -2052,13 +2045,16 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(md.starts_with("### sonde: past its baseline ❌"), "{md}");
+        assert!(md.starts_with("### sonde: over its baseline ❌"), "{md}");
         // the figure past the baseline, bold, said once; no table of verdicts
         assert!(
             md.contains("- **requests 20 → 40 (+100%)**, past the 22 it may use"),
             "{md}"
         );
-        assert!(!md.contains("| pass") && !md.contains("**FAIL**"), "{md}");
+        assert!(
+            !md.contains("| survived") && !md.contains("**over**"),
+            "{md}"
+        );
         assert!(squeezed(&md).contains("| HeadObject | 0 → 20 |"), "{md}");
         let new = md.find("**New findings**").expect("new findings");
         assert!(md[new..].contains("HEAD"), "{md}");

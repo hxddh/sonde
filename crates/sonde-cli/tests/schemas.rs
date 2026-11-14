@@ -284,7 +284,7 @@ async fn every_json_output_is_as_its_schema_says() {
         .await
         .unwrap();
     assert_eq!(demo.status.code(), Some(0));
-    let session = std::fs::read_dir(b.path("data/sessions"))
+    let session = std::fs::read_dir(b.path("data/runs"))
         .unwrap()
         .flatten()
         .map(|e| e.path())
@@ -362,7 +362,7 @@ async fn every_json_output_is_as_its_schema_says() {
         "compare",
         &b.json(&["compare", s, s, "-f", "json"], 0).await,
     );
-    holds("sessions", &b.json(&["sessions", "-f", "json"], 0).await);
+    holds("runs", &b.json(&["runs", "-f", "json"], 0).await);
 
     // replaying it on the small store, and the two compared
     let replayed = b.path("replay.sonde");
@@ -438,10 +438,10 @@ async fn every_json_output_is_as_its_schema_says() {
         .await,
     );
     holds(
-        "layout-inspect",
+        "layout",
         &b.json(
             &[
-                "layout", "inspect", "-e", "a", "-b", "data", "--kind", "generic", "-f", "json",
+                "layout", "-e", "a", "-b", "data", "--kind", "generic", "-f", "json",
             ],
             0,
         )
@@ -514,7 +514,7 @@ fn every_schema_is_checked_and_documented() {
         "show-by",
         "check",
         "compare",
-        "sessions",
+        "runs",
         "compare-replay",
         "compare-replay-stores",
         "compare-answers",
@@ -522,7 +522,7 @@ fn every_schema_is_checked_and_documented() {
         "endpoints-test",
         "bucket-size",
         "bucket-uploads",
-        "layout-inspect",
+        "layout",
         "probe-list",
         "probe",
         "probe-runs",
@@ -552,7 +552,7 @@ fn every_schema_is_checked_and_documented() {
 }
 
 /// The contract promises figures and ids, not wording: every phrase array
-/// (`…Text`) and `layout inspect`'s display tables say so, those tables are
+/// (`…Text`) and `layout`'s display tables say so, those tables are
 /// not required, and no output names an S3 call `operation` (it is a
 /// `kind`; an operation is a program's).
 #[test]
@@ -570,7 +570,7 @@ fn display_text_is_marked_and_an_s3_call_is_a_kind() {
                         let said = p["description"]
                             .as_str()
                             .is_some_and(|d| d.starts_with("Display text, not stable"));
-                        let layout = name == "layout-inspect"
+                        let layout = name == "layout"
                             && ["headline", "facts", "tables"].contains(&k.as_str());
                         if (k.ends_with("Text") || layout) && !said {
                             out.push(format!("{name}: {k} is not marked display text"));

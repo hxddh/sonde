@@ -44,7 +44,7 @@ pub fn project_scenarios(dir: &Path) -> Result<Vec<Scenario>, String> {
 /// no command, and a run that sent no requests.
 pub fn of(s: &Session) -> Result<Plan, String> {
     if s.header.scenario.is_some() {
-        return Err("this session is a trial itself: try the run it is a trial of".into());
+        return Err("this run is a trial itself: try the run it is a trial of".into());
     }
     let command = s
         .header

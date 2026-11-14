@@ -22,16 +22,19 @@ pub enum Dimension {
     Caller,
     Sdk,
     Status,
+    /// The object: its bucket and key (hot keys).
+    Key,
 }
 
 impl Dimension {
-    pub const ALL: [Dimension; 6] = [
+    pub const ALL: [Dimension; 7] = [
         Dimension::Kind,
         Dimension::Prefix,
         Dimension::Size,
         Dimension::Caller,
         Dimension::Sdk,
         Dimension::Status,
+        Dimension::Key,
     ];
 
     pub fn name(self) -> &'static str {
@@ -42,6 +45,7 @@ impl Dimension {
             Dimension::Caller => "caller",
             Dimension::Sdk => "sdk",
             Dimension::Status => "status",
+            Dimension::Key => "key",
         }
     }
 
@@ -161,6 +165,12 @@ impl Keyer {
                 .status
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "no answer".into()),
+            Dimension::Key => match (r.bucket.as_deref(), r.key.as_deref()) {
+                (Some(b), Some(k)) => format!("{b}/{k}"),
+                (Some(b), None) => format!("{b}/"),
+                (None, Some(k)) => k.to_string(),
+                (None, None) => "(no key)".into(),
+            },
         }
     }
 }
@@ -274,6 +284,7 @@ fn place(by: Dimension, key: &str) -> Phrase {
         Dimension::Prefix => v("split.prefix"),
         Dimension::Caller => v("split.caller"),
         Dimension::Sdk => v("split.sdk"),
+        Dimension::Key => v("split.key"),
         Dimension::Status if key == "no answer" => p("split.status.none", &[]),
         Dimension::Status => v("split.status"),
         Dimension::Size => match BANDS.iter().position(|(_, n)| *n == key) {
@@ -477,6 +488,21 @@ mod tests {
             s.text,
             "100% of the slow requests (over 300 ms) are over 8 MiB, under b/wal/."
         );
+    }
+
+    #[test]
+    fn by_key_the_hot_key_is_a_group_of_its_own() {
+        // one key read 30 times, slowly; 20 others once each
+        let mut recs: Vec<Record> = (0..30)
+            .map(|i| rec(i, "GetObject", "conf/settings.json", 400.0, 10))
+            .collect();
+        recs.extend((30..50).map(|i| rec(i, "GetObject", &format!("data/{i}"), 5.0, 10)));
+        let s = split(&recs, Dimension::Key, &RequestPrices::default());
+        assert_eq!(s.rows[0].key, "b/conf/settings.json");
+        assert_eq!(s.rows[0].requests, 30);
+        // past the rows a table holds, the rest is one group
+        assert!(s.rows.last().is_some_and(|r| r.other));
+        assert!(s.text.contains("at b/conf/settings.json"), "{}", s.text);
     }
 
     #[test]

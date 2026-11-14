@@ -28,7 +28,7 @@ pub struct ProbeArgs {
     /// Skip probes that wait in real time.
     #[arg(long)]
     no_slow: bool,
-    /// The format written: table, json, markdown or csv.
+    /// The format written: text or json.
     #[arg(
         long,
         short = 'f',
@@ -46,7 +46,7 @@ pub struct ProbeArgs {
 enum ProbeAction {
     /// The probes and the AWS behavior each checks.
     List {
-        /// The format written: table or json.
+        /// The format written: text or json.
         #[arg(
             long,
             short = 'f',
@@ -58,7 +58,7 @@ enum ProbeAction {
     },
     /// Saved runs, newest first.
     Runs {
-        /// The format written: table or json.
+        /// The format written: text or json.
         #[arg(
             long,
             short = 'f',
@@ -74,7 +74,7 @@ enum ProbeAction {
         before: String,
         /// The run after, the same way.
         after: String,
-        /// The format written: table or json.
+        /// The format written: text or json.
         #[arg(
             long,
             short = 'f',
@@ -94,27 +94,12 @@ fn load(s: &Sonde, spec: &str) -> anyhow::Result<Run> {
 }
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32> {
-    // before a run writes to the store: a report nobody could read is not worth it
-    let (command, format, writes): (_, _, &[Format]) = match &a.action {
-        Some(ProbeAction::List { format }) => {
-            ("probe list", *format, &[Format::Table, Format::Json])
-        }
-        Some(ProbeAction::Runs { format }) => {
-            ("probe runs", *format, &[Format::Table, Format::Json])
-        }
-        Some(ProbeAction::Diff { format, .. }) => {
-            ("probe diff", *format, &[Format::Table, Format::Json])
-        }
-        None => (
-            "probe",
-            a.format,
-            &[Format::Table, Format::Json, Format::Markdown, Format::Csv],
-        ),
+    let format = match &a.action {
+        Some(ProbeAction::List { format })
+        | Some(ProbeAction::Runs { format })
+        | Some(ProbeAction::Diff { format, .. }) => *format,
+        None => a.format,
     };
-    if let Some(why) = output::unsupported(format, command, writes) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     match &a.action {
         Some(ProbeAction::List { .. }) => {
             let c = probes::catalog();
@@ -224,36 +209,38 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &ProbeArgs) -> anyhow::Result<i32
     }
     let text = match a.format {
         Format::Json => output::json(&runs),
-        Format::Markdown => probes::report::markdown(&runs),
-        Format::Csv => {
-            let mut o = String::from("probe,endpoint,verdict,summary\n");
-            for r in &runs {
-                for x in &r.results {
-                    o.push_str(&format!(
-                        "{},{},{},\"{}\"\n",
-                        x.id,
-                        r.endpoint,
-                        x.verdict.label(),
-                        x.summary.replace('"', "\"\"")
-                    ));
-                }
-            }
-            o
-        }
-        Format::Table | Format::Github => {
+        Format::Text => {
             let m = probes::report::matrix(&runs);
             let mut headers = vec!["probe"];
             headers.extend(m.columns.iter().map(|c| c.name.as_str()));
+            // what did not pass says why, in its row: on several endpoints,
+            // each named
+            headers.push("why");
+            let several = m.columns.len() > 1;
             let rows: Vec<Vec<String>> = m
                 .rows
                 .iter()
                 .map(|r| {
+                    let why: Vec<String> = r
+                        .cells
+                        .iter()
+                        .zip(&m.columns)
+                        .filter_map(|(c, col)| {
+                            let c = c.as_ref().filter(|c| c.verdict != Verdict::Pass)?;
+                            Some(if several {
+                                format!("{}: {}", col.name, c.summary)
+                            } else {
+                                c.summary.clone()
+                            })
+                        })
+                        .collect();
                     std::iter::once(r.probe.id.clone())
                         .chain(r.cells.iter().map(|c| {
                             c.as_ref()
                                 .map(|c| format!("{} {}", c.verdict.symbol(), c.verdict.label()))
                                 .unwrap_or_default()
                         }))
+                        .chain([why.join("; ")])
                         .collect()
                 })
                 .collect();

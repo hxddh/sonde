@@ -210,7 +210,7 @@ fn policies_by_name_and_the_stricter_of_two() {
         assert_eq!(Policy::named(p.name()), Some(p));
     }
     assert_eq!(Policy::named("readonly"), None);
-    assert_eq!(Policy::default(), Policy::NoDelete);
+    assert_eq!(Policy::default(), Policy::Allow);
     assert_eq!(Policy::Allow.stricter(Policy::NoDelete), Policy::NoDelete);
     assert_eq!(Policy::ReadOnly.stricter(Policy::Allow), Policy::ReadOnly);
 }

@@ -77,7 +77,7 @@ export async function removeSession(s: SessionInfo, removed?: () => void): Promi
   }
 }
 
-/** Writes a session as a web page, opens it in the browser, and says where it is. */
+/** Writes a run as one web page, opens it in the browser, and says where the file is. */
 export async function shareSession(path: string) {
   try {
     const r = await api.sessions.share(path);
@@ -86,16 +86,16 @@ export async function shareSession(path: string) {
       id: "shared",
       kind: "success",
       title: t("share.ready"),
-      description: t("share.where", { dir: r.dir }),
-      // the page's folder in the file manager, where it is a press away
-      action: t("share.showFolder"),
-      onAction: () => void api.sessions.reveal(r.dir).catch(() => copy(r.dir)),
+      description: t("share.where", { file: r.file }),
+      // the page in the file manager, where it is a press away
+      action: t("share.showFile"),
+      onAction: () => void api.sessions.reveal(r.file).catch(() => copy(r.file)),
       duration: 10000,
     });
   } catch (e) {
     // a build without the viewer: the command that makes the page
     // quoted: a path with spaces is one argument
-    const command = `sonde share --serve "${path.replace(/(["\\$`])/g, "\\$1")}"`;
+    const command = `sonde share "${path.replace(/(["\\$`])/g, "\\$1")}"`;
     copy(command, t("share.command"));
     if (!`${e instanceof Error ? e.message : e}`.includes("no web viewer")) report(e);
   }

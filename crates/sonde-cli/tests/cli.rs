@@ -99,7 +99,7 @@ fn help_lists_the_commands_by_what_they_are_for() {
     // each heading, then its commands, each with its own line
     for (heading, first, last) in [
         ("Record:", "\n  run ", "\n  import "),
-        ("Read a run:", "\n  sessions ", "\n  share "),
+        ("Read a run:", "\n  runs ", "\n  share "),
         ("Buckets:", "\n  bucket ", "\n  endpoints "),
     ] {
         assert!(at(heading) < at(first) && at(first) < at(last), "{help}");
@@ -124,7 +124,7 @@ fn help_lists_the_commands_by_what_they_are_for() {
 }
 
 #[test]
-fn the_demo_records_a_session_that_every_command_reads() {
+fn the_demo_records_a_run_that_every_command_reads() {
     let t = tempfile::tempdir().unwrap();
     let demo = sonde(t.path(), &["run", "--demo"]);
     assert_eq!(
@@ -162,20 +162,20 @@ fn the_demo_records_a_session_that_every_command_reads() {
     assert_eq!(v["requests"].as_array().unwrap().len(), 9);
     assert!(v["findings"].as_array().unwrap().is_empty(), "{v}");
 
-    let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
-    let mut lines = csv.lines();
-    assert_eq!(
-        lines.next(),
-        Some("session,recorded,program,endpoint,requests,took,errors,exit,trials,size")
-    );
-    let name = lines.next().unwrap().split(',').next().unwrap().to_string();
+    let table = stdout(&sonde(t.path(), &["runs"]));
     assert!(
-        lines.next().unwrap().contains("-tour.sonde"),
+        table.starts_with("run   ") && table.contains("recorded") && table.contains("trials"),
+        "{table}"
+    );
+    let rows = runs_json(t.path());
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    let name = rows[0]["name"].as_str().unwrap().to_string();
+    assert!(
+        rows[1]["name"].as_str().unwrap().contains("-tour.sonde"),
         "the first run"
     );
-    assert!(lines.next().is_none());
 
-    // a session by its name alone
+    // a run by its name alone
     let by_name = sonde(
         t.path(),
         &["show", name.trim_end_matches(".sonde"), "--summary"],
@@ -184,7 +184,7 @@ fn the_demo_records_a_session_that_every_command_reads() {
     assert!(stdout(&by_name).contains("9 requests"));
 
     // the same run against itself: no change
-    let path = t.path().join("data/sessions").join(&name);
+    let path = t.path().join("data/runs").join(&name);
     let p = path.to_str().unwrap();
     let same = stdout(&sonde(t.path(), &["compare", p, p]));
     assert!(same.starts_with("no change"), "{same}");
@@ -202,35 +202,12 @@ fn the_demo_reads_as_operations_not_as_a_list_of_requests() {
     for line in [
         "4 lookups in demo/tour/, none found",
         "12 requests (9 operations) from boto3 1.35",
+        // the costs of a few requests are under a cent: their shares, in the table
+        "cost",
         "3 objects under demo/reports/ were checked with HEAD and then read with GET",
     ] {
         assert!(out.contains(line), "no {line:?} in:\n{out}");
     }
-}
-
-#[test]
-fn damaged_baselines_are_said_and_neither_written_over_nor_read_as_none() {
-    let t = tempfile::tempdir().unwrap();
-    assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
-    let file = t.path().join("data/sessions/baselines.json");
-    let damaged = "{\"other program\": \"kept.so";
-    std::fs::write(&file, damaged).unwrap();
-    for args in [
-        &["check", "--set-baseline", "--max-requests", "100"][..],
-        &["check", "--baseline", "auto"],
-        &["sessions", "prune", "--keep", "0", "--confirm", "1"],
-    ] {
-        let o = sonde(t.path(), args);
-        let err = String::from_utf8_lossy(&o.stderr);
-        assert_eq!(o.status.code(), Some(64), "{args:?}: {err}");
-        assert!(
-            err.contains("baselines.json cannot be read"),
-            "{args:?}: {err}"
-        );
-    }
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), damaged);
-    // the session a damaged file may have named as a baseline is still there
-    assert_eq!(sonde(t.path(), &["show"]).status.code(), Some(0));
 }
 
 #[test]
@@ -298,7 +275,7 @@ fn check_holds_a_run_to_its_programs_baseline() {
         "{}",
         String::from_utf8_lossy(&set.stderr)
     );
-    assert!(t.path().join("data/sessions/baselines.json").is_file());
+    assert!(!sonde_proxy::program::baselines(&t.path().join("data/runs")).is_empty());
     std::thread::sleep(std::time::Duration::from_millis(1100));
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     // the mechanism, not this machine's timing: two runs of the demo may differ by more than 10% in waiting
@@ -331,17 +308,9 @@ fn check_holds_a_run_to_its_programs_baseline() {
         Some(1)
     );
     // the baseline survives pruning
-    let pruned = sonde(
-        t.path(),
-        &["sessions", "prune", "--keep", "0", "--confirm", "3"],
-    );
+    let pruned = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
     assert_eq!(pruned.status.code(), Some(0), "{}", stderr(&pruned));
-    assert_eq!(
-        stdout(&sonde(t.path(), &["sessions", "-f", "csv"]))
-            .lines()
-            .count(),
-        2
-    );
+    assert_eq!(runs_json(t.path()).len(), 1);
 }
 
 #[test]
@@ -381,7 +350,7 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
     std::thread::sleep(std::time::Duration::from_millis(1100));
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
-    let mut names: Vec<String> = std::fs::read_dir(t.path().join("data/sessions"))
+    let mut names: Vec<String> = std::fs::read_dir(t.path().join("data/runs"))
         .unwrap()
         .flatten()
         .map(|e| e.path().to_string_lossy().into_owned())
@@ -391,48 +360,24 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
     let page = t.path().join("page.html");
     let o = sonde(
         t.path(),
-        &[
-            "share",
-            "--html",
-            &names[0],
-            &names[1],
-            "-o",
-            page.to_str().unwrap(),
-        ],
+        &["share", &names[0], &names[1], "-o", page.to_str().unwrap()],
     );
-    assert_eq!(
-        o.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&o.stderr)
-    );
-    let html = std::fs::read_to_string(&page).unwrap();
-    let against = html.find("<h2>Against session ").expect("the comparison");
-    assert!(against < html.find("<h2>This run</h2>").unwrap());
-    // the same as --baseline FILE
-    let o = sonde(
-        t.path(),
-        &["share", "--html", &names[1], "--baseline", &names[0]],
-    );
-    assert!(stdout(&o).contains("<h2>Against session "));
-    // a comparison is a page; and two runs or a baseline, not both
-    assert_eq!(
-        sonde(t.path(), &["share", &names[0], &names[1]])
-            .status
-            .code(),
-        Some(64)
-    );
+    // a build without the viewer says how to make it, and leaves no file
+    if stderr(&o).contains("no web viewer") {
+        assert_ne!(o.status.code(), Some(0));
+        assert!(!page.exists());
+    } else {
+        assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+        let html = std::fs::read_to_string(&page).unwrap();
+        // one file: the viewer and the run, the run before it compared first
+        assert!(html.contains("id=\"nsh-params\">{\"compare\":{\"change\":"));
+        assert!(!html.contains("<\\/script") && html.matches("</script>").count() >= 3);
+    }
+    // two runs or a baseline, not both
     assert_eq!(
         sonde(
             t.path(),
-            &[
-                "share",
-                "--html",
-                &names[0],
-                &names[1],
-                "--baseline",
-                "auto"
-            ]
+            &["share", &names[0], &names[1], "--baseline", "auto"]
         )
         .status
         .code(),
@@ -477,31 +422,29 @@ fn a_shared_page_of_two_runs_is_their_comparison() {
 fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
     let t = tempfile::tempdir().unwrap();
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
-    let csv = stdout(&sonde(t.path(), &["sessions", "-f", "csv"]));
-    let name = csv.lines().nth(1).unwrap().split(',').next().unwrap();
+    let rows = runs_json(t.path());
+    let name = rows[0]["name"].as_str().unwrap();
     let c = sonde(t.path(), &["check", "--max-requests", "6"]);
     assert_eq!(c.status.code(), Some(1));
     let out = stdout(&c);
     let first = out.lines().next().unwrap();
     assert!(
-        first.starts_with(&format!("session {name} · recorded 20")),
+        first.starts_with(&format!("run {name} · recorded 20")),
         "{out}"
     );
     // 9 requests against 6
-    let fail = out.lines().find(|l| l.starts_with("FAIL")).unwrap();
+    let fail = out.lines().find(|l| l.starts_with("over")).unwrap();
     assert!(
         fail.contains("requests") && fail.trim_end().ends_with("+50%"),
         "{out}"
     );
 
-    // against itself no warning is new, and the row says so
-    let same = sonde(
-        t.path(),
-        &["check", "--baseline", name, "--no-new-warnings"],
-    );
+    // against itself no warning is new, and the row says so (a baseline
+    // always holds the run to no new warning)
+    let same = sonde(t.path(), &["check", "--baseline", name]);
     let out = stdout(&same);
     assert_eq!(same.status.code(), Some(0), "{out}");
-    assert!(out.contains(&format!("against session {name}")), "{out}");
+    assert!(out.contains(&format!("against run {name}")), "{out}");
     assert!(out.contains("new warnings  0"), "{out}");
 }
 
@@ -509,14 +452,14 @@ fn check_names_the_run_it_judged_and_says_by_how_much_it_failed() {
 fn a_baseline_set_alone_succeeds_by_name_or_relative_path() {
     let t = tempfile::tempdir().unwrap();
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
-    let dir = t.path().join("data/sessions");
+    let dir = t.path().join("data/runs");
     let name = std::fs::read_dir(&dir)
         .unwrap()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .find(|n| n.ends_with(".sonde"))
         .unwrap();
-    // from inside the sessions directory, by a relative path
+    // from inside the runs directory, by a relative path
     let set = Command::new(env!("CARGO_BIN_EXE_sonde"))
         .args(["check", &name, "--set-baseline"])
         .current_dir(&dir)
@@ -571,11 +514,11 @@ fn a_projects_sonde_toml_is_its_budget_and_markdown_is_a_pr_comment() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(
-        cells.contains("| **FAIL** +800% | requests | 9 | ≤ 1 |"),
+        cells.contains("| **over** +800% | requests | 9 | ≤ 1 |"),
         "{md}"
     );
     // a row that passed is not repeated in a comment
-    assert!(!cells.contains("| pass |"), "{md}");
+    assert!(!cells.contains("| within |"), "{md}");
     // a flag still wins over the file
     let c = sonde(
         t.path(),
@@ -744,32 +687,35 @@ fn a_folder_of_logs_is_imported_as_one_session() {
     );
 }
 
+/// 21.0 wrote five formats, a different set per command: now text and
+/// json everywhere, and check's two for CI.
 #[test]
-fn every_command_refuses_a_format_it_does_not_write() {
+fn every_command_writes_text_and_json_and_refuses_another_format() {
     let t = tempfile::tempdir().unwrap();
-    // before anything is asked of a store: none of these has one to ask
+    // refused before anything is asked of a store: none of these has one to ask
     for args in [
         &["bucket", "size", "-b", "b", "-f", "markdown"][..],
-        &["bucket", "uploads", "-b", "b", "-f", "github"],
+        &["bucket", "uploads", "-b", "b", "-f", "csv"],
         &["probe", "list", "-f", "csv"],
-        &["probe", "-b", "scratch", "-f", "github"],
-        &["layout", "inspect", "-b", "b", "-f", "csv"],
-        &["endpoints", "list", "-f", "csv"],
-        &["sessions", "-f", "github"],
-        &["probe", "diff", "a:e", "b:e", "-f", "markdown"],
+        &["probe", "-b", "scratch", "-f", "markdown"],
+        &["layout", "-b", "b", "-f", "csv"],
+        &["endpoints", "list", "-f", "table"],
+        &["runs", "-f", "github"],
+        &["show", "-f", "markdown"],
+        &["compare", "-f", "csv"],
+        &["check", "--max-requests", "1", "-f", "csv"],
     ] {
         let o = sonde(t.path(), args);
-        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        let err = stderr(&o);
         assert_eq!(o.status.code(), Some(64), "{args:?}: {err}");
-        assert!(err.contains("does not write -f"), "{args:?}: {err}");
+        assert!(err.contains("invalid value"), "{args:?}: {err}");
         assert!(o.stdout.is_empty(), "{args:?}: {}", stdout(&o));
     }
-    // a command that writes only what a person reads has no -f at all, and
-    // help lists for each only what it writes
+    // a command that writes only what a person reads has no -f at all
     for args in [
         &["bucket", "abort-uploads", "-b", "b", "-f", "json"][..],
-        &["bucket", "lifecycle", "-b", "b", "-f", "table"],
-        &["sessions", "prune", "--keep", "5", "-f", "json"],
+        &["bucket", "lifecycle", "-b", "b", "-f", "text"],
+        &["runs", "prune", "--keep", "5", "-f", "json"],
         &["endpoints", "add", "x", "http://x", "-f", "json"],
     ] {
         let o = sonde(t.path(), args);
@@ -777,19 +723,20 @@ fn every_command_refuses_a_format_it_does_not_write() {
         assert!(stderr(&o).contains("unexpected argument"), "{args:?}");
     }
     for (args, says) in [
-        (&["sessions", "prune", "--help"][..], None),
+        (&["runs", "prune", "--help"][..], None),
         (&["endpoints", "add", "--help"], None),
         (
             &["probe", "list", "--help"],
-            Some("written: table or json ["),
+            Some("written: text or json ["),
         ),
-        (
-            &["sessions", "list", "--help"],
-            Some("written: table, json, markdown or csv ["),
-        ),
+        (&["runs", "--help"], Some("written: text or json [")),
         (
             &["bucket", "uploads", "--help"],
-            Some("written: table, json or csv ["),
+            Some("written: text or json ["),
+        ),
+        (
+            &["check", "--help"],
+            Some("written: text, json, markdown (a pull request's comment) or github"),
         ),
     ] {
         let help = stdout(&sonde(t.path(), args));
@@ -812,32 +759,14 @@ fn every_command_refuses_a_format_it_does_not_write() {
 fn a_flag_that_would_do_nothing_is_a_usage_error() {
     let t = tempfile::tempdir().unwrap();
     assert_eq!(sonde(t.path(), &["run", "--demo"]).status.code(), Some(0));
-    // a format the command does not write
-    for args in [
-        &["show", "-f", "csv"][..],
-        &["show", "-f", "github"],
-        &["check", "--max-requests", "100000", "-f", "csv"],
-    ] {
-        let o = sonde(t.path(), args);
-        assert_eq!(o.status.code(), Some(64), "{args:?}");
-        assert!(
-            String::from_utf8_lossy(&o.stderr).contains("does not write -f"),
-            "{args:?}"
-        );
-        assert!(o.stdout.is_empty(), "{args:?}");
-    }
     // held to a baseline, with no baseline
-    for flag in [&["--no-new-warnings"][..], &["--tolerance", "5"]] {
-        let mut args = vec!["check", "--max-requests", "100000"];
-        args.extend_from_slice(flag);
-        let o = sonde(t.path(), &args);
-        assert_eq!(o.status.code(), Some(64), "{args:?}");
-        assert!(
-            String::from_utf8_lossy(&o.stderr).contains("needs a baseline"),
-            "{args:?}"
-        );
-    }
-    // with one, both are taken
+    let o = sonde(
+        t.path(),
+        &["check", "--max-requests", "100000", "--tolerance", "5"],
+    );
+    assert_eq!(o.status.code(), Some(64));
+    assert!(stderr(&o).contains("needs a baseline"), "{}", stderr(&o));
+    // with one, it is taken
     assert_eq!(
         sonde(
             t.path(),
@@ -849,21 +778,25 @@ fn a_flag_that_would_do_nothing_is_a_usage_error() {
     );
     let o = sonde(
         t.path(),
-        &[
-            "check",
-            "--baseline",
-            "auto",
-            "--no-new-warnings",
-            "--tolerance",
-            "5",
-        ],
+        &["check", "--baseline", "auto", "--tolerance", "5"],
     );
-    assert_eq!(
-        o.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&o.stderr)
-    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    // what 21.0 had and 22.0 does not is no flag
+    for args in [
+        &["check", "--max-cost", "1"][..],
+        &["check", "--max-p95", "1s"],
+        &["check", "--no-new-warnings"],
+        &["share", "--html"],
+        &["share", "--otlp"],
+        &["share", "--serve"],
+        &["proxy", "--rotate", "5"],
+        &["import", "s3://b/p", "--follow"],
+        &["runs", "prune", "--keep", "1", "--confirm", "1"],
+    ] {
+        let o = sonde(t.path(), args);
+        assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
+        assert!(stderr(&o).contains("unexpected argument"), "{args:?}");
+    }
 }
 
 #[cfg(unix)]
@@ -897,10 +830,10 @@ fn run_exits_as_a_shell_would_when_a_signal_ends_the_program() {
         stdout(&s)
     );
     // and listed with its exit, not as a clean run
-    let listed = sonde(t.path(), &["sessions", "-f", "json"]);
+    let listed = sonde(t.path(), &["runs", "-f", "json"]);
     let doc: serde_json::Value = serde_json::from_str(&stdout(&listed)).unwrap();
     assert_eq!(doc[0]["exit"], 143, "{doc}");
-    let table = stdout(&sonde(t.path(), &["sessions"]));
+    let table = stdout(&sonde(t.path(), &["runs"]));
     let (head, row) = (table.lines().next().unwrap(), table.lines().nth(2).unwrap());
     let at = head.find("exit").expect("an exit column");
     assert!(row[at..].starts_with("143"), "{table}");
@@ -910,17 +843,26 @@ fn stderr(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
 }
 
-/// The name of the tour's newest session (its fixed run, the one a command
+/// The name of the tour's newest run (its fixed run, the one a command
 /// without one takes).
-fn demo_session(dirs: &Path) -> String {
+fn demo_run(dirs: &Path) -> String {
     assert_eq!(sonde(dirs, &["run", "--demo"]).status.code(), Some(0));
     tour_runs(dirs)[0].clone()
 }
 
-/// The tour's sessions by name, newest first.
+/// The runs listed, newest first (`runs -f json`).
+fn runs_json(dirs: &Path) -> Vec<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(&stdout(&sonde(dirs, &["runs", "-f", "json"])))
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+/// The tour's runs by name, newest first.
 fn tour_runs(dirs: &Path) -> Vec<String> {
     let listed: serde_json::Value =
-        serde_json::from_str(&stdout(&sonde(dirs, &["sessions", "-f", "json"]))).unwrap();
+        serde_json::from_str(&stdout(&sonde(dirs, &["runs", "-f", "json"]))).unwrap();
     listed
         .as_array()
         .unwrap()
@@ -945,7 +887,7 @@ const A_LOG_LINE: &str = "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E5
 #[test]
 fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
     let t = tempfile::tempdir().unwrap();
-    let name = demo_session(t.path());
+    let name = demo_run(t.path());
     // compare by name, as show and check take one
     let c = sonde(t.path(), &["compare", &name, &name]);
     assert_eq!(c.status.code(), Some(0), "{}", stderr(&c));
@@ -963,9 +905,15 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
             "adhoc",
         ],
     );
-    assert_eq!(r.status.code(), Some(77), "{}", stderr(&r));
+    // a dry run: what it would send, where, and how to send it
+    assert_eq!(r.status.code(), Some(4), "{}", stderr(&r));
     assert!(stderr(&r).contains("Replay 9 requests"), "{}", stderr(&r));
-    // a name that is no session is said, with where it was looked for
+    assert!(
+        stderr(&r).contains("run again with --yes"),
+        "{}",
+        stderr(&r)
+    );
+    // a name that is no run is said, with where it was looked for
     for args in [
         vec!["compare", "nosuch", name.as_str()],
         vec![
@@ -978,12 +926,12 @@ fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
         ],
         vec!["show", "nosuch"],
         vec!["check", "nosuch", "--max-requests", "1"],
-        vec!["share", "--otlp", "nosuch"],
+        vec!["share", "nosuch"],
     ] {
         let o = sonde(t.path(), &args);
         assert_eq!(o.status.code(), Some(64), "{args:?}: {}", stderr(&o));
         assert!(
-            stderr(&o).contains("no session nosuch") && stderr(&o).contains("sessions"),
+            stderr(&o).contains("no run nosuch") && stderr(&o).contains("runs"),
             "{args:?}: {}",
             stderr(&o)
         );
@@ -1025,7 +973,7 @@ fn two_imports_compare_without_contradicting_themselves() {
 #[test]
 fn the_newest_session_is_the_newest_recording_not_an_import() {
     let t = tempfile::tempdir().unwrap();
-    let name = demo_session(t.path());
+    let name = demo_run(t.path());
     // an import made later, and of a later time
     let log = t.path().join("later.log");
     std::fs::write(&log, A_LOG_LINE).unwrap();
@@ -1041,10 +989,10 @@ fn the_newest_session_is_the_newest_recording_not_an_import() {
     let v: serde_json::Value = serde_json::from_slice(&named.stdout).unwrap();
     assert_eq!(v["summary"]["requests"], 1);
     // and the list says what each holds
-    let list = stdout(&sonde(t.path(), &["sessions"]));
+    let list = stdout(&sonde(t.path(), &["runs"]));
     assert!(list.contains("requests") && list.contains("took") && list.contains("errors"));
     let rows: serde_json::Value =
-        serde_json::from_slice(&sonde(t.path(), &["sessions", "-f", "json"]).stdout).unwrap();
+        serde_json::from_slice(&sonde(t.path(), &["runs", "-f", "json"]).stdout).unwrap();
     let demo = rows
         .as_array()
         .unwrap()
@@ -1092,24 +1040,17 @@ fn what_a_command_cannot_do_is_said_with_what_does_it() {
         "{e}"
     );
     // a time on the command line reads as sonde.toml's does
-    demo_session(t.path());
+    demo_run(t.path());
     let o = sonde(t.path(), &["check", "--max-waiting", "2s", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(v["check"]["verdicts"][0]["limit"], 2000.0, "{v}");
-    let o = sonde(t.path(), &["check", "--max-p95", "250ms", "-f", "json"]);
-    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
-    assert_eq!(v["check"]["verdicts"][0]["limit"], 250.0);
     assert_eq!(
         sonde(t.path(), &["check", "--max-waiting", "soon"])
             .status
             .code(),
         Some(64)
     );
-    // traces are a form of sharing a run
-    let o = sonde(t.path(), &["share", "--otlp"]);
-    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
-    assert!(stdout(&o).contains("resourceSpans"), "{}", stdout(&o));
-    // a session without a failure says so, when only failures are asked for
+    // a run without a failure says so, when only failures are asked for
     let o = sonde(t.path(), &["show", "--errors", "--requests"]);
     let shown = stdout(&o);
     if !shown.contains(" 5") && !shown.contains("ERR") {
@@ -1118,7 +1059,7 @@ fn what_a_command_cannot_do_is_said_with_what_does_it() {
 }
 
 #[test]
-fn a_clean_session_asked_for_its_errors_says_there_are_none() {
+fn a_clean_run_asked_for_its_errors_says_there_are_none() {
     let t = tempfile::tempdir().unwrap();
     let log = t.path().join("clean.log");
     std::fs::write(&log, A_LOG_LINE).unwrap();
@@ -1128,12 +1069,9 @@ fn a_clean_session_asked_for_its_errors_says_there_are_none() {
         &["import", log.to_str().unwrap(), "-o", out.to_str().unwrap()],
     );
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
-    // (grammar: one of each)
-    assert!(
-        stdout(&o).contains("1 request (1 operation)"),
-        "{}",
-        stdout(&o)
-    );
+    // (one request is one operation: said once)
+    assert!(stdout(&o).contains("1 request from"), "{}", stdout(&o));
+    assert!(!stdout(&o).contains("operation"), "{}", stdout(&o));
     for flags in [vec!["--errors"], vec!["--errors", "--requests"]] {
         let mut args = vec!["show", out.to_str().unwrap()];
         args.extend(flags);
@@ -1151,10 +1089,10 @@ fn a_commands_help_lists_the_formats_it_writes_and_the_options_it_uses() {
         stdout(&sonde(t.path(), &args))
     };
     let show = help(&["show"]);
-    assert!(show.contains("The format written: table or json"), "{show}");
+    assert!(show.contains("The format written: text or json"), "{show}");
     assert!(!show.contains("csv") && !show.contains("github"), "{show}");
     assert!(help(&["check"]).contains("markdown") && help(&["check"]).contains("github"));
-    assert!(help(&["bucket", "size"]).contains("table, json or csv"));
+    assert!(help(&["bucket", "size"]).contains("text or json"));
     // the options of every command under their own heading
     let run = help(&["run"]);
     let at = |text: &str, what: &str| {
@@ -1167,14 +1105,14 @@ fn a_commands_help_lists_the_formats_it_writes_and_the_options_it_uses() {
     );
     assert!(at(&run, "--trial") < at(&run, "Global options:"), "{run}");
     // and a command that reads a file is not offered a store
-    for cmd in ["show", "sessions", "check", "share"] {
+    for cmd in ["show", "runs", "check", "share"] {
         let h = help(&[cmd]);
         assert!(h.contains("--data-dir"), "{cmd}: {h}");
         assert!(!h.contains("--url") && !h.contains("--rate"), "{cmd}: {h}");
     }
     // (still taken where it was always taken: it is hidden, not gone)
     assert_eq!(
-        sonde(t.path(), &["sessions", "--region", "eu-west-1"])
+        sonde(t.path(), &["runs", "--region", "eu-west-1"])
             .status
             .code(),
         Some(0)
@@ -1184,7 +1122,7 @@ fn a_commands_help_lists_the_formats_it_writes_and_the_options_it_uses() {
 #[test]
 fn check_init_leaves_the_limits_of_time_for_a_person_to_set() {
     let t = tempfile::tempdir().unwrap();
-    demo_session(t.path());
+    demo_run(t.path());
     let cfg = t.path().join("sonde.toml");
     let c = sonde(
         t.path(),
@@ -1198,8 +1136,9 @@ fn check_init_leaves_the_limits_of_time_for_a_person_to_set() {
         .expect("the line is there");
     assert!(waiting.starts_with("# max-waiting = "), "{waiting}");
     assert!(waiting.contains("measured"), "{waiting}");
+    // what follows from the others is no limit of its own
     assert!(
-        text.lines().any(|l| l.starts_with("# max-p95 = ")),
+        !text.contains("max-p95") && !text.contains("max-cost"),
         "{text}"
     );
     assert!(
@@ -1218,11 +1157,11 @@ fn check_init_leaves_the_limits_of_time_for_a_person_to_set() {
 
 /// The demo's session, and where it is.
 fn demo_file(dirs: &Path) -> std::path::PathBuf {
-    let name = demo_session(dirs);
-    dirs.join("data/sessions").join(format!("{name}.sonde"))
+    let name = demo_run(dirs);
+    dirs.join("data/runs").join(format!("{name}.sonde"))
 }
 
-/// A recorded session of `command` in the sessions folder, made of a
+/// A recorded run of `command` in the runs folder, made of a
 /// fixture's requests.
 fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::path::PathBuf {
     let fixture =
@@ -1232,7 +1171,7 @@ fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::pat
     let mut header: serde_json::Value = serde_json::from_str(header).unwrap();
     header["command"] = command.into();
     header["created"] = created.into();
-    let dir = dirs.join("data/sessions");
+    let dir = dirs.join("data/runs");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join(name);
     std::fs::write(&file, format!("{header}\n{records}")).unwrap();
@@ -1284,7 +1223,7 @@ fn nothing_reached_sonde_fails_the_check_and_run_says_so() {
         "2026-11-01T10:00:00Z",
     );
     let header = std::fs::read_to_string(&base).unwrap();
-    let empty = t.path().join("data/sessions/empty.sonde");
+    let empty = t.path().join("data/runs/empty.sonde");
     std::fs::write(&empty, format!("{}\n", header.lines().next().unwrap())).unwrap();
     let base = base.to_string_lossy().into_owned();
     let empty = empty.to_string_lossy().into_owned();
@@ -1362,66 +1301,61 @@ fn an_exit_code_survives_a_closed_pipe() {
 }
 
 #[test]
-fn sessions_are_listed_from_what_was_counted_in_the_folders_index() {
+fn runs_are_listed_from_what_was_counted_in_the_folders_index() {
     let t = tempfile::tempdir().unwrap();
     let file = demo_file(t.path());
-    // counted when it was recorded: in the folder's one index, no file beside it
-    // (a program's own state, one file per folder, is no session's)
+    // counted when it was recorded: in the folder's one index, with all else
+    // kept beside the runs (a program's findings too): no other file there
     let counted = || sonde_proxy::index::get(&file).counted.is_some();
     assert!(counted());
-    let per_program = ["findings.json", "verdicts.json", "baselines.json"];
     let beside: Vec<String> = std::fs::read_dir(file.parent().unwrap())
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|n| !n.starts_with('.') && !n.ends_with(".sonde"))
-        .filter(|n| !per_program.contains(&n.as_str()))
+        .filter(|n| !n.ends_with(".sonde"))
         .collect();
-    assert!(beside.is_empty(), "{beside:?}");
+    assert_eq!(beside.len(), 2, "{beside:?}");
+    assert!(
+        beside
+            .iter()
+            .all(|n| n == ".index.jsonl" || n == ".index.lock"),
+        "{beside:?}"
+    );
     let listed: serde_json::Value =
-        serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
+        serde_json::from_str(&stdout(&sonde(t.path(), &["runs", "-f", "json"]))).unwrap();
     assert_eq!(listed[0]["requests"], 9, "{listed}");
     assert_eq!(listed[0]["program"], "tour");
     assert!(listed[0]["seconds"].as_f64().unwrap() > 0.0);
     // one that is missing is made by the listing
     sonde_proxy::index::set(&file, sonde_proxy::index::Change::NoCounted);
     assert!(!counted());
-    assert!(stdout(&sonde(t.path(), &["sessions"])).contains("tour"));
+    assert!(stdout(&sonde(t.path(), &["runs"])).contains("tour"));
     assert!(counted());
     // nothing past the newest five: said, not silence
-    let kept = sonde(
-        t.path(),
-        &["sessions", "prune", "--keep", "5", "--confirm", "0"],
-    );
+    let kept = sonde(t.path(), &["runs", "prune", "--keep", "5", "--yes"]);
     assert!(
-        stdout(&kept).contains("nothing to remove: 2 sessions here"),
+        stdout(&kept).contains("nothing to remove: 2 runs here"),
         "{}",
         stdout(&kept)
     );
     assert!(file.is_file());
-    // a dry run that would delete: 4, and nothing deleted
-    let dry = sonde(t.path(), &["sessions", "prune", "--keep", "0"]);
-    assert_eq!(dry.status.code(), Some(4), "{}", stdout(&dry));
-    assert!(stderr(&dry).contains("--confirm 2"), "{}", stderr(&dry));
-    assert!(file.is_file());
-    // a count that is not the dry run's deletes nothing: refused, 77
-    let wrong = sonde(
-        t.path(),
-        &["sessions", "prune", "--keep", "0", "--confirm", "3"],
-    );
-    assert_eq!(wrong.status.code(), Some(77), "{}", stderr(&wrong));
-    assert!(file.is_file());
     assert_eq!(kept.status.code(), Some(0));
-    // removed, and what was counted of it with it
-    let gone = sonde(
-        t.path(),
-        &["sessions", "prune", "--keep", "0", "--confirm", "2"],
+    // a dry run that would delete: 4, and nothing deleted
+    let dry = sonde(t.path(), &["runs", "prune", "--keep", "0"]);
+    assert_eq!(dry.status.code(), Some(4), "{}", stdout(&dry));
+    assert!(
+        stderr(&dry).contains("run again with --yes"),
+        "{}",
+        stderr(&dry)
     );
+    assert!(file.is_file());
+    // removed, and what was counted of it with it
+    let gone = sonde(t.path(), &["runs", "prune", "--keep", "0", "--yes"]);
     assert!(stdout(&gone).contains("deleted "), "{}", stdout(&gone));
     assert!(!file.exists() && !counted());
 }
 
 #[test]
-fn a_session_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
+fn a_run_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
     let t = tempfile::tempdir().unwrap();
     let file = session_of(
         t.path(),
@@ -1443,7 +1377,7 @@ fn a_session_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
         assert_eq!(sonde(t.path(), args).status.code(), Some(65), "{args:?}");
     }
     // and the list says so, rather than listing it as a session that reads
-    let listed = sonde(t.path(), &["sessions", "-f", "json"]);
+    let listed = sonde(t.path(), &["runs", "-f", "json"]);
     let rows: serde_json::Value = serde_json::from_str(&stdout(&listed)).unwrap();
     assert!(
         rows[0]["unreadable"]
@@ -1452,9 +1386,9 @@ fn a_session_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
             .starts_with("line 2: "),
         "{rows}"
     );
-    let table = sonde(t.path(), &["sessions"]);
+    let table = sonde(t.path(), &["runs"]);
     assert!(
-        stderr(&table).contains("bad.sonde is not a session: line 2: "),
+        stderr(&table).contains("bad.sonde is not a run: line 2: "),
         "{}",
         stderr(&table)
     );
@@ -1537,7 +1471,7 @@ fn a_long_command_is_cut_in_its_middle_to_fit_the_terminal() {
     );
     session_of(t.path(), "long.sonde", &long, "2026-11-10T02:00:00Z");
     let narrow = Command::new(env!("CARGO_BIN_EXE_sonde"))
-        .arg("sessions")
+        .arg("runs")
         .env("SONDE_CONFIG_DIR", t.path().join("config"))
         .env("SONDE_DATA_DIR", t.path().join("data"))
         .env("COLUMNS", "110")
@@ -1557,7 +1491,7 @@ fn a_long_command_is_cut_in_its_middle_to_fit_the_terminal() {
     );
     // not a terminal, and no width given: whole (and whole as JSON always)
     let piped = Command::new(env!("CARGO_BIN_EXE_sonde"))
-        .arg("sessions")
+        .arg("runs")
         .env("SONDE_CONFIG_DIR", t.path().join("config"))
         .env("SONDE_DATA_DIR", t.path().join("data"))
         .env_remove("COLUMNS")
@@ -1702,7 +1636,7 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
     let doc: serde_json::Value = serde_json::from_str(&stdout(&c)).unwrap();
     assert_eq!(doc["passed"], true, "{doc}");
     assert!(doc["noBaseline"].is_null(), "{doc}");
-    // held to it by name: past it is "past its baseline", not "over budget"
+    // held to it by name: over it is "over its baseline", not "over budget"
     let c = sonde(
         t.path(),
         &[
@@ -1851,7 +1785,7 @@ fn the_help_lists_fourteen_commands_at_most() {
 #[test]
 fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     let t = tempfile::tempdir().unwrap();
-    let dir = t.path().join("data/sessions");
+    let dir = t.path().join("data/runs");
     std::fs::create_dir_all(&dir).unwrap();
     let runs = [
         "etl-1-base",
@@ -1877,7 +1811,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
         "{first}"
     );
     for said in [
-        "    saving: 20 fewer requests (21% of the session)",
+        "    saving: 20 fewer requests (21% of the run)",
         "    at etl.py:19 <module> (20 requests)",
         "    fix for boto3:",
         "      obj = s3.get_object(Bucket=b, Key=k)",
@@ -2074,10 +2008,7 @@ fn a_layout_asked_for_by_kind_and_not_there_is_said() {
     std::fs::create_dir_all(d.join("logs")).unwrap();
     std::fs::write(d.join("logs/a.txt"), "x").unwrap();
     let dir = d.to_str().unwrap();
-    let o = sonde(
-        t.path(),
-        &["layout", "inspect", "--dir", dir, "--kind", "slatedb"],
-    );
+    let o = sonde(t.path(), &["layout", "--dir", dir, "--kind", "slatedb"]);
     assert_eq!(o.status.code(), Some(4), "{}", stderr(&o));
     assert!(
         stderr(&o).contains("is not a SlateDB layout"),
@@ -2085,10 +2016,7 @@ fn a_layout_asked_for_by_kind_and_not_there_is_said() {
         stderr(&o)
     );
     // any prefix has a write cadence
-    let o = sonde(
-        t.path(),
-        &["layout", "inspect", "--dir", dir, "--kind", "generic"],
-    );
+    let o = sonde(t.path(), &["layout", "--dir", dir, "--kind", "generic"]);
     assert_ne!(o.status.code(), Some(64), "{}", stderr(&o));
     assert!(!stderr(&o).contains("is not a"), "{}", stderr(&o));
 }
@@ -2168,7 +2096,7 @@ fn check_fails_a_run_whose_program_failed() {
     // the run kept that its program failed
     let failed = sonde_in(t.path(), &w, &["run", "--demo", "--", "sh", "-c", "exit 3"]);
     assert_eq!(failed.status.code(), Some(3), "{}", stderr(&failed));
-    for format in ["table", "json", "markdown", "github"] {
+    for format in ["text", "json", "markdown", "github"] {
         let c = sonde_in(
             t.path(),
             &w,
@@ -2239,7 +2167,7 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     // show, compare and share take the same run: this folder's, not the newest
     let shown = sonde_in(t.path(), &a, &["show", "--summary", "-f", "json"]);
     let doc: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
-    assert_eq!(doc["session"]["command"], "sh get.sh", "{doc}");
+    assert_eq!(doc["run"]["command"], "sh get.sh", "{doc}");
     let compared = sonde_in(t.path(), &a, &["compare"]);
     assert!(
         stdout(&compared).contains("first run of `get`")
@@ -2267,14 +2195,15 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     );
     assert!(!stdout(&ck).contains("≤ 0"), "{}", stdout(&ck));
     // the same run named: the same
-    let other = err
+    // (named once, first in what check writes)
+    let other = stdout(&ck)
         .lines()
-        .find_map(|l| {
-            l.strip_prefix("checking ")
-                .and_then(|l| l.rsplit(": ").next())
-        })
+        .next()
+        .and_then(|l| l.strip_prefix("run "))
+        .and_then(|l| l.split(" · ").next())
         .unwrap()
         .to_string();
+    assert!(!err.contains(&other), "the path said twice: {err}");
     let ck = sonde_in(t.path(), &c, &["check", &other]);
     assert!(
         stderr(&ck).contains("its [check] is not applied"),
@@ -2299,7 +2228,7 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
     let r = sonde_in(t.path(), &c, &["run", "--demo", "--", "sh", "-c", "exit 0"]);
     assert_eq!(r.status.code(), Some(0), "{}", stderr(&r));
     let listed: serde_json::Value =
-        serde_json::from_str(&stdout(&sonde(t.path(), &["sessions", "-f", "json"]))).unwrap();
+        serde_json::from_str(&stdout(&sonde(t.path(), &["runs", "-f", "json"]))).unwrap();
     assert_eq!(
         (listed[0]["program"].as_str(), listed[1]["program"].as_str()),
         (Some("sh"), Some("fetch")),
@@ -2415,7 +2344,7 @@ fn a_keys_control_characters_are_written_out_never_sent() {
         vec!["show", "--requests", s],
         vec!["show", "--all", s],
         vec!["show", "--by", "prefix", s],
-        vec!["sessions"],
+        vec!["runs"],
         vec!["compare", s, s],
         vec!["check", s],
     ] {
@@ -2435,7 +2364,7 @@ fn a_keys_control_characters_are_written_out_never_sent() {
 }
 
 fn sessions_in(dirs: &Path) -> usize {
-    std::fs::read_dir(dirs.join("data/sessions"))
+    std::fs::read_dir(dirs.join("data/runs"))
         .map(|d| {
             d.flatten()
                 .filter(|e| e.file_name().to_string_lossy().ends_with(".sonde"))
@@ -2467,7 +2396,7 @@ fn run_refuses_a_mistyped_flag_and_no_endpoint_and_records_nothing_it_did_not_ru
     let o = sonde(t.path(), &["run", "--demo", "--", "/no/such/program"]);
     assert_eq!(o.status.code(), Some(70), "{}", stderr(&o));
     assert!(stderr(&o).contains("cannot start"), "{}", stderr(&o));
-    assert_eq!(sessions_in(t.path()), 0, "no session of what never ran");
+    assert_eq!(sessions_in(t.path()), 0, "no run of what never ran");
     // a program's own flags after its name are its own
     let o = sonde(t.path(), &["run", "--demo", "--", "sh", "-c", "exit 0"]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
@@ -2498,8 +2427,7 @@ fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
     let m_ = mine.to_str().unwrap();
     for args in [
         vec!["import", log.to_str().unwrap(), "-o", m_],
-        vec!["share", o_, "--html", "-o", m_],
-        vec!["share", o_, "--otlp", "-o", m_],
+        vec!["share", o_, "-o", m_],
     ] {
         std::fs::write(&mine, "mine").unwrap();
         let o = sonde(t.path(), &args);
@@ -2512,6 +2440,11 @@ fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
         assert_eq!(std::fs::read_to_string(&mine).unwrap(), "mine", "{args:?}");
         let forced = [args.clone(), vec!["--force"]].concat();
         let o = sonde(t.path(), &forced);
+        // (a build without the viewer makes no page: it leaves the file as it was)
+        if stderr(&o).contains("no web viewer") {
+            assert_eq!(std::fs::read_to_string(&mine).unwrap(), "mine");
+            continue;
+        }
         assert_eq!(o.status.code(), Some(0), "{forced:?}: {}", stderr(&o));
         assert_ne!(std::fs::read_to_string(&mine).unwrap_or_default(), "mine");
     }
@@ -2544,12 +2477,12 @@ fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
             assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
             let err = stderr(&o);
             err.lines()
-                .find_map(|l| l.strip_prefix("session: "))
+                .find_map(|l| l.strip_prefix("run: "))
                 .unwrap()
                 .to_string()
         })
         .collect();
-    assert_ne!(seen[0], seen[1], "each its own session: {seen:?}");
+    assert_ne!(seen[0], seen[1], "each its own run: {seen:?}");
     for s in &seen {
         assert!(Path::new(s).is_file(), "{s}");
     }

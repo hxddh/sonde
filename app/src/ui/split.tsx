@@ -15,7 +15,7 @@ import { Await, Choice } from "./kit";
 import { GroupTable, groupRows } from "./profile";
 
 export type GroupBy = SplitBy | "none";
-export const GROUP_BY: GroupBy[] = ["none", "kind", "prefix", "size", "caller", "sdk", "status"];
+export const GROUP_BY: GroupBy[] = ["none", "kind", "prefix", "size", "caller", "sdk", "status", "key"];
 
 /** The one Group by control: each operation (none), or the operations split by a dimension. */
 export function GroupByChoice(props: { value: GroupBy; onChange: (v: GroupBy) => void }) {

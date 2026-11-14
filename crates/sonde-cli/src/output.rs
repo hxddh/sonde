@@ -73,41 +73,13 @@ fn said(args: std::fmt::Arguments<'_>, newline: bool) -> String {
     text
 }
 
+/// What every command writes: text for people, JSON for machines (`sonde
+/// check` writes two more of its own).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 pub enum Format {
     #[default]
-    Table,
+    Text,
     Json,
-    Markdown,
-    Csv,
-    /// GitHub Actions annotations (`sonde check`): on the run's summary and,
-    /// where a finding names its code, on that line of the diff.
-    Github,
-}
-
-impl Format {
-    fn flag(self) -> &'static str {
-        match self {
-            Format::Table => "table",
-            Format::Json => "json",
-            Format::Markdown => "markdown",
-            Format::Csv => "csv",
-            Format::Github => "github",
-        }
-    }
-}
-
-/// Why `command` does not write `format`, when it writes only `formats`: a
-/// format asked for and not written is a mistake in the command, not a table.
-pub fn unsupported(format: Format, command: &str, formats: &[Format]) -> Option<String> {
-    (!formats.contains(&format)).then(|| {
-        let known: Vec<&str> = formats.iter().map(|f| f.flag()).collect();
-        format!(
-            "{command} does not write -f {} (it writes {})",
-            format.flag(),
-            known.join(", ")
-        )
-    })
 }
 
 /// A count with its noun: `1 request`, `3 requests`, `10,004 requests`.
@@ -183,6 +155,15 @@ pub fn json(v: &impl serde::Serialize) -> String {
     serde_json::to_string_pretty(v).unwrap_or_default()
 }
 
+/// Rows as an aligned table, as `print!` writes them.
+pub fn print(headers: &[&str], rows: &[Vec<String>]) {
+    println!("{}", table(headers, rows));
+}
+
+pub fn bytes(b: u64) -> String {
+    sonde_fmt::bytes(b)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -206,79 +187,5 @@ mod tests {
     fn aligned() {
         let t = super::table(&["a", "bb"], &[vec!["xxx".into(), "y".into()]]);
         assert_eq!(t, "a    bb\n───  ──\nxxx  y");
-    }
-}
-
-/// Rows in the format asked for: an aligned table, a Markdown table or CSV.
-/// (JSON is each command's own, as it carries more than the rows.)
-pub fn render(format: Format, headers: &[&str], rows: &[Vec<String>]) -> String {
-    match format {
-        Format::Markdown => {
-            let line = |cells: Vec<String>| format!("| {} |\n", cells.join(" | "));
-            let esc = |c: &str| c.replace('|', "\\|");
-            let mut s = line(headers.iter().map(|h| esc(h)).collect());
-            s.push_str(&line(headers.iter().map(|_| "---".to_string()).collect()));
-            for r in rows {
-                s.push_str(&line(r.iter().map(|c| esc(c)).collect()));
-            }
-            s
-        }
-        Format::Csv => {
-            let cell = |c: &str| {
-                if c.contains([',', '"', '\n']) {
-                    format!("\"{}\"", c.replace('"', "\"\""))
-                } else {
-                    c.to_string()
-                }
-            };
-            let mut s = headers
-                .iter()
-                .map(|h| cell(h))
-                .collect::<Vec<_>>()
-                .join(",");
-            s.push('\n');
-            for r in rows {
-                s.push_str(&r.iter().map(|c| cell(c)).collect::<Vec<_>>().join(","));
-                s.push('\n');
-            }
-            s
-        }
-        _ => format!("{}\n", table(headers, rows)),
-    }
-}
-
-pub fn print(format: Format, headers: &[&str], rows: &[Vec<String>]) {
-    print!("{}", render(format, headers, rows));
-}
-
-pub fn bytes(b: u64) -> String {
-    sonde_fmt::bytes(b)
-}
-
-#[cfg(test)]
-mod render_tests {
-    use super::*;
-
-    #[test]
-    fn a_format_a_command_does_not_write_is_said_not_ignored() {
-        let writes = [Format::Table, Format::Json];
-        assert_eq!(unsupported(Format::Json, "show", &writes), None);
-        assert_eq!(
-            unsupported(Format::Csv, "show", &writes).as_deref(),
-            Some("show does not write -f csv (it writes table, json)")
-        );
-    }
-
-    #[test]
-    fn markdown_and_csv_are_real() {
-        let rows = vec![vec!["a|b".to_string(), "x,\"y\"".to_string()]];
-        assert_eq!(
-            render(Format::Markdown, &["k", "v"], &rows),
-            "| k | v |\n| --- | --- |\n| a\\|b | x,\"y\" |\n"
-        );
-        assert_eq!(
-            render(Format::Csv, &["k", "v"], &rows),
-            "k,v\na|b,\"x,\"\"y\"\"\"\n"
-        );
     }
 }

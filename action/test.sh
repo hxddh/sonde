@@ -120,15 +120,15 @@ is "of the schedule's runs" "$(grep -c -- '--branch main --event schedule' "$t/g
 # the program's command as typed; its status kept for the verdict
 SONDE_RUN="python3 -c 'print(1)'" SONDE_RUN_ARGS="--url https://s3.test --policy allow" SONDE_NAME=etl FAKE_RUN_EXIT=3 step record
 is "record keeps the program's status" "$(output exit)" 3
-is "record writes a session" "$(output session)" "$t/runner/sonde/run.sonde"
+is "record writes a run" "$(output file)" "$t/runner/sonde/run.sonde"
 is "the command's words as typed" "$(tail -n 3 "$t/sonde.run" | paste -sd'|')" "python3|-c|print(1)"
 is "run's flags and the name before --" "$(grep -c -e '^--policy$' -e '^allow$' -e '^etl$' "$t/sonde.run")" 3
 
 # check: passed or not; anything else is the step's failure
-export SONDE_SESSION="$t/runner/sonde/run.sonde" SONDE_BASELINE=auto
+export SONDE_FILE="$t/runner/sonde/run.sonde" SONDE_BASELINE=auto
 SONDE_CHECK_ARGS="--tolerance 5" step check >/dev/null
 is "a check that passed" "$(output passed)" true
-is "check's flags" "$(paste -sd' ' "$t/sonde.check")" "check $SONDE_SESSION --baseline auto --tolerance 5 -f github"
+is "check's flags" "$(paste -sd' ' "$t/sonde.check")" "check $SONDE_FILE --baseline auto --tolerance 5 -f github"
 FAKE_CHECK=1 step check >/dev/null
 is "a check that failed" "$(output passed)" false
 if FAKE_CHECK=64 step check >/dev/null; then is "a check that could not run fails the step" 0 1; fi
@@ -146,7 +146,7 @@ is "the comment starts with its marker" "$(head -n 1 "$t/body")" "<!-- sonde: et
 is "the comment links the report" "$(grep -c -- '--report-url' "$t/sonde.check")" 1
 is "the summary has the comment" "$(grep -c 'within budget' "$t/summary")" 1
 SONDE_EXIT=1 step comment
-is "the program's status is the session's: no flag carries it" "$(grep -c -- '--program-exit' "$t/sonde.check")" 0
+is "the program's status is the run's: no flag carries it" "$(grep -c -- '--program-exit' "$t/sonde.check")" 0
 FAKE_COMMENT=99 step comment
 is "a comment there: it is edited" "$(output url)" "https://github.test/repos/o/r/issues/comments/99"
 SONDE_COMMENT=false FAKE_COMMENT=99 step comment

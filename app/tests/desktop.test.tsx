@@ -85,7 +85,7 @@ test("a run file opens from Runs: a picked .sonde, and a refusal for anything el
   await app.waitFor("text:$ python gen_delta.py s3://lake/delta", { timeout: 10000 });
   app.onPick(() => [{ name: "notes.sonde", data: encode("hello") }]);
   await app.press("id:open-file");
-  await app.waitFor("text:/notes.sonde: not a sonde session/", { timeout: 5000 });
+  await app.waitFor("text:/notes.sonde: not a sonde run/", { timeout: 5000 });
 });
 
 const SESSION = "{\"format\":\"sonde-session\",\"version\":2,\"created\":\"2026-11-07T01:09:10.816413840Z\",\"endpoint\":\"rustfs\",\"url\":\"http://127.0.0.1:9100/\",\"region\":\"us-east-1\",\"command\":\"python gen_delta.py s3://lake/delta\"}\n{\"id\":1,\"time\":\"2026-11-07T01:09:10.924307634Z\",\"endpoint\":\"adhoc\",\"kind\":\"GetObject\",\"method\":\"GET\",\"url\":\"http://127.0.0.1:9100/lake/delta/_delta_log/_last_checkpoint\",\"bucket\":\"lake\",\"key\":\"delta/_delta_log/_last_checkpoint\",\"query\":[],\"status\":404,\"latencyMs\":2.124287,\"retries\":0,\"requestId\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\",\"hostId\":null,\"requestHeaders\":[{\"name\":\"host\",\"value\":\"127.0.0.1:42459\"},{\"name\":\"x-amz-date\",\"value\":\"20261107T010910Z\"},{\"name\":\"x-amz-content-sha256\",\"value\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},{\"name\":\"authorization\",\"value\":\"AWS4-HMAC-SHA256 Credential=\u00abredacted\u00bb/20261107/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=\u00abredacted\u00bb\"},{\"name\":\"accept\",\"value\":\"*/*\"},{\"name\":\"user-agent\",\"value\":\"object_store/0.13.2\"}],\"responseHeaders\":[{\"name\":\"content-type\",\"value\":\"application/xml\"},{\"name\":\"x-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"x-amz-request-id\",\"value\":\"2fc6cbee-0ce0-4d54-8f25-cdcda4d2df69\"},{\"name\":\"content-length\",\"value\":\"127\"},{\"name\":\"date\",\"value\":\"Sat, 07 Nov 2026 01:09:10 GMT\"}],\"requestBytes\":0,\"responseBytes\":127,\"errorBody\":\"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>\",\"transportError\":null,\"region\":\"us-east-1\",\"job\":null}\n";
@@ -266,8 +266,27 @@ test("every chart over one stretch of time names the same round moments", async 
   expect(timeTicks([230, 460])).toEqual([300, 400]);
   expect(timeTicks([5, 5])).toEqual([5]);
   // slices and wall time give one span: a chart of slices and a chart of moments agree
-  expect(sessionSpan({ binMs: 7.8, wallMs: 467 }, 60)).toEqual([0, 468]);
-  expect(sessionSpan({ binMs: 10, wallMs: 467 }, 40)).toEqual([0, 467]);
+  expect(sessionSpan({ startMs: 0, binMs: 7.8, wallMs: 467 }, 60)).toEqual([0, 468]);
+  expect(sessionSpan({ startMs: 0, binMs: 10, wallMs: 467 }, 40)).toEqual([0, 467]);
+  // a stretch's own profile: on the session's axis, from where it starts
+  expect(sessionSpan({ startMs: 1000, binMs: 10, wallMs: 467 }, 40)).toEqual([1000, 1467]);
+});
+
+test("a shape in a terminal is block characters, a burst kept, never wider than its room", async () => {
+  const { blocks } = await import("../src/ui/plots");
+  expect(blocks([0, 1, 2, 4])).toBe("▁▃▅█");
+  // forty slices in sixteen columns: each column the most of its slices
+  const burst = Array.from({ length: 40 }, (_, i) => (i === 21 ? 9 : 1));
+  const said = blocks(burst);
+  expect(said.length).toBe(16);
+  expect([...said].filter((c) => c === "█").length).toBe(1);
+});
+
+test("a scale of sizes is ticked at powers of 1024, or of 32 where it is narrow", async () => {
+  const { sizeTicks } = await import("../src/ui/plots");
+  const said = (d: [number, number]) => sizeTicks(d).map((v) => Math.round(10 ** v));
+  expect(said([0, 7])).toEqual([1, 1024, 1024 ** 2]);
+  expect(said([3.2, 6.5])).toEqual([32 * 1024, 1024 ** 2]);
 });
 
 test("a table that narrows drops its columns by rank, whole, and clips none", async () => {

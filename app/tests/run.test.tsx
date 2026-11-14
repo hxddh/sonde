@@ -205,11 +205,10 @@ test("a run's time: where it went, and two runs before and after", async () => {
   expect(app.shows("id:latency-heat-chart")).toBe(true);
   expect(app.shows("id:scatter-size-chart")).toBe(true);
   for (const id of ["latency-as", "scatter-by", "spent-by", "sizes-by", "prefix-measure"]) expect(app.shows(`id:${id}`)).toBe(false);
-  // where by prefix: by requests, and by the busiest second against S3's limit, two maps
+  // where by prefix: one bar chart, each prefix's requests and its busiest second against S3's limit
   await app.scroll("id:time-pane", 900);
   await app.waitFor("id:prefix-use");
-  await app.waitFor("id:prefix-peak-chart");
-  expect(app.shows("label:/^Most at .*: \\d+\\/s$/")).toBe(true);
+  expect(app.shows("label:/^Most at .*: \\d+ requests?, \\d+\\/s at its busiest$/")).toBe(true);
   // the operations sort by how long they took
   await app.press("id:session-pane-mode-operations");
   // compared with another run: before and after
@@ -254,7 +253,7 @@ test("a program over its runs: history, a baseline, and the flows of its request
   await app.press("id:session-pane-mode-time");
   await app.waitFor("id:time-pane");
   // how long every request took (of two: said so), and where they went, on demand
-  expect(app.shows("text:/^Half took .* or less, 95% took .* or less.* · of only 2 requests$/")).toBe(true);
+  expect(app.shows("text:/^Half took .* or less; the slowest .* · of only 2 requests$/")).toBe(true);
   await app.waitFor("id:flows");
   expect(app.shows("label:/^2 requests: 50% answered/")).toBe(true);
 });

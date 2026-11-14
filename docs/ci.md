@@ -26,7 +26,7 @@ the newest one. This repository tests it against stand-ins on each pull request,
 each release and daily, against a real baseline and a real comment.
 
 No store, no secrets: `run-args: --demo` runs the program against the built-in store, so the check holds its
-requests and findings (its times are not meaningful: leave `max-waiting` and `max-p95` out).
+requests and findings (its times are not meaningful: leave `max-waiting` out).
 
 | Step | Does |
 |---|---|
@@ -34,19 +34,19 @@ requests and findings (its times are not meaningful: leave `max-waiting` and `ma
 | Record | `sonde run -o FILE RUN-ARGS [--name NAME] -- RUN` in `working-directory`. The program's exit status fails the job, after the steps below. |
 | Baseline | `auto`: of the newest 5 completed push runs of the same workflow on the base branch (a push, a schedule: the runs of its own event on its own branch, not itself), the first that kept the artifact `artifact` (`gh run list`, `gh run download`). None: a warning, and `check --baseline auto` says `no baseline yet` in every format. |
 | Check | `sonde check -f github`: annotations on the run, findings on the code lines that sent them. |
-| Report | `sonde share --html RUN --baseline BASE` (`--redact` with `redact: true`): the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
-| Keep | The session, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
+| Report | `sonde share RUN --baseline BASE` (`--redact` with `redact: true`): one HTML file, the comparison first, then the run. Kept as the artifact `<artifact>-report`. |
+| Keep | The run, as the artifact `<artifact>`: the next runs' baseline (the repository's artifact retention, 90 days by default). |
 | Comment | `sonde check -f markdown --report-url URL`: the job's summary, and one pull-request comment found by `<!-- sonde: <artifact> -->` and edited in place. |
 | Verdict | Fails when the program failed, else when the check failed (`fail: false` keeps the job green). |
 
 | Input | Default | |
 |---|---|---|
 | `run` | (required) | The command, as typed. |
-| `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--policy allow`, `--demo`. |
+| `run-args` | | `sonde run` flags: `--url`, `--region`, `--path-style`, `--policy no-delete`, `--demo`. |
 | `name` | | The program's name (else `[program] name` in `sonde.toml` for the program it `runs`, else what the command runs). |
-| `check-args` | | `sonde check` flags: `--tolerance 5`, `--no-new-warnings`, `--max-requests N`. |
+| `check-args` | | `sonde check` flags: `--tolerance 5`, `--max-requests N`. |
 | `config` | found upward | `sonde.toml`. |
-| `baseline` | `auto` | `none`, a session path, or an https URL. |
+| `baseline` | `auto` | `none`, a run's path, or an https URL. |
 | `artifact` | `sonde` | One per job (a matrix names each). |
 | `comment` | `true` | Needs `pull-requests: write`. A fork's pull request has a read-only token: no comment (a warning), the summary still has it. |
 | `redact` | `false` | Bucket and key names in the report become tokens. |
@@ -55,16 +55,16 @@ requests and findings (its times are not meaningful: leave `max-waiting` and `ma
 | `working-directory` | `.` | |
 | `github-token` | `github.token` | Needs `actions: read` for the baseline. |
 
-Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
+Outputs: `passed` (`true`/`false`), `file` (the run's), `report-url`, `comment-url`.
 
 ## The comment
 
 ```markdown
-### sonde: past its baseline ❌
+### sonde: over its baseline ❌
 
 **Against the baseline**
 
-- **requests 52 → 72 (+38%)**, past the 57 it may use
+- **requests 52 → 72 (+38%)**, over the 57 it may use
 - cost 0.00021 USD → 0.00022 USD (+5%)
 
 | kind       | requests | waiting       |
@@ -81,18 +81,29 @@ Outputs: `passed` (`true`/`false`), `session`, `report-url`, `comment-url`.
 | Part | When |
 |---|---|
 | Heading | Always: the verdict, as every format closes. |
-| `> ❌ The program failed` | the run's program exited other than 0 (kept with the session): its status, and the first request the recording policy refused, if one was. |
-| Since | Past the baseline over several runs (needs the runs, so local history; not in a fresh runner). |
+| `> ❌ The program failed` | the run's program exited other than 0 (kept with the run): its status, and the first request the recording policy refused, if one was. |
+| Since | Over the baseline for several runs (needs the runs, so local history; not in a fresh runner). |
 | `> ⚠️ no baseline yet` | A baseline asked for and none found. |
 | Failed rows | Budget rows that failed; never a row that passed. Without a baseline, its failed rows too. |
-| Against the baseline | Requests, cost and errors that changed, waiting that moved past 10% and 50 ms; a figure past the baseline in bold with its limit. Kinds of request that changed. |
+| Against the baseline | Requests, cost and errors that changed, waiting that moved past 10% and 50 ms; a figure over the baseline in bold with its limit. Kinds of request that changed. |
 | New findings, Gone | Against the baseline, as `sonde compare` says them (one under its threshold in the baseline is not new, one under it in the run is not gone); new first, with the code line that sent them. Not when either run failed. |
-| Warnings now | `no-new-warnings`: a finding the baseline had as a note, a warning in this run. |
+| Warnings now | A finding the baseline had as a note, a warning in this run (a baseline always holds the run to no new warning). |
 | Trials | Those that broke or degraded; the survived counted. |
 | Findings | Without a baseline: the run's first five findings, folded. |
 | The report | With `--report-url`. |
 
-## GitLab CI
+## Elsewhere
+
+Three commands, in any CI:
+
+```sh
+sonde run -o run.sonde -- python etl.py
+sonde check run.sonde --baseline main.sonde -f markdown --report-url "$URL" > comment.md
+sonde share run.sonde --baseline main.sonde -o report.html
+```
+
+Keep `run.sonde` from the main branch (an artifact, a bucket) and give it, or its https URL, as `--baseline`.
+In GitLab CI:
 
 ```yaml
 s3:
@@ -105,14 +116,15 @@ s3:
     - 'curl -fsSL -o main.sonde -H "JOB-TOKEN: $CI_JOB_TOKEN"
         "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/artifacts/$CI_DEFAULT_BRANCH/raw/run.sonde?job=$CI_JOB_NAME"
         || rm -f main.sonde'
+    - sonde share run.sonde $([ -f main.sonde ] && echo --baseline main.sonde) -o report.html
     - sonde check run.sonde --max-errors 0 $([ -f main.sonde ] && echo --baseline main.sonde) -f markdown > check.md
   after_script:
     - cat check.md
   artifacts:
     when: always
-    paths: [run.sonde, check.md]
+    paths: [run.sonde, check.md, report.html]
 ```
 
-Each run is kept as the job's artifact; the default branch's newest is the next runs' baseline. `check` fails the job
-when the run is past its budget or baseline. Jenkins and other systems: the same `run`, a baseline fetched from where
-the main branch keeps its run, and `check`.
+Each run is kept as the job's artifact; the default branch's newest is the next runs' baseline (fetched with the job's
+token, so a private project works too). `check` fails the job when the run is past its budget or baseline; the errors
+floor lets the first pipeline, with no baseline yet, pass and keep its run. Jenkins takes the same three commands.

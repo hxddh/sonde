@@ -4,7 +4,7 @@
 import { computed, signal, token, View, Text } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { Area, Dot, Grid, Line, Plot, PlotAxis, PlotLabel, Rule, Treemap } from "nsh/base/plot";
-import { count, day, duration, factor, percent } from "../../format";
+import { change, count, day, duration, factor, percent } from "../../format";
 import { t } from "../../i18n";
 import type { LatencyChange, ProgramHistory, RunChange, Profile } from "../../types";
 import { areasWithRoom, AXIS_LABEL, CROSS_BAND, CROSS_LINE, Chart, ChartTip, DASH, GUTTER, GUTTER_SCALE, HEADROOM, HOVER, INACTIVE, LABEL, Legend, type LegendItem, MOTION, PLOT, TICK_ROOM, TREEMAP, axisName, decades, groupName, log10, rowsHeight, tipValue, BARS, GRID, STRIP, STROKE, TIP, TimeAxis, ValueAxis, sessionSpan, sinceTick, ROW_FIGURE, Budget, budgetTop } from "./system";
@@ -19,7 +19,7 @@ import { Figure, terminal, textual, SimpleTable, SURFACE, TONE } from "../kit";
  * and the median latency of the slices that sent any, and a rule at every
  * moment sonde answered in the store's place. What the faults cost shows as
  * the gap between the two lines after a rule. */
-export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: number[]; /** the stretch chosen on the timeline (ms from the start): both runs over it */ domainMs?: [number, number] | null }) {
+export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: number[]; /** the stretch chosen on the timeline (ms from the start): both runs over it */ domainMs?: [number, number] | null; /** what it says of itself (two runs compared: theirs; a trial: how long each took) */ label?: string }) {
   // (inside the stretch, with the slice that starts before it: the line enters the plot at its edge)
   const within = (tMs: number, binMs: number) => !props.domainMs || (tMs + binMs > props.domainMs[0] && tMs < props.domainMs[1]);
   const lineOf = (p: Profile) => {
@@ -48,7 +48,7 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
     const f = hovered() === null ? null : faults()[hovered()!];
     return f ? { title: sinceTick(f.tMs), lines: [t("trialOver.fault")] } : null;
   };
-  const label = () => t("trialOver.text", { trial: duration(props.trial.wallMs), clean: duration(props.clean.wallMs), n: props.faults.length });
+  const label = () => props.label ?? t("trialOver.took", { trial: duration(props.trial.wallMs), clean: duration(props.clean.wallMs) });
   // the count steps up at each slice's end; the median is of the slices that sent a request, joined across the rest
   const of = (rows: ReturnType<typeof lineOf>, key: "sent" | "p50") => (key === "sent" ? rows : rows.filter((r) => r.has));
   const plot = (key: "sent" | "p50", top: () => number, say: (v: number) => string, axis: boolean, testID: string) => (
@@ -89,11 +89,12 @@ export function TrialOverClean(props: { trial: Profile; clean: Profile; faults: 
   );
 }
 
-/** What the trial's chart draws: its line, the clean run's dashed under it, and a rule where sonde answered. */
-export function trialLegend(faults: boolean): LegendItem[] {
+/** What the trial's chart draws: its line, the clean run's dashed under it, and a rule where sonde answered. Two
+ * runs compared draw the same, named for what they are (`names`: the earlier, the later). */
+export function trialLegend(faults: boolean, names?: [string, string]): LegendItem[] {
   return [
-    { label: t("trialOver.trial"), swatch: "border-chart-1", line: "solid" },
-    { label: t("trialOver.clean"), swatch: "border-muted-foreground", line: "dashed" },
+    { label: names?.[1] ?? t("trialOver.trial"), swatch: "border-chart-1", line: "solid" },
+    { label: names?.[0] ?? t("trialOver.clean"), swatch: "border-muted-foreground", line: "dashed" },
     ...(faults ? [{ label: t("trialOver.faults"), swatch: TONE.injected.fill }] : []),
   ];
 }
@@ -178,7 +179,7 @@ export function RunBars(props: { change: RunChange; max?: number; /** two differ
           yScale={{ type: "band", ...BARS.pairs }}
           // room for the labels at the bars' ends
           xScale={{ type: "linear", domain: [0, peak() * 1.35] }}
-          colorScale={{ type: "ordinal", domain: ["fewer", "more", "same", "plain"], range: [token("status-ok" as never) as unknown as string, token("status-server" as never) as unknown as string, token("muted-foreground" as never) as unknown as string, token("chart-1" as never) as unknown as string] }}
+          colorScale={{ type: "ordinal", domain: ["fewer", "more", "same", "plain"], range: [token("chart-1" as never) as unknown as string, token("chart-4" as never) as unknown as string, token("muted-foreground" as never) as unknown as string, token("chart-1" as never) as unknown as string] }}
           accessibilityLabel={rows().map((r) => `${r.name} ${r.before} → ${r.after}`).join(", ")}
           accessibilityValue={tipValue(tip())}
           motion={MOTION}
@@ -209,7 +210,7 @@ export function RunBars(props: { change: RunChange; max?: number; /** two differ
             { label: t("runBars.before"), swatch: "border border-muted-foreground bg-card" },
             ...(props.neutral
               ? [{ label: t("runBars.after"), swatch: "bg-chart-1" }]
-              : [...(rows().some((r) => r.tone === "fewer") ? [{ label: t("runBars.fewer"), swatch: "bg-status-ok" }] : []), ...(rows().some((r) => r.tone === "more") ? [{ label: t("runBars.more"), swatch: "bg-status-server" }] : []), ...(rows().some((r) => r.tone === "same") ? [{ label: t("runBars.after"), swatch: "bg-muted-foreground" }] : [])]),
+              : [...(rows().some((r) => r.tone === "fewer") ? [{ label: t("runBars.fewer"), swatch: "bg-chart-1" }] : []), ...(rows().some((r) => r.tone === "more") ? [{ label: t("runBars.more"), swatch: "bg-chart-4" }] : []), ...(rows().some((r) => r.tone === "same") ? [{ label: t("runBars.after"), swatch: "bg-muted-foreground" }] : [])]),
           ]}
         />
       </If>
@@ -247,7 +248,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
           <Plot
             testID="prefix-change"
             data={rows()}
-            colorScale={{ type: "diverging", domain: [-1, 1], pivot: 0, range: props.neutral ? [token("chart-4"), token("muted"), token("chart-1")] : [token("status-ok"), token("muted"), token("status-server")] }}
+            colorScale={{ type: "diverging", domain: [-1, 1], pivot: 0, range: props.neutral ? [token("muted-foreground" as never) as unknown as string, token("muted"), token("chart-1")] : [token("chart-1"), token("muted"), token("chart-4")] }}
             accessibilityLabel={label()}
             accessibilityValue={tipValue(tip())}
             appearGeneration={rows().length}
@@ -276,7 +277,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
             />
           </Plot>
           {/* the changes there are, and no other */}
-          <Legend items={[...(rows().some((r) => r.change < 0) ? [{ label: t("prefixChange.fewer"), swatch: props.neutral ? "bg-chart-4" : "bg-status-ok" }] : []), ...(rows().some((r) => r.change === 0) ? [{ label: t("prefixChange.same"), swatch: "bg-muted" }] : []), ...(rows().some((r) => r.change > 0) ? [{ label: t("prefixChange.more"), swatch: props.neutral ? "bg-chart-1" : "bg-status-server" }] : [])]} />
+          <Legend items={[...(rows().some((r) => r.change < 0) ? [{ label: t("prefixChange.fewer"), swatch: props.neutral ? "bg-muted-foreground" : "bg-chart-1" }] : []), ...(rows().some((r) => r.change === 0) ? [{ label: t("prefixChange.same"), swatch: "bg-muted" }] : []), ...(rows().some((r) => r.change > 0) ? [{ label: t("prefixChange.more"), swatch: props.neutral ? "bg-chart-1" : "bg-chart-4" }] : [])]} />
         </View>
       </If>
     </If>
@@ -285,7 +286,18 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
 
 // --- a program over its runs ------------------------------------------------------------
 
-type Measure = "requests" | "waitingMs" | "cost" | "warnings";
+type Measure = "requests" | "waitingMs" | "cost" | "warnings" | "errors" | "p95Ms";
+
+/** What a figure did over a program's runs, in a sentence: against the baseline where one is set, else since the
+ * first run shown ("−56% against the baseline (120 → 53)"); the same in every run, said once. */
+export function trendSaid(runs: { created: string; v: number }[], base: number | null, format: (v: number) => string): string {
+  if (runs.length === 0) return "";
+  const last = runs[runs.length - 1].v;
+  if (runs.every((r) => format(r.v) === format(last)) && (base === null || format(base) === format(last))) return t("trend.textSame", { v: format(last) });
+  const ab = (a: number) => (a === 0 ? t("trend.fromNone") : change(a, last));
+  if (base !== null) return t("trend.textBaseline", { change: ab(base), a: format(base), b: format(last) });
+  return t("trend.textFirst", { change: ab(runs[0].v), day: day(runs[0].created), a: format(runs[0].v), b: format(last) });
+}
 
 /** One figure of a program over its runs: a line through them, the baseline dashed, the latest run labelled. */
 export function RunTrend(props: { history: ProgramHistory; measure: Measure; title: string; format: (v: number) => string; onOpen?: (path: string) => void; /** the project's own limit on this measure (sonde.toml's `max-waiting`): its line */ budget?: number | null }) {
@@ -311,9 +323,10 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
     return r ? { title: day(r.created), lines: [props.format(r[props.measure] as number), ...(base() !== null ? [t("trend.baseline", { v: props.format(base()!) })] : [])] } : null;
   };
   const label = () => `${props.title}: ${values().map(props.format).join(", ")}`;
+  const said = () => trendSaid(runs().map((r) => ({ created: r.created, v: r[props.measure] as number })), base(), props.format);
   return (
     // the latest run's figure (or the one under the pointer) where a chart's control is
-    <Chart testID={`trend-${props.measure}`} class={`${SURFACE.trend} flex-1`} title={props.title} action={<Figure value={props.format(shown()[props.measure] as number)} label={day(shown().created)} />}>
+    <Chart testID={`trend-${props.measure}`} class={`${SURFACE.trend} flex-1`} title={props.title} text={said()} action={<Figure value={props.format(shown()[props.measure] as number)} label={day(shown().created)} />}>
       <BaseButton
         accessibilityLabel={label()}
         disabled={!props.onOpen}
@@ -335,9 +348,10 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
           tooltipOffset={10}
           tooltipContent={<ChartTip tip={tip()} />}
           onHoverChange={({ index }) => hovered.set(index)}
-          // a line through a few runs, not rows
-          class={`mr-1 ${STRIP}`}
+          // a line through a few runs, not rows; the first and last runs' days under it
+          class={`mr-1 ${TICK_ROOM} ${STRIP}`}
         >
+          <PlotAxis tickValues={last() > 0 ? [0, last()] : [0]} format={(i) => day(runs()[i]?.created)} labelClass={LABEL.bucket} />
           <If when={base() !== null}>
             {/* the baseline, and up to what sonde check allows */}
             <If when={limit() !== null}>

@@ -36,20 +36,22 @@ Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in
 
 ## Large sessions
 
-**A million requests take about 1.1 GiB of memory** to read and analyse; `compare` of two, 1.3 GiB (it reads one
-session at a time). Memory grows with the requests: about 1.2 KB each, so 8 GB holds about six million.
+**A million requests take about 1.1 GiB of memory** to read and analyse, in 9 s; `compare` of two, 1.3 GiB (it
+reads one run at a time). Memory grows with the requests: about 1.1 KB each (a record's 470 bytes and its headers,
+then its operation), so 8 GB holds about six million. The goal is 400 MiB: a lean record of about 150 bytes.
 
-Measured 2026-11-14, release build, `/usr/bin/time` (peak resident memory), two runs each within 2%. The sessions are
+Measured 2026-11-14 (22.0), release build, `/usr/bin/time` (peak resident memory), the commands once, the budgets twice (their ranges below). The sessions are
 the budgets' lake job with real headers (`crates/proxy/tests/support`): a million requests, 170 MiB gzipped, 1.6 GiB
 of JSON lines.
 
 | A million requests | Time | Peak memory |
 | --- | --- | --- |
-| `sonde show` | 7.6 s | 1.1 GiB |
-| `sonde show -f json` | 36 s | 1.1 GiB |
-| `sonde check --baseline` (another million) | 14 s | 1.2 GiB |
-| `sonde compare` (two millions) | 19 s | 1.3 GiB |
-| `sonde share --html` | 9 s | 1.0 GiB |
+| `sonde show` | 8.7 s | 1.1 GiB |
+| `sonde show -f json` | 14 s | 1.1 GiB |
+| `sonde show -f json --requests` (1.6 GiB of JSON) | 39 s | 1.1 GiB |
+| `sonde check --baseline` (another million) | 18 s | 1.2 GiB |
+| `sonde compare` (two millions) | 23 s | 1.3 GiB |
+| `sonde share` | not yet measured | |
 
 Budgets (`crates/proxy/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past its
 peak memory (what is measured and about an eighth more), which is the same from run to run. Time moves with a shared
@@ -57,14 +59,15 @@ runner: it is said in the job's summary and fails only past several times what i
 
 | Budget | Measured | Peak memory, held at | Time, held at |
 | --- | --- | --- | --- |
-| a million read and analysed (`show`) | 1,141–1,160 MiB, 7.3–7.6 s | 1,300 MiB | 45 s |
-| two runs of a million compared | 1,282 MiB, 18 s | 1,450 MiB | 120 s |
-| an outage of 300 thousand | 521–527 MiB, 1.7 s | 600 MiB | 30 s |
-| small multipart uploads, 300 thousand | 437 MiB, 2.3 s | 500 MiB | 30 s |
-| the app's first view of 100 thousand (629 KiB sent) | 236–243 MiB, 0.6–0.7 s | 280 MiB | 6 s |
-| a sorted page of operations | 55 ms | | 1.5 s |
+| a million read and analysed (`show`) | 1,110–1,126 MiB, 8.4–9.3 s | 1,300 MiB | 45 s |
+| two runs of a million compared | 1,269–1,357 MiB, 23 s | 1,450 MiB | 120 s |
+| an outage of 300 thousand | 516–517 MiB, 2.1–2.2 s | 600 MiB | 30 s |
+| small multipart uploads, 300 thousand | 435–441 MiB, 2.6–2.9 s | 500 MiB | 30 s |
+| the app's first view of 100 thousand | 237–242 MiB, 0.7 s | 280 MiB | 6 s |
+| a sorted page of operations | 52 ms | | 1.5 s |
+| the Time pane of a million: its rows (bounded by its slices, under 2 MiB) and a tenth reckoned alone | 715 MiB, 7.4 s | 1,462 MiB | 45 s |
 
-How: the file is streamed and parsed on every core; records keep only the headers an analysis reads, with repeated
+How: the file is streamed and parsed on every core; `show -f json` writes the requests only with `--requests`; records keep only the headers an analysis reads, with repeated
 text shared; operations, signals and profile are computed once, in parallel; JSON is written as it is made; the app
 gets a page of operations at a time; `compare` reads one session at a time. The app also caches each
 finished run's figures in `sessions/.index.jsonl` and reads a live recording incrementally.

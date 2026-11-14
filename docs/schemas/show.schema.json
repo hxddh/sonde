@@ -26,8 +26,8 @@
         "$ref": "#/$defs/record"
       }
     },
-    "session": {
-      "$ref": "#/$defs/sessionHeader"
+    "run": {
+      "$ref": "#/$defs/runHeader"
     },
     "summary": {
       "$ref": "#/$defs/summary"
@@ -55,13 +55,13 @@
         "object",
         "null"
       ],
-      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, back, new, open), or `failed` (the exit code of a run that failed: not compared). Null for a session that is no run of a program."
+      "description": "The run against its program's run before it, as `show` says it under \"since the run before\": `program`, `previous`, `change` (as `compare -f json`), `findings` (each with its `state`: fixed, less, back, new, open), or `failed` (the exit code of a run that failed: not compared). Null for a run that is no run of a program."
     }
   },
   "required": [
     "operations",
     "findings",
-    "session",
+    "run",
     "summary",
     "whatIf",
     "trials"
@@ -214,7 +214,7 @@
         },
         "operations": {
           "type": "array",
-          "description": "The operations it is about (their places in the session's `operations`).",
+          "description": "The operations it is about (their places in the run's `operations`).",
           "items": {
             "type": "integer"
           }
@@ -366,11 +366,11 @@
     },
     "record": {
       "type": "object",
-      "description": "One request: a line of the session file (docs/dev/session-format.md).",
+      "description": "One request: a line of the run file (docs/dev/run-format.md).",
       "properties": {
         "id": {
           "type": "integer",
-          "description": "Unique within the session."
+          "description": "Unique within the run."
         },
         "time": {
           "type": "string",
@@ -535,18 +535,18 @@
         "job"
       ]
     },
-    "sessionHeader": {
+    "runHeader": {
       "type": "object",
-      "description": "The session's first line: docs/dev/session-format.md.",
+      "description": "The run's first line: docs/dev/run-format.md.",
       "properties": {
         "format": {
           "type": "string",
-          "description": "Always `sonde-session`.",
+          "description": "Always `sonde-run`.",
           "const": "sonde-session"
         },
         "version": {
           "type": "integer",
-          "description": "The session format's version (docs/dev/session-format.md)."
+          "description": "The run format's version (docs/dev/run-format.md)."
         },
         "sonde": {
           "type": "string",
@@ -606,7 +606,7 @@
     },
     "summary": {
       "type": "object",
-      "description": "The session in figures.",
+      "description": "The run in figures.",
       "properties": {
         "requests": {
           "type": "integer"
@@ -694,7 +694,7 @@
             "array",
             "null"
           ],
-          "description": "Null when the session's times cannot say it (an imported log's, to the second).",
+          "description": "Null when the run's times cannot say it (an imported log's, to the second).",
           "prefixItems": [
             {
               "type": "number"
@@ -806,7 +806,7 @@
               },
               "run": {
                 "type": "string",
-                "description": "The run's session file name."
+                "description": "The run's file name."
               }
             },
             "required": [

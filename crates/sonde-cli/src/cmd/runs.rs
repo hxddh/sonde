@@ -1,4 +1,4 @@
-//! `sonde sessions`: the recorded sessions, newest first, and pruning old ones.
+//! `sonde runs`: the recorded runs, newest first, and pruning old ones.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use crate::output::{self, Format};
 
 #[derive(Args)]
 #[command(args_conflicts_with_subcommands = true)]
-pub struct SessionsArgs {
+pub struct RunsArgs {
     #[command(subcommand)]
     action: Option<Action>,
     #[command(flatten)]
@@ -19,7 +19,7 @@ pub struct SessionsArgs {
 
 #[derive(Args)]
 struct ListArgs {
-    /// The format written: table, json, markdown or csv.
+    /// The format written: text or json.
     #[arg(
         long,
         short = 'f',
@@ -32,16 +32,14 @@ struct ListArgs {
 
 #[derive(Subcommand)]
 enum Action {
-    /// List them, newest first (the default).
-    List(ListArgs),
-    /// Delete all but the newest N (baselines are kept): a dry run, unless --confirm repeats the count it prints.
+    /// Delete all but the newest N (baselines are kept): a dry run, unless --yes.
     Prune {
-        /// How many of the newest sessions to keep.
+        /// How many of the newest runs to keep.
         #[arg(long, value_name = "N")]
         keep: usize,
-        /// The number of sessions the dry run said it would delete: deletes them.
-        #[arg(long, value_name = "COUNT")]
-        confirm: Option<usize>,
+        /// Delete the runs the dry run lists.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -72,16 +70,16 @@ struct Row {
     #[serde(skip_serializing_if = "Option::is_none")]
     exit: Option<i32>,
     /// Its first line in the middle that is no record: `show` refuses the
-    /// file, so it is not listed as a session that reads.
+    /// file, so it is not listed as a run that reads.
     #[serde(skip_serializing_if = "Option::is_none")]
     unreadable: Option<String>,
 }
 
-/// The sessions in the data directory, newest first: each from the counts
+/// The runs in the data directory, newest first: each from the counts
 /// kept in the folder's index (made the first time it is listed and when it
-/// is recorded), never from the session read whole.
+/// is recorded), never from the run read whole.
 fn rows(s: &Sonde) -> Vec<Row> {
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     let mut out: Vec<Row> = std::fs::read_dir(&dir)
         .into_iter()
         .flatten()
@@ -153,14 +151,14 @@ fn middle(text: &str, room: usize) -> String {
     format!("{start}…{end}")
 }
 
-/// A session named on the command line: a path, or a name in the sessions directory.
+/// A run named on the command line: a path, or a name in the runs directory.
 pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
     if f.exists() {
         return f.clone();
     }
     // by name: a session of the sessions folder, with `.sonde` or without;
     // then a trial's session, which is kept in `trials/` there
-    let dir = s.paths().sessions();
+    let dir = s.paths().runs();
     let named = format!("{}.sonde", f.display());
     for cand in [
         dir.join(f),
@@ -175,23 +173,23 @@ pub fn resolve(s: &Sonde, f: &PathBuf) -> PathBuf {
     f.clone()
 }
 
-/// A session named on the command line, opened: every command that takes a
-/// session takes it by path or by name, and one that is not there is said
+/// A run named on the command line, opened: every command that takes a
+/// run takes it by path or by name, and one that is not there is said
 /// with where it was looked for.
 pub fn open(s: &Sonde, f: &PathBuf) -> anyhow::Result<(PathBuf, sonde_proxy::session::Session)> {
     let file = resolve(s, f);
     if !file.exists() {
         return Err(super::usage(format!(
-            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            "no run {}: not a file, and not a name in {} (`sonde runs` lists them)",
             f.display(),
-            s.paths().sessions().display()
+            s.paths().runs().display()
         )));
     }
     let session = read(&file, sonde_proxy::session::Keep::All)?;
     Ok((file, session))
 }
 
-/// A session file read: one that is not a session is bad data (65), one
+/// A run's file read: one that is not a run is bad data (65), one
 /// that could not be read an operation that failed (70), and one cut short
 /// is read up to its cut and said on stderr.
 pub fn read(
@@ -211,7 +209,7 @@ pub fn read(
     }
 }
 
-/// [`open`] for what a session amounts to (its operations, findings,
+/// [`open`] for what a run amounts to (its operations, findings,
 /// figures): its records without what no analysis reads.
 pub fn open_lean(
     s: &Sonde,
@@ -220,35 +218,27 @@ pub fn open_lean(
     let file = resolve(s, f);
     if !file.exists() {
         return Err(super::usage(format!(
-            "no session {}: not a file, and not a name in {} (`sonde sessions` lists them)",
+            "no run {}: not a file, and not a name in {} (`sonde runs` lists them)",
             f.display(),
-            s.paths().sessions().display()
+            s.paths().runs().display()
         )));
     }
     let session = read(&file, sonde_proxy::session::Keep::Analysis)?;
     Ok((file, session))
 }
 
-pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
-    let format = match &a.action {
-        Some(Action::List(l)) => l.format,
-        _ => a.list.format,
-    };
-    let writes = [Format::Table, Format::Json, Format::Markdown, Format::Csv];
-    if let Some(why) = output::unsupported(format, "sessions", &writes) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
+pub async fn run(s: &Arc<Sonde>, a: &RunsArgs) -> anyhow::Result<i32> {
+    let format = a.list.format;
     let all = rows(s);
     match &a.action {
-        None | Some(Action::List(_)) => {
+        None => {
             if matches!(format, Format::Json) {
                 println!("{}", output::json(&all));
                 return Ok(0);
             }
             if all.is_empty() {
                 eprintln!(
-                    "no sessions yet: `sonde run --demo` for a tour, `sonde run -- <command>` for your program"
+                    "no runs yet: `sonde run --demo` for a tour, `sonde run -- <command>` for your program"
                 );
                 return Ok(0);
             }
@@ -288,13 +278,13 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 })
                 .collect();
             let mut heads = vec![
-                "session", "recorded", "program", "endpoint", "requests", "took", "errors", "exit",
+                "run", "recorded", "program", "endpoint", "requests", "took", "errors", "exit",
                 "trials", "size",
             ];
             // a table has no column with nothing in it (no run's exit is
             // known: imports, replays); a file's columns stay what they are
             const EXIT: usize = 7;
-            if matches!(format, Format::Table) && all.iter().all(|r| r.exit.is_none()) {
+            if matches!(format, Format::Text) && all.iter().all(|r| r.exit.is_none()) {
                 heads.remove(EXIT);
                 for r in &mut rows {
                     r.remove(EXIT);
@@ -302,7 +292,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             }
             // a command may be a line long: in a terminal it is cut in its
             // middle so that every row fits (a file or a pipe gets it whole)
-            if matches!(format, Format::Table)
+            if matches!(format, Format::Text)
                 && let Some(width) = terminal_width()
             {
                 const PROGRAM: usize = 2;
@@ -322,27 +312,22 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     r[PROGRAM] = middle(&r[PROGRAM], room);
                 }
             }
-            output::print(format, &heads, &rows);
+            output::print(&heads, &rows);
             for r in all.iter().filter(|r| r.unreadable.is_some()) {
                 eprintln!(
-                    "sonde: {} is not a session: {} (`sonde show` refuses it; its other lines are counted)",
+                    "sonde: {} is not a run: {} (`sonde show` refuses it; its other lines are counted)",
                     r.name,
                     r.unreadable.as_deref().unwrap_or_default()
                 );
             }
             Ok(0)
         }
-        Some(Action::Prune { keep, confirm }) => {
-            let dir = s.paths().sessions();
-            // which sessions are baselines is unknown: none is deleted
+        Some(Action::Prune { keep, yes }) => {
+            let dir = s.paths().runs();
             let baselines: std::collections::HashSet<String> =
-                match sonde_proxy::program::read_baselines(&dir) {
-                    Ok(all) => all.into_values().collect(),
-                    Err(e) => {
-                        eprintln!("sonde: {e} (nothing was deleted)");
-                        return Ok(64);
-                    }
-                };
+                sonde_proxy::program::baselines(&dir)
+                    .into_values()
+                    .collect();
             let gone: Vec<&Row> = all
                 .iter()
                 .skip(*keep)
@@ -352,7 +337,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 // said, not silence: nothing was past the newest N
                 println!(
                     "nothing to remove: {} here, {} kept{}",
-                    output::count(all.len(), "session"),
+                    output::count(all.len(), "run"),
                     keep,
                     if all.len() > *keep {
                         " and the rest baselines"
@@ -362,18 +347,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                 );
                 return Ok(0);
             }
-            // what the dry run listed, repeated: anything else deletes nothing
-            let yes = match confirm {
-                None => false,
-                Some(n) if *n == gone.len() => true,
-                Some(n) => {
-                    eprintln!(
-                        "sonde: --confirm {n} does not match: {} would be deleted now; nothing was deleted",
-                        gone.len()
-                    );
-                    return Ok(77);
-                }
-            };
+            let yes = *yes;
             for r in &gone {
                 if yes {
                     std::fs::remove_file(&r.path)?;
@@ -389,9 +363,8 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             }
             if !yes {
                 eprintln!(
-                    "dry run: to delete {}, run again with --confirm {}",
-                    output::count(gone.len(), "session"),
-                    gone.len()
+                    "dry run: to delete {}, run again with --yes",
+                    if gone.len() == 1 { "it" } else { "them" }
                 );
                 // a dry run with something to do: 4, as every dry run
                 return Ok(4);
@@ -405,56 +378,38 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
 pub struct ImportArgs {
     /// An S3 server access log, a CloudTrail file (`{"Records": …}` or one
     /// event a line), or a HAR; or a folder of them (gzip or plain, folders
-    /// within too), read in the order of their names into one session. Or
+    /// within too), read in the order of their names into one run. Or
     /// `s3://bucket/prefix` where a store writes its access logs or
-    /// CloudTrail files: what arrived since the last import of it, read
-    /// through the endpoint (GET and LIST only), one session a pass.
+    /// CloudTrail files: what arrived since the last import of it (the
+    /// first, the last day's), read through the endpoint (GET and LIST only).
     #[arg(value_name = "FILE|FOLDER|S3_URL")]
     file: PathBuf,
-    /// The session file (default: a new one in the data directory's sessions/).
+    /// The run's file (default: a new one in the data directory's runs/).
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
     /// With -o: write over the file if it is there (else it is refused).
     #[arg(long, requires = "out")]
     force: bool,
-    /// With s3://: keep reading as new log files arrive, each pass its
-    /// session, until Ctrl-C.
-    #[arg(long)]
-    follow: bool,
-    /// With --follow: look for new log files this often ("15m", "1h", "30s").
-    #[arg(long, default_value = "15m", requires = "follow")]
-    every: String,
     /// With s3://: the endpoint the logs are read through.
     #[arg(long, short = 'e')]
     endpoint: Option<String>,
-    /// With s3://: post each new warning finding, and each pass over
-    /// sonde.toml's budget, to this webhook as `{"text": …}`.
-    #[arg(long, value_name = "URL")]
-    alert: Option<String>,
 }
 
-/// Production traffic as a session: the same operations, findings and
+/// Production traffic as a run: the same operations, findings and
 /// figures as a recording, with no proxy in front of the program.
 pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     let given = a.file.to_string_lossy();
     if given.starts_with("s3://") {
         if a.out.is_some() {
             return Err(super::usage(
-                "-o is for a file or folder: logs read from s3:// make a session a pass, in the sessions folder",
+                "-o is for a file or folder: logs read from s3:// are kept in the runs folder",
             ));
         }
-        let logs = super::watch::Logs {
-            endpoint: a.endpoint.as_deref(),
-            src: &given,
-            every: &a.every,
-            once: !a.follow,
-            alert: a.alert.as_deref(),
-        };
-        return super::watch::watch_logs(s, &logs).await;
+        return super::logs::import_logs(s, a.endpoint.as_deref(), &given).await;
     }
-    if a.follow || a.endpoint.is_some() || a.alert.is_some() {
+    if a.endpoint.is_some() {
         return Err(super::usage(
-            "--follow, --endpoint and --alert are for logs read from s3://bucket/prefix",
+            "--endpoint is for logs read from s3://bucket/prefix",
         ));
     }
     if let Some(out) = &a.out {
@@ -503,7 +458,7 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     let path = match &a.out {
         Some(p) => p.clone(),
         None => {
-            let dir = s.paths().sessions();
+            let dir = s.paths().runs();
             std::fs::create_dir_all(&dir)?;
             sonde_proxy::session::fresh_path(&dir, &name)
         }
@@ -569,80 +524,4 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
         );
     }
     super::record::show_file(s, &path).await
-}
-
-/// A session as OpenTelemetry traces (OTLP/JSON: each operation a span, its
-/// requests under it), to a file, stdout or a collector.
-pub async fn otlp(
-    s: &Arc<Sonde>,
-    file: &std::path::Path,
-    out: Option<&std::path::Path>,
-    to: Option<&str>,
-) -> anyhow::Result<i32> {
-    // spans are made of what the analysis reads: nothing else is kept
-    let (_, session) = open_lean(s, &file.to_path_buf())?;
-    match (to, out) {
-        (Some(url), _) => {
-            // a collector takes a request of a few MiB (4 MiB is the usual
-            // limit), not a session's worth: sent in batches under it
-            const BATCH: usize = 3 << 20;
-            let requests = session.records.len();
-            // made on another thread, a part ahead of the one being sent:
-            // the session's worth of JSON is never held at once
-            let (parts, mut made) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
-            let making = tokio::task::spawn_blocking(move || {
-                sonde_proxy::otlp::batches(&session, BATCH, &mut |part| {
-                    parts
-                        .blocking_send(part)
-                        .map_err(|_| std::io::Error::other("sending stopped"))
-                })
-            });
-            let client = s3raw::http_client().build().expect("an HTTP client");
-            let mut sent = 0;
-            while let Some(body) = made.recv().await {
-                let resp = client
-                    .post(url)
-                    .header("content-type", "application/json")
-                    .body(body)
-                    .send()
-                    .await?;
-                if !resp.status().is_success() {
-                    eprintln!(
-                        "sonde: {url} answered {}{}",
-                        resp.status(),
-                        if sent > 0 {
-                            format!(" to part {} (the {sent} before it were taken)", sent + 1)
-                        } else {
-                            String::new()
-                        }
-                    );
-                    return Ok(70);
-                }
-                sent += 1;
-            }
-            making.await??;
-            eprintln!(
-                "{} sent to {url} as traces{}",
-                output::count(requests, "request"),
-                if sent > 1 {
-                    format!(", in {sent} parts")
-                } else {
-                    String::new()
-                }
-            );
-        }
-        // written as it is made: a span at a time
-        (None, Some(p)) => {
-            let out = std::io::BufWriter::new(std::fs::File::create(p)?);
-            sonde_proxy::otlp::write_traces(&session, out, true)?;
-        }
-        (None, None) => {
-            use std::io::Write;
-            let mut out = std::io::BufWriter::new(crate::output::Stdout);
-            sonde_proxy::otlp::write_traces(&session, &mut out, true)?;
-            out.write_all(b"\n")?;
-            out.flush()?;
-        }
-    }
-    Ok(0)
 }

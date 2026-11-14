@@ -26,6 +26,23 @@ const REAL_SECRET: &str = "real-secret-only-sonde-knows";
 struct Upstream {
     objects: Mutex<HashMap<String, (Vec<u8>, Vec<(String, String)>)>>,
     calls: Mutex<Vec<String>>,
+    /// A bucket in another region, as AWS has it: a request signed for any
+    /// other is redirected with `x-amz-bucket-region`.
+    elsewhere: Mutex<Option<(String, String)>>,
+}
+
+/// The region a request was signed for: its credential's scope.
+fn signed_region(req: &http::request::Parts) -> String {
+    let auth = req
+        .headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    auth.split("Credential=")
+        .nth(1)
+        .and_then(|c| c.split('/').nth(2))
+        .unwrap_or("")
+        .to_string()
 }
 
 /// Verifies the request's SigV4 signature; `Err` says why it is wrong.
@@ -120,6 +137,18 @@ async fn serve(
             .unwrap());
     }
     let path = parts.uri.path().to_string();
+    if let Some((bucket, region)) = up.elsewhere.lock().clone()
+        && path.starts_with(&format!("/{bucket}"))
+        && signed_region(&parts) != region
+    {
+        return Ok(Response::builder()
+            .status(301)
+            .header("x-amz-bucket-region", region)
+            .body(Full::new(Bytes::from(
+                "<Error><Code>PermanentRedirect</Code></Error>",
+            )))
+            .unwrap());
+    }
     let resp = match parts.method.as_str() {
         "PUT" => {
             let mut checksums: Vec<(String, String)> = parts
@@ -333,6 +362,41 @@ async fn put_get_list_are_resigned_and_recorded() {
     let first = get.first_byte_ms.expect("first byte measured");
     assert!(first <= get.latency_ms, "{first} > {}", get.latency_ms);
     assert_eq!(get.response_bytes, Some(19));
+}
+
+/// A bucket in another region than the endpoint's: the store's redirect
+/// says which, the request with no body is sent again signed for it, and
+/// the bucket's next requests (a write too) are signed for it from the start.
+#[tokio::test]
+async fn a_bucket_in_another_region_is_signed_for_its_region() {
+    let (_proxy, app, log, up) = setup(Policy::Allow).await;
+    up.objects
+        .lock()
+        .insert("/far/k".into(), (b"far away".to_vec(), Vec::new()));
+    *up.elsewhere.lock() = Some(("far".into(), "ap-southeast-2".into()));
+    let get = S3Request::new("GetObject", http::Method::GET)
+        .bucket("far")
+        .key("k");
+    let r = app.send_raw(get).await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(&r.body[..], b"far away");
+    let put = S3Request::new("PutObject", http::Method::PUT)
+        .bucket("far")
+        .key("new")
+        .body(Body::from("written"));
+    let r = app.send_raw(put).await.unwrap();
+    assert_eq!(r.status, 200, "{}", r.text());
+    // one redirect, then the region the store said
+    let calls = up.calls.lock().clone();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    let records = log.list(&reqlog::Filter::default(), 10);
+    assert!(
+        records
+            .iter()
+            .all(|r| r.region.as_deref() == Some("ap-southeast-2")),
+        "{:?}",
+        records.iter().map(|r| &r.region).collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]

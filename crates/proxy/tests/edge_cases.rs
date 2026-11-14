@@ -207,7 +207,7 @@ fn a_small_multipart_upload_counts_its_create_too() {
     assert_eq!(small.impact, 9);
     assert_eq!(
         small.saving_text.as_deref(),
-        Some("6 fewer requests (66% of the session)")
+        Some("6 fewer requests (66% of the run)")
     );
 }
 

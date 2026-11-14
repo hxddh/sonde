@@ -46,7 +46,7 @@
     "windows": true,
     "statusBar": true,
     "picker": true,
-    "openUrl": { "schemes": ["http", "https"] }
+    "openUrl": { "schemes": ["http", "https", "file"] }
   },
   "macos": {
     "infoPlist": {

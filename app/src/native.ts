@@ -78,6 +78,8 @@ export const api = {
     view: async (path: string) => (await Sessions.view(path)) as T.SessionView,
     /** The requests that started in a stretch of it (ms from its first request's start), reckoned as a session of their own: what the Time pane's charts not drawn over time read while a stretch is chosen. Off the interface's thread. */
     stretch: async (path: string, fromMs: number, toMs: number) => (await Sessions.stretch(path, fromMs, toMs)) as T.Stretch,
+    /** A run as it goes: the requests that started in its last half minute, reckoned alone (the live panel). Off the interface's thread. */
+    live: async (path: string) => (await (Sessions as unknown as { live(p: string): Promise<unknown> }).live(path)) as T.Stretch,
     /** A range of its operations, sorted and narrowed as the table asks. */
     episodes: async (path: string, query: T.EpisodeQuery) => (await Sessions.episodes(path, query)) as T.EpisodePage,
     /** One operation by its index, with every one of its requests' ids. */
@@ -112,7 +114,7 @@ export const api = {
     remove: (path: string) => Sessions.remove(path) as Promise<boolean>,
     /** Shows a file or folder in the file manager. */
     reveal: (path: string) => Sessions.reveal(path) as Promise<void>,
-    share: async (path: string) => (await Sessions.share(path)) as { dir: string; url: string },
+    share: async (path: string) => (await Sessions.share(path)) as { file: string; url: string },
     run: (command: string, cwd: string | null, endpoint: string, policy: "allow" | "no-delete" | "read-only", cols: number, rows: number, onEvent: (e: T.RunEvent) => void) =>
       Sessions.run(command, cwd, endpoint, policy, cols, rows, (e) => onEvent(e as T.RunEvent)) as Promise<T.RunResult>,
     input: (data: string) => Sessions.input(data),

@@ -589,7 +589,7 @@ async fn a_program_that_retries_survives_every_scenario() {
         assert_eq!(t["standing"], "survived", "{t:#}");
         assert_eq!(t["faults"], t["retried"], "{t:#}");
         // each verdict names a session that is there, by a name and not a path
-        let name = t["session"].as_str().unwrap();
+        let name = t["run"].as_str().unwrap();
         assert!(!name.contains('/'), "{name}");
         let file = b.path("trials").join(name);
         assert!(file.is_file(), "{}", file.display());
@@ -673,7 +673,7 @@ async fn a_scenario_pressed_harder_fails_more_attempts_in_a_row() {
     assert_eq!(t["times"], 3, "{t:#}");
     assert_eq!(t["attempts"], 4, "{t:#}");
     assert_eq!(t["faults"], 9, "three requests, three attempts each: {t:#}");
-    assert_eq!(t["session"], "run.slowdown-3x.sonde");
+    assert_eq!(t["run"], "run.slowdown-3x.sonde");
     assert_eq!(
         t["about"],
         "503 SlowDown on each request's first 3 attempts"
@@ -757,11 +757,7 @@ async fn a_program_that_never_retries_and_writes_a_key_twice_did_not_survive() {
     let name = session.to_str().unwrap();
     let c = b.run(None, &["check", name]).await;
     assert_eq!(c.code, Some(1), "{}{}", c.stdout, c.stderr);
-    assert!(
-        c.stdout.contains("FAIL  breaks under slowdown"),
-        "{}",
-        c.stdout
-    );
+    assert!(c.stdout.contains("broke     slowdown"), "{}", c.stdout);
     assert!(
         c.stdout.trim_end().ends_with("broke under a trial"),
         "{}",
@@ -1029,7 +1025,7 @@ async fn a_clean_run_that_fails_is_not_tried_and_a_scenario_that_meets_nothing_i
     assert!(!o.stderr.contains("did not break"), "{}", o.stderr);
     let c = b.run(None, &["check", session.to_str().unwrap()]).await;
     assert_eq!(c.code, Some(0), "{}", c.stdout);
-    assert!(c.stdout.contains("untested: fail-complete"), "{}", c.stdout);
+    assert!(c.stdout.contains("untested  fail-complete"), "{}", c.stdout);
     assert!(
         c.stdout.trim_end().ends_with("nothing was tried"),
         "{}",
@@ -1283,7 +1279,7 @@ async fn a_named_program_keeps_its_baseline_when_its_arguments_change() {
         c.stdout
     );
     assert!(!c.stderr.contains("the baseline ran"), "{}", c.stderr);
-    let list = b.run(None, &["sessions", "-f", "json"]).await;
+    let list = b.run(None, &["runs", "-f", "json"]).await;
     let rows: serde_json::Value = serde_json::from_str(&list.stdout).unwrap();
     assert_eq!(rows[0]["program"], "nightly");
     assert_eq!(rows[0]["requests"], 1);
@@ -1322,7 +1318,7 @@ async fn an_unnamed_program_run_with_another_date_is_the_same_program() {
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let second = run("2026-11-14").await;
     assert_eq!(second.code, Some(0), "refused: {}", second.stderr);
-    let list = b.run(None, &["sessions", "-f", "json"]).await;
+    let list = b.run(None, &["runs", "-f", "json"]).await;
     let rows: serde_json::Value = serde_json::from_str(&list.stdout).unwrap();
     assert_eq!(rows[0]["program"], rows[1]["program"], "{rows:#}");
     assert!(
@@ -2274,10 +2270,10 @@ async fn an_input_too_large_to_hold_is_fed_to_every_run_all_the_same() {
     );
 }
 
-/// By default (no-delete) a program writes what it writes, over an object
-/// there before or not, and deletes nothing it did not make.
+/// By default a plain run lets a program do what it would without sonde,
+/// deletes too; a trial's runs refuse the deletes of what they did not make.
 #[tokio::test(flavor = "multi_thread")]
-async fn by_default_a_run_writes_over_what_is_there_and_deletes_nothing() {
+async fn a_plain_run_allows_deletes_and_a_trial_refuses_them() {
     let b = Bench::new().await;
     let o = b
         .run(Some("retrying"), &["run", "--trial", "-o", "run.sonde"])
@@ -2292,13 +2288,20 @@ async fn by_default_a_run_writes_over_what_is_there_and_deletes_nothing() {
         )
         .await;
     assert_eq!(other.code, Some(0), "{}", other.stderr);
-    assert!(!b.path("data/sessions/written.json").exists());
-    // deletes are refused by default
+    // deletes go through by default
     let deletes = b
         .run(Some("batches"), &["run", "-o", "deletes.sonde"])
         .await;
-    assert_eq!(deletes.code, Some(1), "{}", deletes.stderr);
-    let s = sonde_proxy::session::Session::open(&b.path("deletes.sonde")).unwrap();
+    assert_eq!(deletes.code, Some(0), "{}", deletes.stderr);
+    // the flag refuses them
+    let flag = b
+        .run(
+            Some("batches"),
+            &["run", "--policy", "no-delete", "-o", "flag.sonde"],
+        )
+        .await;
+    assert_eq!(flag.code, Some(1), "{}", flag.stderr);
+    let s = sonde_proxy::session::Session::open(&b.path("flag.sonde")).unwrap();
     let refused = s.records.iter().find(|r| r.status == Some(403)).unwrap();
     assert!(
         refused
@@ -2307,25 +2310,12 @@ async fn by_default_a_run_writes_over_what_is_there_and_deletes_nothing() {
             .is_some_and(|e| e.contains("no-delete")),
         "{refused:?}"
     );
-    assert_eq!(b.store.state.lock().buckets["data"]["a"].0, b"1");
-    // the project may let it, and sonde says so; a flag is over the file
-    std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"allow\"\n").unwrap();
-    let allowed = b
-        .run(Some("batches"), &["run", "-o", "allowed.sonde"])
+    // and so does the project's file
+    std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"no-delete\"\n").unwrap();
+    let project = b
+        .run(Some("batches"), &["run", "-o", "project.sonde"])
         .await;
-    assert_eq!(allowed.code, Some(0), "{}", allowed.stderr);
-    assert!(
-        allowed.stderr.contains("[record] policy"),
-        "{}",
-        allowed.stderr
-    );
-    let flag = b
-        .run(
-            Some("batches"),
-            &["run", "--policy", "no-delete", "-o", "flag.sonde"],
-        )
-        .await;
-    assert_eq!(flag.code, Some(1), "{}", flag.stderr);
+    assert_eq!(project.code, Some(1), "{}", project.stderr);
     std::fs::write(b.path("sonde.toml"), "[record]\npolicy = \"everything\"\n").unwrap();
     let wrong = b.run(Some("retrying"), &["run", "-o", "again.sonde"]).await;
     assert_eq!(wrong.code, Some(64), "{}", wrong.stderr);
@@ -2396,12 +2386,7 @@ async fn a_refusal_by_the_policy_under_a_trial_is_its_own_outcome() {
     );
     let c = b.run(None, &["check", "run.sonde"]).await;
     assert_eq!(c.code, Some(0), "{}", c.stdout);
-    assert!(
-        c.stdout
-            .contains("warn  refused by the policy under slowdown"),
-        "{}",
-        c.stdout
-    );
+    assert!(c.stdout.contains("refused   slowdown"), "{}", c.stdout);
 }
 
 /// Broke, changed, tried again: only what broke runs, and each verdict says
@@ -2480,7 +2465,7 @@ async fn trying_again_runs_only_what_broke_and_says_it_survived_since() {
         )
         .await;
     assert_eq!(plain.code, Some(0), "{}", plain.stderr);
-    assert!(b.path("verdicts.json").is_file());
+    assert!(!sonde_proxy::trial::read_verdicts(&b.path(".")).is_empty());
     // nothing left to try
     let none = b
         .run(
@@ -2573,8 +2558,17 @@ async fn trying_again_runs_every_strength_that_broke() {
     let broke = serde_json::json!([{
         "at": "2026-11-01T00:00:00Z", "standing": "broke", "run": "run.sonde"
     }]);
-    let kept = serde_json::json!({ "etl": { "slowdown": broke, "slowdown:3": broke } });
-    std::fs::write(b.path("verdicts.json"), kept.to_string()).unwrap();
+    let kept = serde_json::json!({ "slowdown": broke, "slowdown:3": broke });
+    sonde_proxy::index::update(&b.path("."), |_| {
+        (
+            vec![(
+                "etl".to_string(),
+                sonde_proxy::index::Change::Verdicts(Some(kept)),
+            )],
+            (),
+        )
+    })
+    .unwrap();
     let o = b
         .run(
             Some("retrying"),
@@ -2592,7 +2586,7 @@ async fn trying_again_runs_every_strength_that_broke() {
     assert_eq!(o.code, Some(0), "{}", o.stderr);
     let mut sessions: Vec<String> = trials(&b.path("run.sonde"))
         .iter()
-        .map(|t| t["session"].as_str().unwrap().to_string())
+        .map(|t| t["run"].as_str().unwrap().to_string())
         .collect();
     sessions.sort();
     assert_eq!(

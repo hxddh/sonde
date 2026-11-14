@@ -1,23 +1,22 @@
 # Recording
 
 The program talks to a local endpoint with keys made for the run; sonde checks them, re-signs with the real
-credentials, forwards the request, streams the answer back and appends a record to a session file. The real
+credentials, forwards the request, streams the answer back and appends a record to the run's file. The real
 credentials never reach the program.
 
 ```sh
 sonde run -- python etl.py                  # record a command
 sonde run --live -- ./my-service            # print requests as they happen
-sonde run --policy allow -- python etl.py  # allow deletes and overwrites
+sonde run --policy no-delete -- ./job      # refuse its deletes
 sonde proxy --listen 127.0.0.1:9000         # a standing endpoint for a program started elsewhere
-sonde proxy --rotate 60                     # left running: status line, warnings, a file an hour
 ```
 
 The endpoint is `-e <id>`, `--url <url>`, or the only one configured; credentials as for every command
 ([credentials](credentials.md)).
 
-**In the app**, Run does the same: a command (and working directory), an endpoint and a policy (starting at
-`no-delete`), Return. It runs through your shell in a pseudo-terminal (ConPTY on Windows), with
-operations beside it; Stop ends it, a notification says how, the session opens. Output is kept in the session with
+**In the app**, Run does the same: a command (and working directory), an endpoint and a policy, Return. It runs
+through your shell in a pseudo-terminal (ConPTY on Windows), with
+operations beside it; Stop ends it, a notification says how, the run opens. Output is kept in the run with
 arrival times (`{"log": …}`), escape codes removed, `\r`-redrawn lines at their last state; choosing an operation
 highlights its lines and back. Output is kept as printed: do not print secrets.
 
@@ -25,7 +24,7 @@ highlights its lines and back. Output is kept as printed: do not print secrets.
 
 | Variable | Value |
 |---|---|
-| `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_S3` | `http://127.0.0.1:<port>` |
+| `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_S3`, `S3_ENDPOINT_URL` | `http://127.0.0.1:<port>` |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | made for this recording (`SONDE…` / 64 hex digits) |
 | `AWS_REGION`, `AWS_DEFAULT_REGION` | the endpoint's region (`us-east-1` when none) |
 | `AWS_ALLOW_HTTP`, `AWS_S3_FORCE_PATH_STYLE` | `true` |
@@ -34,10 +33,20 @@ highlights its lines and back. Output is kept as printed: do not print secrets.
 
 - Removed: `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, the container-credential
   variables.
-- A client that ignores these needs the endpoint set by hand (`sonde proxy` prints it), path-style or a
-  `<bucket>.localhost` host.
-- Tested in CI (`scripts/sdk-smoke.sh`): boto3, AWS SDKs for JavaScript v3, Go v2, Java v2, the AWS CLI (also in its
-  container image, through `run -- docker run`), polars (object_store), and boto3 under `--tls`.
+- Tested in CI (`scripts/sdk-smoke.sh`, against RustFS): boto3, AWS SDKs for JavaScript v3, Go v2, Java v2, the AWS
+  CLI (also in its container image, through `run -- docker run`), polars (object_store), and boto3 under `--tls`.
+- An error that names a `SONDE…` key came from a store sonde was not in front of: the client did not take the
+  endpoint. When nothing reaches sonde, `run` says how the program's own client takes it, that client first:
+
+| Client | How it reaches sonde |
+|---|---|
+| AWS CLI v1.29+ / v2.13+, s5cmd (`S3_ENDPOINT_URL`), pandas (s3fs), polars, pyarrow `FileSystem.from_uri`, Spark (below) | by itself |
+| pyarrow `S3FileSystem()` | `S3FileSystem(endpoint_override=os.environ["AWS_ENDPOINT_URL"])` |
+| DuckDB | `SET s3_endpoint` to the endpoint's host and port, `s3_url_style='path'`, `s3_use_ssl=false` (read it from `AWS_ENDPOINT_URL` in the program) |
+| rclone | a remote of the environment's: `rclone ls :s3,env_auth=true:bucket` (a named remote keeps its own endpoint) |
+| a container | `sonde run -- docker run …` (or `podman run`) is given `--network host` and `-e NAME` for each variable above, by name only; a network of its own cannot reach 127.0.0.1. Docker Desktop needs host networking turned on |
+
+Production that runs elsewhere (Kubernetes, serverless) is read from its logs: [`sonde import`](#production-traffic-access-logs-cloudtrail-har).
 
 ### TLS
 
@@ -93,7 +102,7 @@ committer settings; empty `…/` directory markers are reported with their delet
 
 ## How a request is handled
 
-1. Bucket and key from the path (`/bucket/key`) or a `<bucket>.localhost` Host; the query decoded as is (`+` stays).
+1. Bucket and key from the path (`/bucket/key`); the query decoded as is (`+` stays).
 2. Its kind named from method, path and query (`UploadPart`, `ListObjectsV2`, …).
 3. It must be for sonde: a loopback Host (`127.0.0.1`, `localhost`, `*.localhost`, `::1`) unless `--allow-remote`,
    and a SigV4 (header or presigned) or SigV2 signature with this recording's keys. Else `403
@@ -101,7 +110,9 @@ committer settings; empty `…/` directory markers are reported with their delet
 4. The [policy](#what-a-recorded-program-may-do) may refuse it: `403 AccessDenied` naming the policy, recorded as
    refused. A path starting `//`, or a bucket `.` or `..`, gets `400 InvalidURI`. A key's own `.` and `..` segments
    (`a/../b`, a key of its own in S3) are forwarded as sent.
-5. Re-signed (SigV4) for the real endpoint. Bodies stream through, except: signed `aws-chunked`
+5. Re-signed (SigV4) for the real endpoint, in the bucket's region: a redirect that names another
+   (`x-amz-bucket-region`, as AWS answers for a bucket elsewhere) is kept for the bucket, a request with no body is
+   sent again signed for it (to that region's host, on AWS), and the bucket's next requests are signed for it. Bodies stream through, except: signed `aws-chunked`
    (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD[-TRAILER]`) is decoded (up to 1 GiB) and sent with its SHA-256, trailing
    checksums as headers; a body without a length is buffered (S3 needs `Content-Length`);
    `STREAMING-UNSIGNED-PAYLOAD-TRAILER` passes unchanged (not yet covered by the SDK tests).
@@ -117,31 +128,33 @@ ids, the error body, **latency** (the whole exchange, until the body is through 
 ## What a recorded program may do
 
 For `sonde run`, `proxy` and the app's Run (and its trials). It is the only answer to "what may a program do";
-sonde's own destructive acts are each a dry run and a typed confirmation ([security](security.md#one-safety-model)).
+sonde's own destructive acts are each a dry run, then `--yes` ([security](security.md#one-safety-model)).
 
 | Policy | Allows | Refuses |
 |---|---|---|
-| `no-delete` (default) | reads, listings, every write (over an object or not); multipart uploads; tags, ACLs, retention; turning versioning on; removing what this recording made (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning, any write sonde cannot name |
+| `allow` (default) | everything: the program does with its data what it would without sonde | nothing |
+| `no-delete` (a trial's default) | reads, listings, every write (over an object or not); multipart uploads; tags, ACLs, retention; turning versioning on; removing what this recording made (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning, any write sonde cannot name |
 | `read-only` | GET and HEAD | everything else |
-| `allow` | everything | nothing |
 
 A program may remove what it made in the same recording: abort an upload it started, delete an object or a version
 it wrote (during a trial, also one under a `{trial}` place of its command, and what the clean run made), a
 `DeleteObjects` whose every object is such, a bucket it created. A write over an object goes through: with versioning
 on, the store keeps the old version; without it, use `read-only` to keep what is there.
 
-Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy`
-in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app, Run starts at `no-delete` (the
-project's `[record] policy` when Run is not asked for one), which `[record] policy` may narrow, never widen.
+Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy` in `sonde.toml`;
+`allow`, or `no-delete` for `--trial` and `--again` (sonde's own faults could push a program down a path it would
+not take). In the app, `[record] policy` may narrow Run's choice, never widen it.
 
-## Session files
+A request sonde refuses is said with its reason, a line each: a policy's names the flag that lifts it; S3 Express
+and a path that names no bucket are no policy's.
 
-- JSON lines: a header, then a record per completed request ([session-format](dev/session-format.md)), redacted. A crash
+## A run's file
+
+- JSON lines: a header, then a record per completed request ([format](dev/run-format.md)), redacted. A crash
   loses at most a torn last line, which is skipped.
-- In `<data>/sessions/`, or `-o FILE`. Gzipped in place when finished (about a tenth; still `.sonde`); a live one
+- In `<data>/runs/`, or `-o FILE`. Gzipped in place when finished (about a tenth; still `.sonde`); a live one
   stays plain (the app reads only what was appended).
-- `sonde sessions prune --keep N --yes` keeps the newest N and every baseline. `sonde proxy --rotate M` starts a new
-  file every M minutes.
+- `sonde runs prune --keep N --yes` keeps the newest N and every baseline.
 
 ```
 172 requests to rustfs in 0.5 s · 116 not found · ↑36.5 KiB ↓22.7 KiB
@@ -155,10 +168,10 @@ GET and HEAD answered 404 are **not found**, not errors. Errors: other 4xx/5xx, 
 sonde import access.log      # S3 server access log
 sonde import trail.json      # CloudTrail data events ({"Records": …} or one per line)
 sonde import browser.har     # a HAR; gzip read directly
-sonde import s3://logs/s3/ --follow   # where a store writes its logs, as they arrive
+sonde import s3://logs/s3/  # where a store writes its logs: what arrived since the last import
 ```
 
-Each becomes a session, read like a recording; the app opens them too (Open, or drop the file).
+Each becomes a run, read like a recording; the app opens them too (Open, or drop the file).
 
 - Access-log lines that are not a program's request (lifecycle expiry, a batch delete's objects) and unreadable lines
   are skipped and counted.
@@ -215,12 +228,12 @@ delta-rs 1.6 (49 → 5), boto3, the Java SDK.
 ## Replay on another endpoint
 
 ```sh
-sonde compare session.sonde --replay ceph                  # plan, confirm, replay, clean up, compare
-sonde compare session.sonde --replay r2 --bucket data=scratch --yes
-sonde compare session.sonde replay.sonde                   # a session and its replay, later
+sonde compare run.sonde --replay ceph                      # the plan: what it would send, where
+sonde compare run.sonde --replay r2 --bucket data=scratch --yes   # replay, clean up, compare
+sonde compare run.sonde replay.sonde                       # a run and its replay, later
 ```
 
-Re-enacted (a session holds no object data):
+Re-enacted (a run holds no object data):
 
 - Payloads: deterministic bytes of the recorded length. Control documents (DeleteObjects, tagging, …): as recorded,
   keys moved under the prefix.
@@ -229,7 +242,7 @@ Re-enacted (a session holds no object data):
 - Every key and listing prefix under `replay-<time>/` (or `--prefix`). Creating or deleting a bucket, bucket-level
   changes (lifecycle, policy) and requests naming a version id are left out, and the plan says so.
 - One request at a time, in order, no retries.
-- Asks first (`--yes` in scripts); deletes what it wrote afterwards, always.
+- A dry run first; `--yes` replays. It deletes what it wrote afterwards, always.
 - Each bucket must be there, its prefix empty and listable, else nothing is sent.
 - Never on the recorded keys: an empty prefix is refused.
 - Compared by status and S3 error code, and for an answer that succeeded, what it carried: a listing's keys
@@ -239,28 +252,28 @@ Re-enacted (a session holds no object data):
 ✗ PutObject   recorded 412 PreconditionFailed → replay 200   ×1   e.g. data/log/0001.json  (if-none-match: *)
 ```
 
-Tested: the SlateDB, pyiceberg, delta-rs and boto3 sessions replay with no difference on RustFS and Ceph RGW 16.2.5.
+Tested: the SlateDB, pyiceberg, delta-rs and boto3 runs replay with no difference on RustFS and Ceph RGW 16.2.5.
 
 In the app, Replay shows the plan, runs it and opens the comparison: grouped differences
-and both sessions as transcripts (`Op bucket/key [conditions] → outcome`). Compare does the same for any two sessions.
+and both runs as transcripts (`Op bucket/key [conditions] → outcome`). Compare does the same for any two runs.
 
-## Share a session
+## Share a run
 
 ```sh
-sonde share                              # newest session → ./<session>-share/
-sonde share --serve                      # http://127.0.0.1:<port>/ until Ctrl-C
-sonde share --html --redact -o run.html  # one HTML file, names replaced
+sonde share                              # newest run → ./<run>.html
+sonde share --redact -o run.html         # names replaced
+sonde share run.sonde --baseline auto    # what changed against the baseline, first
 ```
 
-A static site: the embedded viewer and a precomputed `session.json` (header, summary, operations, observations,
-records, output); nothing runs server-side. It holds what the session holds: share it as you would the file.
-`--redact` and `--html`: [cli](cli.md#read-a-run).
+One HTML file: the app's own views (figures, findings, operations, output, the Time pane with every chart) and the
+run, everything computed. Nothing is fetched: it opens from a disk as from any web server. It holds what the run
+holds: share it as you would the file. `--redact`: [cli](cli.md#read-a-run).
 
 ## Limits
 
 - HTTP/1.1 between program and sonde; TLS only with `--tls`.
 - S3 Express One Zone (directory buckets, `<name>--<zone>--x-s3`): `CreateSession` and every request to one get
-  `501 NotImplemented`, never forwarded.
+  `501 NotImplemented`, never forwarded, whatever the policy.
 - One target endpoint per proxy.
 - No overall time limit per exchange; 60 s without a byte cuts it. Connecting gives up after 10 s.
 - `run` and `proxy` wait up to 5 s at exit for requests in flight.

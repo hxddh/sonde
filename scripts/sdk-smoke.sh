@@ -53,17 +53,17 @@ for sdk in "${sdks[@]}"; do
       cmd=(mvn -q -B -f "$smoke/java/pom.xml" exec:java) ;;
     *) echo "unknown SDK $sdk"; exit 64 ;;
   esac
-  session="$out/$sdk.sonde"
+  file="$out/$sdk.sonde"
   echo "== $sdk"
   # (each program removes what it wrote: deletes are asked for)
-  if ! "$sonde" "${opts[@]}" "${run[@]}" -o "$session" -- "${cmd[@]}"; then
-    echo "!! $sdk: the program failed (session: $session)"; fail=1; continue
+  if ! "$sonde" "${opts[@]}" "${run[@]}" -o "$file" -- "${cmd[@]}"; then
+    echo "!! $sdk: the program failed (run: $file)"; fail=1; continue
   fi
-  read -r requests errors < <("$sonde" show "$session" --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["summary"]; print(s["requests"], s["errors"])')
+  read -r requests errors < <("$sonde" show "$file" --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["summary"]; print(s["requests"], s["errors"])')
   if [ "${requests:-0}" = "0" ]; then
     echo "!! $sdk: nothing reached sonde"; fail=1
   elif [ "$errors" != "0" ]; then
-    echo "!! $sdk: $errors failed requests"; "$sonde" show "$session" --errors; fail=1
+    echo "!! $sdk: $errors failed requests"; "$sonde" show "$file" --errors; fail=1
   fi
 done
 exit $fail

@@ -104,6 +104,8 @@ jobs:
           web="$RUNNER_TEMP/nsh/target/wasm32-unknown-unknown/web"
           mkdir -p "$RUNNER_TEMP/nsh-runtime/web"
           cp "$web/nsh-browser.wasm" "$web/nsh-syntaxes.bin" crates/nsh-platform-web/web/nsh.js "$RUNNER_TEMP/nsh-runtime/web/"
+          # the runtime's browser modules (nsh.js imports them): without them the page starts nothing
+          cp -r crates/nsh-platform-web/web/browser "$RUNNER_TEMP/nsh-runtime/web/"
       - name: Build the viewer
         env:
           NSH_RUNTIME: ${{ runner.temp }}/nsh-runtime
@@ -177,7 +179,7 @@ jobs:
         if: runner.os == 'Windows'
         run: target/${{ matrix.target }}/release/sonde.exe --version
       - name: sonde share has its viewer
-        run: test -n "$(target/${{ matrix.target }}/release/sonde share crates/proxy/tests/fixtures/delta.sonde -o share-check 2>&1 >/dev/null; ls share-check/index.html)"
+        run: target/${{ matrix.target }}/release/sonde share crates/proxy/tests/fixtures/delta.sonde -o share-check.html && grep -q 'id="sonde-files"' share-check.html
       # before it is zipped: the archive holds the signed sonde.exe
       - name: Sign sonde.exe (skipped without the signing secrets)
         if: runner.os == 'Windows'
