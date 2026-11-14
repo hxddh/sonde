@@ -682,13 +682,14 @@ pub fn waiting_ms_of<'a>(records: impl Iterator<Item = &'a Record>) -> f64 {
 /// count once and the kinds add up to the time with a request in flight.
 pub(crate) fn waited_us<K: Ord + Clone>(by: &BTreeMap<K, Vec<&Record>>) -> BTreeMap<K, f64> {
     let keys: Vec<&K> = by.keys().collect();
-    let mut events: Vec<(i64, i32, usize)> = Vec::new();
+    let mut events: Vec<(i64, i32, u32)> =
+        Vec::with_capacity(2 * by.values().map(Vec::len).sum::<usize>());
     for (k, rs) in by.values().enumerate() {
         for r in rs {
             let (s, e) = (start_us(r), end_us(r));
             if e > s {
-                events.push((s, 1, k));
-                events.push((e, -1, k));
+                events.push((s, 1, k as u32));
+                events.push((e, -1, k as u32));
             }
         }
     }
@@ -708,6 +709,7 @@ pub(crate) fn waited_us<K: Ord + Clone>(by: &BTreeMap<K, Vec<&Record>>) -> BTree
             }
         }
         last = t;
+        let k = k as usize;
         active[k] += d as i64;
         total += d as i64;
     }
@@ -1190,17 +1192,34 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     let mut samples: Vec<Sample> = if records.len() <= MAX_SAMPLES {
         records.iter().map(sample).collect()
     } else {
-        let mut by_ms: Vec<&Record> = records.iter().collect();
-        by_ms.sort_by(|a, b| b.latency_ms.total_cmp(&a.latency_ms));
-        let slow: std::collections::HashSet<u64> = by_ms[..SLOWEST].iter().map(|r| r.id).collect();
-        let rest: Vec<&Record> = records.iter().filter(|r| !slow.contains(&r.id)).collect();
+        // the slowest first, the records' order among equals: picked, not
+        // all sorted
+        let slower = |a: &usize, b: &usize| {
+            records[*b]
+                .latency_ms
+                .total_cmp(&records[*a].latency_ms)
+                .then(a.cmp(b))
+        };
+        let mut by_ms: Vec<usize> = (0..records.len()).collect();
+        by_ms.select_nth_unstable_by(SLOWEST - 1, slower);
+        by_ms.truncate(SLOWEST);
+        by_ms.sort_unstable_by(slower);
+        let mut slow = vec![false; records.len()];
+        for &i in &by_ms {
+            slow[i] = true;
+        }
+        let rest: Vec<u32> = (0..records.len() as u32)
+            .filter(|i| !slow[*i as usize])
+            .collect();
         let want = MAX_SAMPLES - SLOWEST;
         let step = rest.len() as f64 / want as f64;
-        by_ms[..SLOWEST]
+        by_ms
             .iter()
             .copied()
-            .chain((0..want).map(|i| rest[((i as f64 * step) as usize).min(rest.len() - 1)]))
-            .map(sample)
+            .chain(
+                (0..want).map(|i| rest[((i as f64 * step) as usize).min(rest.len() - 1)] as usize),
+            )
+            .map(|i| sample(&records[i]))
             .collect()
     };
     samples.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));
