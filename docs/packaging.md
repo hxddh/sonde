@@ -31,7 +31,8 @@ finished; the system waits 200 ms.
 
 Repository secrets: `MACOS_CERTIFICATE_P12` (base64 Developer ID Application `.p12`), `MACOS_CERTIFICATE_PASSWORD`,
 `MACOS_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` (app-specific). Without them the steps
-print a notice, the app stays ad hoc signed and the flow still runs; in a release it is a warning.
+print a notice, the app stays ad hoc signed and the flow still runs; on `main`, whose build a release publishes, it is
+a warning. Windows binaries are not signed (no Authenticode yet). Each release's notes say what it skipped.
 
 ## The terminal binary has no GUI dependency
 
@@ -52,31 +53,32 @@ runs `sonde --version` in `debian:bookworm-slim`.
 | Run | `ci.yml` jobs | `build.yml` builds |
 |---|---|---|
 | Pull request (a newer push cancels it) | lint, unit (Linux, macOS arm64, Windows), supply, action, integration, record, ui, Linux tour | Linux x86_64 (glibc, musl, desktop) |
-| Push to `main` | the same | and Linux arm64, macOS arm64, Windows (terminal, desktop) |
-| Nightly, or Actions › CI › Run workflow | the same, and the macOS and Windows tours | and macOS Intel and the macOS app: all a release ships |
+| Push to `main`, nightly, Actions › CI › Run workflow | the same, and the macOS and Windows tours | everything a release ships |
 | Dependabot crate update | lint, unit, supply | nothing |
 
-A pull request's run takes under 30 minutes; its tour is the one approved (`app/shots.approved.json`), the macOS and
-Windows tours are reported. `nightly.yml` runs the timed tests, `fuzz.yml` the fuzzers weekly, `action-live.yml` the
-Action against a real baseline and comment daily.
+Every tour is held to its platform's approved pictures (`app/shots.approved.json`; `scripts/shots-diff.py approve`
+on the run's `sonde-shots-<platform>` artifact, then commit); a platform with none approved is reported, not held.
+`nightly.yml` runs the timed tests, `fuzz.yml` the fuzzers weekly, `action-live.yml` the Action after each release
+and daily.
 
 ## Releasing
 
 1. Update `CHANGELOG.md` (`## [x.y.z] - date`) and the versions: `Cargo.toml` `workspace.package.version`,
    `app/nsh.json` `version` and `build`.
-2. Push tag `vx.y.z`, or run Actions › Release › Run workflow with `x.y.z` (it tags the chosen commit).
-   `release.yml` takes each artifact a finished CI run of that commit kept (main's, the nightly or one by hand; never
-   a pull request's) and builds the rest with `build.yml` (the web viewer first, `nsh package App.tsx --target web`,
-   embedded in every terminal binary): after main's run, the macOS app and macOS Intel; after a nightly or CI run by
-   hand on the commit, nothing. It publishes the release with the changelog section, `SHA256SUMS` and a `.sha256` per
-   file, and attests each file.
-3. `action-tag.yml` then moves the major tag (`v19`) to the release, so `uses: hxddh/sonde@v19` installs it. A
-   pre-release does not move it. To repair one: Actions › Action tag › Run workflow with `x.y.z`.
+2. Merge to `main`, then push tag `vx.y.z` on that commit, or run Actions › Release › Run workflow with `x.y.z` (it
+   tags the chosen commit). `release.yml` builds nothing: it waits (up to two hours) for CI's run of that commit on
+   `main` (its push, the nightly or one by hand; never a pull request's), refuses it unless it is green — every
+   build, test and tour — and publishes that run's files (`scripts/release-wait.sh`). The release has the changelog
+   section, what it skipped for want of secrets (signing, notarization, the signed package, Windows' Authenticode),
+   `SHA256SUMS` and a `.sha256` per file; each file is attested.
+3. `action-tag.yml` then moves the major tag (`v19`) to the release, so `uses: hxddh/sonde@v19` installs it (a
+   pre-release does not move it; to repair one: Actions › Action tag › Run workflow with `x.y.z`), and
+   `action-live.yml` runs the Action against it.
 
 | | |
 |---|---|
 | `install.sh` | Downloads the machine's binary, checks its `.sha256`, installs to `~/.local/bin`. `SONDE_INSTALL_DIR`, `SONDE_VERSION` (`19.0.0`, or `19`: the newest 19.x), `SONDE_STATIC=1`. Runs `gh attestation verify` when `gh` is signed in (`SONDE_VERIFY=1` requires it, `0` skips). |
-| `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb; macOS and Windows nightly), wide and smallest, light and dark, English and Chinese, into the `sonde-shots` artifact. |
+| `scripts/shots.sh` | CI's `shots` job: every place on a real window (Linux under Xvfb, macOS, Windows), wide and smallest, light and dark, English and Chinese, into the `sonde-shots-<platform>` artifact. The screens of measured figures show committed sessions (`app/tests/fixtures`). |
 
 ## Signed packages of the app's code
 

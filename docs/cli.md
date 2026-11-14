@@ -13,7 +13,7 @@
 | A session argument | A path or a name, resolved in order: a file; `sessions/<name>[.sonde]`; `sessions/trials/<name>` (e.g. `20261108-073328-etl.slowdown`). Not found: usage error naming where it looked. |
 | The newest session | The default for `show`, `check`, `share`: newest from `run` or `proxy` (never a replay, import or trial). |
 | A program | `[program] name` in `sonde.toml`, or `--name`; else the whole command line. Runs are grouped and baselines kept by it. |
-| Size | Sessions are streamed and analysed once. A million requests: under 15 s and 1.5 GB; `compare` reads one session at a time, so two cost what one does ([performance](performance.md)). |
+| Size | Sessions are streamed and analysed once; `compare` reads one session at a time, so two cost what one does. Memory grows with the requests ([what a million cost](performance.md#large-sessions)). |
 | `.index.jsonl` | One per sessions folder: each session's counts (requests, time, errors, program, figures once checked), its trials' verdicts and its exit code. Read by `sessions`, the app and `check`'s history. Counted again when missing, when the session's length or mtime (ns) changed, or the analysis changed; forgotten with the session. A session with a bad middle line is listed with `!` (`unreadable` in JSON). |
 
 ## Record
