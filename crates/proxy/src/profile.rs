@@ -1802,7 +1802,9 @@ pub struct Run {
     /// are shown by are chosen from.
     pub folders: HashMap<String, usize>,
     /// Its findings at any threshold, by identity: a finding of the run
-    /// before that is only among these is less, not fixed.
+    /// before that is only among these is less, not fixed. (Their counts
+    /// and words: the operations, saved requests, fixes and callers each
+    /// names are let go.)
     pub traces: BTreeMap<String, Observation>,
     /// What its findings would save, by what their requests asked.
     pub asks: crate::fixloop::Asks,
@@ -1888,9 +1890,16 @@ impl Run {
         name_findings(&mut observations, &traces);
         let asks = crate::fixloop::asks_of(records, &observations);
         let error_classes = error_classes(records);
+        // (a trace is read for its counts and its words, not for the
+        // operations and requests it names: a run of a million has tens of
+        // thousands)
         let traces = traces
             .into_iter()
-            .map(|o| (finding_identity(&o), o))
+            .map(|mut o| {
+                (o.episodes, o.saved_ids) = (Vec::new(), Vec::new());
+                (o.fixes, o.callers) = (Vec::new(), Vec::new());
+                (finding_identity(&o), o)
+            })
             .collect();
         Run {
             requests: records.len(),
