@@ -202,9 +202,35 @@ struct LogLine {
     log: LogChunk,
 }
 
-/// Appends records to a session file.
+/// Appends records to a session file. A write that fails is not retried:
+/// the first error is kept, and the requests not written are counted, for
+/// the recording's end to say ([`SessionWriter::not_written`]).
 pub struct SessionWriter {
-    out: Mutex<BufWriter<File>>,
+    out: Mutex<Out>,
+}
+
+struct Out {
+    file: BufWriter<File>,
+    /// Requests not written, and the first error.
+    lost: u64,
+    why: Option<String>,
+}
+
+impl Out {
+    /// Writes one line; an error is kept, the first one.
+    fn line(&mut self, value: &impl Serialize) -> bool {
+        let written = serde_json::to_writer(&mut self.file, value)
+            .map_err(std::io::Error::from)
+            .and_then(|()| self.file.write_all(b"\n"))
+            .and_then(|()| self.file.flush());
+        match written {
+            Ok(()) => true,
+            Err(e) => {
+                self.why.get_or_insert_with(|| e.to_string());
+                false
+            }
+        }
+    }
 }
 
 /// A path for a new session file in `dir` named `<stem>.sonde`, or
@@ -241,36 +267,47 @@ impl SessionWriter {
         out.write_all(b"\n")?;
         out.flush()?;
         Ok(SessionWriter {
-            out: Mutex::new(out),
+            out: Mutex::new(Out {
+                file: out,
+                lost: 0,
+                why: None,
+            }),
+        })
+    }
+
+    /// What the recording lost: "N requests not written: <why>", or none.
+    /// The program's output that was not written is not counted, but its
+    /// error is said when no request was lost.
+    pub fn not_written(&self) -> Option<String> {
+        let out = self.out.lock();
+        let why = out.why.as_deref()?;
+        Some(match out.lost {
+            0 => format!("the program's output was not all written: {why}"),
+            1 => format!("1 request not written: {why}"),
+            n => format!("{n} requests not written: {why}"),
         })
     }
 
     /// Appends a chunk of the program's output.
     pub fn write_log(&self, text: &str) {
-        let mut out = self.out.lock();
-        let line = LogLine {
+        self.out.lock().line(&LogLine {
             log: LogChunk {
                 time: Utc::now(),
                 text: text.to_string(),
             },
-        };
-        if serde_json::to_writer(&mut *out, &line).is_ok() {
-            let _ = out.write_all(b"\n");
-            let _ = out.flush();
-        }
+        });
     }
 
     pub fn flush(&self) -> std::io::Result<()> {
-        self.out.lock().flush()
+        self.out.lock().file.flush()
     }
 }
 
 impl Sink for SessionWriter {
     fn write(&self, record: &Record) {
         let mut out = self.out.lock();
-        if serde_json::to_writer(&mut *out, record).is_ok() {
-            let _ = out.write_all(b"\n");
-            let _ = out.flush();
+        if !out.line(record) {
+            out.lost += 1;
         }
     }
 }
@@ -987,6 +1024,25 @@ mod tests {
         assert!(p.is_file());
         unreserve(&p);
         assert!(!p.exists());
+    }
+
+    /// A write that fails is said at the end, with the first error.
+    #[test]
+    fn requests_not_written_are_counted_with_the_first_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sonde");
+        let w = SessionWriter::create(&path, &SessionHeader::new("e", "u", "r", None)).unwrap();
+        assert_eq!(w.not_written(), None);
+        // a file that refuses writes, as a full disk does
+        w.out.lock().file = BufWriter::new(File::open(&path).unwrap());
+        for id in 1..=3 {
+            w.write(&Record {
+                id,
+                ..Default::default()
+            });
+        }
+        let said = w.not_written().unwrap();
+        assert!(said.starts_with("3 requests not written: "), "{said}");
     }
 
     /// A session, its counts and its verdicts are their user's alone.

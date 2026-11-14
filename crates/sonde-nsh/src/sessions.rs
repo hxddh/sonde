@@ -38,22 +38,24 @@ impl Recording {
     /// Ends it: the requests in flight are answered and recorded (those
     /// still going after [`SHUTDOWN_GRACE`] are left out), then the file is
     /// compressed. The session file's path.
-    async fn finish(self) -> String {
+    async fn finish(self) -> (String, Option<String>) {
         self.finish_within(SHUTDOWN_GRACE).await
     }
 
     /// [`Recording::finish`], waiting `grace` for the requests in flight.
-    async fn finish_within(mut self, grace: std::time::Duration) -> String {
+    /// Also what the recording lost ([`SessionWriter::not_written`]).
+    async fn finish_within(mut self, grace: std::time::Duration) -> (String, Option<String>) {
         // compressing renames a new file over this one: a connection still
         // writing would write to a file nobody reads
         self.proxy.shutdown(grace).await;
         let _ = self.writer.flush();
+        let lost = self.writer.not_written();
         let _ = self.written.keep();
         let file = self.path.clone();
         drop(self);
         // finished: a tenth of its size; still a .sonde file every reader opens
         let _ = sonde_proxy::session::compress(&file);
-        file.to_string_lossy().into_owned()
+        (file.to_string_lossy().into_owned(), lost)
     }
 }
 
@@ -1012,8 +1014,11 @@ async fn run_recorded(
         g.take_if(|r| r.path == Path::new(&path))
     };
     // resolves once the file is whole: what reads it next reads all of it
-    if let Some(r) = own {
-        let _ = background(r.finish()).await;
+    if let Some(r) = own
+        && let Ok((_, Some(lost))) = background(r.finish()).await
+    {
+        // said where the run's output is, as the CLI says it
+        output.post(json!({ "data": format!("\r\nsonde: {lost}\r\n") }));
     }
     Ok((code, path))
 }
@@ -2842,8 +2847,9 @@ mod tests {
             runtime: tokio::runtime::Handle::current(),
             written: Arc::default(),
         };
-        let file = recording.finish().await;
+        let (file, lost) = recording.finish().await;
         assert_eq!(Path::new(&file), path);
+        assert_eq!(lost, None);
         assert!(sonde_proxy::session::is_compressed(&path));
         let s = Session::open(&path).unwrap();
         assert_eq!(

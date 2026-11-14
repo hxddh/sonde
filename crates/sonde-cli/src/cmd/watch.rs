@@ -510,6 +510,9 @@ pub(super) async fn watch(s: &Arc<Sonde>, a: &ProxyArgs) -> anyhow::Result<i32> 
     let mut sent: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let finish = |w: Arc<SessionWriter>, p: &Path| {
         let _ = w.flush();
+        if let Some(lost) = w.not_written() {
+            eprintln!("sonde proxy: {}: {lost}", p.display());
+        }
         drop(w);
         let _ = sonde_proxy::session::compress(p);
     };

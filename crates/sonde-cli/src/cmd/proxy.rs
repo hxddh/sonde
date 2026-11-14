@@ -80,6 +80,9 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
     // requests still in flight are recorded before the file is read and packed
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
     started.writer.flush()?;
+    if let Some(lost) = started.writer.not_written() {
+        eprintln!("sonde: {lost}");
+    }
     let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
     print_summary(
         &session.records,
