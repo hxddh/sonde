@@ -2,7 +2,7 @@
 # Screenshots of the app on a real window: tests/shots.test.tsx on this
 # machine's desktop target (GTK on Linux, under a virtual display when there
 # is none; AppKit on macOS; Win32 on Windows). Fresh config and data; PNGs in
-# app/shots (or $SONDE_SHOTS).
+# app/shots (or $SONDE_SHOTS). SONDE_SHOT_VARIANTS=wide,min: those variants only.
 set -eu
 cd "$(dirname "$0")/../app"
 tmp="$(mktemp -d)"

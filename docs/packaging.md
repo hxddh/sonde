@@ -52,12 +52,14 @@ runs `sonde --version` in `debian:bookworm-slim`.
 
 | Run | `ci.yml` jobs | `build.yml` builds |
 |---|---|---|
-| Pull request (a newer push cancels it) | lint, unit (Linux, macOS arm64, Windows), supply, action, integration, record, ui, Linux tour | Linux x86_64 (glibc, musl, desktop) |
+| Pull request (a newer push cancels it) | lint, unit (Linux, macOS arm64, Windows), budgets, supply, action, integration, record, ui, Linux tour | Linux x86_64 (glibc, musl, desktop) |
 | Push to `main`, nightly, Actions › CI › Run workflow | the same, and the macOS and Windows tours | everything a release ships |
-| Dependabot crate update | lint, unit, supply | nothing |
+| Dependabot crate update | lint, unit, budgets, supply | nothing |
 
-Every tour is held to its platform's approved pictures (`app/shots.approved.json`; `scripts/shots-diff.py approve`
-on the run's `sonde-shots-<platform>` artifact, then commit); a platform with none approved is reported, not held.
+A tour's variants run side by side (`shots`); `shots-check` holds each platform's pictures, together the run's
+`sonde-shots-<platform>` artifact, to its approved ones (`app/shots.approved.json`; `scripts/shots-diff.py approve`
+on that artifact, then commit); a platform with none approved is reported, not held. Rust's caches are saved by
+`main`'s runs only, so a pull request's never push out the ones every run reads.
 `nightly.yml` runs the timed tests, `fuzz.yml` the fuzzers weekly, `action-live.yml` the Action after each release
 and daily.
 
