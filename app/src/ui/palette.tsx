@@ -1,6 +1,6 @@
 // The command palette: every place and action of the app, and the things
-// people come back to — recent sessions and commands, endpoints, buckets —
-// behind one search field. ⌘K (Ctrl+K) on a desktop, `:` in a terminal.
+// people come back to — recent runs, endpoints, buckets, what the screen
+// offers — behind one search field. ⌘K (Ctrl+K) on a desktop, `:` in a terminal.
 
 import { computed, resource, setColorScheme, signal, Text, View } from "nsh";
 import { Command, Dialog } from "nsh/base";
@@ -8,9 +8,9 @@ import { date } from "../format";
 import { language, t } from "../i18n";
 import { areaLabel, sectionLabel } from "../labels";
 import { api } from "../native";
-import { command, history, lastRun, openLastRun, running, stop } from "../run";
+import { lastRun, openLastRun, running, stop } from "../run";
 import { checkRequested } from "./updates";
-import { area, shownSessionCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openSession, openSessionFile, refreshSettings, report, SETTINGS_TABS, sessionsChanged, sessionsTick, settings, shellHeight, STORE_TABS, useEndpoint } from "../store";
+import { area, shownCommands, ACTIVITY_TABS, AREAS, chooseBucket, endpoint, endpoints, go, openExample, openSession, openSessionFile, refreshSettings, SETTINGS_TABS, sessionsTick, settings, shellHeight, startDemo, STORE_TABS, useEndpoint } from "../store";
 import type { BucketEntry, SessionInfo } from "../types";
 import { Icon, type IconName } from "./icon";
 import { BREAK, CONTROL, EMPHASIS, Empty, glass, HIGHLIGHT, Kbd, keyLabel, POPUP, ROWS, SCRIM, terminal, SURFACE, Row, TEXT } from "./kit";
@@ -45,31 +45,15 @@ function actions(buckets: BucketEntry[]): Action[] {
   const list: Action[] = [];
   AREAS.forEach((a, i) => list.push({ id: `area:${a}`, label: areaLabel(a), group: t("palette.go"), icon: AREA_ICON[a], shortcut: a === "settings" ? "mod+," : a === "activity" ? "mod+shift+a" : `mod+${i + 1}`, run: () => go(a) }));
   if (running()) list.push({ id: "run:stop", label: t("run.stop"), group: t("palette.actions"), icon: "square", run: stop });
-  // the session on screen: what its ⋯ offers besides running it again
-  if (area() === "sessions") shownSessionCommands().forEach((c) => list.push({ id: `session-cmd:${c.id}`, label: c.label, group: t("palette.session"), icon: c.icon, run: () => c.run() }));
-  if (lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: scrubCommand(lastRun()!.command), commandHint: true, run: () => openLastRun(go) });
-
-  // the commands run before: the field filled, ready to run again
-  history()
-    .slice(0, 5)
-    .forEach((c, i) =>
-      list.push({
-        id: `cmd:${i}`,
-        // by its program, the command itself beside it (its variables' values hidden): rows that began alike
-        // ("sleep 1.5 && curl …") no longer read the same
-        label: programOf(c) ?? scrubCommand(c),
-        hint: scrubCommand(c),
-        commandHint: true,
-        group: t("palette.commands"),
-        icon: "square-terminal",
-        keywords: ["run", "command", scrubCommand(c)],
-        run: () => {
-          command.set(c);
-          go("run");
-        },
-      }),
-    );
-  // the newest sessions; every one once a word is typed (by its command, title or endpoint)
+  // what is on screen: a run's commands besides running it again, a Buckets section's, an object's
+  shownCommands().forEach((e) =>
+    e.list().forEach((c) => {
+      if (!c.disabled) list.push({ id: `cmd:${c.id}`, label: c.label, group: e.group(), icon: c.icon, shortcut: c.shortcut, run: () => c.run() });
+    }),
+  );
+  // on Run, the run that ended in the Runs place, where it sits among the others
+  if (area() === "run" && lastRun() && !lastRun()!.removed) list.push({ id: "run:open", label: t("run.lineUp"), group: t("palette.actions"), icon: "list-clock", hint: scrubCommand(lastRun()!.command), commandHint: true, run: () => openLastRun(go) });
+  // the newest runs; every one once a word is typed (by its command, title or endpoint)
   sessionsTick();
   let sessions: SessionInfo[] = [];
   try {
@@ -118,24 +102,12 @@ function actions(buckets: BucketEntry[]): Action[] {
       },
     }),
   );
-  STORE_TABS.forEach((s) => list.push({ id: `store:${s}`, label: `${areaLabel("store")} › ${s === "browse" ? t("nav.objects") : sectionLabel(s)}`, group: t("palette.store"), icon: "database", run: () => go(s) }));
+  STORE_TABS.forEach((s, i) => list.push({ id: `store:${s}`, label: `${areaLabel("store")} › ${s === "browse" ? t("nav.objects") : sectionLabel(s)}`, group: t("palette.store"), icon: "database", shortcut: `mod+alt+${i + 1}`, run: () => go(s) }));
   SETTINGS_TABS.forEach((s) => list.push({ id: `settings:${s}`, label: `${areaLabel("settings")} › ${sectionLabel(s)}`, group: t("palette.settings"), icon: "settings", run: () => go(s) }));
   ACTIVITY_TABS.forEach((s) => list.push({ id: `activity:${s}`, label: `${areaLabel("activity")} › ${sectionLabel(s)}`, group: t("palette.go"), icon: "activity", run: () => go(s) }));
-  list.push({
-    id: "example",
-    label: t("timeline.example"),
-    group: t("palette.actions"),
-    icon: "scroll-text",
-    run: () => {
-      try {
-        openSession.set(api.sessions.example());
-        sessionsChanged();
-        go("sessions");
-      } catch (e) {
-        report(e);
-      }
-    },
-  });
+  // the example and the demo: their one door after the welcome
+  list.push({ id: "example", label: t("example.open"), group: t("palette.actions"), icon: "scroll-text", run: openExample });
+  if (endpoint() !== "demo") list.push({ id: "demo", label: t("demo.start"), group: t("palette.actions"), icon: "sparkles", run: () => void startDemo() });
   if (!terminal()) list.push({ id: "open-file", label: t("sessions.openFile"), group: t("palette.actions"), icon: "folder-open", shortcut: "mod+o", keywords: ["sonde", "session", "import"], run: () => void openSessionFile() });
   list.push({ id: "updates", label: t("updates.check"), group: t("palette.actions"), icon: "refresh-cw", keywords: ["upgrade", "version"], run: () => (checkRequested.update((n) => n + 1), go("settings")) });
   const theme = settings()?.theme ?? "system";

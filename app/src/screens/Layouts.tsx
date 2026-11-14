@@ -7,7 +7,7 @@ import { bytes, count, date } from "../format";
 import { type Key, t } from "../i18n";
 import { core } from "../phrases";
 import { api, asError, watch } from "../native";
-import { bucket, endpoint, prefix, report } from "../store";
+import { bucket, endpoint, offerCommands, prefix, report } from "../store";
 import { here, LAYOUT_LABEL, remember } from "../ui/overview";
 import type { Detection, Layout, Snapshot } from "../types";
 import { sectionLabel } from "../labels";
@@ -119,6 +119,15 @@ export function Layouts() {
     }
   };
   const tone = (s: string) => (s === "error" ? "fail" : s === "warning" ? "warn" : "info");
+  // the section's commands: in the palette and on their shortcuts, as on its row (each layout found decoded by name)
+  offerCommands(
+    () => sectionLabel("layouts"),
+    () => [
+      { id: "layouts-scan", label: found() ? t("overview.rescan") : t("common.scan"), icon: "refresh-cw", shortcut: "mod+shift+r", disabled: !bucket() || busy(), run: () => void detect() },
+      { id: "layouts-generic", label: t("layouts.generic"), icon: "timer", shortcut: "mod+shift+g", disabled: !bucket() || busy(), run: () => void analyze("generic", pfx()) },
+      ...(found() ?? []).map((d) => ({ id: `layouts-decode-${d.format}-${d.root}`, label: `${t("layouts.decode")} · ${LABEL[d.format] ?? d.format} ${d.root || "/"}`, icon: "boxes" as const, disabled: busy(), run: () => void analyze(d.format, d.root) })),
+    ],
+  );
   if (!terminal() && !found()) void detect();
   return (
     <Scroll testID="screen-layouts" class="flex-1" contentClass="gap-4 p-4">
@@ -133,7 +142,7 @@ export function Layouts() {
           <BucketPicker />
           <Field bare class={WIDTH.long} label={t("common.prefix")} placeholder={t("common.prefix")} value={pfx()} onChange={(v) => pfx.set(v)} onSubmit={detect} mono testID="layout-prefix" />
         </If>
-        <Button small variant={found() ? "outline" : "primary"} label={found() ? t("overview.rescan") : t("common.scan")} onPress={detect} disabled={!bucket() || busy()} testID="layout-detect" />
+        <Button small variant={found() ? "outline" : "primary"} label={found() ? t("overview.rescan") : t("common.scan")} shortcut="mod+shift+r" onPress={detect} disabled={!bucket() || busy()} testID="layout-detect" />
         <If when={busy()}>
           <Button small variant="ghost" label={t("common.cancel")} onPress={() => job && api.cancelJob(job)} testID="layout-cancel" />
         </If>

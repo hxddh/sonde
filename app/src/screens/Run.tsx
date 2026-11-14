@@ -1,28 +1,26 @@
-// Run: the program and what it does to S3, side by side. Type a command and
-// press Return: sonde starts it in a terminal, its requests signed for the
+// Run: the command bar and the program it runs. Type a command and press
+// Return: sonde starts it in a terminal, its requests signed for the
 // endpoint in the toolbar; its operations appear beside it as they happen,
-// over a band of live figures. When it ends, a toast and a notification
-// say how, and the session opens lined up with the output.
+// over a band of live figures. When it ends, the run's own view takes the
+// place (its header and panes, opened on its Output), as Runs shows it.
 
-import { batch, cleanup, effect, LayoutAnimation, reduceMotion, resource, Scroll, signal, Text, View, type ViewRef } from "nsh";
+import { cleanup, effect, LayoutAnimation, reduceMotion, Scroll, signal, Text, untracked, View } from "nsh";
 import { ResizablePanel, ResizablePanelGroup, Terminal, type TerminalRef } from "nsh/base";
-import { isAvailable } from "nsh/desktop";
-import { change, count, duration, percent, rate } from "../format";
+import { count, duration, percent, rate } from "../format";
 import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { command, cwd, history, input, lastRun, onOutput, openLastRun, output, policy, resize, running, start, startedAt, stop } from "../run";
-import { away, compareOnOpen, endpoint, endpoints, endpointsMode, go, openSession, paneOnOpen, report, sessionsChanged, showInSidebar } from "../store";
-import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
-import { TrialDialog } from "../ui/trial";
-import type { Profile, SessionView } from "../types";
+import { command, cwd, history, input, lastRun, onOutput, output, policy, resize, running, start, startedAt, stop } from "../run";
+import { away, endpoint, endpoints, go, openSession, report, sessionsTick, showInSidebar } from "../store";
+import type { Profile, SessionInfo, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, popupMenu, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, SPLIT_GAP, Title, ActionRow, More, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
+import { Button, Card, CARD, Dot, Empty, Field, Figure, Heading, KeyValue, ListRow, Notice, Options, READING, SideHeader, Strong, terminal, SPLIT_GAP, Title, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
-import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
-import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, sessionStory, STRIP } from "../ui/plots";
+import { type Policy, OperationsTable, RecordPanel } from "../ui/session";
+import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, STRIP } from "../ui/plots";
 import { rememberedSize } from "../ui/sizes";
+import { SessionPane } from "./Sessions";
 
 const POLICIES = (): { value: Policy; title: string; icon: "shield-check" | "ban" | "lock" }[] => [
   { value: "allow", title: t("timeline.allow"), icon: "shield-check" },
@@ -38,11 +36,6 @@ function CommandBar() {
     const id = endpoint();
     if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
     start(command(), id);
-  };
-  let recentButton: ViewRef | undefined;
-  const recent = () => {
-    if (!isAvailable || !history().length) return;
-    void popupMenu(history().map((c) => ({ label: scrubCommand(c), run: () => command.set(c) })), recentButton);
   };
   if (terminal()) {
     return (
@@ -62,11 +55,13 @@ function CommandBar() {
   }
   return (
     <View class="gap-2">
-      {/* the command: the kit's field at the kit's height, the one that matters by its width and its mono, with what runs it at its end */}
+      {/* the command: the kit's field at the kit's height, the one that matters by its width and its mono, with
+          what runs it at its end; it rests at its start (a long command shows what it runs, not its last arguments) */}
       <View class="flex-row items-center gap-2">
         <Field
           bare
           mono
+          rest
           class="min-w-0 flex-1"
           testID="run-command"
           label={t("run.command")}
@@ -75,14 +70,9 @@ function CommandBar() {
           onChange={(v) => command.set(v)}
           onSubmit={run}
           leading={<Text class={`font-mono ${TEXT.bodyQuiet}`}>$</Text>}
-          trailing={
-            <If when={history().length > 0 && isAvailable}>
-              <IconButton ref={(r) => (recentButton = r)} inField icon="clock" label={t("run.recent")} onPress={recent} testID="run-history" />
-            </If>
-          }
         />
-        {/* the one primary of the place: Run, Stop while it runs; once a run ended, the band's Run again is the one Run */}
-        <If when={running()} else={<If when={!lastRun()}><Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" /></If>}>
+        {/* the one primary of the place: Run, Stop while it runs */}
+        <If when={running()} else={<Button variant="primary" icon="play" label={t("run.start")} shortcut="enter" onPress={run} disabled={!command().trim() || !endpoint()} testID="run-start" />}>
           <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
         </If>
       </View>
@@ -106,7 +96,7 @@ function ProgramTerminal() {
   let term: TerminalRef | undefined;
   const off = onOutput((d) => term?.write(d));
   cleanup(off);
-  // a run starts on a clean terminal: the one before is its session's now
+  // a run starts on a clean terminal: the one before is its run's now
   let shownRun = startedAt();
   effect(() => {
     const at = startedAt();
@@ -131,73 +121,15 @@ function ProgramTerminal() {
   );
 }
 
-/** The run's figures as they change: running for, requests, errors, bytes; then how it ended. */
+/** The run's figures as they change: running for, requests, errors, not found; once it ended having sent
+ * nothing to show, how it ended. */
 function StatusBand(props: { view: SessionView | null; now: () => number }) {
   const s = () => props.view?.summary;
   const r = () => lastRun();
-  const warnings = () => props.view?.observations.filter((o) => o.level === "warn").length ?? 0;
   // the errors in the tone their rows are drawn in: the client's where every one was a 4xx
   const errorTone = () => {
     const c = props.view?.signals?.errors.counts;
     return c && c.client > 0 && c.server + c.transport === 0 ? "client" : "fail";
-  };
-  // once it ended: held to its program's baseline, as sonde check would
-  const verdict = resource(
-    () => (r() && !r()!.removed && r()!.path ? r()!.path : null),
-    async (path) => {
-      try {
-        return await api.sessions.history(path);
-      } catch {
-        return null;
-      }
-    },
-  );
-  const failed = () => verdict()?.check?.verdicts.filter((v) => !v.ok) ?? [];
-  // "Try under faults…": its dialog
-  const trying = signal(false);
-  let tried = false;
-  // once it ended, the band's second row: what to do next, labelled, and the one primary at its end.
-  // The row measures itself: the others stand in rank order while they fit beside the primary, the
-  // rest behind `⋯` (never on a third line, never under the figures)
-  const widths = signal<Record<string, number>>({});
-  const measure = (key: string) => ({ bounds }: { bounds: { size: { width: number } } }) => {
-    const w = Math.round(bounds.size.width);
-    if (widths()[key] !== w) widths.set({ ...widths(), [key]: w });
-  };
-  // (8 before the primary; never less than nothing)
-  const room = () => Math.max(0, (widths().next ?? 0) - (widths().primary ?? 0) - 8);
-  // (one row at every width: what does not fit beside the primary is behind its `⋯`, so a short window keeps
-  // the operations' rows)
-  // the one Run of the place once a run ended: its command again, or the field's command when it was
-  // changed since (the field's Return runs the same). It stays on Run: what changed since this run is
-  // said here, under the band, with the way to compare the two
-  const same = () => !!r() && command().trim() === r()!.command.trim();
-  const runNext = () => {
-    const done = r();
-    if (!done || running()) return;
-    const id = same() ? done.endpoint : endpoint();
-    if (!id) return report({ kind: "config", message: t("run.chooseEndpoint") });
-    start(same() ? done.command : command(), id);
-  };
-  const others = () => [
-    // the loop in one place: change the program, run it again, see what it did
-    { id: "run-open-session", label: t("run.lineUp"), icon: "list-clock" as const, run: () => openLastRun(go) },
-    // …then under faults: the same command, sonde answering in the store's place, said before it runs
-    ...(!terminal() && (s()?.requests ?? 0) > 0 ? [{ id: "run-try", label: t("trial.try"), icon: "flask-conical" as const, run: () => trying.set(true), disabled: !!running() }] : []),
-    // the demo done: the next step is the user's own program and store
-    ...(endpoint() === "demo" ? [{ id: "run-now-yours", label: t("run.nowYours"), icon: "plus" as const, tip: t("run.nowYoursHint"), run: () => (endpointsMode.set("add"), go("endpoints")) }] : []),
-  ];
-  const verdictText = () => {
-    const c = verdict()?.check;
-    if (!c) return null;
-    if (c.passed) return t("run.withinBaseline");
-    const v = failed()[0];
-    if (!v) return t("run.pastBaseline");
-    // past a limit of nothing: say how many, not "+0%"
-    if (v.limit <= 0) return t("run.pastBaselineN", { what: t(`verdict.${v.what}` as never), n: Math.round(v.value) });
-    // never "0% past": a sliver is "<1%" (`change` rounds as every change does)
-    if (v.value <= v.limit) return t("run.pastBaseline");
-    return t("run.pastBaselineBy", { what: t(`verdict.${v.what}` as never), pct: change(v.limit, v.value).slice(1, -1) });
   };
   return (
     <Card pad="none" testID={r() ? "run-ended" : "run-status"} class="shrink-0 gap-2 px-3 py-2">
@@ -226,11 +158,7 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
             // the kit's inline figure, one each; a terminal's one line of words
             <If
               when={!terminal()}
-              else={
-                <Text class="tabular-nums text-foreground">
-                  {[t("run.bandRequests", { n: x().requests }), x().errors > 0 ? t("run.bandErrors", { n: x().errors }) : "", x().misses > 0 ? t("run.bandMisses", { n: x().misses }) : "", r() ? duration(x().seconds * 1000) : "", r() && warnings() > 0 ? t("run.toLook", { n: warnings() }) : ""].filter(Boolean).join(" · ")}
-                </Text>
-              }
+              else={<Text class="tabular-nums text-foreground">{[t("run.bandRequests", { n: x().requests }), x().errors > 0 ? t("run.bandErrors", { n: x().errors }) : "", x().misses > 0 ? t("run.bandMisses", { n: x().misses }) : ""].filter(Boolean).join(" · ")}</Text>}
             >
               <View class="flex-row flex-wrap items-center gap-x-6 gap-y-2">
                 <Figure small value={count(x().requests)} label={t("figure.requests")} />
@@ -240,66 +168,15 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
                 <If when={x().misses > 0}>
                   <Figure small value={count(x().misses)} label={t("figure.notFound")} />
                 </If>
-                <If when={r()}>
-                  <Figure small value={duration(x().seconds * 1000)} label={t("figure.took")} />
-                </If>
-                <If when={r() && warnings() > 0}>
-                  <Figure small value={count(warnings())} label={t("figure.toLook")} tone="warn" />
-                </If>
               </View>
             </If>
           )}
         </If>
-        <If when={verdictText()}>{(v) => <Badge testID="run-verdict" label={v()} tone={verdict()?.check?.passed ? "ok" : "fail"} />}</If>
       </View>
-      <If when={trying() && r() && !r()!.removed}>
-        <TrialDialog
-          path={r()!.path}
-          // read here first; closed after a trial, the run opens on its Runs pane, where the verdicts stay
-          onClose={() => {
-            trying.set(false);
-            if (!tried) return;
-            tried = false;
-            batch(() => (paneOnOpen.set({ path: r()!.path, pane: "runs" }), openSession.set(r()!.path), go("sessions")));
-          }}
-          onDone={() => (tried = true)}
-          // a finished scenario pressed: its own session (closing then leaves it open, not the Runs pane)
-          onOpen={(session) => {
-            tried = false;
-            batch(() => (openSession.set(session), go("sessions")));
-          }}
-          // tried again what broke: the fresh run, on its Runs pane
-          onAgain={(fresh) => {
-            tried = false;
-            batch(() => (paneOnOpen.set({ path: fresh, pane: "runs" }), openSession.set(fresh), go("sessions")));
-          }}
-        />
-      </If>
-      {/* once it ended, a row of its own: the loop's next steps by their words, then the one Run of the place */}
-      <If when={r() && !terminal()}>
-        <View class="flex-row items-center gap-2" onLayout={measure("next")}>
-          {/* a run that sent nothing kept no session (the toast said so): it is only run again */}
-          <View class="min-w-0 flex-1 flex-row items-center">
-            <If when={!r()!.removed}>
-              <ActionRow testID="run-actions" room={room()} actions={others} />
-            </If>
-          </View>
-          <View class="flex-row items-center justify-end gap-2">
-            <View class="shrink-0" onLayout={measure("primary")}>
-              <Button small variant="primary" icon="play" label={same() ? t("sessions.runAgain") : t("run.start")} onPress={runNext} disabled={!!running() || (!same() && (!command().trim() || !endpoint()))} testID="run-again-band" />
-            </View>
-          </View>
-        </View>
-      </If>
-      <If when={r() && terminal() && !r()!.removed}>
-        <ActionRow testID="run-actions" room={0} actions={others} />
-      </If>
     </Card>
   );
 }
 
-/** The run as it goes: requests a second, failures, in flight and the p95
- * now; requests over time beside how long they take. */
 /** What the live view shows: the last half minute. */
 const LIVE_WINDOW_MS = 30_000;
 const liveRange = (p: Profile): [number, number] | null => {
@@ -308,6 +185,8 @@ const liveRange = (p: Profile): [number, number] | null => {
   return n > keep ? [n - keep, n - 1] : null;
 };
 
+/** The run as it goes: requests a second, failures, in flight and the p95 now; requests over time beside how
+ * long they take. */
 function LivePanel(props: { profile: Profile }) {
   const f = () => liveFigures(props.profile);
   // the first requests have no shape yet: the figures alone, the charts once there is one
@@ -335,6 +214,8 @@ function LivePanel(props: { profile: Profile }) {
   );
 }
 
+/** The program's requests as they become operations, over a band of live figures; once it ended having sent
+ * nothing to show, why (a run that did shows its own view). */
 function LiveOperations() {
   const tick = signal(0);
   const now = signal(Date.now());
@@ -351,48 +232,28 @@ function LiveOperations() {
   const path = () => running()?.path ?? lastRun()?.path ?? null;
   // read again as the program's requests arrive, and once more as it ends
   const view = analysis(path, () => (tick(), lastRun())).view;
-  // once it ended: against the program's run before (its findings' states, what was fixed)
-  const since = sinceLastOf(() => {
-    const r = lastRun();
-    return r && !r.removed && r.path ? r.path : null;
-  });
-  const compareBefore = () => {
-    const r = lastRun();
-    const before = since()?.previous;
-    if (!r || !before) return;
-    batch(() => (compareOnOpen.set({ before, after: r.path }), openSession.set(r.path), go("sessions")));
-  };
   // its operations, in pages: the first of them as they arrive
   const operations = pagedOperations(() => path() ?? "", view);
-
   return (
     <View class="min-h-0 flex-1 gap-2" testID="run-operations">
       <StatusBand view={view()} now={now} />
-      <If when={view() && view()!.operationsTotal > 0} else={<If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}>
+      <If
+        when={view() && view()!.operationsTotal > 0}
+        else={
+          <If when={lastRun() && view()} else={<Empty icon="activity" text={t("run.waiting")} />}>
             {/* the SDK hints only for a program that ran and still sent nothing */}
-            <If
-              when={!lastRun()!.killed && lastRun()!.exit !== 127}
-              else={<Empty icon="activity" text={lastRun()!.killed ? t("run.stoppedEmpty") : t("run.notFound")} />}
-            >
+            <If when={!lastRun()!.killed && lastRun()!.exit !== 127} else={<Empty icon="activity" text={lastRun()!.killed ? t("run.stoppedEmpty") : t("run.notFound")} />}>
               <NoRequests />
             </If>
-          </If>}>
+          </If>
+        }
+      >
         <View class="min-h-0 flex-1 gap-2">
           {/* while it runs: its requests over time, growing as they arrive */}
           <If when={!terminal() && !lastRun() && view()!.profile}>
             <LivePanel profile={view()!.profile} />
           </If>
-          {/* once it ended: the run in a sentence, then its top findings with what each saves and the one
-              figure for acting on them; a finding pressed opens the session on it, its fix open */}
-          <If when={lastRun() && view()}>
-            <If when={view()!.profile?.groups.length}>
-              <Text testID="run-story" class="px-1 text-body leading-5 text-foreground">{sessionStory(view()!.profile)}</Text>
-            </If>
-            <Observations view={view()!} dense max={3} whatIfUnder savingUnder narrow states={statesOf(since())} onFilter={(i) => i !== null && openLastRun(go, i)} />
-            {/* beside them, what changed since the program's run before: fixed (with what it saved), back */}
-            <SinceRun since={since()} max={3} onCompare={compareBefore} />
-          </If>
-          <OperationsTable view={view()!} source={operations} onSelect={() => lastRun() && openLastRun(go)} compact follow={!!running()} />
+          <OperationsTable view={view()!} source={operations} onSelect={() => {}} compact follow={!!running()} />
         </View>
       </If>
     </View>
@@ -423,24 +284,16 @@ function NoRequests() {
   );
 }
 
-/** Before the first run: what Run does, the commands run before, and recording without a program. */
+/** Before the first run: what Run does, and recording without a program (a terminal, which has no sidebar,
+ * lists the commands run before here). */
 function Intro() {
   const recording = signal(api.sessions.current());
-  const example = () => {
-    try {
-      openSession.set(api.sessions.example());
-      sessionsChanged();
-      go("sessions");
-    } catch (e) {
-      report(e);
-    }
-  };
   return (
     <View class="flex-1 items-center justify-center p-6" testID="run-intro">
       <View class={`${READING} gap-6`}>
         <View class="gap-2">
           <Title page>{t("run.title")}</Title>
-          <Text class="text-body leading-5 text-muted-foreground">{t("run.hint")}</Text>
+          <Text class={`${TEXT.bodyQuiet} leading-5`}>{t("run.hint")}</Text>
         </View>
         <If when={terminal() && history().length > 0}>
           <View class="gap-1">
@@ -455,9 +308,6 @@ function Intro() {
           </View>
         </If>
         <RecordPanel recording={recording()} onChange={() => recording.set(api.sessions.current())} policy={policy} />
-        <View class="flex-row">
-          <Button small variant="ghost" icon="scroll-text" label={t("run.example")} onPress={example} testID="open-example" class="-ml-2" />
-        </View>
       </View>
     </View>
   );
@@ -486,42 +336,98 @@ function Recent() {
   );
 }
 
-export function Run() {
-  const active = () => running() !== null || lastRun() !== null;
-  // once the program has ended, its output yields room to its result (what it did, what to change)
+/** The program and its operations side by side while it runs (and when it ended having sent nothing). */
+function Live() {
+  // once a program ended with nothing to show, its output yields room to why
   const done = () => running() === null && lastRun() !== null;
-  if (!terminal()) cleanup(showInSidebar("run", () => <Recent />));
   return (
-    <View class="flex-1 gap-4 p-4 terminal:gap-1 terminal:p-1" testID="screen-run">
-      <CommandBar />
-      <If when={active()} else={<Intro />}>
-        <If
-          when={terminal()}
-          else={
-            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_GAP} handleAccessibilityLabel={t("run.resizeOperations")}>
-              <ResizablePanel minSize={done() ? PANE.terminalDone : PANE.terminalLeast}>
-                <View class="flex-1 pr-2">
-                  <ProgramTerminal />
-                </View>
-              </ResizablePanel>
-              <ResizablePanel size={opsWidth.size()} onResize={opsWidth.onResize} minSize={PANE.operationsLeast}>
-                <View class="flex-1 pl-2">
-                  <LiveOperations />
-                </View>
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          }
-        >
-          {/* a terminal inside a terminal: the program above, its operations below */}
-          <View class="flex-1 gap-1">
-            <View class={SURFACE.terminalHalf}>
+    <If
+      when={terminal()}
+      else={
+        <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_GAP} handleAccessibilityLabel={t("run.resizeOperations")}>
+          <ResizablePanel minSize={done() ? PANE.terminalDone : PANE.terminalLeast}>
+            <View class="flex-1 pr-2">
               <ProgramTerminal />
             </View>
-            <LiveOperations />
-          </View>
+          </ResizablePanel>
+          <ResizablePanel size={opsWidth.size()} onResize={opsWidth.onResize} minSize={PANE.operationsLeast}>
+            <View class="flex-1 pl-2">
+              <LiveOperations />
+            </View>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      }
+    >
+      {/* a terminal inside a terminal: the program above, its operations below */}
+      <View class="flex-1 gap-1">
+        <View class={SURFACE.terminalHalf}>
+          <ProgramTerminal />
+        </View>
+        <LiveOperations />
+      </View>
+    </If>
+  );
+}
+
+export function Run() {
+  // the run that ended, while it is kept: its own view, as Runs shows it
+  const ended = () => {
+    const r = lastRun();
+    return running() === null && r && !r.removed && r.path ? r.path : null;
+  };
+  const read = analysis(ended).view;
+  const shown = () => (ended() && (read()?.summary.requests ?? 0) > 0 ? ended() : null);
+  // the runs, for the view's Compare… and its name: read again as they change
+  const runs = signal<SessionInfo[]>([]);
+  effect(() => {
+    sessionsTick();
+    untracked(() => {
+      try {
+        runs.set(api.sessions.list());
+      } catch {
+        // none yet
+      }
+    });
+  });
+  const active = () => running() !== null || (lastRun() !== null && !lastRun()!.deleted);
+  if (!terminal()) cleanup(showInSidebar("run", () => <Recent />));
+  return (
+    <View class="flex-1" testID="screen-run">
+      <View class="shrink-0 px-4 pt-4 terminal:p-1">
+        <CommandBar />
+      </View>
+      <If when={active()} else={<Intro />}>
+        <If
+          when={shown()}
+          else={
+            <View class="min-h-0 flex-1 p-4 terminal:p-1">
+              <Live />
+            </View>
+          }
+        >
+          {/* one view a run: the pane keyed by its run, so another run gets a fresh one */}
+          <Each of={[shown()!]} key={(p) => p}>
+            {(p) => (
+              <SessionPane
+                path={p()}
+                others={runs}
+                tick={() => 0}
+                inRun
+                // how the program ended, where that is news: stopped, or an exit other than 0
+                note={
+                  <If when={lastRun() && (lastRun()!.killed || lastRun()!.exit !== 0) ? lastRun() : null}>
+                    {(r) => <Notice testID="run-exit" tone="warn" text={r().killed ? t("run.stoppedNote") : t("run.exitNote", { code: `${r().exit ?? "?"}` })} />}
+                  </If>
+                }
+                onOpen={(other) => {
+                  openSession.set(other);
+                  go("sessions");
+                }}
+              />
+            )}
+          </Each>
         </If>
       </If>
     </View>
   );
 }
-

@@ -1,14 +1,15 @@
-// Endpoints: add, edit, import from AWS profiles, test connectivity, demo.
+// Endpoints: add, edit, import from AWS profiles, test connectivity, check compatibility.
 
 import { batch, effect, signal, Text, untracked, View } from "nsh";
 import { count, duration } from "../format";
 import { t } from "../i18n";
 import { vendorName } from "../labels";
 import { api, asError } from "../native";
-import { endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report, startDemo } from "../store";
+import { bucket, endpoint, endpoints, endpointsMode, notify, refreshEndpoints, report } from "../store";
 import type { ConnectivityReport, EndpointView } from "../types";
-import { REVEAL, Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Labeled, Mono, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert, TEXT } from "../ui/kit";
+import { REVEAL, Actions, Badge, Button, Card, Check, Choice, Empty, Field, FORM, Heading, IconButton, IconTile, Muted, Notice, Page, PageHeader, Row, terminal, SwitchRow, confirmAlert, TEXT } from "../ui/kit";
 import { CELL, ConfigNotice, GRID } from "./Settings";
+import { CompatDialog } from "./Probes";
 
 type Draft = {
   id: string;
@@ -48,8 +49,7 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
   // with none), made unique among the endpoints there are, so adding never
   // replaces one
   const idFor = (x: Draft) => {
-    const typed = x.id.trim();
-    if (typed || props.editing) return typed;
+    if (props.editing) return x.id;
     const base = x.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "endpoint";
     const taken = new Set(endpoints().map((e) => e.id));
     let id = base;
@@ -99,19 +99,9 @@ function Form(props: { initial: Draft; editing: boolean; onDone: () => void; onS
   return (
     <View testID="endpoint-form" class="gap-4">
       <Heading>{props.editing ? t("endpoints.edit") : t("endpoints.addTitle")}</Heading>
+      {/* its id (what runs and settings name it by) is made from the name, once: never asked for */}
+      <Field label={t("endpoints.field.name")} value={d().name} onChange={(v) => set("name", v)} onSubmit={save} testID="ep-name" error={errorOf("id")} />
       <View class={GRID}>
-        <Field class={CELL} label={t("endpoints.field.name")} value={d().name} onChange={(v) => set("name", v)} onSubmit={save} testID="ep-name" />
-        {/* an endpoint's id names it in sessions and settings: set once */}
-        <If
-          when={!props.editing}
-          else={
-            <Labeled class={CELL} label={t("endpoints.field.id")}>
-              <Mono>{d().id}</Mono>
-            </Labeled>
-          }
-        >
-          <Field class={CELL} label={t("endpoints.field.id")} value={d().id} onChange={(v) => set("id", v)} onSubmit={save} testID="ep-id" mono error={errorOf("id")} />
-        </If>
         <Choice
           class={CELL}
           label={t("endpoints.field.vendor")}
@@ -214,6 +204,8 @@ export function Endpoints() {
     const m = endpointsMode();
     if (m !== "list") untracked(() => batch(() => (mode.set(m), endpointsMode.set("list"))));
   });
+  // the endpoint whose compatibility is being checked (its dialog open)
+  const checking = signal<EndpointView | null>(null);
   const tests = signal<Record<string, ConnectivityReport | "running">>({});
   const test = async (id: string) => {
     tests.update((x) => ({ ...x, [id]: "running" }));
@@ -270,6 +262,8 @@ export function Endpoints() {
             <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{`${e.url} · ${e.region || "—"} · ${e.credentials}`}</Text>
           </View>
           <Button small variant="outline" icon="activity" label={t("endpoints.test")} onPress={() => test(e.id)} loading={r() === "running"} testID={`test-${e.id}`} />
+          {/* every probe against it, in a bucket of its own (the one chosen in Buckets, filled in) */}
+          <Button small variant="outline" icon="flask-conical" label={t("compat.open")} onPress={() => checking.set(e)} testID={`compat-${e.id}`} />
           {/* its edit and removal under the pointer (or the keyboard) only */}
           <View class={`flex-row items-center gap-1 ${REVEAL}`}>
             <IconButton icon="pencil" label={t("common.edit")} onPress={() => mode.set({ edit: e })} testID={`edit-${e.id}`} />
@@ -285,10 +279,6 @@ export function Endpoints() {
       <View class={terminal() ? "gap-2" : `${FORM} gap-6`}>
         <ConfigNotice />
         <PageHeader title={t("endpoints.title")}>
-          {/* a store to try sonde on beside one's own: offered while the demo is not the one in use (with none, the empty list offers it) */}
-          <If when={endpoints().length > 0 && endpoint() !== "demo"}>
-            <Button variant="ghost" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
-          </If>
           {/* one primary at a time: while a form is open its Save is the one, and these wait for it */}
           <Button variant="outline" label={t("endpoints.import")} onPress={() => mode.set("import")} disabled={mode() !== "list"} testID="import-endpoints" />
           <Button variant={mode() === "list" ? "primary" : "outline"} icon="plus" label={t("endpoints.add")} onPress={() => mode.set("add")} disabled={mode() !== "list"} testID="add-endpoint" />
@@ -298,11 +288,7 @@ export function Endpoints() {
         <If when={form()}>{(f) => <Card testID="endpoint-form-card">{f()}</Card>}</If>
         <If
           when={endpoints().length > 0}
-          else={
-            <Empty icon="server" text={t("endpoints.noneYet")}>
-              <Button variant="outline" icon="sparkles" label={t("endpoints.demo")} onPress={() => void startDemo()} testID="open-demo" />
-            </Empty>
-          }
+          else={<Empty icon="server" text={t("endpoints.noneYet")} />}
         >
           <Card pad="none">
             <Each of={endpoints()} key={(e) => e.id}>
@@ -311,6 +297,7 @@ export function Endpoints() {
           </Card>
         </If>
       </View>
+      <If when={checking()}>{(e) => <CompatDialog endpoint={e()} bucket={endpoint() === e().id ? bucket() : null} onClose={() => checking.set(null)} />}</If>
     </Page>
   );
 }

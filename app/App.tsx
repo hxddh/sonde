@@ -13,7 +13,7 @@ import { endForQuit, followNotifications, running } from "./src/run";
 import { Run } from "./src/screens/Run";
 import { Sessions } from "./src/screens/Sessions";
 import { StoreArea } from "./src/screens/StoreArea";
-import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, report, section, shellHeight, setOverlay, settings, shellWidth } from "./src/store";
+import { type Area, area, areaOf, AREAS, bucket, endpoint, endpoints, go, init, openDropped, openLaunch, openLink, openSystemFiles, wouldOpen, openSession, openSessionFile, report, section, shellHeight, setOverlay, settings, shellWidth, STORE_TABS } from "./src/store";
 import { openSettingsWindow, SettingsBody } from "./src/screens/SettingsWindow";
 import { Activity, activityAnchor, activityOpen, runningJobs } from "./src/ui/activity";
 import { Back, BREAK, FocusRest, ListRow, PANE, Recoverable, SidePanel, SPLIT_HANDLE, terminal, TEXT, Title, WIDTH } from "./src/ui/kit";
@@ -22,7 +22,6 @@ import { rememberedSize } from "./src/ui/sizes";
 import { Palette, paletteOpen } from "./src/ui/palette";
 import { appMenus, Sidebar, sidebarOpen, toggleSidebar, Toolbar, windowMaterial } from "./src/ui/shell";
 import { Toaster } from "./src/ui/toast";
-import { applyContrast } from "./src/theme";
 import { scrubCommand } from "./src/ui/sessionview";
 
 /** The app's name, as it was built (nsh.json's `name`). */
@@ -248,6 +247,8 @@ function installMenus() {
     "mod+k": () => paletteOpen.set(!paletteOpen()),
     "mod+b": () => !terminal() && toggleSidebar(),
     "mod+o": () => !terminal() && void openSessionFile(),
+    // Buckets' sections, in their row's order
+    ...Object.fromEntries(STORE_TABS.map((s, i) => [`mod+alt+${i + 1}`, () => go(s)])),
   });
   if (terminal()) keymap.bind({ "shift+;": () => paletteOpen.set(true) }, { when: "notEditing" });
 }
@@ -290,10 +291,6 @@ function App() {
   effect(() => {
     const theme = settings()?.theme ?? "system";
     setColorScheme(theme === "light" || theme === "dark" ? theme : "system");
-  });
-  // a terminal draws in its own colors
-  effect(() => {
-    if (platform.idiom !== "terminal") applyContrast(settings()?.["high-contrast"] ?? false);
   });
   installMenus();
   return platform.idiom === "terminal" ? <TerminalShell /> : <DesktopShell />;

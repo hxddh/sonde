@@ -2,7 +2,7 @@
 // errors, and navigation between sections. Rust owns the data; these
 // signals mirror it and are refreshed after each change.
 
-import { batch, Clipboard, computed, type JSX, lifecycle, Picker, signal } from "nsh";
+import { batch, cleanup, Clipboard, computed, type JSX, keymap, lifecycle, Picker, signal, untracked, type ViewRef } from "nsh";
 import { rangeOf, rangeOnOpen } from "./range";
 import { api, asError } from "./native";
 import { language, t } from "./i18n";
@@ -16,7 +16,7 @@ import type { EndpointView, Settings, SondeError } from "./types";
  * own) and a terminal as places of their own. */
 export type Area = "run" | "sessions" | "store" | "activity" | "settings";
 /** The tabs of Store: what is in a bucket. */
-export type StoreTab = "browse" | "multipart" | "versions" | "capacity" | "layouts" | "probes";
+export type StoreTab = "browse" | "capacity" | "multipart" | "layouts";
 /** The tabs of Settings. */
 export type SettingsTab = "settings" | "endpoints";
 /** The tabs of Activity: what sonde itself did. */
@@ -26,7 +26,7 @@ export type Section = "run" | "sessions" | StoreTab | SettingsTab | ActivityTab;
 
 /** Every place, as a terminal lists them. */
 export const AREAS: Area[] = ["run", "sessions", "store", "activity", "settings"];
-export const STORE_TABS: StoreTab[] = ["browse", "capacity", "multipart", "versions", "layouts", "probes"];
+export const STORE_TABS: StoreTab[] = ["browse", "capacity", "multipart", "layouts"];
 export const SETTINGS_TABS: SettingsTab[] = ["settings", "endpoints"];
 export const ACTIVITY_TABS: ActivityTab[] = ["jobs", "audit"];
 
@@ -51,13 +51,34 @@ export const settingsTab = signal<SettingsTab>("settings");
 export const activityTab = signal<ActivityTab>("jobs");
 /** The area on screen. */
 export const area = () => areaOf(section());
-/** The session the Sessions area shows (set by Run when a run ends, by the palette, …). */
+/** The run the Runs place shows (set by the palette, a notification, a link, …). */
 export const openSession = signal<string | null>(null);
-/** What can be done to the session on screen besides running it again (Try under faults, Replay on…,
- * Compare…): its header's ⋯ lists them, and so does the palette while it is shown. `run` is given the
- * button a menu would open under, where there is one. */
-export type SessionCommand = { id: string; label: string; icon: import("./ui/lucide").IconName; disabled?: boolean; run: (anchor?: import("nsh").ViewRef) => void };
-export const shownSessionCommands = signal<SessionCommand[]>([]);
+/** A command of what is on screen (a run's Try under faults…, a Buckets section's Scan again): its place shows
+ * it (a button, or behind ⋯), the palette lists it while it is shown, and its shortcut runs it. `run` is given
+ * the button a menu would open under, where there is one. */
+export type PlaceCommand = { id: string; label: string; icon: import("./ui/lucide").IconName; shortcut?: string; disabled?: boolean; run: (anchor?: ViewRef) => void };
+/** The commands on screen, by the group the palette lists them under. */
+export const shownCommands = signal<{ group: () => string; list: () => PlaceCommand[] }[]>([]);
+/** Offers `list` while the component that calls it is on screen: in the palette under `group`, and each by its
+ * shortcut (bound for the commands the list holds as it is first read; one disabled does nothing). */
+export function offerCommands(group: () => string, list: () => PlaceCommand[]) {
+  const entry = { group, list };
+  shownCommands.set([...untracked(shownCommands), entry]);
+  cleanup(() => shownCommands.set(untracked(shownCommands).filter((e) => e !== entry)));
+  const keys = [...new Set(untracked(list).flatMap((c) => (c.shortcut ? [c.shortcut] : [])))];
+  if (keys.length)
+    keymap.bind(
+      Object.fromEntries(
+        keys.map((k) => [
+          k,
+          () => {
+            const c = untracked(list).find((x) => x.shortcut === k);
+            if (c && !c.disabled) c.run();
+          },
+        ]),
+      ),
+    );
+}
 /** The sessions read since launch, whatever way led to them (the Sessions
  * place, a window of their own, a comparison): every reader says so here. */
 const read = new Set<string>();
@@ -67,11 +88,8 @@ export const reading = (path: string) => void read.add(path);
 export const wasRead = (path: string) => read.has(path) || openSession() === path;
 /** A comparison to open with a session: the run before it (`Run again`). */
 export const compareOnOpen = signal<{ before: string; after: string } | null>(null);
-/** A pane to show a session on when it opens: a program opens on its runs; a finding
- * pressed after a run opens on the operations with that finding chosen (its advice open). */
-export const paneOnOpen = signal<{ path: string; pane: "runs" | "operations"; finding?: number } | null>(null);
-/** The key the versions screen shows. */
-export const versionKey = signal<string>("");
+/** A pane to show a run on when it opens: a trial tried again opens its fresh run on its runs. */
+export const paneOnOpen = signal<{ path: string; pane: "runs" } | null>(null);
 /** What the current place shows, for the toolbar's breadcrumb (a session's command). */
 export const crumb = signal<string | null>(null);
 /** Bumped when the list of sessions changes (a run ended, an example opened, a replay). */
@@ -192,6 +210,17 @@ export async function startDemo(): Promise<boolean> {
   } catch (e) {
     report(e);
     return false;
+  }
+}
+
+/** Opens the example (a SlateDB program's run, built in) in Runs. */
+export function openExample() {
+  try {
+    openSession.set(api.sessions.example());
+    sessionsChanged();
+    go("sessions");
+  } catch (e) {
+    report(e);
   }
 }
 

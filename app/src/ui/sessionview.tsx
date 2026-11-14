@@ -8,7 +8,7 @@ import { Clipboard, computed, effect, type JSX, List, Scroll, signal, Text, toke
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
 import { change, clock, count, date, duration, middle, shortKeys, transfer } from "../format";
 import { t } from "../i18n";
-import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say } from "../phrases";
+import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say, sharedNotes } from "../phrases";
 import { Chart, sessionStory, Sparkline, timed, Waterfall, MARK } from "./plots";
 import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
@@ -769,7 +769,7 @@ export function OperationsTable(props: {
         return <Text class={`${TEXT.body} line-clamp-1`}>{c.text}</Text>;
     }
   };
-  return (
+  const grid = () => (
     <View class={`min-h-0 flex-1 ${CARD}`} onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}>
     <DataTable
       ref={(r) => {
@@ -810,6 +810,16 @@ export function OperationsTable(props: {
       empty={<Empty compact text={t("common.empty")} />}
     />
     </View>
+  );
+  // the notes nearly every operation has: said once, under the rows that leave them out
+  const shared = () => (props.compact ? [] : sharedNotes(held(), props.view.sharedNotes));
+  return (
+    <If when={!props.compact && props.view.sharedNotes.length > 0} else={grid()}>
+      <View class="min-h-0 flex-1 gap-2">
+        {grid()}
+        <Text testID="ops-shared" class={`px-1 ${TEXT.note} line-clamp-2`}>{t("ops.shared", { notes: shared().join(" · ") })}</Text>
+      </View>
+    </If>
   );
 }
 
@@ -879,7 +889,7 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
   const e = () => props.episode;
   // its requests sonde answered in the store's place (a trial's): the outcome in sonde's own tone
   const hurt = () => new Set(props.rows.filter((r) => r.injected).map((r) => r.id));
-  const notes = () => episodeNotes(e(), props.shared);
+  const notes = () => episodeNotes(e(), []);
   const fam = () => family(e());
   return (
     <View class="gap-4" testID="operation-detail">

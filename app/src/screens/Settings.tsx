@@ -162,12 +162,6 @@ export function SettingsScreen() {
                   }}
                   testID="language"
                 />
-                <If when={!terminal()}>
-                  <Labeled class={CELL} label={t("settings.contrastLabel")}>
-                    <SwitchRow label={t("settings.contrast")} hint={t("settings.contrastHint")} checked={d()["high-contrast"] ?? false} onChange={(v) => change({ ...d(), "high-contrast": v }, true)} testID="high-contrast" />
-                  </Labeled>
-                  <View class={CELL} />
-                </If>
               </View>
             </Section>
 

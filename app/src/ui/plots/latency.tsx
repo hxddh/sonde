@@ -232,24 +232,9 @@ export function Chains(props: { profile: Profile; max?: number; /** the stretch 
 // --- where the time went --------------------------------------------------------
 
 /** Where a session's time went: a bar per kind of request, its share of the time the program waited. */
-export function TimeSpent(props: { profile: Profile; max?: number; by?: "kind" | "code" }) {
-  // by kind of request, or by the place in the program's code that sent them
-  const rows = () =>
-    props.by === "code"
-      ? (props.profile.callers ?? []).slice(0, props.max ?? 8).map((c) => ({
-          name: c.place,
-          waitedMs: c.waitedMs,
-          share: c.waitedMs / Math.max(props.profile.waitingMs, 1e-9),
-          requests: c.requests,
-          p50Ms: 0,
-          p95Ms: 0,
-          maxMs: 0,
-          bytesUp: 0,
-          bytesDown: 0,
-          cost: c.cost,
-          code: true,
-        }))
-      : props.profile.groups.slice(0, props.max ?? 8).map((g) => ({ ...g, name: groupName(g), code: false }));
+export function TimeSpent(props: { profile: Profile; max?: number }) {
+  // (by line of the program, the waiting is Group by's table: "Which lines of the program were slow or failed?")
+  const rows = () => props.profile.groups.slice(0, props.max ?? 8).map((g) => ({ ...g, name: groupName(g) }));
   const hovered = signal<number | null>(null);
   const label = () => {
     const top = rows()[0];
@@ -259,7 +244,7 @@ export function TimeSpent(props: { profile: Profile; max?: number; by?: "kind" |
     const g = hovered() === null ? null : rows()[hovered()!];
     if (!g) return null;
     const spent = t("profile.spentLine", { time: duration(g.waitedMs), pct: pct(g.share), n: g.requests });
-    return g.code ? { title: g.name, lines: [spent, cost(g.cost, props.profile.cost.currency)] } : { title: g.name, lines: [spent, t("profile.latencyLine", { p50: duration(g.p50Ms), p95: duration(g.p95Ms), max: duration(g.maxMs) }), `${transfer(g.bytesUp, g.bytesDown)} · ${cost(g.cost, props.profile.cost.currency)}`] };
+    return { title: g.name, lines: [spent, t("profile.latencyLine", { p50: duration(g.p50Ms), p95: duration(g.p95Ms), max: duration(g.maxMs) }), `${transfer(g.bytesUp, g.bytesDown)} · ${cost(g.cost, props.profile.cost.currency)}`] };
   };
   return (
     <If
@@ -267,7 +252,7 @@ export function TimeSpent(props: { profile: Profile; max?: number; by?: "kind" |
       else={<SimpleTable columns={[t("profile.kind"), t("profile.share"), t("profile.time"), t("figure.requests")]} rows={rows().map((g) => [g.name, pct(g.share), duration(g.waitedMs), count(g.requests)])} />}
     >
       <Plot
-        testID={props.by === "code" ? "time-spent-code" : "time-spent"}
+        testID="time-spent"
         data={rows()}
         yScale={{ type: "band", ...BARS.rows }}
         xScale={{ type: "linear", domain: [0, Math.max(...rows().map((g) => g.waitedMs), 1) * 1.45] }}
@@ -292,8 +277,8 @@ export function TimeSpent(props: { profile: Profile; max?: number; by?: "kind" |
           label={(_, i) => `${pct(rows()[i].share)} · ${duration(rows()[i].waitedMs)}`}
           labelClass={LABEL.bar}
         />
-        {/* a place in the code keeps its end (the file and line), a kind both its ends */}
-        <PlotAxis placement="left" format={(i) => (rows()[i]?.code ? tail(rows()[i].name, GUTTER_CHARS) : axisName(rows()[i]?.name ?? ""))} labelClass={AXIS_LABEL} />
+        {/* a kind keeps both its ends */}
+        <PlotAxis placement="left" format={(i) => axisName(rows()[i]?.name ?? "")} labelClass={AXIS_LABEL} />
       </Plot>
     </If>
   );
@@ -457,49 +442,6 @@ export function RequestScatter(props: { profile: Profile; by: "time" | "size"; d
         {/* every colour a dot may have, named: the outcomes this stretch holds, and a scenario's answers */}
         <Legend items={[...OUTCOMES.filter((o) => rows().some((r) => r.tone === o.tone)).map((o) => ({ label: t(o.key), swatch: o.swatch })), ...injectedLegend(props.injected), { label: `${t("scatter.p95Line")} ${duration(props.profile.p95Ms ?? 0)}`, swatch: "border-muted-foreground", line: "dashed" }]} />
       </BaseButton>
-    </If>
-  );
-}
-
-/** The busiest kinds of request, each its own small chart on one time axis:
- * its median to p95 as a band, slice by slice. Which kind slowed, and when. */
-export function KindsOverTime(props: { profile: Profile; domainMs?: [number, number] | null }) {
-  const kinds = () => {
-    const by = new Map<number, { tMs: number; p50: number; p95: number }[]>();
-    for (const g of props.profile.groupRate ?? []) {
-      const tMs = g.bin * props.profile.binMs;
-      if (props.domainMs && (tMs < props.domainMs[0] || tMs >= props.domainMs[1])) continue;
-      by.set(g.group, [...(by.get(g.group) ?? []), { tMs, p50: g.p50Ms, p95: g.p95Ms }]);
-    }
-    return [...by.entries()].filter(([, rows]) => rows.length > 1).map(([group, rows]) => ({ group, name: groupName(props.profile.groups[group]), rows }));
-  };
-  const top = () => Math.max(...kinds().flatMap((k) => k.rows.map((r) => r.p95)), 1) * 1.15;
-  const domain = (): [number, number] => props.domainMs ?? sessionSpan(props.profile, props.profile.rate.length);
-  const hovered = signal<{ group: number; index: number } | null>(null);
-  const tipOf = (k: { group: number; name: string; rows: { tMs: number; p50: number; p95: number }[] }) => {
-    const r = hovered()?.group === k.group ? k.rows[hovered()!.index] : null;
-    return r ? { title: k.name, lines: [`+${duration(r.tMs)}`, `p50 ${duration(r.p50)} · p95 ${duration(r.p95)}`] } : null;
-  };
-  return (
-    <If when={!terminal() && kinds().length > 0}>
-      <View testID="kinds-over-time" class="gap-1">
-        <Each of={kinds()} key={(k) => `${k.group}`}>
-          {(k, i) => (
-            <View class="flex-row items-center">
-              <Text class={ROW_LABEL}>{axisName(k().name)}</Text>
-              <Plot data={k().rows} x="tMs" xScale={{ type: "linear", domain: domain() }} yScale={{ type: "linear", domain: [0, top()] }} accessibilityLabel={`${k().name}: p95 ${duration(Math.max(...k().rows.map((r) => r.p95)))}`} motion={MOTION} crossLineClass={CROSS_LINE} tooltipPlacement="pointer" tooltipOffset={10} tooltipContent={<ChartTip tip={tipOf(k())} />} onHoverChange={({ index }) => hovered.set(index === null ? null : { group: k().group, index })} style={{ height: PITCH }} class={`flex-1 ${i() === kinds().length - 1 ? TICK_ROOM : ""}`}>
-                <Area y0="p50" y1="p95" curve="linear" class="fill-chart-1/20" />
-                <Line y="p95" curve="linear" class={`stroke-chart-1 ${STROKE.line}`} hoverDotClass="size-1.5 rounded-full bg-chart-1" />
-                <Line y="p50" curve="linear" class={`stroke-chart-1/50 ${STROKE.hair}`} hoverDotClass="hidden" />
-                <If when={i() === kinds().length - 1}>
-                  <TimeAxis domain={domain()} />
-                </If>
-              </Plot>
-            </View>
-          )}
-        </Each>
-        <Legend gutter items={[{ label: "p95", swatch: "border-chart-1", line: "solid" }, { label: t("kinds.band"), swatch: "bg-chart-1/30" }]} />
-      </View>
     </If>
   );
 }

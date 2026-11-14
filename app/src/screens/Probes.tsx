@@ -1,19 +1,21 @@
-// The compatibility matrix: probes run on several endpoints in parallel,
-// vendor × probe cells that open on the raw requests and responses, saved
-// runs and the difference between two of them. A section of Buckets: a run
-// takes minutes, so it outlives the section (its jobs are in Activity, where
-// they stop); back here, it shows how far it got, then its matrix.
+// "Check compatibility…" on an endpoint (Settings › Endpoints): every probe
+// sonde has, run against that endpoint in a bucket the user names (the one
+// chosen in Buckets, filled in), then the matrix of what each store answered
+// — the latest check of every endpoint, a column each — whose cells open on
+// the raw requests and responses. A check takes minutes: it outlives the
+// dialog (its job is in Activity, where it stops), and the dialog, opened
+// again, shows how far it got.
 
-import { effect, Scroll, signal, Text, untracked, View } from "nsh";
+import { computed, effect, signal, Text, untracked, View } from "nsh";
 import { DataTable } from "nsh/base";
-import { count, date, duration } from "../format";
+import { duration } from "../format";
 import { t } from "../i18n";
 import { core, endpointName } from "../phrases";
-import { sectionLabel, SYMBOL, verdictLabel, verdictTone } from "../labels";
+import { SYMBOL, verdictLabel, verdictTone } from "../labels";
 import { api, watch } from "../native";
-import { endpoint, endpoints, go, notify, report } from "../store";
-import type { Change, Matrix, ProbeMeta, ProbeResult, RunSummary } from "../types";
-import { titleCells, ToolBar, Back, Badge, ProgressBar, Button, Card, Check, Choice, Disclosure, Empty, Field, Heading, KeyValue, Mono, More, Muted, Notice, PageHeader, ROW, rowHeight, SimpleTable, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, WIDTH, COLUMN, TEXT } from "../ui/kit";
+import { notify, report } from "../store";
+import type { EndpointView, Matrix, ProbeMeta, ProbeResult } from "../types";
+import { titleCells, Actions, Back, Badge, Button, Card, Disclosure, Empty, Field, Heading, KeyValue, Modal, ModalBody, Mono, More, Muted, ProgressBar, ROW, rowHeight, SwitchRow, TABLE, terminal, Title, TYPE, Pressable, SIZES, COLUMN, TEXT } from "../ui/kit";
 import { Document } from "../ui/record";
 import { StatusMark } from "../ui/sessionview";
 
@@ -21,8 +23,8 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
   return (
     <View class="gap-4" testID="probe-detail">
       <View class="flex-row items-center gap-2">
-        <Back onPress={props.onBack} />
-        <Title class="min-w-0 flex-1">{`${core(props.probe.titleText, props.probe.title)} — ${props.endpointName}`}</Title>
+        <Back onPress={props.onBack} testID="probe-back" />
+        <Heading class="min-w-0 flex-1">{`${core(props.probe.titleText, props.probe.title)} — ${props.endpointName}`}</Heading>
         <Badge label={verdictLabel(props.result.verdict)} tone={verdictTone(props.result.verdict)} />
       </View>
       <Muted>{core(props.probe.descriptionText, props.probe.description)}</Muted>
@@ -58,9 +60,9 @@ function CellDetail(props: { probe: ProbeMeta; result: ProbeResult; endpointName
   );
 }
 
-/** The matrix: as tall as its rows, up to `maxRows` of them (then it scrolls). */
-function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: ProbeMeta, col: number) => void }) {
-  // a row a probe, a column a store: the probe's column stays while the stores scroll under it
+/** The matrix: a row a probe, a column a store's latest check; a cell opens what it answered. */
+function MatrixView(props: { matrix: Matrix; onOpen: (probe: ProbeMeta, col: number) => void }) {
+  // the probe's column stays while the stores scroll under it
   const columns = () => [
     { key: "probe", title: t("probes.probe"), width: COLUMN.probe, fixed: true },
     ...props.matrix.columns.map((c, i) => ({ key: `s${i}`, title: c.server ? `${endpointName({ id: c.endpoint, name: c.name })} · ${c.server}` : `${endpointName({ id: c.endpoint, name: c.name })} · ${c.vendor}`, width: COLUMN.probeStore, align: "start" as const })),
@@ -70,7 +72,6 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
       probe: `${core(r.probe.titleText, r.probe.title)}\n${r.probe.id}`,
       ...Object.fromEntries(r.cells.map((c, i) => [`s${i}`, c ? `${SYMBOL[c.verdict]} ${verdictLabel(c.verdict)}` : "—"])),
     }));
-  const shown = () => Math.max(1, Math.min(props.matrix.rows.length, props.maxRows));
   return (
     <DataTable
       testID="matrix"
@@ -99,9 +100,9 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
               return (
                 // at its cell's start: the press area is the badge's, not the cell's
                 <View class="flex-row">
-                <Pressable testID={`cell-${row.probe.id}-${i}`} label={`${row.probe.id} ${props.matrix.columns[i].name} ${verdictLabel(c.verdict)}`} onPress={() => props.onOpen(row.probe, i)}>
-                  <Badge label={verdictLabel(c.verdict)} tone={verdictTone(c.verdict)} />
-                </Pressable>
+                  <Pressable testID={`cell-${row.probe.id}-${i}`} label={`${row.probe.id} ${props.matrix.columns[i].name} ${verdictLabel(c.verdict)}`} onPress={() => props.onOpen(row.probe, i)}>
+                    <Badge label={verdictLabel(c.verdict)} tone={verdictTone(c.verdict)} />
+                  </Pressable>
                 </View>
               );
             }
@@ -117,82 +118,56 @@ function MatrixView(props: { matrix: Matrix; maxRows: number; onOpen: (probe: Pr
           : undefined
       }
       classes={terminal() ? undefined : TABLE}
-      // its rows and its titles, and no more: nothing empty under a short matrix
-      style={terminal() ? { height: SIZES.terminalMatrix } : { height: (shown() + 1) * (rowHeight(ROW.twoLine) ?? ROW.twoLine) }}
+      style={{ height: SIZES.dialogScroll }}
     />
   );
 }
 
-/** A terminal's matrix: a box of its own to scroll in (its page scrolls too). */
-
-// a run's state is the app's, not the section's: from the press on Run to its last job's end
-// a second press starts nothing; each endpoint's progress; bumped as a run ends (read again)
-const busy = signal(false);
+// a check is the app's, not the dialog's: from the press on Run to its job's end a second press starts nothing;
+// how far it got, by endpoint; bumped as one ends (the matrix read again)
 const running = signal<Record<string, string>>({});
 const ran = signal(0);
 
-export function Probes() {
-  // the endpoint in use to start from; the bucket probes write to is chosen on purpose
-  const chosen = signal<Record<string, boolean>>(endpoint() ? { [endpoint()!]: true } : {});
-  const scratch = signal("");
+/** "Check compatibility…" of `endpoint`: the bucket its probes write to (`bucket`, the one chosen in Buckets,
+ * filled in), whether they may make buckets of their own, then every probe, then the matrix. */
+export function CompatDialog(props: { endpoint: EndpointView; bucket: string | null; onClose: () => void }) {
+  const scratch = signal(props.bucket ?? "");
   const temp = signal(false);
-  const slow = signal(true);
-  const only = signal("");
   const matrix = signal<Matrix>(api.probeMatrix());
-  const runs = signal<RunSummary[]>(api.probeRuns());
   const open = signal<{ probe: ProbeMeta; col: number } | null>(null);
-  const earlier = signal<string | null>(null);
-  const later = signal<string | null>(null);
-  const diff = signal<Change[] | null>(null);
-  // the page's own height: the matrix may take it, not more
-  const height = signal(720);
-  const refresh = () => {
-    matrix.set(api.probeMatrix());
-    runs.set(api.probeRuns());
-  };
-  // a run that ended while the section was away, or here
+  const busy = () => props.endpoint.id in running();
+  // a check that ended while the dialog was closed, or open
   let seen = untracked(ran);
   effect(() => {
     const n = ran();
-    if (n !== seen) untracked(refresh);
+    if (n !== seen) untracked(() => matrix.set(api.probeMatrix()));
     seen = n;
   });
-  // the endpoints checked that are still there
-  const picked = () => endpoints().filter((e) => chosen()[e.id]).map((e) => e.id);
-  const canRun = () => picked().length > 0 && scratch() !== "" && !busy();
   const run = async () => {
-    if (!canRun()) return;
-    const eps = picked();
-    busy.set(true);
+    const ep = props.endpoint.id;
+    if (!scratch() || busy()) return;
+    running.update((r) => ({ ...r, [ep]: t("common.loading") }));
     try {
-      const ids = await api.runProbes(eps, { bucket: scratch(), allowTempBuckets: temp(), includeSlow: slow(), only: only().split(",").map((s) => s.trim()).filter(Boolean) });
-      await Promise.all(
-        ids.map(async (id, i) => {
-          try {
-            await watch(id, (e) => e.type === "Progress" && running.update((r) => ({ ...r, [eps[i]]: `${e.progress.done}/${e.progress.total ?? "?"} ${core(e.progress.messageText, e.progress.message)}` })));
-          } catch (e) {
-            report(e);
-          }
-          running.update((r) => {
-            const { [eps[i]]: _, ...rest } = r;
-            return rest;
-          });
-        }),
-      );
+      const [id] = await api.runProbes([ep], { bucket: scratch(), allowTempBuckets: temp(), includeSlow: true, only: [] });
+      await watch(id, (e) => e.type === "Progress" && running.update((r) => ({ ...r, [ep]: `${e.progress.done}/${e.progress.total ?? "?"} ${core(e.progress.messageText, e.progress.message)}` })));
     } catch (e) {
       report(e);
     }
-    busy.set(false);
+    running.update((r) => {
+      const { [ep]: _, ...rest } = r;
+      return rest;
+    });
     ran.update((n) => n + 1);
   };
-  const detail = () => {
+  // read once per cell opened (a run's file is read whole)
+  const detail = computed(() => {
     const o = open();
     if (!o) return null;
     const col = matrix().columns[o.col];
     const r = api.probeRun(col.run, col.endpoint);
     const res = r?.results.find((x) => x.id === o.probe.id);
     return res ? { probe: o.probe, result: res, name: endpointName({ id: col.endpoint, name: col.name }) } : null;
-  };
+  });
   const exportAs = (f: "markdown" | "json") => {
     try {
       notify(t("common.exportedTo", { path: api.exportProbes(f) }));
@@ -200,105 +175,52 @@ export function Probes() {
       report(e);
     }
   };
-  const compare = () => {
-    try {
-      diff.set(api.probeDiff(earlier()!, later()!));
-    } catch (e) {
-      report(e);
-    }
-  };
-  const nameOf = (id: string) => endpoints().find((e) => e.id === id)?.name ?? id;
-  // a run as people read one: where, when, and how it went in words
-  const runItems = () => runs().map((r) => ({ value: `${r.id}:${r.endpoint}`, title: `${endpointName({ id: r.endpoint, name: r.endpointName })} · ${date(r.started)} · ${t("probes.tally", { pass: count(r.pass), fail: count(r.fail), differs: count(r.differs) })}` }));
-  const rowPoints = () => rowHeight(ROW.twoLine) ?? ROW.twoLine;
   return (
-    <View class="flex-1" onLayout={({ bounds }) => height.set(Math.round(bounds.size.height))}>
-      <If
-        when={detail()}
-        else={
-          <Scroll testID="screen-probes" class="flex-1" contentClass="gap-4 p-4">
-            {/* the head every section has: its title (a terminal's tab says it), what it looks at, what else it offers */}
-            <View class="gap-1">
-              <ToolBar
-                title={terminal() ? undefined : sectionLabel("probes")}
-                end={
-                  <More
-                    testID="probe-more"
-                    actions={() => [
-                      { label: t("probes.exportMd"), icon: "download", run: () => exportAs("markdown"), disabled: matrix().columns.length === 0 },
-                      { label: t("probes.exportJson"), icon: "download", run: () => exportAs("json"), disabled: matrix().columns.length === 0 },
-                    ]}
-                  />
-                }
-              />
-              <Text class={TEXT.note}>{t("compat.hint")}</Text>
-            </View>
-            <Card>
-              {/* one considered head: what the card does, and at its end the one command that does it */}
-              <View class="flex-row items-center gap-3">
-                <Heading class="min-w-0 flex-1">{t("probes.run")}</Heading>
-                <Button variant="primary" icon="play" label={t("common.run")} onPress={run} disabled={!canRun()} testID="probe-run" />
-              </View>
+    <Modal open steady size="wide" onClose={props.onClose} testID="compat-dialog" describe={t("compat.hint")}>
+      <View class="flex-row items-center gap-2">
+        <Title class="min-w-0 flex-1">{t("compat.title", { name: props.endpoint.name })}</Title>
+        <If when={matrix().columns.length > 0}>
+          <More
+            testID="probe-more"
+            actions={() => [
+              { label: t("probes.exportMd"), icon: "download", run: () => exportAs("markdown") },
+              { label: t("probes.exportJson"), icon: "download", run: () => exportAs("json") },
+            ]}
+          />
+        </If>
+      </View>
+      <ModalBody testID="screen-probes">
+        <If
+          when={detail()}
+          else={
+            <>
+              <Muted>{t("compat.hint")}</Muted>
+              {/* the bucket its probes write to, and the one choice a check has */}
               <View class="flex-row flex-wrap items-center gap-3">
-                {/* which endpoints: said in place when none is chosen (Run stays off until one is) */}
-                <Text class={TEXT.note}>{picked().length > 0 ? t("endpoints.title") : t("probes.chooseEndpoint")}</Text>
-                <Each of={endpoints()} key={(e) => e.id}>
-                  {(e) => <Check testID={`probe-ep-${e().id}`} label={e().name} checked={!!chosen()[e().id]} onChange={(v) => chosen.update((c) => ({ ...c, [e().id]: v }))} />}
-                </Each>
+                <Field bare class="min-w-56 flex-1" label={t("probes.scratch")} placeholder={t("probes.scratch")} value={scratch()} onChange={(v) => scratch.set(v)} onSubmit={run} mono testID="probe-bucket" />
+                <SwitchRow label={t("probes.tempBuckets")} checked={temp()} onChange={(v) => temp.set(v)} testID="probe-temp" />
               </View>
-              <View class="flex-row flex-wrap items-center gap-3">
-                <Field bare class={WIDTH.field} label={t("probes.scratch")} placeholder={t("probes.scratch")} value={scratch()} onChange={(v) => scratch.set(v)} onSubmit={run} mono testID="probe-bucket" />
-                <Field bare class={WIDTH.long} label={t("probes.only")} placeholder={t("probes.onlyHint")} value={only()} onChange={(v) => only.set(v)} onSubmit={run} mono testID="probe-only" />
-                <SwitchRow label={t("probes.tempBuckets")} checked={temp()} onChange={(v) => temp.set(v)} />
-                <SwitchRow label={t("probes.slow")} checked={slow()} onChange={(v) => slow.set(v)} />
-              </View>
-              {/* what a run does to the bucket, before it runs */}
+              {/* what a check does to the bucket, before it runs */}
               <Text testID="probe-writes" class={TEXT.note}>
                 {t("probes.writes", { bucket: scratch() || "…" })}
               </Text>
-              <Each of={Object.entries(running())}>{(r) => <ProgressBar value={null} label={`${nameOf(r()[0])}: ${r()[1]}`} />}</Each>
-            </Card>
-            {/* the page is named once, at its head: this is what the runs found */}
-            <Heading>{t("probes.results")}</Heading>
-            <Card pad="none">
-              <If when={matrix().columns.length > 0} else={<Empty icon="flask-conical" text={t("probes.noRuns")} />}>
-                {/* as tall as its rows, and never taller than the window leaves it */}
-                <MatrixView matrix={matrix()} maxRows={Math.max(4, Math.floor((height() - 96) / rowPoints()) - 1)} onOpen={(probe, col) => open.set({ probe, col })} />
+              <If when={running()[props.endpoint.id]}>{(p) => <ProgressBar value={null} label={p()} />}</If>
+              <Heading>{t("probes.results")}</Heading>
+              <If when={matrix().columns.length > 0} else={<Empty compact icon="flask-conical" text={t("probes.noRuns")} />}>
+                <Card pad="none">
+                  <MatrixView matrix={matrix()} onOpen={(probe, col) => open.set({ probe, col })} />
+                </Card>
               </If>
-            </Card>
-            {/* two runs to compare, or no card that offers it */}
-            <If when={runItems().length > 1}>
-            <Card>
-              <Heading>{t("probes.diff")}</Heading>
-              <View class="flex-row flex-wrap items-center gap-2">
-                <Text class={TEXT.note}>{t("probes.earlier")}</Text>
-                <Choice class={WIDTH.wide} value={earlier()} items={runItems()} onChange={(v) => earlier.set(v)} placeholder={t("probes.runs")} testID="probe-earlier" />
-                <Text class={TEXT.note}>{t("probes.later")}</Text>
-                <Choice class={WIDTH.wide} value={later()} items={runItems()} onChange={(v) => later.set(v)} placeholder={t("probes.runs")} testID="probe-later" />
-                <Button label={t("probes.compare")} disabled={!earlier() || !later()} onPress={compare} testID="probe-compare" />
-              </View>
-              <If when={diff()}>
-                {(d) => (
-                  <If when={d().length > 0} else={<Empty compact text={t("probes.noChange")} />}>
-                    <SimpleTable
-                      bare
-                      columns={[t("probes.probe"), t("probes.earlier"), t("probes.later"), t("probes.now")]}
-                      rows={d().map((c) => [c.probe, c.before ? verdictLabel(c.before) : "—", c.after ? verdictLabel(c.after) : "—", `${core(c.afterSummaryText, c.afterSummary)}${c.stepsChanged ? ` (${t("probes.responsesChanged")})` : ""}`])}
-                    />
-                  </If>
-                )}
-              </If>
-            </Card>
-            </If>
-          </Scroll>
-        }
-      >
-        {(d) => (
-          <Scroll class="flex-1" contentClass="p-4">
-            <CellDetail probe={d().probe} result={d().result} endpointName={d().name} onBack={() => open.set(null)} />
-          </Scroll>
-        )}
-      </If>
-    </View>
+            </>
+          }
+        >
+          {(d) => <CellDetail probe={d().probe} result={d().result} endpointName={d().name} onBack={() => open.set(null)} />}
+        </If>
+      </ModalBody>
+      <Actions note={busy() ? <Muted class="text-small">{t("compat.goesOn")}</Muted> : undefined}>
+        <Button variant="ghost" label={t("common.close")} onPress={props.onClose} testID="compat-close" />
+        <Button variant="primary" icon="play" label={t("compat.run")} onPress={run} disabled={!scratch() || busy()} loading={busy()} testID="probe-run" />
+      </Actions>
+    </Modal>
   );
 }
