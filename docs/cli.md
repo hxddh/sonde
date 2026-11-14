@@ -107,7 +107,7 @@
 | 3 | Probes could not run (errors only) |
 | 4 | Findings worth attention: stale uploads or no abort rule, layout warnings, a changed probe diff, a dry run |
 | 64 | Usage or configuration error (an unknown command or option too, and a `-f` format the command does not write; `--help` and `--version` exit 0) |
-| 65 | Bad data: not a session (no header, a newer format, a bad line in its middle). A torn last line or a cut gzip stream is read up to the cut (said on stderr) |
+| 65 | Bad data: not a session (no header, a newer format, a bad line in its middle), or an imported CloudTrail document cut short (said where). A torn last line or a cut gzip stream is read up to the cut (said on stderr) |
 | 70 | The operation failed (connection, credentials, permission); a replay could not remove what it wrote |
 | 77 | Refused: the confirmation did not match, or a replay without `--yes` and no terminal to ask |
 | 130, 143 | `run --trial` interrupted by Ctrl-C or SIGTERM (`run` otherwise exits as its command did) |

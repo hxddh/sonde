@@ -2120,3 +2120,18 @@ fn a_run_ended_by_sigterm_says_the_code_it_exits_with() {
     assert!(stderr(&o).contains("(exit 143)"), "{}", stderr(&o));
     assert!(!stderr(&o).contains("137"), "{}", stderr(&o));
 }
+
+/// A CloudTrail file cut short is bad data (65), said where it broke.
+#[test]
+fn a_cloudtrail_file_cut_short_is_bad_data_said_where() {
+    let t = tempfile::tempdir().unwrap();
+    let trail = t.path().join("trail.json");
+    std::fs::write(
+        &trail,
+        r#"{"Records":[{"eventTime":"2031-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"a"}},{"eventTime":"2031-02-06T00:00:02Z","eventSo"#,
+    )
+    .unwrap();
+    let o = sonde(t.path(), &["import", trail.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(65), "{}", stderr(&o));
+    assert!(stderr(&o).contains("at line 1, column"), "{}", stderr(&o));
+}
