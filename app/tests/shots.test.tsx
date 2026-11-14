@@ -292,6 +292,8 @@ for (const v of variants) {
     if (width < 1000) await app.scroll("id:inspector-scroll", 400);
     await app.press("id:op-request-0");
     await app.waitFor("id:record-detail");
+    // (a narrow window's inspector, scrolled to its requests, back at its start: where a drag stops differs run to run)
+    if (width < 1000) await app.scroll("id:inspector-scroll", -5000).catch(() => {});
     await shot("03c-request");
     await app.press("id:inspector-close");
     await app.press("id:observation-1");
