@@ -46,7 +46,9 @@ impl Tls {
             .ok()
             .and_then(|t| t.elapsed().ok())
             .is_some_and(|age| age.as_secs() < RENEW_DAYS * 86_400);
-        if !(fresh && ca.is_file() && key.is_file()) {
+        // (one made before it named its authority's key is made again)
+        let names_authority = std::fs::read(&cert).is_ok_and(|pem| names_its_authority(&pem));
+        if !(fresh && names_authority && ca.is_file() && key.is_file()) {
             make(dir)?;
         }
         let chain: Vec<CertificateDer<'static>> = [&cert, &ca]
@@ -129,6 +131,9 @@ fn make(dir: &Path) -> Result<(), String> {
         .push(DnType::CommonName, "localhost");
     leaf.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     leaf.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    // which key signed it: a strict verifier (Python 3.13's default) refuses a
+    // certificate that does not say
+    leaf.use_authority_key_identifier_extension = true;
     (leaf.not_before, leaf.not_after) = (since, until);
     let cert = leaf.signed_by(&key, &ca).map_err(err)?;
 
@@ -137,6 +142,13 @@ fn make(dir: &Path) -> Result<(), String> {
     write_file(&dir.join("ca.pem"), ca.pem().as_bytes(), false)?;
     // the certificate last: its time is what says the three are fresh
     write_file(&dir.join("cert.pem"), cert.pem().as_bytes(), false)
+}
+
+/// Whether a certificate (PEM) has the extension that names the key that
+/// signed it (the authority key identifier, 2.5.29.35).
+fn names_its_authority(pem: &[u8]) -> bool {
+    const AKI: &[u8] = &[0x06, 0x03, 0x55, 0x1d, 0x23];
+    CertificateDer::from_pem_slice(pem).is_ok_and(|der| der.windows(AKI.len()).any(|w| w == AKI))
 }
 
 /// The machine's roots (as far as they can be read) and the authority.
@@ -211,6 +223,8 @@ mod tests {
         assert_eq!(names.len(), 4, "{names:?}");
         let bundle = std::fs::read_to_string(&t.bundle).unwrap();
         assert!(bundle.ends_with(&std::fs::read_to_string(&t.ca).unwrap()));
+        // it names its authority's key (strict verifiers refuse it otherwise)
+        assert!(names_its_authority(&cert));
         // made again only when it is old
         Tls::load_or_make(&at).unwrap();
         assert_eq!(std::fs::read(at.join("cert.pem")).unwrap(), cert);
