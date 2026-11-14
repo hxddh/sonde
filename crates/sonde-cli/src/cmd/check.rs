@@ -98,61 +98,21 @@ fn duration_arg(text: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("{text:?} is not a time (2s, 250ms, or ms as a number)"))
 }
 
-/// The run `check` judges when none is named: the newest run of the
-/// project's program (`[program] name`; a run without a name of its own
-/// whose command `--init` names so is one), else the newest run of a program
-/// recorded in this folder (the session's `cwd`); never another program's.
-/// The run, and which it is in words.
-fn newest_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, String)> {
-    let dir = s.paths().sessions();
-    let here = std::env::current_dir().ok();
-    let here = here.as_ref().map(|h| h.canonicalize().unwrap_or(h.clone()));
-    let mut newest: Option<(chrono::DateTime<chrono::Utc>, PathBuf, String)> = None;
-    for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
-            continue;
+/// Whether a run is the project's (`sonde.toml` at `project`): of its
+/// program by name when it names one ([`super::record::of_program`]), else
+/// recorded in the project's folder or below it. Another program's run is
+/// never held to the project's `[check]`.
+fn of_project(h: &SessionHeader, project: &Path, name: Option<&str>) -> bool {
+    match name {
+        Some(n) => super::record::of_program(h, n),
+        None => {
+            let root = project
+                .parent()
+                .map(|d| d.canonicalize().unwrap_or(d.into()));
+            let cwd = h.cwd.as_deref().map(PathBuf::from);
+            let cwd = cwd.map(|c| c.canonicalize().unwrap_or(c));
+            matches!((root, cwd), (Some(r), Some(c)) if c.starts_with(&r))
         }
-        let Some(h) = sonde_proxy::session::read_header(&p).filter(|h| h.is_recording()) else {
-            continue;
-        };
-        let Some(key) = sonde_proxy::program::key_of(&h) else {
-            continue;
-        };
-        let ours = match name {
-            // named so, or recorded before it had the name `--init` gave it
-            Some(n) => {
-                key == n
-                    || (h.name.as_deref().is_none_or(|x| x.trim().is_empty())
-                        && h.command.as_deref().and_then(name_for).as_deref() == Some(n))
-            }
-            None => {
-                let cwd = h.cwd.as_deref().map(PathBuf::from);
-                let cwd = cwd.map(|c| c.canonicalize().unwrap_or(c));
-                cwd.is_some() && cwd == here
-            }
-        };
-        if ours && newest.as_ref().is_none_or(|(n, ..)| h.created > *n) {
-            newest = Some((h.created, p, key));
-        }
-    }
-    match (newest, name) {
-        (Some((_, p, _)), Some(n)) => Ok((
-            p,
-            format!("the newest run of program \"{n}\" ([program] name in sonde.toml)"),
-        )),
-        (Some((_, p, key)), None) => Ok((
-            p,
-            format!("the newest run of program `{key}` recorded in this folder"),
-        )),
-        (None, Some(n)) => Err(super::usage(format!(
-            "no run of program \"{n}\" ([program] name in sonde.toml) in {}: record one with `sonde run -- <command>`, or name the session to check",
-            dir.display()
-        ))),
-        (None, None) => Err(super::usage(format!(
-            "no program was recorded in this folder ({}): name the session to check, or give the program a name (`name` under [program] in sonde.toml); another program's run is not checked",
-            here.as_deref().unwrap_or(Path::new(".")).display()
-        ))),
     }
 }
 
@@ -193,7 +153,12 @@ fn init_project(
     // baseline. One is written for it
     let named = header.name.as_deref().is_some_and(|n| !n.trim().is_empty());
     let name = (!named)
-        .then(|| header.command.as_deref().and_then(name_for))
+        .then(|| {
+            header
+                .command
+                .as_deref()
+                .and_then(sonde_proxy::program::short_name)
+        })
         .flatten();
     let mut text = [
         "# sonde check: what a run of this program may use against S3.".to_string(),
@@ -284,47 +249,6 @@ fn action_line() -> String {
         .next()
         .unwrap_or_default();
     format!("      - uses: hxddh/sonde@v{major}")
-}
-
-/// A name for a program from its command: the script an interpreter runs
-/// (`etl` of `python etl.py --day 2`), else the program itself. Letters,
-/// digits, `-` and `_`.
-fn name_for(command: &str) -> Option<String> {
-    const INTERPRETERS: &[&str] = &[
-        "python", "python3", "node", "ruby", "java", "bash", "sh", "deno", "bun", "perl", "php",
-        "uv", "poetry", "npx", "dotnet",
-    ];
-    let program = sonde_proxy::program::program_name(command)?;
-    let stem = |f: &str| {
-        let name = f.rsplit(['/', '\\']).next().unwrap_or(f);
-        name.split('.').next().unwrap_or(name).to_string()
-    };
-    let base = program.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
-    let mut name = stem(&program);
-    if INTERPRETERS.contains(&base) || INTERPRETERS.contains(&program.as_str()) {
-        // what it runs: the first word after it that is a file, not an option
-        let after = command
-            .split_whitespace()
-            .skip_while(|w| !w.ends_with(&program));
-        if let Some(script) = after
-            .skip(1)
-            .find(|w| !w.starts_with('-') && w.contains('.') && !w.contains('='))
-        {
-            name = stem(script);
-        }
-    }
-    let name: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let name = name.trim_matches('-').to_string();
-    (!name.is_empty()).then_some(name)
 }
 
 /// The runs of `key` up to `upto` (oldest first, 30 at most), each with
@@ -524,7 +448,35 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         .name
         .clone()
         .filter(|n| !n.trim().is_empty());
-    let project = loaded.file.check;
+    let file = match &a.file {
+        Some(f) => super::sessions::resolve(s, f),
+        None => {
+            let (file, why) = super::record::which_run(s, project_name.as_deref())?;
+            eprintln!("checking {why}: {}", file.display());
+            file
+        }
+    };
+    // another program's run is not held to the sonde.toml found here (one
+    // given with --config is the one asked for)
+    let mut project = loaded.file.check;
+    if a.config.is_none()
+        && let Some(toml) = &project_path
+        && let Some(h) = sonde_proxy::session::read_header(&file)
+        && !of_project(&h, toml, project_name.as_deref())
+    {
+        let whose = match &project_name {
+            Some(n) => format!("not of program \"{n}\" ({})", toml.display()),
+            None => format!("recorded outside the folder of {}", toml.display()),
+        };
+        eprintln!(
+            "note: {} is a run of `{}`, {whose}: its [check] is not applied",
+            file.display(),
+            sonde_proxy::program::key_of(&h)
+                .as_deref()
+                .unwrap_or("no command"),
+        );
+        project = Default::default();
+    }
     // a path in sonde.toml is the project's: relative to the file, not to
     // the folder `sonde check` runs in
     let project_baseline = project.baseline.clone().map(|b| {
@@ -549,14 +501,6 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     {
         fetched = Some(fetch_baseline(u).await?);
     }
-    let file = match &a.file {
-        Some(f) => super::sessions::resolve(s, f),
-        None => {
-            let (file, why) = newest_run(s, project_name.as_deref())?;
-            eprintln!("checking {why}: {}", file.display());
-            file
-        }
-    };
     // against a baseline its findings are said as `run` and `compare` say
     // them: at any threshold too (less, not fixed)
     let traced = baseline_arg.is_some() && matches!(a.format, Format::Markdown | Format::Json);
@@ -1051,7 +995,7 @@ fn no_baseline_text(
     let of = |command: &str| {
         (
             sonde_proxy::program::program_name(command),
-            name_for(command),
+            sonde_proxy::program::short_name(command),
         )
     };
     if !named
@@ -1059,7 +1003,7 @@ fn no_baseline_text(
             .keys()
             .find(|k| k.as_str() != key && of(k) == of(key) && of(key).0.is_some())
     {
-        let name = name_for(key).unwrap_or_else(|| "NAME".into());
+        let name = sonde_proxy::program::short_name(key).unwrap_or_else(|| "NAME".into());
         text.push_str(&format!(
             "\n  there is one for `{other}`: the same program with other arguments. A program without a name goes by its whole command; give it one and its runs share a baseline: `name = \"{name}\"` under [program] in sonde.toml, or `sonde run --name {name}`"
         ));

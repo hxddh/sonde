@@ -2102,14 +2102,54 @@ fn check_alone_takes_this_programs_newest_run_never_anothers() {
         "{}",
         stderr(&ck)
     );
-    // nothing recorded here: refused, not another's
-    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
-    assert_eq!(ck.status.code(), Some(64), "{}", stdout(&ck));
+    // show, compare and share take the same run: this folder's, not the newest
+    let shown = sonde_in(t.path(), &a, &["show", "--summary", "-f", "json"]);
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&shown)).unwrap();
+    assert_eq!(doc["session"]["command"], "true", "{doc}");
+    let compared = sonde_in(t.path(), &a, &["compare"]);
     assert!(
-        stderr(&ck).contains("no program was recorded in this folder"),
+        stdout(&compared).contains("first run of `true`")
+            || stderr(&compared).contains("first run of `true`"),
+        "{}{}",
+        stdout(&compared),
+        stderr(&compared)
+    );
+    // nothing recorded here: the newest run, said so (and it failed)
+    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
+    assert_eq!(ck.status.code(), Some(1), "{}", stdout(&ck));
+    assert!(
+        stderr(&ck)
+            .contains("the newest run (program `sh -c exit 3`; none was recorded in this folder)"),
         "{}",
         stderr(&ck)
     );
+    // and this folder's sonde.toml is not its budget: it is another program's run
+    std::fs::write(c.join("sonde.toml"), "[check]\nmax-requests = 0\n").unwrap();
+    let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);
+    let err = stderr(&ck);
+    assert!(
+        err.contains("recorded outside the folder of")
+            && err.contains("its [check] is not applied"),
+        "{err}"
+    );
+    assert!(!stdout(&ck).contains("≤ 0"), "{}", stdout(&ck));
+    // the same run named: the same
+    let other = err
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("checking ")
+                .and_then(|l| l.rsplit(": ").next())
+        })
+        .unwrap()
+        .to_string();
+    let ck = sonde_in(t.path(), &c, &["check", &other]);
+    assert!(
+        stderr(&ck).contains("its [check] is not applied"),
+        "{}",
+        stderr(&ck)
+    );
+    assert_eq!(ck.status.code(), Some(1), "the run failed: {}", stdout(&ck));
+    std::fs::remove_file(c.join("sonde.toml")).unwrap();
     // a project's program by its name, wherever it ran
     std::fs::write(c.join("sonde.toml"), "[program]\nname = \"true\"\n").unwrap();
     let ck = sonde_in(t.path(), &c, &["check", "--max-requests", "100"]);

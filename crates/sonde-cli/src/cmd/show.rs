@@ -229,7 +229,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     }
     let file = match &a.file {
         Some(f) => super::sessions::resolve(s, f),
-        None => newest_session(s)?,
+        None => which_run(s, project_name().as_deref())?.0,
     };
     // read for what it amounts to: a request in full (`-f json`) is written
     // from the file, never held with the rest

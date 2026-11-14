@@ -125,10 +125,7 @@ pub(super) async fn start_under(
         (None, None) => {
             let dir = s.paths().sessions();
             std::fs::create_dir_all(&dir)?;
-            let name = command
-                .as_deref()
-                .and_then(sonde_proxy::program::program_name)
-                .filter(|n| !n.is_empty())
+            let name = sonde_proxy::program::file_stem(of.name.as_deref(), command.as_deref())
                 .unwrap_or_else(|| "proxy".into());
             sonde_proxy::session::fresh_path(
                 &dir,
@@ -580,12 +577,25 @@ pub(super) fn not_drained(grace: std::time::Duration) -> String {
     )
 }
 
-/// The newest session recorded from a program's own requests (`run`,
-/// `proxy`): what a bare `sonde show` or `sonde check` is about. A
-/// replay, an import and a trial are sessions too, and are named to be read.
-pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
+/// The run a command is about when none is named: one rule for `show`,
+/// `compare`, `share` and `check`. The newest run of the project's program
+/// (`[program] name` in sonde.toml; a run recorded before it had the name,
+/// whose command `check --init` names so, is one), else of the program
+/// recorded in this folder (the session's `cwd`), else the newest run of
+/// any. Only runs (`run`, `proxy`): a replay, an import and a trial are
+/// named to be read. The run, and which it is in words.
+pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, String)> {
     let dir = s.paths().sessions();
-    let mut newest: Option<(chrono::DateTime<chrono::Utc>, PathBuf)> = None;
+    let here = std::env::current_dir().ok();
+    let here = here.as_ref().map(|h| h.canonicalize().unwrap_or(h.clone()));
+    // the newest of the program named, of this folder, and of all
+    type Newest = Option<(chrono::DateTime<chrono::Utc>, PathBuf, String)>;
+    let (mut named, mut local, mut any): (Newest, Newest, Newest) = (None, None, None);
+    let keep = |n: &mut Newest, at: chrono::DateTime<chrono::Utc>, p: &PathBuf, key: &str| {
+        if n.as_ref().is_none_or(|(t, ..)| at > *t) {
+            *n = Some((at, p.clone(), key.to_string()));
+        }
+    };
     for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
@@ -594,16 +604,66 @@ pub fn newest_session(s: &Sonde) -> anyhow::Result<PathBuf> {
         let Some(h) = sonde_proxy::session::read_header(&p).filter(|h| h.is_recording()) else {
             continue;
         };
-        if newest.as_ref().is_none_or(|(n, _)| h.created > *n) {
-            newest = Some((h.created, p));
+        let key = sonde_proxy::program::key_of(&h).unwrap_or_else(|| "proxy".into());
+        keep(&mut any, h.created, &p, &key);
+        if let Some(n) = name
+            && of_program(&h, n)
+        {
+            keep(&mut named, h.created, &p, &key);
+        }
+        let cwd = h.cwd.as_deref().map(PathBuf::from);
+        let cwd = cwd.map(|c| c.canonicalize().unwrap_or(c));
+        if cwd.is_some() && cwd == here {
+            keep(&mut local, h.created, &p, &key);
         }
     }
-    newest.map(|(_, p)| p).ok_or_else(|| {
-        super::usage(format!(
+    match (name, named, local, any) {
+        (Some(n), Some((_, p, _)), ..) => Ok((
+            p,
+            format!("the newest run of program \"{n}\" ([program] name in sonde.toml)"),
+        )),
+        (Some(n), None, ..) => Err(super::usage(format!(
+            "no run of program \"{n}\" ([program] name in sonde.toml) in {}: record one with `sonde run -- <command>`, or name the session",
+            dir.display()
+        ))),
+        (None, _, Some((_, p, key)), _) => Ok((
+            p,
+            format!("the newest run of program `{key}` recorded in this folder"),
+        )),
+        (None, _, None, Some((_, p, key))) => Ok((
+            p,
+            format!("the newest run (program `{key}`; none was recorded in this folder)"),
+        )),
+        (None, _, None, None) => Err(super::usage(format!(
             "no recorded sessions in {} yet: record one with `sonde run -- <command>`",
             dir.display()
-        ))
-    })
+        ))),
+    }
+}
+
+/// Whether a run is of the program named `name`: by its key, or, recorded
+/// without a name of its own, by the name `check --init` gives its command.
+pub fn of_program(h: &SessionHeader, name: &str) -> bool {
+    sonde_proxy::program::key_of(h).as_deref() == Some(name)
+        || (h.name.as_deref().is_none_or(|x| x.trim().is_empty())
+            && h.command
+                .as_deref()
+                .and_then(sonde_proxy::program::short_name)
+                .as_deref()
+                == Some(name))
+}
+
+/// The project's program's name here (`[program] name` of the sonde.toml
+/// this folder is in), when it says one. A sonde.toml that cannot be read
+/// names none here: `run` and `check` say what is wrong with it.
+pub fn project_name() -> Option<String> {
+    let here = std::env::current_dir().ok()?;
+    sonde_proxy::project::of(&here)
+        .ok()??
+        .file
+        .program
+        .name
+        .filter(|n| !n.trim().is_empty())
 }
 
 #[cfg(test)]

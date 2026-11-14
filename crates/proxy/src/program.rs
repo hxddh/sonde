@@ -259,6 +259,62 @@ pub fn program_name(command: &str) -> Option<String> {
     first
 }
 
+/// A short name for a program from its command: the script an interpreter
+/// runs (`etl` of `python etl.py --day 2`), else the program itself. Letters,
+/// digits, `-` and `_`: what `check --init` names a program, and what its
+/// session files are named by.
+pub fn short_name(command: &str) -> Option<String> {
+    const INTERPRETERS: &[&str] = &[
+        "python", "python3", "node", "ruby", "java", "bash", "sh", "deno", "bun", "perl", "php",
+        "uv", "poetry", "npx", "dotnet",
+    ];
+    let program = program_name(command)?;
+    let stem = |f: &str| {
+        let name = f.rsplit(['/', '\\']).next().unwrap_or(f);
+        name.split('.').next().unwrap_or(name).to_string()
+    };
+    let base = program.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    let mut name = stem(&program);
+    if INTERPRETERS.contains(&base) || INTERPRETERS.contains(&program.as_str()) {
+        // what it runs: the first word after it that is a file, not an option
+        let after = command
+            .split_whitespace()
+            .skip_while(|w| !w.ends_with(&program));
+        if let Some(script) = after
+            .skip(1)
+            .find(|w| !w.starts_with('-') && w.contains('.') && !w.contains('='))
+        {
+            name = stem(script);
+        }
+    }
+    safe_name(&name)
+}
+
+/// A name with letters, digits, `-` and `_` only (each other character a
+/// `-`, none at either end): none when nothing is left.
+fn safe_name(name: &str) -> Option<String> {
+    let name: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let name = name.trim_matches('-').to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// What a run's session file is named by, after its time: the program's
+/// name (`--name`, `[program] name`), else its command's short name
+/// ([`short_name`]: `etl` of `python3 etl.py`, not `python3`).
+pub fn file_stem(name: Option<&str>, command: Option<&str>) -> Option<String> {
+    name.and_then(safe_name)
+        .or_else(|| command.and_then(short_name))
+}
+
 /// The command with the value of every variable it sets hidden
 /// (`AWS_SECRET_ACCESS_KEY=…`), quoted values whole: what may leave the machine.
 pub fn scrub_command(command: &str) -> String {

@@ -113,7 +113,7 @@ pub async fn run(s: &Arc<Sonde>, a: &ShareArgs) -> anyhow::Result<i32> {
     }
     let file = match a.files.last() {
         Some(f) => super::sessions::resolve(s, f),
-        None => super::record::newest_session(s)?,
+        None => super::record::which_run(s, super::record::project_name().as_deref())?.0,
     };
     if !file.exists() {
         return Err(super::usage(format!(

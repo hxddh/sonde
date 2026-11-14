@@ -435,7 +435,7 @@ fn runs_compared(
             super::sessions::resolve(s, after),
         ))),
         [one] => before_of(&super::sessions::resolve(s, one)),
-        _ => before_of(&newest_session(s)?),
+        _ => before_of(&which_run(s, project_name().as_deref())?.0),
     }
 }
 

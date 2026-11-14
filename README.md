@@ -70,7 +70,7 @@ sonde run --demo                        # a tour on a built-in store, no account
 sonde run --demo -- python etl.py       # your program on the built-in store, no account needed
 sonde endpoints import                  # your ~/.aws/config profiles
 sonde run -- python etl.py              # record
-sonde show                              # read the newest session
+sonde show                              # read the newest run of this folder's program
 sonde run -- python etl.py              # after a change: what is fixed, and what it saved
 sonde show --by prefix                  # where the slow requests are
 sonde run --trial -- python etl.py 's3://scratch/{trial}/'   # the same under faults
