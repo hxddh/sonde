@@ -1775,9 +1775,9 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert_eq!(fixed["measured"]["requests"], 20);
     // a program's first run has nothing before it
     let none = sonde(t.path(), &["compare", "etl-1-base"]);
-    assert_eq!(none.status.code(), Some(64));
+    assert_eq!(none.status.code(), Some(0), "not a mistake in the command");
     assert!(
-        stderr(&none).contains("the first run of `etl`"),
+        stderr(&none).contains("the first run of `etl`: there is no run before it"),
         "{}",
         stderr(&none)
     );
@@ -2209,4 +2209,229 @@ fn an_hourly_job_run_twice_unchanged_reads_no_change() {
     for not in ["✓ fixed", "! new", "↓ less", "↑ more"] {
         assert!(!second.contains(not), "{not} in:\n{second}");
     }
+}
+
+/// A key planted in a log with ESC and BEL (a window title set) reaches no
+/// terminal as they are: every command writes them out.
+#[test]
+fn a_keys_control_characters_are_written_out_never_sent() {
+    let t = tempfile::tempdir().unwrap();
+    let log = t.path().join("planted.log");
+    let line = A_LOG_LINE
+        .replace("t/a", "t/%1B%5D0%3Bpwned%07a")
+        .replace("boto3/1.34", "boto3/1.34\u{1b}[2J");
+    std::fs::write(&log, line.repeat(3)).unwrap();
+    let session = t.path().join("planted.sonde");
+    let s = session.to_str().unwrap();
+    let mut seen = vec![sonde(t.path(), &["import", log.to_str().unwrap(), "-o", s])];
+    for args in [
+        vec!["show", s],
+        vec!["show", "--requests", s],
+        vec!["show", "--all", s],
+        vec!["show", "--by", "prefix", s],
+        vec!["sessions"],
+        vec!["compare", s, s],
+        vec!["check", s],
+    ] {
+        seen.push(sonde(t.path(), &args));
+    }
+    let mut written_out = false;
+    for o in &seen {
+        for text in [stdout(o), stderr(o)] {
+            assert!(
+                !text.contains('\u{1b}') && !text.contains('\u{7}'),
+                "a control character reached the terminal: {text:?}"
+            );
+            written_out |= text.contains("\\e]0;pwned\\x07a");
+        }
+    }
+    assert!(written_out, "the key is shown, written out");
+}
+
+fn sessions_in(dirs: &Path) -> usize {
+    std::fs::read_dir(dirs.join("data/sessions"))
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".sonde"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// What `run` cannot do is a usage error before anything runs: a flag of
+/// its own mistyped is never taken for the program, and no endpoint is the
+/// configuration's mistake. A command that cannot start leaves no session.
+#[test]
+fn run_refuses_a_mistyped_flag_and_no_endpoint_and_records_nothing_it_did_not_run() {
+    let t = tempfile::tempdir().unwrap();
+    let o = sonde(t.path(), &["run", "--demo", "--typo", "--", "true"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("unknown option --typo"),
+        "{}",
+        stderr(&o)
+    );
+    let o = sonde(t.path(), &["run", "--", "true"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("no endpoint configured"),
+        "{}",
+        stderr(&o)
+    );
+    let o = sonde(t.path(), &["run", "--demo", "--", "/no/such/program"]);
+    assert_eq!(o.status.code(), Some(70), "{}", stderr(&o));
+    assert!(stderr(&o).contains("cannot start"), "{}", stderr(&o));
+    assert_eq!(sessions_in(t.path()), 0, "no session of what never ran");
+    // a program's own flags after its name are its own
+    let o = sonde(t.path(), &["run", "--demo", "--", "sh", "-c", "exit 0"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+}
+
+/// `-o FILE` refuses a file that is there unless `--force`, and two runs
+/// given one file each print their own report and keep their own session.
+#[test]
+fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
+    let t = tempfile::tempdir().unwrap();
+    let out = t.path().join("run.sonde");
+    std::fs::write(&out, "mine").unwrap();
+    let o_ = out.to_str().unwrap();
+    let o = sonde(t.path(), &["run", "--demo", "-o", o_, "--", "true"]);
+    assert_eq!(o.status.code(), Some(64), "{}", stderr(&o));
+    assert!(stderr(&o).contains("--force"), "{}", stderr(&o));
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "mine");
+    let o = sonde(
+        t.path(),
+        &["run", "--demo", "-o", o_, "--force", "--", "true"],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_ne!(std::fs::read(&out).unwrap(), b"mine");
+    // two at once, one file
+    let both = t.path().join("both.sonde");
+    let b_ = both.to_str().unwrap().to_string();
+    let runs: Vec<_> = ["first", "second"]
+        .into_iter()
+        .map(|word| {
+            let b_ = b_.clone();
+            let dirs = t.path().to_path_buf();
+            std::thread::spawn(move || {
+                let script = format!("sleep 0.5; echo {word}");
+                sonde(
+                    &dirs,
+                    &["run", "--demo", "-o", &b_, "--", "sh", "-c", &script],
+                )
+            })
+        })
+        .collect();
+    let seen: Vec<String> = runs
+        .into_iter()
+        .map(|r| {
+            let o = r.join().unwrap();
+            assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+            let err = stderr(&o);
+            err.lines()
+                .find_map(|l| l.strip_prefix("session: "))
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_ne!(seen[0], seen[1], "each its own session: {seen:?}");
+    for s in &seen {
+        assert!(Path::new(s).is_file(), "{s}");
+    }
+    let left: Vec<String> = std::fs::read_dir(t.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".recording"))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+/// sonde told to end (SIGTERM) ends its program and says the code it exits
+/// with: one code, 143, in the message and the exit.
+#[cfg(unix)]
+#[test]
+fn a_run_ended_by_sigterm_says_the_code_it_exits_with() {
+    let t = tempfile::tempdir().unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_sonde"))
+        .args(["run", "--demo", "--", "sleep", "30"])
+        .env("SONDE_CONFIG_DIR", t.path().join("config"))
+        .env("SONDE_DATA_DIR", t.path().join("data"))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(o.status.code(), Some(143), "{}", stderr(&o));
+    assert!(stderr(&o).contains("(exit 143)"), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("137"), "{}", stderr(&o));
+}
+
+/// A CloudTrail file cut short is bad data (65), said where it broke.
+#[test]
+fn a_cloudtrail_file_cut_short_is_bad_data_said_where() {
+    let t = tempfile::tempdir().unwrap();
+    let trail = t.path().join("trail.json");
+    std::fs::write(
+        &trail,
+        r#"{"Records":[{"eventTime":"2031-02-06T00:00:01Z","eventSource":"s3.amazonaws.com","eventName":"GetObject","requestParameters":{"bucketName":"lake","key":"a"}},{"eventTime":"2031-02-06T00:00:02Z","eventSo"#,
+    )
+    .unwrap();
+    let o = sonde(t.path(), &["import", trail.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(65), "{}", stderr(&o));
+    assert!(stderr(&o).contains("at line 1, column"), "{}", stderr(&o));
+}
+
+/// `compare` alone after a program's first run: there is no run before it,
+/// said, and nothing wrong with the command.
+#[test]
+fn compare_alone_after_a_first_run_says_there_is_no_run_before() {
+    let t = tempfile::tempdir().unwrap();
+    let o = sonde(t.path(), &["run", "--demo", "--", "true"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let o = sonde(t.path(), &["compare"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("there is no run before it to compare with"),
+        "{}",
+        stderr(&o)
+    );
+}
+
+/// An imported log's what-if says no waiting: the import says it is not known.
+#[test]
+fn an_imported_logs_what_if_says_no_waiting_it_does_not_know() {
+    let t = tempfile::tempdir().unwrap();
+    let log = t.path().join("headget.log");
+    let mut text = String::new();
+    for i in 1..=8 {
+        for (op, method) in [("REST.HEAD.OBJECT", "HEAD"), ("REST.GET.OBJECT", "GET")] {
+            text.push_str(&format!(
+                "79a5 lake [06/Feb/2031:00:00:3{i} +0000] 192.0.2.3 - {method}{i} {op} t/k{i} \"{method} /lake/t/k{i} HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n"
+            ));
+        }
+    }
+    std::fs::write(&log, text).unwrap();
+    let session = t.path().join("headget.sonde");
+    let s = session.to_str().unwrap();
+    let o = sonde(t.path(), &["import", log.to_str().unwrap(), "-o", s]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let shown = stdout(&sonde(t.path(), &["show", s]));
+    let line = shown
+        .lines()
+        .find(|l| l.starts_with("acting on"))
+        .unwrap_or_else(|| panic!("{shown}"));
+    assert!(line.contains("16 → 8 requests"), "{line}");
+    assert!(!line.contains("waiting"), "{line}");
+    let j: serde_json::Value =
+        serde_json::from_str(&stdout(&sonde(t.path(), &["show", s, "-f", "json"]))).unwrap();
+    assert!(j["whatIf"]["waitingMs"].is_null(), "{}", j["whatIf"]);
+    assert_eq!(j["whatIf"]["requests"], serde_json::json!([16, 8]));
 }

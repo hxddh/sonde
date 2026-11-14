@@ -239,6 +239,97 @@ fn round_up(s: &str) -> String {
     String::from_utf8(d).expect("ascii digits")
 }
 
+/// A character that does something to a terminal rather than show itself:
+/// C0 (tab and newline among them), DEL, C1, and the marks that turn text's
+/// direction (a key can be made to read as another).
+fn controls(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+fn escape_into(out: &mut String, c: char) {
+    use std::fmt::Write;
+    let _ = match c {
+        '\n' => write!(out, "\\n"),
+        '\r' => write!(out, "\\r"),
+        '\t' => write!(out, "\\t"),
+        '\u{1b}' => write!(out, "\\e"),
+        c if (c as u32) < 0x80 => write!(out, "\\x{:02x}", c as u32),
+        c => write!(out, "\\u{{{:x}}}", c as u32),
+    };
+}
+
+/// Text from outside sonde (a key, a bucket, a program's command or
+/// output, a log's line) as it may be shown: every control character
+/// written out (`\e`, `\x07`, `\n`, `\u{9b}`), so that none moves the
+/// cursor, sets the window's title or starts a line of its own.
+pub fn escape(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.chars().any(controls) {
+        return text.into();
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars() {
+        if controls(c) {
+            escape_into(&mut out, c);
+        } else {
+            out.push(c);
+        }
+    }
+    out.into()
+}
+
+/// What sonde writes to a terminal, whatever is in it: as [`escape`], but
+/// lines and tabs stay, and so do sonde's own colours (`ESC [ … m`) and
+/// its progress line's erase (`\r ESC [2K`). Everything sonde prints passes
+/// through it.
+pub fn terminal(text: &str) -> std::borrow::Cow<'_, str> {
+    // (the common case: nothing to look at)
+    if !text.chars().any(|c| controls(c) && c != '\n' && c != '\t') {
+        return text.into();
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        let kept = match c {
+            '\n' | '\t' => 1,
+            '\r' if rest[1..].starts_with("\u{1b}[2K") => 1,
+            '\u{1b}' => own_sequence(rest),
+            _ => 0,
+        };
+        if kept > 0 {
+            out.push_str(&rest[..kept]);
+            rest = &rest[kept..];
+            continue;
+        }
+        if controls(c) {
+            escape_into(&mut out, c);
+        } else {
+            out.push(c);
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    out.into()
+}
+
+/// The length of the sequence of sonde's own at the start of `text`: a
+/// colour (`ESC [` digits and `;` `m`) or the erase of a line (`ESC [2K`).
+fn own_sequence(text: &str) -> usize {
+    let Some(body) = text.strip_prefix("\u{1b}[") else {
+        return 0;
+    };
+    if body.starts_with("2K") {
+        return 4;
+    }
+    let params = body
+        .bytes()
+        .take_while(|b| b.is_ascii_digit() || *b == b';')
+        .count();
+    if params <= 12 && body.as_bytes().get(params) == Some(&b'm') {
+        2 + params + 1
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,5 +386,29 @@ mod tests {
         assert_eq!(count_signed(0, true), "0");
         assert_eq!(counted(1, "request"), "1 request");
         assert_eq!(counted(10_004, "request"), "10,004 requests");
+    }
+
+    #[test]
+    fn control_characters_are_written_out_never_sent() {
+        let planted = "logs/\u{1b}]0;pwned\u{7}x\u{9b}2J\u{7f}\u{202e}fdp.exe";
+        assert_eq!(
+            escape(planted),
+            "logs/\\e]0;pwned\\x07x\\u{9b}2J\\x7f\\u{202e}fdp.exe"
+        );
+        assert_eq!(escape("a\nb\tc\rd"), "a\\nb\\tc\\rd");
+        assert!(matches!(
+            escape("plain/日本/ü"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        // what sonde prints: its lines, colours and progress erase stay
+        let line = format!("\u{1b}[31mbroke\u{1b}[0m at {planted}\n\r\u{1b}[2K3/4\t");
+        assert_eq!(
+            terminal(&line),
+            "\u{1b}[31mbroke\u{1b}[0m at logs/\\e]0;pwned\\x07x\\u{9b}2J\\x7f\\u{202e}fdp.exe\n\r\u{1b}[2K3/4\t"
+        );
+        // what is not a colour is not let through
+        assert_eq!(terminal("\u{1b}[2J\u{1b}[1;31m"), "\\e[2J\u{1b}[1;31m");
+        assert_eq!(terminal("a\rb"), "a\\rb");
+        assert_eq!(terminal("\u{1b}"), "\\e");
     }
 }

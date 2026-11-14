@@ -61,7 +61,15 @@
       "$ref": "#/$defs/cost"
     },
     "whatIf": {
-      "$ref": "#/$defs/whatIf"
+      "description": "The run with every finding's fix; null when no finding names what its fix saves (none, or none that can be counted).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/whatIf"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "findings": {
       "type": "array",
@@ -512,7 +520,11 @@
           "items": false
         },
         "waitingMs": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "Null when the session's times cannot say it (an imported log's, to the second).",
           "prefixItems": [
             {
               "type": "number"

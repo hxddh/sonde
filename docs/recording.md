@@ -98,7 +98,8 @@ committer settings; empty `…/` directory markers are reported with their delet
    and a SigV4 (header or presigned) or SigV2 signature with this recording's keys. Else `403
    SignatureDoesNotMatch`, recorded as refused, never forwarded.
 4. The [policy](#what-a-recorded-program-may-do) may refuse it: `403 AccessDenied` naming the policy, recorded as
-   refused. A path starting `//` gets `400 InvalidURI`.
+   refused. A path starting `//`, or a bucket `.` or `..`, gets `400 InvalidURI`. A key's own `.` and `..` segments
+   (`a/../b`, a key of its own in S3) are forwarded as sent.
 5. Re-signed (SigV4) for the real endpoint. Bodies stream through, except: signed `aws-chunked`
    (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD[-TRAILER]`) is decoded (up to 1 GiB) and sent with its SHA-256, trailing
    checksums as headers; a body without a length is buffered (S3 needs `Content-Length`);
@@ -119,7 +120,7 @@ sonde's own destructive acts are each a dry run and a typed confirmation ([secur
 
 | Policy | Allows | Refuses |
 |---|---|---|
-| `no-delete` (default) | reads, listings, new objects, writes over objects this program wrote (below); multipart uploads; tags, ACLs, retention; turning versioning on | every delete (`DELETE`, `POST ?delete`), `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning, a write (`PutObject`, `CompleteMultipartUpload`, `CopyObject`) over an object that existed before the recording, a write with `If-Match`, any write sonde cannot name |
+| `no-delete` (default) | reads, listings, new objects, writes over objects this program wrote (below); multipart uploads; tags, ACLs, retention; turning versioning on; removing what this recording made (below) | every other delete (`DELETE`, `POST ?delete`) and `AbortMultipartUpload`, `PUT ?lifecycle`, `PUT`/`DELETE ?policy`, suspending versioning, a write (`PutObject`, `CompleteMultipartUpload`, `CopyObject`) over an object that existed before the recording, a write with `If-Match`, any write sonde cannot name |
 | `read-only` | GET and HEAD | everything else |
 | `allow` | everything | nothing |
 
@@ -134,6 +135,9 @@ How `no-delete` finds an existing object:
   anything under a `{trial}` place of its command (`t{trial}/` → keys under `tclean`, `tslowdown`, …). A refused write
   names the key; `--policy allow` lets it through.
 - `sonde proxy` and `watch` record no program: only what the recording itself wrote.
+- A program may remove what it made in the same recording: abort an upload it started (`AbortMultipartUpload` of
+  its own upload id), delete an object or a version it wrote (or one under its trial's `{trial}` place), a
+  `DeleteObjects` whose every object is such, a bucket it created. What earlier recordings wrote is not removed.
 
 Which applies, first match: the flag (`--policy allow|no-delete|read-only`); `[record] policy`
 in `sonde.toml` (warned on stderr when it allows deletes); `no-delete`. In the app, Run starts at `no-delete` (the
@@ -228,15 +232,14 @@ Re-enacted (a session holds no object data):
   keys moved under the prefix.
 - Upload ids, part ETags, ETags in `If-Match`/`If-None-Match` and continuation tokens map to the replay endpoint's;
   `CompleteMultipartUpload` is rebuilt from the replayed parts.
-- Every key and listing prefix under `replay-<time>/` (or `--prefix`). Bucket-level changes (lifecycle, policy,
-  deleting the bucket) and requests naming a version id are left out.
+- Every key and listing prefix under `replay-<time>/` (or `--prefix`). Creating or deleting a bucket, bucket-level
+  changes (lifecycle, policy) and requests naming a version id are left out, and the plan says so.
 - One request at a time, in order, no retries.
 - Asks first (`--yes` in scripts); deletes what it wrote afterwards, always.
-- The prefix must be empty and listable (or its bucket absent), else nothing is sent.
+- Each bucket must be there, its prefix empty and listable, else nothing is sent.
 - Never on the recorded keys: an empty prefix is refused.
 - Compared by status and S3 error code, and for an answer that succeeded, what it carried: a listing's keys
-  (counted on each record, `x-sonde-keys`), a read's bytes. 404 on both sides is the same; `CreateBucket` "already owned by you" is
-  counted apart. Exit 2 when anything differs.
+  (counted on each record, `x-sonde-keys`), a read's bytes. 404 on both sides is the same. Exit 2 when anything differs.
 
 ```
 ✗ PutObject   recorded 412 PreconditionFailed → replay 200   ×1   e.g. data/log/0001.json  (if-none-match: *)

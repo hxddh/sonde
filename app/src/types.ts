@@ -618,7 +618,7 @@ export interface Observation {
 /** A session after acting on every finding that counts a saving: an estimate. */
 export interface WhatIf {
   requests: [number, number];
-  waitingMs: [number, number];
+  waitingMs: [number, number] | null;
   cost: [number, number];
   currency: string;
   findings: number;

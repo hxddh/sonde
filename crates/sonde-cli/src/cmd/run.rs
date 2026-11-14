@@ -62,6 +62,9 @@ pub struct RunArgs {
     /// in sonde.toml, else the command itself).
     #[arg(long)]
     name: Option<String>,
+    /// With -o: write over the file if it is there (else a run refuses it).
+    #[arg(long, requires = "out")]
+    force: bool,
     /// The command, after `--` (none with --demo: the tour).
     #[arg(
         required_unless_present = "demo",
@@ -255,6 +258,26 @@ fn names_its_place(command: &[String]) -> bool {
 }
 
 pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> {
+    // a word like a flag where the command starts is a flag of run's
+    // mistyped, not a program (none is named `--typo`)
+    if let Some(first) = a
+        .command
+        .first()
+        .filter(|w| w.starts_with('-') && *w != "-")
+    {
+        return Err(super::usage(format!(
+            "run: unknown option {first} (the command goes after `--`: sonde run [OPTIONS] -- COMMAND)"
+        )));
+    }
+    if let Some(out) = &a.rec.out
+        && !a.force
+        && out.symlink_metadata().is_ok()
+    {
+        return Err(super::usage(format!(
+            "-o {}: the file is there; --force writes over it",
+            out.display()
+        )));
+    }
     // `--demo` alone: the tour, a program of sonde's own
     if a.demo && a.command.is_empty() {
         if cli.url.is_some() {
@@ -478,20 +501,8 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         .iter()
         .filter(|t| t.standing == Standing::Broke)
         .count();
-    let tried = trials
-        .iter()
-        .filter(|t| t.standing != Standing::Untested)
-        .count();
-    eprintln!(
-        "\n{}",
-        if tried == 0 {
-            "Nothing was tried: no scenario met a request of the program's.".to_string()
-        } else if broke == 0 {
-            "The program did not break.".to_string()
-        } else {
-            format!("The program broke under {broke} of {tried}.")
-        }
-    );
+    let standings: Vec<Standing> = trials.iter().map(|t| t.standing).collect();
+    eprintln!("\n{}", trials_summary(&standings));
     eprintln!("Each trial is a session:");
     for t in &trials {
         if let Some(path) = sonde_proxy::trial::session_path(&file, t) {
@@ -507,25 +518,99 @@ pub async fn run(s: &Arc<Sonde>, cli: &Cli, a: &RunArgs) -> anyhow::Result<i32> 
         })
     {
         eprintln!("Once changed, try again what did not survive:");
-        eprintln!("  {}", again_command(a));
+        eprintln!("  {}", again_command(cli, a, &trials));
     }
     Ok(if broke > 0 { 1 } else { 0 })
 }
 
-/// The command that tries a program again under what did not survive.
-fn again_command(a: &RunArgs) -> String {
-    let mut words = vec!["sonde run --trial --again".to_string()];
+/// What a trial's runs came to, in a sentence: "did not break" only when
+/// every scenario was judged; the ones that were not are said.
+fn trials_summary(standings: &[sonde_proxy::trial::Standing]) -> String {
+    use sonde_proxy::trial::Standing;
+    let count = |s: Standing| standings.iter().filter(|t| **t == s).count();
+    let (broke, refused, untested) = (
+        count(Standing::Broke),
+        count(Standing::Refused),
+        count(Standing::Untested),
+    );
+    let judged = standings.len() - refused - untested;
+    let mut unjudged = Vec::new();
+    if refused > 0 {
+        unjudged.push(format!("{refused} refused by the recording policy"));
+    }
+    if untested > 0 {
+        unjudged.push(format!("{untested} met no request of the program's"));
+    }
+    let unjudged = unjudged.join(", ");
+    match (judged, broke) {
+        (0, _) if refused == 0 => {
+            "Nothing was tried: no scenario met a request of the program's.".to_string()
+        }
+        (0, _) => format!("Nothing was judged: {unjudged}."),
+        (_, 0) if unjudged.is_empty() => "The program did not break.".to_string(),
+        (_, 0) => {
+            format!("The program did not break under the {judged} judged; not judged: {unjudged}.")
+        }
+        _ if unjudged.is_empty() => format!("The program broke under {broke} of {judged}."),
+        _ => format!("The program broke under {broke} of {judged} judged; not judged: {unjudged}."),
+    }
+}
+
+/// The command that tries a program again under what did not survive, with
+/// the flags of the trial it repeats: the same store, policy and recording.
+/// A trial of scenarios named (`--fault`) names again the ones that did not
+/// survive.
+fn again_command(cli: &Cli, a: &RunArgs, trials: &[sonde_proxy::trial::Trial]) -> String {
+    use sonde_proxy::trial::Standing;
+    let q = |w: &str| sonde_proxy::program::shell_join(&[w.to_string()]);
+    let mut words = vec!["sonde run".to_string()];
+    if a.faults.is_empty() {
+        words.push("--trial --again".into());
+    } else {
+        for t in trials.iter().filter(|t| {
+            matches!(
+                t.standing,
+                Standing::Broke | Standing::Degraded | Standing::Refused
+            )
+        }) {
+            words.push(format!("--fault {}", q(&t.asked())));
+        }
+    }
     if let Some(n) = &a.name {
-        words.push(format!(
-            "--name {}",
-            sonde_proxy::program::shell_join(std::slice::from_ref(n))
-        ));
+        words.push(format!("--name {}", q(n)));
     }
     if let Some(out) = &a.rec.out {
-        words.push(format!(
-            "-o {}",
-            sonde_proxy::program::shell_join(&[out.to_string_lossy().into_owned()])
-        ));
+        // (the file is there now: written over, as asked)
+        words.push(format!("-o {} --force", q(&out.to_string_lossy())));
+    }
+    if a.demo {
+        words.push("--demo".into());
+    }
+    if let Some(url) = &cli.url {
+        words.push(format!("--url {}", q(url)));
+        if cli.region != "us-east-1" {
+            words.push(format!("--region {}", q(&cli.region)));
+        }
+        if cli.path_style {
+            words.push("--path-style".into());
+        }
+        if let Some(ca) = &cli.ca_file {
+            words.push(format!("--ca-file {}", q(&ca.to_string_lossy())));
+        }
+    }
+    if let Some(e) = &a.rec.endpoint
+        && !a.demo
+    {
+        words.push(format!("-e {}", q(e)));
+    }
+    if let Some(p) = &a.rec.policy {
+        words.push(format!("--policy {}", q(p)));
+    }
+    if a.rec.tls {
+        words.push("--tls".into());
+    }
+    if a.no_callers {
+        words.push("--no-callers".into());
     }
     words.push("--".into());
     words.push(sonde_proxy::program::shell_join(&a.command));
@@ -582,9 +667,24 @@ async fn run_once(
 ) -> anyhow::Result<Ran> {
     use tokio::io::AsyncWriteExt;
     let command = sonde_proxy::program::shell_join(&a.command);
+    // `-o FILE` is recorded beside it under a name of its own and put in
+    // its place at the end: two runs given one file never write into, or
+    // print, each other's
+    let target = ctx.rec.out.clone().filter(|_| under.is_none());
+    let rec = match &target {
+        Some(t) => {
+            // (its earlier verdicts go now, as a session recorded again)
+            sonde_proxy::trial::remove(t);
+            Recording {
+                out: Some(recording_path(t)),
+                ..ctx.rec.clone()
+            }
+        }
+        None => ctx.rec.clone(),
+    };
     let mut started = start_under(
         s,
-        &ctx.rec,
+        &rec,
         SocketAddr::from(([127, 0, 0, 1], 0)),
         Some(command),
         false,
@@ -682,9 +782,20 @@ async fn run_once(
     }
     let printer = (a.live && under.is_none()).then(|| follow(&started.log, true));
     let began = std::time::Instant::now();
-    let mut child = child
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("cannot start {program}: {e}"))?;
+    let mut child = match child.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            // nothing ran: no session of it
+            if let Some(p) = printer {
+                p.abort();
+            }
+            shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
+            let path = started.path.clone();
+            drop(started);
+            let _ = std::fs::remove_file(&path);
+            return Err(anyhow::anyhow!("cannot start {program}: {e}"));
+        }
+    };
     let feeder = match (&ctx.input, child.stdin.take()) {
         (Some(kept), Some(mut to)) if under.is_none() => {
             // sonde's input, to the program and kept: read on a thread of
@@ -762,16 +873,23 @@ async fn run_once(
     if let Some(p) = printer {
         p.abort();
     }
+    // a run sonde ended on SIGTERM ended as sonde does (143), whatever
+    // signal took its processes down
+    let code = match signal {
+        Some(15) => 143,
+        _ => exit_code(status),
+    };
     // requests still in flight are recorded before the file is read and packed
     shut_down(&mut started.proxy, SHUTDOWN_GRACE).await;
     started.writer.flush()?;
     if under.is_none() {
-        // kept as the app keeps it: a run that failed is compared with none
-        sonde_proxy::index::set(
-            &started.path,
-            sonde_proxy::index::Change::Exit(exit_code(status)),
-        );
+        // read before it is put in its place: this run's, whatever another does
         let session = Session::open_lean(&started.path).map_err(|e| anyhow::anyhow!(e))?;
+        if let Some(t) = &target {
+            started.path = place(&started.path, t, a.force)?;
+        }
+        // kept as the app keeps it: a run that failed is compared with none
+        sonde_proxy::index::set(&started.path, sonde_proxy::index::Change::Exit(code));
         let color = std::io::stderr().is_terminal();
         let prices = request_prices_for(s, &session.header.endpoint);
         let analysis = sonde_proxy::view::Analysis::of(&session, &prices);
@@ -806,10 +924,65 @@ async fn run_once(
     let _ = sonde_proxy::session::compress(&file);
     Ok(Ran {
         file,
-        code: exit_code(status),
+        code,
         wall_ms,
         signal,
     })
+}
+
+/// Where `-o FILE` is recorded until the run ends: beside it, a name of
+/// this run's own that no listing takes for a session.
+fn recording_path(target: &std::path::Path) -> PathBuf {
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "run.sonde".into());
+    target.with_file_name(format!(
+        ".{name}.{}.{}.recording",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ))
+}
+
+/// Puts a finished recording at `target`: over a file there only with
+/// `--force`. One another run put there meanwhile is kept, and this one
+/// goes beside it under a fresh name, said.
+fn place(
+    recorded: &std::path::Path,
+    target: &std::path::Path,
+    force: bool,
+) -> anyhow::Result<PathBuf> {
+    if force {
+        std::fs::rename(recorded, target)?;
+        return Ok(target.to_path_buf());
+    }
+    // a link made new is refused when the name is taken, as a rename is not
+    match std::fs::hard_link(recorded, target) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(recorded);
+            Ok(target.to_path_buf())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let stem = target
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "run".into());
+            let fresh = sonde_proxy::session::fresh_path(&runs_dir(target), &stem);
+            std::fs::rename(recorded, &fresh)?;
+            eprintln!(
+                "sonde: {} was written by another run meanwhile: this run's session is {}",
+                target.display(),
+                fresh.display()
+            );
+            Ok(fresh)
+        }
+        // a file system without links: the name is looked at, then taken
+        Err(_) if target.symlink_metadata().is_err() => {
+            std::fs::rename(recorded, target)?;
+            Ok(target.to_path_buf())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// What sonde wrote on an engine's command line, and whether the program's
@@ -899,6 +1072,35 @@ mod tests {
             assert_eq!(all, "123456789abcdefgh");
         }
         assert_eq!(KeptInput::default().limit, 8 << 20);
+    }
+
+    #[test]
+    fn did_not_break_is_said_only_when_every_scenario_was_judged() {
+        use sonde_proxy::trial::Standing::*;
+        assert_eq!(
+            trials_summary(&[Survived, Degraded]),
+            "The program did not break."
+        );
+        assert_eq!(
+            trials_summary(&[Survived, Refused, Refused, Untested]),
+            "The program did not break under the 1 judged; not judged: 2 refused by the recording policy, 1 met no request of the program's."
+        );
+        assert_eq!(
+            trials_summary(&[Broke, Survived]),
+            "The program broke under 1 of 2."
+        );
+        assert_eq!(
+            trials_summary(&[Broke, Refused]),
+            "The program broke under 1 of 1 judged; not judged: 1 refused by the recording policy."
+        );
+        assert_eq!(
+            trials_summary(&[Refused, Untested]),
+            "Nothing was judged: 1 refused by the recording policy, 1 met no request of the program's."
+        );
+        assert_eq!(
+            trials_summary(&[Untested]),
+            "Nothing was tried: no scenario met a request of the program's."
+        );
     }
 
     #[cfg(unix)]

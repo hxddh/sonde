@@ -98,13 +98,14 @@ pub fn open(cli: &Cli) -> Result<Arc<Sonde>, String> {
     Ok(s)
 }
 
-/// The endpoint a command acts on: `--endpoint`, `--url`, or the only one configured.
+/// The endpoint a command acts on: `--endpoint`, `--url`, or the only one
+/// configured. None to be found is the configuration's mistake (64).
 pub fn endpoint(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
     if let Some(e) = given {
         if s.endpoint_config(e).is_none() {
-            anyhow::bail!(
+            return Err(usage(format!(
                 "no endpoint {e:?}: `sonde endpoints list` shows the configured ones, --url adds one for this run"
-            );
+            )));
         }
         return Ok(e.to_string());
     }
@@ -114,17 +115,17 @@ pub fn endpoint(s: &Sonde, given: Option<&str>) -> anyhow::Result<String> {
     let all = s.endpoints();
     match all.len() {
         1 => Ok(all[0].id.clone()),
-        0 => anyhow::bail!(
+        0 => Err(usage(format!(
             "no endpoint configured: add one with `sonde endpoints add ID URL` (kept in {}), or name one for this run with `--url URL --path-style`",
             s.paths().config_file().display()
-        ),
-        _ => anyhow::bail!(
+        ))),
+        _ => Err(usage(format!(
             "several endpoints configured: pass --endpoint ({})",
             all.iter()
                 .map(|e| e.id.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
-        ),
+        ))),
     }
 }
 

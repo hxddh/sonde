@@ -49,6 +49,9 @@ struct Bucket {
     uploads: Vec<Upload>,
     /// The bytes of parts uploaded to this server: (upload id, part number).
     staged: BTreeMap<(String, u32), Vec<u8>>,
+    /// Uploads completed here: (upload id, key) → the answer given. A retried
+    /// CompleteMultipartUpload gets it again, as S3 and moto answer.
+    completed: BTreeMap<(String, String), String>,
     lifecycle: Option<String>,
     synthetic: usize,
     created: Option<DateTime<Utc>>,
@@ -501,6 +504,11 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
     }
     if let Some(up) = q.get("uploadId") {
         let Some(pos) = b.uploads.iter().position(|u| &u.id == up && u.key == key) else {
+            if method == "POST"
+                && let Some(done) = b.completed.get(&(up.clone(), key.clone()))
+            {
+                return xml(done.clone());
+            }
             return err(404, "NoSuchUpload", "The specified upload does not exist");
         };
         return match method {
@@ -566,11 +574,13 @@ fn handle(state: &Mutex<State>, line: &str, headers: &[(String, String)], body: 
                     time: now,
                     class: "STANDARD",
                 });
-                xml(format!(
+                let done = format!(
                     "<CompleteMultipartUploadResult><Bucket>{bucket}</Bucket><Key>{}</Key><ETag>{}</ETag></CompleteMultipartUploadResult>",
                     esc(&key),
                     esc(&e)
-                ))
+                );
+                b.completed.insert((up.clone(), key.clone()), done.clone());
+                xml(done)
             }
             _ => err(501, "NotImplemented", "not in the demo server"),
         };
@@ -1256,6 +1266,65 @@ mod commits {
             .await
             .unwrap();
         assert!(page.version.is_empty() && page.delete_marker.is_empty());
+    }
+
+    /// As S3 and moto 5.2.5: a retried Complete of an upload just completed
+    /// answers 200 with the same result; Abort and ListParts of it do not.
+    #[tokio::test]
+    async fn a_retried_complete_answers_as_the_first() {
+        let (_dir, c) = demo().await;
+        let key = "mpu/retried";
+        let init = c
+            .send_raw(
+                S3Request::new("CreateMultipartUpload", http::Method::POST)
+                    .bucket("demo")
+                    .key(key)
+                    .query("uploads", "")
+                    .no_retry(),
+            )
+            .await
+            .unwrap();
+        let text = init.text();
+        let id = text
+            .split("<UploadId>")
+            .nth(1)
+            .and_then(|r| r.split("</UploadId>").next())
+            .unwrap()
+            .to_string();
+        let part = S3Request::new("UploadPart", http::Method::PUT)
+            .bucket("demo")
+            .key(key)
+            .query("partNumber", "1")
+            .query("uploadId", &id)
+            .body(Body::from("part one".to_string()))
+            .no_retry();
+        assert_eq!(c.send_raw(part).await.unwrap().status, 200);
+        let complete = |k: &str| {
+            S3Request::new("CompleteMultipartUpload", http::Method::POST)
+                .bucket("demo")
+                .key(k)
+                .query("uploadId", &id)
+                .body(Body::from(
+                    "<CompleteMultipartUpload><Part><PartNumber>1</PartNumber></Part></CompleteMultipartUpload>"
+                        .to_string(),
+                ))
+                .no_retry()
+        };
+        let first = c.send_raw(complete(key)).await.unwrap();
+        assert_eq!(first.status, 200);
+        let again = c.send_raw(complete(key)).await.unwrap();
+        assert_eq!(again.status, 200, "{}", again.text());
+        assert_eq!(again.text(), first.text());
+        // another key with that id is no upload
+        assert_eq!(c.send_raw(complete("mpu/other")).await.unwrap().status, 404);
+        let abort = S3Request::new("AbortMultipartUpload", http::Method::DELETE)
+            .bucket("demo")
+            .key(key)
+            .query("uploadId", &id)
+            .no_retry();
+        assert_eq!(c.send_raw(abort).await.unwrap().status, 404);
+        let got = c.get_object("demo", key, None).await.unwrap();
+        assert_eq!(got.body.as_ref(), b"part one");
     }
 
     #[tokio::test]

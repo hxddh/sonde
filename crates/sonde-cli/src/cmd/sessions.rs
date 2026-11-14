@@ -474,9 +474,14 @@ pub async fn import(s: &Arc<Sonde>, a: &ImportArgs) -> anyhow::Result<i32> {
     };
     let imported = match imported {
         Ok(x) => x,
+        // a file cut short is bad data (65); the wrong file, a usage error
         Err(e) => {
             eprintln!("sonde: {}: {e}", a.file.display());
-            return Ok(64);
+            return Ok(if sonde_proxy::import::is_broken(&e) {
+                65
+            } else {
+                64
+            });
         }
     };
     let (source, session) = (imported.source, &imported.session);
