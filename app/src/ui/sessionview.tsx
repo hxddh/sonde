@@ -4,7 +4,7 @@
 // and how output and operations line up. The app and the web viewer
 // (sonde share) both draw with these.
 
-import { Clipboard, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
+import { Clipboard, computed, effect, type JSX, List, Scroll, signal, Text, token, untracked, View, type ViewRef } from "nsh";
 import { DataTable, type DataTableRef, type DataTableSort, TextView } from "nsh/base";
 import { change, clock, count, date, duration, middle, transfer } from "../format";
 import { t } from "../i18n";
@@ -39,11 +39,14 @@ export function StateBadge(props: { state: FindingState; testID?: string }) {
   return <Badge testID={props.testID} label={stateLabel(props.state)} tone={STATE_TONE[props.state]} />;
 }
 
-export type Tone = "ok" | "miss" | "client" | "server" | "refused";
+export type Tone = "ok" | "miss" | "client" | "server" | "refused" | "injected";
 
-/** How an operation ended, as a status color: lookups that found nothing are not errors. */
-export function episodeTone(e: Pick<EpisodeRow, "outcome" | "miss" | "notFound" | "requests">): Tone {
+/** How an operation ended, as a status color: lookups that found nothing are not errors; one that
+ * failed on an answer sonde gave in the store's place (`injected`, the session's ids) is in sonde's
+ * own tone, never the store's failure. */
+export function episodeTone(e: Pick<EpisodeRow, "outcome" | "miss" | "notFound" | "requests"> & { records?: number[] }, injected?: Set<number>): Tone {
   if (e.outcome.kind === "refused") return "refused";
+  if (e.outcome.kind === "failed" && injected?.size && e.records?.some((id) => injected.has(id))) return "injected";
   if (e.outcome.kind === "failed") return /^4\d\d/.test(e.outcome.detail) ? "client" : "server";
   if (e.miss) return "miss";
   // every request a lookup that found nothing
@@ -66,6 +69,7 @@ const TONE_TEXT: Record<Tone, string> = {
   client: "text-status-client",
   server: "text-status-server",
   refused: "text-status-refused",
+  injected: "text-status-injected",
 };
 const TONE_BAR: Record<Tone, string> = {
   ok: "bg-bar",
@@ -73,6 +77,7 @@ const TONE_BAR: Record<Tone, string> = {
   client: "bg-status-client",
   server: "bg-status-server",
   refused: "bg-status-refused",
+  injected: "bg-status-injected",
 };
 
 /** An HTTP status, the same everywhere: a dot in its tone and the code, a
@@ -607,6 +612,8 @@ export function OperationsTable(props: {
   /** A session still being recorded: the table opens at its newest operation and stays at its end as more arrive, until the reader scrolls up (back at the end, it follows again). */
   follow?: boolean;
 }) {
+  // the requests sonde answered in the store's place (a trial's): their operations in sonde's own tone
+  const hurt = computed(() => new Set(props.view.injected ?? []));
   const notes = (e: EpisodeRow) => episodeNotes(e, props.view.sharedNotes).join(" · ");
   // the slowest or busiest first, at a press on their column's title: sorted where the operations are kept
   const sort = signal<DataTableSort | null>(null);
@@ -671,7 +678,7 @@ export function OperationsTable(props: {
   };
   const data = () =>
     held().map((e) => ({
-      status: episodeTone(e),
+      status: episodeTone(e, hurt()),
       time: clock(e.start),
       format: family(e).label,
       // a terminal cuts it by a count of characters; a window where it runs out of room (the cell's own middle ellipsis)
@@ -688,7 +695,7 @@ export function OperationsTable(props: {
       case "status":
         return (
           <View class="flex-1 items-center justify-center">
-            <Dot tone={episodeTone(e)} label={e.outcome.kind === "ok" ? undefined : e.outcome.kind === "refused" ? t("sessions.refused") : e.outcome.detail} />
+            <Dot tone={episodeTone(e, hurt())} label={e.outcome.kind === "ok" ? undefined : e.outcome.kind === "refused" ? t("sessions.refused") : e.outcome.detail} />
           </View>
         );
       case "format":
@@ -702,7 +709,7 @@ export function OperationsTable(props: {
       case "title":
         // cut in its middle, by the text itself: a name's end (a key's file, an id) is what tells two rows apart
         return (
-          <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e)]}`} style={{ textOverflow: "ellipsis-middle" }}>
+          <Text class={`text-body line-clamp-1 ${e.outcome.kind === "ok" ? "text-foreground" : TONE_TEXT[episodeTone(e, hurt())]}`} style={{ textOverflow: "ellipsis-middle" }}>
             {c.text}
           </Text>
         );
@@ -715,7 +722,7 @@ export function OperationsTable(props: {
           <View class="flex-1 flex-row items-center">
             <View class="h-1.5 flex-1 flex-row overflow-hidden rounded-full bg-bar-track">
               <View style={{ flex: left }} />
-              <View class={`rounded-full ${TONE_BAR[episodeTone(e)]}`} style={{ flex: width, minWidth: 3 }} />
+              <View class={`rounded-full ${TONE_BAR[episodeTone(e, hurt())]}`} style={{ flex: width, minWidth: 3 }} />
               <View style={{ flex: Math.max(0, 1 - left - width) }} />
             </View>
           </View>
@@ -837,6 +844,8 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
     </View>
   );
   const e = () => props.episode;
+  // its requests sonde answered in the store's place (a trial's): the outcome in sonde's own tone
+  const hurt = () => new Set(props.rows.filter((r) => r.injected).map((r) => r.id));
   const notes = () => episodeNotes(e(), props.shared);
   const fam = () => family(e());
   return (
@@ -850,9 +859,9 @@ export function OperationView(props: { episode: EpisodeRow; shared: string[]; ro
           <View class="flex-1" />
           <If when={e().outcome.kind !== "ok"}>
             <View class="flex-row items-center gap-2">
-              <Dot tone={episodeTone(e())} />
+              <Dot tone={episodeTone(e(), hurt())} />
               {/* emphasis: how it failed, in its tone */}
-              <Text class={`text-small ${EMPHASIS} ${TONE_TEXT[episodeTone(e())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
+              <Text class={`text-small ${EMPHASIS} ${TONE_TEXT[episodeTone(e(), hurt())]}`}>{e().outcome.kind === "failed" ? (e().outcome as { detail: string }).detail : t("sessions.refused")}</Text>
             </View>
           </If>
         </View>

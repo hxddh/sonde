@@ -541,8 +541,8 @@ export type TileLook = "full" | "tight" | "line";
  * line about it; with `onPress`, the tile is a button and says where it goes.
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
-export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "client" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
-  const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", client: "text-status-client", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+export function Stat(props: { label: string; value: string; detail?: string; tone?: "plain" | "warn" | "ok" | "bad" | "client" | "injected" | "quiet"; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
+  const tint = () => ({ plain: "text-foreground", warn: "text-warn", ok: "text-status-ok", bad: "text-status-server", client: "text-status-client", injected: "text-status-injected", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
   const look = () => props.look ?? "full";
   const said = () => [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ");
   const name = () => (
@@ -715,8 +715,8 @@ export function PageHeader(props: { title?: string; subtitle?: string; mono?: bo
  * is made of and Escape closes it (Native Shell's Popover): the keyboard,
  * touch and screen readers reach it as the pointer does. The one inline
  * figure; in a row of tiles, `Stat`. */
-export function Figure(props: { value: string; label: string; /** `client`: failures that are all the program's own (4xx), in the tone their rows have */ tone?: "plain" | "ok" | "warn" | "bad" | "client" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
-  const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", client: "text-status-client", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
+export function Figure(props: { value: string; label: string; /** `client`: failures that are all the program's own (4xx), in the tone their rows have */ tone?: "plain" | "ok" | "warn" | "bad" | "client" | "injected" | "quiet"; small?: boolean; preview?: JSX.Element; testID?: string }) {
+  const tint = () => ({ plain: "text-foreground", ok: "text-status-ok", warn: "text-warn", bad: "text-status-server", client: "text-status-client", injected: "text-status-injected", quiet: "text-muted-foreground" })[props.tone ?? "plain"];
   const body = (
     <View class="gap-1">
       <Text class={`tabular-nums font-bold ${props.small ? "text-body" : "text-heading"} ${tint()}`}>{props.value}</Text>

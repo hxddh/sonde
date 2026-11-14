@@ -15,8 +15,9 @@ export interface SignalTile {
   label: string;
   value: string;
   detail: string;
-  /** `client`: failures that are all the program's own (4xx), in the tone their rows and charts have */
-  tone: "plain" | "bad" | "client" | "quiet";
+  /** `client`: failures that are all the program's own (4xx), in the tone their rows and charts have;
+   * `injected`: every one sonde's own answer (a trial), never the store's failure */
+  tone: "plain" | "bad" | "client" | "injected" | "quiet";
   /** Its line over the session, slice by slice (empty: nothing to draw). */
   series: number[];
   /** What the line is of: counts as bars, a level as steps, a measure as a line. */
@@ -90,7 +91,8 @@ export function signalTiles(s: Signals): SignalTile[] {
       value: some ? t("signal.failedOf", { n: count(s.errors.count), of: count(s.rate.requests) }) : s.errors.value == null ? "—" : percent(s.errors.value),
       detail: wrong.length ? wrong.join(" · ") : t("signal.noErrors"),
       // one failure, one colour: all of them the program's own (4xx) are in the tone their rows and charts have
-      tone: s.errors.count === 0 ? "plain" : s.errors.counts.client === s.errors.count ? "client" : "bad",
+      // (sonde's own answers in their own tone: the store's failures are what the colour says otherwise)
+      tone: s.errors.count === 0 ? "plain" : s.errors.counts.injected === s.errors.count ? "injected" : s.errors.counts.client === s.errors.count - s.errors.counts.injected ? "client" : "bad",
       series: few ? [] : s.errors.series,
       kind: "bars",
     },

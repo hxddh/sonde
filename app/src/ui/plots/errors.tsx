@@ -41,7 +41,7 @@ export function ErrorRate(props: { signals: Signals; range?: [number, number] | 
     );
   const peak = () => Math.max(0.01, ...rows().map((r) => r.share));
   // one failure, one colour: in the client's tone where every failure was the program's own (4xx), as the counts beside draw it
-  const tone = () => (e().counts.client > 0 && e().counts.server + e().counts.transport + e().counts.injected === 0 ? FAILURE_FILL.client : FAILURE_FILL.server);
+  const tone = () => { const c = e().counts; return c.server + c.client + c.transport === 0 && c.injected > 0 ? FAILURE_FILL.injected : c.client > 0 && c.server + c.transport === 0 ? FAILURE_FILL.client : FAILURE_FILL.server; };
   const hovered = signal<number | null>(null);
   const label = () => errorRateSaid(s(), props.range);
   const tip = () => {
