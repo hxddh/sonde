@@ -91,6 +91,12 @@ for (const v of variants) {
       }
       await app.waitFor(shown, { timeout: 4000 });
     };
+    // a session's command: its button where the pane has room, else behind its ⋯ by its words
+    const act = async (id: string, label: string) => {
+      if (app.shows(`id:${id}`)) return app.press(`id:${id}`);
+      await app.press("id:session-more");
+      await app.chooseMenuItem(label);
+    };
     const go = async (area: string) => {
       if (!app.shows(`id:nav-${area}`)) await app.keyboard.press("mod+b");
       await app.press(`id:nav-${area}`);
@@ -308,7 +314,7 @@ for (const v of variants) {
       await app.waitFor("id:session-summary", { timeout: 10000 });
       await app.wait(600);
     }
-    await app.press("id:compare-open");
+    await act("compare-open", "Compare…");
     const labels = app.menu()?.map((m) => m.label) ?? [];
     const run = labels.find((l) => l.includes("curl") && /· 18$/.test(l)) ?? labels.find((l) => l.includes("curl"));
     if (run) {
@@ -321,8 +327,8 @@ for (const v of variants) {
     } else if (app.menu()) await app.closeMenu();
 
     // what a replay on another store would send, said before it runs
-    await app.waitFor("id:replay-open", { timeout: 10000 });
-    await app.press("id:replay-open");
+    await app.waitFor("id:session-more", { timeout: 10000 });
+    await act("replay-open", "Replay on…");
     await app.waitFor("id:replay-plan", { timeout: 10000 });
     await shot("03q-replay-plan");
     await app.press("id:replay-cancel");

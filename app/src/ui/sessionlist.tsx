@@ -7,9 +7,8 @@ import { isAvailable } from "nsh/desktop";
 import { programOf, scrubCommand } from "../command";
 import { clock, day, hm } from "../format";
 import { t } from "../i18n";
-import { worstStanding } from "../trials";
 import type { SessionInfo } from "../types";
-import { Badge, Dot, Heading, InWindowMenu, ListRow, terminal } from "./kit";
+import { Dot, Heading, InWindowMenu, ListRow, terminal } from "./kit";
 import { Sparkline } from "./plots";
 
 const DAY = 86400000;
@@ -25,17 +24,21 @@ function dayLabel(iso: string): string {
 }
 
 /** Arguments of one program's runs, each cut so that what tells it from the
- * others shows: where they all begin alike past a few words, that beginning
- * is said once as `…` and each shows the rest (`… --table orders`,
- * `… --table users`); alone, or already different at their start, they stay whole. */
+ * others shows first: where they all begin alike past a few characters, that
+ * beginning is said once as `…` and each starts at what differs, from the
+ * edge of its word or of its path's part (`… --table orders`, `… users.csv`),
+ * so a column that cuts at its end cuts what they share, never what differs.
+ * Alone, or already different at their start, they stay whole. */
 export function tellApart(args: string[]): string[] {
   const distinct = [...new Set(args)];
   if (distinct.length < 2) return args;
   let common = distinct[0];
   for (const a of distinct) while (!a.startsWith(common)) common = common.slice(0, -1);
-  // back to a word's edge; a short beginning is worth keeping whole
-  common = common.slice(0, common.lastIndexOf(" ") + 1);
-  if (common.length < 16) return args;
+  // back to an edge: a word's, or a part of a path or of an option's value
+  const edge = Math.max(...[" ", "/", "=", ":", ","].map((c) => common.lastIndexOf(c)));
+  common = common.slice(0, edge + 1);
+  // a short beginning is worth keeping whole
+  if (common.trim().length < 12) return args;
   return args.map((a) => `… ${a.slice(common.length)}`);
 }
 
@@ -74,6 +77,8 @@ export function SessionList(props: {
     return out;
   };
   const headers = () => rows().flatMap((r, i) => ("day" in r ? [i] : []));
+  // how many of a run's trials broke (none: nothing is said)
+  const broke = (s: SessionInfo) => s.trials?.filter((x) => x.standing === "broke").length || null;
   const name = (s: SessionInfo) => s.title || programOf(s.command) || s.endpoint;
   // the rest of the command after its program, scrubbed; the whole of it when
   // the program is not its first word (`cd etl && python load.py`)
@@ -120,14 +125,17 @@ export function SessionList(props: {
       <View class="flex-row items-center gap-2">
         {/* (a twin's time is at its row's end, to the second: not said twice) */}
         <Text class="min-w-0 flex-1 text-caption text-muted-foreground line-clamp-1">{[told().get(x().s.path)?.twin ? "" : hm(x().s.created), x().s.endpoint, t("sessions.requestsN", { n: x().s.requests })].filter(Boolean).join(" · ")}</Text>
-        {/* tried under faults, and the program broke: said on its row, in a word (in full to a screen reader) */}
-        <If when={worstStanding(x().s.trials) === "broke"}>
-          <View accessibilityLabel={t("trial.brokeBadge")}>
-            <Badge testID="session-broke" label={t("trial.broke")} tone="fail" />
-          </View>
+        {/* tried under faults: how many of its trials broke, quietly — the run itself is not what broke
+            (in full to a screen reader) */}
+        <If when={broke(x().s)}>
+          {(n) => (
+            <Text testID="session-broke" class="shrink-0 text-caption text-muted-foreground" accessibilityLabel={t("trial.ofBrokeSaid", { n: n(), of: x().s.trials!.length })}>
+              {t("trial.ofBroke", { n: n(), of: x().s.trials!.length })}
+            </Text>
+          )}
         </If>
-        {/* (a row that says it broke keeps its line for its words: no mark beside the badge) */}
-        <If when={x().s.shape?.length && worstStanding(x().s.trials) !== "broke"}>
+        {/* (a row that says its trials broke keeps its line for its words: no mark beside them) */}
+        <If when={x().s.shape?.length && !broke(x().s)}>
           <Sparkline shape={x().s.shape!} id={x().s.path} />
         </If>
       </View>

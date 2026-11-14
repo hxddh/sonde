@@ -294,12 +294,13 @@ export function ChartNote(props: { children: JSX.Element; gutter?: boolean; test
 }
 
 /** A chart in its frame, the same for every chart: what it asks (`title`), a
- * sentence that answers it (`text`, which wraps: never cut), how it is cut
- * (`action`, at the title's end), the plot, its `legend` at the plot's left
- * edge (`gutter` for a chart of rows), and `empty` said in the plot's room
- * when there is nothing to draw. A terminal gets the title and what the
- * chart says in words. */
-export function Chart(props: { title: string; text?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string; /** its rows out as CSV (where the page can write a file): a button at the title's end */ onExport?: () => void }) {
+ * sentence that answers it (`text`, computed from what it draws; it wraps:
+ * never cut), how it is cut (`action`, at the title's end), how to read it
+ * (`how`: an info mark there, the words its tooltip), the plot, its `legend`
+ * at the plot's left edge (`gutter` for a chart of rows), and `empty` said in
+ * the plot's room when there is nothing to draw. A terminal gets the title
+ * and what the chart says in words. */
+export function Chart(props: { title: string; text?: string; how?: string; action?: JSX.Element; children?: JSX.Element; legend?: LegendItem[]; gutter?: boolean; empty?: string | null | false; testID?: string; class?: string; /** its rows out as CSV (where the page can write a file): a button at the title's end */ onExport?: () => void }) {
   if (terminal()) {
     return (
       <View testID={props.testID} class="gap-0">
@@ -320,6 +321,10 @@ export function Chart(props: { title: string; text?: string; action?: JSX.Elemen
           </If>
         </View>
         {props.action}
+        {/* how to read it, in its tooltip: the sentence under the title says what it shows */}
+        <If when={props.how}>
+          <IconButton icon="info" label={props.how!} testID={props.testID ? `${props.testID}-how` : undefined} />
+        </If>
         <If when={props.onExport && !props.empty}>
           <IconButton icon="download" label={t("chart.csv")} onPress={() => props.onExport?.()} testID={props.testID ? `${props.testID}-csv` : undefined} />
         </If>

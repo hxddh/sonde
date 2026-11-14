@@ -17,7 +17,7 @@ import { type ChartRows, toCsv } from "../csv";
 import type { ProjectBudget, SessionView, Signals, Split, SplitBy, Stretch } from "../types";
 import { Await, Button, Heading, Notice, Options, terminal, EMPHASIS, SimpleTable } from "./kit";
 import { findingMarks, StatusMark } from "./sessionview";
-import { BytesOverTime, Chains, Chart, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean } from "./plots";
+import { BytesOverTime, Chains, Chart, REASON, began, sizesSaid, throughputSaid, chainsSaid, prefixSaid, timelineSaid, lanesSaid, bytesSaid, groupsSaid, latencySaid, scatterSaid, kindsSaid, spentSaid, distSaid, failuresSaid, errorRateSaid, statusesSaid, costSaid, heatSaid, flowsSaid, CostBy, Distribution, ErrorsOverTime, failureLegend, FirstByte, timed, Flows, focusOf, HALF, hasTail, Heat, KindsOverTime, Lanes, LatencyBand, type LegendItem, PrefixMeasure, type PrefixMeasureKind, PrefixUse, requestsOf, RequestScatter, SessionShape, shapeSentence, Sizes, Throughput, TimeSpent, ChartNote, LatencyHeat, PLOT, SHAPE, TICK_ROOM, faultMoments, latencyLegend, shapeLegend, ErrorRate, TrialOverClean } from "./plots";
 
 /** The board's groups, in order: never more than these four. */
 const GROUPS = ["traffic", "latency", "errors", "where"] as const;
@@ -33,12 +33,17 @@ interface ChartSpec {
   when: () => boolean;
   wide?: boolean;
   title: () => string;
+  /** what it shows, as an answer to its title: computed from what it draws */
   text?: () => string;
+  /** how to read it: the frame's info mark */
+  how?: () => string;
   action?: () => JSX.Element;
   legend?: () => LegendItem[];
   testID?: string;
   /** not drawn over time: reckoned again for the stretch chosen (and its sentence says which stretch) */
   stretched?: boolean;
+  /** drawn over time: zoomed to a stretch of two slices or more (and its sentence, of the zoom, says which) */
+  zooms?: boolean;
   body: () => JSX.Element;
   /** what it draws, as rows: a CSV of it (each figure in one unit, named in its column) */
   rows?: () => ChartRows;
@@ -47,8 +52,6 @@ interface ChartSpec {
 /** The chart a signal's tile opens. */
 const SIGNAL_CHART: Record<SignalId, string> = { rate: "timeline", errors: "errors", latency: "latency", bytes: "bytes", inFlight: "lanes" };
 
-/** What a status is called when S3 gave no code of its own for it: its HTTP name. */
-const REASON: Record<number, string> = { 200: "OK", 201: "Created", 204: "No Content", 206: "Partial Content", 301: "Moved Permanently", 304: "Not Modified", 307: "Temporary Redirect", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 409: "Conflict", 411: "Length Required", 412: "Precondition Failed", 416: "Range Not Satisfiable", 429: "Too Many Requests", 500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
 
 /** Every answer the session got, as a table: its status, what S3 (or HTTP)
  * calls it, how many, how many of them a fault scenario's (in the injected
@@ -185,7 +188,7 @@ function ByKind(props: { view: Pick<SessionView, "summary" | "profile">; selecte
 }
 
 /** The Time pane of a session. */
-export function TimePane(props: { /** what Group by splits the operations by, and the split read (the app's bridge): the table of groups follows it */ groupBy?: SplitBy | null; splitOf?: (by: SplitBy) => Promise<Split>; /** the kind of request chosen (the operations narrowed to it), and a press on a kind's row: the operations of that kind */ kind?: string | null; onKind?: (kind: string | null) => void; /** a chart's rows out as CSV, where the page can write a file (the app; a shared page cannot) */ onExport?: (name: string, csv: string) => void; view: SessionView; onRequest?: (id: number) => void; /** a stretch to open over (a link's), in ms from the session's start */ range?: Range | null; /** the stretch shown changed (null: the whole session): for a link to keep it */ onRange?: (r: Range | null) => void; /** the stretch chosen, as slices, when it is the session's one selection of time (the Operations strip's too); with `onStretch` the pane follows it and says its picks there */ stretch?: [number, number] | null; onStretch?: (s: [number, number] | null) => void; /** the program's budget in its project's sonde.toml: drawn as a line on the charts it is about */ budget?: ProjectBudget | null; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null; /** a trial's session: the clean run it is judged against, when that run is still there */ clean?: SessionView | null; /** the requests that started in a stretch, reckoned as a session (the app's bridge; a shared page has none, and says its charts not over time are of the whole session) */ stretchOf?: (fromMs: number, toMs: number) => Promise<Stretch> }) {
+export function TimePane(props: { /** whether the board is scrolled from its top (the session's header folds while it is) */ onScrolled?: (away: boolean) => void; /** what Group by splits the operations by, and the split read (the app's bridge): the table of groups follows it */ groupBy?: SplitBy | null; splitOf?: (by: SplitBy) => Promise<Split>; /** the kind of request chosen (the operations narrowed to it), and a press on a kind's row: the operations of that kind */ kind?: string | null; onKind?: (kind: string | null) => void; /** a chart's rows out as CSV, where the page can write a file (the app; a shared page cannot) */ onExport?: (name: string, csv: string) => void; view: SessionView; onRequest?: (id: number) => void; /** a stretch to open over (a link's), in ms from the session's start */ range?: Range | null; /** the stretch shown changed (null: the whole session): for a link to keep it */ onRange?: (r: Range | null) => void; /** the stretch chosen, as slices, when it is the session's one selection of time (the Operations strip's too); with `onStretch` the pane follows it and says its picks there */ stretch?: [number, number] | null; onStretch?: (s: [number, number] | null) => void; /** the program's budget in its project's sonde.toml: drawn as a line on the charts it is about */ budget?: ProjectBudget | null; /** a signal pressed in the header: its chart comes into view (`n` tells one press from the next) */ reveal?: { id: SignalId; n: number } | null; /** a trial's session: the clean run it is judged against, when that run is still there */ clean?: SessionView | null; /** the requests that started in a stretch, reckoned as a session (the app's bridge; a shared page has none, and says its charts not over time are of the whole session) */ stretchOf?: (fromMs: number, toMs: number) => Promise<Stretch> }) {
   const p = () => props.view.profile;
   // the four signals, as Rust counted them (an older share: what its profile holds of them)
   const sig = () => signalsOf(props.view)!;
@@ -211,8 +214,10 @@ export function TimePane(props: { /** what Group by splits the operations by, an
     const from = zoomFrom();
     if (from === i) return zoomFrom.set(null);
     if (from === null) return zoomFrom.set(i);
+    const [a, b] = [Math.min(from, i), Math.max(from, i)];
     batch(() => {
-      setStretch([Math.min(from, i), Math.max(from, i)]);
+      // a stretch where no request began would dim every chart for nothing: it does not become the stretch
+      if (began(p(), a, b)) setStretch([a, b]);
       zoomFrom.set(null);
     });
   };
@@ -258,11 +263,6 @@ export function TimePane(props: { /** what Group by splits the operations by, an
   const spentBy = signal<"kind" | "code">("kind");
   const sizesBy = signal<"count" | "speed">("count");
   const measure = signal<PrefixMeasureKind>("requests");
-  // the requests the scatter draws: a zoom's, or every one sampled
-  const shown = () => {
-    const d = zoomMs();
-    return d ? p().samples.filter((x) => x.tMs >= d[0] && x.tMs < d[1]).length : p().samples.length;
-  };
   // a session of a moment has no shape over time to show
   const shaped = () => p().rate.length > 2 && p().samples.length > 2;
   // a live session's slices change length as it grows: a stretch picked would cover another time
@@ -291,9 +291,11 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       id: "trial",
       group: "traffic",
       wide: true,
+      zooms: true,
       when: () => graphic() && overTime() && !!props.clean && timed(props.clean.profile) && props.clean.profile.rate.length > 2,
       title: () => t("trialOver.title"),
-      text: () => t("trialOver.hint"),
+      text: () => t("trialOver.text", { trial: duration(p().wallMs), clean: duration(props.clean!.profile.wallMs), n: faults().length }),
+      how: () => t("trialOver.hint"),
       legend: () => [{ label: t("trialOver.trial"), swatch: "bg-chart-1" }, { label: t("trialOver.clean"), swatch: "bg-muted-foreground" }, ...(faults().length ? [{ label: t("trialOver.faults"), swatch: "bg-status-injected" }] : [])],
       body: () => <TrialOverClean trial={p()} clean={props.clean!.profile} faults={faults()} domainMs={zoomMs()} />,
     },
@@ -302,9 +304,12 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       id: "timeline",
       group: "traffic",
       wide: true,
+      zooms: true,
       when: () => graphic() && shaped(),
       title: () => t("timeline.title"),
-      text: () => (stretch() ? t("timeline.zoomed", { a: duration(stretchMs()![0]), b: duration(stretchMs()![1]) }) : zoomFrom() !== null ? t("timeline.zoomFrom", { t: duration((zoomFrom() ?? 0) * p().binMs) }) : t("timeline.hint")),
+      // what the slices shown hold; a first slice pressed asks where to end
+      text: () => [timelineSaid(p(), zoom()), zoomFrom() !== null ? t("timeline.zoomFrom", { t: duration((zoomFrom() ?? 0) * p().binMs) }) : ""].filter(Boolean).join(" · "),
+      how: () => t("timeline.hint"),
       action: () => (
         <If when={zoomFrom() !== null || (stretch() && !props.onStretch)}>
           {/* a first slice pressed, let go (the stretch chosen is cleared from its chip, above the pane) */}
@@ -312,27 +317,31 @@ export function TimePane(props: { /** what Group by splits the operations by, an
         </If>
       ),
       // every colour of the stack, the line, and what the numbers and rules over the slices are
-      legend: () => [...shapeLegend(p(), findingMarks(props.view).length > 0), ...(faults().length ? [{ label: t("trialOver.faults"), swatch: "bg-status-injected" }] : [])],
+      legend: () => [...shapeLegend(p(), findingMarks(props.view).length > 0, props.view.injected), ...(faults().length ? [{ label: t("trialOver.faults"), swatch: "bg-status-injected" }] : [])],
       rows: () => ({ columns: ["ms", "ok", "not_found", "client_error", "server_error", "p50_ms", "p95_ms"], rows: p().rate.map((b) => [b.tMs, b.ok, b.miss, b.client, b.server, b.p50Ms, b.p95Ms]) }),
-      body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} faults={faults()} range={zoom()} slice={zoomFrom() ?? one()} onSlice={pick} focus={focus} peak={sig().inFlight.peak} class={`${TICK_ROOM} mt-4 ${SHAPE} w-full`} testID="time-shape" />,
+      body: () => <SessionShape profile={p()} annotate axis marks={findingMarks(props.view)} faults={faults()} injected={props.view.injected} range={zoom()} slice={zoomFrom() ?? one()} onSlice={pick} focus={focus} peak={sig().inFlight.peak} class={`${TICK_ROOM} mt-4 ${SHAPE} w-full`} testID="time-shape" />,
     },
     {
       // what ran at once, what waited: each request on its lane
       id: "lanes",
       group: "traffic",
+      zooms: true,
       testID: "lanes-chart",
       when: () => graphic() && timed(p()) && p().samples.length > 1,
       title: () => t("lanes.title"),
-      text: () => t("lanes.hint"),
+      text: () => lanesSaid(p(), zoomMs()),
+      how: () => t("lanes.hint"),
       body: () => <Lanes profile={p()} domainMs={zoomMs()} onRequest={props.onRequest} focus={focus} injected={props.view.injected} />,
     },
     {
       // bodies a second, each way
       id: "bytes",
       group: "traffic",
+      zooms: true,
       when: () => overTime() && sig().bytes.upBytes + sig().bytes.downBytes > 0,
       title: () => t("bytesTime.title"),
-      text: () => t("bytesTime.hint"),
+      text: () => bytesSaid(sig(), zoom()),
+      how: () => t("bytesTime.hint"),
       legend: () => [{ label: t("bytesTime.up"), swatch: "bg-chart-1" }, { label: t("bytesTime.down"), swatch: "bg-chart-4" }],
       rows: () => ({ columns: ["ms", "sent_bytes_per_s", "received_bytes_per_s"], rows: sig().bytes.up.map((u, i) => [i * sig().binMs, u, sig().bytes.down[i] ?? 0]) }),
       body: () => <BytesOverTime signals={sig()} range={zoom()} focus={focus} />,
@@ -344,7 +353,8 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       stretched: true,
       when: () => sig().sizes.request.length + sig().sizes.response.length > 1,
       title: () => t("sizes.title"),
-      text: () => (sizesBy() === "speed" ? t("sizes.hintSpeed") : t("sizes.hint")),
+      text: () => (sizesBy() === "speed" && sa().sizes.throughput.length > 0 ? throughputSaid(sa()) : sizesSaid(sa())),
+      how: () => (sizesBy() === "speed" ? t("sizes.hintSpeed") : t("sizes.hint")),
       action: () => (
         <If when={sig().sizes.throughput.length > 0}>
           <Options testID="sizes-by" value={sizesBy()} items={[{ value: "count", title: t("sizes.byCount") }, { value: "speed", title: t("sizes.bySpeed") }]} onChange={(v) => sizesBy.set(v as "count" | "speed")} />
@@ -367,7 +377,8 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       stretched: true,
       when: () => kindStats(props.view).length > 0,
       title: () => t("byOp.title"),
-      text: () => t("byOp.hint"),
+      text: () => groupsSaid(operationStats(va()).map((o) => ({ name: o.operation, requests: o.count, errorShare: o.errorShare, p95Ms: o.p95Ms, few: o.few }))),
+      how: () => t("byOp.hint"),
       body: () => <ByKind view={va()} selected={props.kind} onSelect={props.onKind} />,
     },
     {
@@ -378,7 +389,8 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       wide: true,
       when: () => !!grouped(),
       title: () => t(`byGroup.${grouped()!}` as never),
-      text: () => [t("byGroup.hint"), stretch() ? t("time.ofWhole") : ""].filter(Boolean).join(" · "),
+      text: () => [split() ? groupsSaid(groupRows(split()!)) : "", stretch() ? t("time.ofWhole") : ""].filter(Boolean).join(" · "),
+      how: () => t("byGroup.hint"),
       body: () => (
         <Await loading={split.loading() && !split()} error={split.error()} retry={() => split.refetch()}>
           <If when={split()}>{(x) => <GroupTable testID="by-group" rows={groupRows(x())} title={t(`split.by.${x().by}`)} currency={x().currency} />}</If>
@@ -388,12 +400,15 @@ export function TimePane(props: { /** what Group by splits the operations by, an
     {
       id: "latency",
       group: "latency",
+      zooms: true,
       when: () => graphic() && overTime(),
       title: () => t("latencyTime.title"),
-      // (no slice with a tail: said, rather than a band named and not drawn)
       text: () =>
-        (latencyAs() === "heat" ? `${t("latencyHeat.hint")}${sampled()}` : hasTail(p()) ? t("latencyTime.hint") : t("latencyTime.hintNoTail")) +
+        latencySaid(p(), zoom()) +
+        (latencyAs() === "heat" ? sampled() : "") +
         (p95Budget() != null && sig().latency.p95Ms != null ? budgetSaid("p95", sig().latency.p95Ms! > p95Budget()!, { v: duration(sig().latency.p95Ms!), budget: duration(p95Budget()!) }) : ""),
+      // (no slice with a tail: said, rather than a band named and not drawn)
+      how: () => (latencyAs() === "heat" ? t("latencyHeat.hint") : hasTail(p()) ? t("latencyTime.hint") : t("latencyTime.hintNoTail")),
       // the bands are of every request; the grid shows what a band averages away (two modes, a slow few)
       action: () => <Options testID="latency-as" value={latencyAs()} items={[{ value: "bands", title: t("latencyTime.bands") }, { value: "heat", title: t("latencyTime.heat") }]} onChange={(v) => latencyAs.set(v as "bands" | "heat")} />,
       legend: () => (latencyAs() === "heat" ? [{ label: t("latencyHeat.scale"), swatch: "bg-heat-high" }] : latencyLegend(p())),
@@ -408,10 +423,12 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       // every request, when it ran or how large it was (a press opens it), or the busiest kinds each over time
       id: "scatter",
       group: "latency",
+      zooms: true,
       when: () => graphic() && timed(p()) && p().samples.length > 1,
       title: () => t("scatter.title"),
       // above what a session keeps of its requests, the dots are of a sample: said
-      text: () => (scatterBy() === "kinds" ? t("kinds.title") : `${t("scatter.text", { n: shown(), p95: duration(p().p95Ms ?? 0) })}${sampled()}`),
+      text: () => (scatterBy() === "kinds" ? kindsSaid(p(), zoomMs()) : `${scatterSaid(p(), zoomMs())}${sampled()}`),
+      how: () => (scatterBy() === "kinds" ? t("kinds.hint") : t("scatter.hint")),
       action: () => <Options testID="scatter-by" value={scatterBy()} items={[{ value: "time", title: t("scatter.byTime") }, { value: "size", title: t("scatter.bySize") }, ...((p().groupRate?.length ?? 0) > 0 ? [{ value: "kinds", title: t("scatter.byKind") }] : [])]} onChange={(v) => scatterBy.set(v as "time" | "size" | "kinds")} />,
       body: () => (
         <If when={scatterBy() === "kinds"} else={<RequestScatter profile={p()} by={scatterBy() === "size" ? "size" : "time"} domainMs={zoomMs()} onRequest={props.onRequest} injected={props.view.injected} />}>
@@ -425,7 +442,8 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       stretched: true,
       when: () => timed(p()),
       title: () => t("profile.spentTitle"),
-      text: () => t("profile.spentHint"),
+      text: () => spentSaid(pa(), spentBy()),
+      how: () => t("profile.spentHint"),
       action: () => (
         <If when={(p().callers?.length ?? 0) > 0}>
           <Options testID="spent-by" value={spentBy()} items={[{ value: "kind", title: t("spent.byKind") }, { value: "code", title: t("spent.byCode") }]} onChange={(v) => spentBy.set(v as "kind" | "code")} />
@@ -433,7 +451,7 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       ),
       body: () => <TimeSpent profile={pa()} by={spentBy()} />,
     },
-    { id: "distribution", group: "latency", stretched: true, when: () => !!p().latency?.length, title: () => t("dist.title"), text: () => t("dist.hint"), body: () => <Distribution profile={pa()} /> },
+    { id: "distribution", group: "latency", stretched: true, when: () => !!p().latency?.length, title: () => t("dist.title"), text: () => distSaid(pa()), how: () => t("dist.hint"), body: () => <Distribution profile={pa()} /> },
     {
       // the wait for the first byte against the rest: only where a first byte was timed
       id: "firstByte",
@@ -441,18 +459,21 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       stretched: true,
       when: () => !!sig().firstByte?.kinds.length,
       title: () => t("firstByte.title"),
-      text: () => t("firstByte.hint"),
+      text: () => (sa().firstByte ? t("firstByte.text", { pct: percent(sa().firstByte!.share), n: count(sa().firstByte!.count) }) : ""),
+      how: () => t("firstByte.hint"),
       legend: () => [{ label: t("firstByte.first"), swatch: "bg-chart-1" }, { label: t("firstByte.rest"), swatch: "bg-chart-4" }],
       body: () => <FirstByte signals={sa()} />,
     },
-    { id: "chains", group: "latency", when: () => !!p().chains?.length, title: () => t("chains.title"), text: () => t("chains.hint"), body: () => <Chains profile={p()} domainMs={zoomMs()} /> },
+    { id: "chains", group: "latency", when: () => !!p().chains?.length, title: () => t("chains.title"), text: () => chainsSaid(p()), how: () => t("chains.hint"), body: () => <Chains profile={p()} domainMs={zoomMs()} /> },
     // --- errors: when they failed, what share, and every answer the store gave
     {
       id: "errors",
       group: "errors",
+      zooms: true,
       when: () => failed() && (shaped() || terminal()),
       title: () => t("failures.title"),
-      text: () => t("failures.hint"),
+      text: () => failuresSaid(sig(), zoom(), sa()),
+      how: () => t("failures.hint"),
       legend: () => failureLegend(sig()),
       rows: () => ({ columns: ["ms", "client", "server", "transport", "injected", "retries"], rows: sig().errors.series.map((_, i) => [i * sig().binMs, sig().errors.client[i] ?? 0, sig().errors.server[i] ?? 0, sig().errors.transport[i] ?? 0, sig().errors.injected[i] ?? 0, sig().errors.retries[i] ?? 0]) }),
       body: () => <ErrorsOverTime signals={sig()} range={zoom()} focus={focus} />,
@@ -461,13 +482,15 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       // the rate beside the counts: the share of each slice's requests that failed
       id: "errorRate",
       group: "errors",
+      zooms: true,
       when: () => graphic() && sig().errors.count > 0 && shaped() && timed(p()),
       title: () => t("errorRate.title"),
-      text: () => t("errorRate.hint") + (props.budget?.maxErrors != null ? budgetSaid("errors", sig().errors.count > props.budget.maxErrors, { n: count(sig().errors.count), budget: count(props.budget.maxErrors) }) : ""),
+      text: () => errorRateSaid(sig(), zoom()) + (props.budget?.maxErrors != null ? budgetSaid("errors", sig().errors.count > props.budget.maxErrors, { n: count(sig().errors.count), budget: count(props.budget.maxErrors) }) : ""),
+      how: () => t("errorRate.hint"),
       rows: () => ({ columns: ["ms", "requests", "failed"], rows: sig().errors.series.map((x, i) => [i * sig().binMs, Math.round(((sig().rate.series[i] ?? 0) * sig().binMs) / 1000), x]) }),
       body: () => <ErrorRate signals={sig()} range={zoom()} focus={focus} budgetShare={errorBudget()} />,
     },
-    { id: "statuses", group: "errors", stretched: true, when: () => sig().statuses.length > 0, title: () => t("statuses.title"), text: () => t("statuses.hint"), body: () => <Statuses signals={sa()} offsetMs={sel()?.offsetMs} /> },
+    { id: "statuses", group: "errors", stretched: true, when: () => sig().statuses.length > 0, title: () => t("statuses.title"), text: () => statusesSaid(sa()), how: () => t("statuses.hint"), body: () => <Statuses signals={sa()} offsetMs={sel()?.offsetMs} /> },
     // --- where: which prefixes, at what cost, on which path
     {
       // where by prefix: how many, what they cost, how near the limit
@@ -476,19 +499,21 @@ export function TimePane(props: { /** what Group by splits the operations by, an
       stretched: true,
       when: () => p().prefixes.some((x) => x.prefix !== "other"),
       title: () => t("prefixUse.title"),
-      text: () => t("prefixUse.hint"),
+      text: () => prefixSaid(pa(), measure()),
+      how: () => t("prefixUse.hint"),
       action: () => <PrefixMeasure profile={pa()} value={measure()} onChange={(m) => measure.set(m)} />,
       body: () => <PrefixUse profile={pa()} measure={measure()} rates={sa().prefixes} />,
     },
-    { id: "cost", group: "where", stretched: true, when: () => sig().cost.kinds.some((x) => x.cost > 0), title: () => t("costBy.title"), text: () => t("costBy.hint"), body: () => <CostBy signals={sa()} /> },
-    { id: "heat", group: "where", when: () => !!p().heat?.length, title: () => t("heat.title"), text: () => t("heat.hint"), body: () => <Heat profile={p()} range={zoom()} /> },
-    { id: "flows", group: "where", wide: true, stretched: true, testID: "flows-chart", when: () => graphic() && !!p().flows?.length, title: () => t("flows.title"), text: () => t("flows.hint"), body: () => <Flows profile={pa()} /> },
+    { id: "cost", group: "where", stretched: true, when: () => sig().cost.kinds.some((x) => x.cost > 0), title: () => t("costBy.title"), text: () => costSaid(sa()), how: () => t("costBy.hint"), body: () => <CostBy signals={sa()} /> },
+    { id: "heat", group: "where", zooms: true, when: () => !!p().heat?.length, title: () => t("heat.title"), text: () => heatSaid(p(), zoom()), how: () => t("heat.hint"), body: () => <Heat profile={p()} range={zoom()} /> },
+    { id: "flows", group: "where", wide: true, stretched: true, testID: "flows-chart", when: () => graphic() && !!p().flows?.length, title: () => t("flows.title"), text: () => flowsSaid(pa()), how: () => t("flows.hint"), body: () => <Flows profile={pa()} /> },
   ];
   const of = (g: Group) => charts.filter((c) => c.group === g && c.when());
-  /** a chart's sentence, and for one reckoned again for the stretch, which stretch */
+  /** a chart's sentence, and beside it the stretch it is of: one reckoned again for the stretch chosen, or one zoomed to it */
   const said = (c: ChartSpec) => {
     const text = c.text?.();
-    const stretch = c.stretched ? ofStretch() : "";
+    const z = zoomMs();
+    const stretch = c.stretched ? ofStretch() : c.zooms && z ? t("time.ofStretch", { a: duration(z[0]), b: duration(z[1]) }) : "";
     return stretch ? (text ? `${text} · ${stretch}` : stretch) : text;
   };
   // a signal pressed scrolls its chart into view (Native Shell's `reveal`, from the chart's own ref)
@@ -510,7 +535,7 @@ export function TimePane(props: { /** what Group by splits the operations by, an
     if (target) show(target.id);
   });
   return (
-    <Scroll testID="time-pane" class="min-h-0 flex-1" contentClass="gap-6 pb-4 terminal:gap-2 terminal:pb-0">
+    <Scroll testID="time-pane" class="min-h-0 flex-1" onScroll={(e) => props.onScrolled?.(e.offset.y > 8)} contentClass="gap-6 pb-4 terminal:gap-2 terminal:pb-0">
       {/* the figures are the session header's; here, a terminal's sentence */}
       <If when={terminal() && timed(p())}>
         <Text class="text-foreground">{shapeSentence(p())}</Text>
@@ -534,7 +559,7 @@ export function TimePane(props: { /** what Group by splits the operations by, an
                       if (wanted === c().id) show(wanted);
                     }}
                     class={terminal() ? "" : c().wide ? "w-full" : HALF}>
-                    <Chart testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={said(c())} action={c().action?.()} legend={c().legend?.()} empty={c().stretched ? noneHeld() : null} onExport={props.onExport && c().rows ? () => props.onExport!(c().id, toCsv(c().rows!())) : undefined}>
+                    <Chart testID={c().testID ?? `chart-${c().id}`} title={c().title()} text={said(c())} how={c().how?.()} action={c().action?.()} legend={c().legend?.()} empty={c().stretched ? noneHeld() : null} onExport={props.onExport && c().rows ? () => props.onExport!(c().id, toCsv(c().rows!())) : undefined}>
                       {c().body()}
                     </Chart>
                   </View>

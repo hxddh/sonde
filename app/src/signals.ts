@@ -15,8 +15,9 @@ export interface SignalTile {
   label: string;
   value: string;
   detail: string;
-  /** `client`: failures that are all the program's own (4xx), in the tone their rows and charts have */
-  tone: "plain" | "bad" | "client" | "quiet";
+  /** `client`: failures that are all the program's own (4xx), in the tone their rows and charts have;
+   * `injected`: every one sonde's own answer (a trial), never the store's failure */
+  tone: "plain" | "bad" | "client" | "injected" | "quiet";
   /** Its line over the session, slice by slice (empty: nothing to draw). */
   series: number[];
   /** What the line is of: counts as bars, a level as steps, a measure as a line. */
@@ -60,10 +61,12 @@ function failures(s: Signals): string[] {
 /** The four signals and in flight, in rank order (a narrow header drops the
  * last first). A figure a log without times cannot give says so in words —
  * "not timed" — and never reads 0. */
-export function signalTiles(s: Signals): SignalTile[] {
+export function signalTiles(s: Signals, /** lookups that found nothing (not failures): said beside the errors */ misses = 0): SignalTile[] {
   const none = t("signal.notTimed");
   const retries = s.errors.retriesTotal > 0 ? [t("signal.retries", { n: count(s.errors.retriesTotal) })] : [];
   const wrong = [...failures(s), ...retries];
+  // what found nothing is no failure, and is said beside them: "No request failed" alone hid a run that missed 67%
+  const missed = misses > 0 && s.rate.requests > 0 ? percent(misses / s.rate.requests) : null;
   const both = s.bytes.upBytes + s.bytes.downBytes;
   // a run of a moment says totals; a handful of requests has no line over its time
   const few = brief(s);
@@ -88,9 +91,10 @@ export function signalTiles(s: Signals): SignalTile[] {
       label: t("signal.errors"),
       // of a handful, how many; of a run, the share
       value: some ? t("signal.failedOf", { n: count(s.errors.count), of: count(s.rate.requests) }) : s.errors.value == null ? "—" : percent(s.errors.value),
-      detail: wrong.length ? wrong.join(" · ") : t("signal.noErrors"),
+      detail: wrong.length ? [...wrong, ...(missed ? [t("signal.missed", { pct: missed })] : [])].join(" · ") : missed ? t("signal.missed", { pct: missed }) : t("signal.noErrors"),
       // one failure, one colour: all of them the program's own (4xx) are in the tone their rows and charts have
-      tone: s.errors.count === 0 ? "plain" : s.errors.counts.client === s.errors.count ? "client" : "bad",
+      // (sonde's own answers in their own tone: the store's failures are what the colour says otherwise)
+      tone: s.errors.count === 0 ? "plain" : s.errors.counts.injected === s.errors.count ? "injected" : s.errors.counts.client === s.errors.count - s.errors.counts.injected ? "client" : "bad",
       series: few ? [] : s.errors.series,
       kind: "bars",
     },

@@ -493,6 +493,8 @@ function Recent() {
 
 export function Run() {
   const active = () => running() !== null || lastRun() !== null;
+  // once the program has ended, its output yields room to its result (what it did, what to change)
+  const done = () => running() === null && lastRun() !== null;
   if (!terminal()) cleanup(showInSidebar("run", () => <Recent />));
   return (
     <View class="flex-1 gap-4 p-4 terminal:gap-1 terminal:p-1" testID="screen-run">
@@ -502,7 +504,7 @@ export function Run() {
           when={terminal()}
           else={
             <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("run.resizeOperations")}>
-              <ResizablePanel minSize={PANE.terminalLeast}>
+              <ResizablePanel minSize={done() ? PANE.terminalDone : PANE.terminalLeast}>
                 <View class="flex-1 pr-2">
                   <ProgramTerminal />
                 </View>
