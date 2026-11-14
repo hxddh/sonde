@@ -2,12 +2,12 @@
 // the session afterwards with the output lined up.
 
 import { expect, open, test } from "nsh/test";
-import { desktop, place, runAction, runCommand } from "./helpers";
+import { openDemo, desktop, place, runAction, runCommand, sessionAction, sessionMenu } from "./helpers";
 
 async function demo() {
   const app = await open("../App.tsx", desktop);
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await place(app, "run");
   return app;
@@ -137,7 +137,7 @@ test("a session as a timeline, replayed from the app, and the answers compared",
   await app.waitFor("id:session-summary", { timeout: 10000 });
   // where each operation fell in time is the operations' own When column
   expect(app.shows("id:session-pane-mode-timeline")).toBe(false);
-  await app.press("id:replay-open");
+  await sessionAction(app, "Replay on…");
   await app.waitFor("id:replay-plan", { timeout: 5000 });
   expect(app.shows("text:/2 requests \\(1 write, 0 deletes\\) under replay-/")).toBe(true);
   await app.press("id:replay-run");
@@ -238,7 +238,7 @@ test("a session's time: where it went, and two runs before and after", async () 
   // compared with another run: before and after
   // (the header, folded while the Time pane was scrolled, opens again with the Operations pane: pressed once laid out)
   await app.wait(500);
-  await app.press("id:compare-open");
+  await sessionAction(app, "Compare…");
   // another program's runs are under their own heading, and say so once compared
   const run = app.menu()!.map((m) => m.label).find((l) => l.startsWith("Other programs > curl"))!;
   await app.chooseMenuItem(run);
@@ -511,8 +511,8 @@ test("try again what broke: a fresh run, only what did not survive, each scenari
   await app.waitFor("id:history-trials", { timeout: 10000 });
   expect(app.shows("id:trial-history-slowdown")).toBe(true);
   expect(app.shows("id:trial-again")).toBe(true);
-  // the session's header tries it under faults too
-  expect(app.shows("id:session-try")).toBe(true);
+  // the session's ⋯ tries it under faults too
+  expect(await sessionMenu(app)).toContain("Try under faults…");
 }, 180000);
 
 test("why slow: Group by splits the operations with a sentence; a request's inspector shows its key's history", async () => {

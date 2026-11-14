@@ -11,7 +11,8 @@ import { Icon } from "../ui/icon";
 import { api, asError, watch } from "../native";
 import { bucket, endpoint, prefix, report, settings } from "../store";
 import type { MpuReport, Plan, UploadRow } from "../types";
-import { Await, Badge, ProgressBar, Button, Card, Disclosure, Empty, Field, Heading, ICON, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH, COLUMN, TEXT } from "../ui/kit";
+import { sectionLabel } from "../labels";
+import { titleCells, Await, Badge, ProgressBar, Button, Card, Disclosure, Empty, Field, Heading, ICON, NumberField, Path, ROW, rowHeight, sortRows, Stat, TABLE, terminal, ToolBar, TYPE, WIDTH, COLUMN, TEXT } from "../ui/kit";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 import { ConfirmPlan } from "../ui/confirm";
 import { Document } from "../ui/record";
@@ -98,9 +99,10 @@ export function Multipart() {
   const tone = (s: string) => (s === "covered" ? "ok" : s === "unknown" ? "quiet" : "warn");
   const age = (r: MpuReport) => t("common.days", { n: r.thresholdDays });
   if (!terminal() && !report_()) void scan();
+
   return (
     <Sheet>
-      <ToolBar scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}>
+      <ToolBar title={terminal() ? undefined : sectionLabel("multipart")} scope={terminal() ? undefined : `${bucket() ?? ""}/${pfx()}`}>
         <If when={terminal()}>
           <EndpointPicker />
           <BucketPicker />
@@ -176,6 +178,8 @@ export function Multipart() {
                       { key: "bytes", title: t("mpu.bytes"), width: COLUMN.bytes, align: "end", sortable: true },
                       { key: "cost", title: t("mpu.costMonth"), width: COLUMN.cost, align: "end", sortable: true },
                     ]}
+                    // the titles as every table draws them: the key sorts, and the four figures at their end
+                    renderHeaderCell={terminal() ? undefined : titleCells(() => [{}, { sortable: true }, ...Array.from({ length: 4 }, () => ({ sortable: true, align: "end" }))])}
                     // an old upload is marked in its first cell (an icon; "!" in a terminal), not shouted: the one way a row says it
                     data={sorted(r().uploads).map((u) => ({ flag: u.stale ? "!" : "", key: u.key, age: u.ageDays == null ? "—" : duration(u.ageDays * 86400000, "age"), parts: count(u.parts), bytes: u.partsError ? "?" : bytes(u.bytes), cost: money(u.costPerMonth, r().currency) }))}
                     fontSize={TYPE.body}

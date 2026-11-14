@@ -1,7 +1,7 @@
 // sonde's styled controls, drawn on nsh/base's behavior with the theme's tokens.
 
 import { Animated, cleanup, createAnimatedValue, Easing, effect, ErrorBoundary, screenReaderEnabled, fontScale, type JSX, keymap, platform, reduceMotion, Scroll, setAccessibilityFocus, signal, Text, token, View, type ViewRef } from "nsh";
-import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
+import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger, AlertDialog, Button as BaseButton, Checkbox as BaseCheckbox, ContextMenu, DataTable, type DataTableHeaderCell, type DataTableRef, type DataTableSort, Dialog, Link, MenuItem, Input, NumberInput, Popover, Progress, Radio, RadioGroup, Select, Sheet, Slider, Switch, Tab, Table, TableBody, TableCell, TableRow, Tabs, Tooltip } from "nsh/base";
 import { lang, t } from "../i18n";
 import { count, middle, separators } from "../format";
 import { isAvailable, Menu, type MenuItem as MenuItemSpec } from "nsh/desktop";
@@ -14,6 +14,9 @@ export const textual = () => terminal() || screenReaderEnabled();
 /** The look of every split's handle (Native Shell's ResizablePanelGroup):
  * a hairline that thickens under the pointer. */
 export const SPLIT_HANDLE = "bg-border group-hover:w-[3px] group-hover:bg-ring/60 group-active:w-[3px] group-active:bg-ring";
+/** The same handle between two cards side by side: their gap parts them, so no hairline is drawn until the
+ * pointer finds it. */
+export const SPLIT_GAP = "bg-transparent group-hover:w-[3px] group-hover:bg-ring/60 group-active:w-[3px] group-active:bg-ring";
 /** A shortcut as the platform writes it: "mod+shift+k" → "⇧⌘K" on macOS,
  * "Ctrl+Shift+K" elsewhere (Native Shell's keymap). */
 export function keyLabel(shortcut: string): string {
@@ -119,6 +122,11 @@ export const DOT = "size-2 shrink-0 rounded-full";
 export const HIGHLIGHT = "bg-accent";
 /** What is chosen in a list, a table, a tree or a row of tiles: one selection. */
 export const SELECTED = "bg-selection";
+/** Chrome that is there only when wanted: a row's trash, pencil or Decode,
+ * a tile's chevron. Hidden until the pointer is over its `group` (a row, a
+ * tile), the group is selected, or the keyboard is inside it; it keeps its
+ * place, so nothing moves as it shows, and it is always reachable. */
+export const REVEAL = `opacity-0 group-hover:opacity-100 group-selected:opacity-100 focus-within:opacity-100 ${TRANSITION}`;
 
 /** One vocabulary of tones, and one table of how each is drawn: its words
  * (`text`), a solid mark (`fill`: a bar, a lane), its dot (`dot`), its icon's
@@ -225,16 +233,49 @@ export const CONTROL = {
 export const TABLE = {
   header: "bg-card border-b border-border",
   get headerCell() {
-    return `px-2 ${TEXT.meta}`;
+    return `group px-2 ${TEXT.meta}`;
   },
+  // a sortable title is pressed anywhere on it (its sort button spans it, unseen): the mark the reader sees is
+  // drawn right after the title by `titleCells`
+  sortIndicator: "absolute inset-0 h-full w-full",
+  sortAscending: "opacity-0",
+  sortDescending: "opacity-0",
   // (its text in the theme's own colour: a table that draws its cells itself was black on dark)
   cell: "px-2 text-foreground",
   rowHover: "bg-row-hover",
   rowSelected: SELECTED,
   fixedEdge: "border-r border-border",
 } as const;
+/** Every DataTable's titles (its `renderHeaderCell`), drawn one way: the title
+ * in the header's role, and on a sortable column its sort mark right after it
+ * — the one direction on the sorted column, both under the pointer, none
+ * otherwise. `columns` are the table's, for which sort and which stand at
+ * their end. */
+export const titleCells = (columns: () => readonly { sortable?: boolean; align?: string; key?: string }[]) => (h: DataTableHeaderCell) => {
+  const c = () => columns()[h.column];
+  return (
+    <View class={`min-w-0 flex-1 flex-row items-center gap-1 ${c()?.align === "end" ? "justify-end" : ""}`}>
+      <Text class={`min-w-0 shrink ${TEXT.meta} line-clamp-1`}>{h.title}</Text>
+      <If when={c()?.sortable && !terminal()}>
+        <View class={`shrink-0 ${h.sort ? "" : `opacity-0 group-hover:opacity-100 ${TRANSITION}`}`}>
+          <Icon name={h.sort === "ascending" ? "chevron-up" : h.sort === "descending" ? "chevron-down" : "chevrons-up-down"} size={ICON.small} tint="muted-foreground" />
+        </View>
+      </If>
+    </View>
+  );
+};
+/** A table inside a card or a chart (`SimpleTable bare`): the same, with no
+ * box of its own and no fill under its titles, the hairline under them only. */
+export const BARE_TABLE = {
+  ...TABLE,
+  get headerCell() {
+    return TABLE.headerCell;
+  },
+  header: "border-b border-border",
+  root: "border-0 bg-transparent",
+};
 /** The one width of a settings page, its forms and lists: Settings and Endpoints line up. */
-export const FORM = "w-full max-w-[720px]";
+export const FORM = "w-full max-w-[720px] self-center";
 /** The one width of a centered column to read (the welcome, an empty Run's intro). */
 export const READING = "w-full max-w-[560px]";
 /** Every size at which a layout changes, and no others (lint-kit fails a
@@ -248,7 +289,7 @@ export const READING = "w-full max-w-[560px]";
 export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as const;
 /** The sizes a page may name, each once: the least width a tile reads in
  * (a session's signal, a comparison's fact with its two lines, a bucket's
- * figure), how high a dialog's scrolling part grows before it scrolls, a
+ * size), how high a dialog's scrolling part grows before it scrolls, a
  * terminal's matrix, and the findings' room over a session's operations (in
  * a short pane: two lines, or the least a chosen finding's advice reads in;
  * in a taller one its least and its share of the pane, a finding chosen or
@@ -258,7 +299,6 @@ export const BREAK = { toolbar: 1040, inspector: 900, short: 600, tall: 880 } as
 export const SIZES = {
   signalTile: 168,
   compareTile: 176,
-  bucketTile: 200,
   capacityTile: 128,
   dialogScroll: 480,
   terminalMatrix: 640,
@@ -318,6 +358,8 @@ export const PANE = {
   /** the sidebar */
   sidebarLeast: 208,
   sidebarMost: 440,
+  /** the sidebar under `BREAK.toolbar`: the user's width, but never wider than this */
+  sidebarNarrow: 220,
   /** the page beside the sidebar */
   mainLeast: 480,
   /** Run's program and its operations */
@@ -595,7 +637,13 @@ export function IconButton(props: { icon: IconName; label: string; onPress?: () 
  * is the one title of a page that is only an introduction (the welcome, an
  * empty Run); `mono` for a title that is a command, a key or a bucket. A
  * terminal has one weight and no sizes. */
-export function Title(props: { children: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string }) {
+export function Title(props: { children?: JSX.Element; page?: boolean; /** at the body's size: a title that is a long command */ small?: boolean; mono?: boolean; lines?: 1 | 2; center?: boolean; class?: string; testID?: string; /** a session's command: on one line, regular-weight mono at the body's size, cut in its middle (never wrapped through an argument); heard whole */ command?: string }) {
+  if (props.command !== undefined)
+    return (
+      <Text testID={props.testID} role="header" accessibilityLabel={props.command} class={`font-mono ${TEXT.body} line-clamp-1 ${props.class ?? ""}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
+        {props.command}
+      </Text>
+    );
   return (
     <Text
       testID={props.testID}
@@ -652,7 +700,7 @@ export function Card(props: { children: JSX.Element; pad?: keyof typeof CARD_PAD
   const cls = () => `${CARD} ${CARD_PAD[props.pad ?? "panel"]} ${props.class ?? ""}`;
   return (
     <If when={props.onPress} else={<View testID={props.testID} class={cls()} onLayout={props.onWidth ? ({ bounds }) => props.onWidth?.(Math.round(bounds.size.width)) : undefined}>{props.children}</View>}>
-      <BaseButton testID={props.testID} accessibilityLabel={props.label} selected={props.selected} onPress={() => props.onPress?.()} class={`${cls()} items-stretch hover:border-ring/40 hover:bg-muted/40 active:bg-muted selected:border-ring/60 ${PRESS.surface} ${FOCUS}`}>
+      <BaseButton testID={props.testID} accessibilityLabel={props.label} selected={props.selected} onPress={() => props.onPress?.()} class={`group ${cls()} items-stretch hover:border-ring/40 hover:bg-muted/40 active:bg-muted selected:border-ring/60 ${PRESS.surface} ${FOCUS}`}>
         {props.children}
       </BaseButton>
     </If>
@@ -691,7 +739,7 @@ export function ListRow(props: { children: JSX.Element; onPress?: () => void; se
 export function Row(props: { children: JSX.Element; first?: boolean; top?: boolean; wrap?: boolean; /** lines one under another (a job: what it is, then how far it got) */ stack?: boolean; /** under its hairline, what pads itself (a list that scrolls): no padding of the row's */ bare?: boolean; class?: string; testID?: string }) {
   const flow = () => (props.stack ? "gap-1" : `flex-row ${props.wrap ? "flex-wrap gap-x-3 gap-y-1" : "gap-3"} ${props.top ? "items-start" : "items-center"}`);
   return (
-    <View testID={props.testID} class={`${flow()} ${props.bare ? "" : "px-3 py-2"} ${props.first ? "" : "border-t border-border"} ${props.class ?? ""}`}>
+    <View testID={props.testID} class={`group ${flow()} ${props.bare ? "" : "px-3 py-2"} ${props.first ? "" : "border-t border-border"} ${props.class ?? ""}`}>
       {props.children}
     </View>
   );
@@ -716,22 +764,27 @@ export type TileLook = "full" | "tight" | "line";
  * In a row, the caller gives it its share (`min-w-44 flex-1`); never a
  * height of its own, which collapses it in a column. */
 export function Stat(props: { label: string; value: string; detail?: string; tone?: Tone; icon?: IconName; onPress?: () => void; pending?: boolean; testID?: string; class?: string; /** a mark beside the figure: its line over a session (a `Sparkline`) */ mark?: JSX.Element; /** what a press does, heard and in its label */ hint?: string; /** how much of it shows (`Tiles` says) */ look?: TileLook }) {
-  const tint = () => TONE[props.tone ?? "plain"].text;
+  // the figure in the text's colour (a quiet one muted): its tone is a mark beside its name, never its figure
+  const tint = () => (props.tone === "quiet" ? TONE.quiet.text : "text-foreground");
+  const marked = () => !!props.tone && props.tone !== "plain" && props.tone !== "quiet";
   const look = () => props.look ?? "full";
   const said = () => [`${props.label}: ${props.value}`, props.detail, props.hint].filter(Boolean).join(", ");
   const name = () => (
     <>
-      {/* the icon only where the name has room beside it; a name's qualifier ("· median") likewise */}
-      <If when={props.icon && look() === "full"}>
-        <Icon name={props.icon!} size={ICON.small} tint={props.tone === "warn" ? TONE.warn.icon : "muted-foreground"} />
+      {/* the icon only where the name has room beside it, in the tile's tone; a tone without one, its dot */}
+      <If when={props.icon && look() === "full"} else={<If when={marked()}><View class="h-4 shrink-0 justify-center"><View class={`${DOT} ${TONE[props.tone!].dot}`} /></View></If>}>
+        <Icon name={props.icon!} size={ICON.small} tint={marked() ? TONE[props.tone!].icon : "muted-foreground"} />
       </If>
       {/* (on a line of its own with its figure, a long name takes a second line before it is cut) */}
       <Text class={`min-w-0 flex-1 ${TEXT.meta} ${look() === "line" ? "line-clamp-2" : "line-clamp-1"}`}>{look() === "full" ? props.label : props.label.split(" · ")[0]}</Text>
     </>
   );
+  // where a press goes, said under the pointer or the keyboard only
   const chevron = () => (
     <If when={props.onPress}>
-      <Icon name="chevron-right" size={ICON.small} />
+      <View class={REVEAL}>
+        <Icon name="chevron-right" size={ICON.small} />
+      </View>
     </If>
   );
   // a figure is never cut: a figure of words ("SlateDB, Apache Iceberg") takes a second line in its tile
@@ -772,13 +825,18 @@ export function Stat(props: { label: string; value: string; detail?: string; ton
   );
 }
 
-/** A path or key too long for its place, cut in its middle so both its
- * start and the end that tells it apart stay; screen readers hear it whole. */
-export function Path(props: { path: string; max?: number; class?: string; testID?: string }) {
+/** A path or key too long for its place, the one rule for cutting one: in
+ * its middle, so its start and the end that tells it apart stay, on one
+ * line (never cut and then wrapped), with no space left against the cut.
+ * Keys listed together are shortened first (`shortKeys`: their shared
+ * folders as "…/"); `whole` is then what a screen reader hears. */
+export function Path(props: { path: string; max?: number; class?: string; testID?: string; whole?: string }) {
+  // runs of spaces read as one: a cut beside them would leave a gap
+  const text = () => props.path.replace(/\s{2,}/g, " ");
   return (
     // a window cuts it where it runs out of room (Native Shell's middle ellipsis); a terminal by a count of characters
-    <Text testID={props.testID} accessibilityLabel={props.path} class={`font-mono ${TEXT.captionSize} line-clamp-1 ${props.class ?? "text-foreground"}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
-      {terminal() ? middle(props.path, props.max ?? 48) : props.path}
+    <Text testID={props.testID} accessibilityLabel={props.whole ?? props.path} class={`font-mono ${TEXT.captionSize} line-clamp-1 ${props.class ?? "text-foreground"}`} style={terminal() ? undefined : { textOverflow: "ellipsis-middle" }}>
+      {terminal() ? middle(text(), props.max ?? 48) : text()}
     </Text>
   );
 }
@@ -804,8 +862,9 @@ export function Notice(props: { text: string; title?: string; tone?: "info" | "w
         </If>
         <Text class={TEXT.small}>{props.text}</Text>
       </View>
+      {/* what can be done stands on the words' middle, not above them (the icon keeps to their first line) */}
       <If when={props.children}>
-        <View class="shrink-0 flex-row items-center gap-2">{props.children}</View>
+        <View class="shrink-0 flex-row items-center gap-2 self-center">{props.children}</View>
       </If>
     </View>
   );
@@ -892,11 +951,17 @@ export function PageHeader(props: { title?: string; subtitle?: string; mono?: bo
  * touch and screen readers reach it as the pointer does. The one inline
  * figure; in a row of tiles, `Stat`. */
 export function Figure(props: { value: string; label: string; /** `client`: failures that are all the program's own (4xx), in the tone their rows have */ tone?: Tone; small?: boolean; preview?: JSX.Element; testID?: string }) {
-  const tint = () => TONE[props.tone ?? "plain"].text;
+  // the figure in the text's colour; its tone (a status) is a dot before what it counts
+  const marked = () => !!props.tone && props.tone !== "plain" && props.tone !== "quiet";
   const body = (
     <View class="gap-1">
-      <Text class={`tabular-nums font-bold ${props.small ? "text-body" : "text-heading"} ${tint()}`}>{props.value}</Text>
-      <Text class={`${TEXT.meta} line-clamp-1`}>{props.label}</Text>
+      <Text class={`tabular-nums font-bold ${props.small ? "text-body" : "text-heading"} text-foreground`}>{props.value}</Text>
+      <View class="flex-row items-center gap-1">
+        <If when={marked()}>
+          <View class={`${DOT} ${TONE[props.tone!].dot}`} />
+        </If>
+        <Text class={`${TEXT.meta} line-clamp-1`}>{props.label}</Text>
+      </View>
     </View>
   );
   if (!props.preview || terminal()) return <View testID={props.testID}>{body}</View>;
@@ -934,9 +999,18 @@ export function tilesPerRow(width: number, n: number, min: number, gap = 12): nu
   const fits = (k: number, least: number) => (width - gap * (k - 1)) / k >= least;
   if (fits(n, min)) return n;
   for (let k = n - 1; k >= 2; k--) if (n % k === 0 && fits(k, min)) return k;
-  // no equal rows: a line each
+  // no equal rows in a pane of some width: as many abreast as fit (two at least, the last row the
+  // shorter), never one per row — a column of one-line tiles reads as a list, not as figures
+  // and the rows as even as they go: five where four fit are three and two, not four and one
+  if (width >= TILES_ABREAST) {
+    const most = Math.max(2, Math.min(n - 1, Math.floor((width + gap) / (min + gap))));
+    return Math.ceil(n / Math.ceil(n / most));
+  }
+  // a pane too narrow for two: a line each
   return 1;
 }
+/** From this width, tiles never stand one per row. */
+const TILES_ABREAST = 560;
 /** How many tiles a single row `width` wide holds, of `n` that each need `min`: two at least. */
 export const tilesFit = (width: number, n: number, min: number, gap = 12) => (width > 0 ? Math.min(n, Math.max(2, Math.floor((width + gap) / (min + gap)))) : n);
 /** Tiles in rows by that rule: the row measures itself and gives each tile its width.
@@ -969,10 +1043,12 @@ export function Tiles(props: { items: (JSX.Element | ((look: () => TileLook) => 
   );
 }
 
-/** A modal dialog: one surface, one width per size, over the scrim. */
-const MODAL = { narrow: "w-[420px]", default: "w-[560px]", wide: "w-[880px]" } as const;
+/** A modal dialog: one surface over the scrim, in one of two widths — 480
+ * for a question or a short form, 640 for a dialog that lists (a plan, its
+ * verdicts, a comparison). */
+const MODAL = { default: "w-[480px]", wide: "w-[640px]" } as const;
 
-export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string; /** what the dialog asks or says, in a sentence: a screen reader hears it after the dialog's name, as it opens */ describe?: string }) {
+export function Modal(props: { open: boolean; onClose: () => void; size?: keyof typeof MODAL; children: JSX.Element; testID?: string; /** what the dialog asks or says, in a sentence: a screen reader hears it after the dialog's name, as it opens */ describe?: string; /** one frame for all its states (a plan, its progress, its verdicts): as high as the window allows, its `ModalBody` scrolling inside, so it never changes size as it goes */ steady?: boolean }) {
   return (
     <Dialog
       open={props.open}
@@ -983,7 +1059,7 @@ export function Modal(props: { open: boolean; onClose: () => void; size?: keyof 
       backdropClass={SCRIM}
       testID={props.testID}
       // never taller than the window: a body that grows (`ModalBody`) scrolls, its title and actions stay
-      class={`m-auto ${MODAL[props.size ?? "default"]} max-h-[92%] max-w-[94%] gap-4 ${CARD} bg-popover p-4 ${SHADOW.modal}`}
+      class={`m-auto ${MODAL[props.size ?? "default"]} ${props.steady ? "h-[640px]" : ""} max-h-[92%] max-w-[94%] gap-4 ${CARD} bg-popover p-4 ${SHADOW.modal}`}
     >
       {props.children}
     </Dialog>
@@ -992,11 +1068,33 @@ export function Modal(props: { open: boolean; onClose: () => void; size?: keyof 
 
 /** A dialog's part that grows with what it holds (a plan, a list of verdicts):
  * it takes what the window leaves under the title and over the actions, and
- * scrolls there, so the dialog's actions are always in view. */
+ * scrolls there, so the dialog's actions are always in view. Where more lies
+ * past an edge, that edge fades (in a `steady` dialog it fills the frame). */
 export function ModalBody(props: { children: JSX.Element; testID?: string; class?: string }) {
+  const FADE = 16;
+  // where the view is over what it holds: its height, its content's, how far it has scrolled
+  const view = signal(0);
+  const content = signal(0);
+  const offset = signal(0);
+  const mask = () => {
+    const h = view();
+    const top = offset() > 1;
+    const bottom = offset() + h < content() - 1;
+    if ((!top && !bottom) || h <= FADE * 2) return undefined;
+    return `linear-gradient(to bottom, ${top ? "transparent" : "black"} 0px, black ${FADE}px, black ${h - FADE}px, ${bottom ? "transparent" : "black"} ${h}px)`;
+  };
   return (
-    <Scroll testID={props.testID} class="min-h-0 shrink" contentClass={`gap-3 ${props.class ?? ""}`}>
-      {props.children}
+    <Scroll
+      testID={props.testID}
+      class="min-h-0 shrink grow"
+      scrollEventThrottle={50}
+      onScroll={(e) => offset.set(Math.round(e.offset.y))}
+      onLayout={({ bounds }) => view.set(Math.round(bounds.size.height))}
+      style={terminal() ? undefined : { maskImage: mask() }}
+    >
+      <View class={`gap-3 ${props.class ?? ""}`} onLayout={({ bounds }) => content.set(Math.round(bounds.size.height))}>
+        {props.children}
+      </View>
     </Scroll>
   );
 }
@@ -1038,55 +1136,50 @@ export function Disclosure(props: { title: string; count?: number; open?: boolea
   );
 }
 
-/** A word on a quiet wash in its tone (`TONE[t].badge`): a state, a standing. */
+/** A state or a standing ("Broke", "Latest", "Missing"): a word, its tone on
+ * a dot before it — no painted word, no wash, no pill: a verdict is read, it
+ * does not shout. A neutral one (`quiet`, `plain`) is a muted word alone. */
 export function Badge(props: { label: string; tone?: Tone; testID?: string }) {
-  const [bg, fg] = TONE[props.tone ?? "quiet"].badge.split(" ");
+  const tone = () => props.tone ?? "quiet";
+  const marked = () => tone() !== "plain" && tone() !== "quiet";
   return (
-    <View testID={props.testID} accessibilityLabel={props.label} class={`h-5 shrink-0 flex-row items-center rounded-full px-2 ${bg}`}>
-      <Text class={`text-small ${fg}`}>{props.label}</Text>
+    <View testID={props.testID} accessibilityLabel={props.label} class="h-5 shrink-0 flex-row items-center gap-1">
+      <If when={marked()}>
+        <View class={`${DOT} ${TONE[tone()].dot}`} />
+      </If>
+      <Text class={`text-small ${marked() ? "text-foreground" : "text-muted-foreground"}`}>{props.label}</Text>
     </View>
   );
 }
 
-/** Names and their values: muted names, selectable values. `boxed` lists
- * them in a bordered card, compact and monospaced (a request's headers). */
-export function KeyValue(props: { rows: [string, string][]; mono?: boolean; boxed?: boolean }) {
-  if (props.boxed)
-    return (
-      // a table to a screen reader: names in the first column, values in the second
-      <View selectable>
-      <Table class="overflow-hidden rounded-(--radius) border border-border bg-card">
+/** Names and their values, the one list of them: bare (no box, no rules
+ * between its columns), a hairline between rows; names sans and muted,
+ * values selectable, in mono only where they are identifiers (`mono`: ids,
+ * hashes, headers' values). `dense` is the smaller size of an inspector's
+ * long lists (a request's headers). Inside a card or the inspector it is
+ * never boxed again. */
+export function KeyValue(props: { rows: [string, string][]; mono?: boolean; dense?: boolean }) {
+  const size = () => (props.dense ? "text-small" : "text-body");
+  return (
+    // a table to a screen reader: names in the first column, values in the second
+    <View selectable>
+      <Table>
         <TableBody>
           <Each of={props.rows}>
             {(row, i) => (
-              <TableRow class={`flex-row gap-3 px-2 py-1 ${i() > 0 ? "border-t border-border" : ""}`}>
-                <TableCell class="w-[136px] shrink-0">
-                  <Text class={`${TEXT.codeQuiet} line-clamp-1`}>{row()[0]}</Text>
+              // off-scale: a long list's rows (6 pt around 20 pt lines) sit between the dense (4) and a card's (8)
+              <TableRow class={`flex-row gap-3 ${props.dense ? "py-1" : "py-1.5"} ${i() > 0 ? "border-t border-border" : ""}`}>
+                <TableCell class={`${props.dense ? "w-[136px]" : "w-44"} shrink-0`}>
+                  <Text class={`${size()} text-muted-foreground line-clamp-1`}>{row()[0]}</Text>
                 </TableCell>
                 <TableCell class="min-w-0 flex-1">
-                  <Text class={`${TEXT.caption} ${props.mono === false ? "" : "font-mono"}`}>{row()[1]}</Text>
+                  <Text class={`${size()} text-foreground ${props.mono ? "font-mono" : ""}`}>{row()[1]}</Text>
                 </TableCell>
               </TableRow>
             )}
           </Each>
         </TableBody>
       </Table>
-      </View>
-    );
-  return (
-    <View class="gap-1">
-      <Each of={props.rows}>
-        {(row) => (
-          <View class="flex-row gap-3">
-            <Text class={`w-44 ${TEXT.bodyQuiet} line-clamp-1`}>
-              {row()[0]}
-            </Text>
-            <Text class={`flex-1 ${TEXT.body} ${props.mono ? "font-mono" : ""}`}>
-              {row()[1]}
-            </Text>
-          </View>
-        )}
-      </Each>
     </View>
   );
 }
@@ -1575,7 +1668,7 @@ export function sortRows<T>(rows: readonly T[], sort: DataTableSort | null, valu
  * first, whole, never clipped). With `onSelect` a row is chosen by a press
  * (by its place in `rows`, whatever the sort; again lets it go), marked as
  * `selected`. */
-export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number; end?: number[]; fill?: number; ranked?: number; selected?: number | null; onSelect?: (row: number | null) => void; label?: string; cell?: (c: { column: number; text: string; /** the row's cells, as text */ cells: string[] }) => JSX.Element | undefined; testID?: string }) {
+export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?: boolean; max?: number; end?: number[]; fill?: number; ranked?: number; selected?: number | null; onSelect?: (row: number | null) => void; label?: string; cell?: (c: { column: number; text: string; /** the row's cells, as text */ cells: string[] }) => JSX.Element | undefined; testID?: string; /** inside a card or a chart: no box of its own, hairlines between its rows only */ bare?: boolean }) {
   const sort = signal<DataTableSort | null>(null);
   const width = signal(0);
   // the widths measured by Native Shell once the rows are in (CJK, mono and proportional alike);
@@ -1628,13 +1721,14 @@ export function SimpleTable(props: { columns: string[]; rows: string[][]; mono?:
       fontSize={TYPE.small}
       fontFamily={props.mono ? token("font-mono") : undefined}
       rowHeight={rowHeight(ROW.dense)}
-      classes={terminal() ? undefined : TABLE}
+      classes={terminal() ? undefined : props.bare ? BARE_TABLE : TABLE}
       renderCell={custom() ? cell : undefined}
+      renderHeaderCell={terminal() ? undefined : titleCells(columns)}
       accessibilityLabel={props.label}
       rowSelectable={!!props.onSelect}
       rowClasses={props.onSelect ? order().map((i) => (i === props.selected ? SELECTED : "")) : undefined}
       onRowPress={props.onSelect ? ({ row }) => { const i = order()[row]; if (i !== undefined) props.onSelect!(i === props.selected ? null : i); } : undefined}
-      class={CARD}
+      class={props.bare ? "" : CARD}
       onLayout={({ bounds }) => width.set(Math.round(bounds.size.width))}
       style={terminal() ? undefined : { height: (shown() + 1) * (rowHeight(ROW.dense) ?? 26) + 2 }}
     />
@@ -1657,19 +1751,28 @@ export function Recoverable(props: { children: JSX.Element }) {
   );
 }
 
-/** The first row of a bucket tool's sheet, built one way: what it looks at
- * (`scope`), its command and Cancel while it runs (`children`), and at the
- * row's end what else it offers (`end`: a `More`). One middle, small controls. */
-export function ToolBar(props: { scope?: string; children?: JSX.Element; end?: JSX.Element; testID?: string }) {
+/** The head of every Buckets section, built one way (`PageHeader`'s
+ * pattern): the section's title, what it looks at (`scope`: a bucket and
+ * prefix), then at the row's end its actions (`children`: its command,
+ * Cancel while it runs) and what else it offers (`end`: a `More`). One
+ * middle, small controls; a narrow pane wraps the actions under the title,
+ * never into it. */
+export function ToolBar(props: { title?: string; scope?: string; children?: JSX.Element; end?: JSX.Element; testID?: string }) {
   return (
-    <View testID={props.testID} class="min-h-8 flex-row flex-wrap items-center gap-2">
-      <If when={props.scope}>{(s) => <Path path={s()} max={40} class="shrink text-muted-foreground" />}</If>
-      {props.children}
-      {/* what ends the row is pushed to its end; without it, a field among the children may take the room */}
-      <If when={props.end}>
-        <View class="flex-1" />
-        {props.end}
+    <View testID={props.testID} class="min-h-8 flex-row flex-wrap items-center gap-x-3 gap-y-2">
+      <View class="min-w-0 shrink flex-row items-baseline gap-2">
+        <If when={props.title}>
+          <Title lines={1} class="shrink-0">
+            {props.title}
+          </Title>
+        </If>
+        <If when={props.scope}>{(s) => <Path path={s()} max={40} class="min-w-0 shrink text-muted-foreground" />}</If>
+      </View>
+      <View class="flex-1" />
+      <If when={props.children}>
+        <View class="flex-row flex-wrap items-center gap-2">{props.children}</View>
       </If>
+      {props.end}
     </View>
   );
 }

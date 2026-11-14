@@ -1,16 +1,14 @@
-// A bucket at a glance: above its objects, what sonde can tell without being
-// asked — its size when it was measured, incomplete uploads and what they
-// cost, versioning, the systems whose layouts it recognises. Four tiles,
-// always there: each says what it knows (or that it is finding out), and
-// opens its detail in a sheet. The objects under them never move.
+// What sonde finds out of a bucket without being asked, as its objects open:
+// its size when it was measured, its incomplete uploads, the systems whose
+// layouts it holds. Kept per endpoint, bucket and prefix, so the sections
+// that say them (Size, Incomplete uploads, Layouts) open on what is known.
+// The section row is the one way to each: no tiles repeat it.
 
 import { batch, cleanup, effect, signal, untracked } from "nsh";
-import { bytes, count, day, money } from "../format";
-import { type Key, t } from "../i18n";
+import { t } from "../i18n";
 import { api, watch } from "../native";
-import { bucket, endpoint, go, prefix } from "../store";
-import type { Detection, DuReport, MpuReport, VersioningStatus } from "../types";
-import { Stat, type TileLook, Tiles, SIZES } from "./kit";
+import { bucket, endpoint, prefix } from "../store";
+import type { Detection, DuReport, MpuReport } from "../types";
 
 export const LAYOUT_LABEL: Record<string, string> = {
   slatedb: "SlateDB",
@@ -57,12 +55,6 @@ export const here = (): Known => {
   return ep && b ? (known()[knownKey(ep, b, prefix())] ?? {}) : {};
 };
 
-/** Versioning is a bucket's, whatever prefix of it shows: asked once per bucket, not per prefix. */
-const versioning = signal<Record<string, { status?: VersioningStatus; failed?: string; at: number }>>({});
-const bucketKey = (ep: string, b: string) => `${ep}\n${b}`;
-/** The buckets whose versioning is being asked for: one question each. */
-const asking = new Set<string>();
-
 /** Bumped by `invalidate`: the place shown is asked about again. */
 const reloads = signal(0);
 
@@ -76,14 +68,12 @@ export function invalidate() {
   batch(() => {
     const { [knownKey(ep, b, prefix())]: _, ...rest } = known();
     known.set(rest);
-    const { [bucketKey(ep, b)]: __, ...others } = versioning();
-    versioning.set(others);
     reloads.update((n) => n + 1);
   });
 }
 
 /** Fills in what is known of the bucket and prefix shown: the cheap facts, as it opens. */
-function useFacts() {
+export function useBucketFacts() {
   let jobs: string[] = [];
   // each opening of a bucket or prefix: an answer for an earlier one is dropped
   let opening = 0;
@@ -125,19 +115,6 @@ function useFacts() {
       const due = (what: Scanned) => have[what] === undefined || have.failed?.[what] !== undefined || now - (have.asked?.[what] ?? 0) > FRESH_MS;
       if (due("mpu")) void job<MpuReport>("mpu", api.mpuScan(ep, b, p), (r) => remember(ep, b, p, { mpu: r, failed: { ...known()[knownKey(ep, b, p)]?.failed, mpu: undefined } }));
       if (due("layouts")) void job<Detection[]>("layouts", api.detectLayouts(ep, b, p), (r) => remember(ep, b, p, { layouts: r, failed: { ...known()[knownKey(ep, b, p)]?.failed, layouts: undefined } }));
-      // the bucket's: an answer is the bucket's whatever prefix shows by then
-      const bk = bucketKey(ep, b);
-      const v = versioning()[bk];
-      if ((!v || v.failed !== undefined || now - v.at > FRESH_MS) && !asking.has(bk)) {
-        asking.add(bk);
-        api
-          .versioning(ep, b)
-          .then(
-            (status) => versioning.set({ ...versioning(), [bk]: { status, at: Date.now() } }),
-            (e) => versioning.set({ ...versioning(), [bk]: { failed: reason(e), at: Date.now() } }),
-          )
-          .finally(() => asking.delete(bk));
-      }
     });
   });
 }
@@ -145,83 +122,3 @@ function useFacts() {
 /** S3's versioning status in the reader's language. */
 export const versioningLabel = (s: string) => (s === "Enabled" ? t("versions.enabled") : s === "Suspended" ? t("versions.suspended") : s === "Unversioned" || s === "" ? t("common.off") : s);
 
-/** The four tiles over a bucket's objects: Size, Incomplete uploads,
- * Versioning, Layouts. Always there, one height: a tile that is finding
- * out shows its place, one with nothing to report says so calmly. */
-export function Overview() {
-  useFacts();
-  const mpu = () => here().mpu;
-  const layouts = () => here().layouts;
-  const size = () => here().size;
-  const fail = (what: Scanned) => here().failed?.[what];
-  const pending = (what: Scanned) => here()[what] === undefined && !fail(what);
-  const v = () => {
-    const ep = endpoint();
-    const b = bucket();
-    return ep && b ? versioning()[bucketKey(ep, b)] : undefined;
-  };
-  const month = (cost: number, currency: string) => `${money(cost, currency)}/${t("overview.month")}`;
-  return (
-    // four abreast, or two and two as the place narrows (never three and one); beside an
-    // inspector, where two would cut their words, a line each: what it is, then its figure
-    <Tiles
-      testID="overview"
-      min={SIZES.bucketTile}
-      items={[
-      (look: () => TileLook) => <Stat
-        look={look()}
-        testID="overview-capacity"
-        icon="chart-pie"
-        label={t("overview.size")}
-        // measured on request only: until then it says so (a figure's place holds no verb), and the tile is the way to ask
-        tone={size() ? "plain" : "quiet"}
-        value={size() ? bytes(size()!.totalBytes) : t("overview.notMeasured")}
-        detail={size() ? `${month(size()!.costPerMonth, size()!.currency)} · ${day(size()!.scannedAt)}` : t("overview.measureHint")}
-        onPress={() => go("capacity")}
-      />,
-      (look: () => TileLook) => <Stat
-        look={look()}
-        testID="overview-multipart"
-        icon="layers"
-        label={t("overview.uploads")}
-        pending={pending("mpu")}
-        tone={fail("mpu") || (mpu()?.staleUploads ?? 0) > 0 ? "warn" : "plain"}
-        value={fail("mpu") ? t("overview.failed") : mpu() ? (mpu()!.totalUploads > 0 ? `${count(mpu()!.totalUploads)} · ${bytes(mpu()!.totalBytes)}` : t("overview.noUploads")) : ""}
-        detail={
-          fail("mpu") ??
-          (mpu()
-            ? mpu()!.totalUploads > 0
-              ? `${t("mpu.stale", { n: mpu()!.staleUploads, age: t("common.days", { n: mpu()!.thresholdDays }) })} · ${month(mpu()!.costPerMonth, mpu()!.currency)}`
-              : mpu()!.lifecycle.status === "missing"
-                ? t("overview.noRule")
-                : `${t("mpu.lifecycle")}: ${t(`mpu.lifecycle.${mpu()!.lifecycle.status}` as Key)}`
-            : "")
-        }
-        onPress={() => go("multipart")}
-      />,
-      (look: () => TileLook) => <Stat
-        look={look()}
-        testID="overview-versions"
-        icon="file-clock"
-        label={t("overview.versioning")}
-        pending={!v()}
-        tone={v()?.failed !== undefined ? "warn" : "plain"}
-        value={v()?.failed !== undefined ? t("overview.failed") : v()?.status ? versioningLabel(v()!.status!.status) : ""}
-        detail={v()?.failed ?? (v()?.status?.objectLock ? `${t("versions.lock")}: ${v()!.status!.objectLock}` : t("overview.versionsHint"))}
-        onPress={() => go("versions")}
-      />,
-      (look: () => TileLook) => <Stat
-        look={look()}
-        testID="overview-layouts"
-        icon="boxes"
-        label={t("overview.layouts")}
-        pending={pending("layouts")}
-        tone={fail("layouts") ? "warn" : "plain"}
-        value={fail("layouts") ? t("overview.failed") : layouts()?.length ? [...new Set(layouts()!.map((d) => LAYOUT_LABEL[d.format] ?? d.format))].join(", ") : t("common.none")}
-        detail={fail("layouts") ?? (layouts()?.length ? layouts()!.map((d) => d.root || "/").join(" · ") : t("layouts.noneFound"))}
-        onPress={() => go("layouts")}
-      />,
-      ]}
-    />
-  );
-}

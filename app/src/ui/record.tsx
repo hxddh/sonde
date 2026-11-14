@@ -145,18 +145,18 @@ export function RecordView(props: { record: RequestRecord; onBack?: () => void; 
         )}
       </If>
       <Disclosure open title={t("requests.facts")}>
-        <KeyValue boxed rows={facts()} />
+        <KeyValue dense rows={facts()} />
       </Disclosure>
       <If when={r().query.length > 0}>
         <Disclosure open title={t("requests.query")} count={r().query.length}>
-          <KeyValue boxed rows={r().query.map(([k, v]) => [k, v])} />
+          <KeyValue dense mono rows={r().query.map(([k, v]) => [k, v])} />
         </Disclosure>
       </If>
       <Disclosure open title={t("requests.requestHeaders")} count={r().requestHeaders.length}>
-        <KeyValue boxed rows={headerRows(r().requestHeaders)} />
+        <KeyValue dense mono rows={headerRows(r().requestHeaders)} />
       </Disclosure>
       <Disclosure open title={t("requests.responseHeaders")} count={r().responseHeaders.length}>
-        <KeyValue boxed rows={headerRows(r().responseHeaders)} />
+        <KeyValue dense mono rows={headerRows(r().responseHeaders)} />
       </Disclosure>
     </View>
   );

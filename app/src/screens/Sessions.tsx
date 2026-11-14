@@ -15,11 +15,11 @@ import { t } from "../i18n";
 import { analysis } from "../analysis";
 import { pagedOperations } from "../paged";
 import { api } from "../native";
-import { away, chooseBucket, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
+import { type SessionCommand, shownSessionCommands, away, chooseBucket, compareOnOpen, copy, crumb, endpoints, go, openSession, paneOnOpen, openSessionFile, reading, report, sessionsChanged, sessionsTick, showInSidebar, startDemo, notify, useEndpoint } from "../store";
 import type { LogLine, Observation, SessionInfo, SessionView, Trial } from "../types";
 import { CompareView, ReplayDialog } from "../ui/compare";
 import { iconSvg } from "../ui/icon";
-import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, terminal, PANE } from "../ui/kit";
+import { Await, Back, BREAK, Button, Empty, IconButton, More, Notice, Options, PanelHeader, popupMenu, Recoverable, SearchField, Segmented, SessionSkeleton, SideHeader, SidePanel, SIZES, SPLIT_HANDLE, SPLIT_GAP, terminal, PANE } from "../ui/kit";
 import { Toaster } from "../ui/toast";
 import { fileName, removeSession, rename, RenameDialog, sessionName, shareSession } from "../ui/manage";
 import { rememberedSize } from "../ui/sizes";
@@ -313,21 +313,31 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
     );
   };
   const info = () => props.others().find((s) => s.path === props.path) ?? null;
+  // the session's commands besides its one primary: behind ⋯, and in the palette while it is shown
+  const sessionCommands = (): SessionCommand[] => {
+    const tryable = !terminal() && ranCommand(view()?.header.command) && !view()?.trial;
+    return [
+      // the same command under faults is asked first what will run (a trial is no run of its own)
+      ...(tryable ? [{ id: "session-try", label: t("trial.try"), icon: "flask-conical" as const, disabled: !!running(), run: () => tryingFaults.set(true) }] : []),
+      { id: "replay-open", label: t("replay.open"), icon: "repeat-2" as const, run: () => replaying.set(true) },
+      ...(isAvailable ? [{ id: "compare-open", label: t("compare.open"), icon: "git-compare-arrows" as const, run: (anchor?: ViewRef) => compareMenu(anchor) }] : []),
+    ];
+  };
+  effect(() => {
+    if (props.inWindow || !view()) return;
+    const list = sessionCommands();
+    untracked(() => shownSessionCommands.set(list));
+    cleanup(() => shownSessionCommands.set([]));
+  });
   const moreMenu = () => {
     if (!isAvailable) return;
     const me = info();
-    // where the pane is narrow, the session's other commands are here, by their words (not icons beside the title)
-    const narrow = !roomy();
-    const tryable = !terminal() && ranCommand(view()?.header.command) && !view()?.trial;
-    const extras: MenuItem[] = narrow
-      ? [
-          ...(tryable ? [{ label: t("trial.try"), icon: iconSvg("flask-conical"), disabled: !!running(), onSelect: () => tryingFaults.set(true) }] : []),
-          { label: t("replay.open"), icon: iconSvg("repeat-2"), onSelect: () => replaying.set(true) },
-          // (the runs' menu opens once this one has closed: macOS shows no menu opened while one is closing)
-          { label: t("compare.open"), icon: iconSvg("git-compare-arrows"), onSelect: () => setTimeout(() => compareMenu(moreButton), 0) },
-          { type: "separator" },
-        ]
-      : [];
+    // the session's other commands, by their words, first: then what copies or shares it
+    const extras: MenuItem[] = [
+      // (each run once this menu has closed: macOS shows no menu, Compare's, opened while one is closing)
+      ...sessionCommands().map((c) => ({ label: c.label, icon: iconSvg(c.icon), disabled: c.disabled, onSelect: () => setTimeout(() => c.run(moreButton), 0) })),
+      { type: "separator" },
+    ];
     void popupMenu([
       ...extras,
       { label: t("sessions.window"), icon: iconSvg("app-window"), onSelect: openWindow, disabled: props.inWindow },
@@ -445,7 +455,7 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
       return (
         <View class="min-h-0 flex-1 gap-3">
           {findings(v)}
-          <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("sessions.resizeOutput")}>
+          <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_GAP} handleAccessibilityLabel={t("sessions.resizeOutput")}>
             <ResizablePanel minSize={PANE.outputLeast}>
               <View class="flex-1 pr-2">{output()}</View>
             </ResizablePanel>
@@ -487,18 +497,12 @@ export function SessionPane(props: { path: string; others: () => SessionInfo[]; 
           testID="run-again"
         />
       </If>
-      {/* where the pane is narrow, the others are behind ⋯ by their words (no row of unlabelled icons): the
-          command keeps its room. The same command under faults is asked first what will run (a trial is no run of its own) */}
-      <If when={!terminal() && roomy() && ranCommand(view()?.header.command) && !view()?.trial}>
-        <Button small variant="outline" icon="flask-conical" label={t("trial.try")} onPress={() => tryingFaults.set(true)} disabled={!!running()} testID="session-try" />
-      </If>
-      <If when={roomy() || terminal() || !isAvailable}>
+      {/* one primary, and the rest behind ⋯ by their words (and in the palette): Try under faults, Replay on…,
+          Compare… — the command keeps its room. Where there are no menus (a terminal, the web), Replay is a button */}
+      <If when={terminal() || !isAvailable}>
         <Button small variant="outline" icon="repeat-2" label={t("replay.open")} onPress={() => replaying.set(true)} testID="replay-open" />
       </If>
       <If when={isAvailable}>
-        <If when={roomy()}>
-          <Button ref={(r) => (compareButton = r)} small variant="outline" icon="git-compare-arrows" label={t("compare.open")} onPress={() => compareMenu(compareButton)} testID="compare-open" />
-        </If>
         <IconButton ref={(r) => (moreButton = r)} icon="ellipsis" label={t("common.more")} onPress={moreMenu} testID="session-more" />
       </If>
     </View>

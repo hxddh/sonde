@@ -3,7 +3,7 @@
 
 import { type JSX, List, resource, Scroll, signal, Text, View } from "nsh";
 import { DatePicker, DiffView, TextView } from "nsh/base";
-import { count, date, day, duration, factor, hm, money } from "../format";
+import { costColumn, count, date, day, duration, factor, hm, money } from "../format";
 import { t } from "../i18n";
 import { say } from "../phrases";
 import { scenarioLabel } from "../trials";
@@ -11,7 +11,7 @@ import { api } from "../native";
 import { copy, report, sessionsChanged, sessionsTick } from "../store";
 import type { CodeChange, GitStamp, ProgramHistory, Trial } from "../types";
 import { Icon } from "./icon";
-import { Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH, TEXT } from "./kit";
+import { ModalBody, Actions, Await, Badge, Button, Card, CONTROL, Disclosure, Empty, ICON, ListRow, Modal, Muted, Notice, PageHeader, POPUP, POPUP_MOTION, Section, SimpleTable, Title, terminal, textual, SIZES, WIDTH, TEXT } from "./kit";
 import { cost, RunTrend, Sparkline } from "./plots";
 import { tellApart } from "./sessionlist";
 import { programOf, scrubCommand } from "./sessionview";
@@ -282,12 +282,14 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
   );
   const ext = (p: string) => p.split(".").pop() ?? "";
   return (
-    <Modal open size="wide" onClose={props.onClose} testID="code-change">
+    // one frame while its change loads and once it is there: the dialog keeps its size
+    <Modal open steady size="wide" onClose={props.onClose} testID="code-change">
       <Title>{t("history.codeChange")}</Title>
+      <ModalBody>
       <Await loading={change.loading()} error={change.error()} retry={() => change.refetch()}>
         <If when={change()}>
           {(x) => (
-            <Scroll style={{ maxHeight: SIZES.dialogScroll }} contentClass="gap-3">
+            <View class="gap-3">
               <Muted class="font-mono text-small">{`${x().from.slice(0, 7)} → ${x().to.slice(0, 7)}`}</Muted>
               <If when={x().files.length} else={<Muted>{t("history.noCodeChange")}</Muted>}>
                 <Each of={x().files} key={(f) => f.path}>
@@ -312,12 +314,13 @@ function CodeChangeDialog(props: { before: string; after: string; onClose: () =>
               <If when={x().more > 0}>
                 <Muted class="text-small">{t("history.moreFiles", { n: x().more })}</Muted>
               </If>
-            </Scroll>
+            </View>
           )}
         </If>
       </Await>
+      </ModalBody>
       <Actions>
-        <Button variant="outline" label={t("common.close")} onPress={props.onClose} testID="code-change-close" />
+        <Button variant="primary" label={t("common.close")} onPress={props.onClose} testID="code-change-close" />
       </Actions>
     </Modal>
   );
@@ -350,6 +353,9 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
     }
   };
   const n = (v: number) => count(Math.round(v));
+  // the runs' costs in one unit, said once in the trend's name
+  const currencyOf = (h: ProgramHistory) => h.runs[0]?.currency ?? "USD";
+  const costs = (h: ProgramHistory) => costColumn(shown(h).runs.map((r) => r.cost), currencyOf(h));
   // a moment's day on the reader's calendar, as the picker's days are: YYYY-MM-DD
   const localDay = (at: string | number) => {
     const d = new Date(at);
@@ -438,10 +444,11 @@ export function HistoryPane(props: { path: string; onOpen?: (path: string) => vo
                 else={<SimpleTable columns={[t("column.time"), t("figure.requests"), t("profile.waiting"), t("profile.cost")]} rows={shown(x()).runs.map((r) => [date(r.created), n(r.requests), duration(r.waitingMs), cost(r.cost, r.currency)])} />}
               >
                 <View class="flex-row flex-wrap gap-3">
-                  <RunTrend history={shown(x())} measure="requests" title={t("figure.requests")} format={n} onOpen={props.onOpen} />
+                  {/* each named as a tile is (a capital, the thing counted), the cost's unit in its name so its figure is short */}
+                  <RunTrend history={shown(x())} measure="requests" title={t("trend.requests")} format={n} onOpen={props.onOpen} />
                   {/* the project's own limit on the waiting (sonde.toml's max-waiting), as a line */}
-                  <RunTrend history={shown(x())} measure="waitingMs" title={t("profile.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
-                  <RunTrend history={shown(x())} measure="cost" title={t("profile.cost")} format={(v) => cost(v, x().runs[0]?.currency ?? "USD")} onOpen={props.onOpen} />
+                  <RunTrend history={shown(x())} measure="waitingMs" title={t("trend.waiting")} format={duration} onOpen={props.onOpen} budget={budget()?.maxWaitingMs} />
+                  <RunTrend history={shown(x())} measure="cost" title={t("trend.cost", { unit: costs(x()).unit })} format={(v) => costColumn([v, ...shown(x()).runs.map((r) => r.cost)], currencyOf(x())).figures[0]} onOpen={props.onOpen} />
                   <RunTrend history={shown(x())} measure="warnings" title={t("obs.warnings")} format={n} onOpen={props.onOpen} />
                 </View>
               </If>

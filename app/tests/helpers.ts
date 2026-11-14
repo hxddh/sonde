@@ -50,7 +50,7 @@ export async function place(app: App, where: string) {
 export async function withDemo(bucket?: string, options: Parameters<typeof open>[1] = desktop): Promise<App> {
   const app = await open("../App.tsx", options);
   await place(app, "endpoints");
-  await app.press("id:open-demo");
+  await openDemo(app);
   await app.waitFor("text:Demo (built-in)", { timeout: 10000 });
   await place(app, "browse");
   await app.waitFor("id:bucket-demo", { timeout: 10000 });
@@ -78,4 +78,27 @@ export async function runAction(app: App, id: "run-open-session" | "run-try" | "
   const item = app.menu()?.map((m) => m.label).find((l) => labels.includes(l));
   if (!item) throw new Error(`${id}: not in the band, not behind its menu`);
   await app.chooseMenuItem(item);
+}
+
+/** A session's command besides its one primary (Try under faults…, Replay on…, Compare…): behind its header's `⋯`,
+ * by its words. */
+export async function sessionAction(app: App, label: string) {
+  await app.press("id:session-more");
+  await app.chooseMenuItem(label);
+}
+
+/** The words of the session header's `⋯` menu, the menu closed again. */
+export async function sessionMenu(app: App): Promise<string[]> {
+  await app.press("id:session-more");
+  const labels = app.menu()?.map((m) => m.label) ?? [];
+  await app.closeMenu();
+  return labels;
+}
+
+/** The demo store in Endpoints: added with Open the demo where it is not in the list yet (an earlier test in the
+ * same run may have made it the one in use, and then the button is not offered). */
+export async function openDemo(app: App) {
+  // the page's head first: the button is in it or not, not on its way
+  await app.waitFor("id:add-endpoint");
+  if (app.shows("id:open-demo")) await app.press("id:open-demo");
 }

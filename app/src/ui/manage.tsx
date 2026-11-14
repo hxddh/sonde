@@ -49,7 +49,7 @@ export function RenameDialog(props: { window?: string }) {
     }
   };
   return (
-    <Modal open={renaming() !== null} onClose={() => asked.set(null)} size="narrow" testID="rename-dialog">
+    <Modal open={renaming() !== null} onClose={() => asked.set(null)} testID="rename-dialog">
       <Title>{t("sessions.renameTitle")}</Title>
       <Field label={t("sessions.renameLabel")} value={draft()} onChange={(v) => draft.set(v)} onSubmit={save} placeholder={renaming() ? (programOf(renaming()!.command) ?? renaming()!.endpoint) : ""} testID="rename-input" />
       <Actions>

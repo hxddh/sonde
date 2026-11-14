@@ -18,7 +18,7 @@ import { SinceRun, sinceLastOf, statesOf } from "../ui/fixloop";
 import { TrialDialog } from "../ui/trial";
 import type { Profile, SessionView } from "../types";
 import { Icon } from "../ui/icon";
-import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, popupMenu, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, Title, ActionRow, More, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
+import { Badge, Button, Card, CARD, Dot, Empty, Field, Figure, Heading, IconButton, KeyValue, ListRow, Options, popupMenu, READING, SideHeader, Strong, terminal, SPLIT_HANDLE, SPLIT_GAP, Title, ActionRow, More, SURFACE, WIDTH, PANE, TEXT } from "../ui/kit";
 import { programOf, scrubCommand } from "../ui/sessionview";
 import { type Policy, Observations, OperationsTable, RecordPanel } from "../ui/session";
 import { Chart, focusOf, LatencyBand, liveFigures, SessionShape, sessionStory, STRIP } from "../ui/plots";
@@ -86,12 +86,15 @@ function CommandBar() {
           <Button variant="destructive" icon="square" label={t("run.stop")} onPress={stop} testID="run-stop" />
         </If>
       </View>
-      {/* where it runs, where its requests go, what it may do: one row, one height */}
+      {/* where it runs and what it may do: one row, one height (where its requests go is the title bar's
+          endpoint, said once; only its absence is said here) */}
       <View class="flex-row flex-wrap items-center gap-x-3 gap-y-2">
         <Field bare small mono class={WIDTH.long} testID="run-cwd" label={t("run.cwd")} value={cwd()} placeholder={t("run.cwdHome")} onChange={(v) => cwd.set(v)} leading={<Icon name="folder" />} />
         <View class="min-w-0 flex-1 flex-row items-center gap-2">
-          <Icon name="server" />
-          <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{ep() ? t("run.goesTo", { name: ep()!.name }) : t("run.chooseEndpoint")}</Text>
+          <If when={!ep()}>
+            <Icon name="server" />
+            <Text class={`min-w-0 flex-1 ${TEXT.note} line-clamp-1`}>{t("run.chooseEndpoint")}</Text>
+          </If>
         </View>
         <Options testID="run-policy" value={policy()} items={POLICIES()} onChange={(v) => policy.set(v as Policy)} />
       </View>
@@ -163,14 +166,8 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
   };
   // (8 before the primary; never less than nothing)
   const room = () => Math.max(0, (widths().next ?? 0) - (widths().primary ?? 0) - 8);
-  // the loop's two next steps ("See the whole run", "Try under faults…") are labelled at every width: where
-  // they do not fit beside the primary (with a `⋯` for the rest), they take the row's whole width by their
-  // words, and the rest's `⋯` and the primary a line under them. (Their widths are those measured with their
-  // icons, beside the primary: what the choice is made on does not change with it.)
-  const actionWidths = signal<Record<string, number>>({});
-  const core = () => others().slice(0, 2);
-  const needs = () => core().reduce((n, a) => n + (actionWidths()[a.id] ?? 0) + 8, 0) + (others().length > core().length ? 36 : 0);
-  const stacked = () => core().length > 0 && core().every((a) => actionWidths()[a.id] !== undefined) && room() < needs();
+  // (one row at every width: what does not fit beside the primary is behind its `⋯`, so a short window keeps
+  // the operations' rows)
   // the one Run of the place once a run ended: its command again, or the field's command when it was
   // changed since (the field's Return runs the same). It stays on Run: what changed since this run is
   // said here, under the band, with the way to compare the two
@@ -280,17 +277,14 @@ function StatusBand(props: { view: SessionView | null; now: () => number }) {
       </If>
       {/* once it ended, a row of its own: the loop's next steps by their words, then the one Run of the place */}
       <If when={r() && !terminal()}>
-        <View class={stacked() ? "gap-2" : "flex-row items-center gap-2"} onLayout={measure("next")}>
+        <View class="flex-row items-center gap-2" onLayout={measure("next")}>
           {/* a run that sent nothing kept no session (the toast said so): it is only run again */}
-          <View class={stacked() ? "flex-row items-center" : "min-w-0 flex-1 flex-row items-center"}>
+          <View class="min-w-0 flex-1 flex-row items-center">
             <If when={!r()!.removed}>
-              <ActionRow testID="run-actions" room={stacked() ? (widths().next ?? 0) : room()} actions={stacked() ? core : others} plain={stacked()} onWidths={(w) => !stacked() && actionWidths.set({ ...actionWidths(), ...w })} />
+              <ActionRow testID="run-actions" room={room()} actions={others} />
             </If>
           </View>
           <View class="flex-row items-center justify-end gap-2">
-            <If when={stacked() && !r()!.removed && others().length > core().length}>
-              <More testID="run-actions-more" actions={() => others().slice(core().length)} />
-            </If>
             <View class="shrink-0" onLayout={measure("primary")}>
               <Button small variant="primary" icon="play" label={same() ? t("sessions.runAgain") : t("run.start")} onPress={runNext} disabled={!!running() || (!same() && (!command().trim() || !endpoint()))} testID="run-again-band" />
             </View>
@@ -504,7 +498,7 @@ export function Run() {
         <If
           when={terminal()}
           else={
-            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("run.resizeOperations")}>
+            <ResizablePanelGroup axis="horizontal" class="min-h-0 flex-1" handleClass={SPLIT_GAP} handleAccessibilityLabel={t("run.resizeOperations")}>
               <ResizablePanel minSize={done() ? PANE.terminalDone : PANE.terminalLeast}>
                 <View class="flex-1 pr-2">
                   <ProgramTerminal />

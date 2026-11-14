@@ -11,9 +11,9 @@ import { api, Listing, watch } from "../native";
 import { bucket, copy, endpoint, go, notify, prefix, report, versionKey } from "../store";
 import type { Entry, ObjectDetail } from "../types";
 import { Icon, type IconName } from "../ui/icon";
-import { Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
+import { titleCells, Await, Back, ProgressBar, Button, Card, Choice, Disclosure, Empty, fitColumns, ICON, IconButton, InWindowMenu, KeyValue, ListRow, More, PanelHeader, Path, popupMenu, Strong, Title, ROW, rowHeight, SearchField, SPLIT_HANDLE, SwitchRow, TABLE, terminal, TYPE, WIDTH, Crumb, Row, COLUMN, PANE, TEXT } from "../ui/kit";
 import { rememberedSize } from "../ui/sizes";
-import { invalidate, Overview } from "../ui/overview";
+import { invalidate, useBucketFacts } from "../ui/overview";
 import { BucketPicker, EndpointPicker } from "../ui/picker";
 
 const WINDOW = 400;
@@ -41,11 +41,9 @@ function Breadcrumbs() {
   return (
     <View class="min-w-0 flex-row flex-wrap items-center gap-1">
       {/* links of the path (the last one the place shown): screen readers hear them so */}
+      {/* the scope beside the section's title: the bucket, then each folder of the prefix (the last the place shown) */}
       <Crumb testID="crumb-root" href={`s3://${bucket()}/`} onOpen={() => prefix.set("")} current={parts().length === 0} label={bucket() ?? ""}>
-        <If when={!terminal()}>
-          <Icon name="database" tint="foreground" />
-        </If>
-        <Strong>{bucket()}</Strong>
+        <Text class={parts().length === 0 ? TEXT.body : TEXT.bodyQuiet}>{bucket()}</Text>
       </Crumb>
       <Each of={parts()}>
         {(p, i) => (
@@ -145,7 +143,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               </View>
               <If when={progress()}>{(p) => <ProgressBar value={null} label={p()} />}</If>
               <KeyValue
-                boxed
+                dense
                 rows={[
                   [t("browse.size"), sizeText(d().size)],
                   ["Content-Type", d().contentType ?? "—"],
@@ -154,10 +152,10 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                   [t("browse.storageClass"), d().storageClass],
                 ]}
               />
-              {/* every part of the inspector the same way: names and values in the one boxed list */}
+              {/* every part of the inspector the same way: names and values in the one bare list */}
               <Disclosure title={t("browse.etag")} open>
                 <KeyValue
-                  boxed
+                  dense
                   rows={[
                     [t("browse.etag"), d().etag?.value ?? "—"],
                     [t("browse.uploadKind"), etagText(d())],
@@ -168,14 +166,14 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               <Disclosure title={t("browse.checksums")} count={d().checksums.length} open>
                 <If when={d().checksums.length > 0} else={<Empty compact text={t("browse.noChecksum")} />}>
                   <KeyValue
-                    boxed
+                    dense mono
                     rows={d().checksums.map((c): [string, string] => [c.algorithm, `${c.value} · ${c.kind === "composite" ? t("browse.composite", { n: c.parts ?? "?" }) : t("browse.fullObject")}${c.kindFromHeader ? "" : ` · ${t("browse.inferred")}`}`])}
                   />
                 </If>
               </Disclosure>
               <Disclosure title={t("browse.encryption")} open>
                 <KeyValue
-                  boxed
+                  dense
                   rows={[
                     ["SSE", d().sse.customerAlgorithm ? `SSE-C (${d().sse.customerAlgorithm})` : (d().sse.algorithm ?? t("browse.noEncryption"))],
                     ...(d().sse.kmsKeyId ? ([[t("browse.kmsKey"), d().sse.kmsKeyId]] as [string, string][]) : []),
@@ -187,7 +185,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
               </Disclosure>
               <Disclosure title={t("browse.metadata")} count={d().metadata.length} open={d().metadata.length > 0}>
                 <If when={d().metadata.length > 0} else={<Empty compact text={t("common.none")} />}>
-                  <KeyValue boxed rows={d().metadata} />
+                  <KeyValue dense mono rows={d().metadata} />
                 </If>
               </Disclosure>
               {/* the section is the thing (a presigned URL); its button the act (create one) */}
@@ -222,7 +220,7 @@ function Detail(props: { entry: Entry; onBack?: () => void }) {
                 </View>
               </Disclosure>
               <Disclosure title={t("browse.headers")} count={d().headers.length} open>
-                <KeyValue boxed rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
+                <KeyValue dense mono rows={d().headers.map(([k, v]) => [k, v] as [string, string])} />
               </Disclosure>
             </View>
           )}
@@ -427,12 +425,26 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
     void popupMenu(actions(row));
   };
 
+  // the listing's columns: the name takes what the others leave
+  const objectColumns = () => [
+    { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : COLUMN.name, minWidth: COLUMN.keyLeast },
+    { key: "size", title: t("browse.size"), width: SIZE, align: "end" as const },
+    ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: COLUMN.date }] : []),
+    ...(ranked().includes("class") ? [{ key: "class", title: t("browse.class"), width: COLUMN.storageClass }] : []),
+    ...(ranked().includes("parts") ? [{ key: "parts", title: t("mpu.parts"), width: COLUMN.objectParts, align: "end" as const }] : []),
+    ];
   return (
     <View class="min-h-0 flex-1 gap-2">
       {/* one row, one middle: where this is, then how much of it, finding in it, how it lists, and again.
           A pane too narrow for both breaks between them, never inside either. */}
       <View class="flex-row flex-wrap items-center gap-2">
-        <View class="min-w-48 flex-1">
+        <View class="min-w-48 flex-1 flex-row items-center gap-2">
+          {/* the head every section has: its title, what it looks at, then its actions at the end */}
+          <If when={!terminal()}>
+            <Title lines={1} class="shrink-0">
+              {t("nav.objects")}
+            </Title>
+          </If>
           <Breadcrumbs />
         </View>
         <View class="ms-auto min-w-0 flex-row items-center gap-2">
@@ -500,13 +512,8 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
             testID="objects"
             accessibilityLabel={t("nav.objects")}
             class="min-h-0 flex-1"
-            columns={[
-              { key: "name", title: t("browse.name"), width: terminal() ? 44 * 8 : width() > 0 ? Math.max(NAME, width() - SIZE - 2 - ranked().reduce((n, k) => n + (OBJECT_COLUMNS.find((c) => c.key === k)?.width ?? 0), 0)) : COLUMN.name, minWidth: COLUMN.keyLeast },
-              { key: "size", title: t("browse.size"), width: SIZE, align: "end" as const },
-              ...(ranked().includes("modified") ? [{ key: "modified", title: t("browse.modified"), width: COLUMN.date }] : []),
-              ...(ranked().includes("class") ? [{ key: "class", title: t("browse.class"), width: COLUMN.storageClass }] : []),
-              ...(ranked().includes("parts") ? [{ key: "parts", title: t("mpu.parts"), width: COLUMN.objectParts, align: "end" as const }] : []),
-            ]}
+            columns={objectColumns()}
+            renderHeaderCell={terminal() ? undefined : titleCells(objectColumns)}
             data={tableData()}
             dataStart={start()}
             rowCount={total()}
@@ -572,6 +579,8 @@ function Objects(props: { onSelect: (e: Entry) => void; selected: string | null 
 const detailWidth = rememberedSize("browse.detail", 400);
 
 export function Browse() {
+  // what the sections say of this bucket and prefix, found out as it opens (the section row is the way to them)
+  if (!terminal()) useBucketFacts();
   const selected = signal<Entry | null>(null);
   effect(() => {
     bucket();
@@ -592,7 +601,6 @@ export function Browse() {
           else={
             <ResizablePanelGroup class="flex-1" handleClass={SPLIT_HANDLE} handleAccessibilityLabel={t("browse.resizeDetail")}>
               <ResizablePanel minSize={PANE.objectsLeast} class="min-w-0 gap-3 px-4 py-4">
-                <Overview />
                 <Objects onSelect={(e) => selected.set(e)} selected={selected()?.key ?? null} />
               </ResizablePanel>
               <ResizablePanel visible={!!selected()} size={detailWidth.size()} minSize={PANE.detailLeast} maxSize={PANE.detailMost} onResize={detailWidth.onResize} class="bg-inspector">
