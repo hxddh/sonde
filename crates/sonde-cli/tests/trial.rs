@@ -116,6 +116,56 @@ async fn program(what: &str) -> i32 {
             let second = ok(app.send_raw(batch(&["c", "d"])).await);
             if retries && !(first && second) { 1 } else { 0 }
         }
+        // an upload in parts as boto3's transfer manager makes one: its
+        // completion retried, and on a failure it gives up, it aborts its own
+        // upload (`E2E_BUCKET`, else `data`)
+        "transfer" => {
+            let bucket = std::env::var("E2E_BUCKET").unwrap_or_else(|_| "data".into());
+            let req = |op: &str, method: http::Method| {
+                S3Request::new(op, method).bucket(&bucket).key("big")
+            };
+            let Ok(created) = app
+                .send_raw(req("CreateMultipartUpload", http::Method::POST).query("uploads", ""))
+                .await
+            else {
+                return 1;
+            };
+            let text = created.text();
+            let Some(id) = text
+                .split("<UploadId>")
+                .nth(1)
+                .and_then(|t| t.split("</UploadId>").next())
+                .map(str::to_string)
+            else {
+                return 1;
+            };
+            let part = app
+                .send_raw(
+                    req("UploadPart", http::Method::PUT)
+                        .query("partNumber", "1")
+                        .query("uploadId", &id)
+                        .body(Body::from("part one")),
+                )
+                .await;
+            let Some(etag) = part.ok().and_then(|r| r.header("etag").map(str::to_string)) else {
+                return 1;
+            };
+            let done = app
+                .send_raw(
+                    req("CompleteMultipartUpload", http::Method::POST)
+                        .query("uploadId", &id)
+                        .body(Body::from(format!(
+                            "<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>{etag}</ETag></Part></CompleteMultipartUpload>"
+                        ))),
+                )
+                .await;
+            if ok(done) {
+                return 0;
+            }
+            let abort = req("AbortMultipartUpload", http::Method::DELETE).query("uploadId", &id);
+            let _ = app.send_raw(abort).await;
+            1
+        }
         // an upload in parts, every answer checked; `multipart-tolerant`
         // takes a completion's NoSuchUpload as a question, and looks
         "multipart" | "multipart-tolerant" => {
@@ -2495,4 +2545,48 @@ async fn trying_again_runs_every_strength_that_broke() {
         "{}",
         o.stderr
     );
+}
+
+/// A boto3-like upload under a lost answer and a completion answered 500 on
+/// the demo store: its completion retried is answered as S3 and moto answer
+/// it (the same result), so it survives as it does on them; and aborting its
+/// own upload, when it gives up, is never refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_upload_under_lost_answers_survives_on_the_demo_store_as_on_s3() {
+    let dir = tempfile::tempdir().unwrap();
+    let sonde = |args: &[&str]| {
+        let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_sonde"));
+        c.current_dir(dir.path())
+            .env("SONDE_CONFIG_DIR", dir.path().join("config"))
+            .env("SONDE_DATA_DIR", dir.path().join("data"))
+            .env("SONDE_E2E", "transfer")
+            .env("E2E_BUCKET", "demo")
+            .stdin(Stdio::null())
+            .args(args)
+            .arg("--")
+            .args(the_program_command());
+        c
+    };
+    let o = out(
+        sonde(&[
+            "run",
+            "--demo",
+            "--fault",
+            "lost-answer",
+            "--fault",
+            "complete-500",
+            "-o",
+            "up.sonde",
+        ])
+        .output()
+        .await
+        .unwrap(),
+    );
+    assert_eq!(o.code, Some(0), "{}", o.stderr);
+    let all = trials(&dir.path().join("up.sonde"));
+    for name in ["lost-answer", "complete-500"] {
+        assert_eq!(trial(&all, name)["standing"], "survived", "{name}: {}", o.stderr);
+    }
+    assert!(o.stderr.contains("The program did not break."), "{}", o.stderr);
+    assert!(!o.stderr.contains("refused"), "{}", o.stderr);
 }
