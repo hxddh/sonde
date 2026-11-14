@@ -16,7 +16,7 @@ inputs:
     description: The program's name (default `[program] name` in sonde.toml for the program it `runs`, else what the command runs).
     default: ""
   check-args:
-    description: Flags for `sonde check` (`--no-new-warnings`, `--tolerance 5`, `--max-requests 5000`).
+    description: Flags for `sonde check` (`--tolerance 5`, `--max-requests 5000`).
     default: ""
   config:
     description: The project's sonde.toml (default found from the working directory up).

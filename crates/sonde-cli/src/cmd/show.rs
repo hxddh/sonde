@@ -41,7 +41,7 @@ pub struct ShowArgs {
     #[arg(long, value_name = "DIMENSION", value_parser = by_arg,
           conflicts_with_all = ["summary", "errors", "requests", "all", "app"])]
     pub(super) by: Option<Dimension>,
-    /// The format written: table or json.
+    /// The format written: text or json.
     #[arg(
         long,
         short = 'f',
@@ -223,10 +223,6 @@ fn print_lines(n: usize, all: bool, what: &str, line: &dyn Fn(usize) -> String) 
 }
 
 pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
-    if let Some(why) = output::unsupported(a.format, "show", &[Format::Table, Format::Json]) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     let file = match &a.file {
         Some(f) => super::sessions::resolve(s, f),
         None => which_run(s, project_name().as_deref())?.0,
@@ -441,7 +437,7 @@ pub async fn show_file(s: &Arc<Sonde>, file: &Path) -> anyhow::Result<i32> {
             all: false,
             app: false,
             by: None,
-            format: Format::Table,
+            format: Format::Text,
         },
     )
     .await

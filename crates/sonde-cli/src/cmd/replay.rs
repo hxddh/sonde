@@ -71,14 +71,6 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     if a.endpoint.len() > 1 {
         return replay_many(s, a).await;
     }
-    if let Some(why) = output::unsupported(
-        a.format,
-        "replay on one endpoint",
-        &[Format::Table, Format::Json],
-    ) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     let (asked, original) = super::sessions::open(s, &a.file)?;
     let ep = super::endpoint(s, a.endpoint.first().map(String::as_str))?;
     let base = s.client(&ep)?;
@@ -231,14 +223,6 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
 /// how many answers differ from the recording, and each kind's p95.
 async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     use sonde_proxy::replay::{self as rp, ReplayOptions};
-    if let Some(why) = output::unsupported(
-        a.format,
-        "replay",
-        &[Format::Table, Format::Json, Format::Markdown, Format::Csv],
-    ) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     let (asked, original) = super::sessions::open(s, &a.file)?;
     let prefix = match &a.how.prefix {
         Some(p) => rp::normalize_prefix(p).map_err(|e| anyhow::anyhow!(e))?,
@@ -364,7 +348,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         }
         let mut headers = vec![""];
         headers.extend(columns.iter().map(String::as_str));
-        output::print(a.format, &headers, &rows);
+        output::print(&headers, &rows);
         for (id, path, _, _) in &stores {
             eprintln!("{id}: {}", path.display());
         }

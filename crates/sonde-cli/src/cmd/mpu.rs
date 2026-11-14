@@ -29,7 +29,7 @@ pub(super) enum MpuAction {
     Scan {
         #[command(flatten)]
         target: Target,
-        /// The format written: table, json or csv.
+        /// The format written: text or json.
         #[arg(
             long,
             short = 'f',
@@ -126,18 +126,6 @@ fn rules_text(doc: Option<&str>) -> Vec<String> {
 }
 
 pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i32> {
-    // the scan is data; a dry run and its confirmation are read by a person
-    // (they have no -f)
-    if let MpuAction::Scan { format, .. } = action
-        && let Some(why) = output::unsupported(
-            *format,
-            "bucket uploads",
-            &[Format::Table, Format::Json, Format::Csv],
-        )
-    {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     match action {
         MpuAction::Scan { target: t, format } => {
             let ep = super::endpoint(s, t.endpoint.as_deref())?;
@@ -146,22 +134,6 @@ pub(super) async fn act(s: &Arc<Sonde>, action: &MpuAction) -> anyhow::Result<i3
             )?;
             match format {
                 Format::Json => println!("{}", output::json(&r)),
-                Format::Csv => {
-                    println!("key,upload_id,initiated,age_days,parts,bytes,cost_per_month,stale");
-                    for u in &r.uploads {
-                        println!(
-                            "{},{},{},{:.2},{},{},{:.4},{}",
-                            u.key,
-                            u.upload_id,
-                            u.initiated.clone().unwrap_or_default(),
-                            u.age_days.unwrap_or(0.0),
-                            u.parts,
-                            u.bytes,
-                            u.cost_per_month,
-                            u.stale
-                        );
-                    }
-                }
                 _ if r.uploads.is_empty() => {
                     println!("no incomplete uploads in {}/{}", t.bucket, t.prefix);
                     println!("Lifecycle: {}", r.lifecycle.message);

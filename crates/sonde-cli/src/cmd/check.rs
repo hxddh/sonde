@@ -12,7 +12,7 @@ use sonde_proxy::project::Project;
 use sonde_proxy::session::{Session, SessionHeader};
 use sonde_proxy::view::Analysis;
 
-use crate::output::{self, Format};
+use crate::output;
 
 use super::record::*;
 
@@ -59,7 +59,7 @@ pub struct CheckArgs {
     /// kept by CI) the comment ends with.
     #[arg(long, value_name = "URL")]
     report_url: Option<String>,
-    /// The format written: table, json, markdown (a pull request's comment) or github (annotations).
+    /// The format written: text, json, markdown (a pull request's comment) or github (annotations).
     #[arg(
         long,
         short = 'f',
@@ -68,6 +68,20 @@ pub struct CheckArgs {
         hide_possible_values = true
     )]
     format: Format,
+}
+
+/// What `check` writes: text and JSON, as every command, and for CI a pull
+/// request's comment and GitHub Actions annotations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
+pub enum Format {
+    #[default]
+    Text,
+    Json,
+    /// A pull request's comment.
+    Markdown,
+    /// GitHub Actions annotations: on the run's summary and, where a finding
+    /// names its code, on that line of the diff.
+    Github,
 }
 
 /// A run as `check` reads it: its figures, profile, findings and header,
@@ -348,19 +362,6 @@ pub(super) async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPa
 }
 
 pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
-    if let Some(why) = output::unsupported(
-        a.format,
-        "check",
-        &[
-            Format::Table,
-            Format::Json,
-            Format::Markdown,
-            Format::Github,
-        ],
-    ) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     if a.report_url.is_some() && a.format != Format::Markdown {
         eprintln!("--report-url is for -f markdown: the link a pull request's comment ends with");
         return Ok(64);
@@ -652,7 +653,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         // hold the run to, and nothing wrong with it: the first run passes
         // (the other formats say it below, as they say any verdict: a
         // comment, an annotation, a field)
-        if no_baseline.is_some() && a.format == Format::Table {
+        if no_baseline.is_some() && a.format == Format::Text {
             println!("nothing checked: no budget, and no baseline yet");
             return Ok(0);
         }

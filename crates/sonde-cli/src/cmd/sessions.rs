@@ -19,7 +19,7 @@ pub struct SessionsArgs {
 
 #[derive(Args)]
 struct ListArgs {
-    /// The format written: table, json, markdown or csv.
+    /// The format written: text or json.
     #[arg(
         long,
         short = 'f',
@@ -234,11 +234,6 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
         Some(Action::List(l)) => l.format,
         _ => a.list.format,
     };
-    let writes = [Format::Table, Format::Json, Format::Markdown, Format::Csv];
-    if let Some(why) = output::unsupported(format, "sessions", &writes) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     let all = rows(s);
     match &a.action {
         None | Some(Action::List(_)) => {
@@ -294,7 +289,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             // a table has no column with nothing in it (no run's exit is
             // known: imports, replays); a file's columns stay what they are
             const EXIT: usize = 7;
-            if matches!(format, Format::Table) && all.iter().all(|r| r.exit.is_none()) {
+            if matches!(format, Format::Text) && all.iter().all(|r| r.exit.is_none()) {
                 heads.remove(EXIT);
                 for r in &mut rows {
                     r.remove(EXIT);
@@ -302,7 +297,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
             }
             // a command may be a line long: in a terminal it is cut in its
             // middle so that every row fits (a file or a pipe gets it whole)
-            if matches!(format, Format::Table)
+            if matches!(format, Format::Text)
                 && let Some(width) = terminal_width()
             {
                 const PROGRAM: usize = 2;
@@ -322,7 +317,7 @@ pub async fn run(s: &Arc<Sonde>, a: &SessionsArgs) -> anyhow::Result<i32> {
                     r[PROGRAM] = middle(&r[PROGRAM], room);
                 }
             }
-            output::print(format, &heads, &rows);
+            output::print(&heads, &rows);
             for r in all.iter().filter(|r| r.unreadable.is_some()) {
                 eprintln!(
                     "sonde: {} is not a session: {} (`sonde show` refuses it; its other lines are counted)",

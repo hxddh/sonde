@@ -29,7 +29,7 @@ pub struct CompareArgs {
     pub(super) replay: Vec<String>,
     #[command(flatten)]
     pub(super) how: super::replay::ReplayOpts,
-    /// The format written: table or json; replayed on several, markdown and csv too.
+    /// The format written: text or json.
     #[arg(
         long,
         short = 'f',
@@ -144,10 +144,6 @@ async fn diff(
     replay: &PathBuf,
     format: Format,
 ) -> anyhow::Result<i32> {
-    if let Some(why) = output::unsupported(format, "compare", &[Format::Table, Format::Json]) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
-    }
     // read one after the other, each for what it amounts to: the replay
     // kept as its answers and its profile, then the session read against them
     let original_file = super::sessions::resolve(s, original);
@@ -246,10 +242,6 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
             (Some(h), _) if named_replay(&h) => return diff(s, y, x, a.format).await,
             _ => {}
         }
-    }
-    if let Some(why) = output::unsupported(a.format, "compare", &[Format::Table, Format::Json]) {
-        eprintln!("sonde: {why}");
-        return Ok(64);
     }
     let (before, after) = match runs_compared(s, &a.runs)? {
         Ok(two) => two,
