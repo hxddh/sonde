@@ -1104,5 +1104,6 @@
  "confirm.colUpload": "Upload ID",
  "confirm.upload": "%{n} parts, started %{started}",
  "confirm.upload.one": "1 part, started %{started}",
- "overview.notMeasured": "Not measured"
+ "overview.notMeasured": "Not measured",
+ "lanes.shade": "A lighter shade: the next request on the same lane"
 }

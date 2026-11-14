@@ -1104,5 +1104,6 @@
  "confirm.colUpload": "上传 ID",
  "confirm.upload": "%{n} 个分片，开始于 %{started}",
  "confirm.upload.one": "%{n} 个分片，开始于 %{started}",
- "overview.notMeasured": "尚未测量"
+ "overview.notMeasured": "尚未测量",
+ "lanes.shade": "颜色较浅：同一泳道上的下一个请求"
 }

@@ -10,11 +10,11 @@ import { change, clock, count, date, duration, middle, transfer } from "../forma
 import { t } from "../i18n";
 import { episodeNotes, episodeTitle, observationSaving, observationText, observationWhy, say } from "../phrases";
 import { Chart, sessionStory, Sparkline, timed, Waterfall, MARK } from "./plots";
-import { type SignalId, signalsOf, signalTiles } from "../signals";
+import { type SignalId, type SignalTile, signalsOf, signalTiles } from "../signals";
 import type { Operations } from "../operations";
 import type { EpisodeRow, FindingChange, LogLine, Observation, RecordSummary, SessionView } from "../types";
 import { Icon } from "./icon";
-import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN } from "./kit";
+import { Badge, Button, Card, CARD, Disclosure, Dot, EMPHASIS, Empty, fitColumns, Heading, ICON, ListRow, Options, Path, Pressable, ROW, rowHeight, Stat, TABLE, terminal, type TileLook, Tiles, Title, TYPE, SIZES, WIDTH, COLUMN } from "./kit";
 import { rememberedSize } from "./sizes";
 
 import { commandLine } from "../command";
@@ -126,7 +126,7 @@ export function gitText(g: SessionView["header"]["git"]): string {
 }
 
 /** The command and where it ran, then the session's figures. */
-export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean }) {
+export function SessionHeader(props: { view: SessionView; actions?: JSX.Element; /** a press on a signal: its chart, on the Time pane */ onSignal?: (id: SignalId) => void; /** what marks the session (a trial of another run), under its title */ children?: JSX.Element; /** the pane is under `BREAK.short`: the signals keep to a line */ short?: boolean; /** the pane under it has scrolled: the header folds to one line — the command, its first figures, the commands */ folded?: boolean }) {
   const s = () => props.view.summary;
   const line = () => {
     const parts = [t("timeline.operations", { n: count(s().requests), ops: t("figure.operationsN", { n: count(props.view.operationsTotal) }), secs: duration(s().seconds * 1000) })];
@@ -172,7 +172,30 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
       </If>
     );
   };
+  // folded: one line, what it ran and its first figures (each still opens its chart), then the commands
+  const FOLDED = 3;
+  const tint = (tone: SignalTile["tone"]) => ({ plain: "text-foreground", bad: "text-status-server", client: "text-status-client", injected: "text-status-injected", quiet: "text-muted-foreground" })[tone];
+  const folded = () => (
+    <View testID="session-folded" class="flex-row items-center gap-3">
+      <View selectable class="min-w-0 flex-1">
+        <Title mono small lines={1}>
+          {command() ? commandLine(command()!) : props.view.header.endpoint}
+        </Title>
+      </View>
+      <View class="shrink-0 flex-row items-center gap-1" accessibilityLabel={line()}>
+        <Each of={tiles().slice(0, FOLDED)}>
+          {(x, i) => (
+            <Pressable label={`${x().label}: ${x().value}`} onPress={() => props.onSignal?.(SIGNALS[i()])} testID={`signal-${SIGNALS[i()]}`}>
+              <Text class={`tabular-nums text-small ${tint(x().tone)}`}>{x().value}</Text>
+            </Pressable>
+          )}
+        </Each>
+      </View>
+      {props.actions}
+    </View>
+  );
   return (
+    <If when={!props.folded} else={folded()}>
     <View class="gap-3">
       <View class="flex-row items-start gap-3">
         <View selectable class="min-w-0 flex-1 gap-1">
@@ -196,6 +219,7 @@ export function SessionHeader(props: { view: SessionView; actions?: JSX.Element;
         <Tiles ranked short={props.short} min={SIZES.signalTile} testID="session-summary" label={line()} items={SIGNALS.map((_, i) => tile(i))} />
       </If>
     </View>
+    </If>
   );
 }
 
@@ -613,6 +637,8 @@ export function OperationsTable(props: {
   compact?: boolean;
   /** A session still being recorded: the table opens at its newest operation and stays at its end as more arrive, until the reader scrolls up (back at the end, it follows again). */
   follow?: boolean;
+  /** whether the table is scrolled from its first row (the session's header folds while it is) */
+  onScrolled?: (away: boolean) => void;
 }) {
   // the requests sonde answered in the store's place (a trial's): their operations in sonde's own tone
   const hurt = computed(() => new Set(props.view.injected ?? []));
@@ -760,6 +786,7 @@ export function OperationsTable(props: {
       rowCount={props.source.total()}
       onVisibleRowsChange={({ range }) => {
         endSeen = range.end;
+        props.onScrolled?.(range.start > 0);
         props.source.show(range.start, range.end);
       }}
       fontSize={TYPE.body}

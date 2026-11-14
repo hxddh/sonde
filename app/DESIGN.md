@@ -154,8 +154,8 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 - **Four thresholds** (`BREAK`), and no others: two widths — `toolbar` (1040), from which the window's toolbar shows
   the endpoint's name in full and the search field rather than its button, and `inspector` (900), from which a pane
   holds an inspector beside what it details (under it the inspector comes in from the edge); two heights of a
-  session's pane — under `short` (600) the shape strip goes, the signal tiles keep to one line each (what they count
-  and the figure) and the findings keep to a line or two, from `tall` (880)
+  session's pane — under `short` (600) the shape strip goes, the signal tiles keep to what they count
+  and the figure, and the findings keep to a line or two, from `tall` (880)
   each finding has its lines in full. A pane measures itself (`onLayout`); nothing reads the focused window's size.
 - **A pane that narrows reflows by rule**, never by clipping:
   - *figures first*: a row of ranked tiles (`Tiles ranked`) holds as many as fit, in rank order; the last ranked
@@ -173,12 +173,19 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
     column's state by its place;
   - a finding's words keep their width: what acting on it saves goes first, then the count's words;
   - a session's sentence wraps to two lines and is cut only at the second line's end;
-  - tiles (`Tiles`) go in rows of equal count: four are four abreast or two and two, never three and one; five
-    that do not fit are a line each, never three and two, nor tight enough to cut a label; where
-    not even two fit as they read (a bucket's tiles beside an inspector) each takes a line of its own — what it
-    counts at its start, the figure at its end — before any label or figure would be cut;
+  - tiles (`Tiles`) go in rows of equal count, each as high as its row: four are four abreast or two and two,
+    never three and one; five that do not fit are a line each, never three and two, nor tight enough to cut a
+    label; where not even two fit as they read (a bucket's tiles beside an inspector) each takes a line of its own
+    — what it counts at its start, the figure at its end — before any label or figure would be cut. That one-line
+    tile is for tiles one per row only: abreast, a short pane keeps what each counts over its figure (`tight`);
+    no label or heading breaks inside a word ("Request / s", "What / to / chan / ge"): what stands beside it
+    goes to the next line;
+  - a session's header **folds to one line** while the pane under it is scrolled from its top: what ran, its first
+    three figures (each still opens its chart), its commands; at the top again it opens;
+  - Run's output yields to its result once the program has ended (`PANE.terminalDone`);
   - commands at a row's end (`ActionRow`) stay in one row: the primary, and in rank order as many of the others
-    as fit, the rest behind `⋯`; they never wrap to a second line. Run's band is the one exception: where its two
+    as fit, the rest behind `⋯` by their words — never a row of unlabelled icons (a session's header narrower than
+    `inspector` keeps Run again and `⋯`); they never wrap to a second line. Run's band is the one exception: where its two
     next steps do not fit beside Run again, they take the row by their words (no icons), and `⋯` and Run again a
     line under them — the loop's next step is never behind `⋯`;
   - a finding's advice opens inside its own row, under its title, which comes to the top of the findings' room;
@@ -211,7 +218,7 @@ Sizes (`CONTROL`, `ROW`, `FORM`):
 | Size | `bytes()`, tabular, at the end of its column |
 | Duration | `duration()` (0.4 ms, 840 ms, 2.35 s, 3 min 05 s). One word per meaning: **Took** for how long an operation or a run lasted, **Waiting** for a program's time on the store, **Latency** for one request |
 | Time | clock time in lists (`14:02:11.204`), `date()` in headers, never raw ISO |
-| Cost | `cost()` with its currency |
+| Cost | `cost()` with its currency; one cost one writing on a pane (a column's small figures as `costParts` writes them, "0.0072", never "<0.01" beside it) |
 | Key or path | mono, cut in the middle, once |
 | Command | mono, `$ ` before it, variables' values hidden |
 | Opening | "Open …", a chevron on rows |
@@ -265,16 +272,19 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 `scripts/lint-charts.py` counts them.
 
 - **One question per chart**: its title is the question it answers, in both languages ("Where did the time
-  go?", "时间花在了哪里？"); its sentence and `accessibilityLabel` the answer ("Most of the waiting: PutObject,
-  65%"). A terminal gets the sentence and a table.
+  go?", "时间花在了哪里？"); its sentence and `accessibilityLabel` the answer, computed from what it draws over the
+  stretch shown (`plots/answers.ts`: "2 requests failed, both 503 SlowDown, between +10 ms and +20 ms", "Most
+  requests were GetObject (82%)"), never how to read it. How to read it is the frame's `how`: an info mark at
+  the title's end, the words in its tooltip. A terminal gets the sentence and a table.
 - **One reading order** on the Time pane: four titled groups, **Traffic, Latency, Errors, Where**, every chart
   shown (none behind "more"); Latency opens with the table by kind of request. Two abreast where there is room, a last
   one alone takes the row.
 - **One selection**: the stretch of time chosen — a slice pressed on the Operations strip, or two on the Time pane's
   timeline — is one state of the session, said as one chip (what narrows, and its ✕) over both panes. Charts over time
   zoom to a stretch of two slices or more (one slice is marked, the rest quiet); every other chart is
-  reckoned again from the requests that started in it (`sessions.stretch`) and its sentence says which
-  ("in +200 ms – +400 ms"); a shared page, which cannot, says "of the whole session".
+  reckoned again from the requests that started in it (`sessions.stretch`). Every chart keeps its sentence,
+  reckoned over the stretch, with the stretch beside it ("… · in +200 ms – +400 ms"); a shared page, which cannot
+  reckon, says "of the whole session". A slice or stretch where no request began does not become the stretch.
 - **One frame** (`Chart`), used by every chart — the Time pane's, Capacity's, Compare's, the trends, the
   waterfall, Run's live panel, the shared page: a card with the question as its title, a sentence that answers it
   (it wraps, never cut), how it is cut at the title's end (`action`), the plot, its `legend`, and `empty` said in
@@ -301,7 +311,8 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
   what it is on, one band or line under it (`CROSS_BAND`, `CROSS_LINE`). A mark a few points high (`Sparkline`)
   stands on a baseline and is drawn at full strength, so it reads in dark.
 - **Colors are roles.** Outcomes in their status tokens (`bar` for ok, `status-miss`, `status-client`,
-  `status-server`; `status-injected` for what a fault scenario answered, whatever it looked like) — one failure one
+  `status-server`; `status-injected` for what a fault scenario answered, whatever it looked like: on the timeline's
+  stack, an operation's row, the Errors tile and its line, never a store failure's red) — one failure one
   colour everywhere: errors all the program's own (4xx) are `status-client` on the tiles and figures too; a quantity in
   `chart-1`, a second in `chart-4`; tails and percentiles in a quiet
   `muted-foreground` (dashed for a line), never an error's color; retries in `info`; before is
@@ -357,8 +368,10 @@ constants): every constant a chart is drawn with is exported from `system.tsx` a
 - **Errors**: the counts by class, and beside them the rate (the share of each slice's requests that failed);
   every answer in a table with headings, none left out (it scrolls), a fault scenario's in the injected tone.
 - **Two runs**: five tiles say each fact once (requests, errors, latency, waiting, cost), each with both runs'
-  lines; equal figures are said once with no change beside them; between two different programs nothing is
-  better or worse, and nothing is green or red. A dumbbell's figures stand on its own line, over an axis.
+  lines; equal figures are said once with no change beside them, in a tile, a dumbbell or a prefix ("5", never
+  "5 → 5"); a figure marked too few to tell (`~`) is neither green nor red; between two different programs nothing
+  is better or worse, and nothing is green or red. A dumbbell's figures stand on its own line, over an axis. The
+  title says one day once, then the two times.
 - **Motion**: an appear of 420 ms ease-out per new data (`appearGeneration`), updates gliding in 260 ms; nothing
   moves with reduced motion.
 - **Lanes**: every request on the first lane free at its start, a run of cells from start to end in its
@@ -396,7 +409,13 @@ word (nothing dismisses the dialog while it runs), the time it has taken counts 
 finished scenario opens its own session. A verdict that is not "survived" says where it turned (the request,
 the program's line) and what to change, from Rust's phrase — each piece of advice once, a later verdict with the same
 referring to it. A verdict is drawn one way (`TrialRow`) in the dialog and on the Runs pane: its standing at the row's
-end, what it found and why in one quiet line, its history as a count and a time ("Broke in 3 of 3 runs, since 08:33"). Every literal a reader sees goes through `t()`, in both languages; a key
+end, what it found and why in one quiet line, its history as a count and a time ("Broke in 3 of 3 runs, since 08:33").
+A run and its trials are apart: a run's row says quietly how many of its trials broke ("2 of 5 broke"), never a
+red "Broke" on a run that exited as it did. The session header says what found nothing beside what failed
+("None failed · 67% found nothing"). A dialog that acts is titled and committed by its act and count ("Abort 2
+uploads"), and a section's fix is its primary (Buckets' "Add abort rule…"; aborting by hand is outline); a
+figure's place holds a figure or says there is none ("Not measured"), never a verb. Chinese keeps a figure with
+its unit (`duration`, `bytes`: a space that does not break). Every literal a reader sees goes through `t()`, in both languages; a key
 nothing uses fails `check-locales.py`. Nouns
 for places (Run, Sessions, Buckets, Activity), verbs for commands. Chinese is written,
 not translated: `桶`, `会话`, `未完成的上传`; a place, a tab, a button and a kind of thing each have a word of

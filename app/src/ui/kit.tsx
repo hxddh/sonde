@@ -192,6 +192,8 @@ export const PANE = {
   mainLeast: 480,
   /** Run's program and its operations */
   terminalLeast: 320,
+  /** the program's output once it has ended: it yields to the result beside it */
+  terminalDone: 200,
   operationsLeast: 340,
   /** a session's output beside its operations */
   outputLeast: 240,

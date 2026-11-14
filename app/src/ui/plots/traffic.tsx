@@ -142,6 +142,8 @@ export function Lanes(props: { profile: Profile; domainMs?: [number, number] | n
         </If>
         {/* the outcomes the session had, and only those: no "Failed" under a run that never failed */}
         <Legend items={[...OUTCOMES.filter((o) => all().some((x) => toneOf(x, marked()) === o.tone)).map((o) => ({ label: t(o.key), swatch: o.swatch })), ...injectedLegend(props.injected)]}>
+          {/* the second shade the cells are drawn in: named, as every colour a chart draws */}
+          <ChartNote testID="lanes-shade">{t("lanes.shade")}</ChartNote>
           <If when={all().length < total()}>
             <ChartNote testID="lanes-sampled">{t("plots.sampled", { n: count(all().length), of: count(total()) })}</ChartNote>
           </If>
