@@ -81,7 +81,7 @@ pub fn is_miss(r: &Record) -> bool {
         // a bucket that is not there is a mistake, not a lookup: a key is
         // looked for, a bucket is named
         && !r
-            .error_body
+            .rare().error_body
             .as_deref()
             .is_some_and(|b| b.contains("<Code>NoSuchBucket</Code>"))
 }
@@ -136,7 +136,7 @@ pub fn summarize(records: &[Record]) -> Summary {
                     });
                 }
             }
-            let what = match (r.status, r.error_body.as_deref().and_then(s3_code)) {
+            let what = match (r.status, r.rare().error_body.as_deref().and_then(s3_code)) {
                 _ if refused => "refused by sonde".to_string(),
                 (Some(st), Some(code)) => format!("{st} {code}"),
                 (Some(st), None) => st.to_string(),
@@ -548,9 +548,9 @@ mod tests {
     fn a_missing_bucket_is_an_error_and_a_missing_key_a_lookup() {
         let mut key = rec("GetObject", 404, 1.0, 0);
         key.method = "GET".into();
-        key.error_body = Some("<Error><Code>NoSuchKey</Code></Error>".into());
+        key.rare_mut().error_body = Some("<Error><Code>NoSuchKey</Code></Error>".into());
         let mut bucket = key.clone();
-        bucket.error_body = Some("<Error><Code>NoSuchBucket</Code></Error>".into());
+        bucket.rare_mut().error_body = Some("<Error><Code>NoSuchBucket</Code></Error>".into());
         assert!(is_miss(&key) && !is_failure(&key));
         assert!(!is_miss(&bucket) && is_failure(&bucket));
     }
@@ -558,12 +558,13 @@ mod tests {
     #[test]
     fn counts() {
         let mut slow = rec("GetObject", 503, 80.0, 100);
-        slow.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+        slow.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         let mut refused = rec("DeleteObject", 403, 0.0, 150);
         refused.response_headers = vec![
             Header::new("x-sonde-proxy", "refused"),
             Header::new("x-sonde-policy", "no-delete"),
-        ];
+        ]
+        .into();
         refused.bucket = Some("b".into());
         refused.key = Some("old.csv".into());
         let s = summarize(&[

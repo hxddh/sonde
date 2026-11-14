@@ -218,7 +218,7 @@ fn list(id: u64, prefix: &str) -> Record {
     Record {
         kind: "ListObjectsV2".into(),
         key: None,
-        query: vec![("prefix".into(), prefix.to_string().into())],
+        query: vec![("prefix".into(), prefix.to_string().into())].into(),
         ..get(id, "")
     }
 }
@@ -601,7 +601,7 @@ fn a_finding_that_grew_is_more_never_less() {
         for _ in 0..n {
             let mut r = get(out.len() as u64 + 1, "busy");
             r.status = Some(503);
-            r.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+            r.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
             out.push(r);
         }
     };
@@ -665,7 +665,11 @@ fn each_kind_of_failure_is_compared() {
         (0..n as u64)
             .map(|i| Record {
                 status: Some(status),
-                error_body: Some(format!("<Error><Code>{code}</Code></Error>")),
+                rare: reqlog::Rare {
+                    error_body: Some(format!("<Error><Code>{code}</Code></Error>")),
+                    ..Default::default()
+                }
+                .into(),
                 ..get(from + i, "x")
             })
             .collect()

@@ -181,6 +181,7 @@ async fn replay_finds_a_store_that_ignores_conditional_writes() {
     let delete = records.iter().find(|r| r.kind == "DeleteObjects").unwrap();
     assert!(
         delete
+            .rare()
             .request_body
             .as_deref()
             .unwrap()
@@ -562,7 +563,7 @@ async fn what_a_cleanup_removed_is_what_the_store_says_and_what_remains_is_count
     let mut create = put_record(4, "big");
     create.kind = "CreateMultipartUpload".into();
     create.method = "POST".into();
-    create.query = vec![("uploads".into(), "".into())];
+    create.query = vec![("uploads".into(), "".into())].into();
     create.request_bytes = None;
     let run = replayed(
         &store,

@@ -360,25 +360,25 @@ fn an_injected_error_is_counted_as_injected_not_as_the_stores() {
     }
     // a fault scenario answered 503 in the store's place; the store's own 503
     recs[2].status = Some(503);
-    recs[2].injected = Some("slow-down".into());
-    recs[2].error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+    recs[2].rare_mut().injected = Some("slow-down".into());
+    recs[2].rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
     recs[3].status = Some(503);
-    recs[3].error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+    recs[3].rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
     // a scenario lost an answer: injected too, not a transport error
     recs[4].status = None;
-    recs[4].transport_error = Some("connection reset".into());
-    recs[4].injected = Some("lost-answer".into());
+    recs[4].rare_mut().transport_error = Some("connection reset".into());
+    recs[4].rare_mut().injected = Some("lost-answer".into());
     // a scenario that only delayed a request failed nothing
-    recs[5].injected = Some("delay".into());
+    recs[5].rare_mut().injected = Some("delay".into());
     // the rest of the classes
     recs[6].status = Some(403);
-    recs[6].error_body = Some("AccessDenied: no".into());
+    recs[6].rare_mut().error_body = Some("AccessDenied: no".into());
     recs[7].status = None;
-    recs[7].transport_error = Some("timed out".into());
+    recs[7].rare_mut().transport_error = Some("timed out".into());
     recs[7].retries = 3;
     // a lookup that found nothing is no error
     recs[8].status = Some(404);
-    recs[8].error_body = Some("<Error><Code>NoSuchKey</Code></Error>".into());
+    recs[8].rare_mut().error_body = Some("<Error><Code>NoSuchKey</Code></Error>".into());
 
     let s = signals(&recs, &RequestPrices::default());
     let c = &s.errors.counts;
@@ -491,7 +491,7 @@ fn sizes_fall_in_buckets_that_double_and_transfers_are_timed_against_them() {
     // a transfer that failed moved nothing whole
     let mut cut = rec(10, 100, "GetObject", 200, 500.0);
     cut.response_bytes = Some(32 * MIB);
-    cut.transport_error = Some("cut".into());
+    cut.rare_mut().transport_error = Some("cut".into());
     recs.push(cut);
     // a size not known is in no bucket
     recs.push(rec(11, 110, "HeadObject", 200, 1.0));
@@ -681,7 +681,6 @@ fn million() -> Vec<Record> {
                 bucket: Some("b".into()),
                 key: (!key.is_empty()).then(|| key.into()),
                 status: Some(if failed { 503 } else { 200 }),
-                error_body: failed.then(|| "<Error><Code>SlowDown</Code></Error>".into()),
                 latency_ms: 3.0 + (i % 50) as f64,
                 first_byte_ms: Some(1.0 + (i % 7) as f64),
                 request_bytes: Some(if method == "PUT" {
@@ -691,6 +690,11 @@ fn million() -> Vec<Record> {
                 }),
                 response_bytes: Some(if op == "GetObject" { i % 300_000 } else { 200 }),
                 retries: u32::from(i % 211 == 0),
+                rare: reqlog::Rare {
+                    error_body: failed.then(|| "<Error><Code>SlowDown</Code></Error>".into()),
+                    ..Default::default()
+                }
+                .into(),
                 ..Default::default()
             }
         })

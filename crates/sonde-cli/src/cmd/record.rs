@@ -294,11 +294,11 @@ pub fn timeline_line(r: &Record, color: bool) -> String {
     if !detail.is_empty() {
         line.push_str(&paint(&format!("  {detail}"), "2", color));
     }
-    if let Some(e) = &r.transport_error {
+    if let Some(e) = &r.rare().transport_error {
         line.push_str(&paint(&format!("  {e}"), "31", color));
     } else if r.is_error()
         && !miss
-        && let Some(code) = r.error_body.as_deref().and_then(|b| {
+        && let Some(code) = r.rare().error_body.as_deref().and_then(|b| {
             let start = b.find("<Code>")? + 6;
             Some(&b[start..start + b[start..].find("</Code>")?])
         })

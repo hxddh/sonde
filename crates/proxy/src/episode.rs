@@ -591,13 +591,13 @@ fn refused(r: &Record) -> bool {
 /// S3's code in an error body, as it stands there (nothing is copied:
 /// [`retryable`] asks of every record).
 fn s3_code(r: &Record) -> Option<&str> {
-    let b = r.error_body.as_deref()?;
+    let b = r.rare().error_body.as_deref()?;
     let start = b.find("<Code>")? + 6;
     Some(&b[start..start + b[start..].find("</Code>")?])
 }
 
 fn failure(r: &Record) -> Option<String> {
-    if r.transport_error.is_some() {
+    if r.rare().transport_error.is_some() {
         return Some("no response".into());
     }
     if !r.is_error() || is_miss(r) {
@@ -867,13 +867,13 @@ fn singles(rs: &[&Record]) -> Vec<Episode> {
 /// told by where it is): a key read a thousand times is one title's
 /// target, not a thousand.
 #[derive(Default)]
-struct Targets(std::collections::HashMap<(Option<reqlog::Text>, usize), reqlog::Text>);
+struct Targets(std::collections::HashMap<(Option<reqlog::Name>, usize), reqlog::Text>);
 
 impl Targets {
     fn of(&mut self, r: &Record) -> reqlog::Text {
         let key = r.key.as_ref().map_or(0, |k| k.as_ptr() as usize);
         self.0
-            .entry((r.bucket.clone(), key))
+            .entry((r.bucket, key))
             .or_insert_with(|| {
                 match (&r.bucket, &r.key) {
                     (Some(b), Some(k)) => format!("{b}/{k}"),
@@ -889,7 +889,7 @@ impl Targets {
 fn single(r: &Record, targets: &mut Targets) -> Episode {
     let mut title = vec![p_shared(
         "request",
-        &[("op", r.kind.clone()), ("target", targets.of(r))],
+        &[("op", r.kind.as_str().into()), ("target", targets.of(r))],
     )];
     if let Some(x) = query(r, "prefix").filter(|x| !x.is_empty()) {
         title.push(p("request.prefix", &[("prefix", x.to_string())]));
@@ -1112,7 +1112,7 @@ fn completes(r: &&Record) -> bool {
 
 /// Whether sonde failed the request in the store's place.
 fn sondes_fault(r: &Record) -> bool {
-    r.injected.is_some() && response_header(r, "x-sonde-fault").is_some()
+    r.rare().injected.is_some() && response_header(r, "x-sonde-fault").is_some()
 }
 
 /// The statuses a retry is owed for: the ones the AWS SDKs send again. A 501
@@ -1134,9 +1134,11 @@ pub(crate) fn code_of(r: &Record) -> Option<&str> {
     if let Some(c) = s3_code(r) {
         return Some(c);
     }
-    let (code, _) = r.error_body.as_deref()?.split_once(": ")?;
-    (r.injected.is_some() && !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric()))
-        .then_some(code)
+    let (code, _) = r.rare().error_body.as_deref()?.split_once(": ")?;
+    (r.rare().injected.is_some()
+        && !code.is_empty()
+        && code.chars().all(|c| c.is_ascii_alphanumeric()))
+    .then_some(code)
 }
 
 /// Whether a client is expected to send the request again: no answer (or
@@ -1144,7 +1146,7 @@ pub(crate) fn code_of(r: &Record) -> Option<&str> {
 /// a code that does ([`CODES_OWE_RETRY`]). The one rule: the trial's
 /// verdict, the retries read from a session and the signals all ask this.
 pub(crate) fn retryable(r: &Record) -> bool {
-    r.transport_error.is_some()
+    r.rare().transport_error.is_some()
         || r.status.is_some_and(status_owes_retry)
         || code_of(r).is_some_and(|c| CODES_OWE_RETRY.contains(&c))
 }
@@ -2150,7 +2152,8 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
             .filter(|r| {
                 (r.kind == "DeleteObject" && r.key.as_deref().is_some_and(|k| k.ends_with('/')))
                     || (r.kind == "DeleteObjects"
-                        && r.request_body
+                        && r.rare()
+                            .request_body
                             .as_deref()
                             .is_some_and(|b| b.contains("/</Key>")))
             })
@@ -2384,7 +2387,7 @@ fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(
             w.push((at, k));
         }
         if r.kind == "DeleteObjects"
-            && let Some(body) = r.request_body.as_deref()
+            && let Some(body) = r.rare().request_body.as_deref()
         {
             let mut rest = body;
             while let Some(i) = rest.find("<Key>") {
@@ -2682,7 +2685,7 @@ mod tests {
     #[test]
     fn retries_chain_until_success() {
         let mut slow = rec(1, 0, "GET", "GetObject", Some("k"), 503);
-        slow.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+        slow.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         let mut slow2 = slow.clone();
         slow2.id = 2;
         slow2.time += Duration::milliseconds(200);
@@ -2756,7 +2759,7 @@ mod tests {
     #[test]
     fn a_trials_503s_are_not_the_stores() {
         let fault = |mut r: Record| {
-            r.injected = Some("slowdown".into());
+            r.rare_mut().injected = Some("slowdown".into());
             r.response_headers
                 .push(Header::new("x-sonde-fault", "slowdown"));
             r
@@ -2790,7 +2793,7 @@ mod tests {
         );
         // a 503 of the store's own, in the same session, is still the store's
         let mut own = rec(90, 5000, "GET", "GetObject", Some("z"), 503);
-        own.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+        own.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         rs.push(own);
         rs.push(rec(91, 5200, "GET", "GetObject", Some("z"), 200));
         let obs = observations(&rs, &episodes(&rs));
@@ -2804,7 +2807,7 @@ mod tests {
     #[test]
     fn an_upload_the_store_completed_is_complete_though_the_program_was_told_500() {
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", Some("big"), 200);
-        create.query = vec![("uploads".into(), "".into())];
+        create.query = vec![("uploads".into(), "".into())].into();
         let q = [("uploadId", "u1")];
         let part = with_query(
             rec(2, 10, "PUT", "UploadPart", Some("big"), 200),
@@ -2814,7 +2817,7 @@ mod tests {
             rec(3, 20, "POST", "CompleteMultipartUpload", Some("big"), 500),
             &q,
         );
-        lost.injected = Some("lost-answer".into());
+        lost.rare_mut().injected = Some("lost-answer".into());
         lost.response_headers
             .push(Header::new("x-sonde-store-status", "200"));
         lost.response_headers
@@ -2823,7 +2826,7 @@ mod tests {
             rec(4, 130, "POST", "CompleteMultipartUpload", Some("big"), 404),
             &q,
         );
-        again.error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
+        again.rare_mut().error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
         let abort = with_query(
             rec(5, 140, "DELETE", "AbortMultipartUpload", Some("big"), 404),
             &q,
@@ -3050,7 +3053,7 @@ mod tests {
             Some("t/_delta_log/00000000000000000007.json"),
             200,
         );
-        won.request_headers = vec![Header::new("If-None-Match", "*")];
+        won.request_headers = vec![Header::new("If-None-Match", "*")].into();
         let mut lost = rec(
             2,
             50,
@@ -3059,10 +3062,10 @@ mod tests {
             Some("t/_delta_log/00000000000000000008.json"),
             412,
         );
-        lost.request_headers = vec![Header::new("If-None-Match", "*")];
-        lost.error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
+        lost.request_headers = vec![Header::new("If-None-Match", "*")].into();
+        lost.rare_mut().error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
         let mut refused = rec(3, 100, "DELETE", "DeleteObject", Some("x"), 403);
-        refused.response_headers = vec![Header::new("x-sonde-proxy", "refused")];
+        refused.response_headers = vec![Header::new("x-sonde-proxy", "refused")].into();
         let records = [won, lost, refused];
         let eps = episodes(&records);
         assert_eq!(eps[0].title(), "commit 7");
@@ -3361,7 +3364,8 @@ mod tests {
                 format!("out/part-{i}.parquet"),
             );
             let mut copy = req(next(), i * 100, "COPY", &dst, 0);
-            copy.request_headers = vec![Header::new("x-amz-copy-source", format!("lake/{src}"))];
+            copy.request_headers =
+                vec![Header::new("x-amz-copy-source", format!("lake/{src}"))].into();
             rs.push(copy);
             rs.push(req(next(), i * 100 + 10, "DELETE", &src, 0));
             rs.push(req(next(), i * 100 + 20, "PUT", &format!("out/d{i}/"), 0));
@@ -3499,7 +3503,8 @@ mod tests {
         // deleted between them, by a DeleteObjects that names it
         let mut deleted: Vec<Record> = (1..=15).map(|i| get(i, "conf.json", 200)).collect();
         let mut batch = rec(8, 75, "POST", "DeleteObjects", None, 200);
-        batch.request_body = Some("<Delete><Object><Key>conf.json</Key></Object></Delete>".into());
+        batch.rare_mut().request_body =
+            Some("<Delete><Object><Key>conf.json</Key></Object></Delete>".into());
         deleted.push(batch);
         assert!(hot(&deleted).is_empty());
         // changed by another writer: the store said another ETag
@@ -3513,7 +3518,8 @@ mod tests {
                     } else {
                         "\"b\"".into()
                     },
-                }];
+                }]
+                .into();
                 r
             })
             .collect();
@@ -3541,7 +3547,8 @@ mod tests {
                 r.request_headers = vec![reqlog::Header {
                     name: "Range".into(),
                     value: format!("bytes={}-{}", i * 100, i * 100 + 99).into(),
-                }];
+                }]
+                .into();
                 r
             })
             .collect();

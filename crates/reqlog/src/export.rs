@@ -25,7 +25,7 @@ pub fn to_har(records: &[Record]) -> Value {
             let query: Vec<Value> =
                 r.query.iter().map(|(n, v)| json!({"name": n, "value": v})).collect();
             let mime = r.header("content-type").unwrap_or("application/octet-stream");
-            let content = match &r.error_body {
+            let content = match &r.rare().error_body {
                 Some(body) => json!({"size": body.len(), "mimeType": mime, "text": body}),
                 None => json!({"size": r.response_bytes.unwrap_or(0), "mimeType": mime}),
             };
@@ -34,7 +34,7 @@ pub fn to_har(records: &[Record]) -> Value {
                 "time": r.latency_ms,
                 "request": {
                     "method": r.method,
-                    "url": r.url,
+                    "url": r.rare().url,
                     "httpVersion": "HTTP/1.1",
                     "headers": headers(&r.request_headers),
                     "queryString": query,
@@ -44,7 +44,7 @@ pub fn to_har(records: &[Record]) -> Value {
                 },
                 "response": {
                     "status": r.status.unwrap_or(0),
-                    "statusText": r.transport_error.clone().unwrap_or_default(),
+                    "statusText": r.rare().transport_error.clone().unwrap_or_default(),
                     "httpVersion": "HTTP/1.1",
                     "headers": headers(&r.response_headers),
                     "cookies": [],
@@ -55,8 +55,8 @@ pub fn to_har(records: &[Record]) -> Value {
                 },
                 "cache": {},
                 "timings": {"send": 0, "wait": r.latency_ms, "receive": 0},
-                "comment": format!("{} retries={} request-id={}", r.kind, r.retries, r.request_id.clone().unwrap_or_default()),
-                "_sonde": {"id": r.id, "endpoint": r.endpoint, "kind": r.kind, "retries": r.retries, "requestId": r.request_id, "hostId": r.host_id},
+                "comment": format!("{} retries={} request-id={}", r.kind, r.retries, r.rare().request_id.clone().unwrap_or_default()),
+                "_sonde": {"id": r.id, "endpoint": r.rare().endpoint, "kind": r.kind, "retries": r.retries, "requestId": r.rare().request_id, "hostId": r.rare().host_id},
             })
         })
         .collect();
@@ -80,10 +80,14 @@ mod tests {
         log.push(Record {
             kind: "GetObject".into(),
             method: "GET".into(),
-            url: "https://h/b/k?X-Amz-Signature=secret".into(),
             status: Some(403),
-            error_body: Some("<Error><Code>AccessDenied</Code></Error>".into()),
-            request_headers: vec![Header::new("x-amz-security-token", "tok")],
+            request_headers: vec![Header::new("x-amz-security-token", "tok")].into(),
+            rare: crate::Rare {
+                url: "https://h/b/k?X-Amz-Signature=secret".into(),
+                error_body: Some("<Error><Code>AccessDenied</Code></Error>".into()),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         });
         let har = to_har(&log.snapshot());

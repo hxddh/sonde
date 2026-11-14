@@ -187,11 +187,12 @@ fn redact_with(s: &mut Session, r: &Redactor) {
         .map(|c| crate::program::program_name(c).unwrap_or_default());
     s.logs.clear();
     for rec in &mut s.records {
-        rec.endpoint = "endpoint".into();
-        rec.url = String::new();
-        rec.job = None;
+        rec.rare_mut().endpoint = "endpoint".into();
+        rec.rare_mut().url = String::new();
+        rec.rare_mut().job = None;
         // what failed, not where: the message names the URL
-        rec.transport_error = rec
+        rec.rare_mut().transport_error = rec
+            .rare()
             .transport_error
             .as_ref()
             .map(|_| "the request did not reach the store".to_string());
@@ -200,7 +201,7 @@ fn redact_with(s: &mut Session, r: &Redactor) {
             .as_deref()
             .map(|b| format!("bucket-{}", r.token(b)).into());
         rec.key = rec.key.as_deref().map(|k| r.path(k).into());
-        for (k, v) in &mut rec.query {
+        for (k, v) in rec.query.make_mut() {
             if matches!(
                 k.as_str(),
                 "prefix" | "start-after" | "marker" | "key-marker"
@@ -211,16 +212,16 @@ fn redact_with(s: &mut Session, r: &Redactor) {
                 *v = r.token(v).into();
             }
         }
-        rec.request_headers.clear();
-        rec.response_headers.clear();
-        rec.request_body = None;
-        rec.request_id = None;
-        rec.host_id = None;
+        rec.request_headers = Default::default();
+        rec.response_headers = Default::default();
+        rec.rare_mut().request_body = None;
+        rec.rare_mut().request_id = None;
+        rec.rare_mut().host_id = None;
         // who asked (an IAM ARN: account and user) and from where
-        rec.requester = None;
-        rec.region = None;
+        rec.rare_mut().requester = None;
+        rec.rare_mut().region = None;
         // the S3 error code says what went wrong; the message may name things
-        rec.error_body = rec.error_body.as_deref().and_then(|b| {
+        rec.rare_mut().error_body = rec.rare_mut().error_body.as_deref().and_then(|b| {
             let code = b.split("<Code>").nth(1)?.split("</Code>").next()?;
             Some(format!("<Error><Code>{code}</Code></Error>"))
         });
@@ -244,11 +245,15 @@ mod tests {
             kind: "GetObject".into(),
             bucket: Some("acme-payroll".into()),
             key: Some(key.into()),
-            url: "https://acme-payroll.s3.amazonaws.com/x".into(),
             status: Some(404),
             latency_ms: 4.0,
-            error_body: Some("<Error><Code>NoSuchKey</Code><Message>acme-payroll/2026/alice.parquet</Message></Error>".into()),
-            request_id: Some("REQ".into()),
+            rare: reqlog::Rare {
+                url: "https://acme-payroll.s3.amazonaws.com/x".into(),
+                error_body: Some("<Error><Code>NoSuchKey</Code><Message>acme-payroll/2026/alice.parquet</Message></Error>".into()),
+                request_id: Some("REQ".into()),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         }
         };
@@ -298,7 +303,7 @@ mod tests {
                 .ends_with("/_delta_log/00000000000000000010.json")
         );
         assert_eq!(
-            s.records[0].error_body.as_deref(),
+            s.records[0].rare().error_body.as_deref(),
             Some("<Error><Code>NoSuchKey</Code></Error>")
         );
         assert_eq!(s.header.command.as_deref(), Some("run"));
@@ -309,8 +314,8 @@ mod tests {
         let mut s = session();
         let r = &mut s.records[0];
         r.key = Some("hr/john.smith".into());
-        r.job = Some("payroll-alice".into());
-        r.transport_error = Some(
+        r.rare_mut().job = Some("payroll-alice".into());
+        r.rare_mut().transport_error = Some(
             "error sending request for url (https://acme-payroll.s3.amazonaws.com/hr/alice)".into(),
         );
         r.query = vec![
@@ -319,7 +324,8 @@ mod tests {
                 "attachment; filename=alice-salary.csv".into(),
             ),
             ("list-type".into(), "2".into()),
-        ];
+        ]
+        .into();
         redact(&mut s);
         let doc = serde_json::to_string(&s.records).unwrap();
         for secret in ["smith", "alice", "payroll", "amazonaws"] {
@@ -331,8 +337,8 @@ mod tests {
     #[test]
     fn who_sent_a_request_and_from_which_region_do_not_survive_redaction() {
         let mut s = session();
-        s.records[0].requester = Some("arn:aws:iam::123456789012:user/alice".into());
-        s.records[0].region = Some("eu-west-3".into());
+        s.records[0].rare_mut().requester = Some("arn:aws:iam::123456789012:user/alice".into());
+        s.records[0].rare_mut().region = Some("eu-west-3".into());
         s.header.region = "eu-west-3".into();
         redact(&mut s);
         let doc = serde_json::to_string(&crate::share::session_json(&s, &RequestPrices::default()))

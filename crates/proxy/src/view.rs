@@ -222,7 +222,7 @@ impl Analysis {
             signals,
             injected: records
                 .iter()
-                .filter(|r| r.injected.is_some())
+                .filter(|r| r.rare().injected.is_some())
                 .map(|r| r.id)
                 .collect(),
             episodes,

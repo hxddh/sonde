@@ -28,7 +28,7 @@ fn q(mut r: Record, q: &[(&str, &str)]) -> Record {
 }
 
 fn slow_down(mut r: Record) -> Record {
-    r.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+    r.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
     r
 }
 
@@ -139,7 +139,7 @@ fn a_session_cut_off_mid_character_still_opens() {
 #[test]
 fn a_replays_root_listing_reads_as_the_original() {
     let mut a = rec(1, 0, "GET", "ListObjectsV2", None, 200);
-    a.query = vec![("list-type".into(), "2".into())];
+    a.query = vec![("list-type".into(), "2".into())].into();
     let mut b = a.clone();
     b.query
         .push(("prefix".into(), "replay-20261107-015048/".into()));
@@ -257,7 +257,7 @@ fn a_copy_of_a_version_and_a_cut_body_are_not_replayed() {
         rec(2, 10, "POST", "DeleteObjects", None, 200),
         &[("delete", "")],
     );
-    del.request_body = Some("x".repeat(reqlog::MAX_REQUEST_BODY));
+    del.rare_mut().request_body = Some("x".repeat(reqlog::MAX_REQUEST_BODY));
     let p = plan(
         &[copy, del],
         &ReplayOptions {

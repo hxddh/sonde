@@ -275,7 +275,7 @@ fn response_header<'a>(r: &'a Record, name: &str) -> Option<&'a str> {
 /// Whether sonde failed this request (a delay is injected too, and is not
 /// a failure).
 pub fn faulted(r: &Record) -> bool {
-    r.injected.is_some() && response_header(r, "x-sonde-fault").is_some()
+    r.rare().injected.is_some() && response_header(r, "x-sonde-fault").is_some()
 }
 
 /// What the store answered a request whose answer sonde lost.
@@ -504,9 +504,10 @@ fn named_request(r: &Record, name: &str) -> Named {
     // hash of what is kept, the names taken out (a body cut short when it
     // was kept is left to its hash)
     let body = r
+        .rare()
         .request_body
         .as_deref()
-        .filter(|_| r.key.is_none() && !r.request_body_truncated)
+        .filter(|_| r.key.is_none() && !r.rare().request_body_truncated)
         .map(|b| unplace_both(b, name))
         .filter(|b| matches!(b, std::borrow::Cow::Owned(_)))
         .map(|b| crate::fault::body_hash(b.as_bytes()))
@@ -1124,7 +1125,7 @@ pub fn judge(
                 }
                 "DeleteObject" => remove(r.key.as_deref().unwrap_or_default().to_string()),
                 "DeleteObjects" => {
-                    let body = r.request_body.as_deref().unwrap_or("");
+                    let body = r.rare().request_body.as_deref().unwrap_or("");
                     let mut keys: BTreeSet<&str> = body
                         .split("<Key>")
                         .skip(1)
@@ -1180,7 +1181,7 @@ pub fn judge(
     let stall = crate::fault::stall_of(scenario);
     if stall.is_some() {
         for group in by_request.values() {
-            for r in group.iter().filter(|r| r.injected.is_some()) {
+            for r in group.iter().filter(|r| r.rare().injected.is_some()) {
                 if given_up(r) {
                     held += 1;
                 } else if !faulted(r) {
@@ -1276,7 +1277,7 @@ pub fn judge(
     let left_uploads = unfinished_uploads(run).saturating_sub(unfinished_uploads(clean));
     let delayed = run
         .iter()
-        .filter(|r| r.injected.is_some() && !faulted(r))
+        .filter(|r| r.rare().injected.is_some() && !faulted(r))
         .count();
 
     // why it is not "survived": each reason a sentence of phrases
@@ -1290,7 +1291,7 @@ pub fn judge(
     };
     let said = |key: &str, n: usize| vec![Said::new(key, &n_of(n))];
     let mut standing = Standing::Survived;
-    let any = run.iter().any(|r| r.injected.is_some());
+    let any = run.iter().any(|r| r.rare().injected.is_some());
     if !any {
         standing = Standing::Untested;
         why.push(vec![Said::new("trial.why.notMet", &[])]);
@@ -1454,7 +1455,7 @@ pub fn judge(
         in_time
             .iter()
             .rev()
-            .find(|r| faulted(r) || r.is_error() || r.transport_error.is_some())
+            .find(|r| faulted(r) || r.is_error() || r.rare().transport_error.is_some())
             .copied()
     };
     let turned_on = match standing {
@@ -2124,7 +2125,7 @@ mod tests {
     }
 
     fn fault(mut r: Record, scenario: &str) -> Record {
-        r.injected = Some(scenario.into());
+        r.rare_mut().injected = Some(scenario.into());
         r.response_headers
             .push(Header::new("x-sonde-fault", scenario));
         r
@@ -2272,7 +2273,8 @@ mod tests {
             r.query = vec![
                 ("partNumber".into(), "1".into()),
                 ("uploadId".into(), upload.into()),
-            ];
+            ]
+            .into();
             r
         };
         let clean = vec![part(1, 0, "u1", 200)];
@@ -2309,8 +2311,8 @@ mod tests {
         let batch = |id, at, body: &str, status| {
             let mut r = rec(id, at, "POST", "DeleteObjects", "", status);
             r.key = None;
-            r.query = vec![("delete".into(), "".into())];
-            r.request_body = Some(body.into());
+            r.query = vec![("delete".into(), "".into())].into();
+            r.rare_mut().request_body = Some(body.into());
             r
         };
         let clean = vec![batch(1, 0, "<a/>", 200), batch(2, 50, "<b/>", 200)];
@@ -2374,14 +2376,14 @@ mod tests {
         let s = crate::fault::scenario("lost-answer").unwrap();
         let complete = |id, at, status| {
             let mut r = rec(id, at, "POST", "CompleteMultipartUpload", "big", status);
-            r.query = vec![("uploadId".into(), "u1".into())];
+            r.query = vec![("uploadId".into(), "u1".into())].into();
             r
         };
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", "big", 200);
-        create.query = vec![("uploads".into(), "".into())];
+        create.query = vec![("uploads".into(), "".into())].into();
         let clean = vec![create.clone(), complete(2, 10, 200)];
         let mut refused = complete(3, 120, 404);
-        refused.error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
+        refused.rare_mut().error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
         let run = vec![create, lost(complete(2, 10, 500), 200), refused];
         let t = judge(&s, &clean, 0, &run, 1);
         assert_eq!(t.wrote_twice, 0, "the store refused the second");
@@ -2517,7 +2519,7 @@ mod tests {
         let clean = vec![get(1, 0, "a", 200), get(2, 100, "b", 200)];
         let mut run = vec![get(1, 0, "a", 200), get(2, 400, "b", 200)];
         for r in &mut run {
-            r.injected = Some("slow".into());
+            r.rare_mut().injected = Some("slow".into());
             r.latency_ms = 305.0;
         }
         let t = judge(&s, &clean, 0, &run, 0);
@@ -2666,7 +2668,8 @@ mod tests {
             r.query = vec![
                 ("list-type".into(), "2".into()),
                 ("prefix".into(), prefix.into()),
-            ];
+            ]
+            .into();
             r
         };
         assert_eq!(
@@ -2730,7 +2733,7 @@ mod tests {
     fn cut(r: Record, sent: u64) -> Record {
         let mut r = fault(r, "cut-body");
         r.response_bytes = Some(sent);
-        r.transport_error = Some("sonde cut the response body".into());
+        r.rare_mut().transport_error = Some("sonde cut the response body".into());
         r.response_headers
             .push(Header::new(crate::CUT_HEADER, sent.to_string()));
         r
@@ -2796,7 +2799,7 @@ mod tests {
         let list = |id, at, prefix: &str, status| {
             let mut r = rec(id, at, "GET", "ListObjectsV2", "", status);
             r.key = None;
-            r.query = vec![("prefix".into(), prefix.into())];
+            r.query = vec![("prefix".into(), prefix.into())].into();
             r
         };
         let batch = |id, at, run: &str, status| {
@@ -2807,7 +2810,7 @@ mod tests {
                 crate::fault::BODY_HASH_HEADER,
                 crate::fault::body_hash(body.as_bytes()),
             ));
-            r.request_body = Some(body);
+            r.rare_mut().request_body = Some(body);
             r
         };
         let clean = vec![
@@ -2977,7 +2980,8 @@ mod tests {
             crate::fault::project_scenario("timeout", "400 RequestTimeout", &[], "", None).unwrap();
         let failed = |r: Record| {
             let mut r = fault(r, "timeout");
-            r.error_body = Some("RequestTimeout: sonde answered in the store's place".into());
+            r.rare_mut().error_body =
+                Some("RequestTimeout: sonde answered in the store's place".into());
             r
         };
         let clean = vec![put(1, 0, "a", 200)];
@@ -2993,16 +2997,17 @@ mod tests {
         // the store's own 400 RequestTimeout is no answer either: the clean
         // run that got only that never got one
         let mut own = put(1, 0, "a", 400);
-        own.error_body = Some("<Error><Code>RequestTimeout</Code></Error>".into());
+        own.rare_mut().error_body = Some("<Error><Code>RequestTimeout</Code></Error>".into());
         assert!(crate::episode::retryable(&own) && !answered(&own));
         // the same function: a 404 is an answer, a 403 RequestTimeTooSkewed is not
         let mut skewed = put(1, 0, "a", 403);
-        skewed.error_body = Some("<Error><Code>RequestTimeTooSkewed</Code></Error>".into());
+        skewed.rare_mut().error_body =
+            Some("<Error><Code>RequestTimeTooSkewed</Code></Error>".into());
         assert!(crate::episode::retryable(&skewed));
         assert!(!crate::episode::retryable(&put(1, 0, "a", 404)));
         // a code sonde did not answer is read only from the error document
         let mut said = put(1, 0, "a", 400);
-        said.error_body = Some("SlowDown: as a program's own words".into());
+        said.rare_mut().error_body = Some("SlowDown: as a program's own words".into());
         assert!(!crate::episode::retryable(&said));
     }
 
@@ -3048,7 +3053,7 @@ mod tests {
     fn skewed(r: Record) -> Record {
         let mut r = fault(r, "skew");
         r.status = Some(403);
-        r.error_body = Some(
+        r.rare_mut().error_body = Some(
             "RequestTimeTooSkewed: sonde answered in the store's place (scenario skew)".into(),
         );
         r
@@ -3080,7 +3085,7 @@ mod tests {
         let s = crate::fault::scenario("complete-500").unwrap();
         let upload = |id, at| {
             let mut r = rec(id, at, "POST", "CreateMultipartUpload", "big", 200);
-            r.query = vec![("uploads".into(), "".into())];
+            r.query = vec![("uploads".into(), "".into())].into();
             r
         };
         let part = |id, at, upload: &str| {
@@ -3088,12 +3093,13 @@ mod tests {
             r.query = vec![
                 ("partNumber".into(), "1".into()),
                 ("uploadId".into(), upload.into()),
-            ];
+            ]
+            .into();
             r
         };
         let complete = |id, at, status, upload: &str| {
             let mut r = rec(id, at, "POST", "CompleteMultipartUpload", "big", status);
-            r.query = vec![("uploadId".into(), upload.into())];
+            r.query = vec![("uploadId".into(), upload.into())].into();
             r
         };
         let head = |id, at, status| rec(id, at, "HEAD", "HeadObject", "big", status);
@@ -3102,7 +3108,7 @@ mod tests {
         // retried, and the store had completed it: 404 NoSuchUpload, taken
         // for the success it is
         let mut gone = complete(4, 60, 404, "u");
-        gone.error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
+        gone.rare_mut().error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
         let run = vec![upload(1, 0), part(2, 10, "u"), lost(), gone.clone()];
         let t = judge(&s, &clean, 0, &run, 0);
         assert_eq!(t.standing, Standing::Survived, "{}", t.line());
@@ -3166,13 +3172,13 @@ mod tests {
 
     /// A download a stall held: answered after it, or given up on.
     fn held(mut r: Record, waited: bool) -> Record {
-        r.injected = Some("slow-first-byte".into());
+        r.rare_mut().injected = Some("slow-first-byte".into());
         if waited {
             r.latency_ms = 10_005.0;
         } else {
             r.latency_ms = 2_000.0;
             r.status = None;
-            r.transport_error = Some("the program stopped waiting".into());
+            r.rare_mut().transport_error = Some("the program stopped waiting".into());
             r.response_headers
                 .push(Header::new("x-sonde-fault", "slow-first-byte"));
             r.response_headers
@@ -3230,7 +3236,7 @@ mod tests {
         // a delay under a stall only slows: `slow` is not held to it
         let slow = crate::fault::scenario("slow").unwrap();
         let mut late = get(1, 0, "a", 200);
-        late.injected = Some("slow".into());
+        late.rare_mut().injected = Some("slow".into());
         late.latency_ms = 305.0;
         let t = judge(&slow, &clean[..1], 0, &[late], 0);
         assert_eq!((t.held, t.standing), (0, Standing::Survived));
@@ -3246,9 +3252,10 @@ mod tests {
         r.query = vec![
             ("list-type".into(), "2".into()),
             ("prefix".into(), prefix.into()),
-        ];
+        ]
+        .into();
         if !hidden.is_empty() {
-            r.injected = Some("stale-list".into());
+            r.rare_mut().injected = Some("stale-list".into());
             r.response_headers
                 .push(Header::new("x-sonde-fault", "stale-list"));
             for k in hidden {
@@ -3348,7 +3355,7 @@ mod tests {
         let batch = |id, at, status| {
             let mut r = rec(id, at, "POST", "DeleteObjects", "", status);
             r.key = None;
-            r.request_body = Some("<Delete/>".into());
+            r.rare_mut().request_body = Some("<Delete/>".into());
             r
         };
         let clean = vec![put(1, 0, "a", 200), batch(2, 10, 501)];
@@ -3843,7 +3850,7 @@ mod tests {
     fn a_refusal_by_the_policy_is_its_own_outcome_never_broke() {
         let clean = vec![put(1, 0, "etl-clean/state", 200)];
         let mut refused = put(1, 0, "etl-slowdown/state", 403);
-        refused.error_body = Some("sonde refused PutObject".into());
+        refused.rare_mut().error_body = Some("sonde refused PutObject".into());
         refused
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));

@@ -779,8 +779,9 @@ pub enum Keep {
     /// Everything the file has.
     All,
     /// What the analyses read: the URL (the bucket, key and query are kept
-    /// apart), the store's request and host ids and the headers no analysis
-    /// reads ([`read_by_analysis`]) are dropped.
+    /// apart), the endpoint and region (the header has them), the store's
+    /// request and host ids and the headers no analysis reads
+    /// ([`read_by_analysis`]) are dropped.
     Analysis,
 }
 
@@ -806,12 +807,20 @@ pub fn read_by_analysis(name: &str) -> bool {
 pub fn lean(r: &mut Record) {
     r.request_headers.retain(|h| read_by_analysis(&h.name));
     r.response_headers.retain(|h| read_by_analysis(&h.name));
-    r.request_headers.shrink_to_fit();
-    r.response_headers.shrink_to_fit();
-    r.query.shrink_to_fit();
-    r.url = String::new();
-    r.host_id = None;
-    r.request_id = None;
+    // (most requests of a run say the same: those lists are held once)
+    r.request_headers = std::mem::take(&mut r.request_headers).shared();
+    r.response_headers = std::mem::take(&mut r.response_headers).shared();
+    r.query = std::mem::take(&mut r.query).shared();
+    if let Some(x) = r.rare.as_deref_mut() {
+        x.endpoint = String::new();
+        x.url = String::new();
+        x.region = None;
+        x.host_id = None;
+        x.request_id = None;
+        if x.is_empty() {
+            r.rare = None;
+        }
+    }
 }
 
 /// A block of a session's lines, read.
@@ -1178,19 +1187,25 @@ mod tests {
                 id: i + 1,
                 kind: "GetObject".into(),
                 method: "GET".into(),
-                url: format!("https://x.r2.dev/b/k{i}"),
                 key: Some(format!("k{i}").into()),
-                host_id: Some("host".into()),
                 status: Some(200),
                 request_headers: vec![
                     reqlog::Header::new("Authorization", "AWS4-HMAC-SHA256 Credential=…"),
                     reqlog::Header::new("user-agent", "aws-sdk-java/2.25"),
                     reqlog::Header::new("Range", "bytes=0-9"),
-                ],
+                ]
+                .into(),
                 response_headers: vec![
                     reqlog::Header::new("x-amz-request-id", format!("{i:016X}")),
                     reqlog::Header::new("ETag", "\"abc\""),
-                ],
+                ]
+                .into(),
+                rare: reqlog::Rare {
+                    url: format!("https://x.r2.dev/b/k{i}"),
+                    host_id: Some("host".into()),
+                    ..Default::default()
+                }
+                .into(),
                 ..Default::default()
             });
             if i % 500 == 0 {
@@ -1349,8 +1364,8 @@ mod tests {
         };
         assert_eq!(names(&full.records[0]).len(), 5);
         assert_eq!(names(&lean.records[0]), ["user-agent", "Range"]);
-        assert!(lean.records[0].url.is_empty() && lean.records[0].host_id.is_none());
-        assert!(lean.records[0].request_id.is_none());
+        assert!(lean.records[0].rare().url.is_empty() && lean.records[0].rare().host_id.is_none());
+        assert!(lean.records[0].rare().request_id.is_none());
         // and nothing an operation or a finding is made of
         let mut same = full.records[0].clone();
         super::lean(&mut same);

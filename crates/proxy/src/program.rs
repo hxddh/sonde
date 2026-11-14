@@ -483,7 +483,7 @@ pub fn run_point(
         refused: records
             .iter()
             .find(|r| crate::refused_by_policy(r))
-            .and_then(|r| r.error_body.clone()),
+            .and_then(|r| r.rare().error_body.clone()),
     }
 }
 
@@ -2100,7 +2100,7 @@ mod tests {
         let mut refused = rec(1, "k");
         refused.method = "DELETE".into();
         refused.status = Some(403);
-        refused.error_body = Some("sonde refused DeleteObject: no-delete mode".into());
+        refused.rare_mut().error_body = Some("sonde refused DeleteObject: no-delete mode".into());
         refused
             .response_headers
             .push(reqlog::Header::new("x-sonde-policy", "no-delete"));

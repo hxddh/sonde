@@ -1151,7 +1151,7 @@ fn full(b: Bytes) -> Out {
 /// A request the policy refuses: recorded as refused, answered 403.
 fn refuse(shared: &Shared, mut record: Record, msg: String) -> Response<Out> {
     record.status = Some(403);
-    record.error_body = Some(msg.clone());
+    record.rare_mut().error_body = Some(msg.clone());
     record
         .response_headers
         .push(Header::new("x-sonde-proxy", "refused"));
@@ -1225,36 +1225,32 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let mut record = Record {
         id: 0,
         time: Utc::now(),
-        endpoint: cfg.endpoint_id.as_str().into(),
         kind: operation.as_str().into(),
         method: method.as_str().into(),
-        url: url.clone(),
         bucket: bucket.as_deref().map(Into::into),
         key: key.as_deref().map(Into::into),
         query: query.iter().map(|(k, v)| (k.into(), v.into())).collect(),
         status: None,
         latency_ms: 0.0,
         retries: 0,
-        request_id: None,
-        host_id: None,
         request_headers: app_headers
             .iter()
             // (a control body's hash is sonde's to say: see below)
             .filter(|(k, _)| !k.eq_ignore_ascii_case(fault::BODY_HASH_HEADER))
             .map(|(k, v)| Header::new(k, v))
             .collect(),
-        response_headers: Vec::new(),
+        response_headers: Default::default(),
         request_bytes: None,
         response_bytes: None,
-        error_body: None,
-        request_body: None,
-        request_body_truncated: false,
-        transport_error: None,
-        region: Some(region.as_str().into()),
-        job: shared.cfg.tag.clone(),
         first_byte_ms: None,
-        requester: None,
-        injected: None,
+        rare: reqlog::Rare {
+            endpoint: cfg.endpoint_id.as_str().into(),
+            url: url.clone(),
+            region: Some(region.as_str().into()),
+            job: shared.cfg.tag.clone(),
+            ..Default::default()
+        }
+        .into(),
     };
     if presigned {
         record.request_headers.push(Header::new(
@@ -1268,7 +1264,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if let Some(why) = express(bucket.as_deref(), &operation, &parts.headers) {
         let msg = format!("sonde refused the request: {why}");
         record.status = Some(501);
-        record.error_body = Some(msg.clone());
+        record.rare_mut().error_body = Some(msg.clone());
         record
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
@@ -1280,7 +1276,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if let Err(why) = admit(&shared.cfg, &parts, &host) {
         let msg = format!("sonde refused the request: {why}");
         record.status = Some(403);
-        record.error_body = Some(msg.clone());
+        record.rare_mut().error_body = Some(msg.clone());
         record
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
@@ -1293,7 +1289,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if empty_first_segment(&host, parts.uri.path()) {
         let msg = "sonde refused the request: its path starts with an empty segment (//), so it names no bucket";
         record.status = Some(400);
-        record.error_body = Some(msg.into());
+        record.rare_mut().error_body = Some(msg.into());
         record
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
@@ -1306,7 +1302,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if dot_bucket(bucket.as_deref()) {
         let msg = "sonde refused the request: its bucket is . or .., which would reach the store as another place";
         record.status = Some(400);
-        record.error_body = Some(msg.into());
+        record.rare_mut().error_body = Some(msg.into());
         record
             .response_headers
             .push(Header::new("x-sonde-proxy", "refused"));
@@ -1387,12 +1383,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 // (kept now: a request sonde answers itself has it too)
                 let hash = match streaming_sig.then(|| chunked::decode(&raw)) {
                     Some(Ok(d)) => {
-                        record.request_body =
+                        record.rare_mut().request_body =
                             Some(String::from_utf8_lossy(&d.payload).into_owned());
                         fault::body_hash(&d.payload)
                     }
                     _ => {
-                        record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
+                        record.rare_mut().request_body =
+                            Some(String::from_utf8_lossy(&raw).into_owned());
                         fault::body_hash(&raw)
                     }
                 };
@@ -1404,7 +1401,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             }
             Err(e) => {
                 let msg = format!("sonde could not read the request body: {e}");
-                record.transport_error = Some(msg.clone());
+                record.rare_mut().transport_error = Some(msg.clone());
                 shared.log.push(record);
                 return Ok(xml_error(400, "IncompleteBody", &msg));
             }
@@ -1416,7 +1413,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             bucket.as_deref(),
             key.as_deref(),
             &query,
-            record.request_body.as_deref(),
+            record.rare().request_body.as_deref(),
         )
     {
         let msg = format!(
@@ -1427,7 +1424,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     if let Some(mode) = shared
         .cfg
         .policy
-        .refuses_document(&operation, record.request_body.as_deref())
+        .refuses_document(&operation, record.rare().request_body.as_deref())
     {
         let msg = format!("sonde refused {operation}: the proxy runs in {mode} mode");
         return Ok(refuse(&shared, record, msg));
@@ -1467,9 +1464,9 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 while let Some(Ok(_)) = body.frame().await {}
             }
             let msg = format!("sonde answered in the store's place (scenario {name})");
-            record.injected = Some(name.clone());
+            record.rare_mut().injected = Some(name.clone());
             record.status = Some(status);
-            record.error_body = Some(format!("{code}: {msg}"));
+            record.rare_mut().error_body = Some(format!("{code}: {msg}"));
             record.latency_ms = received.elapsed().as_secs_f64() * 1000.0;
             record
                 .response_headers
@@ -1478,7 +1475,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             return Ok(fault_error(status, &code, &msg, &name));
         }
         Some((name, fault::Verdict::Wait(d))) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             // a program that stops waiting closes its connection, and this
             // is dropped mid-wait: the record is kept all the same, as an
             // attempt it gave up on, so that a trial reads what followed
@@ -1491,19 +1488,19 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             held.waited();
         }
         Some((name, fault::Verdict::LoseAnswer)) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             after = After::LoseAnswer;
         }
         Some((name, fault::Verdict::LoseRace { met, .. })) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             after = After::LoseRace(met);
         }
         Some((name, fault::Verdict::CutBody { met })) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             after = After::CutBody(met);
         }
         Some((name, fault::Verdict::HideWritten)) => {
-            record.injected = Some(name);
+            record.rare_mut().injected = Some(name);
             after = After::HideWritten;
         }
         None => {}
@@ -1536,7 +1533,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 Ok(raw) => raw,
                 Err(e) => {
                     let msg = format!("sonde could not read the request body: {e}");
-                    record.transport_error = Some(msg.clone());
+                    record.rare_mut().transport_error = Some(msg.clone());
                     shared.log.push(record);
                     return Ok(xml_error(400, "IncompleteBody", &msg));
                 }
@@ -1544,7 +1541,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             let decoded = match chunked::decode(&raw) {
                 Ok(d) => d,
                 Err(e) => {
-                    record.transport_error = Some(e.clone());
+                    record.rare_mut().transport_error = Some(e.clone());
                     shared.log.push(record);
                     return Ok(xml_error(400, "InvalidRequest", &e));
                 }
@@ -1572,7 +1569,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             let hash = sigv4::sha256_hex(&decoded.payload);
             let n = decoded.payload.len() as u64;
             if reqlog::is_control_operation(&operation) {
-                record.request_body = Some(String::from_utf8_lossy(&decoded.payload).into_owned());
+                record.rare_mut().request_body =
+                    Some(String::from_utf8_lossy(&decoded.payload).into_owned());
             }
             (hash, moved.body(decoded.payload.into()), Some(n))
         } else if !has_body {
@@ -1594,12 +1592,13 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 Some(n) if n <= 1 << 20 && reqlog::is_control_operation(&operation) => {
                     match whole(early.take(), body.take(), 1 << 20).await {
                         Ok(raw) => {
-                            record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
+                            record.rare_mut().request_body =
+                                Some(String::from_utf8_lossy(&raw).into_owned());
                             (hash, moved.body(raw), Some(n))
                         }
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
-                            record.transport_error = Some(msg.clone());
+                            record.rare_mut().transport_error = Some(msg.clone());
                             shared.log.push(record);
                             return Ok(xml_error(400, "IncompleteBody", &msg));
                         }
@@ -1620,7 +1619,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                         Ok(raw) => raw,
                         Err(e) => {
                             let msg = format!("sonde could not read the request body: {e}");
-                            record.transport_error = Some(msg.clone());
+                            record.rare_mut().transport_error = Some(msg.clone());
                             shared.log.push(record);
                             return Ok(xml_error(400, "IncompleteBody", &msg));
                         }
@@ -1628,7 +1627,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     let n = raw.len() as u64;
                     // a control document sent chunked is kept too, for replay
                     if reqlog::is_control_operation(&operation) {
-                        record.request_body = Some(String::from_utf8_lossy(&raw).into_owned());
+                        record.rare_mut().request_body =
+                            Some(String::from_utf8_lossy(&raw).into_owned());
                     }
                     (hash, moved.body(raw), Some(n))
                 }
@@ -1662,7 +1662,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         Ok(None) => {}
         Err(e) => {
             let msg = format!("sonde has no credentials for {}: {e}", cfg.endpoint_id);
-            record.transport_error = Some(msg.clone());
+            record.rare_mut().transport_error = Some(msg.clone());
             shared.log.push(record);
             return Ok(xml_error(500, "SondeCredentials", &msg));
         }
@@ -1759,8 +1759,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 }
             }
             if let Ok(r) = rb.body(Bytes::new()).send().await {
-                record.url = url;
-                record.region = Some(moved_to.as_str().into());
+                record.rare_mut().url = url;
+                record.rare_mut().region = Some(moved_to.as_str().into());
                 sent = Ok(r);
             }
         }
@@ -1769,7 +1769,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     let resp = match sent {
         Ok(r) => r,
         Err(msg) => {
-            record.transport_error = Some(msg.clone());
+            record.rare_mut().transport_error = Some(msg.clone());
             shared.log.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         }
@@ -1811,7 +1811,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             if let Some(f) = faults {
                 f.unmeet(met);
             }
-            record.injected = None;
+            record.rare_mut().injected = None;
             after = After::Forward;
         }
         After::CutBody(met) => {
@@ -1822,7 +1822,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                     if let Some(f) = faults {
                         f.unmeet(met);
                     }
-                    record.injected = None;
+                    record.rare_mut().injected = None;
                     after = After::Forward;
                 }
             }
@@ -1841,8 +1841,8 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         // the keys left out, and the rest goes as the store wrote it
         let Ok(Ok(body)) = tokio::time::timeout(idle, resp.bytes()).await else {
             let msg = "the store's listing stopped part way".to_string();
-            record.injected = None;
-            record.transport_error = Some(msg.clone());
+            record.rare_mut().injected = None;
+            record.rare_mut().transport_error = Some(msg.clone());
             shared.log.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         };
@@ -1853,7 +1853,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             let stale = faults
                 .zip(std::str::from_utf8(&body).ok())
                 .and_then(|(f, text)| f.hide(bucket.as_deref().unwrap_or(""), text, url));
-            let name = record.injected.clone().unwrap_or_default();
+            let name = record.rare().injected.clone().unwrap_or_default();
             let sent: Bytes = match stale {
                 Some((text, hidden)) => {
                     record
@@ -1868,7 +1868,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
                 }
                 None => {
                     // nothing of this run's in it: the store's own answer
-                    record.injected = None;
+                    record.rare_mut().injected = None;
                     body
                 }
             };
@@ -1876,7 +1876,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             for (k, v) in resp_headers_kept(&headers) {
                 builder = builder.header(k, v);
             }
-            if record.injected.is_some() {
+            if record.rare().injected.is_some() {
                 builder = builder.header("x-sonde-fault", name.as_str());
             }
             record.response_bytes = Some(sent.len() as u64);
@@ -1891,7 +1891,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     }
     if after == After::HideWritten {
         // an error, or a listing too large or compressed: the store's own
-        record.injected = None;
+        record.rare_mut().injected = None;
         after = After::Forward;
     }
     if matches!(after, After::LoseAnswer | After::LoseRace(_)) {
@@ -1899,7 +1899,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
         // (its body read and let go piece by piece: a lost GET of a large
         // object is not held in memory to be thrown away)
         drain(resp, idle).await;
-        let name = record.injected.clone().unwrap_or_default();
+        let name = record.rare().injected.clone().unwrap_or_default();
         let (told, code, msg) = if after == After::LoseAnswer {
             (
                 500,
@@ -1926,7 +1926,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .response_headers
             .push(Header::new("x-sonde-fault", &name));
         record.status = Some(told);
-        record.error_body = Some(format!("{code}: {msg}"));
+        record.rare_mut().error_body = Some(format!("{code}: {msg}"));
         record.latency_ms = received.elapsed().saturating_sub(fetched).as_secs_f64() * 1000.0;
         shared.log.push(record);
         return Ok(fault_error(told, code, &msg, &name));
@@ -1940,7 +1940,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     // a body to be cut: the status and the whole length go out as the
     // store gave them, and the record says where the body will stop
     let cutting = cut.map(|(at, whole)| {
-        let name = record.injected.clone().unwrap_or_default();
+        let name = record.rare().injected.clone().unwrap_or_default();
         record
             .response_headers
             .push(Header::new("x-sonde-store-status", status.as_str()));
@@ -1966,7 +1966,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
     {
         let Ok(Ok(body)) = tokio::time::timeout(idle, resp.bytes()).await else {
             let msg = "the store's answer stopped part way".to_string();
-            record.transport_error = Some(msg.clone());
+            record.rare_mut().transport_error = Some(msg.clone());
             shared.log.push(record);
             return Ok(xml_error(502, "SondeUpstreamError", &msg));
         };
@@ -1988,7 +1988,7 @@ async fn handle(shared: Arc<Shared>, req: Request<Incoming>) -> Result<Response<
             .unwrap_or_default();
         record.response_bytes = Some(body.len() as u64);
         if !body.is_empty() {
-            record.error_body = Some(String::from_utf8_lossy(&body).into_owned());
+            record.rare_mut().error_body = Some(String::from_utf8_lossy(&body).into_owned());
         }
         shared.log.push(record);
         return Ok(builder.body(full(body)).expect("valid response"));
@@ -2082,9 +2082,9 @@ impl Drop for GivenUp {
         let Some(mut record) = self.record.take() else {
             return;
         };
-        let name = record.injected.clone().unwrap_or_default();
+        let name = record.rare().injected.clone().unwrap_or_default();
         record.latency_ms = self.received.elapsed().as_secs_f64() * 1000.0;
-        record.transport_error = Some(format!(
+        record.rare_mut().transport_error = Some(format!(
             "the program stopped waiting while sonde held the request (scenario {name})"
         ));
         record
@@ -2445,20 +2445,24 @@ impl Drop for Pending {
             // a 200 with fewer bytes is not a clean 200
             if let Some(c) = self.cutting.take() {
                 self.cut = None;
-                r.transport_error = Some(format!(
+                r.rare_mut().transport_error = Some(format!(
                     "sonde cut the response body after {} of {} bytes on purpose (scenario {})",
                     self.read, c.whole, c.name
                 ));
             }
             if let Some(why) = self.cut.take() {
-                r.transport_error = Some(format!(
+                r.rare_mut().transport_error = Some(format!(
                     "the response body was cut after {} byte{}: {why}",
                     self.read,
                     if self.read == 1 { "" } else { "s" }
                 ));
             }
             // (a listing cut short listed no number of keys)
-            if let Some(k) = self.keys.take().filter(|_| r.transport_error.is_none()) {
+            if let Some(k) = self
+                .keys
+                .take()
+                .filter(|_| r.rare().transport_error.is_none())
+            {
                 r.response_headers
                     .push(Header::new(reqlog::KEYS_HEADER, k.keys.to_string()));
             }

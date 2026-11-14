@@ -61,7 +61,12 @@ pub fn replay_tag(original: u64) -> String {
 
 /// The original id a replayed record stands for.
 pub fn original_of(r: &Record) -> Option<u64> {
-    r.job.as_deref()?.strip_prefix("replay:")?.parse().ok()
+    r.rare()
+        .job
+        .as_deref()?
+        .strip_prefix("replay:")?
+        .parse()
+        .ok()
 }
 
 /// Operations a replay leaves out when it is confined to a prefix: they would
@@ -158,8 +163,8 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
         return Some("copies a version of the original endpoint".into());
     }
     // a cut document no longer ends its root element, flagged or not
-    if r.request_body_truncated
-        || r.request_body.as_ref().is_some_and(|b| {
+    if r.rare().request_body_truncated
+        || r.rare().request_body.as_ref().is_some_and(|b| {
             b.len() + 1024 >= reqlog::MAX_REQUEST_BODY && !b.trim_end().ends_with('>')
         })
     {
@@ -169,7 +174,7 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
         && r.kind != "CompleteMultipartUpload"
         && r.kind != "CreateBucket"
         && r.request_bytes.unwrap_or(0) > 0
-        && r.request_body.is_none()
+        && r.rare().request_body.is_none()
     {
         return Some("its body was not recorded".into());
     }
@@ -378,6 +383,7 @@ impl State {
                 .ok_or("no upload id")?;
             let parts = self.parts.get(&upload).cloned().unwrap_or_default();
             let wanted: Vec<u32> = r
+                .rare()
                 .request_body
                 .as_deref()
                 .map(|b| {
@@ -397,7 +403,7 @@ impl State {
             }
             xml.push_str("</CompleteMultipartUpload>");
             req = req.body(Body::from(xml));
-        } else if let Some(b) = &r.request_body {
+        } else if let Some(b) = &r.rare().request_body {
             let body = if r.kind == "DeleteObjects" {
                 move_keys(b, &opts.prefix)
             } else {
@@ -571,6 +577,7 @@ pub fn outcome(r: &Record) -> String {
     }
     let status = r.status.unwrap_or(0);
     let code = r
+        .rare()
         .error_body
         .as_deref()
         .and_then(|b| tags(b, "Code").first().map(|c| c.to_string()));
@@ -583,7 +590,7 @@ pub fn outcome(r: &Record) -> String {
 /// What a request answered well carried, to compare beside its outcome: a
 /// listing's keys, a read's bytes. `None` when there is nothing to compare.
 pub fn carried(r: &Record) -> Option<String> {
-    if !r.status.is_some_and(|s| (200..300).contains(&s)) || r.transport_error.is_some() {
+    if !r.status.is_some_and(|s| (200..300).contains(&s)) || r.rare().transport_error.is_some() {
         return None;
     }
     if let Some(n) = r.header(reqlog::KEYS_HEADER) {
@@ -1149,7 +1156,7 @@ mod tests {
             rec(14, "ListObjectsV2", "GET", Some("1"), 340),
         ];
         for (r, o) in replay.iter_mut().zip(1..) {
-            r.job = Some(replay_tag(o));
+            r.rare_mut().job = Some(replay_tag(o));
         }
         let c = compare(&original, &replay, &[]);
         assert_eq!((c.compared, c.same, c.differ()), (4, 2, 2), "{c:#?}");
@@ -1195,7 +1202,7 @@ mod tests {
                 method: "GET".into(),
                 kind: "ListObjectsV2".into(),
                 bucket: Some("b".into()),
-                query: vec![("prefix".into(), "p/".into())],
+                query: vec![("prefix".into(), "p/".into())].into(),
                 status: Some(200),
                 ..Default::default()
             };
@@ -1244,11 +1251,11 @@ mod tests {
             status: Some(200),
             ..Default::default()
         };
-        a.request_headers = vec![reqlog::Header::new("If-None-Match", "*")];
+        a.request_headers = vec![reqlog::Header::new("If-None-Match", "*")].into();
         let mut b = a.clone();
         b.key = Some("replay-20261107-015048/db/x".into());
         b.status = Some(412);
-        b.error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
+        b.rare_mut().error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
         assert_eq!(
             transcript(&[a]),
             "PutObject b/db/x [if-none-match: *] → 200\n"

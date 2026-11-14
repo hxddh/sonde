@@ -142,25 +142,29 @@ fn record(
     Record {
         id: 0,
         time: when,
-        endpoint: "prod".into(),
         kind: op.into(),
         method: method.into(),
-        url,
         bucket: Some(BUCKET.into()),
         key: key.map(Into::into),
         query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
         status: Some(status),
         latency_ms: (ms * 1000.0).round() / 1000.0,
         retries: 0,
-        request_id: Some(request_id.clone()),
-        host_id: Some(format!("h/{request_id}")),
-        request_headers,
-        response_headers,
+        request_headers: request_headers.into(),
+        response_headers: response_headers.into(),
         request_bytes: Some(up),
         response_bytes: Some(down),
-        error_body,
-        region: Some("us-east-1".into()),
         first_byte_ms: Some((ms * (0.3 + 0.6 * rng.unit()) * 1000.0).round() / 1000.0),
+        rare: reqlog::Rare {
+            endpoint: "prod".into(),
+            url,
+            request_id: Some(request_id.clone()),
+            host_id: Some(format!("h/{request_id}")),
+            error_body,
+            region: Some("us-east-1".into()),
+            ..Default::default()
+        }
+        .into(),
         ..Default::default()
     }
 }
@@ -535,29 +539,33 @@ fn plain(
     Record {
         id: n,
         time: at(t),
-        endpoint: "prod".into(),
         kind: op.into(),
         method: method.into(),
-        url: format!(
-            "https://s3.amazonaws.com/b/{key}{}{}",
-            if qs.is_empty() { "" } else { "?" },
-            qs.join("&")
-        ),
         bucket: Some("b".into()),
         key: Some(key.into()),
         query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
         status: Some(status),
         latency_ms: ms,
-        request_id: Some(format!("{n:016X}")),
-        request_headers: vec![Header::new("user-agent", "aws-sdk-java/2.25")],
-        response_headers: vec![Header::new("x-amz-request-id", format!("{n:016X}"))],
+        request_headers: vec![Header::new("user-agent", "aws-sdk-java/2.25")].into(),
+        response_headers: vec![Header::new("x-amz-request-id", format!("{n:016X}"))].into(),
         request_bytes: Some(up),
         response_bytes: Some(down),
-        error_body: (status == 503).then(|| {
+        first_byte_ms: Some(ms * 0.8),
+        rare: reqlog::Rare {
+            endpoint: "prod".into(),
+            url: format!(
+            "https://s3.amazonaws.com/b/{key}{}{}",
+            if qs.is_empty() { "" } else { "?" },
+            qs.join("&")
+        ),
+            request_id: Some(format!("{n:016X}")),
+            error_body: (status == 503).then(|| {
             "<Error><Code>SlowDown</Code><Message>Please reduce your request rate.</Message></Error>".into()
         }),
-        region: Some("us-east-1".into()),
-        first_byte_ms: Some(ms * 0.8),
+            region: Some("us-east-1".into()),
+            ..Default::default()
+        }
+        .into(),
         ..Default::default()
     }
 }

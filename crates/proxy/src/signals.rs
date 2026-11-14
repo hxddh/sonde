@@ -606,9 +606,9 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         retries_total += (r.retries + again) as u64;
         if is_failure(r) {
             // what sonde did in the store's place is not the store's failure
-            let (series, count) = if r.injected.is_some() {
+            let (series, count) = if r.rare().injected.is_some() {
                 (&mut injected, &mut counts.injected)
-            } else if r.status.is_none() || r.transport_error.is_some() {
+            } else if r.status.is_none() || r.rare().transport_error.is_some() {
                 (&mut transport, &mut counts.transport)
             } else if crate::profile::throttled(r) {
                 (&mut throttled, &mut counts.throttled)
@@ -667,7 +667,7 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
         }
 
         let at = (s - t0) as f64 / 1000.0 + start_ms;
-        let code = r.error_body.as_deref().and_then(s3_code);
+        let code = r.rare().error_body.as_deref().and_then(s3_code);
         let row = statuses
             .entry((r.status, code))
             .or_insert_with(|| StatusRow {
@@ -679,7 +679,7 @@ pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
                 last_ms: at,
             });
         row.count += 1;
-        row.injected += usize::from(r.injected.is_some());
+        row.injected += usize::from(r.rare().injected.is_some());
         row.first_ms = row.first_ms.min(at);
         row.last_ms = row.last_ms.max(at);
 

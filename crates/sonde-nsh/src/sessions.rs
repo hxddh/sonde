@@ -2643,7 +2643,8 @@ mod tests {
                     request_headers: vec![reqlog::Header::new(
                         "x-sonde-caller",
                         "etl/load.py:3 main",
-                    )],
+                    )]
+                    .into(),
                     ..Default::default()
                 });
             }
@@ -2866,7 +2867,6 @@ mod tests {
                     .unwrap(),
                 method: if i % 7 == 0 { "PUT" } else { "GET" }.into(),
                 kind: if i % 7 == 0 { "PutObject" } else { "GetObject" }.into(),
-                url: format!("http://s3/b/data/k{i:05}"),
                 bucket: Some("b".into()),
                 key: Some(format!("data/k{i:05}").into()),
                 status: Some(if i % 50 == 3 { 500 } else { 200 }),
@@ -2874,7 +2874,13 @@ mod tests {
                 request_headers: vec![
                     reqlog::Header::new("authorization", "AWS4-HMAC-SHA256 Credential=…"),
                     reqlog::Header::new("user-agent", "aws-sdk-java/2.25"),
-                ],
+                ]
+                .into(),
+                rare: reqlog::Rare {
+                    url: format!("http://s3/b/data/k{i:05}"),
+                    ..Default::default()
+                }
+                .into(),
                 ..Default::default()
             });
         }
@@ -3038,9 +3044,9 @@ mod tests {
             "a live file is ten times its compressed size"
         );
         let lean = Session::open_lean(&path).unwrap();
-        assert!(lean.records[41].url.is_empty());
+        assert!(lean.records[41].rare().url.is_empty());
         let full = record_from_file(&path, &lean, 42).unwrap().unwrap();
-        assert_eq!(full.url, "http://s3/b/data/k00041");
+        assert_eq!(full.rare().url, "http://s3/b/data/k00041");
         assert!(
             full.request_headers
                 .iter()
@@ -3119,7 +3125,11 @@ mod tests {
             bucket: Some("b".into()),
             key: Some(format!("k{id}").into()),
             status: Some(if injected.is_some() { 503 } else { 200 }),
-            injected: injected.map(String::from),
+            rare: reqlog::Rare {
+                injected: injected.map(String::from),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         };
         let clean = dir.join("20260101-000000-job.sonde");

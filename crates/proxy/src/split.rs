@@ -444,7 +444,8 @@ mod tests {
             request_headers: vec![Header {
                 name: "user-agent".into(),
                 value: "Boto3/1.44.2 md/Botocore#1.44.2 Python/3.12".into(),
-            }],
+            }]
+            .into(),
             ..Default::default()
         }
     }

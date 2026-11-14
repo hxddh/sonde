@@ -386,7 +386,12 @@ pub fn kept_body_hash(r: &reqlog::Record) -> Option<String> {
         .rev()
         .find(|h| h.name.eq_ignore_ascii_case(BODY_HASH_HEADER))
         .map(|h| h.value.to_string())
-        .or_else(|| r.request_body.as_deref().map(|b| body_hash(b.as_bytes())))
+        .or_else(|| {
+            r.rare()
+                .request_body
+                .as_deref()
+                .map(|b| body_hash(b.as_bytes()))
+        })
 }
 
 /// [`identity`] of a recorded request.
@@ -1120,8 +1125,12 @@ mod tests {
             method: "POST".into(),
             kind: "DeleteObjects".into(),
             bucket: Some("b".into()),
-            query: vec![("delete".into(), "".into())],
-            request_body: Some("cut and redac…".into()),
+            query: vec![("delete".into(), "".into())].into(),
+            rare: reqlog::Rare {
+                request_body: Some("cut and redac…".into()),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         };
         let sent = body_hash(b"<Delete>the whole of it</Delete>");

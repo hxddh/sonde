@@ -140,7 +140,8 @@ pub const LATENCY_EDGES: [f64; 15] = [
 /// The store asked the program to slow down.
 pub(crate) fn throttled(r: &Record) -> bool {
     matches!(r.status, Some(503 | 429))
-        || r.error_body
+        || r.rare()
+            .error_body
             .as_deref()
             .is_some_and(|b| b.contains("<Code>SlowDown</Code>"))
 }
@@ -2213,7 +2214,7 @@ mod tests {
             .map(|i| rec(i + 1, i as i64, "GetObject", 200, 3.0 + i as f64))
             .collect();
         let mut slow = rec(21, 30, "PutObject", 503, 400.0);
-        slow.error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
+        slow.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         slow.retries = 2;
         rs.push(slow);
         let p = profile(&rs, &RequestPrices::default());
@@ -2321,7 +2322,8 @@ mod tests {
                     } else {
                         "etl/load.py:30 check"
                     },
-                )],
+                )]
+                .into(),
                 ..Default::default()
             })
             .collect();
@@ -2480,10 +2482,10 @@ mod tests {
     #[test]
     fn a_request_that_never_reached_the_store_is_not_on_its_bill() {
         let mut refused = rec(2, 10, "PutObject", 403, 0.0);
-        refused.response_headers = vec![reqlog::Header::new("x-sonde-proxy", "refused")];
+        refused.response_headers = vec![reqlog::Header::new("x-sonde-proxy", "refused")].into();
         let mut lost = rec(3, 20, "PutObject", 200, 5.0);
         lost.status = None;
-        lost.transport_error = Some("connection refused".into());
+        lost.rare_mut().transport_error = Some("connection refused".into());
         let rs = [rec(1, 0, "PutObject", 200, 5.0), refused, lost];
         let p = profile(&rs, &RequestPrices::default());
         assert_eq!((p.cost.writes, p.cost.reads, p.cost.free), (1, 0, 0));
@@ -2705,7 +2707,7 @@ mod injected {
         // a trial's 503: the store never saw it
         let mut fault = put.clone();
         fault.status = Some(503);
-        fault.injected = Some("slowdown".into());
+        fault.rare_mut().injected = Some("slowdown".into());
         fault
             .response_headers
             .push(Header::new("x-sonde-fault", "slowdown"));
@@ -2772,7 +2774,7 @@ mod injected {
             ..Default::default()
         };
         l.bucket = Some("b".into());
-        l.query = vec![("prefix".into(), "out/".into())];
+        l.query = vec![("prefix".into(), "out/".into())].into();
         listed.push(l);
         assert_eq!(
             chains(&listed).iter().map(|c| c.requests).sum::<usize>(),

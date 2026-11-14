@@ -118,7 +118,7 @@ pub fn as_aws_cli(r: &Record) -> String {
     if op == "get-object" {
         parts.push("/dev/null".into());
     }
-    if let Some(e) = endpoint_url(&r.url)
+    if let Some(e) = endpoint_url(&r.rare().url)
         && !e.ends_with(".amazonaws.com")
     {
         parts.push("--endpoint-url".into());
@@ -133,7 +133,8 @@ pub fn as_aws_cli(r: &Record) -> String {
 }
 
 fn region_arg(r: &Record) -> String {
-    r.region
+    r.rare()
+        .region
         .as_ref()
         .map(|reg| format!(" --region {reg}"))
         .unwrap_or_default()
@@ -153,7 +154,7 @@ pub fn as_curl(r: &Record) -> String {
         "amz-sdk-invocation-id",
         "amz-sdk-request",
     ];
-    let mut url = r.url.clone();
+    let mut url = r.rare().url.clone();
     if url.contains("X-Amz-Signature") {
         // a presigned URL: drop the presign query, curl signs anew
         if let Ok(mut u) = url::Url::parse(&url) {
@@ -173,7 +174,10 @@ pub fn as_curl(r: &Record) -> String {
         "# UNSIGNED: sonde never exports a signature. Sign it with curl itself:".to_string(),
         format!(
             "#   --aws-sigv4 'aws:amz:{}:s3' --user \"$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY\"",
-            r.region.clone().unwrap_or_else(|| "us-east-1".into())
+            r.rare()
+                .region
+                .clone()
+                .unwrap_or_else(|| "us-east-1".into())
         ),
         format!("curl -sS -i -X {} {}", r.method, shell_quote(&url)),
     ];
@@ -201,15 +205,14 @@ mod tests {
         Record {
             kind: "ListObjectsV2".into(),
             method: "GET".into(),
-            url: "http://127.0.0.1:9000/bucket?list-type=2&prefix=logs%2F&delimiter=%2F".into(),
             bucket: Some("bucket".into()),
             query: vec![
                 ("list-type".into(), "2".into()),
                 // decoded, as s3raw and the proxy keep a record's query
                 ("prefix".into(), "logs/".into()),
                 ("delimiter".into(), "/".into()),
-            ],
-            region: Some("us-east-1".into()),
+            ]
+            .into(),
             request_headers: vec![
                 Header::new(
                     "Authorization",
@@ -218,7 +221,14 @@ mod tests {
                 Header::new("x-amz-date", "20240101T000000Z"),
                 Header::new("x-amz-security-token", "TOKEN"),
                 Header::new("x-amz-request-payer", "requester"),
-            ],
+            ]
+            .into(),
+            rare: crate::Rare {
+                url: "http://127.0.0.1:9000/bucket?list-type=2&prefix=logs%2F&delimiter=%2F".into(),
+                region: Some("us-east-1".into()),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         }
         .redacted()
@@ -247,7 +257,7 @@ mod tests {
     #[test]
     fn a_percent_sign_in_a_prefix_is_copied_as_it_is() {
         let mut r = rec();
-        r.query = vec![("prefix".into(), "sale-50%25off/a%2Fb".into())];
+        r.query = vec![("prefix".into(), "sale-50%25off/a%2Fb".into())].into();
         let cmd = as_aws_cli(&r);
         assert!(cmd.contains("--prefix sale-50%25off/a%2Fb "), "{cmd}");
     }
@@ -266,7 +276,7 @@ mod tests {
     #[test]
     fn curl_strips_presign() {
         let mut r = rec();
-        r.url = "https://h/b/k?versionId=1&X-Amz-Signature=abc&X-Amz-Date=x".into();
+        r.rare_mut().url = "https://h/b/k?versionId=1&X-Amz-Signature=abc&X-Amz-Date=x".into();
         let cmd = as_curl(&r.redacted());
         assert!(cmd.contains("https://h/b/k?versionId=1"), "{cmd}");
         assert!(!cmd.contains("X-Amz-Signature"));

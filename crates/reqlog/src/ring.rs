@@ -58,12 +58,12 @@ impl Filter {
             return false;
         }
         if let Some(e) = &self.endpoint
-            && &r.endpoint != e
+            && &r.rare().endpoint != e
         {
             return false;
         }
         if let Some(j) = &self.job
-            && r.job.as_ref() != Some(j)
+            && r.rare().job.as_ref() != Some(j)
         {
             return false;
         }
@@ -75,7 +75,7 @@ impl Filter {
             let hit = [
                 r.bucket.as_deref(),
                 r.key.as_deref(),
-                r.request_id.as_deref(),
+                r.rare().request_id.as_deref(),
             ]
             .iter()
             .any(|f| f.is_some_and(|v| v.to_lowercase().contains(&t)));
@@ -200,7 +200,7 @@ impl RequestLog {
             .records
             .iter()
             .rev()
-            .find(|r| r.request_id.as_deref() == Some(request_id))
+            .find(|r| r.rare().request_id.as_deref() == Some(request_id))
             .cloned()
     }
 
@@ -250,14 +250,18 @@ mod tests {
         Record {
             kind: op.into(),
             method: "GET".into(),
-            endpoint: "e1".into(),
             bucket: Some("b".into()),
             key: Some("k".into()),
             status,
             request_headers: vec![Header::new(
                 "Authorization",
                 "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/x, SignedHeaders=host, Signature=abc",
-            )],
+            )].into(),
+            rare: crate::Rare {
+                endpoint: "e1".into(),
+                ..Default::default()
+            }
+            .into(),
             ..Default::default()
         }
     }
@@ -320,7 +324,7 @@ mod tests {
     fn find_by_request_id() {
         let log = RequestLog::new(10);
         let mut r = rec("HeadObject", Some(403));
-        r.request_id = Some("REQ123".into());
+        r.rare_mut().request_id = Some("REQ123".into());
         let id = log.push(r);
         assert_eq!(log.find_request_id("REQ123").unwrap().id, id);
         assert!(log.find_request_id("nope").is_none());
