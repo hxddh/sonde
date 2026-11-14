@@ -1722,9 +1722,9 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
     assert_eq!(fixed["measured"]["requests"], 20);
     // a program's first run has nothing before it
     let none = sonde(t.path(), &["compare", "etl-1-base"]);
-    assert_eq!(none.status.code(), Some(64));
+    assert_eq!(none.status.code(), Some(0), "not a mistake in the command");
     assert!(
-        stderr(&none).contains("the first run of `etl`"),
+        stderr(&none).contains("the first run of `etl`: there is no run before it"),
         "{}",
         stderr(&none)
     );
@@ -2134,4 +2134,20 @@ fn a_cloudtrail_file_cut_short_is_bad_data_said_where() {
     let o = sonde(t.path(), &["import", trail.to_str().unwrap()]);
     assert_eq!(o.status.code(), Some(65), "{}", stderr(&o));
     assert!(stderr(&o).contains("at line 1, column"), "{}", stderr(&o));
+}
+
+/// `compare` alone after a program's first run: there is no run before it,
+/// said, and nothing wrong with the command.
+#[test]
+fn compare_alone_after_a_first_run_says_there_is_no_run_before() {
+    let t = tempfile::tempdir().unwrap();
+    let o = sonde(t.path(), &["run", "--demo", "--", "true"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let o = sonde(t.path(), &["compare"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("there is no run before it to compare with"),
+        "{}",
+        stderr(&o)
+    );
 }
