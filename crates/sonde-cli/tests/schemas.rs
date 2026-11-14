@@ -1,5 +1,5 @@
 //! Every `-f json` output is what its JSON Schema in docs/schemas says
-//! (docs/contract.md): the real binary, the demo's session and a small S3 in
+//! (docs/contract.md): the real binary, the demo's run and a small S3 in
 //! this process. A field a schema requires that goes, or changes its type,
 //! fails here; a field added does not (schemas leave objects open).
 //!
@@ -284,31 +284,31 @@ async fn every_json_output_is_as_its_schema_says() {
         .await
         .unwrap();
     assert_eq!(demo.status.code(), Some(0));
-    let session = std::fs::read_dir(b.path("data/runs"))
+    let run = std::fs::read_dir(b.path("data/runs"))
         .unwrap()
         .flatten()
         .map(|e| e.path())
         .find(|p| p.extension().is_some_and(|e| e == "sonde"))
         .unwrap();
-    let s = session.to_str().unwrap();
+    let s = run.to_str().unwrap();
     // the run tried under a fault, and its program tried before: a verdict
     // with its history
     {
         use sonde_proxy::trial;
-        let clean = sonde_proxy::session::Session::open(&session).unwrap();
+        let clean = sonde_proxy::run::RunFile::open(&run).unwrap();
         let slowdown = sonde_proxy::fault::scenario("slowdown").unwrap();
         let now = trial::judge(&slowdown, &clean.records, 0, &clean.records, 0);
-        trial::save(&session, std::slice::from_ref(&now)).unwrap();
+        trial::save(&run, std::slice::from_ref(&now)).unwrap();
         let mut then = now.clone();
         then.standing = trial::Standing::Broke;
-        let dir = session.parent().unwrap();
+        let dir = run.parent().unwrap();
         let day = chrono::Utc::now() - chrono::Duration::days(1);
         trial::record(dir, "tour", "earlier.sonde", day, &[then]).unwrap();
-        let name = session.file_name().unwrap().to_string_lossy();
+        let name = run.file_name().unwrap().to_string_lossy();
         trial::record(dir, "tour", &name, chrono::Utc::now(), &[now]).unwrap();
     }
 
-    // reading a session
+    // reading a run
     holds("show", &b.json(&["show", s, "-f", "json"], 0).await);
     holds(
         "show",
@@ -324,8 +324,8 @@ async fn every_json_output_is_as_its_schema_says() {
         .unwrap();
         let q = b.path("quiet.sonde");
         let text = std::fs::read_to_string(&quiet).unwrap();
-        let (_, session) = sonde_proxy::import::import(&text, "quiet").unwrap();
-        sonde_proxy::import::save(&session, &q).unwrap();
+        let (_, run) = sonde_proxy::import::import(&text, "quiet").unwrap();
+        sonde_proxy::import::save(&run, &q).unwrap();
         let q = q.to_str().unwrap();
         let shown = b.json(&["show", q, "-f", "json"], 0).await;
         assert!(shown["whatIf"].is_null(), "{}", shown["whatIf"]);

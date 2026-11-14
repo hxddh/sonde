@@ -1,10 +1,10 @@
 //! Edge cases found reviewing 4.0: retries around commits and multipart
-//! uploads, a session cut off mid-character, a replay's root listing.
+//! uploads, a run cut off mid-character, a replay's root listing.
 
 use chrono::DateTime;
 use reqlog::{Record, Sink};
 use sonde_proxy::episode::{Shape, episodes, observations};
-use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
+use sonde_proxy::run::{RunFile, RunHeader, RunWriter};
 
 fn rec(id: u64, at_ms: i64, method: &str, op: &str, key: Option<&str>, status: u16) -> Record {
     Record {
@@ -117,10 +117,10 @@ fn a_retried_create_does_not_leave_an_upload_open() {
 }
 
 #[test]
-fn a_session_cut_off_mid_character_still_opens() {
+fn a_run_cut_off_mid_character_still_opens() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s.sonde");
-    let w = SessionWriter::create(&path, &SessionHeader::new("r2", "u", "auto", None)).unwrap();
+    let w = RunWriter::create(&path, &RunHeader::new("r2", "u", "auto", None)).unwrap();
     w.write(&Record {
         id: 1,
         kind: "GetObject".into(),
@@ -132,7 +132,7 @@ fn a_session_cut_off_mid_character_still_opens() {
     let line = "{\"log\":{\"time\":\"2026-01-01T00:00:00Z\",\"text\":\"世界\"}}";
     bytes.extend_from_slice(&line.as_bytes()[..line.find('世').unwrap() + 1]);
     std::fs::write(&path, &bytes).unwrap();
-    let s = Session::open(&path).expect("the records before the torn line");
+    let s = RunFile::open(&path).expect("the records before the torn line");
     assert_eq!(s.records.len(), 1);
 }
 
@@ -154,13 +154,13 @@ fn a_replays_root_listing_reads_as_the_original() {
 fn records_joined_from_two_recordings_get_ids_of_their_own() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("joined.sonde");
-    let w = SessionWriter::create(&path, &SessionHeader::new("r2", "u", "auto", None)).unwrap();
+    let w = RunWriter::create(&path, &RunHeader::new("r2", "u", "auto", None)).unwrap();
     for (id, key) in [(1, "a"), (2, "b"), (1, "c")] {
         w.write(&rec(id, id as i64, "GET", "GetObject", Some(key), 200));
     }
     w.flush().unwrap();
     drop(w);
-    let s = Session::open(&path).unwrap();
+    let s = RunFile::open(&path).unwrap();
     let ids: Vec<u64> = s.records.iter().map(|r| r.id).collect();
     assert_eq!(ids, [1, 2, 3]);
     assert_eq!(s.records[2].key.as_deref(), Some("c"));
@@ -281,7 +281,7 @@ fn a_copy_of_a_version_and_a_cut_body_are_not_replayed() {
     );
 }
 
-/// A session that names `PUT /bucket?inventory` CreateBucket:
+/// A run that names `PUT /bucket?inventory` CreateBucket:
 /// a replay confined to a prefix goes by the request, not by that name.
 #[test]
 fn a_misnamed_bucket_configuration_is_not_replayed_under_a_prefix() {
@@ -319,10 +319,10 @@ fn throttling_counts_never_underflow() {
 }
 
 #[test]
-fn a_finished_session_is_compressed_and_still_opens() {
+fn a_finished_run_is_compressed_and_still_opens() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("done.sonde");
-    let w = SessionWriter::create(&path, &SessionHeader::new("r2", "u", "auto", None)).unwrap();
+    let w = RunWriter::create(&path, &RunHeader::new("r2", "u", "auto", None)).unwrap();
     for i in 0..500u64 {
         w.write(&rec(
             i + 1,
@@ -336,24 +336,24 @@ fn a_finished_session_is_compressed_and_still_opens() {
     w.flush().unwrap();
     drop(w);
     let plain = std::fs::metadata(&path).unwrap().len();
-    sonde_proxy::session::compress(&path).unwrap();
+    sonde_proxy::run::compress(&path).unwrap();
     let packed = std::fs::metadata(&path).unwrap().len();
     assert!(packed * 5 < plain, "{packed} of {plain}");
-    assert!(sonde_proxy::session::is_compressed(&path));
-    let s = Session::open(&path).unwrap();
+    assert!(sonde_proxy::run::is_compressed(&path));
+    let s = RunFile::open(&path).unwrap();
     assert_eq!(s.records.len(), 500);
     // compressing again changes nothing
-    sonde_proxy::session::compress(&path).unwrap();
+    sonde_proxy::run::compress(&path).unwrap();
     assert_eq!(std::fs::metadata(&path).unwrap().len(), packed);
 }
 
 #[test]
-fn a_growing_session_is_read_in_steps_without_repeats() {
+fn a_growing_run_is_read_in_steps_without_repeats() {
     use reqlog::Sink;
-    use sonde_proxy::session::{Session, SessionHeader, SessionWriter, complete_len};
+    use sonde_proxy::run::{RunFile, RunHeader, RunWriter, complete_len};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("live.sonde");
-    let w = SessionWriter::create(&path, &SessionHeader::new("e", "http://e", "r", None)).unwrap();
+    let w = RunWriter::create(&path, &RunHeader::new("e", "http://e", "r", None)).unwrap();
     let rec = |id| reqlog::Record {
         id,
         kind: "GetObject".into(),
@@ -367,7 +367,7 @@ fn a_growing_session_is_read_in_steps_without_repeats() {
     let at = complete_len(&path).unwrap();
     w.write(&rec(4));
     w.flush().unwrap();
-    let mut s = Session::open(&path).unwrap();
+    let mut s = RunFile::open(&path).unwrap();
     assert_eq!(s.records.len(), 4);
     let at = s.read_more(&path, at).unwrap();
     assert_eq!(s.records.len(), 4, "record 4 is not read twice");
@@ -392,10 +392,10 @@ fn a_growing_session_is_read_in_steps_without_repeats() {
 #[test]
 fn a_record_written_after_a_newer_one_is_still_read() {
     use reqlog::Sink;
-    use sonde_proxy::session::{Session, SessionHeader, SessionWriter, complete_len};
+    use sonde_proxy::run::{RunFile, RunHeader, RunWriter, complete_len};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("live.sonde");
-    let w = SessionWriter::create(&path, &SessionHeader::new("e", "http://e", "r", None)).unwrap();
+    let w = RunWriter::create(&path, &RunHeader::new("e", "http://e", "r", None)).unwrap();
     let rec = |id| reqlog::Record {
         id,
         kind: "GetObject".into(),
@@ -405,7 +405,7 @@ fn a_record_written_after_a_newer_one_is_still_read() {
         w.write(&rec(id));
     }
     w.flush().unwrap();
-    let mut s = Session::open(&path).unwrap();
+    let mut s = RunFile::open(&path).unwrap();
     let at = complete_len(&path).unwrap();
     // 3 finished after 4
     w.write(&rec(3));

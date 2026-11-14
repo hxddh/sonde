@@ -7,7 +7,7 @@ use std::sync::Arc;
 use reqlog::Record;
 use sonde_core::Sonde;
 use sonde_proxy::episode::episodes;
-use sonde_proxy::session::{Session, SessionHeader};
+use sonde_proxy::run::{RunFile, RunHeader};
 
 use crate::output;
 
@@ -199,7 +199,7 @@ pub(super) async fn import_logs(
                     if i.malformed == 1 { "" } else { "s" }
                 );
             }
-            records.extend(i.session.records);
+            records.extend(i.run.records);
         }
         mark.read(k, *at);
         if *at > mark.watermark {
@@ -255,22 +255,22 @@ pub(super) async fn import_logs(
     for (i, r) in records.iter_mut().enumerate() {
         r.id = i as u64 + 1;
     }
-    let mut header = SessionHeader::new(&ep, "", "", Some(key.clone()));
+    let mut header = RunHeader::new(&ep, "", "", Some(key.clone()));
     header.created = chrono::Utc::now();
-    let path = sonde_proxy::session::fresh_path(
+    let path = sonde_proxy::run::fresh_path(
         &dir,
         &format!(
             "{}-logs-{bucket}",
             chrono::Local::now().format("%Y%m%d-%H%M%S")
         ),
     );
-    let session = Session {
+    let run = RunFile {
         header,
         records,
         logs: Vec::new(),
     };
-    sonde_proxy::import::save(&session, &path)?;
-    drop(session);
+    sonde_proxy::import::save(&run, &path)?;
+    drop(run);
     super::record::show_file(s, &path).await?;
     Ok(code)
 }
@@ -304,20 +304,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(import(&s, "demo", "s3://demo/logs/").await, 0);
-        let sessions: Vec<_> = std::fs::read_dir(s.paths().runs())
+        let runs: Vec<_> = std::fs::read_dir(s.paths().runs())
             .unwrap()
             .flatten()
             .map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "sonde"))
             .collect();
-        assert_eq!(sessions.len(), 1);
-        let session = Session::open(&sessions[0]).unwrap();
-        assert_eq!(session.records.len(), 2);
+        assert_eq!(runs.len(), 1);
+        let run = RunFile::open(&runs[0]).unwrap();
+        assert_eq!(run.records.len(), 2);
         assert_eq!(
-            session.header.command.as_deref(),
+            run.header.command.as_deref(),
             Some("logs of s3://demo/logs/")
         );
-        // a second pass has nothing new: no second session
+        // a second pass has nothing new: no second run
         assert_eq!(import(&s, "demo", "s3://demo/logs/").await, 0);
         let count = || {
             std::fs::read_dir(s.paths().runs())
@@ -376,7 +376,7 @@ mod tests {
         )
         .await;
         assert_eq!(import(&s, "demo", "s3://demo/uplogs/").await, 0);
-        let sessions = || {
+        let runs = || {
             let mut all: Vec<_> = std::fs::read_dir(s.paths().runs())
                 .unwrap()
                 .flatten()
@@ -387,15 +387,15 @@ mod tests {
             all
         };
         let unfinished = |path: &std::path::Path| {
-            let session = Session::open(path).unwrap();
-            let eps = episodes(&session.records);
-            let obs = observations(&session.records, &eps);
+            let run = RunFile::open(path).unwrap();
+            let eps = episodes(&run.records);
+            let obs = observations(&run.records, &eps);
             (
-                session.records.len(),
+                run.records.len(),
                 obs.iter().any(|o| o.phrases[0].key == "obs.unfinished"),
             )
         };
-        let first = sessions();
+        let first = runs();
         assert_eq!(first.len(), 1);
         assert_eq!(unfinished(&first[0]), (1, false), "the upload waits");
         put(
@@ -408,7 +408,7 @@ mod tests {
         )
         .await;
         assert_eq!(import(&s, "demo", "s3://demo/uplogs/").await, 0);
-        let all = sessions();
+        let all = runs();
         assert_eq!(all.len(), 2);
         let second = all.iter().find(|p| **p != first[0]).unwrap();
         assert_eq!(unfinished(second), (3, false), "read whole, finished");

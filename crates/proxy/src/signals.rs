@@ -1,6 +1,6 @@
 //! A run read by its four signals — rate, errors, latency, bytes — and how
 //! many requests were in flight: each a figure with its line over the
-//! session, on the slices the profile's charts use ([`Timeline`]). With them,
+//! run, on the slices the profile's charts use ([`Timeline`]). With them,
 //! what the figures alone do not say: the time before an answer's first byte
 //! against the rest, the sizes of bodies and how fast they moved, every
 //! status the store gave and when, what each operation cost, and each
@@ -178,7 +178,7 @@ pub struct Sizes {
     pub mib_per_sec: Option<f64>,
 }
 
-/// One answer the session got, and when.
+/// One answer the run got, and when.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusRow {
@@ -189,7 +189,7 @@ pub struct StatusRow {
     pub count: usize,
     /// Of them, a fault scenario's.
     pub injected: usize,
-    /// The first and the last, from the session's start.
+    /// The first and the last, from the run's start.
     pub first_ms: f64,
     pub last_ms: f64,
 }
@@ -204,7 +204,7 @@ pub struct CostRow {
     /// Of them, the ones the store bills (it answered them).
     pub billed: usize,
     pub cost: f64,
-    /// Of the session's cost (0 when it cost nothing).
+    /// Of the run's cost (0 when it cost nothing).
     pub share: f64,
 }
 
@@ -237,9 +237,9 @@ pub struct PrefixRate {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Signals {
-    /// Where its first slice begins, from the session's start (the profile's
+    /// Where its first slice begins, from the run's start (the profile's
     /// `startMs`: 0 but for a stretch). The statuses' and the peak's times
-    /// are from the session's start too.
+    /// are from the run's start too.
     pub start_ms: f64,
     /// Whether the requests' times are known (the profile's rule).
     pub timed: bool,
@@ -331,7 +331,7 @@ pub fn gave_up(records: &[Record]) -> Vec<bool> {
 fn retry_links(records: &[Record]) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     // only the places a failure was at are named: naming every request of a
-    // large session would cost more than the rest of this pass
+    // large run would cost more than the rest of this pass
     let places: std::collections::HashSet<(Option<&str>, Option<&str>)> = records
         .iter()
         .filter(|r| crate::episode::retryable(r))
@@ -557,8 +557,8 @@ pub fn signals(records: &[Record], prices: &RequestPrices) -> Signals {
     signals_from(records, prices, None)
 }
 
-/// [`signals`] of a stretch of a session whose first request started at
-/// `origin_us`: on the session's axis, as [`crate::profile::profile_from`].
+/// [`signals`] of a stretch of a run whose first request started at
+/// `origin_us`: on the run's axis, as [`crate::profile::profile_from`].
 pub fn signals_from(records: &[Record], prices: &RequestPrices, origin_us: Option<i64>) -> Signals {
     let tl = Timeline::from_origin(records, origin_us);
     let start_ms = tl.map_or(0.0, |t| t.start_ms);

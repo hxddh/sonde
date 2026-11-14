@@ -1,9 +1,9 @@
-//! Session files (`.sonde`): one JSON header line, then one redacted record
+//! Run files (`.sonde`): one JSON header line, then one redacted record
 //! per line. Written as requests happen, so a crash keeps what came before.
 //! The format is a contract (docs/dev/run-format.md): a field may be added
 //! within a version, and readers pass over fields they do not know; a change
 //! that would mislead an older reader is a new [`VERSION`], which that reader
-//! refuses by name ([`SessionHeader::readable`]).
+//! refuses by name ([`RunHeader::readable`]).
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -14,14 +14,14 @@ use parking_lot::Mutex;
 use reqlog::{Record, Sink};
 use serde::{Deserialize, Serialize};
 
-pub const FORMAT: &str = "sonde-session";
+pub const FORMAT: &str = "sonde-run";
 /// The format's version: what this sonde writes, and the only one it reads.
 pub const VERSION: u32 = 2;
 
-/// The first line of a session file.
+/// The first line of a run file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionHeader {
+pub struct RunHeader {
     pub format: String,
     pub version: u32,
     /// The sonde that wrote it (its version): a reader that cannot read the
@@ -57,7 +57,7 @@ pub struct SessionHeader {
     /// Its requests' times are to the second (an imported log's): where in
     /// its second each began is not known. They are spread over it in the
     /// log's order, and what depends on it (how many were in flight at
-    /// once, which waited for which) is not said of such a session.
+    /// once, which waited for which) is not said of such a run.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub whole_seconds: bool,
 }
@@ -111,22 +111,22 @@ pub fn git_stamp(dir: &Path) -> Option<GitStamp> {
     })
 }
 
-/// A session's header alone, from its first line (compressed or not).
-pub fn read_header(path: &Path) -> Option<SessionHeader> {
+/// A run's header alone, from its first line (compressed or not).
+pub fn read_header(path: &Path) -> Option<RunHeader> {
     let mut lines = Lines::open(path).ok()?;
     serde_json::from_slice(lines.line().ok()??).ok()
 }
 
-/// A session's first line as it is written (what tells one recording from
+/// A run's first line as it is written (what tells one recording from
 /// another written in its place).
 pub fn header_line(path: &Path) -> Option<String> {
     let mut lines = Lines::open(path).ok()?;
     Some(String::from_utf8_lossy(lines.line().ok()??).into_owned())
 }
 
-impl SessionHeader {
+impl RunHeader {
     pub fn new(endpoint: &str, url: &str, region: &str, command: Option<String>) -> Self {
-        SessionHeader {
+        RunHeader {
             format: FORMAT.into(),
             version: VERSION,
             sonde: Some(env!("CARGO_PKG_VERSION").into()),
@@ -170,9 +170,9 @@ impl SessionHeader {
         Ok(())
     }
 
-    /// Whether the session was recorded from a program's own requests
+    /// Whether the run was recorded from a program's own requests
     /// (`sonde run`, `proxy`, `watch`): not a replay, an import or a trial.
-    /// "The newest session" is the newest of these.
+    /// "The newest run" is the newest of these.
     pub fn is_recording(&self) -> bool {
         self.scenario.is_none()
             && self.trial_of.is_none()
@@ -198,17 +198,17 @@ pub struct LogChunk {
     pub text: String,
 }
 
-/// A log line in a session file: `{"log": {"time", "text"}}`, beside the
+/// A log line in a run file: `{"log": {"time", "text"}}`, beside the
 /// records.
 #[derive(Serialize, Deserialize)]
 struct LogLine {
     log: LogChunk,
 }
 
-/// Appends records to a session file. A write that fails is not retried:
+/// Appends records to a run file. A write that fails is not retried:
 /// the first error is kept, and the requests not written are counted, for
-/// the recording's end to say ([`SessionWriter::not_written`]).
-pub struct SessionWriter {
+/// the recording's end to say ([`RunWriter::not_written`]).
+pub struct RunWriter {
     out: Mutex<Out>,
 }
 
@@ -236,8 +236,8 @@ impl Out {
     }
 }
 
-/// A path for a new session file in `dir` named `<stem>.sonde`, or
-/// `<stem>-2.sonde`, `<stem>-3.sonde`… when that one exists: two sessions
+/// A path for a new run file in `dir` named `<stem>.sonde`, or
+/// `<stem>-2.sonde`, `<stem>-3.sonde`… when that one exists: two runs
 /// started in the same second do not share a file. The file is made here,
 /// empty, with `create_new`, so that no other process takes the name
 /// between the choice and the write ([`unreserve`] when nothing comes of it).
@@ -263,13 +263,13 @@ pub fn unreserve(path: &Path) {
     }
 }
 
-impl SessionWriter {
-    pub fn create(path: &Path, header: &SessionHeader) -> std::io::Result<SessionWriter> {
+impl RunWriter {
+    pub fn create(path: &Path, header: &RunHeader) -> std::io::Result<RunWriter> {
         let mut out = BufWriter::new(reqlog::private::create(path)?);
         serde_json::to_writer(&mut out, header)?;
         out.write_all(b"\n")?;
         out.flush()?;
-        Ok(SessionWriter {
+        Ok(RunWriter {
             out: Mutex::new(Out {
                 file: out,
                 lost: 0,
@@ -306,7 +306,7 @@ impl SessionWriter {
     }
 }
 
-impl Sink for SessionWriter {
+impl Sink for RunWriter {
     fn write(&self, record: &Record) {
         let mut out = self.out.lock();
         if !out.line(record) {
@@ -315,19 +315,19 @@ impl Sink for SessionWriter {
     }
 }
 
-/// The longest line a session file may hold: a record with the largest
-/// bodies kept is a few MiB of JSON; past this it is not a session's line.
+/// The longest line a run file may hold: a record with the largest
+/// bodies kept is a few MiB of JSON; past this it is not a run's line.
 pub const MAX_LINE: usize = 32 << 20;
 
-/// The most text a session file may hold once decompressed: a few bytes of
-/// gzip can say they are any size. Sessions are read as a stream, so this is
+/// The most text a run file may hold once decompressed: a few bytes of
+/// gzip can say they are any size. Runs are read as a stream, so this is
 /// far above any recorded run (about forty million requests).
 pub const MAX_TEXT: u64 = 64 << 30;
 
 /// How much is read at a time.
 const CHUNK: usize = 1 << 20;
 
-/// A session file's lines, plain or gzip (a finished session is compressed:
+/// A run file's lines, plain or gzip (a finished run is compressed:
 /// [`compress`]), read as a stream: a line at a time or a block of whole
 /// lines at a time, never the file whole. A line past [`MAX_LINE`] and a file
 /// past [`MAX_TEXT`] are errors, not memory.
@@ -484,7 +484,7 @@ impl Lines {
     }
 }
 
-/// Whether a session file is compressed.
+/// Whether a run file is compressed.
 pub fn is_compressed(path: &Path) -> bool {
     let mut magic = [0u8; 2];
     File::open(path)
@@ -492,8 +492,8 @@ pub fn is_compressed(path: &Path) -> bool {
         .is_ok_and(|_| magic == [0x1f, 0x8b])
 }
 
-/// Compresses a finished session in place (gzip; a tenth of its size or
-/// less): it stays a `.sonde` file every reader opens. A live session is
+/// Compresses a finished run in place (gzip; a tenth of its size or
+/// less): it stays a `.sonde` file every reader opens. A live run is
 /// not compressed: it is still being appended to. A run of the runs
 /// folder is counted as it goes by, and its counts kept beside it
 /// ([`crate::summary::Counted`]): listing it never reads it again.
@@ -501,7 +501,7 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
     if is_compressed(path) {
         return Ok(());
     }
-    // (a session written elsewhere, with -o, gets no file beside it)
+    // (a run written elsewhere, with -o, gets no file beside it)
     let listed = path
         .parent()
         .and_then(|d| d.file_name())
@@ -535,13 +535,13 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// A session's bytes going by, cut into lines and counted.
+/// A run's bytes going by, cut into lines and counted.
 #[derive(Default)]
 struct Tally {
     line: Vec<u8>,
-    header: Option<SessionHeader>,
+    header: Option<RunHeader>,
     counter: crate::summary::Counter,
-    /// Not a session (no header, or a line past any record's length): not counted.
+    /// Not a run (no header, or a line past any record's length): not counted.
     not: bool,
     lines: usize,
 }
@@ -579,7 +579,7 @@ impl Tally {
         }
     }
 
-    fn finish(mut self) -> Option<(SessionHeader, crate::summary::Counter)> {
+    fn finish(mut self) -> Option<(RunHeader, crate::summary::Counter)> {
         if !self.line.is_empty() && !self.not {
             let line = std::mem::take(&mut self.line);
             self.take(&line);
@@ -589,17 +589,17 @@ impl Tally {
     }
 }
 
-/// A session read back.
+/// A run read back.
 #[derive(Debug, Clone)]
-pub struct Session {
-    pub header: SessionHeader,
+pub struct RunFile {
+    pub header: RunHeader,
     pub records: Vec<Record>,
     /// The recorded program's output, when sonde ran it in a terminal.
     pub logs: Vec<LogChunk>,
 }
 
-/// Where a growing (uncompressed) session file's complete lines end: what
-/// [`Session::read_more`] starts from next time.
+/// Where a growing (uncompressed) run file's complete lines end: what
+/// [`RunFile::read_more`] starts from next time.
 pub fn complete_len(path: &Path) -> std::io::Result<u64> {
     let mut f = std::fs::File::open(path)?;
     let len = f.metadata()?.len();
@@ -613,10 +613,10 @@ pub fn complete_len(path: &Path) -> std::io::Result<u64> {
     })
 }
 
-impl Session {
+impl RunFile {
     /// Appends what a live recording wrote after `from` (a byte offset at a
     /// line's start, from [`complete_len`] or an earlier call): its complete
-    /// lines only, and of those only what is newer than what the session
+    /// lines only, and of those only what is newer than what the run
     /// holds, so `from` may lag behind it. Returns where the next call
     /// starts. Not for compressed files.
     pub fn read_more(&mut self, path: &Path, from: u64) -> std::io::Result<u64> {
@@ -663,30 +663,30 @@ impl Session {
         Ok(from + end as u64 + 1)
     }
 
-    /// Reads a session file. A torn last line (the recorder was killed) is
+    /// Reads a run file. A torn last line (the recorder was killed) is
     /// skipped; any other bad line is an error.
-    pub fn open(path: &Path) -> Result<Session, String> {
-        Session::read(path, Keep::All)
+    pub fn open(path: &Path) -> Result<RunFile, String> {
+        RunFile::read(path, Keep::All)
     }
 
-    /// [`Session::open`] for reading what the session amounts to (its
+    /// [`RunFile::open`] for reading what the run amounts to (its
     /// operations, findings, time, cost): what no analysis reads of a record
     /// is not kept ([`Keep::Analysis`]), which is most of its size. Not for
     /// showing a request whole, replaying it or writing it out.
-    pub fn open_lean(path: &Path) -> Result<Session, String> {
-        Session::read(path, Keep::Analysis)
+    pub fn open_lean(path: &Path) -> Result<RunFile, String> {
+        RunFile::read(path, Keep::Analysis)
     }
 
-    /// Reads a session file as a stream: the file is never held as text, its
+    /// Reads a run file as a stream: the file is never held as text, its
     /// lines are parsed as they are decompressed, on the cores there are.
-    pub fn read(path: &Path, keep: Keep) -> Result<Session, String> {
-        Session::read_said(path, keep)
-            .map(|r| r.session)
+    pub fn read(path: &Path, keep: Keep) -> Result<RunFile, String> {
+        RunFile::read_said(path, keep)
+            .map(|r| r.run)
             .map_err(|e| e.to_string())
     }
 
-    /// [`Session::read`], saying what it could not read: a file that is no
-    /// session apart from one that could not be read at all, and a
+    /// [`RunFile::read`], saying what it could not read: a file that is no
+    /// run apart from one that could not be read at all, and a
     /// compressed file cut short (read up to its cut) apart from a whole one.
     pub fn read_said(path: &Path, keep: Keep) -> Result<Opened, ReadError> {
         let io = |e: std::io::Error| match e.kind() {
@@ -699,7 +699,7 @@ impl Session {
             .map_err(io)?
             .ok_or(ReadError::Bad("empty run file".into()))?;
         let first = String::from_utf8_lossy(first);
-        let header: SessionHeader = serde_json::from_str(first.trim_end_matches('\r'))
+        let header: RunHeader = serde_json::from_str(first.trim_end_matches('\r'))
             .map_err(|e| ReadError::Bad(format!("not a sonde run: {e}")))?;
         header.readable().map_err(ReadError::Bad)?;
         let small = std::fs::metadata(path).is_ok_and(|m| m.len() < 256 * 1024);
@@ -737,7 +737,7 @@ impl Session {
             )
         });
         Ok(Opened {
-            session: Session {
+            run: RunFile {
                 header,
                 records,
                 logs,
@@ -747,20 +747,20 @@ impl Session {
     }
 }
 
-/// A session read, and what of its file was not.
+/// A run read, and what of its file was not.
 pub struct Opened {
-    pub session: Session,
+    pub run: RunFile,
     /// The file is compressed and its text stops short of its end: what is
     /// read is what came before (said, not refused, as a torn last line is).
     pub cut: Option<String>,
 }
 
-/// Why a session file was not read.
+/// Why a run file was not read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadError {
     /// It could not be read (not there, not allowed, a disk's error).
     Io(String),
-    /// It was read, and it is not a session: no header, a line no record
+    /// It was read, and it is not a run: no header, a line no record
     /// could be in the middle of it, a newer format.
     Bad(String),
 }
@@ -810,7 +810,7 @@ pub fn lean(r: &mut Record) {
     r.lean(&read_by_analysis);
 }
 
-/// A block of a session's lines, read.
+/// A block of a run's lines, read.
 struct Block {
     records: Vec<Record>,
     logs: Vec<LogChunk>,
@@ -862,7 +862,7 @@ fn parse_block(bytes: &[u8], keep: Keep) -> Block {
     out
 }
 
-/// A session's blocks put together, in the file's order.
+/// A run's blocks put together, in the file's order.
 #[derive(Default)]
 struct Gathered {
     records: Vec<Record>,
@@ -872,7 +872,7 @@ struct Gathered {
     keys: std::collections::HashSet<reqlog::Text>,
     /// Lines read so far, and a bad last line of the block before: a torn
     /// last line of the file is the recorder killed mid-write, a bad line
-    /// anywhere else is not a session.
+    /// anywhere else is not a run.
     lines: usize,
     torn: Option<String>,
 }
@@ -907,7 +907,7 @@ impl Gathered {
     }
 }
 
-/// Reads a session's blocks on `workers` threads while another
+/// Reads a run's blocks on `workers` threads while another
 /// decompresses, and gathers them here in the file's order.
 fn read_blocks(
     mut lines: Lines,
@@ -986,10 +986,10 @@ fn read_blocks(
 mod tests {
     use super::*;
 
-    /// Many sessions begun in one second: each its own file, none written
+    /// Many runs begun in one second: each its own file, none written
     /// over (the name is taken with `create_new`, not checked then opened).
     #[test]
-    fn sessions_begun_at_once_each_get_a_file() {
+    fn runs_begun_at_once_each_get_a_file() {
         let dir = tempfile::tempdir().unwrap();
         let paths: Vec<std::path::PathBuf> = std::thread::scope(|s| {
             let made: Vec<_> = (0..24)
@@ -997,9 +997,9 @@ mod tests {
                     let dir = dir.path();
                     s.spawn(move || {
                         let path = fresh_path(dir, "20261113-120000-etl");
-                        let mut h = SessionHeader::new("e", "u", "r", None);
+                        let mut h = RunHeader::new("e", "u", "r", None);
                         h.name = Some(format!("run {i}"));
-                        SessionWriter::create(&path, &h).unwrap().flush().unwrap();
+                        RunWriter::create(&path, &h).unwrap().flush().unwrap();
                         path
                     })
                 })
@@ -1010,7 +1010,7 @@ mod tests {
         assert_eq!(names.len(), 24);
         let mut runs: Vec<String> = paths
             .iter()
-            .map(|p| Session::open(p).unwrap().header.name.unwrap())
+            .map(|p| RunFile::open(p).unwrap().header.name.unwrap())
             .collect();
         runs.sort();
         runs.dedup();
@@ -1027,7 +1027,7 @@ mod tests {
     fn requests_not_written_are_counted_with_the_first_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.sonde");
-        let w = SessionWriter::create(&path, &SessionHeader::new("e", "u", "r", None)).unwrap();
+        let w = RunWriter::create(&path, &RunHeader::new("e", "u", "r", None)).unwrap();
         assert_eq!(w.not_written(), None);
         // a file that refuses writes, as a full disk does
         w.out.lock().file = BufWriter::new(File::open(&path).unwrap());
@@ -1041,7 +1041,7 @@ mod tests {
         assert!(said.starts_with("3 requests not written: "), "{said}");
     }
 
-    /// A session, its counts and its verdicts are their user's alone.
+    /// A run, its counts and its verdicts are their user's alone.
     #[cfg(unix)]
     #[test]
     fn what_a_recording_leaves_is_0600() {
@@ -1049,7 +1049,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("runs").join("s.sonde");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let w = SessionWriter::create(&path, &SessionHeader::new("e", "u", "r", None)).unwrap();
+        let w = RunWriter::create(&path, &RunHeader::new("e", "u", "r", None)).unwrap();
         w.write(&Record {
             id: 1,
             kind: "GetObject".into(),
@@ -1071,7 +1071,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.sonde");
         let least = concat!(
-            r#"{"format":"sonde-session","version":2,"created":"2026-11-12T10:00:00Z","endpoint":"e","url":"","region":"","later":{"x":1}}"#,
+            r#"{"format":"sonde-run","version":2,"created":"2026-11-12T10:00:00Z","endpoint":"e","url":"","region":"","later":{"x":1}}"#,
             "\n",
             r#"{"id":1,"time":"2026-11-12T10:00:00.001Z","endpoint":"e","kind":"GetObject","method":"GET","url":"","query":[],"latencyMs":3.5,"retries":0,"requestHeaders":[],"responseHeaders":[],"later":true}"#,
             "\n",
@@ -1079,7 +1079,7 @@ mod tests {
             "\n",
         );
         std::fs::write(&path, least).unwrap();
-        let s = Session::open(&path).unwrap();
+        let s = RunFile::open(&path).unwrap();
         assert_eq!(s.records.len(), 1);
         assert_eq!(
             (s.records[0].status, s.records[0].bucket.as_ref()),
@@ -1090,9 +1090,9 @@ mod tests {
         assert_eq!(s.header.sonde, None);
         // a line short of a required field is not a record
         std::fs::write(&path, least.replace(r#""latencyMs":3.5,"#, "")).unwrap();
-        assert!(Session::open(&path).is_err());
+        assert!(RunFile::open(&path).is_err());
         // what this sonde writes names it, and calls the S3 call its kind
-        let h = SessionHeader::new("e", "u", "r", None);
+        let h = RunHeader::new("e", "u", "r", None);
         assert_eq!(h.sonde.as_deref(), Some(env!("CARGO_PKG_VERSION")));
         assert_eq!(h.version, VERSION);
         let line = serde_json::to_value(&s.records[0]).unwrap();
@@ -1103,25 +1103,25 @@ mod tests {
         // newer: refused, by name
         let newer = least.replacen(r#""version":2,"#, r#""version":3,"sonde":"21.0.0","#, 1);
         std::fs::write(&path, &newer).unwrap();
-        let e = Session::open(&path).unwrap_err();
+        let e = RunFile::open(&path).unwrap_err();
         assert!(
             e.contains("written by sonde 21.0.0, format 3;")
                 && e.contains("reads format 2: update sonde"),
             "{e}"
         );
         std::fs::write(&path, least.replacen(r#""version":2"#, r#""version":4"#, 1)).unwrap();
-        let e = Session::open(&path).unwrap_err();
+        let e = RunFile::open(&path).unwrap_err();
         assert!(e.contains("written by another sonde, format 4"), "{e}");
         // older: refused too, never read in part
         std::fs::write(&path, least.replacen(r#""version":2"#, r#""version":1"#, 1)).unwrap();
-        let e = Session::open(&path).unwrap_err();
+        let e = RunFile::open(&path).unwrap_err();
         assert!(
             e.contains("format 1; this sonde") && e.ends_with("reads format 2"),
             "{e}"
         );
-        std::fs::write(&path, least.replacen("sonde-session", "har", 1)).unwrap();
+        std::fs::write(&path, least.replacen("sonde-run", "har", 1)).unwrap();
         assert!(
-            Session::open(&path)
+            RunFile::open(&path)
                 .unwrap_err()
                 .contains("not a sonde run")
         );
@@ -1131,9 +1131,9 @@ mod tests {
     fn round_trip_and_torn_tail() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.sonde");
-        let w = SessionWriter::create(
+        let w = RunWriter::create(
             &path,
-            &SessionHeader::new("r2", "https://x.r2.dev", "auto", Some("app".into())),
+            &RunHeader::new("r2", "https://x.r2.dev", "auto", Some("app".into())),
         )
         .unwrap();
         for i in 0..3 {
@@ -1150,7 +1150,7 @@ mod tests {
             .open(&path)
             .unwrap();
         f.write_all(b"{\"id\": 9, \"oper").unwrap();
-        let s = Session::open(&path).unwrap();
+        let s = RunFile::open(&path).unwrap();
         assert_eq!(s.header.endpoint, "r2");
         assert_eq!(s.records.len(), 3);
         assert_eq!(s.records[2].id, 2);
@@ -1158,11 +1158,11 @@ mod tests {
         assert_eq!(s.logs[0].text, "hello\r\n");
     }
 
-    /// A session of `n` requests with headers, written as a recording is.
+    /// A run of `n` requests with headers, written as a recording is.
     fn recorded(path: &Path, n: u64) {
-        let w = SessionWriter::create(
+        let w = RunWriter::create(
             path,
-            &SessionHeader::new("r2", "https://x.r2.dev", "auto", Some("app".into())),
+            &RunHeader::new("r2", "https://x.r2.dev", "auto", Some("app".into())),
         )
         .unwrap();
         for i in 0..n {
@@ -1201,7 +1201,7 @@ mod tests {
     }
 
     #[test]
-    fn a_large_session_read_in_blocks_on_several_threads_is_in_the_files_order() {
+    fn a_large_run_read_in_blocks_on_several_threads_is_in_the_files_order() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("big.sonde");
         // past a block and past the size read on one thread
@@ -1211,7 +1211,7 @@ mod tests {
             if compressed {
                 compress(&path).unwrap();
             }
-            let s = Session::open(&path).unwrap();
+            let s = RunFile::open(&path).unwrap();
             assert_eq!(s.records.len(), 6000);
             assert!(
                 s.records
@@ -1233,8 +1233,8 @@ mod tests {
         let whole = std::fs::read(&path).unwrap();
         // the recorder killed mid-write: the last line has no end
         std::fs::write(&path, &whole[..whole.len() - 40]).unwrap();
-        assert_eq!(Session::open(&path).unwrap().records.len(), 2999);
-        // a line that is no record in the middle: not a session, and which line
+        assert_eq!(RunFile::open(&path).unwrap().records.len(), 2999);
+        // a line that is no record in the middle: not a run, and which line
         let mut bad = whole.clone();
         let at = bad
             .iter()
@@ -1245,27 +1245,27 @@ mod tests {
             .0;
         bad.splice(at + 1..at + 1, b"{\"id\": \"x\"}\n".iter().copied());
         std::fs::write(&path, &bad).unwrap();
-        let e = Session::open(&path).unwrap_err();
+        let e = RunFile::open(&path).unwrap_err();
         assert!(e.starts_with("line 1502: "), "{e}");
     }
 
     #[test]
-    fn a_compressed_session_cut_short_is_read_up_to_its_cut_and_says_so() {
+    fn a_compressed_run_cut_short_is_read_up_to_its_cut_and_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cut.sonde");
         recorded(&path, 6000);
         compress(&path).unwrap();
-        let whole = Session::read_said(&path, Keep::All).unwrap();
-        assert_eq!((whole.session.records.len(), whole.cut), (6000, None));
+        let whole = RunFile::read_said(&path, Keep::All).unwrap();
+        assert_eq!((whole.run.records.len(), whole.cut), (6000, None));
         // a partial copy: the gzip stream stops in its middle
         let bytes = std::fs::read(&path).unwrap();
         for keep in [bytes.len() / 3, bytes.len() * 2 / 3, bytes.len() - 4] {
             std::fs::write(&path, &bytes[..keep]).unwrap();
-            let r = Session::read_said(&path, Keep::Analysis).unwrap();
-            let n = r.session.records.len();
+            let r = RunFile::read_said(&path, Keep::Analysis).unwrap();
+            let n = r.run.records.len();
             assert!(n > 0 && n <= 6000, "{n}");
             assert!(
-                r.session
+                r.run
                     .records
                     .iter()
                     .enumerate()
@@ -1277,13 +1277,13 @@ mod tests {
                 "{said}"
             );
             // and every reader of it agrees: opened, counted
-            assert_eq!(Session::open(&path).unwrap().records.len(), n);
+            assert_eq!(RunFile::open(&path).unwrap().records.len(), n);
             assert_eq!(crate::summary::counted(&path).unwrap().requests, n as u64);
         }
     }
 
     #[test]
-    fn a_file_that_is_no_session_is_told_from_one_that_could_not_be_read() {
+    fn a_file_that_is_no_run_is_told_from_one_that_could_not_be_read() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("x.sonde");
         let bad = |e: Result<Opened, ReadError>| match e {
@@ -1292,19 +1292,19 @@ mod tests {
             Ok(_) => panic!("read"),
         };
         assert!(matches!(
-            Session::read_said(&path, Keep::All),
+            RunFile::read_said(&path, Keep::All),
             Err(ReadError::Io(_))
         ));
         std::fs::write(&path, b"").unwrap();
-        assert_eq!(bad(Session::read_said(&path, Keep::All)), "empty run file");
+        assert_eq!(bad(RunFile::read_said(&path, Keep::All)), "empty run file");
         std::fs::write(&path, b"hello\n").unwrap();
-        assert!(bad(Session::read_said(&path, Keep::All)).starts_with("not a sonde run"));
+        assert!(bad(RunFile::read_said(&path, Keep::All)).starts_with("not a sonde run"));
         recorded(&path, 10);
         let mut text = std::fs::read(&path).unwrap();
         let at = text.iter().position(|b| *b == b'\n').unwrap() + 1;
         text.splice(at..at, b"garbage\n".iter().copied());
         std::fs::write(&path, &text).unwrap();
-        assert!(bad(Session::read_said(&path, Keep::All)).starts_with("line 2: "));
+        assert!(bad(RunFile::read_said(&path, Keep::All)).starts_with("line 2: "));
     }
 
     #[test]
@@ -1317,7 +1317,7 @@ mod tests {
             File::create(&path).unwrap(),
             flate2::Compression::fast(),
         );
-        let header = SessionHeader::new("e", "https://e", "r", None);
+        let header = RunHeader::new("e", "https://e", "r", None);
         serde_json::to_writer(&mut gz, &header).unwrap();
         gz.write_all(b"\n{\"id\":1,\"url\":\"").unwrap();
         let filler = vec![b'a'; 1 << 20];
@@ -1326,7 +1326,7 @@ mod tests {
         }
         gz.finish().unwrap();
         assert!(std::fs::metadata(&path).unwrap().len() < 1 << 20);
-        let e = Session::open(&path).unwrap_err();
+        let e = RunFile::open(&path).unwrap_err();
         assert!(e.contains("a line longer than 32 MiB"), "{e}");
         // the header alone still reads, and so does counting what is there
         assert_eq!(read_header(&path).unwrap().endpoint, "e");
@@ -1338,8 +1338,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("lean.sonde");
         recorded(&path, 3);
-        let full = Session::open(&path).unwrap();
-        let lean = Session::open_lean(&path).unwrap();
+        let full = RunFile::open(&path).unwrap();
+        let lean = RunFile::open_lean(&path).unwrap();
         let names = |r: &Record| -> Vec<String> {
             r.request_headers()
                 .iter()
@@ -1424,8 +1424,7 @@ mod tests {
     fn a_key_read_a_thousand_times_is_held_once_and_its_operations_share_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("hot.sonde");
-        let w =
-            SessionWriter::create(&path, &SessionHeader::new("e", "https://e", "r", None)).unwrap();
+        let w = RunWriter::create(&path, &RunHeader::new("e", "https://e", "r", None)).unwrap();
         // a key past what text is looked for when it is read (512 bytes)
         let long = "segment/".repeat(100);
         for i in 0..30_000u64 {
@@ -1442,7 +1441,7 @@ mod tests {
             });
         }
         w.flush().unwrap();
-        let s = Session::open_lean(&path).unwrap();
+        let s = RunFile::open_lean(&path).unwrap();
         let at = |t: &reqlog::Text| t.as_ptr() as usize;
         let keys: std::collections::HashSet<usize> = s
             .records
@@ -1462,7 +1461,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_of_the_sessions_folder_is_counted_as_it_is_compressed() {
+    fn a_run_of_the_runs_folder_is_counted_as_it_is_compressed() {
         let data = tempfile::tempdir().unwrap();
         let dir = data.path().join("runs");
         std::fs::create_dir(&dir).unwrap();

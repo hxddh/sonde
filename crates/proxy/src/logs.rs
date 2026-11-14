@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::session::LogChunk;
+use crate::run::LogChunk;
 
 /// One line of output: when it began, its text without escape codes.
 #[derive(Debug, Clone, PartialEq, Serialize)]

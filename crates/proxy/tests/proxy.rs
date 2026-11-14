@@ -712,7 +712,7 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
         .unwrap();
     assert_eq!(r.status(), 403);
     assert_eq!(calls(), 0, "nothing reached the store");
-    // each refusal is in the session, saying why
+    // each refusal is in the run, saying why
     let refused = log.list(&reqlog::Filter::default(), 10);
     assert_eq!(refused.len(), 3);
     assert!(refused.iter().all(|r| r.status == Some(403)));

@@ -1,7 +1,7 @@
-//! A session as one HTML file anyone opens in a browser, from a disk or a
+//! A run as one HTML file anyone opens in a browser, from a disk or a
 //! web server alike: sonde's viewer (the app's own views and Time pane, built
 //! with Native Shell's web target and embedded at build time) and the
-//! session, everything already computed, all in the one file. `sonde share`
+//! run, everything already computed, all in the one file. `sonde share`
 //! and the app's Share both write it.
 
 use std::io::Write;
@@ -11,7 +11,7 @@ use base64::Engine;
 use serde_json::Value;
 
 use crate::episode::{episodes, shared_notes};
-use crate::session::Session;
+use crate::run::RunFile;
 use crate::summary::summarize;
 
 mod embedded {
@@ -22,7 +22,7 @@ mod embedded {
 pub fn has_viewer() -> bool {
     embedded::VIEWER.iter().any(|(p, _, _)| *p == "index.html")
 }
-/// A JSON document written as it is made: a session of a million requests
+/// A JSON document written as it is made: a run of a million requests
 /// is never one tree in memory and then one string. Objects and arrays are
 /// opened and closed; a value is written whole, its keys in order (as
 /// `serde_json::Value` orders them, so a document reads the same whichever
@@ -168,16 +168,16 @@ impl<W: std::io::Write> JsonOut<W> {
     }
 }
 
-/// A session's records as they are in its file, each handed to `each` with
-/// the id the session read gave it (`ids`, in the file's order: a file joined
+/// A run's records as they are in its file, each handed to `each` with
+/// the id the run read gave it (`ids`, in the file's order: a file joined
 /// from two recordings is numbered afresh). For writing every record out in
-/// full beside an analysis made of [`Session::open_lean`].
+/// full beside an analysis made of [`RunFile::open_lean`].
 pub fn each_record(
     path: &Path,
     ids: &mut dyn Iterator<Item = u64>,
     each: &mut dyn FnMut(reqlog::Record) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
-    let mut lines = crate::session::Lines::open(path)?;
+    let mut lines = crate::run::Lines::open(path)?;
     // the header
     lines.line()?;
     while let Some(raw) = lines.line()? {
@@ -185,7 +185,7 @@ pub fn each_record(
             continue;
         }
         let text = String::from_utf8_lossy(raw);
-        // a torn last line: the session read skipped it too
+        // a torn last line: the run read skipped it too
         let Ok(mut r) = serde_json::from_str::<reqlog::Record>(text.trim_end_matches('\r')) else {
             continue;
         };
@@ -221,18 +221,18 @@ pub struct Compared {
 
 /// Everything the viewer shows, computed: header, summary, operations,
 /// observations, records (with their short target) and output lines.
-pub fn session_json(s: &Session, prices: &crate::profile::RequestPrices) -> Value {
+pub fn run_json(s: &RunFile, prices: &crate::profile::RequestPrices) -> Value {
     let mut doc = Vec::new();
     // (into memory: nothing to fail)
-    let _ = write_session_json(s, None, prices, None, &mut doc);
+    let _ = write_run_json(s, None, prices, None, &mut doc);
     serde_json::from_slice(&doc).unwrap_or(Value::Null)
 }
 
-/// [`session_json`], written as it is made. `s` may be a session read with
-/// [`Session::open_lean`] when `full` is its file: the records are then
+/// [`run_json`], written as it is made. `s` may be a run read with
+/// [`RunFile::open_lean`] when `full` is its file: the records are then
 /// written from the file, one at a time, and never all held.
-pub fn write_session_json(
-    s: &Session,
+pub fn write_run_json(
+    s: &RunFile,
     full: Option<&Path>,
     prices: &crate::profile::RequestPrices,
     compared: Option<&Compared>,
@@ -417,11 +417,11 @@ const BOOT: &str = r#"(async () => {
   s.textContent = `This page could not start: ${e?.message ?? e}`;
 });"#;
 
-/// Writes the page: one HTML file holding the viewer and the session
-/// ([`write_session_json`], given to the viewer as its parameters), titled
+/// Writes the page: one HTML file holding the viewer and the run
+/// ([`write_run_json`], given to the viewer as its parameters), titled
 /// by the run's program. Refused when this build has no viewer.
 pub fn write_page(
-    s: &Session,
+    s: &RunFile,
     full: Option<&Path>,
     prices: &crate::profile::RequestPrices,
     compared: Option<&Compared>,
@@ -464,7 +464,7 @@ pub fn write_page(
             out: &mut out,
             lt: false,
         };
-        write_session_json(s, full, prices, compared, &mut inside)?;
+        write_run_json(s, full, prices, compared, &mut inside)?;
     }
     write!(
         out,
@@ -514,15 +514,15 @@ mod tests {
     }
 
     #[test]
-    fn a_session_shared_from_a_lean_reading_and_its_file_is_the_same_document() {
+    fn a_run_shared_from_a_lean_reading_and_its_file_is_the_same_document() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sdk-java.sonde");
         let prices = crate::profile::RequestPrices::default();
-        let full = Session::open(&path).unwrap();
+        let full = RunFile::open(&path).unwrap();
         let mut whole = Vec::new();
-        write_session_json(&full, None, &prices, None, &mut whole).unwrap();
-        let lean = Session::open_lean(&path).unwrap();
+        write_run_json(&full, None, &prices, None, &mut whole).unwrap();
+        let lean = RunFile::open_lean(&path).unwrap();
         let mut streamed = Vec::new();
-        write_session_json(&lean, Some(&path), &prices, None, &mut streamed).unwrap();
+        write_run_json(&lean, Some(&path), &prices, None, &mut streamed).unwrap();
         assert!(whole == streamed, "the two documents differ");
         let doc: Value = serde_json::from_slice(&streamed).unwrap();
         assert_eq!(doc["records"].as_array().unwrap().len(), full.records.len());
@@ -537,14 +537,14 @@ mod tests {
                     .unwrap()
                     .eq_ignore_ascii_case("authorization"))
         );
-        assert_eq!(session_json(&full, &prices), doc);
+        assert_eq!(run_json(&full, &prices), doc);
     }
 
     #[test]
     fn a_shared_page_never_carries_a_secret_set_before_the_program() {
-        let s = crate::session::Session {
-            header: crate::session::SessionHeader {
-                format: "sonde-session".into(),
+        let s = crate::run::RunFile {
+            header: crate::run::RunHeader {
+                format: "sonde-run".into(),
                 version: 1,
                 sonde: None,
                 created: chrono::Utc::now(),
@@ -562,7 +562,7 @@ mod tests {
             records: vec![],
             logs: vec![],
         };
-        let doc = super::session_json(&s, &Default::default()).to_string();
+        let doc = super::run_json(&s, &Default::default()).to_string();
         assert!(!doc.contains("hunter2"), "{doc}");
         assert!(doc.contains("AWS_SECRET_ACCESS_KEY=… python etl.py"));
         let mut page = Vec::new();

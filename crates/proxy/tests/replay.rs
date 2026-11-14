@@ -252,8 +252,8 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
     workload(&app(&proxy)).await;
     let mut records = recorded.list(&Filter::default(), 1000);
     records.reverse();
-    let session = sonde_proxy::session::Session {
-        header: sonde_proxy::session::SessionHeader::new("t", &original.url, "us-east-1", None),
+    let run = sonde_proxy::run::RunFile {
+        header: sonde_proxy::run::RunHeader::new("t", &original.url, "us-east-1", None),
         records,
         logs: Vec::new(),
     };
@@ -280,7 +280,7 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
     };
     let refused = sonde_proxy::replay::replay_to_file(
         &app,
-        &session,
+        &run,
         &opts,
         &dir.path().join("r.sonde"),
         |_, _| {},
@@ -296,7 +296,7 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
     };
     let refused = sonde_proxy::replay::replay_to_file(
         &app,
-        &session,
+        &run,
         &in_place,
         &dir.path().join("r0.sonde"),
         |_, _| {},
@@ -312,7 +312,7 @@ async fn a_replay_never_cleans_up_what_it_did_not_write() {
     };
     let run = sonde_proxy::replay::replay_to_file(
         &app,
-        &session,
+        &run,
         &opts,
         &dir.path().join("r2.sonde"),
         |_, _| {},
@@ -354,7 +354,7 @@ async fn answering(status: u16, code: &'static str) -> String {
     format!("http://{addr}")
 }
 
-fn one_put() -> sonde_proxy::session::Session {
+fn one_put() -> sonde_proxy::run::RunFile {
     let r = reqlog::Record {
         id: 1,
         kind: "PutObject".into(),
@@ -365,8 +365,8 @@ fn one_put() -> sonde_proxy::session::Session {
         request_bytes: Some(1).into(),
         ..Default::default()
     };
-    sonde_proxy::session::Session {
-        header: sonde_proxy::session::SessionHeader::new("t", "http://x", "us-east-1", None),
+    sonde_proxy::run::RunFile {
+        header: sonde_proxy::run::RunHeader::new("t", "http://x", "us-east-1", None),
         records: vec![r],
         logs: Vec::new(),
     }
@@ -440,8 +440,8 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
         request_bytes: Some(4).into(),
         ..Default::default()
     };
-    let session = sonde_proxy::session::Session {
-        header: sonde_proxy::session::SessionHeader::new("t", "http://x", "us-east-1", None),
+    let run = sonde_proxy::run::RunFile {
+        header: sonde_proxy::run::RunHeader::new("t", "http://x", "us-east-1", None),
         // one key written twice: two versions of it
         records: vec![put(1, "a"), put(2, "a"), put(3, "dir/b")],
         logs: Vec::new(),
@@ -453,7 +453,7 @@ async fn a_replay_on_a_bucket_that_keeps_versions_removes_the_versions_it_wrote(
     };
     let run = sonde_proxy::replay::replay_to_file(
         &target,
-        &session,
+        &run,
         &opts,
         &dir.path().join("r.sonde"),
         |_, _| {},
@@ -497,8 +497,8 @@ async fn replayed(store: &MiniS3, records: Vec<reqlog::Record>) -> sonde_proxy::
         .send_raw(S3Request::new("CreateBucket", http::Method::PUT).bucket("data"))
         .await
         .unwrap();
-    let session = sonde_proxy::session::Session {
-        header: sonde_proxy::session::SessionHeader::new("t", "http://x", "us-east-1", None),
+    let run = sonde_proxy::run::RunFile {
+        header: sonde_proxy::run::RunHeader::new("t", "http://x", "us-east-1", None),
         records,
         logs: Vec::new(),
     };
@@ -509,7 +509,7 @@ async fn replayed(store: &MiniS3, records: Vec<reqlog::Record>) -> sonde_proxy::
     };
     sonde_proxy::replay::replay_to_file(
         &target,
-        &session,
+        &run,
         &opts,
         &dir.path().join("r.sonde"),
         |_, _| {},

@@ -26,7 +26,7 @@ pub mod program;
 pub mod project;
 pub mod replay;
 pub mod report;
-pub mod session;
+pub mod run;
 pub mod share;
 pub mod signals;
 pub mod split;
@@ -56,9 +56,10 @@ use tokio::net::TcpListener;
 
 type Out = BoxBody<Bytes, std::io::Error>;
 
-/// What the proxy lets through. A recording takes [`Policy::NoDelete`]
-/// unless told otherwise (`--policy allow`, `[record] policy`, the app's
-/// Run); a proxy built by hand ([`ProxyConfig::default`]) forwards all.
+/// What the proxy lets through. A plain run records under [`Policy::Allow`]
+/// and a trial's runs under [`Policy::NoDelete`], unless told otherwise
+/// (`--policy`, `[record] policy`, the app's Run); a proxy built by hand
+/// ([`ProxyConfig::default`]) forwards all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Policy {
     /// Everything: a program does with its data what it would without sonde.
@@ -331,7 +332,7 @@ pub struct ProxyConfig {
     /// for the ones before it, so concurrent large uploads queue rather than
     /// hold a gigabyte each.
     pub max_buffered_total: usize,
-    /// Tags every record (the `job` field), e.g. a session id.
+    /// Tags every record (the `job` field), e.g. a run id.
     pub tag: Option<String>,
     /// The keys the application signs with: made for each proxy, so only the
     /// program sonde gave them to can use the endpoint's credentials.

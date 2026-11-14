@@ -110,7 +110,7 @@ pub fn sdk(r: &Record) -> Option<String> {
 }
 
 /// The SDK that sent most of `records`, by their user agents (a few
-/// thousand of them looked at, spread over the session).
+/// thousand of them looked at, spread over the run).
 pub fn sdk_of(records: &[Record]) -> Option<String> {
     let mut sdks: HashMap<String, usize> = HashMap::new();
     for r in records.iter().step_by((records.len() / 4096).max(1)) {

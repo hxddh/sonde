@@ -1,4 +1,4 @@
-//! Traffic sonde did not record, read as a session: S3 server access logs,
+//! Traffic sonde did not record, read as a run: S3 server access logs,
 //! CloudTrail data events and HAR files. Production traffic gets the same
 //! operations, findings and charts as a recording, with no proxy in front of
 //! the program. What a source does not carry stays empty: CloudTrail has no
@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use reqlog::Record;
 use serde_json::Value;
 
-use crate::session::{Session, SessionHeader};
+use crate::run::{RunFile, RunHeader};
 
 /// Where imported traffic came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,14 +37,12 @@ impl Source {
     }
 }
 
-/// What a text is, by its first characters: a session needs no import.
+/// What a text is, by its first characters: a run needs no import.
 pub fn detect(text: &str) -> Option<Source> {
     let t = text.trim_start();
     if t.starts_with('{') {
         let head: String = t.chars().take(4096).collect();
-        if head.contains("\"format\":\"sonde-session\"")
-            || head.contains("\"format\": \"sonde-session\"")
-        {
+        if head.contains("\"format\":\"sonde-run\"") || head.contains("\"format\": \"sonde-run\"") {
             return None;
         }
         if head.contains("\"Records\"") || head.contains("\"eventSource\"") {
@@ -64,11 +62,11 @@ pub fn detect(text: &str) -> Option<Source> {
         .map(|_| Source::AccessLog)
 }
 
-/// An import: the session, and what of the source was left out of it.
+/// An import: the run, and what of the source was left out of it.
 #[derive(Debug, Clone)]
 pub struct Imported {
     pub source: Source,
-    pub session: Session,
+    pub run: RunFile,
     /// Lines that could not be read (cut off, or not the source's format).
     pub malformed: usize,
     /// Lines that are no request of a program's (a lifecycle expiry, a batch
@@ -110,10 +108,10 @@ pub fn gunzip(bytes: &[u8], limit: u64) -> std::io::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Reads `text` as the source it is into a session (records numbered in time
+/// Reads `text` as the source it is into a run (records numbered in time
 /// order). `name` names it (the endpoint shown for it).
-pub fn import(text: &str, name: &str) -> Result<(Source, Session), String> {
-    import_counted(text, name).map(|i| (i.source, i.session))
+pub fn import(text: &str, name: &str) -> Result<(Source, RunFile), String> {
+    import_counted(text, name).map(|i| (i.source, i.run))
 }
 
 /// [`import`], with the count of the lines left out.
@@ -123,7 +121,7 @@ pub fn import_counted(text: &str, name: &str) -> Result<Imported, String> {
     parts.finish(name)
 }
 
-/// A session gathered from several files of one source, one text at a time:
+/// A run gathered from several files of one source, one text at a time:
 /// S3 delivers an hour of access logs as thousands of small files, and only
 /// the requests of each are kept once it is read.
 #[derive(Default)]
@@ -179,7 +177,7 @@ impl Parts {
         Ok(())
     }
 
-    /// The session of everything added, its records numbered in time order.
+    /// The run of everything added, its records numbered in time order.
     pub fn finish(self, name: &str) -> Result<Imported, String> {
         let source = self
             .source
@@ -216,7 +214,7 @@ impl Parts {
             r.id = i as u64 + 1;
             r.rare_mut().endpoint = endpoint.as_str().into();
         }
-        let mut header = SessionHeader::new(
+        let mut header = RunHeader::new(
             &endpoint,
             "",
             "",
@@ -226,7 +224,7 @@ impl Parts {
         header.whole_seconds = whole_seconds;
         Ok(Imported {
             source,
-            session: Session {
+            run: RunFile {
                 header,
                 records,
                 logs: Vec::new(),
@@ -277,18 +275,18 @@ fn store_host(host: &str, bucket: Option<&str>) -> Option<String> {
     Some(host)
 }
 
-/// A folder imported as one session, and the files that were no part of it.
+/// A folder imported as one run, and the files that were no part of it.
 #[derive(Debug, Clone)]
 pub struct ImportedDir {
     pub imported: Imported,
-    /// Files read into the session.
+    /// Files read into the run.
     pub files: usize,
     /// Files left out, each with why (relative to the folder).
     pub left_out: Vec<(String, String)>,
 }
 
 /// Every file under `dir` (folders within too, as CloudTrail delivers), in
-/// the order of their names, gzip or plain, as one session. A file that is
+/// the order of their names, gzip or plain, as one run. A file that is
 /// not of the first file's source is left out and named; hidden files are
 /// passed over.
 pub fn import_dir(dir: &std::path::Path, name: &str) -> Result<ImportedDir, String> {
@@ -825,7 +823,7 @@ fn har(
         if let Some(op) = e["_sonde"]["kind"].as_str() {
             r.kind = op.into();
         }
-        // a presigned URL's signature, key and token never reach the session
+        // a presigned URL's signature, key and token never reach the run
         let mut shown = url.clone();
         if url.query().is_some() {
             let kept: Vec<(String, String)> = url
@@ -855,18 +853,18 @@ fn har(
     Ok(out)
 }
 
-/// Writes an imported session as a `.sonde` file, compressed as a finished
+/// Writes an imported run as a `.sonde` file, compressed as a finished
 /// recording is.
-pub fn save(session: &Session, path: &std::path::Path) -> std::io::Result<()> {
+pub fn save(run: &RunFile, path: &std::path::Path) -> std::io::Result<()> {
     use reqlog::Sink;
     {
-        let w = crate::session::SessionWriter::create(path, &session.header)?;
-        for r in &session.records {
+        let w = crate::run::RunWriter::create(path, &run.header)?;
+        for r in &run.records {
             w.write(r);
         }
         w.flush()?;
     }
-    crate::session::compress(path)
+    crate::run::compress(path)
 }
 
 #[cfg(test)]
@@ -889,7 +887,7 @@ mod tests {
 79a5 lake [06/Feb/2026:00:00:40 +0000] 192.0.2.3 arn:aws:iam::1:user/etl 3E57427F3EXAMPL3 REST.GET.BUCKET - "GET /lake?list-type=2&prefix=t%2F HTTP/1.1" 200 - 812 - 25 24 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#;
 
     #[test]
-    fn a_seconds_requests_are_spread_over_it_and_the_session_says_so() {
+    fn a_seconds_requests_are_spread_over_it_and_the_run_says_so() {
         // five requests logged in one second, then two in the next
         let line = |sec: u32, key: &str| {
             format!(
@@ -934,7 +932,7 @@ mod tests {
         let said = serde_json::to_string(&s.header).unwrap();
         assert!(said.contains("\"wholeSeconds\":true"), "{said}");
         // a recording says nothing of the kind, and reads as before
-        let recorded = SessionHeader::new("e", "", "", None);
+        let recorded = RunHeader::new("e", "", "", None);
         assert!(
             !serde_json::to_string(&recorded)
                 .unwrap()
@@ -960,15 +958,15 @@ mod tests {
             ),
         );
         let i = import_counted(&har, "page").unwrap();
-        assert_eq!(i.session.records.len(), 1);
+        assert_eq!(i.run.records.len(), 1);
         assert_eq!(
             i.other_hosts, 2,
             "the page and its script: counted, not dropped unsaid"
         );
-        assert_eq!(i.session.records[0].first_byte_ms, Some(18.5));
-        assert_eq!(i.session.header.endpoint, "s3.eu-west-1.amazonaws.com");
+        assert_eq!(i.run.records[0].first_byte_ms, Some(18.5));
+        assert_eq!(i.run.header.endpoint, "s3.eu-west-1.amazonaws.com");
         // times with fractions are the request's own
-        assert!(!i.session.header.whole_seconds);
+        assert!(!i.run.header.whole_seconds);
     }
 
     #[test]
@@ -1071,7 +1069,7 @@ mod tests {
             ),
         );
         let (_, s) = import(&har, "browser").unwrap();
-        // a presigned URL's credentials never reach the session
+        // a presigned URL's credentials never reach the run
         let text = serde_json::to_string(&s.records).unwrap();
         for secret in ["AKIAX", "TOK", "SIG"] {
             assert!(!text.contains(secret), "{secret} kept: {text}");
@@ -1106,7 +1104,7 @@ mod tests {
         .join("\n");
         let i = import_counted(&log, "prod").unwrap();
         let ops: Vec<(&str, Option<&str>)> = i
-            .session
+            .run
             .records
             .iter()
             .map(|r| (r.kind.as_str(), r.key.as_deref()))
@@ -1127,18 +1125,12 @@ mod tests {
                 .find(|h| h.name == "x-amz-copy-source")
                 .map(|h| h.value.clone())
         };
-        assert_eq!(
-            source(&i.session.records[0]).as_deref(),
-            Some("/archive/t/src")
-        );
-        assert_eq!(
-            source(&i.session.records[1]).as_deref(),
-            Some("/lake/t/src")
-        );
+        assert_eq!(source(&i.run.records[0]).as_deref(), Some("/archive/t/src"));
+        assert_eq!(source(&i.run.records[1]).as_deref(), Some("/lake/t/src"));
     }
 
     #[test]
-    fn a_folder_of_log_files_is_one_session_in_the_order_of_their_names() {
+    fn a_folder_of_log_files_is_one_run_in_the_order_of_their_names() {
         use std::io::Write;
         let dir = tempfile::tempdir().unwrap();
         let lines: Vec<&str> = LOG.lines().collect();
@@ -1162,7 +1154,7 @@ mod tests {
         assert_eq!(d.files, 3);
         let ops: Vec<&str> = d
             .imported
-            .session
+            .run
             .records
             .iter()
             .map(|r| r.kind.as_str())
@@ -1197,7 +1189,7 @@ mod tests {
         std::fs::write(dir.path().join("a-archive.log"), read).unwrap();
         std::fs::write(dir.path().join("b-lake.log"), copy).unwrap();
         let d = import_dir(dir.path(), "logs").unwrap();
-        let r = &d.imported.session.records;
+        let r = &d.imported.run.records;
         assert_eq!(r.len(), 1);
         assert_eq!(
             r[0].request_headers()
@@ -1226,7 +1218,7 @@ mod tests {
         .unwrap();
         let d = import_dir(dir.path(), "logs").unwrap();
         assert_eq!(d.files, 1);
-        assert_eq!(d.imported.session.records.len(), 1);
+        assert_eq!(d.imported.run.records.len(), 1);
     }
 
     #[test]
@@ -1243,7 +1235,7 @@ mod tests {
         );
         let i = import_counted(&log, "prod").unwrap();
         assert_eq!((i.malformed, i.not_requests), (1, 2));
-        let ops: Vec<&str> = i.session.records.iter().map(|r| r.kind.as_str()).collect();
+        let ops: Vec<&str> = i.run.records.iter().map(|r| r.kind.as_str()).collect();
         assert_eq!(
             ops,
             [
@@ -1253,7 +1245,7 @@ mod tests {
                 "CompleteMultipartUpload"
             ]
         );
-        assert_eq!(i.session.records[3].request_bytes, None);
+        assert_eq!(i.run.records[3].request_bytes, None);
         // an upload's own body is still counted
         let put = r#"79a5 lake [06/Feb/2026:00:00:45 +0000] 192.0.2.3 - 8E57 REST.PUT.OBJECT t/new "PUT /lake/t/new HTTP/1.1" 200 - - 512 9 8 "-" "-" - xyz= SigV4 - - - - - -"#;
         let (_, s) = import(put, "prod").unwrap();
@@ -1311,7 +1303,7 @@ mod tests {
         ]
         .join("\n");
         let i = import_counted(&ct, "trail").unwrap();
-        assert_eq!(i.session.records.len(), 2);
+        assert_eq!(i.run.records.len(), 2);
         assert_eq!((i.malformed, i.other_services), (2, 1));
     }
 
@@ -1382,8 +1374,8 @@ mod tests {
     }
 
     #[test]
-    fn a_session_is_not_imported() {
-        let s = r#"{"format":"sonde-session","version":1}"#;
+    fn a_run_is_not_imported() {
+        let s = r#"{"format":"sonde-run","version":1}"#;
         assert_eq!(detect(s), None);
     }
 }

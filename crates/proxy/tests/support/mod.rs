@@ -1,4 +1,4 @@
-//! Sessions made up for tests of size: a lake job of sixteen workers (reads
+//! Runs made up for tests of size: a lake job of sixteen workers (reads
 //! in ranges, small writes, paged listings, multipart uploads, a hot
 //! manifest, 503 storms with retries, lookups that find nothing), and the two
 //! shapes that were quadratic. The same seed makes the same file.
@@ -10,7 +10,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Duration, Utc};
 use reqlog::{Header, Record};
-use sonde_proxy::session::SessionHeader;
+use sonde_proxy::run::RunHeader;
 
 /// A small generator of its own: the same numbers on every machine.
 pub struct Rng(u64);
@@ -428,7 +428,7 @@ impl Lake {
     }
 }
 
-/// Writes records as a finished (compressed) session.
+/// Writes records as a finished (compressed) run.
 struct Out {
     gz: flate2::write::GzEncoder<std::io::BufWriter<std::fs::File>>,
     n: u64,
@@ -436,12 +436,12 @@ struct Out {
 
 impl Out {
     fn create(path: &Path, command: &str) -> Out {
-        let file = std::fs::File::create(path).expect("the session file");
+        let file = std::fs::File::create(path).expect("the run file");
         let mut gz = flate2::write::GzEncoder::new(
             std::io::BufWriter::new(file),
             flate2::Compression::new(1),
         );
-        let mut header = SessionHeader::new(
+        let mut header = RunHeader::new(
             "prod",
             "https://s3.us-east-1.amazonaws.com/",
             "us-east-1",

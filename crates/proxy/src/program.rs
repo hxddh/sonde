@@ -1,4 +1,4 @@
-//! A program over its runs: the sessions of one command, each reduced to the
+//! A program over its runs: the runs of one command, each reduced to the
 //! figures that move when the program changes (requests, waiting, cost,
 //! errors, findings), and a run checked against a budget or a baseline run:
 //! what `sonde check` gates CI on, and what the app's history shows.
@@ -9,7 +9,7 @@ use crate::episode::Observation;
 use crate::profile::Profile;
 use reqlog::Record;
 
-/// The program a session ran, as runs of it are grouped: what its command
+/// The program a run ran, as runs of it are grouped: what its command
 /// runs ([`short_name`]: `etl` for `python3 etl.py 5`), whatever its
 /// arguments; a log source's imports are its own (`logs of s3://b/logs/`,
 /// [`LOGS_OF`]). A replay, a file imported once or a recording without a
@@ -94,9 +94,9 @@ fn without_trial(word: &str) -> String {
     w
 }
 
-/// The program a session is a run of: the name it was given, else what its
+/// The program a run belongs to: the name it was given, else what its
 /// command runs ([`program_key`]).
-pub fn key_of(header: &crate::session::SessionHeader) -> Option<String> {
+pub fn key_of(header: &crate::run::RunHeader) -> Option<String> {
     // (a replay or an import of a named run is still none)
     program_key(header.command.as_deref())?;
     match header.name.as_deref().map(str::trim) {
@@ -259,7 +259,7 @@ pub fn program_name(command: &str) -> Option<String> {
 /// container runs (`aws-cli` of `docker run amazon/aws-cli s3 ls`), else the
 /// program itself (`load` of `./load --all`). Letters, digits, `-` and `_`:
 /// a program without a name of its own goes by it ([`program_key`]), and its
-/// session files are named by it.
+/// run files are named by it.
 pub fn short_name(command: &str) -> Option<String> {
     const INTERPRETERS: &[&str] = &[
         "python", "python3", "node", "ruby", "java", "deno", "bun", "perl", "php", "uv", "poetry",
@@ -341,7 +341,7 @@ fn safe_name(name: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// What a run's session file is named by, after its time: the program's
+/// What a run's file is named by, after its time: the program's
 /// name (`--name`, `[program] name`), else its command's short name
 /// ([`short_name`]: `etl` of `python3 etl.py`, not `python3`).
 pub fn file_stem(name: Option<&str>, command: Option<&str>) -> Option<String> {
@@ -793,17 +793,17 @@ pub struct Since {
     pub runs_ago: usize,
     pub first_past: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub first_past_commit: Option<crate::session::GitStamp>,
+    pub first_past_commit: Option<crate::run::GitStamp>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_within: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_within_commit: Option<crate::session::GitStamp>,
+    pub last_within_commit: Option<crate::run::GitStamp>,
 }
 
 /// [`Since`] of `runs` (oldest first, the newest last), against `base`.
 /// None when the newest run is within it.
 pub fn since(
-    runs: &[(RunPoint, Option<crate::session::GitStamp>)],
+    runs: &[(RunPoint, Option<crate::run::GitStamp>)],
     base: &RunPoint,
     tolerance: f64,
 ) -> Option<Since> {
@@ -943,7 +943,7 @@ pub fn share_moved(a: f64, b: f64) -> String {
     }
 }
 
-/// Money to two significant digits under a cent: a session's requests often
+/// Money to two significant digits under a cent: a run's requests often
 /// cost thousandths.
 pub fn money_text(v: f64, currency: &str) -> String {
     if !v.is_finite() || v < 0.0 {
@@ -1602,7 +1602,7 @@ mod tests {
             refused: None,
         };
         let git = |c: &str| {
-            Some(crate::session::GitStamp {
+            Some(crate::run::GitStamp {
                 commit: c.into(),
                 branch: None,
                 dirty: false,
@@ -1684,7 +1684,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_file_is_named_by_its_program_not_its_interpreter() {
+    fn a_run_file_is_named_by_its_program_not_its_interpreter() {
         // 20.0 named every Python run `…-python3.sonde`
         assert_eq!(
             file_stem(None, Some("python3 etl.py --day 1")).as_deref(),
@@ -1936,8 +1936,7 @@ mod tests {
 
     #[test]
     fn a_named_program_is_its_name_whatever_its_command() {
-        let mut h =
-            crate::session::SessionHeader::new("e", "", "", Some("python etl.py /tmp/a".into()));
+        let mut h = crate::run::RunHeader::new("e", "", "", Some("python etl.py /tmp/a".into()));
         assert_eq!(key_of(&h).as_deref(), Some("etl"));
         h.name = Some("nightly-etl".into());
         assert_eq!(key_of(&h).as_deref(), Some("nightly-etl"));
@@ -1948,7 +1947,7 @@ mod tests {
         assert_eq!(key_of(&h), None);
         assert!(!h.is_recording());
         h.command = None;
-        assert!(h.is_recording(), "a proxy's session");
+        assert!(h.is_recording(), "a proxy's run");
         h.scenario = Some("slowdown".into());
         assert!(!h.is_recording(), "a trial");
     }

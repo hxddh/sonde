@@ -7,7 +7,7 @@ use std::sync::Arc;
 use clap::Args;
 use sonde_core::Sonde;
 use sonde_proxy::Proxy;
-use sonde_proxy::session::Session;
+use sonde_proxy::run::RunFile;
 
 use crate::Cli;
 
@@ -70,18 +70,18 @@ pub async fn proxy(s: &Arc<Sonde>, _cli: &Cli, a: &ProxyArgs) -> anyhow::Result<
     if let Some(lost) = started.writer.not_written() {
         eprintln!("sonde: {lost}");
     }
-    let session = Session::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
+    let run = RunFile::open(&started.path).map_err(|e| anyhow::anyhow!(e))?;
     print_summary(
-        &session.records,
-        &session.header.endpoint,
+        &run.records,
+        &run.header.endpoint,
         &started.path,
         std::io::stderr().is_terminal(),
-        &request_prices_for(s, &session.header.endpoint),
+        &request_prices_for(s, &run.header.endpoint),
         false,
     );
     // finished: compressed to a tenth or less, still a .sonde file
     let file = started.path.clone();
     drop(started);
-    let _ = sonde_proxy::session::compress(&file);
+    let _ = sonde_proxy::run::compress(&file);
     Ok(0)
 }

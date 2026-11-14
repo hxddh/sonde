@@ -1,6 +1,6 @@
-//! Where a session's time went and what its requests cost: the time a
+//! Where a run's time went and what its requests cost: the time a
 //! program spent waiting on its store, by kind of request; how many requests
-//! were in flight; the rate of requests over the session by outcome; an
+//! were in flight; the rate of requests over the run by outcome; an
 //! estimate of the requests' price. And two runs of one program compared.
 //!
 //! Times are wall-clock: a kind's time is the union of its requests'
@@ -75,9 +75,9 @@ pub struct Group {
     pub sum_ms: f64,
     /// The program's waiting that was theirs: each moment's waiting split
     /// evenly among the requests then in flight, so the kinds add up to the
-    /// session's waiting.
+    /// run's waiting.
     pub waited_ms: f64,
-    /// `waited_ms` over the session's waiting (the kinds add up to 1).
+    /// `waited_ms` over the run's waiting (the kinds add up to 1).
     pub share: f64,
     pub p50_ms: f64,
     pub p95_ms: f64,
@@ -88,11 +88,11 @@ pub struct Group {
     pub cost: f64,
 }
 
-/// Requests started in one slice of the session, by outcome.
+/// Requests started in one slice of the run, by outcome.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Bin {
-    /// The slice's start, from the session's start.
+    /// The slice's start, from the run's start.
     pub t_ms: f64,
     pub ok: usize,
     pub miss: usize,
@@ -218,10 +218,10 @@ pub struct Cost {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
-    /// Where its first slice begins, from the session's start: 0 for a
-    /// session, a stretch's own start for a stretch of it. Every time below
+    /// Where its first slice begins, from the run's start: 0 for a
+    /// run, a stretch's own start for a stretch of it. Every time below
     /// (`rate`, `inFlight`, `samples`, `chains`, `peakAtMs`) is from the
-    /// session's start too, so a stretch's charts draw on the session's axis.
+    /// run's start too, so a stretch's charts draw on the run's axis.
     pub start_ms: f64,
     /// From the first request's start to the last one's end.
     pub wall_ms: f64,
@@ -243,7 +243,7 @@ pub struct Profile {
     pub prices: RequestPrices,
     /// The busiest prefixes, most requests first (at most 8, then "other").
     pub prefixes: Vec<PrefixStat>,
-    /// Requests per prefix (by index) and slice of the session (by `rate`'s index).
+    /// Requests per prefix (by index) and slice of the run (by `rate`'s index).
     pub heat: Vec<HeatCell>,
     /// Where requests went: operation → prefix → outcome, each a flow of requests.
     pub flows: Vec<Flow>,
@@ -464,7 +464,7 @@ fn is_zero(n: &usize) -> bool {
 }
 
 /// A key's prefix for S3's rate limits: its bucket and folder, three levels
-/// at most ("b/logs/2026/"). What a session is *shown* by is [`prefix_groups`].
+/// at most ("b/logs/2026/"). What a run is *shown* by is [`prefix_groups`].
 pub fn prefix_of(r: &Record) -> String {
     let (b, short) = prefix_parts(r);
     prefix_named(b, short)
@@ -518,11 +518,11 @@ fn parent_of(folder: &str) -> Option<&str> {
     inner.rfind('/').map(|i| &folder[..=i])
 }
 
-/// The prefixes a session is shown by: its folders at the depth that tells
+/// The prefixes a run is shown by: its folders at the depth that tells
 /// them apart, not cut at a fixed level. With more folders than `max`, the
 /// quietest of the deepest is folded into the nearest folder above it that
 /// it shares with another, again and again, so what stays apart is what
-/// carried the requests. Each name with how many of the session's folders
+/// carried the requests. Each name with how many of the run's folders
 /// were folded into it (0: that folder alone).
 pub fn prefix_groups<'a>(
     folders: impl Iterator<Item = &'a str>,
@@ -542,7 +542,7 @@ fn fold_folders<'a>(
 ) -> Vec<(String, usize)> {
     use std::cmp::Reverse;
     /// A group: its requests, whether a key lies right in it, and the
-    /// folders of the session folded into it.
+    /// folders of the run folded into it.
     #[derive(Default)]
     struct G {
         requests: usize,
@@ -654,7 +654,7 @@ const MAX_PREFIXES: usize = 8;
 
 const MAX_BINS: f64 = 90.0;
 const MAX_STEPS: usize = 480;
-/// Requests drawn one by one: every request of a session this size or
+/// Requests drawn one by one: every request of a run this size or
 /// smaller; of a larger one, the slowest and an even spread of the rest.
 const MAX_SAMPLES: usize = 4000;
 const SLOWEST: usize = 400;
@@ -750,13 +750,13 @@ fn nice(ms: f64) -> f64 {
     10.0 * p
 }
 
-/// A session's time axis: its first instant, its length, and the slices
-/// every chart over the session shares.
+/// A run's time axis: its first instant, its length, and the slices
+/// every chart over the run shares.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Timeline {
     /// The first request's start, in µs.
     pub t0_us: i64,
-    /// Where that is from the session's start, in ms (0 but for a stretch).
+    /// Where that is from the run's start, in ms (0 but for a stretch).
     pub start_ms: f64,
     /// From there to the last request's end (1 at least).
     pub wall_us: i64,
@@ -770,9 +770,9 @@ impl Timeline {
         Timeline::from_origin(records, None)
     }
 
-    /// [`Timeline::of`] for a stretch of a session whose first request
+    /// [`Timeline::of`] for a stretch of a run whose first request
     /// started at `origin_us`: its slices are its own, its times the
-    /// session's (`start_ms` on).
+    /// run's (`start_ms` on).
     pub fn from_origin(records: &[Record], origin_us: Option<i64>) -> Option<Timeline> {
         let t0_us = records.iter().map(start_us).min()?;
         let t1 = records.iter().map(end_us).max().unwrap_or(t0_us);
@@ -801,7 +801,7 @@ impl Timeline {
 
 /// The `q` quantile of sorted values by nearest rank (the smallest value
 /// with at least `q` of them at or under it; 0 without any). The one
-/// definition every figure uses: a session's, a kind's, a slice's.
+/// definition every figure uses: a run's, a kind's, a slice's.
 pub fn percentile(sorted: &[f64], q: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
@@ -846,14 +846,14 @@ fn tone(r: &Record) -> u8 {
     }
 }
 
-/// A session's prefixes ([`prefix_groups`], the busiest [`MAX_PREFIXES`] and
+/// A run's prefixes ([`prefix_groups`], the busiest [`MAX_PREFIXES`] and
 /// then "other"), each with its requests and its busiest second; the
 /// groups they were counted by; and each request's prefix, by its place.
 pub fn prefix_stats(
     records: &[Record],
     prices: &RequestPrices,
 ) -> (Vec<(String, usize)>, Vec<PrefixStat>, Vec<u8>) {
-    // each folder named once, however many requests went to it: a session
+    // each folder named once, however many requests went to it: a run
     // has far fewer folders than requests
     let mut ids: HashMap<(&str, &str), usize> = HashMap::new();
     let mut names: Vec<(String, usize)> = Vec::new();
@@ -967,8 +967,8 @@ pub fn profile(records: &[Record], prices: &RequestPrices) -> Profile {
     profile_from(records, prices, None)
 }
 
-/// [`profile`] of a stretch of a session whose first request started at
-/// `origin_us`: its times on the session's axis ([`Profile::start_ms`]).
+/// [`profile`] of a stretch of a run whose first request started at
+/// `origin_us`: its times on the run's axis ([`Profile::start_ms`]).
 pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Option<i64>) -> Profile {
     let empty = Profile {
         start_ms: 0.0,
@@ -1008,7 +1008,7 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     let (t0, wall_us, start) = (tl.t0_us, tl.wall_us, tl.start_ms);
     let busy_us = union_us(records.iter().map(|r| (start_us(r), end_us(r))).collect());
     let ms = |us: i64| us as f64 / 1000.0;
-    // an instant, from the session's start
+    // an instant, from the run's start
     let at_ms = |us: i64| ms(us - t0) + start;
     let price = |r: &Record| price(r, prices);
 
@@ -1393,7 +1393,7 @@ pub fn profile_from(records: &[Record], prices: &RequestPrices, origin_us: Optio
     }
 }
 
-/// One kind of request on two stores (a session and its replay): how long it
+/// One kind of request on two stores (a run and its replay): how long it
 /// took on each.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1406,7 +1406,7 @@ pub struct LatencyChange {
     pub waiting_ms: (f64, f64),
 }
 
-/// The kinds of request two sessions share, by how much slower (p95) the
+/// The kinds of request two runs share, by how much slower (p95) the
 /// second is, slowest first: a workload measured on two stores.
 pub fn latency_changes(a: &Profile, b: &Profile) -> Vec<LatencyChange> {
     let mut out: Vec<LatencyChange> = a
@@ -1843,11 +1843,11 @@ impl Run {
         Run::with(records, profile, observations, traces)
     }
 
-    /// [`Run::of`] a session's records, read with its header as its
+    /// [`Run::of`] a run's records, read with its header as its
     /// findings were ([`crate::episode::traces_of`]), its operations made
     /// already.
-    pub fn of_session(
-        header: &crate::session::SessionHeader,
+    pub fn of_run(
+        header: &crate::run::RunHeader,
         records: &[Record],
         episodes: &[crate::episode::Episode],
         profile: Profile,
@@ -1940,7 +1940,7 @@ impl Run {
     /// A run of `records` reckoned: where its time went, its operations and
     /// its findings.
     pub fn analysed(
-        header: &crate::session::SessionHeader,
+        header: &crate::run::RunHeader,
         records: &[Record],
         prices: &RequestPrices,
     ) -> Run {
@@ -2311,7 +2311,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_session_has_an_empty_profile() {
+    fn an_empty_run_has_an_empty_profile() {
         let p = profile(&[], &RequestPrices::default());
         assert!(p.groups.is_empty() && p.rate.is_empty());
     }
@@ -2376,7 +2376,7 @@ mod tests {
         assert_eq!(p.callers[0].place, "etl/load.py:12 read");
         assert_eq!(p.callers[0].requests, 4);
         assert!((p.callers.iter().map(|c| c.waited_ms).sum::<f64>() - p.waiting_ms).abs() < 1e-6);
-        // each sample says its answer; every request is drawn in a session this small
+        // each sample says its answer; every request is drawn in a run this small
         assert_eq!(p.samples.len(), 6);
         assert!(p.samples.iter().all(|s| s.status == Some(200)));
     }
@@ -2479,7 +2479,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stretchs_profile_is_on_the_sessions_axis_with_slices_of_its_own() {
+    fn a_stretchs_profile_is_on_the_runs_axis_with_slices_of_its_own() {
         let rs: Vec<Record> = (0..100)
             .map(|i| rec(i, i as i64 * 100, "GetObject", 200, 5.0))
             .collect();
@@ -2509,7 +2509,7 @@ mod tests {
         assert_eq!(percentile(&[], 0.5), 0.0);
         assert_eq!(percentile(&[10.0, 30.0], 0.5), 10.0);
         assert_eq!(percentile(&[10.0, 30.0], 0.95), 30.0);
-        // two requests of one kind: the session's median is the kind's, the
+        // two requests of one kind: the run's median is the kind's, the
         // slice's and the summary's
         let rs = [
             rec(1, 0, "GetObject", 200, 10.0),

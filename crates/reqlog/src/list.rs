@@ -7,7 +7,7 @@ use crate::{Header, Text};
 
 /// A record's query parameters and headers. A record holds them behind one
 /// pointer, which the records holding the same lists share ([`Lists::shared`]): a
-/// session of a million requests, read for its analysis, keeps of most of
+/// run of a million requests, read for its analysis, keeps of most of
 /// them the same user agent and nothing else, held once.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Lists {

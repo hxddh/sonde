@@ -6,7 +6,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crate::session::Session;
+use crate::run::RunFile;
 
 /// Path segments that say what a layout is, not what the data is: kept.
 const STRUCTURAL: &[&str] = &[
@@ -151,26 +151,26 @@ impl Redactor {
     }
 }
 
-/// Makes a session safe to hand on: bucket names and every key segment
-/// become tokens (the same name, the same token, within this session; the
+/// Makes a run safe to hand on: bucket names and every key segment
+/// become tokens (the same name, the same token, within this run; the
 /// layout's own names and file types are kept), and headers, bodies,
 /// request ids, URLs, the program's output and its arguments are dropped.
-pub fn redact(s: &mut Session) {
+pub fn redact(s: &mut RunFile) {
     redact_all(&mut [s]);
 }
 
-/// [`redact`] of sessions shown together (a run and its baseline): the same
+/// [`redact`] of runs shown together (a run and its baseline): the same
 /// name, the same token, in each, so what they share still compares.
-pub fn redact_all(sessions: &mut [&mut Session]) {
+pub fn redact_all(runs: &mut [&mut RunFile]) {
     let r = Redactor {
         salt: rand::random(),
     };
-    for s in sessions {
+    for s in runs {
         redact_with(s, &r);
     }
 }
 
-fn redact_with(s: &mut Session, r: &Redactor) {
+fn redact_with(s: &mut RunFile, r: &Redactor) {
     s.header.url = String::new();
     s.header.endpoint = "endpoint".into();
     s.header.region = String::new();
@@ -235,11 +235,11 @@ fn redact_with(s: &mut Session, r: &Redactor) {
 mod tests {
     use super::*;
     use crate::profile::RequestPrices;
-    use crate::session::SessionHeader;
+    use crate::run::RunHeader;
     use chrono::DateTime;
     use reqlog::Record;
 
-    fn session() -> Session {
+    fn run() -> RunFile {
         let rec = |id: u64, key: &str| {
             Record {
             id,
@@ -260,8 +260,8 @@ mod tests {
             ..Default::default()
         }
         };
-        Session {
-            header: SessionHeader::new(
+        RunFile {
+            header: RunHeader::new(
                 "prod",
                 "https://s3.amazonaws.com",
                 "us-east-1",
@@ -277,12 +277,11 @@ mod tests {
     }
 
     #[test]
-    fn a_redacted_session_keeps_its_shape_and_none_of_its_names() {
-        let mut s = session();
+    fn a_redacted_run_keeps_its_shape_and_none_of_its_names() {
+        let mut s = run();
         redact(&mut s);
         let page =
-            serde_json::to_string(&crate::share::session_json(&s, &RequestPrices::default()))
-                .unwrap();
+            serde_json::to_string(&crate::share::run_json(&s, &RequestPrices::default())).unwrap();
         for secret in [
             "acme",
             "alice",
@@ -314,7 +313,7 @@ mod tests {
 
     #[test]
     fn nothing_that_names_the_data_survives_redaction() {
-        let mut s = session();
+        let mut s = run();
         let r = &mut s.records[0];
         r.key = Some("hr/john.smith".into());
         r.rare_mut().job = Some("payroll-alice".into());
@@ -338,13 +337,13 @@ mod tests {
 
     #[test]
     fn who_sent_a_request_and_from_which_region_do_not_survive_redaction() {
-        let mut s = session();
+        let mut s = run();
         s.records[0].rare_mut().requester = Some("arn:aws:iam::123456789012:user/alice".into());
         s.records[0].rare_mut().region = Some("eu-west-3".into());
         s.header.region = "eu-west-3".into();
         redact(&mut s);
-        let doc = serde_json::to_string(&crate::share::session_json(&s, &RequestPrices::default()))
-            .unwrap();
+        let doc =
+            serde_json::to_string(&crate::share::run_json(&s, &RequestPrices::default())).unwrap();
         for secret in ["123456789012", "alice", "eu-west-3"] {
             assert!(!doc.contains(secret), "{secret} leaked");
         }

@@ -12,7 +12,7 @@ use reqlog::RequestLog;
 use serde_json::json;
 use sonde_proxy::episode::episodes;
 use sonde_proxy::replay::{self, ReplayOptions};
-use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
+use sonde_proxy::run::{RunFile, RunHeader, RunWriter};
 use sonde_proxy::view::Analysis;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
 
@@ -23,7 +23,7 @@ struct Recording {
     path: PathBuf,
     endpoint: String,
     log: RequestLog,
-    writer: Arc<SessionWriter>,
+    writer: Arc<RunWriter>,
     /// The runtime it began on: where it is finished, from a handler that is in none.
     runtime: tokio::runtime::Handle,
 }
@@ -41,7 +41,7 @@ impl Recording {
     }
 
     /// [`Recording::finish`], waiting `grace` for the requests in flight.
-    /// Also what the recording lost ([`SessionWriter::not_written`]).
+    /// Also what the recording lost ([`RunWriter::not_written`]).
     async fn finish_within(mut self, grace: std::time::Duration) -> (String, Option<String>) {
         // compressing renames a new file over this one: a connection still
         // writing would write to a file nobody reads
@@ -51,7 +51,7 @@ impl Recording {
         let file = self.path.clone();
         drop(self);
         // finished: a tenth of its size; still a .sonde file every reader opens
-        let _ = sonde_proxy::session::compress(&file);
+        let _ = sonde_proxy::run::compress(&file);
         (file.to_string_lossy().into_owned(), lost)
     }
 }
@@ -263,13 +263,13 @@ async fn begin(
         .unwrap_or_else(|| "recording".into());
     let path = match &under {
         Some(u) => u.path.clone(),
-        None => sonde_proxy::session::fresh_path(
+        None => sonde_proxy::run::fresh_path(
             &dir,
             &format!("{}-{name}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
         ),
     };
     let cfg = client.config();
-    let mut header = SessionHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
+    let mut header = RunHeader::new(&endpoint, cfg.endpoint.as_str(), &cfg.region, command);
     if let Some(dir) = &cwd {
         header = header.ran_in(dir);
     }
@@ -282,7 +282,7 @@ async fn begin(
         .as_ref()
         .map(|u| Arc::new(sonde_proxy::fault::Faults::new(&u.scenario)));
     let made = under.as_ref().map(|u| u.made.clone()).unwrap_or_default();
-    let writer = Arc::new(SessionWriter::create(&path, &header).map_err(err_msg)?);
+    let writer = Arc::new(RunWriter::create(&path, &header).map_err(err_msg)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
     let started = background({
@@ -331,8 +331,8 @@ struct Cached {
     /// For a growing (uncompressed) file: where its unread lines start.
     read_to: Option<u64>,
     used: u64,
-    run: Arc<Session>,
-    /// A large run is kept lean ([`Session::open_lean`]): a request in
+    run: Arc<RunFile>,
+    /// A large run is kept lean ([`RunFile::open_lean`]): a request in
     /// full is then read from the file when it is asked for.
     lean: bool,
     analysis: Option<Arc<Analysis>>,
@@ -361,16 +361,16 @@ fn kept_lean(len: u64, compressed: bool) -> bool {
     }
 }
 
-fn open_run(path: &str) -> Result<Arc<Session>, String> {
+fn open_run(path: &str) -> Result<Arc<RunFile>, String> {
     cached_run(path).map(|(s, _)| s)
 }
 
 /// A run with every record in full: the one kept, or (a large run
 /// is kept lean) read again for the occasion.
-fn full_run(path: &str) -> Result<Arc<Session>, String> {
+fn full_run(path: &str) -> Result<Arc<RunFile>, String> {
     match cached_run(path)? {
         (s, false) => Ok(s),
-        _ => Ok(Arc::new(Session::open(Path::new(path)).map_err(err_msg)?)),
+        _ => Ok(Arc::new(RunFile::open(Path::new(path)).map_err(err_msg)?)),
     }
 }
 
@@ -386,7 +386,7 @@ fn full_record(path: &str, id: u64) -> Result<Option<reqlog::Record>, String> {
 
 /// One record in full from a run's file, for a run read lean (`s`:
 /// it has the ids the reading gave the file's records).
-fn record_from_file(path: &Path, s: &Session, id: u64) -> Result<Option<reqlog::Record>, String> {
+fn record_from_file(path: &Path, s: &RunFile, id: u64) -> Result<Option<reqlog::Record>, String> {
     if !s.records.iter().any(|r| r.id == id) {
         return Ok(None);
     }
@@ -407,13 +407,13 @@ fn record_from_file(path: &Path, s: &Session, id: u64) -> Result<Option<reqlog::
     }
 }
 
-fn cached_run(path: &str) -> Result<(Arc<Session>, bool), String> {
+fn cached_run(path: &str) -> Result<(Arc<RunFile>, bool), String> {
     let p = Path::new(path);
     let now = stamp(p)?;
     let used = USE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // a finished recording is compressed in place, and a tiny one can come
     // out larger: never read a compressed file as appended lines
-    let compressed = sonde_proxy::session::is_compressed(p);
+    let compressed = sonde_proxy::run::is_compressed(p);
     let grown = {
         let mut cache = CACHE.lock();
         match cache.get_mut(p) {
@@ -442,21 +442,21 @@ fn cached_run(path: &str) -> Result<(Arc<Session>, bool), String> {
                 let from = if was_lean { had } else { 0 };
                 s.records[from..]
                     .iter_mut()
-                    .for_each(sonde_proxy::session::lean);
+                    .for_each(sonde_proxy::run::lean);
             }
             (Arc::new(s), Some(to), lean)
         }
         None => {
             // where complete lines end, taken before the read: the next read starts there
             let to = (!compressed)
-                .then(|| sonde_proxy::session::complete_len(p).ok())
+                .then(|| sonde_proxy::run::complete_len(p).ok())
                 .flatten();
             let lean = kept_lean(now.0, compressed);
             // read outside the lock: another run opens meanwhile
             let s = if lean {
-                Session::open_lean(p)
+                RunFile::open_lean(p)
             } else {
-                Session::open(p)
+                RunFile::open(p)
             };
             (Arc::new(s.map_err(err_msg)?), to, lean)
         }
@@ -488,7 +488,7 @@ fn cached_run(path: &str) -> Result<(Arc<Session>, bool), String> {
 /// A run and what it amounts to (its operations, findings, signals),
 /// worked out once per version of the file: every view of it, and every
 /// page of its operations, is a look at this.
-fn analysis_of(path: &str) -> Result<(Arc<Session>, Arc<Analysis>), String> {
+fn analysis_of(path: &str) -> Result<(Arc<RunFile>, Arc<Analysis>), String> {
     let s = open_run(path)?;
     let p = Path::new(path);
     if let Some(a) = CACHE
@@ -676,7 +676,7 @@ fn trials_of(run: &Path) -> Vec<sonde_proxy::trial::Trial> {
     let program = header_of(run).and_then(|h| sonde_proxy::program::key_of(&h));
     let mut trials = sonde_proxy::trial::load_with_history(run, program.as_deref());
     for t in &mut trials {
-        t.run = sonde_proxy::trial::session_path(run, t)
+        t.run = sonde_proxy::trial::run_path(run, t)
             .filter(|p| p.is_file())
             .map(|p| p.to_string_lossy().into_owned());
     }
@@ -692,7 +692,7 @@ fn trial_marks(run: &Path) -> Vec<JsonValue> {
             json!({
                 "scenario": t.scenario,
                 "standing": t.standing,
-                "run": sonde_proxy::trial::session_path(run, t)
+                "run": sonde_proxy::trial::run_path(run, t)
                     .filter(|p| p.is_file())
                     .map(|p| p.to_string_lossy().into_owned()),
             })
@@ -1069,7 +1069,7 @@ fn count_records(path: &Path) -> usize {
     }
     // a finished run is compressed: counted whole, once, and the count
     // kept beside it
-    if len > from && sonde_proxy::session::is_compressed(path) {
+    if len > from && sonde_proxy::run::is_compressed(path) {
         let n = sonde_proxy::summary::counted(path).map_or(0, |c| c.requests as usize);
         COUNTS.lock().insert(path.to_path_buf(), (len, n, header));
         return n;
@@ -1105,7 +1105,7 @@ fn count_records(path: &Path) -> usize {
 const SHAPE_BINS: usize = sonde_proxy::summary::SHAPE_BINS;
 
 fn shape_of(path: &Path) -> Vec<u32> {
-    if !sonde_proxy::session::is_compressed(path) {
+    if !sonde_proxy::run::is_compressed(path) {
         return Vec::new();
     }
     sonde_proxy::summary::counted(path)
@@ -1114,7 +1114,7 @@ fn shape_of(path: &Path) -> Vec<u32> {
 }
 
 fn header_line(path: &Path) -> Option<String> {
-    sonde_proxy::session::header_line(path)
+    sonde_proxy::run::header_line(path)
 }
 
 /// [`Runs::code_change`]'s work: two runs' commits, the files between
@@ -1216,7 +1216,7 @@ fn code_change_of(before: &str, after: &str) -> Result<JsonValue, String> {
     }))
 }
 
-fn header_of(path: &Path) -> Option<SessionHeader> {
+fn header_of(path: &Path) -> Option<RunHeader> {
     serde_json::from_str(&header_line(path)?).ok()
 }
 
@@ -1233,7 +1233,7 @@ fn shell_exports(set: &[(String, String)], unset: &[String]) -> String {
 
 /// The requests of `bucket`/`key` in a run, in time order, each with
 /// the operation it belongs to.
-fn key_history_of(s: &Session, a: &Analysis, bucket: &str, key: &str) -> Vec<JsonValue> {
+fn key_history_of(s: &RunFile, a: &Analysis, bucket: &str, key: &str) -> Vec<JsonValue> {
     let mut rows: Vec<&reqlog::Record> = s
         .records
         .iter()
@@ -1256,7 +1256,7 @@ fn key_history_of(s: &Session, a: &Analysis, bucket: &str, key: &str) -> Vec<Jso
 async fn try_under(
     file: &Path,
     of: &str,
-    clean: &Session,
+    clean: &RunFile,
     clean_exit: i32,
     plan: &sonde_proxy::trial_plan::Plan,
     chosen: Vec<sonde_proxy::fault::Scenario>,
@@ -1309,9 +1309,9 @@ async fn try_under(
     for scenario in chosen {
         output.post(trial_event(&scenario.name, None));
         let under = Under {
-            path: sonde_proxy::session::fresh_path(
+            path: sonde_proxy::run::fresh_path(
                 &dir,
-                &sonde_proxy::trial::session_stem(&file, &scenario),
+                &sonde_proxy::trial::run_stem(&file, &scenario),
             ),
             of: of.clone(),
             scenario: scenario.clone(),
@@ -1382,7 +1382,7 @@ impl Runs {
                 }
                 // a finished run is listed from the counts kept beside
                 // it: never read whole to be listed
-                let counted = sonde_proxy::session::is_compressed(&p)
+                let counted = sonde_proxy::run::is_compressed(&p)
                     .then(|| sonde_proxy::summary::counted(&p))
                     .flatten();
                 let mut row = match counted {
@@ -1822,7 +1822,7 @@ impl Runs {
         let s = sonde();
         let original = full_run(&path)?;
         let base = s.client(&endpoint).map_err(crate::state::err)?;
-        let out = sonde_proxy::session::fresh_path(
+        let out = sonde_proxy::run::fresh_path(
             &s.paths().runs(),
             &format!("{}-replay", chrono::Local::now().format("%Y%m%d-%H%M%S")),
         );
@@ -1838,7 +1838,7 @@ impl Runs {
         .await
         .map_err(err_msg)?
         .map_err(err_msg)?;
-        let _ = sonde_proxy::session::compress(&file);
+        let _ = sonde_proxy::run::compress(&file);
         Ok(to_json(run))
     }
 
@@ -1847,7 +1847,7 @@ impl Runs {
     pub async fn compare(a: String, b: String) -> Result<JsonValue, String> {
         tokio::task::spawn_blocking(move || {
             let (sa, sb) = (open_run(&a)?, open_run(&b)?);
-            let price = |s: &Session| crate::state::request_prices_for(&s.header.endpoint);
+            let price = |s: &RunFile| crate::state::request_prices_for(&s.header.endpoint);
             let latency = sonde_proxy::profile::latency_changes(
                 &sonde_proxy::profile::profile(&sa.records, &price(&sa)),
                 &sonde_proxy::profile::profile(&sb.records, &price(&sb)),
@@ -2029,7 +2029,7 @@ impl Runs {
             // each run with the commit its code was at
             let dated: Vec<(
                 sonde_proxy::program::RunPoint,
-                Option<sonde_proxy::session::GitStamp>,
+                Option<sonde_proxy::run::GitStamp>,
             )> = runs
                 .into_iter()
                 .rev()
@@ -2189,7 +2189,7 @@ impl Runs {
         reqlog::private::write(&path, text).map_err(err_msg)?;
         // a finished run, kept as every other is: compressed, so the
         // list reads its shape (an open file being written has none)
-        sonde_proxy::session::compress(&path).map_err(err_msg)?;
+        sonde_proxy::run::compress(&path).map_err(err_msg)?;
         Ok(path.to_string_lossy().into_owned())
     }
 
@@ -2228,14 +2228,14 @@ impl Runs {
         {
             return Ok(p.to_string_lossy().into_owned());
         }
-        let path = sonde_proxy::session::fresh_path(&dir, &stem);
+        let path = sonde_proxy::run::fresh_path(&dir, &stem);
         // production traffic: an access log, CloudTrail events, a HAR
         if sonde_proxy::import::detect(&text).is_some() {
             let (_, run) = sonde_proxy::import::import(&text, &stem)?;
             sonde_proxy::import::save(&run, &path).map_err(err_msg)?;
         } else {
             reqlog::private::write(&path, text).map_err(err_msg)?;
-            if let Err(e) = Session::open(&path) {
+            if let Err(e) = RunFile::open(&path) {
                 let _ = std::fs::remove_file(&path);
                 return Err(format!("{name}: {e}"));
             }
@@ -2456,7 +2456,7 @@ mod tests {
         // a file still open (not compressed) is still growing: no shape yet
         assert!(shape_of(&path).is_empty());
         // as `example()` keeps it: every request in one of the slices
-        sonde_proxy::session::compress(&path).unwrap();
+        sonde_proxy::run::compress(&path).unwrap();
         let shape = shape_of(&path);
         assert_eq!(shape.len(), SHAPE_BINS);
         assert_eq!(shape.iter().sum::<u32>(), 172);
@@ -2618,15 +2618,14 @@ mod tests {
         let two = git(&["rev-parse", "HEAD"]);
         let run = |name: &str, commit: &str, n: u64| {
             let path = dir.path().join(name);
-            let mut h =
-                SessionHeader::new("ep", "http://s3", "", Some("python etl/load.py".into()));
+            let mut h = RunHeader::new("ep", "http://s3", "", Some("python etl/load.py".into()));
             h.cwd = Some(repo.to_string_lossy().into_owned());
-            h.git = Some(sonde_proxy::session::GitStamp {
+            h.git = Some(sonde_proxy::run::GitStamp {
                 commit: commit.into(),
                 branch: None,
                 dirty: false,
             });
-            let w = SessionWriter::create(&path, &h).unwrap();
+            let w = RunWriter::create(&path, &h).unwrap();
             for i in 0..n {
                 w.write(&reqlog::Record {
                     id: i + 1,
@@ -2663,15 +2662,15 @@ mod tests {
         );
         assert_eq!(c["files"][0]["notes"][0]["line"], 3, "{c:#}");
         // a commit that is not one is never handed to git
-        let mut bad = SessionHeader::new("ep", "http://s3", "", None);
-        bad.git = Some(sonde_proxy::session::GitStamp {
+        let mut bad = RunHeader::new("ep", "http://s3", "", None);
+        bad.git = Some(sonde_proxy::run::GitStamp {
             commit: "--output=/tmp/x".into(),
             branch: None,
             dirty: false,
         });
         bad.cwd = Some(repo.to_string_lossy().into_owned());
         let p = dir.path().join("bad.sonde");
-        drop(SessionWriter::create(&p, &bad).unwrap());
+        drop(RunWriter::create(&p, &bad).unwrap());
         assert!(code_change_of(&a, &p.to_string_lossy()).is_err());
     }
 
@@ -2680,19 +2679,18 @@ mod tests {
         use reqlog::Sink;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ci.sonde");
-        let w =
-            SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let w = RunWriter::create(&path, &RunHeader::new("ep", "http://s3", "", None)).unwrap();
         w.write(&reqlog::Record {
             id: 1,
             kind: "GetObject".into(),
             ..Default::default()
         });
         drop(w);
-        sonde_proxy::session::compress(&path).unwrap();
+        sonde_proxy::run::compress(&path).unwrap();
         let bytes = std::fs::read(&path).unwrap();
         assert!(bytes.starts_with(&[0x1f, 0x8b]));
         let text = file_text(&bytes).unwrap();
-        assert!(text.starts_with("{\"format\":\"sonde-session\""), "{text}");
+        assert!(text.starts_with("{\"format\":\"sonde-run\""), "{text}");
         assert_eq!(file_text(b"plain").unwrap(), "plain");
     }
 
@@ -2701,7 +2699,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.sonde");
         let mut f = std::fs::File::create(&path).unwrap();
-        writeln!(f, "{{\"format\":\"sonde-session\"}}").unwrap();
+        writeln!(f, "{{\"format\":\"sonde-run\"}}").unwrap();
         writeln!(f, "{{\"id\":1}}").unwrap();
         writeln!(f, "{{\"log\":{{\"text\":\"hello\"}}}}").unwrap();
         writeln!(f, "{{\"id\":2}}").unwrap();
@@ -2719,7 +2717,7 @@ mod tests {
         // another run written in its place, as long or longer
         drop(f);
         let mut g = std::fs::File::create(&path).unwrap();
-        writeln!(g, "{{\"format\":\"sonde-session\",\"other\":true}}").unwrap();
+        writeln!(g, "{{\"format\":\"sonde-run\",\"other\":true}}").unwrap();
         for i in 0..6 {
             writeln!(g, "{{\"id\":{i}}}").unwrap();
         }
@@ -2762,8 +2760,8 @@ mod tests {
         .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("live.sonde");
-        let header = SessionHeader::new("target", &upstream, "eu-west-1", None);
-        let writer = Arc::new(SessionWriter::create(&path, &header).unwrap());
+        let header = RunHeader::new("target", &upstream, "eu-west-1", None);
+        let writer = Arc::new(RunWriter::create(&path, &header).unwrap());
         let log = RequestLog::new(16);
         log.set_sink(Some(writer.clone()));
         let cfg = ProxyConfig {
@@ -2818,8 +2816,8 @@ mod tests {
         let (file, lost) = recording.finish().await;
         assert_eq!(Path::new(&file), path);
         assert_eq!(lost, None);
-        assert!(sonde_proxy::session::is_compressed(&path));
-        let s = Session::open(&path).unwrap();
+        assert!(sonde_proxy::run::is_compressed(&path));
+        let s = RunFile::open(&path).unwrap();
         assert_eq!(
             s.records.len(),
             1,
@@ -2833,8 +2831,7 @@ mod tests {
         use reqlog::Sink;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("grows.sonde");
-        let w =
-            SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let w = RunWriter::create(&path, &RunHeader::new("ep", "http://s3", "", None)).unwrap();
         let rec = |id| reqlog::Record {
             id,
             time: chrono::Utc::now(),
@@ -2849,7 +2846,7 @@ mod tests {
         w.write(&rec(1));
         drop(w);
         // finished: compressed in place, still longer than what was read
-        sonde_proxy::session::compress(&path).unwrap();
+        sonde_proxy::run::compress(&path).unwrap();
         assert!(std::fs::metadata(&path).unwrap().len() > live);
         assert_eq!(open_run(&p).unwrap().records.len(), 1);
     }
@@ -2858,8 +2855,7 @@ mod tests {
     /// the quicker; every seventh a write, one in fifty failed.
     fn many(path: &Path, n: u64) {
         use reqlog::Sink;
-        let w =
-            SessionWriter::create(path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let w = RunWriter::create(path, &RunHeader::new("ep", "http://s3", "", None)).unwrap();
         for i in 0..n {
             w.write(&reqlog::Record {
                 id: i + 1,
@@ -3033,14 +3029,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("lean.sonde");
         many(&path, 300);
-        sonde_proxy::session::compress(&path).unwrap();
+        sonde_proxy::run::compress(&path).unwrap();
         // (runs past `LEAN_FROM` on disk are kept so)
         assert!(kept_lean(LEAN_FROM + 1, true) && !kept_lean(LEAN_FROM, true));
         assert!(
             !kept_lean(LEAN_FROM * 5, false),
             "a live file is ten times its compressed size"
         );
-        let lean = Session::open_lean(&path).unwrap();
+        let lean = RunFile::open_lean(&path).unwrap();
         assert!(lean.records[41].rare().url.is_empty());
         let full = record_from_file(&path, &lean, 42).unwrap().unwrap();
         assert_eq!(full.rare().url, "http://s3/b/data/k00041");
@@ -3060,7 +3056,7 @@ mod tests {
         // live: counted as it grows, nothing kept
         assert_eq!(count_records(&path), 120);
         assert!(sonde_proxy::index::get(&path).counted.is_none());
-        sonde_proxy::session::compress(&path).unwrap();
+        sonde_proxy::run::compress(&path).unwrap();
         assert_eq!(count_records(&path), 120);
         assert_eq!(shape_of(&path).iter().sum::<u32>(), 120);
         let kept = sonde_proxy::summary::kept(&path).expect("kept in the index");
@@ -3075,8 +3071,7 @@ mod tests {
         use reqlog::Sink;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("live.sonde");
-        let w =
-            SessionWriter::create(&path, &SessionHeader::new("ep", "http://s3", "", None)).unwrap();
+        let w = RunWriter::create(&path, &RunHeader::new("ep", "http://s3", "", None)).unwrap();
         let rec = |id| reqlog::Record {
             id,
             time: chrono::Utc::now(),
@@ -3127,11 +3122,11 @@ mod tests {
             ..Default::default()
         };
         let clean = dir.join("20260101-000000-job.sonde");
-        let mut header = SessionHeader::new("ep", "http://s3", "", Some(command.into()));
+        let mut header = RunHeader::new("ep", "http://s3", "", Some(command.into()));
         if let Some(d) = cwd {
             header = header.ran_in(d);
         }
-        let w = SessionWriter::create(&clean, &header).unwrap();
+        let w = RunWriter::create(&clean, &header).unwrap();
         w.write(&rec(1, "PUT", "PutObject", None));
         w.write(&rec(2, "GET", "GetObject", None));
         w.write_log("clean output\n");
@@ -3141,15 +3136,15 @@ mod tests {
             .join("20260101-000000-job.slowdown.sonde");
         header.scenario = Some("slowdown".into());
         header.trial_of = Some("20260101-000000-job.sonde".into());
-        let w = SessionWriter::create(&trial, &header).unwrap();
+        let w = RunWriter::create(&trial, &header).unwrap();
         w.write(&rec(1, "PUT", "PutObject", Some("slowdown")));
         w.write(&rec(2, "PUT", "PutObject", None));
         w.write_log("trial output\n");
         w.flush().unwrap();
         let scenario = sonde_proxy::fault::scenario("slowdown").unwrap();
         let (c, t) = (
-            Session::open(&clean).unwrap(),
-            Session::open(&trial).unwrap(),
+            RunFile::open(&clean).unwrap(),
+            RunFile::open(&trial).unwrap(),
         );
         let mut verdict = sonde_proxy::trial::judge(&scenario, &c.records, 0, &t.records, 0);
         verdict.run = Some(trial.to_string_lossy().into_owned());
@@ -3295,7 +3290,7 @@ mod tests {
         let command = "cd etl; A='x y' python load.py \"s3://b/{trial}/in put\" | tee log-{trial}.txt && curl -s $AWS_ENDPOINT_URL/demo/missing.txt\ncurl -s x\\ y || true";
         let dir = tempfile::tempdir().unwrap();
         let (clean, _, _) = run_and_trial(dir.path(), command, None);
-        let plan = sonde_proxy::trial_plan::of(&Session::open(Path::new(&clean)).unwrap()).unwrap();
+        let plan = sonde_proxy::trial_plan::of(&RunFile::open(Path::new(&clean)).unwrap()).unwrap();
         assert_eq!(plan.command, command, "kept as written");
         assert_eq!(
             command_under(&plan.command, Some("slowdown")),

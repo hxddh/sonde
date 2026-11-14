@@ -10,7 +10,7 @@ use sonde_proxy::episode::Observation;
 use sonde_proxy::fixloop::{FindingChange, SinceLast, State};
 use sonde_proxy::profile::RunChange;
 use sonde_proxy::program::{money_text, ms_text};
-use sonde_proxy::session::SessionHeader;
+use sonde_proxy::run::RunHeader;
 use sonde_proxy::view::Analysis;
 
 use super::record::{paint, request_prices_for};
@@ -212,7 +212,7 @@ pub(super) fn since_lines(since: &SinceLast, color: bool) -> Vec<String> {
 pub(super) fn since_last(
     s: &Sonde,
     path: &Path,
-    header: &SessionHeader,
+    header: &RunHeader,
     records: &[Record],
     a: &Analysis,
 ) -> Option<SinceLast> {

@@ -1,4 +1,4 @@
-//! What reading a large session may cost, held by a test: sessions of any
+//! What reading a large run may cost, held by a test: runs of any
 //! size are a promise only while something fails when it is broken.
 //!
 //! Each test holds its peak memory to a budget: within a few percent from run
@@ -8,9 +8,9 @@
 //! held only at several times what it takes, so a test fails on a time
 //! that is wrong, not on a slow machine. docs/dev/performance.md has the figures.
 //!
-//! Ignored by default (they make sessions of up to a million requests); CI
-//! runs them optimised, each in a process of its own, with the sessions made
-//! once for all of them in `SONDE_BUDGET_SESSIONS`:
+//! Ignored by default (they make runs of up to a million requests); CI
+//! runs them optimised, each in a process of its own, with the runs made
+//! once for all of them in `SONDE_BUDGET_RUNS`:
 //! `cargo test --release -p sonde-proxy --test budgets -- --ignored --exact NAME`.
 
 mod support;
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use sonde_proxy::profile::RequestPrices;
-use sonde_proxy::session::Session;
+use sonde_proxy::run::RunFile;
 use sonde_proxy::view::Analysis;
 
 /// One at a time: the peak of memory is the process's, and the clock is
@@ -35,23 +35,23 @@ fn alone(first: bool) -> std::sync::MutexGuard<'static, ()> {
     ONE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The session `name`, made by `make` the first time: kept in
-/// `SONDE_BUDGET_SESSIONS` when it is set, so that tests run each in a
-/// process of its own make each session once; else made in `dir` for this
+/// The run `name`, made by `make` the first time: kept in
+/// `SONDE_BUDGET_RUNS` when it is set, so that tests run each in a
+/// process of its own make each run once; else made in `dir` for this
 /// test alone.
-fn session(dir: &Path, name: &str, make: impl FnOnce(&Path) -> u64) -> PathBuf {
-    let Some(kept) = std::env::var_os("SONDE_BUDGET_SESSIONS") else {
+fn run(dir: &Path, name: &str, make: impl FnOnce(&Path) -> u64) -> PathBuf {
+    let Some(kept) = std::env::var_os("SONDE_BUDGET_RUNS") else {
         let path = dir.join(name);
         make(&path);
         return path;
     };
     let path = PathBuf::from(kept).join(name);
     if !path.is_file() {
-        std::fs::create_dir_all(path.parent().expect("a folder")).expect("the sessions' folder");
-        // whole or not there: a test stopped half-way leaves no session
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("the runs' folder");
+        // whole or not there: a test stopped half-way leaves no run
         let part = path.with_extension("part");
         make(&part);
-        std::fs::rename(&part, &path).expect("the session kept");
+        std::fs::rename(&part, &path).expect("the run kept");
     }
     path
 }
@@ -88,7 +88,7 @@ fn held(name: &str, took: Duration, room: Duration, mib: u64) {
     assert!(took < room, "{name}: took {took:?}, past {room:?}");
 }
 
-/// What `sonde show` does with a session: read it (lean: what the analyses
+/// What `sonde show` does with a run: read it (lean: what the analyses
 /// read), then count it, group it into operations, find what stands out,
 /// reckon the four signals and where the time went, and what acting on the
 /// findings would leave ([`Analysis::of`]: `show`, `check` and the app's
@@ -96,7 +96,7 @@ fn held(name: &str, took: Duration, room: Duration, mib: u64) {
 /// it ([`Analysis::since_last`]). Returns how long it took, and the analysis.
 fn read_as_show(path: &std::path::Path) -> (Duration, usize, Analysis) {
     let started = Instant::now();
-    let s = Session::open_lean(path).expect("the session opens");
+    let s = RunFile::open_lean(path).expect("the run opens");
     let opened = started.elapsed();
     let a = Analysis::of(&s, &RequestPrices::default());
     // and, a run of a program, against the run before it (none here)
@@ -125,7 +125,7 @@ const MILLION_MIB: u64 = 400;
 fn a_million_requests_are_read_within_their_memory() {
     let _alone = alone(true);
     let dir = tempfile::tempdir().expect("a folder");
-    let path = session(dir.path(), "lake-1000000-1.sonde", |p| {
+    let path = run(dir.path(), "lake-1000000-1.sonde", |p| {
         support::lake(1_000_000, p, 1)
     });
     let before = peak_mib();
@@ -162,16 +162,16 @@ fn two_runs_of_a_million_requests_compare_within_what_one_costs() {
     use sonde_proxy::profile::{Run, compare_runs};
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
-    let a = session(dir.path(), "lake-1000000-1.sonde", |p| {
+    let a = run(dir.path(), "lake-1000000-1.sonde", |p| {
         support::lake(1_000_000, p, 1)
     });
-    let b = session(dir.path(), "lake-1000000-2.sonde", |p| {
+    let b = run(dir.path(), "lake-1000000-2.sonde", |p| {
         support::lake(1_000_000, p, 2)
     });
     peak_from_now();
     let started = Instant::now();
     let run = |p: &std::path::Path| {
-        let s = Session::open_lean(p).expect("the session opens");
+        let s = RunFile::open_lean(p).expect("the run opens");
         Run::analysed(&s.header, &s.records, &RequestPrices::default())
     };
     let (ra, rb) = (run(&a), run(&b));
@@ -198,7 +198,7 @@ fn two_runs_of_a_million_requests_compare_within_what_one_costs() {
 fn an_outage_of_three_hundred_thousand_requests_is_read_within_its_memory() {
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
-    let path = session(dir.path(), "outage-300000.sonde", |p| {
+    let path = run(dir.path(), "outage-300000.sonde", |p| {
         support::outage(300_000, p)
     });
     peak_from_now();
@@ -217,7 +217,7 @@ fn an_outage_of_three_hundred_thousand_requests_is_read_within_its_memory() {
 fn small_uploads_of_three_hundred_thousand_requests_are_read_within_their_memory() {
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
-    let path = session(dir.path(), "uploads-300000.sonde", |p| {
+    let path = run(dir.path(), "uploads-300000.sonde", |p| {
         support::small_uploads(300_000, p)
     });
     peak_from_now();
@@ -243,14 +243,14 @@ fn small_uploads_of_three_hundred_thousand_requests_are_read_within_their_memory
 fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory() {
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
-    let path = session(dir.path(), "lake-100000-2.sonde", |p| {
+    let path = run(dir.path(), "lake-100000-2.sonde", |p| {
         support::lake(100_000, p, 2)
     });
     peak_from_now();
-    // what the bridge does when a window opens a session: read it, analyse
+    // what the bridge does when a window opens a run: read it, analyse
     // it, and build the view that is sent (the first page and the totals)
     let started = Instant::now();
-    let s = Session::open(&path).expect("the session opens");
+    let s = RunFile::open(&path).expect("the run opens");
     let a = Analysis::of(&s, &RequestPrices::default());
     let view = serde_json::Value::Object(a.view(&path.to_string_lossy(), &s.header));
     let took = started.elapsed();
@@ -270,7 +270,7 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory
         Duration::from_secs(6),
         250,
     );
-    // and it does not grow with the session: a page of operations, not all
+    // and it does not grow with the run: a page of operations, not all
     assert_eq!(
         view["operations"].as_array().map(Vec::len),
         Some(sonde_proxy::view::PAGE)
@@ -316,12 +316,12 @@ fn the_time_pane_of_a_million_requests_draws_bounded_rows() {
     use sonde_proxy::signals::{signals, signals_from};
     let _alone = alone(false);
     let dir = tempfile::tempdir().expect("a folder");
-    let path = session(dir.path(), "lake-1000000-1.sonde", |p| {
+    let path = run(dir.path(), "lake-1000000-1.sonde", |p| {
         support::lake(1_000_000, p, 1)
     });
     peak_from_now();
     let started = Instant::now();
-    let s = Session::open_lean(&path).expect("the session opens");
+    let s = RunFile::open_lean(&path).expect("the run opens");
     let prices = RequestPrices::default();
     let (p, g) = (profile(&s.records, &prices), signals(&s.records, &prices));
     // what the bridge sends the pane: its rows bounded by the slices

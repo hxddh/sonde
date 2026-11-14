@@ -1,7 +1,7 @@
-//! A session as a window shows it: analysed once, then looked at in pages.
+//! A run as a window shows it: analysed once, then looked at in pages.
 //! The view carries the totals, the signals, the profile, the findings and
 //! the first page of operations; the rest are asked for in ranges, sorted
-//! and narrowed here. What is sent does not grow with the session.
+//! and narrowed here. What is sent does not grow with the run.
 
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use crate::episode::{
 };
 use crate::fixes::WhatIf;
 use crate::profile::{Profile, RequestPrices};
-use crate::session::Session;
+use crate::run::RunFile;
 use crate::signals::Signals;
 use crate::summary::Summary;
 
@@ -39,7 +39,7 @@ pub enum Sort {
     Requests,
 }
 
-/// A range of a session's operations, as the table asks for it.
+/// A range of a run's operations, as the table asks for it.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Query {
@@ -77,7 +77,7 @@ impl Query {
     }
 }
 
-/// A session, analysed.
+/// A run, analysed.
 pub struct Analysis {
     pub episodes: Vec<Episode>,
     pub observations: Vec<Observation>,
@@ -115,7 +115,7 @@ impl Analysis {
     pub fn since_last(
         &self,
         path: &std::path::Path,
-        header: &crate::session::SessionHeader,
+        header: &crate::run::RunHeader,
         records: &[reqlog::Record],
         prices: &dyn Fn(&str) -> RequestPrices,
     ) -> Option<crate::fixloop::SinceLast> {
@@ -137,14 +137,14 @@ impl Analysis {
         crate::fixloop::since_last(&dir, path, header, records, run, prices)
     }
 
-    pub fn of(s: &Session, prices: &RequestPrices) -> Analysis {
+    pub fn of(s: &RunFile, prices: &RequestPrices) -> Analysis {
         Analysis::of_records(&s.header, &s.records, prices)
     }
 
-    /// Everything a session amounts to, worked out once: its counts, its
+    /// Everything a run amounts to, worked out once: its counts, its
     /// signals, where its time went, its operations and its findings.
     pub fn of_records(
-        header: &crate::session::SessionHeader,
+        header: &crate::run::RunHeader,
         records: &[reqlog::Record],
         prices: &RequestPrices,
     ) -> Analysis {
@@ -299,7 +299,7 @@ impl Analysis {
                     Sort::Requests => e.records.len() as i64,
                 }
             };
-            // equal ones in the session's order, whichever way the rest go
+            // equal ones in the run's order, whichever way the rest go
             order.sort_by(|a, b| {
                 let (x, y) = (by(*a), by(*b));
                 let c = if key.descending { y.cmp(&x) } else { x.cmp(&y) };
@@ -376,7 +376,7 @@ impl Analysis {
     /// What a window opens with: everything but the operations past the
     /// first page, and the findings' operations past the first
     /// [`FINDING_EPISODES`].
-    pub fn view(&self, path: &str, header: &crate::session::SessionHeader) -> Map<String, Value> {
+    pub fn view(&self, path: &str, header: &crate::run::RunHeader) -> Map<String, Value> {
         let mut formats: std::collections::BTreeMap<&str, usize> = Default::default();
         let mut shapes: std::collections::BTreeMap<String, usize> = Default::default();
         for e in &self.episodes {
@@ -447,7 +447,7 @@ mod tests {
     use super::*;
     use reqlog::Record;
 
-    fn session(n: u64) -> Session {
+    fn run(n: u64) -> RunFile {
         let records = (0..n)
             .map(|i| Record {
                 id: i + 1,
@@ -462,8 +462,8 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        Session {
-            header: crate::session::SessionHeader::new("e", "https://e", "r", None),
+        RunFile {
+            header: crate::run::RunHeader::new("e", "https://e", "r", None),
             records,
             logs: Vec::new(),
         }
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn the_view_carries_the_first_page_and_the_count_of_the_rest() {
-        let s = session(1800);
+        let s = run(1800);
         let a = Analysis::of(&s, &RequestPrices::default());
         assert_eq!(a.episodes.len(), 1800);
         let v = a.view("p.sonde", &s.header);
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(v["span"]["start"], json!(a.episodes[0].start));
         assert_eq!(v["families"]["kinds"]["request"], 1800);
         // the view of 1800 operations is no larger than that of 500
-        let small = Analysis::of(&session(500), &RequestPrices::default());
+        let small = Analysis::of(&run(500), &RequestPrices::default());
         let (big, little) = (
             serde_json::to_string(&v["operations"]).unwrap().len(),
             serde_json::to_string(&small.view("p", &s.header)["operations"])
@@ -497,10 +497,10 @@ mod tests {
 
     #[test]
     fn pages_follow_the_tables_sorting_and_narrowing() {
-        let s = session(1800);
+        let s = run(1800);
         let a = Analysis::of(&s, &RequestPrices::default());
         let q = |json: Value| -> Query { serde_json::from_value(json).unwrap() };
-        // the next page of the session's own order
+        // the next page of the run's own order
         let p = a.page(&q(json!({ "offset": 500, "limit": 3 })));
         assert_eq!(p["total"], 1800);
         let idx = |p: &Value| -> Vec<u64> {
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn a_finding_lists_some_of_its_operations_and_counts_them_all() {
         // one key read 600 times: a finding about 600 operations
-        let mut s = session(600);
+        let mut s = run(600);
         for r in &mut s.records {
             r.key = Some("conf.json".into());
             r.method = "GET".into();

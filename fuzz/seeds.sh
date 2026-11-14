@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Fills fuzz/corpus/<target> with real inputs to start from: the decoders'
-# samples, the sessions the tests read, and a few lines of each log.
+# samples, the runs the tests read, and a few lines of each log.
 set -eu
 cd "$(dirname "$0")"
 samples=../crates/decoders/samples
@@ -11,7 +11,7 @@ copy iceberg_avro $(find $samples/iceberg -name '*.avro')
 copy slatedb $(find $samples/slatedb -type f)
 copy lakefs $(find $samples/lakefs/sample/_lakefs -type f)
 copy woodpecker $(find $samples/woodpecker -name '*.blk')
-copy session_lines ../crates/proxy/tests/fixtures/*.sonde
+copy run_lines ../crates/proxy/tests/fixtures/*.sonde
 # (what follows "79a5 lake [", which the target puts before each input)
 seed import_access_log
 printf '%s\n' '06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a "GET /lake/t/a HTTP/1.1" 200 - 4096 4096 12 10 "-" "boto3/1.34" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -' \

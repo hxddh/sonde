@@ -1,4 +1,4 @@
-//! A session's requests split by one dimension (`sonde show --by`, the
+//! A run's requests split by one dimension (`sonde show --by`, the
 //! app's Group by): the operations table's figures for each prefix, size,
 //! caller, SDK, status or kind, and one sentence saying where the slow
 //! and the costly requests concentrate.
@@ -74,22 +74,22 @@ pub struct Row {
     pub p99_ms: f64,
     /// The program's waiting that was theirs ([`crate::profile::Group::waited_ms`]).
     pub waited_ms: f64,
-    /// `waited_ms` over the session's waiting (the rows add up to 1).
+    /// `waited_ms` over the run's waiting (the rows add up to 1).
     pub share: f64,
     pub cost: f64,
     pub cost_share: f64,
-    /// Of them, slow requests (the session's slowest tenth).
+    /// Of them, slow requests (the run's slowest tenth).
     pub slow: usize,
 }
 
-/// A session split by one dimension.
+/// A run split by one dimension.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Split {
     pub by: Dimension,
     /// The SDK that sent most requests (`boto3 1.44`), from their user agent.
     pub sdk: Option<String>,
-    /// A request this slow or slower is slow: the session's p90 (0 when
+    /// A request this slow or slower is slow: the run's p90 (0 when
     /// there are too few to say).
     pub slow_ms: f64,
     pub slow: usize,
@@ -179,7 +179,7 @@ impl Keyer {
 /// The SDK most of `records` were sent by (one answer for every view).
 pub use crate::callers::sdk_of;
 
-/// The requests at or over the session's p90: the slowest tenth (none with
+/// The requests at or over the run's p90: the slowest tenth (none with
 /// fewer than [`FEW_SLOW`] of them, or no times).
 fn slow_ms(records: &[Record]) -> f64 {
     let mut lat: Vec<f64> = records.iter().map(|r| r.latency_ms.max(0.0)).collect();
@@ -455,7 +455,7 @@ mod tests {
     }
 
     /// 40 small fast reads under data/, 10 large slow writes under wal/.
-    fn session() -> Vec<Record> {
+    fn run() -> Vec<Record> {
         let mut out = Vec::new();
         for i in 0..40 {
             out.push(rec(i, "GetObject", &format!("data/{i}"), 5.0, 1000));
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn the_sentence_names_where_the_slow_requests_are_and_narrows_them() {
-        let s = split(&session(), Dimension::Prefix, &RequestPrices::default());
+        let s = split(&run(), Dimension::Prefix, &RequestPrices::default());
         assert_eq!(s.sdk.as_deref(), Some("boto3 1.44"));
         assert_eq!(s.rows[0].key, "b/wal/");
         assert_eq!(s.rows[0].slow, 10);
@@ -478,11 +478,11 @@ mod tests {
             "100% of the slow requests (over 300 ms) are under b/wal/."
         );
         // by kind: one kind, nothing to tell apart
-        let s = split(&session(), Dimension::Kind, &RequestPrices::default());
+        let s = split(&run(), Dimension::Kind, &RequestPrices::default());
         assert_eq!(s.rows.len(), 1);
         assert_eq!(s.text, "");
         // by size, and narrowed by prefix: all of the slow requests are both
-        let mut recs = session();
+        let mut recs = run();
         // 10 more large reads under data/, fast
         for i in 50..60 {
             recs.push(rec(i, "GetObject", &format!("data/{i}"), 5.0, 20 << 20));

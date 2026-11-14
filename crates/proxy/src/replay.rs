@@ -1,6 +1,6 @@
-//! Replaying a recorded session on another endpoint, and comparing the two.
+//! Replaying a recorded run on another endpoint, and comparing the two.
 //!
-//! A session does not keep object data, and the identifiers an endpoint hands
+//! A run does not keep object data, and the identifiers an endpoint hands
 //! out — upload ids, ETags, continuation tokens — differ from one endpoint to
 //! the next. Replay therefore re-enacts each request rather than re-sending
 //! bytes:
@@ -142,7 +142,7 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
     if r.kind == "Unknown" {
         return Some("not an S3 operation sonde knows".into());
     }
-    // by what the request is, not only by the name the session stored
+    // by what the request is, not only by the name the run stored
     // (by what the request is: a `PUT /b?inventory` stored as CreateBucket
     // is a bucket's setting)
     let what = named(r);
@@ -627,7 +627,7 @@ pub struct Difference {
     pub conditions: Vec<String>,
 }
 
-/// The two sessions side by side.
+/// The two runs side by side.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Comparison {
@@ -664,7 +664,7 @@ pub fn is_replay(records: &[Record]) -> bool {
     records.iter().any(|r| original_of(r).is_some())
 }
 
-/// Compares an original session with its replay (records tagged by
+/// Compares an original run with its replay (records tagged by
 /// [`replay_tag`]). `replayed` gives the reasons for requests not sent.
 pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) -> Comparison {
     compare_answers(original, &answers(replay), replayed)
@@ -672,7 +672,7 @@ pub fn compare(original: &[Record], replay: &[Record], replayed: &[Replayed]) ->
 
 /// What [`compare`] reads of a replay: each [`Answer`] by the request it
 /// repeats. A few bytes a request: a replay is read, kept as this, and let
-/// go before its session is read.
+/// go before its run is read.
 pub fn answers(replay: &[Record]) -> HashMap<u64, Answer> {
     replay
         .iter()
@@ -818,7 +818,7 @@ fn replay_prefix_len(k: &str) -> Option<usize> {
     ok.then_some("replay-".len() + end + 1)
 }
 
-/// A replay done: its session file, what it was, and how it compares.
+/// A replay done: its run file, what it was, and how it compares.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplayRun {
@@ -930,12 +930,12 @@ async fn delete_keys(
     removed
 }
 
-/// Replays `original` with `base`'s endpoint into a new session file at
+/// Replays `original` with `base`'s endpoint into a new run file at
 /// `out`, under a prefix of its own (an empty one is refused), deletes what
 /// it wrote under the prefix, and compares the answers.
 pub async fn replay_to_file(
     base: &S3Client,
-    original: &crate::session::Session,
+    original: &crate::run::RunFile,
     opts: &ReplayOptions,
     out: &std::path::Path,
     progress: impl FnMut(usize, usize),
@@ -949,14 +949,13 @@ pub async fn replay_to_file(
         .command
         .clone()
         .unwrap_or_else(|| original.header.endpoint.clone());
-    let header = crate::session::SessionHeader::new(
+    let header = crate::run::RunHeader::new(
         &cfg.endpoint_id,
         cfg.endpoint.as_str(),
         &cfg.region,
         Some(format!("replay of {name}")),
     );
-    let writer =
-        Arc::new(crate::session::SessionWriter::create(out, &header).map_err(|e| e.to_string())?);
+    let writer = Arc::new(crate::run::RunWriter::create(out, &header).map_err(|e| e.to_string())?);
     // cleanup deletes everything under the prefix: it must hold nothing before
     for b in buckets_of(&original.records, opts) {
         let why = match base.list_all(&b, &opts.prefix, 1).await {
@@ -1030,7 +1029,7 @@ pub async fn replay_to_file(
             unaborted_uploads += up.upload.len();
         }
     }
-    let replayed = crate::session::Session::open(out)?;
+    let replayed = crate::run::RunFile::open(out)?;
     let comparison = compare(&original.records, &replayed.records, &done);
     Ok(ReplayRun {
         path: out.to_path_buf(),
@@ -1046,7 +1045,7 @@ pub async fn replay_to_file(
     })
 }
 
-/// A session as text to compare with another: one line per request, in
+/// A run as text to compare with another: one line per request, in
 /// order — operation, target (a replay's prefix taken off), the conditions
 /// it carried, and its outcome.
 pub fn transcript(records: &[Record]) -> String {

@@ -13,7 +13,7 @@ use crate::fault::Scenario;
 use crate::program::Budget;
 
 /// The `[check]` table: a run's budget, kept with the code it is about
-/// (`max-waiting` in ms, or "2s"; `baseline` a session,
+/// (`max-waiting` in ms, or "2s"; `baseline` a run,
 /// `auto`, or an https URL of one).
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

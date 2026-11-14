@@ -16,19 +16,19 @@ confirms with `--confirm COUNT`, and display text leaves the promise. 20.0 reads
 --program-exit` is gone (the session keeps the exit); a program's key keeps its numbers (`--limit 30` and `--limit 5`
 are two programs); `compare -f json` requires `waitingKnown`; `--again` implies `--trial`.
 
-**22.0** broke: a recording is a run everywhere (`sonde runs`, the data directory's `runs/`, `"run"` for
-`"session"` in JSON, `runs.schema.json`); `-f` is `text` or `json` (`check` adds `markdown`, `github`; `csv` and the
-other `markdown`s go); plain `run` and `proxy` default to policy `allow`; `share` writes one HTML file (`--html`,
-`--serve`, `--port`, `--otlp` and `--to` go); `proxy --rotate/--alert` and `import --follow/--every/--alert` go;
-`--confirm` is `--yes` after a dry run; `check` loses `--max-cost`, `--max-p95` and `--no-new-warnings` (a baseline
-always holds a run to no new warning), and the `sonde.toml` keys with them; a program is named by `sh -c`'s command
-and a container's image; all state beside the runs is in the folder's one index.
+**22.0** broke: a recording is a run everywhere (`sonde runs`, the data directory's `runs/`, `"run"` for `"session"`
+in JSON, `runs.schema.json`, the file format `sonde-run`); `-f` is `text` or `json` (`check` adds `markdown`,
+`github`; `csv` and the other `markdown`s go); plain `run` and `proxy` default to policy `allow`; `share` writes one
+HTML file (`--html`, `--serve`, `--port`, `--otlp` and `--to` go); `proxy --rotate/--alert` and `import
+--follow/--every/--alert` go; `--confirm` is `--yes` after a dry run; `check` loses `--max-cost`, `--max-p95` and
+`--no-new-warnings` (a baseline always holds a run to no new warning), and the `sonde.toml` keys with them; a program
+is named by `sh -c`'s command and a container's image; all state beside the runs is in the folder's one index.
 
 ## Stable
 
 | | What | Documented in | Tested by |
 |---|---|---|---|
-| Run files | The `.sonde` format: header, records, log lines, versioning | [run-format.md](dev/run-format.md) | `the_format_as_its_spec_says` (`crates/proxy/src/session.rs`) |
+| Run files | The `.sonde` format: header, records, log lines, versioning | [run-format.md](dev/run-format.md) | `the_format_as_its_spec_says` (`crates/proxy/src/run.rs`) |
 | JSON outputs | Every `-f json` output: required fields, types, meanings | [schemas/](schemas/), one JSON Schema (draft 2020-12) each | `crates/sonde-cli/tests/schemas.rs` (real outputs against the schemas) |
 | `sonde.toml` | `[check]` (`max-requests`, `max-waiting`, `max-errors`, `expect`, `tolerance`, `baseline`), `[program]` (`name`, `runs`), `[record]` (`policy`, `name-callers`, `tls`), `[[scenario]]` (`name`, `fault`, `on`, `prefix`, `times`), and each value's meaning | [configuration.md](configuration.md#sondetoml), [cli.md](cli.md) (`check`), [trials.md](trials.md#a-projects-own-scenarios), [recording.md](recording.md#what-a-recorded-program-may-do) | `crates/proxy/src/project.rs` (one reader for CLI and app) |
 | `config.toml` | Its place, `[settings]` (`concurrency`, `rate-limit`, `theme`, `high-contrast`, `language`, `exports-dir`, `downloads-dir`, `prices`), `[[endpoint]]` (`id`, `name`, `url`, `region`, `vendor`, `path-style`, `ca-file`, `buckets`, `sign-payload`, `credentials`), and each value's meaning | [configuration.md](configuration.md#configtoml), [credentials.md](credentials.md) | `crates/sonde-core/src/config.rs` |

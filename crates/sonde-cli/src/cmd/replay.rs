@@ -8,7 +8,7 @@ use std::sync::Arc;
 use clap::Args;
 use sonde_core::Sonde;
 use sonde_proxy::profile::{Profile, profile};
-use sonde_proxy::session::Session;
+use sonde_proxy::run::RunFile;
 
 use crate::output::{self, Format};
 
@@ -116,7 +116,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         None => {
             let dir = s.paths().runs();
             std::fs::create_dir_all(&dir)?;
-            sonde_proxy::session::fresh_path(
+            sonde_proxy::run::fresh_path(
                 &dir,
                 &format!("{}-replay", chrono::Local::now().format("%Y%m%d-%H%M%S")),
             )
@@ -130,7 +130,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     })
     .await
     .map_err(|e| anyhow::anyhow!(e))?;
-    let _ = sonde_proxy::session::compress(&path);
+    let _ = sonde_proxy::run::compress(&path);
     if show {
         eprint!("\r\x1b[2K");
     }
@@ -194,7 +194,7 @@ async fn replay_on(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
         ),
         _ => {
             print_comparison(&c, std::io::stdout().is_terminal());
-            if let Ok(replayed) = Session::open(&path) {
+            if let Ok(replayed) = RunFile::open(&path) {
                 print_latency(
                     &original.records,
                     &replayed.records,
@@ -251,11 +251,11 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
     std::fs::create_dir_all(&dir)?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let runs = futures::future::join_all(targets.iter().map(|(id, client)| {
-        let path = sonde_proxy::session::fresh_path(&dir, &format!("{stamp}-replay-{id}"));
+        let path = sonde_proxy::run::fresh_path(&dir, &format!("{stamp}-replay-{id}"));
         let (original, opts) = (&original, &opts);
         async move {
             let run = rp::replay_to_file(client, original, opts, &path, |_, _| {}).await;
-            let _ = sonde_proxy::session::compress(&path);
+            let _ = sonde_proxy::run::compress(&path);
             (id.clone(), path, run)
         }
     }))
@@ -285,7 +285,7 @@ async fn replay_many(s: &Arc<Sonde>, a: &ReplayArgs) -> anyhow::Result<i32> {
             );
             failed += 1;
         }
-        let replayed = Session::open(&path).map_err(|e| anyhow::anyhow!(e))?;
+        let replayed = RunFile::open(&path).map_err(|e| anyhow::anyhow!(e))?;
         columns.push(id.clone());
         stores.push((
             id,

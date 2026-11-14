@@ -1,5 +1,5 @@
 //! The four signals of real recordings (tests/fixtures) and of small made-up
-//! sessions: what they say adds up to what the profile and the summary say.
+//! runs: what they say adds up to what the profile and the summary say.
 
 use std::path::Path;
 use std::time::Instant;
@@ -7,7 +7,7 @@ use std::time::Instant;
 use chrono::DateTime;
 use reqlog::Record;
 use sonde_proxy::profile::{RequestPrices, profile};
-use sonde_proxy::session::Session;
+use sonde_proxy::run::RunFile;
 use sonde_proxy::signals::{SPARK_COLUMNS, Signals, signals, sparkline, text};
 use sonde_proxy::summary::summarize;
 
@@ -20,8 +20,8 @@ const FIXTURES: [&str; 6] = [
     "slatedb.sonde",
 ];
 
-fn load(name: &str) -> Session {
-    Session::open(
+fn load(name: &str) -> RunFile {
+    RunFile::open(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(name),
@@ -323,7 +323,7 @@ fn the_signals_of_every_recording_add_up_to_its_profile_and_summary() {
 }
 
 #[test]
-fn a_session_without_times_has_no_latency_and_no_first_byte() {
+fn a_run_without_times_has_no_latency_and_no_first_byte() {
     // a CloudTrail file: when each request was made, not how long it took
     let recs: Vec<Record> = (0..20)
         .map(|i| rec(i + 1, i as i64 * 500, "GetObject", 200, 0.0))
@@ -346,7 +346,7 @@ fn a_session_without_times_has_no_latency_and_no_first_byte() {
     assert!(t.contains("latency  not recorded"), "{t}");
     assert!(!t.contains("first byte"), "{t}");
 
-    // and of no session at all, nothing
+    // and of no run at all, nothing
     let none = signals(&[], &RequestPrices::default());
     assert_eq!(
         (none.bins, none.rate.value, none.errors.value),

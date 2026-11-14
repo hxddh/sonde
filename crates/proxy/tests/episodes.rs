@@ -3,10 +3,10 @@
 use std::path::Path;
 
 use sonde_proxy::episode::{Format, Outcome, Shape, episodes, observations};
-use sonde_proxy::session::Session;
+use sonde_proxy::run::RunFile;
 
-fn load(name: &str) -> Session {
-    Session::open(
+fn load(name: &str) -> RunFile {
+    RunFile::open(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(name),
@@ -237,7 +237,7 @@ fn lance_run_reads_as_versions() {
     );
 }
 
-/// Every title, note and observation of the recorded sessions is said by
+/// Every title, note and observation of the recorded runs is said by
 /// phrases with an English template, and those phrases say exactly the
 /// English text (the app says them in Chinese from the same keys).
 #[test]

@@ -1,6 +1,6 @@
 //! What to change in the program, by SDK: each finding a few lines of code
 //! that act on it (the change, not a whole program), and what acting on
-//! every finding would leave of a session (`what_if`).
+//! every finding would leave of a run (`what_if`).
 
 use reqlog::Record;
 use serde::Serialize;
@@ -215,13 +215,13 @@ pub fn for_sdk<'a>(fixes: &'a [Fix], sdk: Option<&str>) -> Option<&'a Fix> {
         .or_else(|| fixes.iter().find(|f| Some(f.sdk) == lang))
 }
 
-/// A session after acting on the findings that name what they save.
+/// A run after acting on the findings that name what they save.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WhatIf {
     /// Before and after.
     pub requests: (usize, usize),
-    /// None when the session's times cannot say it (an imported log's,
+    /// None when the run's times cannot say it (an imported log's,
     /// to the second).
     pub waiting_ms: Option<(f64, f64)>,
     pub cost: (f64, f64),
@@ -235,13 +235,13 @@ pub struct WhatIf {
 }
 
 /// What acting on the findings would leave, measured and not estimated: the
-/// requests the findings name are taken out of the session, and the session
+/// requests the findings name are taken out of the run, and the run
 /// without them is reckoned again. The waiting is the time with a request
 /// in flight among those left (a request that ran beside another saves
 /// nothing by going), the cost is the price of those left. A finding that
 /// saves time without removing a request (requests sent at once) takes its
 /// own figure off, when none of its requests is among those removed. A
-/// finding that does not name its requests is not counted. A session whose
+/// finding that does not name its requests is not counted. A run whose
 /// waiting is not known (`timed` false: an imported log's) says none, and
 /// counts no finding that saves only time.
 pub fn what_if(
@@ -266,7 +266,7 @@ pub fn what_if(
         gone.extend(o.saved_ids.iter().copied());
         counted.push(o);
     }
-    // never the whole session: a request each finding keeps is among the ids
+    // never the whole run: a request each finding keeps is among the ids
     // it does not name. Those left are added up where they are, not copied
     let left = || records.iter().filter(|r| !gone.contains(&r.id));
     let mut waiting = crate::profile::waiting_ms_of(left());

@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::fault::Scenario;
-use crate::session::Session;
+use crate::run::RunFile;
 
 /// A trial of a run, planned.
 #[derive(Debug)]
@@ -42,7 +42,7 @@ pub fn project_scenarios(dir: &Path) -> Result<Vec<Scenario>, String> {
 
 /// The plan of a trial of the run `s`; refused for a trial itself, a run of
 /// no command, and a run that sent no requests.
-pub fn of(s: &Session) -> Result<Plan, String> {
+pub fn of(s: &RunFile) -> Result<Plan, String> {
     if s.header.scenario.is_some() {
         return Err("this run is a trial itself: try the run it is a trial of".into());
     }
@@ -105,9 +105,9 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::SessionHeader;
+    use crate::run::RunHeader;
 
-    fn run(command: &str, cwd: Option<&Path>) -> Session {
+    fn run(command: &str, cwd: Option<&Path>) -> RunFile {
         let rec = |id: u64, method: &str, op: &str| reqlog::Record {
             id,
             time: chrono::Utc::now(),
@@ -118,11 +118,11 @@ mod tests {
             status: Some(200),
             ..Default::default()
         };
-        let mut header = SessionHeader::new("ep", "http://s3", "", Some(command.into()));
+        let mut header = RunHeader::new("ep", "http://s3", "", Some(command.into()));
         if let Some(d) = cwd {
             header = header.ran_in(d);
         }
-        Session {
+        RunFile {
             header,
             records: vec![rec(1, "PUT", "PutObject"), rec(2, "GET", "GetObject")],
             logs: Vec::new(),

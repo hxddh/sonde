@@ -14,7 +14,7 @@ use sonde_core::Sonde;
 use sonde_core::guard::human_bytes;
 use sonde_proxy::profile::{Profile, RequestPrices};
 use sonde_proxy::project::Project;
-use sonde_proxy::session::{SessionHeader, SessionWriter};
+use sonde_proxy::run::{RunHeader, RunWriter};
 use sonde_proxy::view::Analysis;
 use sonde_proxy::{Policy, Proxy, ProxyConfig};
 
@@ -53,7 +53,7 @@ pub struct Recording {
 pub(super) struct Started {
     pub(super) proxy: Proxy,
     pub(super) log: RequestLog,
-    pub(super) writer: Arc<SessionWriter>,
+    pub(super) writer: Arc<RunWriter>,
     pub(super) path: PathBuf,
 }
 
@@ -126,19 +126,19 @@ pub(super) async fn start_under(
             std::fs::create_dir_all(&dir)?;
             let name = sonde_proxy::program::file_stem(of.name.as_deref(), command.as_deref())
                 .unwrap_or_else(|| "proxy".into());
-            sonde_proxy::session::fresh_path(
+            sonde_proxy::run::fresh_path(
                 &dir,
                 &format!("{}-{name}", chrono::Local::now().format("%Y%m%d-%H%M%S")),
             )
         }
     };
     let ran = command.is_some();
-    let mut header = SessionHeader::new(&ep, cfg.endpoint.as_str(), &cfg.region, command);
+    let mut header = RunHeader::new(&ep, cfg.endpoint.as_str(), &cfg.region, command);
     if ran && let Ok(dir) = std::env::current_dir() {
         header = header.ran_in(&dir);
     }
     header.name = of.name.clone().filter(|n| !n.trim().is_empty());
-    // a session recorded again starts with no verdict of its last recording
+    // a run recorded again starts with no verdict of its last recording
     if under.is_none() {
         sonde_proxy::trial::remove(&path);
     }
@@ -149,7 +149,7 @@ pub(super) async fn start_under(
     // under no-delete a program may remove what it made (a trial's runs
     // share its clean run's)
     let made = of.made.clone().unwrap_or_default();
-    let writer = Arc::new(SessionWriter::create(&path, &header)?);
+    let writer = Arc::new(RunWriter::create(&path, &header)?);
     let log = RequestLog::new(4096);
     log.set_sink(Some(writer.clone()));
     let tls = if r.tls {
@@ -184,8 +184,8 @@ pub(super) async fn start_under(
 }
 
 /// The folder a run is in, where its program's runs are kept.
-pub(super) fn runs_dir(session: &std::path::Path) -> PathBuf {
-    match session.parent() {
+pub(super) fn runs_dir(run: &std::path::Path) -> PathBuf {
+    match run.parent() {
         Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
         _ => PathBuf::from("."),
     }
@@ -419,7 +419,7 @@ pub(super) fn print_summary(
     stdout: bool,
 ) {
     // (a run just recorded: its times are its own)
-    let header = SessionHeader::new(endpoint, "", "", None);
+    let header = RunHeader::new(endpoint, "", "", None);
     let analysis = Analysis::of_records(&header, records, prices);
     print_summary_of(&analysis, &header, path, color, stdout, false, None);
 }
@@ -432,7 +432,7 @@ pub(super) fn print_summary(
 /// run before. `all` adds the signals over the run and their tables.
 pub(super) fn print_summary_of(
     a: &Analysis,
-    header: &SessionHeader,
+    header: &RunHeader,
     path: &Path,
     color: bool,
     stdout: bool,
@@ -663,7 +663,7 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
         if p.extension().and_then(|x| x.to_str()) != Some("sonde") {
             continue;
         }
-        let Some(h) = sonde_proxy::session::read_header(&p).filter(|h| h.is_recording()) else {
+        let Some(h) = sonde_proxy::run::read_header(&p).filter(|h| h.is_recording()) else {
             continue;
         };
         let key = sonde_proxy::program::key_of(&h).unwrap_or_else(|| "proxy".into());
@@ -704,7 +704,7 @@ pub fn which_run(s: &Sonde, name: Option<&str>) -> anyhow::Result<(PathBuf, Stri
 }
 
 /// Whether a run is of the program named `name`.
-pub fn of_program(h: &SessionHeader, name: &str) -> bool {
+pub fn of_program(h: &RunHeader, name: &str) -> bool {
     sonde_proxy::program::key_of(h).as_deref() == Some(name)
 }
 

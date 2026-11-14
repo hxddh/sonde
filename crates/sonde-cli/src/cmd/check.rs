@@ -9,7 +9,7 @@ use std::sync::Arc;
 use clap::Args;
 use sonde_core::Sonde;
 use sonde_proxy::project::Project;
-use sonde_proxy::session::{Session, SessionHeader};
+use sonde_proxy::run::{RunFile, RunHeader};
 use sonde_proxy::view::Analysis;
 
 use crate::output;
@@ -90,7 +90,7 @@ type Checked = (
     sonde_proxy::program::RunPoint,
     sonde_proxy::profile::Profile,
     Vec<sonde_proxy::episode::Observation>,
-    SessionHeader,
+    RunHeader,
     Option<sonde_proxy::profile::Run>,
 );
 
@@ -105,7 +105,7 @@ fn duration_arg(text: &str) -> Result<f64, String> {
 /// program by name when it names one ([`super::record::of_program`]), else
 /// recorded in the project's folder or below it. Another program's run is
 /// never held to the project's `[check]`.
-fn of_project(h: &SessionHeader, project: &Path, name: Option<&str>) -> bool {
+fn of_project(h: &RunHeader, project: &Path, name: Option<&str>) -> bool {
     match name {
         Some(n) => super::record::of_program(h, n),
         None => {
@@ -202,10 +202,10 @@ fn action_line() -> String {
 fn program_runs(
     s: &Sonde,
     key: &str,
-    upto: (&Path, &SessionHeader, &sonde_proxy::program::RunPoint),
+    upto: (&Path, &RunHeader, &sonde_proxy::program::RunPoint),
 ) -> Vec<(
     sonde_proxy::program::RunPoint,
-    Option<sonde_proxy::session::GitStamp>,
+    Option<sonde_proxy::run::GitStamp>,
 )> {
     let dir = s.paths().runs();
     let (upto, upto_header, upto_point) = upto;
@@ -217,7 +217,7 @@ fn program_runs(
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
         .filter_map(|p| {
-            let h = sonde_proxy::session::read_header(&p)?;
+            let h = sonde_proxy::run::read_header(&p)?;
             (sonde_proxy::program::key_of(&h).as_deref() == Some(key) && h.created <= upto_created)
                 .then_some((h.created, p))
         })
@@ -227,11 +227,11 @@ fn program_runs(
     found.retain(|(_, p)| p.canonicalize().ok() != upto.canonicalize().ok());
     let from = found.len().saturating_sub(29);
     // an earlier run's figures are kept in its folder's index once
-    // reckoned: thirty runs are thirty entries, not thirty sessions read whole
+    // reckoned: thirty runs are thirty entries, not thirty runs read whole
     let mut runs: Vec<_> = found[from..]
         .iter()
         .filter_map(|(_, p)| {
-            let endpoint = sonde_proxy::session::read_header(p)?.endpoint;
+            let endpoint = sonde_proxy::run::read_header(p)?.endpoint;
             let (counted, figures) =
                 sonde_proxy::summary::figures(p, &request_prices_for(s, &endpoint))?;
             Some((figures.point, counted.git))
@@ -246,7 +246,7 @@ fn program_runs(
 /// 9f8e7d6, was within it" when this run is the first past it. None when
 /// this run is the only one known: the verdict says it all.
 fn since_line(s: &sonde_proxy::program::Since) -> Option<String> {
-    let short = |g: &Option<sonde_proxy::session::GitStamp>, path: &str| match g {
+    let short = |g: &Option<sonde_proxy::run::GitStamp>, path: &str| match g {
         Some(g) => format!(
             "{}{}",
             &g.commit[..g.commit.len().min(7)],
@@ -395,7 +395,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let mut project = loaded.file.check;
     if a.config.is_none()
         && let Some(toml) = &project_path
-        && let Some(h) = sonde_proxy::session::read_header(&file)
+        && let Some(h) = sonde_proxy::run::read_header(&file)
         && !of_project(&h, toml, project_name.as_deref())
     {
         let whose = match &project_name {
@@ -439,31 +439,31 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     let traced = baseline_arg.is_some() && matches!(a.format, Format::Markdown | Format::Json);
     // read once, for what it amounts to: its figures, its findings, its header
     let read = |p: &PathBuf| -> anyhow::Result<Checked> {
-        let session = super::runs::read(p, sonde_proxy::session::Keep::Analysis)?;
+        let opened = super::runs::read(p, sonde_proxy::run::Keep::Analysis)?;
         let Analysis {
             profile: pr,
             observations: ob,
             episodes,
             ..
-        } = Analysis::of(&session, &request_prices_for(s, &session.header.endpoint));
+        } = Analysis::of(&opened, &request_prices_for(s, &opened.header.endpoint));
         let point = run_point(
             &p.to_string_lossy(),
-            &session.header.created.to_rfc3339(),
-            &session.records,
+            &opened.header.created.to_rfc3339(),
+            &opened.records,
             &pr,
             &ob,
         );
         let run = traced.then(|| {
-            sonde_proxy::profile::Run::of_session(
-                &session.header,
-                &session.records,
+            sonde_proxy::profile::Run::of_run(
+                &opened.header,
+                &opened.records,
                 &episodes,
                 pr.clone(),
                 ob.clone(),
             )
         });
-        // (its records are let go here: two sessions are never held at once)
-        Ok((point, pr, ob, session.header, run))
+        // (its records are let go here: two runs are never held at once)
+        Ok((point, pr, ob, opened.header, run))
     };
     if !file.exists() {
         return Err(super::usage(format!(
@@ -704,7 +704,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
         return Ok(if passed { 0 } else { 1 });
     }
     let color = std::io::stdout().is_terminal();
-    let judged = session_line(&file, Some(&header));
+    let judged = run_line(&file, Some(&header));
     let shown = |what: &str, v: f64| match what {
         "waiting" => ms_text(v),
         "cost" => money_text(v, &run.0.currency),
@@ -847,7 +847,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
     println!("{judged}");
     println!("{named}");
     if let (Some(b), Some(base)) = (&base_path, &base) {
-        println!("against {}", session_line(b, Some(&base.3)));
+        println!("against {}", run_line(b, Some(&base.3)));
     }
     if !rows.is_empty() {
         println!(
@@ -910,10 +910,7 @@ fn no_baseline_text(program: Option<&str>) -> String {
 /// A run by name and time, as `sonde check` says which run it judged:
 /// `run 20261110-091555-etl.sonde · recorded 2026-11-10 09:15`, the time
 /// as `sonde runs` lists it.
-pub(super) fn session_line(
-    file: &Path,
-    header: Option<&sonde_proxy::session::SessionHeader>,
-) -> String {
+pub(super) fn run_line(file: &Path, header: Option<&sonde_proxy::run::RunHeader>) -> String {
     let name = file
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -922,7 +919,7 @@ pub(super) fn session_line(
     let header = match header {
         Some(h) => Some(h),
         None => {
-            read = Session::open(file).ok().map(|s| s.header);
+            read = RunFile::open(file).ok().map(|s| s.header);
             read.as_ref()
         }
     };
@@ -980,7 +977,7 @@ mod tests {
     #[test]
     fn since_says_the_runs_and_commits_around_and_never_this_run_as_a_commit() {
         use sonde_proxy::program::Since;
-        use sonde_proxy::session::GitStamp;
+        use sonde_proxy::run::GitStamp;
         let at = |c: &str| {
             Some(GitStamp {
                 commit: c.into(),

@@ -1,6 +1,6 @@
 //! From requests to operations.
 //!
-//! A recorded session is grouped into [`Episode`]s: a multipart upload, a
+//! A recorded run is grouped into [`Episode`]s: a multipart upload, a
 //! retried request, a burst of lookups, a paged listing, or a step of a
 //! storage format — a SlateDB manifest or WAL write, an Iceberg, Delta or
 //! Hudi commit, a Paimon snapshot — with the reads and file writes that led
@@ -165,7 +165,7 @@ fn digits(s: &str, n: usize) -> Option<u64> {
 }
 
 /// The format part a key names, from its last two path segments. A data
-/// file's name is only a guess: [`episodes`] takes it when the session also
+/// file's name is only a guess: [`episodes`] takes it when the run also
 /// touched that table's log.
 pub fn part_of(key: &str) -> Option<Part> {
     let mut segs = key.rsplit('/');
@@ -356,7 +356,7 @@ pub fn listed_format(prefix: &str) -> Option<(Format, &str)> {
     Some((f, dir))
 }
 
-/// The tables a session touched the log of: a `_delta_log/` key or listing
+/// The tables a run touched the log of: a `_delta_log/` key or listing
 /// (Delta), a `metadata/` file or listing (Iceberg). A Parquet file's name
 /// alone says nothing: Spark, Hive, Hudi and DuckDB write `part-*.parquet`
 /// and `…/data/*.parquet` too.
@@ -422,7 +422,7 @@ impl Tables {
         Tables { roots }
     }
 
-    /// The part a request's key names, when the session gives a reason to
+    /// The part a request's key names, when the run gives a reason to
     /// believe it: a data file counts only beside its table's log.
     fn part(&self, r: &Record) -> Option<Part> {
         let key = r.key.as_deref()?;
@@ -434,7 +434,7 @@ impl Tables {
         }
     }
 
-    /// Whose data file a Parquet file is: the table's whose log the session
+    /// Whose data file a Parquet file is: the table's whose log the run
     /// touched, the deepest when one table is under another. The path alone
     /// does not say: a Delta table under `…/data/` has its files there too.
     fn data_part(&self, bucket: Option<&str>, key: &str) -> Option<Part> {
@@ -498,7 +498,7 @@ pub enum Outcome {
 
 /// One operation: requests that belong together. Its title is its phrases
 /// ([`Episode::title_text`], and [`Episode::title`] the English of them),
-/// made when they are asked for: a session may have a million operations,
+/// made when they are asked for: a run may have a million operations,
 /// most of them one request, and each is held in 88 bytes ([`Ids`] and
 /// [`Said::Request`] hold one request's in place).
 #[derive(Debug, Clone, PartialEq)]
@@ -915,7 +915,7 @@ pub fn episodes(records: &[Record]) -> Vec<Episode> {
     let mut buffers: Vec<(Format, Vec<&Record>)> = Vec::new();
     let mut probe: Vec<&Record> = Vec::new();
     let mut listing: Vec<&Record> = Vec::new();
-    // requests that are nothing more: most of a large session, made into
+    // requests that are nothing more: most of a large run, made into
     // operations together once the rest is placed
     let mut alone: Vec<&Record> = Vec::new();
     for item in &items {
@@ -1012,7 +1012,7 @@ fn request_phrase(op: reqlog::Name, bucket: Option<reqlog::Name>, key: Option<&s
 }
 
 /// A request that is nothing more, an operation of its own: most of a large
-/// session, so its title is held as the request's own words
+/// run, so its title is held as the request's own words
 /// ([`Said::Request`]) when they are all it says.
 fn single(r: &Record) -> Episode {
     let sized =
@@ -1282,7 +1282,7 @@ pub(crate) fn code_of(r: &Record) -> Option<&str> {
 /// Whether a client is expected to send the request again: no answer (or
 /// one cut short), a status that says so (408, 429, 500, 502, 503, 504), or
 /// a code that does ([`CODES_OWE_RETRY`]). The one rule: the trial's
-/// verdict, the retries read from a session and the signals all ask this.
+/// verdict, the retries read from a run and the signals all ask this.
 pub(crate) fn retryable(r: &Record) -> bool {
     r.rare().transport_error.is_some()
         || r.status.is_some_and(status_owes_retry)
@@ -1752,7 +1752,7 @@ fn loose(f: Format, rs: Vec<&Record>) -> Episode {
     build(Shape::Step, Some(f), title, rs)
 }
 
-/// Something worth knowing about a session.
+/// Something worth knowing about a run.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Observation {
@@ -1838,7 +1838,7 @@ impl Observation {
 }
 
 /// Notes that hold for (nearly) every step of a format: said once for the
-/// session rather than on each line. Returns (format, note, steps with it,
+/// run rather than on each line. Returns (format, note, steps with it,
 /// steps of the format).
 pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)> {
     let mut out = Vec::new();
@@ -1867,7 +1867,7 @@ pub fn shared_notes(episodes: &[Episode]) -> Vec<(Format, String, usize, usize)>
     out
 }
 
-/// Something for each request, by its id. A session's ids are 1 to n (or
+/// Something for each request, by its id. A run's ids are 1 to n (or
 /// near it): a table by id then, with no hashing; a map when they are not.
 pub(crate) enum ById<V> {
     Table(u64, Vec<Option<V>>),
@@ -1979,7 +1979,7 @@ impl<V> ById<V> {
     }
 }
 
-/// What stands out across a session's requests and episodes.
+/// What stands out across a run's requests and episodes.
 /// The share of a run's requests throttled from which throttling is a
 /// warning even when every throttled request was retried and got through:
 /// the retries alone then add as many requests as `sonde check` lets a run
@@ -2612,7 +2612,7 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     out
 }
 
-/// The writes of a session by bucket, each with when it was sent and the key
+/// The writes of a run by bucket, each with when it was sent and the key
 /// it changed (a PUT, a copy onto it, a part, a completion, a delete, each
 /// key a DeleteObjects names), in order: what tells a read that would answer
 /// the same again from one whose answer changed in between.
@@ -2762,33 +2762,30 @@ fn renamed_from_temporary(records: &[Record]) -> (Vec<u64>, Vec<u64>) {
     (copies, deletes)
 }
 
-/// [`observations`] of a session, read with its header: a session whose
+/// [`observations`] of a run, read with its header: a run whose
 /// times are to the second (an imported log's:
-/// [`crate::session::SessionHeader::whole_seconds`]) says nothing that
+/// [`crate::run::RunHeader::whole_seconds`]) says nothing that
 /// depends on where in its second a request began. Requests "one after
 /// another" are not found in it (spread over their second they all look
 /// so), and a throttling is said without how many were in flight.
 pub fn observations_of(
-    header: &crate::session::SessionHeader,
+    header: &crate::run::RunHeader,
     records: &[Record],
     episodes: &[Episode],
 ) -> Vec<Observation> {
     of_header(header, observations(records, episodes))
 }
 
-/// [`traces`] of a session, as [`observations_of`] says its findings.
+/// [`traces`] of a run, as [`observations_of`] says its findings.
 pub fn traces_of(
-    header: &crate::session::SessionHeader,
+    header: &crate::run::RunHeader,
     records: &[Record],
     episodes: &[Episode],
 ) -> Vec<Observation> {
     of_header(header, traces(records, episodes))
 }
 
-fn of_header(
-    header: &crate::session::SessionHeader,
-    mut out: Vec<Observation>,
-) -> Vec<Observation> {
+fn of_header(header: &crate::run::RunHeader, mut out: Vec<Observation>) -> Vec<Observation> {
     if !header.whole_seconds {
         return out;
     }
@@ -3068,7 +3065,7 @@ mod tests {
             !keys.iter().any(|k| k.starts_with("obs.throttled")),
             "the store asked for nothing: {keys:?}"
         );
-        // a 503 of the store's own, in the same session, is still the store's
+        // a 503 of the store's own, in the same run, is still the store's
         let mut own = rec(90, 5000, "GET", "GetObject", Some("z"), 503);
         own.rare_mut().error_body = Some("<Error><Code>SlowDown</Code></Error>".into());
         rs.push(own);
@@ -3265,7 +3262,7 @@ mod tests {
     }
 
     #[test]
-    fn a_parquet_file_is_no_table_until_the_session_touches_its_log() {
+    fn a_parquet_file_is_no_table_until_the_run_touches_its_log() {
         // what Spark, Hive, Hudi and DuckDB write: the names alone
         let spark = rec(
             1,

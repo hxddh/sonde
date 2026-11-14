@@ -1,6 +1,6 @@
-//! What sonde says about a session, as data: a phrase is a key and its
+//! What sonde says about a run, as data: a phrase is a key and its
 //! arguments, so the app and the shared page say it in the reader's language
-//! (`app/src/phrases.ts`) while the CLI and the session's English text come
+//! (`app/src/phrases.ts`) while the CLI and the run's English text come
 //! from the templates here. A text is phrases said one after the other.
 
 use std::collections::BTreeMap;
@@ -16,7 +16,7 @@ pub struct Phrase {
 
 /// A phrase's arguments by name, in the order of their names: a map as it is
 /// written and read, kept as the two or three pairs it is. Every operation
-/// of a session has a title, and a session may have a million: its values
+/// of a run has a title, and a run may have a million: its values
 /// are shared text (an operation's name, a key its requests name already).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Args(Vec<(&'static str, Text)>);

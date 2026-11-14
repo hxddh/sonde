@@ -1,4 +1,4 @@
-//! What a session amounts to: counts, bytes, time, and per operation.
+//! What a run amounts to: counts, bytes, time, and per operation.
 
 use std::collections::BTreeMap;
 
@@ -187,9 +187,9 @@ pub fn summarize(records: &[Record]) -> Summary {
     s
 }
 
-/// What a session file holds, counted once and kept in its folder's index
-/// ([`crate::index`]): listing sessions, and holding a run to an earlier
-/// one, read this and never the session whole. It is of one version of the
+/// What a run file holds, counted once and kept in its folder's index
+/// ([`crate::index`]): listing runs, and holding a run to an earlier
+/// one, read this and never the run whole. It is of one version of the
 /// file (its length and the time it was written, taken before it was read):
 /// another is counted again.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -211,7 +211,7 @@ pub struct Counted {
     /// Recorded from a program's own requests (not a replay, an import, a trial).
     pub recording: bool,
     #[serde(default)]
-    pub git: Option<crate::session::GitStamp>,
+    pub git: Option<crate::run::GitStamp>,
     pub requests: u64,
     pub errors: u64,
     pub misses: u64,
@@ -222,12 +222,12 @@ pub struct Counted {
     pub shape: Vec<u32>,
     /// The first line in its middle that is no record, and why: `sonde show`
     /// refuses such a file, and the list says so rather than counting what
-    /// is around it as a session. (A torn last line is a recording cut
+    /// is around it as a run. (A torn last line is a recording cut
     /// short: not counted, and no fault.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unreadable: Option<String>,
     /// The figures a baseline and a program's history need, once the
-    /// session has been analysed ([`figures`]).
+    /// run has been analysed ([`figures`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub figures: Option<Figures>,
 }
@@ -254,14 +254,14 @@ pub const COUNTED_VERSION: u32 = 3;
 pub const ANALYSIS: &str = concat!(env!("CARGO_PKG_VERSION"), "+5");
 pub const SHAPE_BINS: usize = 24;
 
-/// Removes a session's counts: when the session is removed or replaced.
-pub fn forget(session: &std::path::Path) {
-    crate::index::set(session, crate::index::Change::NoCounted);
+/// Removes a run's counts: when the run is removed or replaced.
+pub fn forget(run: &std::path::Path) {
+    crate::index::set(run, crate::index::Change::NoCounted);
 }
 
 /// What of a record's line the counts read: the rest of the line is skipped,
 /// not parsed. What a record must have, a line must have to be counted
-/// ([`crate::session::Session::read`] refuses a line without it).
+/// ([`crate::run::RunFile::read`] refuses a line without it).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
@@ -290,7 +290,7 @@ struct CountedLine<'a> {
     transport_error: Option<serde::de::IgnoredAny>,
 }
 
-/// A session's counts, taken a line at a time: the same figures as
+/// A run's counts, taken a line at a time: the same figures as
 /// [`summarize`] of its records.
 #[derive(Default)]
 pub struct Counter {
@@ -311,9 +311,9 @@ pub struct Counter {
 }
 
 impl Counter {
-    /// A line of a session file after its header: a record, the program's
+    /// A line of a run file after its header: a record, the program's
     /// output, or a line that is neither (not counted: the last line torn,
-    /// or, followed by another, a file that is not a session's).
+    /// or, followed by another, a file that is not a run's).
     pub fn line(&mut self, line: &[u8]) {
         self.lines += 1;
         if self.unreadable.is_none() {
@@ -375,11 +375,7 @@ impl Counter {
     /// The counts, of the file as it was when `stamp` was taken ([`stamp`],
     /// before it was read: a file written again while it was read is then
     /// counted again next time, not kept under the newer stamp).
-    pub fn finish(
-        self,
-        stamp: Option<(u64, u64)>,
-        header: &crate::session::SessionHeader,
-    ) -> Counted {
+    pub fn finish(self, stamp: Option<(u64, u64)>, header: &crate::run::RunHeader) -> Counted {
         let (len, modified_ns) = stamp.unwrap_or((0, 0));
         let mut shape = vec![0u32; SHAPE_BINS];
         if let (Some(a), Some(b)) = (self.starts.iter().min(), self.starts.iter().max()) {
@@ -429,29 +425,29 @@ pub fn stamp(path: &std::path::Path) -> Option<(u64, u64)> {
     Some((m.len(), at))
 }
 
-/// The counts kept of a session, when they are of the file as it is now:
+/// The counts kept of a run, when they are of the file as it is now:
 /// in its folder's index.
-pub fn kept(session: &std::path::Path) -> Option<Counted> {
-    let c = crate::index::get(session).counted?;
-    (c.version == COUNTED_VERSION && Some((c.len, c.modified_ns)) == stamp(session)).then_some(c)
+pub fn kept(run: &std::path::Path) -> Option<Counted> {
+    let c = crate::index::get(run).counted?;
+    (c.version == COUNTED_VERSION && Some((c.len, c.modified_ns)) == stamp(run)).then_some(c)
 }
 
-/// Keeps a session's counts in its folder's index. A failure to write is no
+/// Keeps a run's counts in its folder's index. A failure to write is no
 /// error: they are counted again next time.
-pub fn keep(session: &std::path::Path, c: &Counted) {
-    crate::index::set(session, crate::index::Change::Counted(Box::new(c.clone())));
+pub fn keep(run: &std::path::Path, c: &Counted) {
+    crate::index::set(run, crate::index::Change::Counted(Box::new(c.clone())));
 }
 
-/// A session's counts: those kept beside it, or counted now in one pass over
-/// its lines (no record is built) and, for a finished session, kept. `None`
-/// when the file is not a session.
-pub fn counted(session: &std::path::Path) -> Option<Counted> {
-    if let Some(c) = kept(session) {
+/// A run's counts: those kept beside it, or counted now in one pass over
+/// its lines (no record is built) and, for a finished run, kept. `None`
+/// when the file is not a run.
+pub fn counted(run: &std::path::Path) -> Option<Counted> {
+    if let Some(c) = kept(run) {
         return Some(c);
     }
-    let at = stamp(session);
-    let mut lines = crate::session::Lines::open(session).ok()?;
-    let header: crate::session::SessionHeader = serde_json::from_slice(lines.line().ok()??).ok()?;
+    let at = stamp(run);
+    let mut lines = crate::run::Lines::open(run).ok()?;
+    let header: crate::run::RunHeader = serde_json::from_slice(lines.line().ok()??).ok()?;
     let mut n = Counter::default();
     // what reads is counted: a file cut short still lists
     while let Ok(Some(l)) = lines.line() {
@@ -459,20 +455,20 @@ pub fn counted(session: &std::path::Path) -> Option<Counted> {
     }
     let c = n.finish(at, &header);
     // a live recording is still growing: its counts would be stale at once
-    if crate::session::is_compressed(session) {
-        keep(session, &c);
+    if crate::run::is_compressed(run) {
+        keep(run, &c);
     }
     Some(c)
 }
 
-/// A run's figures at `prices`: those kept beside it, or the session read
+/// A run's figures at `prices`: those kept beside it, or the run read
 /// and analysed now and its figures kept. With them, its counts.
 pub fn figures(
-    session: &std::path::Path,
+    run: &std::path::Path,
     prices: &crate::profile::RequestPrices,
 ) -> Option<(Counted, Figures)> {
-    let path = session.to_string_lossy().into_owned();
-    if let Some(c) = kept(session)
+    let path = run.to_string_lossy().into_owned();
+    if let Some(c) = kept(run)
         && let Some(f) = c
             .figures
             .clone()
@@ -483,8 +479,8 @@ pub fn figures(
         f.point.path = path;
         return Some((c, f));
     }
-    let at = stamp(session);
-    let s = crate::session::Session::open_lean(session).ok()?;
+    let at = stamp(run);
+    let s = crate::run::RunFile::open_lean(run).ok()?;
     let f = figures_of(&path, &s, prices);
     let mut n = Counter::default();
     for r in &s.records {
@@ -492,16 +488,16 @@ pub fn figures(
     }
     let mut c = n.finish(at, &s.header);
     c.figures = Some(f.clone());
-    if crate::session::is_compressed(session) {
-        keep(session, &c);
+    if crate::run::is_compressed(run) {
+        keep(run, &c);
     }
     Some((c, f))
 }
 
-/// The figures of a session already read.
+/// The figures of a run already read.
 pub fn figures_of(
     path: &str,
-    s: &crate::session::Session,
+    s: &crate::run::RunFile,
     prices: &crate::profile::RequestPrices,
 ) -> Figures {
     let crate::view::Analysis {
@@ -633,7 +629,7 @@ mod tests {
         assert_eq!(json["kinds"][1]["few"], true);
     }
 
-    /// A fixture copied into a sessions folder, compressed or not.
+    /// A fixture copied into a runs folder, compressed or not.
     fn fixture(dir: &std::path::Path, name: &str, compressed: bool) -> std::path::PathBuf {
         let from = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
@@ -641,7 +637,7 @@ mod tests {
         let to = dir.join(name);
         std::fs::copy(from, &to).unwrap();
         if compressed {
-            crate::session::compress(&to).unwrap();
+            crate::run::compress(&to).unwrap();
         }
         to
     }
@@ -656,7 +652,7 @@ mod tests {
             "delta.sonde",
         ] {
             let path = fixture(dir.path(), name, true);
-            let s = crate::session::Session::open(&path).unwrap();
+            let s = crate::run::RunFile::open(&path).unwrap();
             let sum = summarize(&s.records);
             let c = counted(&path).unwrap();
             assert_eq!(
@@ -683,15 +679,15 @@ mod tests {
     }
 
     #[test]
-    fn counts_are_kept_in_the_index_of_a_finished_session_and_go_when_it_changes_or_is_forgotten() {
+    fn counts_are_kept_in_the_index_of_a_finished_run_and_go_when_it_changes_or_is_forgotten() {
         let dir = tempfile::tempdir().unwrap();
         let index = |p: &std::path::Path| crate::index::get(p).counted;
-        // a live (uncompressed) session is counted and nothing is kept
+        // a live (uncompressed) run is counted and nothing is kept
         let live = fixture(dir.path(), "slatedb.sonde", false);
         assert_eq!(counted(&live).unwrap().requests, 172);
         assert!(index(&live).is_none());
         // a finished one keeps its counts: the next listing reads only those
-        crate::session::compress(&live).unwrap();
+        crate::run::compress(&live).unwrap();
         let first = counted(&live).unwrap();
         assert!(index(&live).is_some());
         assert_eq!(kept(&live), Some(first.clone()));
@@ -721,7 +717,7 @@ mod tests {
         // the stamp a count is kept under is the one taken before it read:
         // a file written while it was read is not kept as counted
         let before = stamp(&path);
-        let header = crate::session::read_header(&path).unwrap();
+        let header = crate::run::read_header(&path).unwrap();
         let other = fixture(dir.path(), "delta.sonde", true);
         std::fs::copy(&other, &path).unwrap();
         keep(&path, &Counter::default().finish(before, &header));
@@ -737,7 +733,7 @@ mod tests {
             std::fs::write(&path, bytes).unwrap();
             (
                 counted(&path).unwrap(),
-                crate::session::Session::open(&path).map(|s| s.records.len()),
+                crate::run::RunFile::open(&path).map(|s| s.records.len()),
             )
         };
         // the last line torn: both read the twelve before it
@@ -763,7 +759,7 @@ mod tests {
         let prices = crate::profile::RequestPrices::default();
         let mut all = String::new();
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        // the sessions alone: a lock or a state file another test's reading leaves beside them is not one
+        // the runs alone: a lock or a state file another test's reading leaves beside them is not one
         let mut names: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().path())
@@ -771,7 +767,7 @@ mod tests {
             .collect();
         names.sort();
         for path in names {
-            let s = crate::session::Session::open(&path).unwrap();
+            let s = crate::run::RunFile::open(&path).unwrap();
             let mut f = figures_of("", &s, &prices);
             f.analysis.clear();
             all.push_str(&serde_json::to_string(&f).unwrap());

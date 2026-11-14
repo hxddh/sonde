@@ -63,7 +63,7 @@ impl Paths {
     pub fn python_hook(&self) -> PathBuf {
         self.data_dir.join("python-hook")
     }
-    /// Sessions shared as web pages from the app.
+    /// Runs shared as web pages from the app.
     pub fn shared(&self) -> PathBuf {
         self.data_dir.join("shared")
     }

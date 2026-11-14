@@ -244,7 +244,7 @@ pub struct Trial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub advice: Option<Said>,
     /// The trial's own run: its file's name in the clean run's `trials/`
-    /// folder ([`session_path`] gives the path).
+    /// folder ([`run_path`] gives the path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
     /// The scenario's verdicts for the program, oldest first, up to this
@@ -332,7 +332,7 @@ fn done(r: &Record) -> bool {
 }
 
 /// Whether a failed request is one a program should send again
-/// ([`retryable`]: the rule the retries read from a session and the signals
+/// ([`retryable`]: the rule the retries read from a run and the signals
 /// go by, status and code). A 404 or a 501 is the answer, however often it
 /// is asked.
 fn retry_owed(r: &Record) -> bool {
@@ -1569,32 +1569,32 @@ pub fn judge(
     }
 }
 
-fn stem_of(session: &std::path::Path) -> String {
-    let name = session
+fn stem_of(run: &std::path::Path) -> String {
+    let name = run
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     name.strip_suffix(".sonde").unwrap_or(&name).to_string()
 }
 
-/// The folder a run's trial sessions are recorded in, beside its session.
-pub fn folder_for(session: &std::path::Path) -> std::path::PathBuf {
-    session.with_file_name("trials")
+/// The folder a run's trial runs are recorded in, beside its run.
+pub fn folder_for(run: &std::path::Path) -> std::path::PathBuf {
+    run.with_file_name("trials")
 }
 
-/// The stem a trial's session file is given: `<run>.<scenario>`, and its
+/// The stem a trial's run file is given: `<run>.<scenario>`, and its
 /// strength when pressed (`<run>.slowdown-3x`): two strengths, two files.
-pub fn session_stem(session: &std::path::Path, scenario: &crate::fault::Scenario) -> String {
+pub fn run_stem(run: &std::path::Path, scenario: &crate::fault::Scenario) -> String {
     match crate::fault::pressed(scenario) {
-        Some(n) => format!("{}.{}-{n}x", stem_of(session), scenario.name),
-        None => format!("{}.{}", stem_of(session), scenario.name),
+        Some(n) => format!("{}.{}-{n}x", stem_of(run), scenario.name),
+        None => format!("{}.{}", stem_of(run), scenario.name),
     }
 }
 
 /// Whether a file in a run's `trials/` folder is one of that run's trial
-/// sessions: `<run>.<scenario>.sonde`, a scenario's name having no dot.
-fn is_trial_of(session: &std::path::Path, name: &str) -> bool {
-    name.strip_prefix(&format!("{}.", stem_of(session)))
+/// runs: `<run>.<scenario>.sonde`, a scenario's name having no dot.
+fn is_trial_of(run: &std::path::Path, name: &str) -> bool {
+    name.strip_prefix(&format!("{}.", stem_of(run)))
         .and_then(|rest| rest.strip_suffix(".sonde"))
         .is_some_and(|scenario| {
             !scenario.is_empty()
@@ -1604,52 +1604,52 @@ fn is_trial_of(session: &std::path::Path, name: &str) -> bool {
         })
 }
 
-/// Where a trial's session is: in its run's `trials/` folder, under the
+/// Where a trial's run is: in its run's `trials/` folder, under the
 /// name the verdict keeps. Only a name of that run's is taken: what the
-/// file says (it may have come with a shared session) is never a path.
-pub fn session_path(session: &std::path::Path, t: &Trial) -> Option<std::path::PathBuf> {
+/// file says (it may have come with a shared run) is never a path.
+pub fn run_path(run: &std::path::Path, t: &Trial) -> Option<std::path::PathBuf> {
     let kept = t.run.as_deref()?;
     let name = kept.rsplit(['/', '\\']).next()?;
-    is_trial_of(session, name).then(|| folder_for(session).join(name))
+    is_trial_of(run, name).then(|| folder_for(run).join(name))
 }
 
 /// Removes what a run's trials left: its verdicts, and the files in its own
 /// `trials/` folder that are named for it. Before a run is recorded again,
 /// and when it is deleted. Nothing the verdicts' file names is removed.
-pub fn remove(session: &std::path::Path) {
-    let dir = folder_for(session);
+pub fn remove(run: &std::path::Path) {
+    let dir = folder_for(run);
     for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         // a file of the folder itself, never one a link points to
         let file = e.file_type().is_ok_and(|t| t.is_file());
-        if file && is_trial_of(session, &name) {
+        if file && is_trial_of(run, &name) {
             let _ = std::fs::remove_file(dir.join(name));
         }
     }
-    crate::index::set(session, crate::index::Change::NoTrials);
+    crate::index::set(run, crate::index::Change::NoTrials);
     // (only when nothing else is in it)
     let _ = std::fs::remove_dir(dir);
 }
 
 /// Keeps a run's trials in its folder's index, so that the app and `sonde
 /// check` read what the last trial found.
-pub fn save(session: &std::path::Path, trials: &[Trial]) -> std::io::Result<()> {
-    if !session
+pub fn save(run: &std::path::Path, trials: &[Trial]) -> std::io::Result<()> {
+    if !run
         .parent()
         .is_some_and(|d| d.as_os_str().is_empty() || d.is_dir())
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("no folder for {}", session.display()),
+            format!("no folder for {}", run.display()),
         ));
     }
-    crate::index::set(session, crate::index::Change::Trials(trials.to_vec()));
+    crate::index::set(run, crate::index::Change::Trials(trials.to_vec()));
     Ok(())
 }
 
 /// A run's trials; none when it was never tried.
-pub fn load(session: &std::path::Path) -> Vec<Trial> {
-    crate::index::get(session).trials.unwrap_or_default()
+pub fn load(run: &std::path::Path) -> Vec<Trial> {
+    crate::index::get(run).trials.unwrap_or_default()
 }
 
 /// A run's trials in a word: the worst standing among them (broke, then
@@ -1688,7 +1688,7 @@ pub fn places(command: &[String], name: &str) -> Vec<String> {
 }
 
 /// A scenario's verdict as its program keeps it: when, how it stood, and
-/// the run (its session's file name).
+/// the run (its file name).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Seen {
@@ -1749,7 +1749,7 @@ pub fn record(
 }
 
 /// Gives each of a run's trials its scenario's history, up to this run's
-/// verdict (`run`: the session's file name): none for a run the program's
+/// verdict (`run`: the run's file name): none for a run the program's
 /// verdicts do not name.
 pub fn with_history(dir: &std::path::Path, program: &str, run: &str, trials: &mut [Trial]) {
     let all = read_verdicts(dir);
@@ -1767,10 +1767,10 @@ pub fn with_history(dir: &std::path::Path, program: &str, run: &str, trials: &mu
 
 /// A run's trials as `check` and `show` say them: each with its
 /// scenario's history for `program`, kept in the run's folder.
-pub fn load_with_history(session: &std::path::Path, program: Option<&str>) -> Vec<Trial> {
-    let mut trials = load(session);
-    if let (Some(p), Some(name)) = (program, session.file_name()) {
-        let dir = session
+pub fn load_with_history(run: &std::path::Path, program: Option<&str>) -> Vec<Trial> {
+    let mut trials = load(run);
+    if let (Some(p), Some(name)) = (program, run.file_name()) {
+        let dir = run
             .parent()
             .filter(|d| !d.as_os_str().is_empty())
             .unwrap_or(std::path::Path::new("."));
@@ -2537,9 +2537,9 @@ mod tests {
     #[test]
     fn removing_a_runs_trials_removes_its_own_files_and_nothing_a_file_names() {
         let dir = tempfile::tempdir().unwrap();
-        let session = dir.path().join("run.sonde");
+        let run = dir.path().join("run.sonde");
         let other = dir.path().join("run-2.sonde");
-        let trials = folder_for(&session);
+        let trials = folder_for(&run);
         std::fs::create_dir_all(&trials).unwrap();
         let outside = dir.path().join("precious.txt");
         for f in [
@@ -2551,27 +2551,24 @@ mod tests {
         ] {
             std::fs::write(f, "x").unwrap();
         }
-        // the verdicts name a file elsewhere: a shared session may say anything
+        // the verdicts name a file elsewhere: a shared run may say anything
         let mut t = judge(&slowdown(), &[], 0, &[], 0);
         t.run = Some(outside.to_string_lossy().into_owned());
-        save(&session, &[t.clone()]).unwrap();
-        assert_eq!(session_path(&session, &t), None, "no path of the file's");
+        save(&run, &[t.clone()]).unwrap();
+        assert_eq!(run_path(&run, &t), None, "no path of the file's");
         t.run = Some("run.slowdown.sonde".into());
-        assert_eq!(
-            session_path(&session, &t),
-            Some(trials.join("run.slowdown.sonde"))
-        );
+        assert_eq!(run_path(&run, &t), Some(trials.join("run.slowdown.sonde")));
         t.run = Some("../../etc/run.slowdown.sonde".into());
         assert_eq!(
-            session_path(&session, &t),
+            run_path(&run, &t),
             Some(trials.join("run.slowdown.sonde")),
             "a name, never a path"
         );
-        remove(&session);
+        remove(&run);
         assert!(outside.exists());
         assert!(!trials.join("run.slowdown.sonde").exists());
         assert!(!trials.join("run.error-2.sonde").exists());
-        assert!(load(&session).is_empty());
+        assert!(load(&run).is_empty());
         assert!(
             trials.join("run-2.slowdown.sonde").exists(),
             "another run's"

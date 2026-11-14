@@ -10,7 +10,7 @@ use chrono::DateTime;
 use reqlog::Record;
 use sonde_proxy::fixloop::{self, State};
 use sonde_proxy::profile::{RequestPrices, Run, compare_runs};
-use sonde_proxy::session::Session;
+use sonde_proxy::run::RunFile;
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -28,7 +28,7 @@ const RUNS: [&str; 5] = [
 
 /// A run as `sonde compare` reads it, counted against `before` when given.
 fn run(name: &str, before: Option<&Run>) -> Run {
-    let s = Session::open_lean(&fixture(name)).expect("the fixture opens");
+    let s = RunFile::open_lean(&fixture(name)).expect("the fixture opens");
     let mut r = Run::analysed(&s.header, &s.records, &RequestPrices::default());
     if let Some(b) = before {
         r.measure(&s.records, b);
@@ -114,7 +114,7 @@ fn a_programs_findings_are_kept_open_fixed_and_back_over_its_runs() {
     let prices = |_: &str| RequestPrices::default();
     let since = |name: &str| {
         let path = dir.path().join(name);
-        let s = Session::open_lean(&path).unwrap();
+        let s = RunFile::open_lean(&path).unwrap();
         let r = Run::analysed(&s.header, &s.records, &RequestPrices::default());
         fixloop::since_last(dir.path(), &path, &s.header, &s.records, r, &prices)
             .expect("a run of a program")
@@ -300,10 +300,10 @@ fn two_runs_of_an_unchanged_program_whose_keys_change_every_run_read_no_change()
     assert!(c.resolved.is_empty() && c.appeared.is_empty());
 }
 
-/// A session of `records` written to `path`, as `sonde run` leaves one.
-fn write_session(path: &Path, header: &sonde_proxy::session::SessionHeader, records: &[Record]) {
+/// A run of `records` written to `path`, as `sonde run` leaves one.
+fn write_run(path: &Path, header: &sonde_proxy::run::RunHeader, records: &[Record]) {
     use reqlog::Sink;
-    let w = sonde_proxy::session::SessionWriter::create(path, header).unwrap();
+    let w = sonde_proxy::run::RunWriter::create(path, header).unwrap();
     for r in records {
         w.write(r);
     }
@@ -314,7 +314,7 @@ fn write_session(path: &Path, header: &sonde_proxy::session::SessionHeader, reco
 /// what `sonde run` says of it against the run before.
 fn ran(dir: &Path, minute: i64, records: &[Record], exit: Option<i32>) -> fixloop::SinceLast {
     let (path, header) = job(dir, minute);
-    write_session(&path, &header, records);
+    write_run(&path, &header, records);
     if let Some(x) = exit {
         sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(x));
     }
@@ -322,9 +322,9 @@ fn ran(dir: &Path, minute: i64, records: &[Record], exit: Option<i32>) -> fixloo
 }
 
 /// The run of `job` recorded `minute` minutes in: its path and header.
-fn job(dir: &Path, minute: i64) -> (PathBuf, sonde_proxy::session::SessionHeader) {
+fn job(dir: &Path, minute: i64) -> (PathBuf, sonde_proxy::run::RunHeader) {
     let mut header =
-        sonde_proxy::session::SessionHeader::new("e", "http://e", "", Some("python job.py".into()));
+        sonde_proxy::run::RunHeader::new("e", "http://e", "", Some("python job.py".into()));
     header.name = Some("job".into());
     header.created = DateTime::from_timestamp_millis(1_700_000_000_000 + minute * 60_000).unwrap();
     (dir.join(format!("run-{minute:02}.sonde")), header)
@@ -411,7 +411,7 @@ fn a_changed_command_is_said_and_saves_nothing() {
     let at = |minute: i64, limit: u64, records: &[Record]| {
         let (path, mut header) = job(dir.path(), minute);
         header.command = Some(format!("python job.py --limit {limit}"));
-        write_session(&path, &header, records);
+        write_run(&path, &header, records);
         sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(0));
         fixloop::since_last(
             dir.path(),
@@ -717,7 +717,7 @@ fn runs_that_end_out_of_order_keep_all_their_findings() {
         .map(|(i, w)| {
             let (path, header) = job(dir.path(), i as i64 + 1);
             let rs: Vec<Record> = (1..=12).map(|n| get(n, w)).collect();
-            write_session(&path, &header, &rs);
+            write_run(&path, &header, &rs);
             sonde_proxy::index::set(&path, sonde_proxy::index::Change::Exit(0));
             (i as i64 + 1, rs)
         })

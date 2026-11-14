@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn the_last_change_holds_and_a_gone_session_is_forgotten() {
+    fn the_last_change_holds_and_a_gone_run_is_forgotten() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.sonde");
         let b = dir.path().join("b.sonde");
@@ -375,7 +375,7 @@ mod tests {
         // another process reads the same from the file
         READ.lock().clear();
         assert_eq!(get(&a), Entry::default());
-        // one file in the folder, hidden: the folder lists its sessions
+        // one file in the folder, hidden: the folder lists its runs
         let names: Vec<String> = std::fs::read_dir(dir.path())
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn many_changes_are_compacted_to_a_line_a_session() {
+    fn many_changes_are_compacted_to_a_line_a_run() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.sonde");
         for i in 0..200 {

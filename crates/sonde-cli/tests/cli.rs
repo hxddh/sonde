@@ -630,7 +630,7 @@ fn a_gzipped_log_is_imported_and_its_odd_lines_are_counted() {
 }
 
 #[test]
-fn a_folder_of_logs_is_imported_as_one_session() {
+fn a_folder_of_logs_is_imported_as_one_run() {
     let t = tempfile::tempdir().unwrap();
     let logs = t.path().join("lake-logs");
     std::fs::create_dir_all(logs.join("2026-02-06")).unwrap();
@@ -639,7 +639,7 @@ fn a_folder_of_logs_is_imported_as_one_session() {
             r#"79a5 lake [06/Feb/2026:00:00:{second:02} +0000] 192.0.2.3 arn:aws:iam::1:user/etl {id} REST.GET.OBJECT {key} "GET /lake/{key} HTTP/1.1" 200 - 4096 4096 12 10 "-" "aws-sdk-java/2.21" - xyz= SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -"#
         )
     };
-    // named out of time order: the session is in time order all the same
+    // named out of time order: the run is in time order all the same
     std::fs::write(logs.join("2026-02-06/b"), line(1, "A1", "t/one")).unwrap();
     std::fs::write(logs.join("2026-02-06/a"), line(2, "A2", "t/two")).unwrap();
     std::fs::write(logs.join("c"), line(3, "A3", "t/three")).unwrap();
@@ -885,7 +885,7 @@ fn tour_first(dirs: &Path) -> String {
 const A_LOG_LINE: &str = "79a5 lake [06/Feb/2031:00:00:38 +0000] 192.0.2.3 - 3E57 REST.GET.OBJECT t/a \"GET /lake/t/a HTTP/1.1\" 200 - 4096 4096 12 10 \"-\" \"boto3/1.34\" - x SigV4 ECDHE AuthHeader lake.s3.amazonaws.com TLSv1.3 - -\n";
 
 #[test]
-fn every_command_takes_a_session_by_its_name_and_says_where_it_looked() {
+fn every_command_takes_a_run_by_its_name_and_says_where_it_looked() {
     let t = tempfile::tempdir().unwrap();
     let name = demo_run(t.path());
     // compare by name, as show and check take one
@@ -971,7 +971,7 @@ fn two_imports_compare_without_contradicting_themselves() {
 }
 
 #[test]
-fn the_newest_session_is_the_newest_recording_not_an_import() {
+fn the_newest_run_is_the_newest_recording_not_an_import() {
     let t = tempfile::tempdir().unwrap();
     let name = demo_run(t.path());
     // an import made later, and of a later time
@@ -984,7 +984,7 @@ fn the_newest_session_is_the_newest_recording_not_an_import() {
     assert_eq!(v["summary"]["requests"], 9, "the demo's, not the import's");
     let checked = sonde(t.path(), &["check", "--max-requests", "100"]);
     assert!(stdout(&checked).contains(&name), "{}", stdout(&checked));
-    // the import is still a session, read by its name
+    // the import is still a run, read by its name
     let named = sonde(t.path(), &["show", "later", "--summary", "-f", "json"]);
     let v: serde_json::Value = serde_json::from_slice(&named.stdout).unwrap();
     assert_eq!(v["summary"]["requests"], 1);
@@ -1155,7 +1155,7 @@ fn check_init_leaves_the_limits_of_time_for_a_person_to_set() {
     assert!(stderr(&c).contains("sonde.toml"), "{}", stderr(&c));
 }
 
-/// The demo's session, and where it is.
+/// The demo's run, and where it is.
 fn demo_file(dirs: &Path) -> std::path::PathBuf {
     let name = demo_run(dirs);
     dirs.join("data/runs").join(format!("{name}.sonde"))
@@ -1163,7 +1163,7 @@ fn demo_file(dirs: &Path) -> std::path::PathBuf {
 
 /// A recorded run of `command` in the runs folder, made of a
 /// fixture's requests.
-fn session_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::path::PathBuf {
+fn run_of(dirs: &Path, name: &str, command: &str, created: &str) -> std::path::PathBuf {
     let fixture =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../proxy/tests/fixtures/sdk-python.sonde");
     let text = std::fs::read_to_string(fixture).unwrap();
@@ -1216,7 +1216,7 @@ fn with_no_endpoint_a_run_goes_where_the_aws_default_chain_says() {
 #[test]
 fn nothing_reached_sonde_fails_the_check_and_run_says_so() {
     let t = tempfile::tempdir().unwrap();
-    let base = session_of(
+    let base = run_of(
         t.path(),
         "base.sonde",
         "python etl.py",
@@ -1357,7 +1357,7 @@ fn runs_are_listed_from_what_was_counted_in_the_folders_index() {
 #[test]
 fn a_run_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
     let t = tempfile::tempdir().unwrap();
-    let file = session_of(
+    let file = run_of(
         t.path(),
         "bad.sonde",
         "python etl.py",
@@ -1376,7 +1376,7 @@ fn a_run_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
     ] {
         assert_eq!(sonde(t.path(), args).status.code(), Some(65), "{args:?}");
     }
-    // and the list says so, rather than listing it as a session that reads
+    // and the list says so, rather than listing it as a run that reads
     let listed = sonde(t.path(), &["runs", "-f", "json"]);
     let rows: serde_json::Value = serde_json::from_str(&stdout(&listed)).unwrap();
     assert!(
@@ -1397,8 +1397,8 @@ fn a_run_with_a_line_no_record_could_be_is_bad_data_to_every_reader() {
 #[test]
 fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
     let t = tempfile::tempdir().unwrap();
-    session_of(t.path(), "a.sonde", "python etl.py", "2026-11-01T10:00:00Z");
-    let b = session_of(t.path(), "b.sonde", "python etl.py", "2026-11-01T11:00:00Z");
+    run_of(t.path(), "a.sonde", "python etl.py", "2026-11-01T10:00:00Z");
+    let b = run_of(t.path(), "b.sonde", "python etl.py", "2026-11-01T11:00:00Z");
     // the second run made one upload part fewer
     let text = std::fs::read_to_string(&b).unwrap();
     let mut lines: Vec<&str> = text.lines().collect();
@@ -1439,10 +1439,10 @@ fn compare_says_the_kinds_it_leaves_out_and_waiting_as_show_does() {
 }
 
 #[test]
-fn a_compressed_session_cut_short_is_read_up_to_its_cut() {
+fn a_compressed_run_cut_short_is_read_up_to_its_cut() {
     use std::io::Write;
     let t = tempfile::tempdir().unwrap();
-    let file = session_of(
+    let file = run_of(
         t.path(),
         "cut.sonde",
         "python etl.py",
@@ -1469,7 +1469,7 @@ fn a_long_command_is_cut_in_its_middle_to_fit_the_terminal() {
         "python /srv/jobs/etl/load.py --table warehouse.events {}--day 2026-11-10",
         "--partition p ".repeat(12)
     );
-    session_of(t.path(), "long.sonde", &long, "2026-11-10T02:00:00Z");
+    run_of(t.path(), "long.sonde", &long, "2026-11-10T02:00:00Z");
     let narrow = Command::new(env!("CARGO_BIN_EXE_sonde"))
         .arg("runs")
         .env("SONDE_CONFIG_DIR", t.path().join("config"))
@@ -1501,7 +1501,7 @@ fn a_long_command_is_cut_in_its_middle_to_fit_the_terminal() {
 }
 
 #[test]
-fn a_trials_session_is_found_by_its_name() {
+fn a_trials_run_is_found_by_its_name() {
     let t = tempfile::tempdir().unwrap();
     let file = demo_file(t.path());
     let trials = file.with_file_name("trials");
@@ -1519,7 +1519,7 @@ fn a_trials_session_is_found_by_its_name() {
 }
 
 #[test]
-fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
+fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_run() {
     let t = tempfile::tempdir().unwrap();
     // 2,400 requests a second apart, every hundredth refused
     let mut log = String::new();
@@ -1560,7 +1560,7 @@ fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
     assert_eq!(failed["operations"].as_array().unwrap().len(), 24);
     assert_eq!(
         failed["summary"]["requests"], 2400,
-        "the summary is of the session"
+        "the summary is of the run"
     );
     let all: serde_json::Value = serde_json::from_str(&stdout(&sonde(
         t.path(),
@@ -1573,7 +1573,7 @@ fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
         serde_json::from_str(&stdout(&sonde(t.path(), &["show", out, "-f", "json"]))).unwrap();
     assert!(lean.get("requests").is_none() && lean["operations"].is_array());
     assert_eq!(all["requests"][7]["status"], 403);
-    // a long session: its first and last hundred, and how many are between
+    // a long run: its first and last hundred, and how many are between
     let shown = stdout(&sonde(t.path(), &["show", out, "--requests"]));
     assert!(
         shown.contains("… 2,200 requests between these: `--all` prints them"),
@@ -1599,13 +1599,13 @@ fn show_writes_only_what_failed_as_json_too_and_the_ends_of_a_long_session() {
 #[test]
 fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
     let t = tempfile::tempdir().unwrap();
-    let monday = session_of(
+    let monday = run_of(
         t.path(),
         "monday.sonde",
         "python etl.py --date 2026-11-09",
         "2026-11-09T02:00:00Z",
     );
-    let tuesday = session_of(
+    let tuesday = run_of(
         t.path(),
         "tuesday.sonde",
         "python etl.py --date 2026-11-10",
@@ -1674,7 +1674,7 @@ fn a_baseline_holds_a_program_whose_argument_changes_between_runs() {
 #[test]
 fn a_check_of_trials_alone_has_no_failed_budget_inside_it() {
     let t = tempfile::tempdir().unwrap();
-    let file = session_of(
+    let file = run_of(
         t.path(),
         "run.sonde",
         "python etl.py",
@@ -1928,7 +1928,7 @@ fn a_fix_is_confirmed_with_what_it_saved_and_an_undone_one_is_back() {
 #[test]
 fn an_expect_that_is_no_findings_identity_is_a_usage_error() {
     let t = tempfile::tempdir().unwrap();
-    let run = session_of(
+    let run = run_of(
         t.path(),
         "run.sonde",
         "python etl.py",
@@ -2086,7 +2086,7 @@ fn check_fails_a_run_whose_program_failed() {
     let ok = sonde_in(t.path(), &w, &["run", "--demo", "--", "true"]);
     assert_eq!(ok.status.code(), Some(0), "{}", stderr(&ok));
     let budget = ["--max-requests", "100"];
-    // the flag is gone: the session keeps the exit
+    // the flag is gone: the run keeps the exit
     let c = sonde_in(
         t.path(),
         &w,
@@ -2137,7 +2137,7 @@ fn check_fails_a_run_whose_program_failed() {
     assert!(!w.join("sonde.toml").exists());
 }
 
-/// 19.0's `check` alone took the newest session of any program: another
+/// 19.0's `check` alone took the newest run of any program: another
 /// program's run passed this one's budget. It takes the newest run of
 /// `[program] name`, else of a program recorded in this folder, and says
 /// which; never another's.
@@ -2336,8 +2336,8 @@ fn a_keys_control_characters_are_written_out_never_sent() {
         .replace("t/a", "t/%1B%5D0%3Bpwned%07a")
         .replace("boto3/1.34", "boto3/1.34\u{1b}[2J");
     std::fs::write(&log, line.repeat(3)).unwrap();
-    let session = t.path().join("planted.sonde");
-    let s = session.to_str().unwrap();
+    let run = t.path().join("planted.sonde");
+    let s = run.to_str().unwrap();
     let mut seen = vec![sonde(t.path(), &["import", log.to_str().unwrap(), "-o", s])];
     for args in [
         vec!["show", s],
@@ -2363,7 +2363,7 @@ fn a_keys_control_characters_are_written_out_never_sent() {
     assert!(written_out, "the key is shown, written out");
 }
 
-fn sessions_in(dirs: &Path) -> usize {
+fn runs_in(dirs: &Path) -> usize {
     std::fs::read_dir(dirs.join("data/runs"))
         .map(|d| {
             d.flatten()
@@ -2375,7 +2375,7 @@ fn sessions_in(dirs: &Path) -> usize {
 
 /// What `run` cannot do is a usage error before anything runs: a flag of
 /// its own mistyped is never taken for the program, and no endpoint is the
-/// configuration's mistake. A command that cannot start leaves no session.
+/// configuration's mistake. A command that cannot start leaves no run.
 #[test]
 fn run_refuses_a_mistyped_flag_and_no_endpoint_and_records_nothing_it_did_not_run() {
     let t = tempfile::tempdir().unwrap();
@@ -2396,14 +2396,14 @@ fn run_refuses_a_mistyped_flag_and_no_endpoint_and_records_nothing_it_did_not_ru
     let o = sonde(t.path(), &["run", "--demo", "--", "/no/such/program"]);
     assert_eq!(o.status.code(), Some(70), "{}", stderr(&o));
     assert!(stderr(&o).contains("cannot start"), "{}", stderr(&o));
-    assert_eq!(sessions_in(t.path()), 0, "no run of what never ran");
+    assert_eq!(runs_in(t.path()), 0, "no run of what never ran");
     // a program's own flags after its name are its own
     let o = sonde(t.path(), &["run", "--demo", "--", "sh", "-c", "exit 0"]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
 }
 
 /// `-o FILE` refuses a file that is there unless `--force`, and two runs
-/// given one file each print their own report and keep their own session.
+/// given one file each print their own report and keep their own run.
 #[test]
 fn run_o_refuses_a_file_there_and_two_runs_at_once_keep_their_own() {
     let t = tempfile::tempdir().unwrap();
@@ -2523,7 +2523,7 @@ fn a_run_ended_by_sigterm_says_the_code_it_exits_with() {
         "{}",
         stderr(&o)
     );
-    // (not killed: no exit 137 said; the session's name holds the time, its digits any)
+    // (not killed: no exit 137 said; the run's name holds the time, its digits any)
     assert!(!stderr(&o).contains("exit 137"), "{}", stderr(&o));
 }
 
@@ -2572,8 +2572,8 @@ fn an_imported_logs_what_if_says_no_waiting_it_does_not_know() {
         }
     }
     std::fs::write(&log, text).unwrap();
-    let session = t.path().join("headget.sonde");
-    let s = session.to_str().unwrap();
+    let run = t.path().join("headget.sonde");
+    let s = run.to_str().unwrap();
     let o = sonde(t.path(), &["import", log.to_str().unwrap(), "-o", s]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let shown = stdout(&sonde(t.path(), &["show", s]));

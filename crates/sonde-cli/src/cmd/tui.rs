@@ -130,12 +130,12 @@ fn bundle(path: &Option<PathBuf>) -> io::Result<Bundle> {
         .map_err(io::Error::other)
 }
 
-struct Session {
+struct RunFile {
     mouse: bool,
 }
 
-impl Session {
-    fn enter(mouse: bool) -> io::Result<Session> {
+impl RunFile {
+    fn enter(mouse: bool) -> io::Result<RunFile> {
         terminal::enable_raw_mode()?;
         let mut out = io::stdout();
         execute!(out, terminal::EnterAlternateScreen, crossterm::cursor::Hide)?;
@@ -148,7 +148,7 @@ impl Session {
             restore(mouse);
             previous(info);
         }));
-        Ok(Session { mouse })
+        Ok(RunFile { mouse })
     }
 }
 
@@ -167,7 +167,7 @@ fn restore(mouse: bool) {
     let _ = terminal::disable_raw_mode();
 }
 
-impl Drop for Session {
+impl Drop for RunFile {
     fn drop(&mut self) {
         restore(self.mouse);
     }
@@ -211,7 +211,7 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
     o.ui_sets = vec![nsh_base::registry(), sonde_nsh::registry()];
     let mut main = AppView::new(o);
     main.set_dev_log_path(log);
-    let session = Session::enter(!args.no_mouse)?;
+    let run = RunFile::enter(!args.no_mouse)?;
     let backend = CrosstermBackend::new(io::BufWriter::new(io::stdout()));
     let mut term = Terminal::new(main.measure_backend(backend))?;
     term.draw(|f| main.render(f, f.area()))?;
@@ -247,7 +247,7 @@ fn run_inner(cli: &Cli, args: &TuiArgs) -> io::Result<()> {
     }
     main.stop();
     drop(term);
-    drop(session);
+    drop(run);
     Ok(())
 }
 

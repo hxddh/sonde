@@ -64,7 +64,7 @@ fn by_arg(text: &str) -> Result<Dimension, String> {
 /// sentence that says where the slow and the costly requests are.
 fn print_split(
     split: &sonde_proxy::split::Split,
-    header: &sonde_proxy::session::SessionHeader,
+    header: &sonde_proxy::run::RunHeader,
     requests: usize,
     seconds: f64,
     color: bool,
@@ -229,14 +229,14 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     };
     // read for what it amounts to: a request in full (`-f json`) is written
     // from the file, never held with the rest
-    let (file, session) = super::runs::open_lean(s, &file)?;
+    let (file, run) = super::runs::open_lean(s, &file)?;
     if a.app {
         return open_in_app(&file);
     }
-    let all = &session.records;
-    let prices = request_prices_for(s, &session.header.endpoint);
+    let all = &run.records;
+    let prices = request_prices_for(s, &run.header.endpoint);
     // what it amounts to, once: every part below reads this
-    let analysis = Analysis::of(&session, &prices);
+    let analysis = Analysis::of(&run, &prices);
     let eps = &analysis.episodes;
     if let Some(by) = a.by {
         let split = sonde_proxy::split::split(all, by, &prices);
@@ -244,13 +244,13 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             Format::Json => println!(
                 "{}",
                 output::json(&serde_json::json!({
-                    "run": session.header,
+                    "run": run.header,
                     "split": split,
                 }))
             ),
             _ => print_split(
                 &split,
-                &session.header,
+                &run.header,
                 all.len(),
                 analysis.summary.seconds,
                 std::io::stdout().is_terminal(),
@@ -261,10 +261,10 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
     // how its program stood under faults, each scenario since when
     let trials = sonde_proxy::trial::load_with_history(
         &file,
-        sonde_proxy::program::key_of(&session.header).as_deref(),
+        sonde_proxy::program::key_of(&run.header).as_deref(),
     );
     // against the program's run before it, as `run` said it: in every format
-    let since = super::fixloop::since_last(s, &file, &session.header, all, &analysis);
+    let since = super::fixloop::since_last(s, &file, &run.header, all, &analysis);
     match a.format {
         // the summary alone: what the table's summary shows, and no more
         Format::Json if a.summary => {
@@ -272,7 +272,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             println!(
                 "{}",
                 output::json(&serde_json::json!({
-                    "run": session.header,
+                    "run": run.header,
                     "summary": analysis.summary,
                     "operations": eps.len(),
                     "waiting": {
@@ -317,7 +317,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
                 })?;
                 w.end_array()?;
             }
-            w.field("run", &session.header)?;
+            w.field("run", &run.header)?;
             w.field("summary", &analysis.summary)?;
             w.field("whatIf", &analysis.what_if)?;
             w.field("trials", &trials)?;
@@ -329,7 +329,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
         }
         _ => {
             let color = std::io::stdout().is_terminal();
-            if let Some(c) = &session.header.command {
+            if let Some(c) = &run.header.command {
                 println!("{}", paint(&format!("$ {c}"), "1", color));
             }
             // a list asked for: the requests (then the summary), or what
@@ -373,7 +373,7 @@ pub async fn show(s: &Arc<Sonde>, a: &ShowArgs) -> anyhow::Result<i32> {
             }
             print_summary_of(
                 &analysis,
-                &session.header,
+                &run.header,
                 &file,
                 color,
                 true,

@@ -7,7 +7,7 @@ crates/sonde-nsh          `sonde/native`: #[module] Sonde, Runs,              �
                           #[class] Listing; Run's PTY (portable-pty)          │ to it
 crates/sonde-cli          `sonde`: headless subcommands; `sonde tui` host     ─┘
 crates/proxy (sonde-proxy) the recording endpoint, faults and trials,       ─┐
-                          sessions and their summary cache, episodes,         │
+                          runs and their summary cache, episodes,         │
                           observations, signals, the paged view, programs     │
                           and budgets, replay, comparison, import, OTLP,      │
                           the HTML report                                     │
@@ -72,7 +72,7 @@ output chunk; gzipped when finished). Then, in `sonde-proxy`:
 | `program.rs` | a run's figures against a budget (`sonde.toml`) or a baseline: `sonde check`, the app's history |
 | `fixloop.rs` | a finding across a program's runs: fixed (gone at any threshold, measured saving), less, back, new, open; kept per program in `findings.json` beside its runs |
 | `summary.rs` | counts kept in the folder's index, valid while file length, time and cache version match |
-| `index.rs` | one `.index.jsonl` per sessions folder: counts, verdicts, exit codes; an appended log, compacted |
+| `index.rs` | one `.index.jsonl` per runs folder: counts, verdicts, exit codes; an appended log, compacted |
 | `view.rs` | analysed once, sent in pages (`Runs.view`, `Runs.episodes`): what crosses to the UI does not grow |
 | `phrase.rs` | each sentence as a key and arguments beside its English; the app and viewer render them per language (`app/src/phrases.ts`), falling back to English |
 

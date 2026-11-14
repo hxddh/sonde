@@ -1,10 +1,10 @@
-//! How the analysis scales: a synthetic session of N requests (default a
+//! How the analysis scales: a synthetic run of N requests (default a
 //! million) written, compressed, read back and analysed, each step timed.
 //!
 //!     cargo run --release -p sonde-proxy --example scale -- 1000000
 //!
-//! A path after the count keeps the session there (the nightly run gives it to
-//! sonde-nsh's timed test of the bridge, `SONDE_BIG_SESSION`).
+//! A path after the count keeps the run there (the nightly run gives it to
+//! sonde-nsh's timed test of the bridge, `SONDE_BIG_RUN`).
 
 use std::time::Instant;
 
@@ -12,7 +12,7 @@ use chrono::DateTime;
 use reqlog::Record;
 use sonde_proxy::episode::{episodes, observations};
 use sonde_proxy::profile::{RequestPrices, profile};
-use sonde_proxy::session::{Session, SessionHeader, SessionWriter, compress};
+use sonde_proxy::run::{RunFile, RunHeader, RunWriter, compress};
 
 fn main() {
     let n: usize = std::env::args()
@@ -23,9 +23,9 @@ fn main() {
     let path = dir.path().join("big.sonde");
     let t = Instant::now();
     {
-        let w = SessionWriter::create(
+        let w = RunWriter::create(
             &path,
-            &SessionHeader::new("e", "http://e", "us-east-1", Some("etl".into())),
+            &RunHeader::new("e", "http://e", "us-east-1", Some("etl".into())),
         )
         .unwrap();
         use reqlog::Sink;
@@ -65,7 +65,7 @@ fn main() {
         raw as f64 / gz as f64
     );
     let t = Instant::now();
-    let s = Session::open(&path).unwrap();
+    let s = RunFile::open(&path).unwrap();
     println!("open: {:.2?}", t.elapsed());
     if let Some(keep) = &keep {
         std::fs::copy(&path, keep).unwrap();

@@ -1,4 +1,4 @@
-//! A large session (50,000 requests of a busy program) opens and analyses in
+//! A large run (50,000 requests of a busy program) opens and analyses in
 //! well under the time a person waits for a window. The bound is loose for
 //! debug builds and slow CI machines; `--release` shows the real figure.
 
@@ -7,7 +7,7 @@ use std::time::Instant;
 use chrono::DateTime;
 use reqlog::{Record, Sink};
 use sonde_proxy::episode::{episodes, observations};
-use sonde_proxy::session::{Session, SessionHeader, SessionWriter};
+use sonde_proxy::run::{RunFile, RunHeader, RunWriter};
 use sonde_proxy::summary::summarize;
 
 pub fn busy(n: u64) -> Vec<Record> {
@@ -50,9 +50,9 @@ pub fn busy(n: u64) -> Vec<Record> {
 fn fifty_thousand_requests_open_in_reasonable_time() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("big.sonde");
-    let w = SessionWriter::create(
+    let w = RunWriter::create(
         &path,
-        &SessionHeader::new("ep", "http://s3", "", Some("busy".into())),
+        &RunHeader::new("ep", "http://s3", "", Some("busy".into())),
     )
     .unwrap();
     for r in busy(50_000) {
@@ -61,7 +61,7 @@ fn fifty_thousand_requests_open_in_reasonable_time() {
     drop(w);
 
     let t = Instant::now();
-    let s = Session::open(&path).unwrap();
+    let s = RunFile::open(&path).unwrap();
     let read = t.elapsed();
     let eps = episodes(&s.records);
     let analysed = t.elapsed() - read;

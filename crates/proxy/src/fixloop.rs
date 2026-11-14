@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::episode::Observation;
 use crate::phrase::{Phrase, p, plural};
 use crate::profile::{FindingText, RequestPrices, Run, RunChange};
-use crate::session::SessionHeader;
+use crate::run::RunHeader;
 
 /// Where a finding stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -685,7 +685,7 @@ pub fn previous_run(
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("sonde"))
         .filter_map(|p| {
-            let h = crate::session::read_header(&p)?;
+            let h = crate::run::read_header(&p)?;
             (h.is_recording()
                 && h.created < created
                 && crate::program::key_of(&h).as_deref() == Some(key))
@@ -724,12 +724,12 @@ pub struct SinceLast {
 /// A run (`path`, its `header`, its `records` and `run`, them analysed)
 /// against the program's run before it that did not fail, found in `dir`;
 /// and the program's kept findings brought up to it when it is its newest
-/// run. A run that failed is not compared. None for a session that is no
+/// run. A run that failed is not compared. None for a run that is no
 /// run of a program (a replay, an import, a trial).
 pub fn since_last(
     dir: &Path,
     path: &Path,
-    header: &SessionHeader,
+    header: &RunHeader,
     records: &[Record],
     mut run: Run,
     prices: &dyn Fn(&str) -> RequestPrices,
@@ -751,7 +751,7 @@ pub fn since_last(
     }
     let previous = previous_run(dir, &key, header.created, path);
     let before = previous.as_ref().and_then(|p| {
-        let s = crate::session::Session::open_lean(p).ok()?;
+        let s = crate::run::RunFile::open_lean(p).ok()?;
         let run = Run::analysed(&s.header, &s.records, &prices(&s.header.endpoint));
         Some((
             s.header.created,

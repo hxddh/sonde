@@ -145,9 +145,9 @@ async fn diff(
     format: Format,
 ) -> anyhow::Result<i32> {
     // read one after the other, each for what it amounts to: the replay
-    // kept as its answers and its profile, then the session read against them
+    // kept as its answers and its profile, then the run read against them
     let original_file = super::runs::resolve(s, original);
-    let prices = sonde_proxy::session::read_header(&original_file)
+    let prices = sonde_proxy::run::read_header(&original_file)
         .map(|h| request_prices_for(s, &h.endpoint))
         .unwrap_or_default();
     let (replay_header, answers, is_replay, replay_profile) = {
@@ -192,7 +192,7 @@ async fn diff(
     Ok(if c.differ() > 0 { 2 } else { 0 })
 }
 
-fn named_replay(h: &sonde_proxy::session::SessionHeader) -> bool {
+fn named_replay(h: &sonde_proxy::run::RunHeader) -> bool {
     h.command
         .as_deref()
         .is_some_and(|c| c.starts_with("replay of "))
@@ -231,9 +231,9 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
             "--bucket, --prefix, --yes and -o are for --replay ENDPOINT",
         ));
     }
-    // a session and its replay, in either order: their answers compared
+    // a run and its replay, in either order: their answers compared
     if let [x, y] = a.runs.as_slice() {
-        let header = |f: &PathBuf| sonde_proxy::session::read_header(&super::runs::resolve(s, f));
+        let header = |f: &PathBuf| sonde_proxy::run::read_header(&super::runs::resolve(s, f));
         match (header(x), header(y)) {
             (_, Some(h)) if named_replay(&h) => return diff(s, x, y, a.format).await,
             (Some(h), _) if named_replay(&h) => return diff(s, y, x, a.format).await,
@@ -252,14 +252,13 @@ pub async fn compare(s: &Arc<Sonde>, a: &CompareArgs) -> anyhow::Result<i32> {
     // cost what the larger does, not both at once (the later counted
     // against what the earlier's findings would save)
     let run = |f: &PathBuf, against: Option<&sonde_proxy::profile::Run>| -> anyhow::Result<_> {
-        let (_, session) = super::runs::open_lean(s, f)?;
-        let prices = request_prices_for(s, &session.header.endpoint);
-        let mut run =
-            sonde_proxy::profile::Run::analysed(&session.header, &session.records, &prices);
+        let (_, opened) = super::runs::open_lean(s, f)?;
+        let prices = request_prices_for(s, &opened.header.endpoint);
+        let mut run = sonde_proxy::profile::Run::analysed(&opened.header, &opened.records, &prices);
         if let Some(a) = against {
-            run.measure(&session.records, a);
+            run.measure(&opened.records, a);
         }
-        Ok((session.header, run))
+        Ok((opened.header, run))
     };
     let (ha, ra) = run(&before, None)?;
     let (hb, rb) = run(&after, Some(&ra))?;
@@ -455,7 +454,7 @@ fn runs_compared(
 
 /// A run and its program's run before it, or why it has none (its first).
 fn before_of(after: &std::path::Path) -> anyhow::Result<Result<(PathBuf, PathBuf), String>> {
-    let h = sonde_proxy::session::read_header(after)
+    let h = sonde_proxy::run::read_header(after)
         .ok_or_else(|| super::usage(format!("{} is not a sonde run", after.display())))?;
     let key = sonde_proxy::program::key_of(&h).ok_or_else(|| {
         super::usage(format!(

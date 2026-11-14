@@ -173,7 +173,7 @@ per-attempt timeout; for a stale listing, keep the written keys or list again; e
 | History | Each verdict is added to its program's in its runs folder's index: per scenario as asked (`slowdown:3`), when, standing, run; the newest 50. Kept when a run is recorded again or deleted. |
 | The line | Once a scenario has two verdicts: `broke on 12 Nov, survived since`, or `survived since 10 Nov` when it never changed. In `run`, `check`, `show` (*Under faults*), Markdown and GitHub output. JSON: `history` on each trial. |
 | `--again` | `sonde run --again -- CMD` (`--trial` implied): a fresh clean run, then the scenarios whose last verdict was broke, degraded or refused. A trial that left any ends by printing this command with its own flags (store, policy, `-o`, `--name`, `--tls`); a trial of `--fault` scenarios prints them again, the ones that did not survive. |
-| App | `Sessions.trialAgain(path, …)`: the same, from a run of the program. |
+| App | `Runs.trialAgain(path, …)`: the same, from a run of the program. |
 
 ## Where the results go
 
@@ -213,9 +213,10 @@ times = 2                  # attempts per request that fail (default 1; 0 = ever
 ## Limits
 
 - Only traffic through the proxy is tried.
-- Trials use the run's policy (`no-delete` by default); a program that deletes what it did not make needs
-  `--policy allow` ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no
-  place sonde can read: use `{trial}`.
+- A trial's own default policy is `no-delete` (a plain run's is `allow`): sonde's faults could push a program down a
+  path it would not take. A program that deletes what it did not make needs `--policy allow`
+  ([recording](recording.md#what-a-recorded-program-may-do)). `SONDE_TRIAL` names no place sonde can read: use
+  `{trial}`.
 - **cut-body**: sonde sees which bytes are asked for again, not what the program did with the half (a checksum
   failure with the clean exit reads as "took the half as whole"). Chunked bodies are not cut. One cut per object.
 - **lost-race**: no other writer exists; with `If-None-Match: *` the store holds the program's write. Commit contents

@@ -1,4 +1,4 @@
-//! [`Name`]: a word a session says over and over, in two bytes.
+//! [`Name`]: a word a run says over and over, in two bytes.
 
 use std::collections::HashMap;
 use std::num::NonZeroU16;
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// A word records say over and over (a request's kind, its method, its
 /// bucket), held as two bytes: its text is kept once, for as long as the
-/// process runs. A session of a million requests names a few dozen kinds
+/// process runs. A run of a million requests names a few dozen kinds
 /// and buckets; a record's three names take 6 bytes, not 48. It reads as a
 /// `str` everywhere, and is written to a file as one.
 ///
