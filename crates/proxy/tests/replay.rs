@@ -391,7 +391,7 @@ async fn a_replay_that_cannot_list_its_prefix_does_not_start() {
 }
 
 #[tokio::test]
-async fn a_bucket_that_is_not_there_yet_holds_nothing() {
+async fn a_bucket_that_is_not_there_is_not_created_and_nothing_is_sent() {
     let url = answering(404, "NoSuchBucket").await;
     let store = client(&url, RequestLog::default());
     let dir = tempfile::tempdir().unwrap();
@@ -400,11 +400,13 @@ async fn a_bucket_that_is_not_there_yet_holds_nothing() {
         buckets: vec![],
     };
     let out = dir.path().join("r.sonde");
-    let run = sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {})
-        .await
-        .unwrap();
-    assert_eq!(run.plan.requests, 1);
-    assert_eq!(run.removed, 0);
+    let Err(why) =
+        sonde_proxy::replay::replay_to_file(&store, &one_put(), &opts, &out, |_, _| {}).await
+    else {
+        panic!("replayed into a bucket that is not there");
+    };
+    assert!(why.contains("a replay creates no bucket"), "{why}");
+    assert!(!out.exists());
 }
 
 #[tokio::test]

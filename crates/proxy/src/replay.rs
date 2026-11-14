@@ -957,9 +957,11 @@ pub async fn replay_to_file(
                 "{b}/{} already holds objects: a replay writes under a prefix of its own and deletes what is there afterwards; choose another prefix",
                 opts.prefix
             ),
-            // a bucket that is not there holds nothing (the replay may
-            // create it); any other answer leaves the prefix unknown
-            Err(e) if e.status == Some(404) => continue,
+            // a replay creates no bucket; any other answer leaves the
+            // prefix unknown
+            Err(e) if e.status == Some(404) => format!(
+                "bucket {b} is not there: a replay creates no bucket, so nothing was replayed; create it, or replay into another (--bucket {b}=OTHER)"
+            ),
             Err(e) => format!(
                 "could not check that {b}/{} is empty ({e}): a replay deletes what is under its prefix afterwards, so nothing was replayed",
                 opts.prefix
