@@ -113,10 +113,11 @@ fn read_as_show(path: &std::path::Path) -> (Duration, usize, Analysis) {
     (took, s.records.len(), a)
 }
 
-/// What a million requests of the lake job may hold at once. Each budget is
-/// what was measured (docs/dev/performance.md) and about an eighth more, for another
-/// machine's threads and allocator: not room for a request held whole again.
-const MILLION_MIB: u64 = 1300;
+/// What a million requests of the lake job may hold at once: 400 MiB, what
+/// 22.0 set out to hold them in. Each budget is what was measured
+/// (docs/dev/performance.md) and about an eighth more, for another machine's
+/// threads and allocator: not room for a request held whole again.
+const MILLION_MIB: u64 = 400;
 
 #[test]
 #[ignore = "a million requests: run in release, as CI does"]
@@ -187,7 +188,7 @@ fn two_runs_of_a_million_requests_compare_within_what_one_costs() {
         "compare of two millions",
         took,
         Duration::from_secs(120),
-        1450,
+        560,
     );
 }
 
@@ -206,7 +207,7 @@ fn an_outage_of_three_hundred_thousand_requests_is_read_within_its_memory() {
         "show of an outage of 300 thousand",
         took,
         Duration::from_secs(30),
-        600,
+        240,
     );
 }
 
@@ -232,7 +233,7 @@ fn small_uploads_of_three_hundred_thousand_requests_are_read_within_their_memory
         "show of 300 thousand small uploads",
         took,
         Duration::from_secs(30),
-        500,
+        270,
     );
 }
 
@@ -266,7 +267,7 @@ fn the_apps_first_view_of_a_hundred_thousand_requests_is_built_within_its_memory
         "the app's first view of 100 thousand",
         took,
         Duration::from_secs(6),
-        280,
+        250,
     );
     // and it does not grow with the session: a page of operations, not all
     assert_eq!(
@@ -355,12 +356,11 @@ fn the_time_pane_of_a_million_requests_draws_bounded_rows() {
         tenth.len(),
         peak_mib()
     );
-    // what show of a million holds, and room for a tenth of it held again (not yet measured: CI's first run
-    // says it)
+    // the run, its profile and signals, and a tenth of it held again
     held(
         "the Time pane of a million",
         took,
         Duration::from_secs(45),
-        MILLION_MIB + MILLION_MIB / 8,
+        310,
     );
 }

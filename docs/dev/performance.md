@@ -36,41 +36,53 @@ Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in
 
 ## Large sessions
 
-**A million requests take about 1.1 GiB of memory** to read and analyse, in 9 s; `compare` of two, 1.3 GiB (it
-reads one run at a time). Memory grows with the requests: about 1.1 KB each (a record's 470 bytes and its headers,
-then its operation), so 8 GB holds about six million. The goal is 400 MiB: a lean record of about 150 bytes.
+**A million requests take about 350 MiB of memory** to read and analyse, in 9 s; `compare` of two, about 500 MiB
+(it reads one run at a time). Memory grows with the requests: about 350 bytes each (a record's 96 bytes and what
+it shares, its operation's 88, and the analysis's room), so 8 GB holds about twenty million.
 
-Measured 2026-11-14 (22.0), release build, `/usr/bin/time` (peak resident memory), the commands once, the budgets twice (their ranges below). The sessions are
-the budgets' lake job with real headers (`crates/proxy/tests/support`): a million requests, 170 MiB gzipped, 1.6 GiB
-of JSON lines.
+Measured 2026-11-14 (22.0), release build, `/usr/bin/time` (peak resident memory), the commands once, the budgets
+twice (their ranges below). The sessions are the budgets' lake job with real headers (`crates/proxy/tests/support`):
+a million requests, 170 MiB gzipped, 1.6 GiB of JSON lines.
 
 | A million requests | Time | Peak memory |
 | --- | --- | --- |
-| `sonde show` | 8.7 s | 1.1 GiB |
-| `sonde show -f json` | 14 s | 1.1 GiB |
-| `sonde show -f json --requests` (1.6 GiB of JSON) | 39 s | 1.1 GiB |
-| `sonde check --baseline` (another million) | 18 s | 1.2 GiB |
-| `sonde compare` (two millions) | 23 s | 1.3 GiB |
+| `sonde show` | 8.5 s | 351 MiB |
+| `sonde show -f json` | 13 s | 350 MiB |
+| `sonde show -f json --requests` (1.6 GiB of JSON) | 38 s | 349 MiB |
+| `sonde check --baseline` (another million) | 17 s | 391 MiB |
+| `sonde compare` (two millions) | 20 s | 510 MiB |
 | `sonde share` | not yet measured | |
 
 Budgets (`crates/proxy/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past its
-peak memory (what is measured and about an eighth more), which is the same from run to run. Time moves with a shared
-runner: it is said in the job's summary and fails only past several times what it takes.
+peak memory (what is measured and about an eighth more; a million's is the 400 MiB 22.0 set out for), which moves
+by a few percent from run to run. Time moves with a shared runner: it is said in the job's summary and fails only
+past several times what it takes.
 
-| Budget | Measured | Peak memory, held at | Time, held at |
-| --- | --- | --- | --- |
-| a million read and analysed (`show`) | 1,110–1,126 MiB, 8.4–9.3 s | 1,300 MiB | 45 s |
-| two runs of a million compared | 1,269–1,357 MiB, 23 s | 1,450 MiB | 120 s |
-| an outage of 300 thousand | 516–517 MiB, 2.1–2.2 s | 600 MiB | 30 s |
-| small multipart uploads, 300 thousand | 435–441 MiB, 2.6–2.9 s | 500 MiB | 30 s |
-| the app's first view of 100 thousand | 237–242 MiB, 0.7 s | 280 MiB | 6 s |
-| a sorted page of operations | 52 ms | | 1.5 s |
-| the Time pane of a million: its rows (bounded by its slices, under 2 MiB) and a tenth reckoned alone | 715 MiB, 7.4 s | 1,462 MiB | 45 s |
+| Budget | Measured (21.0) | Measured | Peak memory, held at | Time, held at |
+| --- | --- | --- | --- | --- |
+| a million read and analysed (`show`) | 1,107–1,126 MiB, 8.4–9.3 s | 333–368 MiB, 8.4–9.1 s | 400 MiB | 45 s |
+| two runs of a million compared | 1,269–1,357 MiB, 23–25 s | 490–548 MiB, 20–21 s | 560 MiB | 120 s |
+| an outage of 300 thousand | 511–517 MiB, 2.1–2.2 s | 199–211 MiB, 1.8–1.9 s | 240 MiB | 30 s |
+| small multipart uploads, 300 thousand | 430–441 MiB, 2.6–3.1 s | 234–235 MiB, 2.8 s | 270 MiB | 30 s |
+| the app's first view of 100 thousand (records whole) | 234–242 MiB, 0.7–1.0 s | 217–221 MiB, 1.0–1.1 s | 250 MiB | 6 s |
+| a sorted page of operations | 52 ms | 48–57 ms | | 1.5 s |
+| the Time pane of a million: its rows (bounded by its slices, under 2 MiB) and a tenth reckoned alone | 711–715 MiB, 6.6–7.4 s | 270–272 MiB, 4.9 s | 310 MiB | 45 s |
 
-How: the file is streamed and parsed on every core; `show -f json` writes the requests only with `--requests`; records keep only the headers an analysis reads, with repeated
-text shared; operations, signals and profile are computed once, in parallel; JSON is written as it is made; the app
-gets a page of operations at a time; `compare` reads one session at a time. The app also caches each
-finished run's figures in `sessions/.index.jsonl` and reads a live recording incrementally.
+How:
+- **The record** (`reqlog::Record`, 96 bytes): its kind, method and bucket are interned `Name`s (2 bytes each); a
+  size and the first byte's time take 8 bytes each; its query and headers are one list behind a pointer that records
+  holding the same share; what few have (an error's body, a fault's mark) and what no analysis reads (the URL, the
+  endpoint, the region, the store's ids) is behind another, there only when needed.
+- **The reading**: the file is streamed and parsed on every core; a lean reading (what `show`, `check` and `compare`
+  use) borrows a line's text and makes only what it keeps, the headers an analysis reads; repeated text is shared.
+- **The operation** (88 bytes): one request that went through is its record's names in place; any other's phrases,
+  notes and outcome are behind one pointer; titles are made when asked for.
+- **The analysis**: counts, signals, profile, operations and findings are computed once, one after another (threads
+  each kept what they let go: a fifth more memory, for 2.5 s less); work is done on sorted indexes and tables by id,
+  not per-request maps and copies; a run's traces keep their counts and words, not the requests they name.
+- **The output**: `show -f json` writes the requests only with `--requests`; JSON is written as it is made; the app
+  gets a page of operations at a time; `compare` reads one session at a time. The app also caches each finished
+  run's figures in the folder's index and reads a live recording incrementally.
 
 ## Terminal binary
 
