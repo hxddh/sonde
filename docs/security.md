@@ -43,7 +43,8 @@ operations (aborting uploads, deleting versions, delete markers or objects, repl
 never a switch away: each is a plan (`sonde-core::guard`):
 
 1. A plan is a dry run listing exactly what would change (for lifecycle, old and new documents).
-2. It runs only with its typed confirmation: the item count or the bucket name.
+2. It runs only when confirmed: the item count typed where data is lost (`--confirm COUNT`); a lifecycle rule, which
+   keeps the bucket's other rules, on `--yes`.
 3. Plans expire after 10 minutes and run once.
 4. Each run is appended to `<data>/audit.jsonl` twice: `"stage": "started"` before the first request (if that cannot
    be written, the run does not start), then the outcome (time, action, targets, outcome, request ids, errors).
