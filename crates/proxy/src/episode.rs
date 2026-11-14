@@ -1874,6 +1874,53 @@ pub(crate) enum ById<V> {
     Map(std::collections::HashMap<u64, V>),
 }
 
+/// Which operation each request belongs to, by its id (a request two
+/// operations claim is the later's): a table when the ids are about 1 to n
+/// (a recording's), sorted pairs when not (a map's buckets would cost twice
+/// as much a request).
+pub(crate) enum Owners {
+    Table { first: u64, of: Vec<u32> },
+    Pairs(Vec<(u64, u32)>),
+}
+
+impl Owners {
+    pub(crate) fn of(episodes: &[Episode]) -> Owners {
+        let ids = || {
+            episodes
+                .iter()
+                .enumerate()
+                .flat_map(|(i, e)| e.records.iter().map(move |id| (*id, i as u32)))
+        };
+        let (n, first, last) = ids().fold((0u64, u64::MAX, 0), |(n, lo, hi), (id, _)| {
+            (n + 1, lo.min(id), hi.max(id))
+        });
+        if n > 0 && last - first <= 2 * n {
+            let mut of = vec![u32::MAX; (last - first + 1) as usize];
+            for (id, i) in ids() {
+                of[(id - first) as usize] = i;
+            }
+            return Owners::Table { first, of };
+        }
+        let mut pairs: Vec<(u64, u32)> = ids().collect();
+        pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+        pairs.dedup_by_key(|(id, _)| *id);
+        Owners::Pairs(pairs)
+    }
+
+    pub(crate) fn get(&self, id: u64) -> Option<u32> {
+        match self {
+            Owners::Table { first, of } => of
+                .get(id.checked_sub(*first)? as usize)
+                .copied()
+                .filter(|i| *i != u32::MAX),
+            Owners::Pairs(pairs) => {
+                let at = pairs.binary_search_by_key(&id, |(id, _)| *id).ok()?;
+                Some(pairs[at].1)
+            }
+        }
+    }
+}
+
 /// Each record by its id: looked up in place when the records are in the
 /// order of their ids (a recording's are), else through a [`ById`].
 pub(crate) enum RecordsById<'a> {
@@ -1960,14 +2007,9 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // each record by its id: read once, for every finding that names requests
     let by_id = RecordsById::of(records);
     // which episode each record belongs to
-    let owner: ById<u32> = ById::of(records.len(), || {
-        episodes
-            .iter()
-            .enumerate()
-            .flat_map(|(i, e)| e.records.iter().map(move |r| (*r, i as u32)))
-    });
+    let owner = Owners::of(episodes);
     let of_records = |ids: &mut dyn Iterator<Item = u64>| -> Vec<usize> {
-        ids.filter_map(|id| owner.get(&id).map(|i| *i as usize))
+        ids.filter_map(|id| owner.get(id).map(|i| i as usize))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -2133,28 +2175,48 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
     // cache would answer as the store did (counted by the records' own
     // names: only a hot key's is written out)
     let writes = writes_by_bucket(records);
-    let unchanging = unchanging_reads(records, &writes);
-    let mut reads: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
-    for r in records
+    // each bucket's writes by key, then time (by place): where a key's are
+    let by_key: HashMap<&str, Vec<u32>> = writes
         .iter()
-        .filter(|r| r.method == "GET" || r.method == "HEAD")
-    {
-        if let (Some(b), Some(k)) = (&r.bucket, &r.key) {
-            reads.entry((b, k)).or_default().push(r.id);
+        .map(|(b, w)| {
+            let mut at: Vec<u32> = (0..w.len() as u32).collect();
+            at.sort_unstable_by_key(|i| {
+                let (when, key) = w[*i as usize];
+                (key, when)
+            });
+            (*b, at)
+        })
+        .collect();
+    // each key's reads side by side (sorted by place, in the records' order
+    // within a key): no list is made of each
+    let place = |i: &u32| {
+        let r = &records[*i as usize];
+        (r.bucket.as_deref(), r.key.as_deref())
+    };
+    let mut reads: Vec<u32> = (0..records.len() as u32)
+        .filter(|i| {
+            let r = &records[*i as usize];
+            (r.method == "GET" || r.method == "HEAD") && r.bucket.is_some() && r.key.is_some()
+        })
+        .collect();
+    reads.sort_by(|a, b| place(a).cmp(&place(b)));
+    let mut hot: Vec<(String, Vec<u64>)> = Vec::new();
+    for group in reads.chunk_by(|a, b| place(a) == place(b)) {
+        let n = group.len();
+        let enough = if any {
+            n >= 2
+        } else {
+            n >= 10 && n * 10 >= total
+        };
+        if enough && unchanging(records, group, &writes, &by_key) {
+            let (Some(b), Some(k)) = place(&group[0]) else {
+                continue;
+            };
+            let ids = group.iter().map(|i| records[*i as usize].id).collect();
+            hot.push((format!("{b}/{k}"), ids));
         }
     }
-    let mut hot: Vec<(String, Vec<u64>)> = reads
-        .into_iter()
-        .filter(|(_, ids)| {
-            if any {
-                ids.len() >= 2
-            } else {
-                ids.len() >= 10 && ids.len() * 10 >= total
-            }
-        })
-        .filter(|(place, _)| unchanging.contains(place))
-        .map(|((b, k), ids)| (format!("{b}/{k}"), ids))
-        .collect();
+    drop(reads);
     hot.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     for (k, ids) in hot.into_iter().take(most) {
         let n = ids.len();
@@ -2555,7 +2617,17 @@ fn observations_at(records: &[Record], episodes: &[Episode], any: bool) -> Vec<O
 /// key a DeleteObjects names), in order: what tells a read that would answer
 /// the same again from one whose answer changed in between.
 fn writes_by_bucket(records: &[Record]) -> std::collections::HashMap<&str, Vec<(Order, &str)>> {
-    let mut out: std::collections::HashMap<&str, Vec<(Order, &str)>> = Default::default();
+    // (each bucket's list made at its size: its writes counted first)
+    let mut counts: std::collections::HashMap<&str, usize> = Default::default();
+    for r in records.iter().filter(|r| !crate::profile::is_read(r)) {
+        if let Some(b) = r.bucket.as_deref() {
+            *counts.entry(b).or_default() += 1;
+        }
+    }
+    let mut out: std::collections::HashMap<&str, Vec<(Order, &str)>> = counts
+        .into_iter()
+        .map(|(b, n)| (b, Vec::with_capacity(n)))
+        .collect();
     for r in records.iter().filter(|r| !crate::profile::is_read(r)) {
         let Some(b) = r.bucket.as_deref() else {
             continue;
@@ -2605,58 +2677,52 @@ fn written_between(
         .any(|(_, k)| changes(k))
 }
 
-/// The keys (bucket, key) whose every read would be answered the same by a
-/// copy kept from the first: each found (no miss), whole (no range or
-/// part: those are the parallel reading of one object), of one ETag where
+/// Whether every read of one key (`group`, by place) would be answered the
+/// same by a copy kept from the first: each found (no miss), whole (no range
+/// or part: those are the parallel reading of one object), of one ETag where
 /// the store said it, and with no write to the key between the first read
-/// and the last. A key rewritten between its reads would be answered stale
-/// by a cache, and a miss is not kept by one (an exception is not cached; a
-/// key polled for appears): neither is a hot key to cache. A read that
-/// failed otherwise (throttled, a 500) said nothing of the key, and is
-/// passed over: a cache would not have sent it.
-fn unchanging_reads<'a>(
-    records: &'a [Record],
+/// and the last (`writes` and, by key, `by_key`). A key rewritten between
+/// its reads would be answered stale by a cache, and a miss is not kept by
+/// one (an exception is not cached; a key polled for appears): neither is a
+/// hot key to cache. A read that failed otherwise (throttled, a 500) said
+/// nothing of the key, and is passed over: a cache would not have sent it.
+fn unchanging(
+    records: &[Record],
+    group: &[u32],
     writes: &std::collections::HashMap<&str, Vec<(Order, &str)>>,
-) -> std::collections::HashSet<(&'a str, &'a str)> {
-    use std::collections::HashMap;
-    let mut reads: HashMap<(&str, &str), (Order, Order, bool, Option<&str>)> = HashMap::new();
-    for r in records.iter().filter(|r| crate::profile::is_read(r)) {
-        let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
-            continue;
-        };
+    by_key: &std::collections::HashMap<&str, Vec<u32>>,
+) -> bool {
+    let mut seen: Option<(Order, Order, Option<&str>)> = None;
+    for r in group.iter().map(|i| &records[*i as usize]) {
         if crate::summary::is_failure(r) {
             continue;
         }
         let at = order_of(r);
         let whole = header(r, "range").is_none() && query(r, "partNumber").is_none();
         let etag = response_header(r, "etag");
-        let e = reads.entry((b, k)).or_insert((at, at, true, etag));
-        e.0 = e.0.min(at);
-        e.1 = e.1.max(at);
-        e.2 &= whole && !is_miss(r) && (etag.is_none() || e.3.is_none() || etag == e.3);
-        e.3 = e.3.or(etag);
-    }
-    // each key's writes, in order (a bucket's are): one lookup a key, not a
-    // walk through every write to the bucket between its reads
-    let mut written: HashMap<(&str, &str), Vec<Order>> = HashMap::new();
-    for (b, w) in writes {
-        for (at, k) in w {
-            if reads.contains_key(&(*b, *k)) {
-                written.entry((*b, *k)).or_default().push(*at);
-            }
+        let (first, last, kept) = seen.get_or_insert((at, at, etag));
+        if !whole || is_miss(r) || etag.is_some() && kept.is_some() && etag != *kept {
+            return false;
         }
+        (*first, *last) = ((*first).min(at), (*last).max(at));
+        *kept = kept.or(etag);
     }
-    reads
-        .into_iter()
-        .filter(|(place, (first, last, same, _))| {
-            *same
-                && !written.get(place).is_some_and(|at| {
-                    let from = at.partition_point(|t| t <= first);
-                    at.get(from).is_some_and(|t| t < last)
-                })
-        })
-        .map(|(place, _)| place)
-        .collect()
+    let (Some((first, last, _)), Some(r)) = (seen, group.first().map(|i| &records[*i as usize]))
+    else {
+        return false;
+    };
+    let (Some(b), Some(k)) = (r.bucket.as_deref(), r.key.as_deref()) else {
+        return false;
+    };
+    let (Some(w), Some(at)) = (writes.get(b), by_key.get(b)) else {
+        return true;
+    };
+    // the key's writes, in time order: one after the first read, before the last
+    let from = at.partition_point(|i| w[*i as usize].1 < k);
+    let to = at.partition_point(|i| w[*i as usize].1 <= k);
+    let of_key = &at[from..to];
+    let next = of_key.partition_point(|i| w[*i as usize].0 <= first);
+    of_key.get(next).is_none_or(|i| w[*i as usize].0 >= last)
 }
 
 /// Copies out of a `_temporary/` folder and the deletes of what they copied
