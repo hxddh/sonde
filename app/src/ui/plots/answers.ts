@@ -228,8 +228,8 @@ export function statusesSaid(s: Signals): string {
 
 /** What the requests cost: the dearest kind and its share of the whole. */
 export function costSaid(s: Signals): string {
-  const top = s.cost.operations.filter((x) => x.cost > 0).sort((a, b) => b.cost - a.cost)[0];
-  return top ? t("costBy.text", { op: top.operation, pct: percent(top.share), total: cost(s.cost.amount, s.cost.currency) }) : "";
+  const top = s.cost.kinds.filter((x) => x.cost > 0).sort((a, b) => b.cost - a.cost)[0];
+  return top ? t("costBy.text", { op: top.kind, pct: percent(top.share), total: cost(s.cost.amount, s.cost.currency) }) : "";
 }
 
 /** When each prefix was busy: the busiest prefix, in the session's busiest second or the stretch's busiest slice. */

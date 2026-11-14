@@ -377,7 +377,7 @@ export function TimePane(props: { /** whether the board is scrolled from its top
       stretched: true,
       when: () => kindStats(props.view).length > 0,
       title: () => t("byOp.title"),
-      text: () => groupsSaid(operationStats(va()).map((o) => ({ name: o.operation, requests: o.count, errorShare: o.errorShare, p95Ms: o.p95Ms, few: o.few }))),
+      text: () => groupsSaid(kindStats(va()).map((o) => ({ name: o.kind, requests: o.count, errorShare: o.errorShare, p95Ms: o.p95Ms, few: o.few }))),
       how: () => t("byOp.hint"),
       body: () => <ByKind view={va()} selected={props.kind} onSelect={props.onKind} />,
     },
