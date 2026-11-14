@@ -384,12 +384,16 @@ pub(super) async fn watch_logs(s: &Arc<Sonde>, a: &Logs<'_>) -> anyhow::Result<i
 fn post_alert(url: &str, text: String) -> tokio::task::JoinHandle<()> {
     let url = url.to_string();
     tokio::spawn(async move {
-        let r = reqwest::Client::new()
-            .post(&url)
-            .json(&serde_json::json!({ "text": text }))
-            .send()
-            .await
-            .and_then(|r| r.error_for_status());
+        let r = async {
+            s3raw::http_client()
+                .build()?
+                .post(&url)
+                .json(&serde_json::json!({ "text": text }))
+                .send()
+                .await?
+                .error_for_status()
+        }
+        .await;
         if let Err(e) = r {
             static SAID: std::sync::Once = std::sync::Once::new();
             SAID.call_once(|| {

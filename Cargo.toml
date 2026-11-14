@@ -59,8 +59,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tokio-util = "0.7"
 futures = "0.3"
 bytes = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "stream", "http2", "json"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream", "http2", "json", "query"] }
 http = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 url = "2"
 percent-encoding = "2"
 quick-xml = { version = "0.42", features = ["serialize"] }

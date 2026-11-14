@@ -337,7 +337,7 @@ pub(super) async fn fetch_baseline(url: &str) -> anyhow::Result<tempfile::TempPa
     if !url.starts_with("https://") {
         anyhow::bail!("baseline {shown}: only https URLs are fetched");
     }
-    let client = reqwest::Client::builder()
+    let client = s3raw::http_client()
         .timeout(std::time::Duration::from_secs(60))
         // a redirect keeps to https
         .redirect(reqwest::redirect::Policy::custom(|a| {

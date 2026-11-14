@@ -597,7 +597,7 @@ pub async fn otlp(
                         .map_err(|_| std::io::Error::other("sending stopped"))
                 })
             });
-            let client = reqwest::Client::new();
+            let client = s3raw::http_client().build().expect("an HTTP client");
             let mut sent = 0;
             while let Some(body) = made.recv().await {
                 let resp = client

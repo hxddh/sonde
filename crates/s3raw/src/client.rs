@@ -358,6 +358,19 @@ const REQUEST_ID_HEADERS: &[&str] = &[
     "x-bz-request-id",
 ];
 
+/// Every HTTP client sonde makes starts here: TLS through rustls and ring,
+/// the certificate checked by the operating system's verifier (its roots,
+/// its policy, the trust an organisation manages). The first call makes ring
+/// the process's provider, which reqwest needs before it builds a client.
+pub fn http_client() -> reqwest::ClientBuilder {
+    static PROVIDER: std::sync::Once = std::sync::Once::new();
+    PROVIDER.call_once(|| {
+        // (a provider already installed, by the app or a test, is kept)
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    reqwest::Client::builder()
+}
+
 impl S3Client {
     pub fn new(
         cfg: ClientConfig,
@@ -378,15 +391,12 @@ impl S3Client {
             None => Vec::new(),
         };
         let builder = || {
-            let mut b = reqwest::Client::builder()
+            http_client()
                 .connect_timeout(Duration::from_secs(10))
                 .redirect(reqwest::redirect::Policy::none())
                 .user_agent(cfg.user_agent.clone())
-                .pool_max_idle_per_host(32);
-            for c in &certs {
-                b = b.add_root_certificate(c.clone());
-            }
-            b
+                .pool_max_idle_per_host(32)
+                .tls_certs_merge(certs.iter().cloned())
         };
         let http = builder()
             .timeout(cfg.timeout)

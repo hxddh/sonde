@@ -332,7 +332,7 @@ async fn signed_aws_chunked_bodies_are_decoded() {
         &[],
         "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER",
     );
-    let resp = reqwest::Client::new()
+    let resp = web()
         .put(format!("{}/data/chunked", proxy.url()))
         .header(
             "x-amz-content-sha256",
@@ -367,7 +367,7 @@ async fn presigned_urls_are_resigned() {
     app.send(put).await.unwrap();
     let url = app.presign("GET", "data", "p", 60, &[]).await.unwrap();
     assert!(url.starts_with(&proxy.url()));
-    let resp = reqwest::get(&url).await.unwrap();
+    let resp = web().get(&url).send().await.unwrap();
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text().await.unwrap(), "x");
 }
@@ -468,7 +468,7 @@ async fn upstream_errors_keep_their_body() {
         .await
         .unwrap();
     let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
-    let resp = reqwest::Client::new()
+    let resp = web()
         .get(format!("{}/data/k", proxy.url()))
         .header("x-amz-date", date)
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
@@ -501,7 +501,7 @@ async fn a_control_document_sent_chunked_is_kept_for_replay() {
         &[],
         "UNSIGNED-PAYLOAD",
     );
-    let resp = reqwest::Client::new()
+    let resp = web()
         .post(format!("{}/data?delete", proxy.url()))
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
         .header("x-amz-date", date)
@@ -521,7 +521,9 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
     let (proxy, _app, log, up) = setup(Policy::Allow).await;
     let calls = || up.calls.lock().len();
     // not signed at all
-    let r = reqwest::get(format!("{}/data/k", proxy.url()))
+    let r = web()
+        .get(format!("{}/data/k", proxy.url()))
+        .send()
         .await
         .unwrap();
     assert_eq!(r.status(), 403);
@@ -548,7 +550,7 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
     assert_eq!(r.status, 403, "{}", r.text());
     // the right signature from a page that rebound its own name to 127.0.0.1
     let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
-    let r = reqwest::Client::new()
+    let r = web()
         .get(format!("{}/data/k", proxy.url()))
         .header("host", "evil.example")
         .header("x-amz-date", date)
@@ -808,7 +810,7 @@ async fn get_with_timeout(
         .await
         .unwrap();
     let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
-    let resp = reqwest::Client::new()
+    let resp = web()
         .get(format!("{}/data/k", proxy.url()))
         .header("x-amz-date", date)
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
@@ -888,7 +890,7 @@ async fn an_upload_slower_than_the_timeout_but_still_moving_goes_through() {
         Some((Ok::<_, std::io::Error>(Bytes::from_static(b"x")), i + 1))
     });
     let (date, auth) = signed(&proxy, "PUT", "/data/slow", &[], &[], "UNSIGNED-PAYLOAD");
-    let resp = reqwest::Client::new()
+    let resp = web()
         .put(format!("{}/data/slow", proxy.url()))
         .header("x-amz-date", date)
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
@@ -966,7 +968,7 @@ async fn a_request_in_flight_when_the_proxy_stops_is_still_recorded() {
     assert_eq!(records[0].response_bytes, Some(6));
     assert_eq!(reading.await.unwrap().unwrap(), 6);
     // and nothing new is taken
-    assert!(reqwest::get(proxy.url()).await.is_err());
+    assert!(web().get(proxy.url()).send().await.is_err());
 }
 
 async fn setup_faults(scenario: &str) -> (Proxy, S3Client, RequestLog, Arc<Upstream>) {
@@ -1518,11 +1520,11 @@ async fn tls_and_plain_http_are_served_on_one_port() {
     assert_eq!(var("AWS_ENDPOINT_URL"), Some(proxy.url()));
     assert!(var("AWS_CA_BUNDLE").is_some() && var("NODE_EXTRA_CA_CERTS").is_some());
 
-    let trusting = reqwest::Client::builder()
-        .add_root_certificate(reqwest::Certificate::from_pem(&ca).unwrap())
+    let trusting = s3raw::http_client()
+        .tls_certs_merge([reqwest::Certificate::from_pem(&ca).unwrap()])
         .build()
         .unwrap();
-    let plain = reqwest::Client::new();
+    let plain = web();
     for (http, base) in [(&trusting, proxy.url()), (&plain, proxy.plain_url())] {
         let (date, auth) = signed(&proxy, "GET", "/data/k", &[], &[], "UNSIGNED-PAYLOAD");
         let resp = http
@@ -1540,12 +1542,36 @@ async fn tls_and_plain_http_are_served_on_one_port() {
     assert_eq!(log.list(&reqlog::Filter::default(), 10).len(), 2);
     // a client that does not trust the certificate is not answered
     assert!(
-        reqwest::Client::new()
+        web()
             .get(format!("{}/data/k", proxy.url()))
             .send()
             .await
             .is_err()
     );
+    // --ca-file: sonde's own client trusts what it is given, beside the system's roots
+    let key = var("AWS_ACCESS_KEY_ID").unwrap();
+    let secret = var("AWS_SECRET_ACCESS_KEY").unwrap();
+    let through = |ca_pem: Option<Vec<u8>>| {
+        let mut cfg = ClientConfig::new("tls", &proxy.url(), "eu-west-1").unwrap();
+        cfg.ca_pem = ca_pem;
+        let creds = Credentials::new(&key, &secret, None);
+        S3Client::new(
+            cfg,
+            Arc::new(StaticProvider(Some(creds))),
+            RequestLog::default(),
+        )
+        .unwrap()
+    };
+    // (answered by the stand-in store, through the TLS endpoint)
+    through(Some(ca.clone()))
+        .head_object("data", "k", None)
+        .await
+        .unwrap();
+    let e = through(None)
+        .head_object("data", "k", None)
+        .await
+        .unwrap_err();
+    assert_eq!(e.kind, s3raw::ErrorKind::Transport, "{e}");
 }
 
 #[tokio::test]
@@ -1554,7 +1580,7 @@ async fn s3_express_is_refused_with_its_reason() {
     let bucket = "/logs--usw2-az1--x-s3";
     let q = vec![("session".to_string(), String::new())];
     let (date, auth) = signed(&proxy, "GET", bucket, &q, &[], "UNSIGNED-PAYLOAD");
-    let resp = reqwest::Client::new()
+    let resp = web()
         .get(format!("{}{bucket}?session", proxy.url()))
         .header("x-amz-date", date)
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
@@ -1570,4 +1596,9 @@ async fn s3_express_is_refused_with_its_reason() {
     assert!(sonde_proxy::is_directory_bucket("logs--usw2-az1--x-s3"));
     assert!(!sonde_proxy::is_directory_bucket("logs--x-s3"));
     assert!(!sonde_proxy::is_directory_bucket("plain-bucket"));
+}
+
+/// A client as sonde's are made (ring, the system's verifier).
+fn web() -> reqwest::Client {
+    s3raw::http_client().build().expect("an HTTP client")
 }
