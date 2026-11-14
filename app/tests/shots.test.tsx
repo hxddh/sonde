@@ -335,9 +335,15 @@ for (const v of variants) {
     if (width < 1000) await app.scroll("id:inspector-scroll", -5000).catch(() => {});
     await shot("03c-request");
     await app.press("id:inspector-close");
-    await app.press("id:observation-1");
+    // the operations narrowed to a kind of request (the example has no finding to narrow them: SlateDB rewrites what
+    // it lists and probes keys that are not there)
+    await app.press(v.lang ? "label:分组" : "label:Group by");
+    await app.press(v.lang ? "text:请求类型" : "text:Kind of request");
+    await app.waitFor("id:split-table", { timeout: 10000 });
+    await app.press("id:split-table >> text:PutObject");
+    await app.waitFor("id:operations");
+    await app.waitFor("id:clear-filter");
     await shot("03d-filtered");
-    // a slice of the session's shape: the operations running then
     await app.press("id:clear-filter");
     // why slow: the operations split by kind of request, and where the slow ones are, in a sentence
     await app.press(v.lang ? "label:分组" : "label:Group by");
