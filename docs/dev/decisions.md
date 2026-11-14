@@ -6,11 +6,9 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 |---|---|---|---|
 | D-001 | Language of the core | Rust; TSX with Rust helpers | **Rust for everything but screens**: the core is testable without a UI and survives a UI change. |
 | D-003 | SigV4 | `aws-sigv4`; our own | **Our own (`s3raw::sigv4`)**, tested against AWS's suite: it exposes the canonical request and allows deliberate skew for probes. |
-| D-004 | HTTP | `reqwest` + rustls; hyper | **reqwest, rustls, native roots**: per-endpoint CAs, no OpenSSL. Redirects are not followed: a 301/307 is a finding. |
 | D-005 | Where the listing lives | rows in JS; rows in Rust | **Rust (`Listing`)**: 100 000 rows never cross into the VM. |
 | D-006 | Rust ↔ TSX types | typed `JsObject` structs; JSON | **JSON, mirrored by `app/src/types.ts`**: NSH traits on core types would break the layering. |
 | D-007 | Static keys in the UI | a form field; config file only | **Config file only** (`config.toml`, 0600): a typed key would pass through the JS VM. |
-| D-008 | Destructive confirmation | a checkbox; typed text | **Typed text** (the item count, or the bucket name); plans expire in 10 minutes and run once. |
 | D-009 | Hermetic UI tests | mock in TSX; a server | **A demo S3 server (`sonde-core::demo`)**: real HTTP through the real client; also `sonde tui --demo`. |
 | D-010 | The terminal host | `nsh-tui-host`; our own loop | **Our own loop on `nsh-platform-tui`** (FINDINGS #2): one binary with the bundle and sonde's CLI. |
 | D-013 | Second S3 implementation for CI | Ceph RGW; Garage; SeaweedFS | **Ceph RGW and RustFS**: the spec asks for Ceph; RustFS starts in seconds. MinIO optional (D-023). |
@@ -125,7 +123,6 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-130 | `slow-first-byte` | every GET held; one | **One download held 10 s**: a trial costs 10 s at most. Waited out is degraded. |
 | D-131 | `stale-list` | judge the listing's use; the key's requests | **The key's requests**: read less is broke, written again degraded, untouched untested. |
 | D-132 | What a recorded program may do by default | allow; no-delete | **no-delete** for `run`, `proxy`, `watch` and the app's Run; the demo allows. |
-| D-133 | How no-delete keeps objects | a HEAD before each write; `If-None-Match: *` | **`If-None-Match: *` on PutObject and CompleteMultipartUpload**, a HEAD for CopyObject: atomic, no extra request. A store that ignores it writes over (said; use read-only). |
 | D-134 | What no-delete lets a run write again | nothing; what it wrote | **What it wrote (a 2xx)**; a trial's runs share the clean run's. |
 | D-135 | A trial's policy | allow; the run's | **The run's**. |
 | D-136 | Read-only mode and Run | coupled; separate | **Separate**: read-only covers sonde's own acts; coupling would make every first Run read-only. |
@@ -162,7 +159,6 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-170 | `mpu` under `bucket` | nested; flat | **`size`, `uploads`, `abort-uploads`, `lifecycle`**, flat. |
 | D-171 | What sonde keeps of each session | files beside it; one index per folder | **`.index.jsonl` per folder**, append-only, compacted when mostly stale. |
 | D-172 | A setting gone from `config.toml` | an error; ignored | **Ignored, said once, dropped at the next save**: an older file always loads. |
-| D-173 | What no-delete lets a program write over | its own run's writes; its earlier runs' writes | **What its earlier runs wrote** (per program and endpoint, `written.json`), and keys under a `{trial}` place: a re-run and a re-trial work. |
 | D-174 | When `skew` is offered | always; by SDK | **When the SDK retries it** (Java, JavaScript), or when named: botocore cannot. |
 | D-175 | Trying again | everything; what did not survive | **`--trial --again`: broke, degraded and refused**, with each scenario's history per program (`verdicts.json`). |
 | D-176 | A refusal by the policy in a trial | broke; its own | **`refused`**: the program was not judged; `check` warns. |
@@ -204,3 +200,18 @@ Newest last; the decisions in force. Those a later one replaced: [history](../hi
 | D-215 | Which run, which budget | per command; one rule | **`[program] name`, else this folder's, else the newest**; a `sonde.toml` applies to its own program only. |
 | D-216 | An operation's type | `kind`; `shape` | **`operations[].shape`**: `kind` is only the S3 call. `check --program-exit` removed (the session keeps the exit). |
 | D-217 | The tour | skips what it cannot reach; fails | **Fails**: every Time chart at every size; Linux, macOS and Windows approved. |
+| D-218 | Policy of a plain run | no-delete; allow | **allow** (`--trial` and `--again`: no-delete, which refuses deletes, aborts and lifecycle, policy and versioning changes only): sonde does not change what a program may do with its own data. Supersedes D-133, D-173. |
+| D-219 | One word | session; run | **run** in the CLI, JSON, folders, app and docs; the proxy's file format id follows. |
+| D-220 | Formats | five, per command | **text and json**; `check` adds markdown and github. |
+| D-221 | Confirmation | typed text; dry run then `--yes` | **A dry run, then `--yes`**. Supersedes D-008. |
+| D-222 | State beside the runs | a file each; one index | **The folder's one `.index.jsonl`**, under one lock, replaced durably. |
+| D-223 | share | a site, a server, OTLP; one file | **One HTML file holding the viewer and the run**: nothing fetched or served; a second run or baseline opens on Compare. No OTLP: "observable" means the product's own charts. |
+| D-224 | A program's name | rules on its arguments; its script | **`--name`, else what the command runs**: `sh -c`'s command, a container's image, `python -m`'s module. |
+| D-225 | Containers | documented; rewritten | **`docker run` / `podman run` get the host's network and the variables by name** (no key on a command line). |
+| D-226 | Another region | an error; re-signed | **Re-signed for the region the store names**, cached per bucket; a request with no body is sent again. |
+| D-227 | HTTP | reqwest 0.12, native roots; 0.13 | **reqwest 0.13, rustls with ring; the operating system verifies**; `--ca-file` adds roots. Supersedes D-004. |
+| D-228 | A record in memory | 472 bytes; lean | **96 bytes**: interned names, shared query and headers, the rare part behind one pointer; the file format is unchanged. The analysis runs one part after another: a million in about 350 MiB. |
+| D-229 | A stretch of a run | sliced as the whole; its own | **Computed on the run's axis with its own slices**: zoomed charts draw real detail. |
+| D-230 | Throttles in charts | a 5xx; their own | **Their own class and colour**; a failure bar opens its requests. |
+| D-231 | Colour pairs | by eye; linted | **lint-charts checks distance under deuteranopia and protanopia**: chart-4 orange, fewer/more blue/orange. |
+| D-232 | Dependencies | as they come; monthly | **Dependabot monthly for every ecosystem**, RustCrypto as one group; its PRs run the whole CI. Rust 1.97 for every crate. |

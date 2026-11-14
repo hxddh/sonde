@@ -2,6 +2,67 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org).
 
+## [22.0.0] - 2026-11-15
+
+22.0 is the smaller sonde: fewer commands, flags, files, words and doors, each finished. It reads no data of earlier
+versions and keeps no old names ([contract](docs/contract.md)).
+
+### Changed
+
+- A recording is a **run** everywhere: `sonde runs` (it lists by itself), the `runs/` folder, `"run"` in JSON, the
+  app's Runs area. `sonde layout` has no `inspect`.
+- Plain `run` and `proxy` record under `allow`; `--trial` and `--again` under `no-delete`, which refuses only deletes,
+  aborts and lifecycle, policy and versioning changes.
+- With no endpoint configured, `run` goes where an AWS SDK would (the default chain and region). A bucket in another
+  region is signed for it, cached per bucket.
+- A program is `--name` / `[program] name`, else what its command runs: `sh -c`'s command, a container's image,
+  `python -m`'s module.
+- `sonde` alone says where to start; `run --demo` shows a finding, its line, its fix, and the job fixed.
+- More clients reach sonde with nothing set: s5cmd (`S3_ENDPOINT_URL`), `docker run` / `podman run` (host network,
+  variables by name). When nothing arrives, the program's own client is named first.
+- `share` writes one HTML file holding the app's own views and Time pane; two runs open on Compare.
+- Every command writes `text` and `json`; `check` adds `markdown` and `github`. Destructive commands are a dry run,
+  then `--yes`. Costs under a cent are said as a share; probe failures give their reason.
+- All state beside the runs is in the folder's one index, under one lock, replaced durably.
+- Charts, every one kept and shown:
+  - correct on large runs (the heat map counts every request);
+  - zoom draws the stretch's own detail;
+  - throttles have their own colour, and a failure bar opens its requests;
+  - latency bands on a log scale, rates with units;
+  - computed sentences on Compare, trends, Capacity, the live panel and trials;
+  - new: Compare over time, errors and p95 trends, bytes by month written, Group by key;
+  - colour-blind safe pairs; sparklines in the terminal.
+- The app: a finished run opens on its own view; one door to each place; Buckets in four sections, all on the keyboard;
+  compatibility is checked from an endpoint in Settings.
+- A million requests: `show` in about 350 MiB (was 1.1 GiB), `compare` of two in about 0.5 GiB (was 1.36); a
+  record is 96 bytes. Signed chunked uploads stream. `show -f json` lists requests only with `--requests`.
+- Latest dependencies: reqwest 0.13 (the operating system verifies certificates), RustCrypto 0.11, rand 0.10,
+  rcgen 0.14, toml 1; Rust 1.97; Native Shell at its main; macOS CI on macOS 26. The SDK smoke run uses the latest
+  boto3, JS, Go and Java SDKs with nothing forced, plus the AWS CLI, its image through `docker run`, polars and `--tls`.
+
+### Removed
+
+- `share --serve`, `--port`, `--html`, `--otlp`, `--to` and the static site; all OTLP.
+- `proxy --rotate/--alert`, `import --follow/--every/--alert`; `import s3://` is one pass that carries on from the last.
+- `--confirm`; `check --max-cost`, `--max-p95`, `--no-new-warnings` (a baseline always forbids new warnings).
+- CSV and the other Markdown outputs; reading sessions of earlier formats; the no-delete ledger and injected headers.
+
+### Fixed
+
+- `check` fails a run of no request ("nothing reached sonde").
+- A 503 retried away is a note, not a warning; `max-errors` counts requests that failed after their retries.
+- A hot key keeps its finding when some reads were throttled.
+- A recording that could not write says so.
+- A chart sentence on few requests says so.
+- `--tls` certificates are accepted by Python 3.13's strict default.
+- While a program runs, Run shows its requests live.
+- `show` of a million is linear again (60 s → 8.5 s).
+
+### Not in this release
+
+- The macOS app is not signed with a Developer ID or notarized, and Windows has no Authenticode: the steps are in CI,
+  waiting for the keys.
+
 ## [21.0.0] - 2026-11-14
 
 21.0 removes and renames without notice: a break comes in the major that makes it ([contract](docs/contract.md)).

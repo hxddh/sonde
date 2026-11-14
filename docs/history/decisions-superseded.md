@@ -22,3 +22,7 @@ order.
 | D-193 | A finding across runs | its text; a normalised identity | **A normalised identity** (numbers, ids and dates stripped from keys and paths), so a fix is seen as one. | D-198 |
 | D-195 | CI | every OS each change; Linux, others nightly | **Linux per change, macOS/Windows/Intel nightly and at release**; the release reuses CI's builds. | D-203 |
 | D-197 | Breaking in 20.0 | announce in 19.x; break now | **Break now**, by the owner's decision; 20.0 reads format 1; the announcement rule holds from 20.0. | D-206 |
+| D-004 | HTTP | `reqwest` + rustls; hyper | **reqwest, rustls, native roots**: per-endpoint CAs, no OpenSSL. Redirects are not followed: a 301/307 is a finding. | *(22.0)*
+| D-008 | Destructive confirmation | a checkbox; typed text | **Typed text** (the item count, or the bucket name); plans expire in 10 minutes and run once. | *(22.0)*
+| D-133 | How no-delete keeps objects | a HEAD before each write; `If-None-Match: *` | **`If-None-Match: *` on PutObject and CompleteMultipartUpload**, a HEAD for CopyObject: atomic, no extra request. A store that ignores it writes over (said; use read-only). | *(22.0)*
+| D-173 | What no-delete lets a program write over | its own run's writes; its earlier runs' writes | **What its earlier runs wrote** (per program and endpoint, `written.json`), and keys under a `{trial}` place: a re-run and a re-trial work. | *(22.0)*
