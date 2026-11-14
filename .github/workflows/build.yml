@@ -6,15 +6,11 @@ on:
       release:
         type: boolean
         default: false
-      # pr: Linux x86_64; main: and Linux arm64, macOS arm64, Windows; all:
-      # and macOS Intel and the macOS app (nightly, by hand, a release)
+      # pr: Linux x86_64; all: every file a release ships (main's runs, the
+      # nightly, by hand: release.yml publishes what main's run built)
       set:
         type: string
         default: all
-      # the artifacts a release takes from CI's run of its commit
-      skip:
-        type: string
-        default: "[]"
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,18 +30,16 @@ jobs:
         shell: python
         env:
           SET: ${{ inputs.set }}
-          SKIP: ${{ inputs.skip }}
         run: |
           import json, os
-          level = {"pr": 0, "main": 1, "all": 2}[os.environ["SET"]]
-          skip = set(json.loads(os.environ["SKIP"]))
+          level = {"pr": 0, "all": 1}[os.environ["SET"]]
           terminal = [
               (0, "ubuntu-22.04", "x86_64-unknown-linux-gnu", "linux-x86_64"),
               # static: runs on any Linux, Alpine and distroless included
               (0, "ubuntu-22.04", "x86_64-unknown-linux-musl", "linux-x86_64-musl"),
               (1, "ubuntu-22.04-arm", "aarch64-unknown-linux-gnu", "linux-aarch64"),
               (1, "macos-15", "aarch64-apple-darwin", "macos-aarch64"),
-              (2, "macos-15-intel", "x86_64-apple-darwin", "macos-x86_64"),
+              (1, "macos-15-intel", "x86_64-apple-darwin", "macos-x86_64"),
               # sonde.exe in a .zip: CI on Windows, and the terminal there
               (1, "windows-latest", "x86_64-pc-windows-msvc", "windows-x86_64"),
           ]
@@ -53,11 +47,9 @@ jobs:
               (0, "ubuntu-24.04", "linux", "linux-x86_64"),
               (1, "windows-latest", "windows", "windows-x86_64"),
           ]
-          t = [{"os": o, "target": g, "name": n} for l, o, g, n in terminal
-               if l <= level and f"sonde-{n}" not in skip]
-          d = [{"os": o, "target": g, "name": n} for l, o, g, n in desktop
-               if l <= level and f"sonde-desktop-{n}" not in skip]
-          m = level >= 2 and "sonde-macos-app" not in skip
+          t = [{"os": o, "target": g, "name": n} for l, o, g, n in terminal if l <= level]
+          d = [{"os": o, "target": g, "name": n} for l, o, g, n in desktop if l <= level]
+          m = level >= 1
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"terminal={json.dumps(t)}\ndesktop={json.dumps(d)}\n")
               out.write(f"macos-app={str(m).lower()}\nany={str(bool(t or d or m)).lower()}\n")

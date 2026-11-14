@@ -16,56 +16,17 @@ permissions:
   actions: read
 
 jobs:
-  reuse:
-    # what CI built of this very commit (main's run, the nightly or one by
-    # hand; never a pull request's), kept again as this run's artifacts, so
-    # the build below makes only what is missing: usually the macOS app and
-    # macOS Intel, nothing after a nightly or a CI run by hand on the commit
-    runs-on: ubuntu-24.04
-    outputs:
-      have: ${{ steps.reuse.outputs.have }}
-    steps:
-      - id: reuse
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
-        run: |
-          want="sonde-linux-x86_64 sonde-linux-x86_64-musl sonde-linux-aarch64 sonde-macos-aarch64 sonde-macos-x86_64
-            sonde-windows-x86_64 sonde-desktop-linux-x86_64 sonde-desktop-windows-x86_64 sonde-macos-app"
-          runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&status=completed&per_page=50" --jq \
-            '.workflow_runs[] | select((.event == "push" or .event == "schedule" or .event == "workflow_dispatch") and .head_repository.full_name == env.REPO) | .id')
-          have=()
-          mkdir -p reused
-          for id in $runs; do
-            names=$(gh api "repos/$REPO/actions/runs/$id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired | not) | .name')
-            for n in $want; do
-              case " ${have[*]} " in *" $n "*) continue;; esac
-              grep -qx "$n" <<<"$names" || continue
-              gh run download "$id" -R "$REPO" -n "$n" -D reused
-              have+=("$n")
-              echo "- \`$n\` from https://github.com/$REPO/actions/runs/$id" >> "$GITHUB_STEP_SUMMARY"
-            done
-          done
-          [ ${#have[@]} -gt 0 ] || echo "no CI run of $SHA kept a build: everything is built here" >> "$GITHUB_STEP_SUMMARY"
-          echo "have=$(jq -cn '$ARGS.positional' --args ${have[@]+"${have[@]}"})" >> "$GITHUB_OUTPUT"
-          ls -la reused
-      - if: steps.reuse.outputs.have != '[]'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: reused, path: reused }
-
-  build:
-    needs: reuse
-    uses: ./.github/workflows/build.yml
-    with: { release: true, skip: "${{ needs.reuse.outputs.have }}" }
-    secrets: inherit
-
+  # Nothing is built here: CI's run of this very commit on main (its push,
+  # the nightly or one by hand; never a pull request's) builds every file a
+  # release ships, and runs the tours of every platform. The release waits
+  # for that run, is refused unless it is green, and publishes its builds.
   publish:
-    needs: [reuse, build]
-    if: ${{ !cancelled() && needs.reuse.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
+    # CI's run (about an hour on main) and the publishing after it
+    timeout-minutes: 150
     permissions:
       contents: write
+      actions: read
       # build provenance: a Sigstore attestation of each file, made with this
       # workflow's identity and kept by GitHub (`gh attestation verify`)
       id-token: write
@@ -79,12 +40,22 @@ jobs:
           v="${VERSION#v}"
           grep -q "^version = \"$v\"" Cargo.toml || { echo "::error::Cargo.toml is not at $v"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        # the binaries and the app (not the viewer's site, which is inside them)
-        with: { path: dist, pattern: "sonde-[lmdw]*", merge-multiple: true }
-      - if: needs.reuse.outputs.have != '[]'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: { name: reused, path: dist }
+      - name: CI's green run of this commit
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: scripts/release-wait.sh
+      - name: Its builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ steps.ci.outputs.run }}
+        run: |
+          for n in sonde-linux-x86_64 sonde-linux-x86_64-musl sonde-linux-aarch64 sonde-macos-aarch64 sonde-macos-x86_64 \
+            sonde-windows-x86_64 sonde-desktop-linux-x86_64 sonde-desktop-windows-x86_64 sonde-macos-app; do
+            gh run download "$RUN" -R "${{ github.repository }}" -n "$n" -D dist
+          done
       - name: Every platform, once
         run: |
           shopt -s nullglob
@@ -111,6 +82,8 @@ jobs:
           [ -n "$MACOS_CERTIFICATE_P12" ] || skipped+=("- The macOS app is not signed with a Developer ID: Gatekeeper refuses the \`.dmg\` until you right-click → Open, or run \`xattr -d com.apple.quarantine sonde.app\`.")
           [ -n "$APPLE_ID" ] || skipped+=("- The \`.dmg\` is not notarized.")
           [ -n "$NSH_PACKAGE_KEY" ] && [ -n "$NSH_PACKAGE_CERT" ] || skipped+=("- No signed package of the app's code: an installed app updates only by installing the new app.")
+          # (no Windows signing yet: the release says so until there is)
+          skipped+=("- \`sonde.exe\` and the Windows app are not signed (no Authenticode): SmartScreen warns before the first start; **More info → Run anyway**.")
           if [ ${#skipped[@]} -gt 0 ]; then
             { echo; echo "### Not in this release"; echo; printf '%s\n' "${skipped[@]}"; } >> notes.md
             printf '::warning title=Skipped::%s\n' "${skipped[@]}"
@@ -179,3 +152,15 @@ jobs:
     needs: publish
     uses: ./.github/workflows/action-tag.yml
     with: { version: "${{ inputs.version || github.ref_name }}" }
+
+  # the Action as a user's workflow runs it, against the release just made
+  # (a release made with this workflow's token starts no workflow of its own)
+  action-live:
+    needs: action-tag
+    uses: ./.github/workflows/action-live.yml
+    with: { after-release: true }
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+      issues: write
