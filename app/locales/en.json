@@ -1089,8 +1089,7 @@
  "heat.textAt.one": "The busiest prefix here, %{prefix}, took 1 request in one slice, at +%{at}",
  "trial.ofBroke": "%{n} of %{of} broke",
  "trial.ofBrokeSaid": "Tried under faults: %{n} of %{of} trials broke",
- "signal.missed": "%{pct} found nothing",
- "signal.noneFailedMissed": "None failed · %{pct} found nothing",
+ "signal.missed": "%{pct} not found",
  "confirm.act.abortUploads": "Abort %{n} uploads",
  "confirm.act.abortUploads.one": "Abort 1 upload",
  "confirm.act.deleteVersions": "Delete %{n} versions",
@@ -1105,5 +1104,6 @@
  "confirm.upload": "%{n} parts, started %{started}",
  "confirm.upload.one": "1 part, started %{started}",
  "overview.notMeasured": "Not measured",
- "lanes.shade": "A lighter shade: the next request on the same lane"
+ "lanes.shade": "A lighter shade: the next request on the same lane",
+ "timeline.textApart": "%{n} requests, never two in one slice, from +%{a} to +%{b}"
 }

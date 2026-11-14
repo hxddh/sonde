@@ -183,7 +183,8 @@ export function SessionHeader(props: { view: SessionView; /** its commands: made
           {command() ? commandLine(command()!) : props.view.header.endpoint}
         </Title>
       </View>
-      <View class="shrink-0 flex-row items-center gap-1" accessibilityLabel={line()}>
+      {/* (the session's figures, folded: the same summary in a line) */}
+      <View testID="session-summary" class="shrink-0 flex-row items-center gap-1" accessibilityLabel={line()}>
         <Each of={tiles().slice(0, FOLDED)}>
           {(x, i) => (
             <Pressable label={`${x().label}: ${x().value}`} onPress={() => props.onSignal?.(SIGNALS[i()])} testID={`signal-${SIGNALS[i()]}`}>

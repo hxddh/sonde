@@ -26,6 +26,11 @@ export function timelineSaid(p: Profile, range?: [number, number] | null): strin
     if (peak < 0 || k > requests(p.rate[peak])) peak = i;
   }
   if (n === 0 || peak < 0) return t("timeline.none");
+  // no slice holds two: when they began, first to last
+  if (requests(p.rate[peak]) === 1 && n > 1) {
+    const at = p.rate.slice(a, b + 1).filter((x) => requests(x) > 0);
+    return t("timeline.textApart", { n: count(n), a: duration(at[0].tMs), b: duration(at[at.length - 1].tMs) });
+  }
   return t("timeline.text", { n: count(n), peak: count(requests(p.rate[peak])), at: duration(p.rate[peak].tMs) });
 }
 

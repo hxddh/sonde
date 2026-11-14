@@ -209,7 +209,7 @@ test("a session's time: where it went, and two runs before and after", async () 
   // (a run under a second has totals, not a rate: 172 requests in 467 ms are not "368 a second")
   expect(app.shows("label:/^Requests: 172, in 467 ms, shows its chart$/")).toBe(true);
   // what found nothing is no failure, and is said beside them
-  expect(app.shows("label:/^Errors: 0%, None failed · 67% found nothing/")).toBe(true);
+  expect(app.shows("label:/^Errors: 0%, 67% not found/")).toBe(true);
   await app.press("id:signal-latency");
   await app.waitFor("id:time-pane");
   await app.waitFor("id:latency-over-time");

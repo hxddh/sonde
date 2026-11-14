@@ -412,7 +412,7 @@ referring to it. A verdict is drawn one way (`TrialRow`) in the dialog and on th
 end, what it found and why in one quiet line, its history as a count and a time ("Broke in 3 of 3 runs, since 08:33").
 A run and its trials are apart: a run's row says quietly how many of its trials broke ("2 of 5 broke"), never a
 red "Broke" on a run that exited as it did. The session header says what found nothing beside what failed
-("None failed · 67% found nothing"). A dialog that acts is titled and committed by its act and count ("Abort 2
+("0%", and under it "67% not found"). A dialog that acts is titled and committed by its act and count ("Abort 2
 uploads"), and a section's fix is its primary (Buckets' "Add abort rule…"; aborting by hand is outline); a
 figure's place holds a figure or says there is none ("Not measured"), never a verb. Chinese keeps a figure with
 its unit (`duration`, `bytes`: a space that does not break). Every literal a reader sees goes through `t()`, in both languages; a key

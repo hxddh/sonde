@@ -91,7 +91,7 @@ export function signalTiles(s: Signals, /** lookups that found nothing (not fail
       label: t("signal.errors"),
       // of a handful, how many; of a run, the share
       value: some ? t("signal.failedOf", { n: count(s.errors.count), of: count(s.rate.requests) }) : s.errors.value == null ? "—" : percent(s.errors.value),
-      detail: wrong.length ? [...wrong, ...(missed ? [t("signal.missed", { pct: missed })] : [])].join(" · ") : missed ? t("signal.noneFailedMissed", { pct: missed }) : t("signal.noErrors"),
+      detail: wrong.length ? [...wrong, ...(missed ? [t("signal.missed", { pct: missed })] : [])].join(" · ") : missed ? t("signal.missed", { pct: missed }) : t("signal.noErrors"),
       // one failure, one colour: all of them the program's own (4xx) are in the tone their rows and charts have
       // (sonde's own answers in their own tone: the store's failures are what the colour says otherwise)
       tone: s.errors.count === 0 ? "plain" : s.errors.counts.injected === s.errors.count ? "injected" : s.errors.counts.client === s.errors.count - s.errors.counts.injected ? "client" : "bad",
