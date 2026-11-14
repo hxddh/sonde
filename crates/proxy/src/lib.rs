@@ -820,7 +820,7 @@ fn admit_v2(
     query: &[(String, String)],
 ) -> Result<(), String> {
     use base64::Engine;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let q = |k: &str| query.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
     let header = |k: &str| {
         parts

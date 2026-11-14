@@ -573,7 +573,7 @@ async fn only_the_program_given_the_keys_uses_the_credentials() {
 #[test]
 fn a_sigv2_presigned_url_with_the_keys_is_admitted_and_one_without_is_not() {
     use base64::Engine;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let cfg = ProxyConfig::default();
     let sign = |secret: &str, resource: &str, expires: &str| {
         let mut mac = Hmac::<sha1::Sha1>::new_from_slice(secret.as_bytes()).unwrap();
