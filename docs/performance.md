@@ -36,40 +36,33 @@ Covers parsing, re-signing, the record and the extra loopback hop. CI runs it in
 
 ## Large sessions
 
-Synthetic sessions with real headers (a million: 124 MiB gzipped, 1.5 GiB of JSON lines).
+**A million requests take about 1.1 GiB of memory** to read and analyse; `compare` of two, 1.3 GiB (it reads one
+session at a time). Memory grows with the requests: about 1.2 KB each, so 8 GB holds about six million.
 
-17.0 (other builds running, load 3–7):
+Measured 2026-11-14, release build, `/usr/bin/time` (peak resident memory), two runs each within 2%. The sessions are
+the budgets' lake job with real headers (`crates/proxy/tests/support`): a million requests, 170 MiB gzipped, 1.6 GiB
+of JSON lines.
 
-| | Time, peak memory |
-| --- | --- |
-| `show`, 1 million | 12 s, 1.11 GiB |
-| `show`, 2 million | 26 s, 2.16 GiB |
-| `compare`, 2 × 1 million | 24 s, 1.16 GiB |
-| `compare`, 2 × 2 million | 39 s, 2.25 GiB |
-| `show`, 300 thousand, 1 000-character keys | 2.4 s, 0.40 GiB |
+| A million requests | Time | Peak memory |
+| --- | --- | --- |
+| `sonde show` | 7.6 s | 1.1 GiB |
+| `sonde show -f json` | 36 s | 1.1 GiB |
+| `sonde check --baseline` (another million) | 14 s | 1.2 GiB |
+| `sonde compare` (two millions) | 19 s | 1.3 GiB |
+| `sonde share --html` | 9 s | 1.0 GiB |
 
-About 1.1 KB a request (8 GB holds about seven million), mostly the record's 472 bytes of fields.
+Budgets (`crates/proxy/tests/budgets.rs`): CI runs each test optimised in a process of its own and fails it past its
+peak memory (what is measured and about an eighth more), which is the same from run to run. Time moves with a shared
+runner: it is said in the job's summary and fails only past several times what it takes.
 
-16.0 (not remeasured since):
-
-| | 10 thousand | 100 thousand | 1 million |
+| Budget | Measured | Peak memory, held at | Time, held at |
 | --- | --- | --- | --- |
-| `sonde check --baseline` | 0.2 s, 36 MiB | 1.5 s, 236 MiB | 17 s, 2.0 GiB |
-| `sonde show -f json` | 0.3 s, 33 MiB | 3.5 s, 212 MiB | 34 s, 1.8 GiB |
-| `sonde share --otlp` | 0.3 s, 33 MiB | 3 s, 187 MiB | 32 s, 1.7 GiB |
-| `sonde share --html` | 0.1 s, 0.85 MB page | 0.9 s, 0.85 MB page | 9.9 s, 0.85 MB page |
-| `sonde sessions`, one such file | at once | at once | at once (5.7 s once, when first counted) |
-| The app's first view | 610 KiB | 640 KiB | 634 KiB |
-
-Budgets (`crates/proxy/tests/budgets.rs`, run optimised in CI):
-
-| Budget | Measured |
-| --- | --- |
-| a million requests read and analysed: 15 s, 1.5 GiB | 11 s, 1.1 GiB |
-| two runs of a million compared: 40 s, 1.5 GiB | 28 s, 1.2 GiB |
-| an outage, and small multipart uploads, 300 thousand each: 10 s | 2 s |
-| the app's first view of 100 thousand: 2 s, under 2 MiB sent | 0.9 s |
-| a sorted page of operations: 500 ms | — |
+| a million read and analysed (`show`) | 1,141–1,160 MiB, 7.3–7.6 s | 1,300 MiB | 45 s |
+| two runs of a million compared | 1,282 MiB, 18 s | 1,450 MiB | 120 s |
+| an outage of 300 thousand | 521–527 MiB, 1.7 s | 600 MiB | 30 s |
+| small multipart uploads, 300 thousand | 437 MiB, 2.3 s | 500 MiB | 30 s |
+| the app's first view of 100 thousand (629 KiB sent) | 236–243 MiB, 0.6–0.7 s | 280 MiB | 6 s |
+| a sorted page of operations | 55 ms | | 1.5 s |
 
 How: the file is streamed and parsed on every core; records keep only the headers an analysis reads, with repeated
 text shared; operations, signals and profile are computed once, in parallel; JSON is written as it is made; the app
@@ -89,7 +82,8 @@ finished run's figures in `sessions/.index.jsonl` and reads a live recording inc
 | Page Down presses in 10 s, each answered with a frame | 163 (≈ 5 300 rows) |
 | `--fps` while paging | 49–50 fps (bounded by the script's key rate), frame 1.15 ms, p95 1.66 ms, ≈ 140 of 4 800 cells written |
 
-Binary: 55.7 MB (x86_64, LTO thin, JS engine and bundle included), linking only `libgcc_s`, `libm`, `libc`
+Binary: 79.0 MB (19.0.0's `sonde-linux-x86_64`: LTO thin, JS engine, the app's bundle and the viewer included; the CLI
+alone, without them, 18.7 MB), linking only `libgcc_s`, `libm`, `libc`
 ([packaging](packaging.md#the-terminal-binary-has-no-gui-dependency)).
 
 ## Headless UI
