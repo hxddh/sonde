@@ -138,8 +138,10 @@ fn skip_reason(r: &Record, opts: &ReplayOptions) -> Option<String> {
         return Some("not an S3 operation sonde knows".into());
     }
     // by what the request is, not only by the name the session stored
-    let either = |op: &str| r.operation == op || named(r) == op;
-    if !opts.prefix.is_empty() && (either("CreateBucket") || either("DeleteBucket")) {
+    // (by what the request is: a `PUT /b?inventory` stored as CreateBucket
+    // is a bucket's setting)
+    let what = named(r);
+    if !opts.prefix.is_empty() && (what == "CreateBucket" || what == "DeleteBucket") {
         return Some("creates or deletes a bucket, outside the prefix".into());
     }
     if !opts.prefix.is_empty() && (changes_bucket(&r.operation) || changes_bucket(&named(r))) {
