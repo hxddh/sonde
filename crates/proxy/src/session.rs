@@ -779,8 +779,8 @@ pub enum Keep {
     /// Everything the file has.
     All,
     /// What the analyses read: the URL (the bucket, key and query are kept
-    /// apart), the store's host id and the headers no analysis reads
-    /// ([`read_by_analysis`]) are dropped.
+    /// apart), the store's request and host ids and the headers no analysis
+    /// reads ([`read_by_analysis`]) are dropped.
     Analysis,
 }
 
@@ -811,6 +811,7 @@ pub fn lean(r: &mut Record) {
     r.query.shrink_to_fit();
     r.url = String::new();
     r.host_id = None;
+    r.request_id = None;
 }
 
 /// A block of a session's lines, read.
@@ -1352,6 +1353,7 @@ mod tests {
         assert_eq!(names(&full.records[0]).len(), 5);
         assert_eq!(names(&lean.records[0]), ["user-agent", "Range"]);
         assert!(lean.records[0].url.is_empty() && lean.records[0].host_id.is_none());
+        assert!(lean.records[0].request_id.is_none());
         // and nothing an operation or a finding is made of
         let mut same = full.records[0].clone();
         super::lean(&mut same);
