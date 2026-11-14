@@ -377,13 +377,29 @@ export function Sparkline(props: { shape: number[]; id: string; class?: string; 
       </If>
     </Plot>
   );
+  // a terminal: the same shape in block characters, as `sonde show` prints it
+  const ink = () => (props.tone === "fail" ? "text-status-server" : props.tone === "client" ? "text-status-client" : props.tone === "injected" ? "text-status-injected" : props.tone === "quiet" ? "text-muted-foreground" : "text-chart-1");
   return (
-    <If when={!terminal() && props.shape.some((n) => n > 0)}>
-      <If when={!props.still} else={plot()}>
-        <PlotAppearScope id={props.id}>{plot()}</PlotAppearScope>
+    <If when={props.shape.some((n) => n > 0)}>
+      <If when={!terminal()} else={<Text class={ink()} accessibilityLabel="">{blocks(props.shape)}</Text>}>
+        <If when={!props.still} else={plot()}>
+          <PlotAppearScope id={props.id}>{plot()}</PlotAppearScope>
+        </If>
       </If>
     </If>
   );
+}
+
+/** The eight heights of a block character, lowest first. */
+const BLOCKS = "▁▂▃▄▅▆▇█";
+/** A shape in block characters, `columns` wide at most (each the most of the slices it stands for, so a burst is
+ * not averaged away); a slice of none is the lowest block, the baseline. */
+export function blocks(shape: number[], columns = 16): string {
+  if (shape.length === 0) return "";
+  const n = Math.min(columns, shape.length);
+  const cols = Array.from({ length: n }, (_, c) => Math.max(...shape.slice(Math.floor((c * shape.length) / n), Math.max(Math.floor(((c + 1) * shape.length) / n), Math.floor((c * shape.length) / n) + 1))));
+  const top = Math.max(...cols, 1e-12);
+  return cols.map((v) => BLOCKS[v <= 0 ? 0 : Math.min(7, Math.max(1, Math.round((v / top) * 7)))]).join("");
 }
 
 // --- how requests were answered ---------------------------------------------------

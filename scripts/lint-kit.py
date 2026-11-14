@@ -82,7 +82,7 @@ BASE_OWN = {
     # the range of days over a program's runs
     "ui/history.tsx": {"DatePicker"},
     # a plot takes no presses itself: it sits in a pressable view (the chart system's)
-    "ui/plots/traffic.tsx": {"Button"}, "ui/plots/latency.tsx": {"Button"}, "ui/plots/runs.tsx": {"Button"}, "ui/plots/operation.tsx": {"Button"},
+    "ui/plots/traffic.tsx": {"Button"}, "ui/plots/latency.tsx": {"Button"}, "ui/plots/runs.tsx": {"Button"}, "ui/plots/operation.tsx": {"Button"}, "ui/plots/errors.tsx": {"Button"},
 }
 UI_RULES = [
     ("number", r"(?<![\w.])String\(", "a number as text by hand: count(), percent(), duration() (an id: a template)"),

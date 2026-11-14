@@ -13,8 +13,8 @@ import { errorRateSaid, failuresSaid } from "./answers";
 /** The classes a failure is of, in the order they stack: the store's own first (a throttle, the store asking the
  * program to slow down, in the warn tone, apart from its other 5xx), a scenario's last. */
 const FAILURES = ["throttled", "server", "client", "transport", "injected"] as const;
-export const FAILURE_FILL: Record<(typeof FAILURES)[number], string> = { throttled: "fill-warn", server: "fill-status-server", client: "fill-status-client", transport: "fill-status-refused", injected: "fill-status-injected" };
-const FAILURE_SWATCH: Record<(typeof FAILURES)[number], string> = { throttled: "bg-warn", server: "bg-status-server", client: "bg-status-client", transport: "bg-status-refused", injected: "bg-status-injected" };
+export const FAILURE_FILL: Record<(typeof FAILURES)[number], string> = { throttled: "fill-warn/55", server: "fill-status-server", client: "fill-status-client", transport: "fill-status-refused", injected: "fill-status-injected" };
+const FAILURE_SWATCH: Record<(typeof FAILURES)[number], string> = { throttled: "bg-warn/55", server: "bg-status-server", client: "bg-status-client", transport: "bg-status-refused", injected: "bg-status-injected" };
 
 /** The slices the failures charts show of a whole session: those around its failures and retries (`fitted`), or all. */
 export const failedSlices = (s: Signals) => fitted(s.errors.series.length, (i) => (s.errors.series[i] ?? 0) + (s.errors.retries[i] ?? 0) > 0);

@@ -179,7 +179,7 @@ export function RunBars(props: { change: RunChange; max?: number; /** two differ
           yScale={{ type: "band", ...BARS.pairs }}
           // room for the labels at the bars' ends
           xScale={{ type: "linear", domain: [0, peak() * 1.35] }}
-          colorScale={{ type: "ordinal", domain: ["fewer", "more", "same", "plain"], range: [token("status-ok" as never) as unknown as string, token("status-server" as never) as unknown as string, token("muted-foreground" as never) as unknown as string, token("chart-1" as never) as unknown as string] }}
+          colorScale={{ type: "ordinal", domain: ["fewer", "more", "same", "plain"], range: [token("chart-1" as never) as unknown as string, token("chart-4" as never) as unknown as string, token("muted-foreground" as never) as unknown as string, token("chart-1" as never) as unknown as string] }}
           accessibilityLabel={rows().map((r) => `${r.name} ${r.before} → ${r.after}`).join(", ")}
           accessibilityValue={tipValue(tip())}
           motion={MOTION}
@@ -210,7 +210,7 @@ export function RunBars(props: { change: RunChange; max?: number; /** two differ
             { label: t("runBars.before"), swatch: "border border-muted-foreground bg-card" },
             ...(props.neutral
               ? [{ label: t("runBars.after"), swatch: "bg-chart-1" }]
-              : [...(rows().some((r) => r.tone === "fewer") ? [{ label: t("runBars.fewer"), swatch: "bg-status-ok" }] : []), ...(rows().some((r) => r.tone === "more") ? [{ label: t("runBars.more"), swatch: "bg-status-server" }] : []), ...(rows().some((r) => r.tone === "same") ? [{ label: t("runBars.after"), swatch: "bg-muted-foreground" }] : [])]),
+              : [...(rows().some((r) => r.tone === "fewer") ? [{ label: t("runBars.fewer"), swatch: "bg-chart-1" }] : []), ...(rows().some((r) => r.tone === "more") ? [{ label: t("runBars.more"), swatch: "bg-chart-4" }] : []), ...(rows().some((r) => r.tone === "same") ? [{ label: t("runBars.after"), swatch: "bg-muted-foreground" }] : [])]),
           ]}
         />
       </If>
@@ -248,7 +248,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
           <Plot
             testID="prefix-change"
             data={rows()}
-            colorScale={{ type: "diverging", domain: [-1, 1], pivot: 0, range: props.neutral ? [token("chart-4"), token("muted"), token("chart-1")] : [token("status-ok"), token("muted"), token("status-server")] }}
+            colorScale={{ type: "diverging", domain: [-1, 1], pivot: 0, range: props.neutral ? [token("muted-foreground" as never) as unknown as string, token("muted"), token("chart-1")] : [token("chart-1"), token("muted"), token("chart-4")] }}
             accessibilityLabel={label()}
             accessibilityValue={tipValue(tip())}
             appearGeneration={rows().length}
@@ -277,7 +277,7 @@ export function PrefixChangeMap(props: { prefixes: { prefix: string; requests: [
             />
           </Plot>
           {/* the changes there are, and no other */}
-          <Legend items={[...(rows().some((r) => r.change < 0) ? [{ label: t("prefixChange.fewer"), swatch: props.neutral ? "bg-chart-4" : "bg-status-ok" }] : []), ...(rows().some((r) => r.change === 0) ? [{ label: t("prefixChange.same"), swatch: "bg-muted" }] : []), ...(rows().some((r) => r.change > 0) ? [{ label: t("prefixChange.more"), swatch: props.neutral ? "bg-chart-1" : "bg-status-server" }] : [])]} />
+          <Legend items={[...(rows().some((r) => r.change < 0) ? [{ label: t("prefixChange.fewer"), swatch: props.neutral ? "bg-muted-foreground" : "bg-chart-1" }] : []), ...(rows().some((r) => r.change === 0) ? [{ label: t("prefixChange.same"), swatch: "bg-muted" }] : []), ...(rows().some((r) => r.change > 0) ? [{ label: t("prefixChange.more"), swatch: props.neutral ? "bg-chart-1" : "bg-chart-4" }] : [])]} />
         </View>
       </If>
     </If>
@@ -351,7 +351,7 @@ export function RunTrend(props: { history: ProgramHistory; measure: Measure; tit
           // a line through a few runs, not rows; the first and last runs' days under it
           class={`mr-1 ${TICK_ROOM} ${STRIP}`}
         >
-          <PlotAxis tickValues={last() > 0 ? [0, last()] : [0]} format={(i) => day(runs()[i]?.created)} labelClass={LABEL.time} />
+          <PlotAxis tickValues={last() > 0 ? [0, last()] : [0]} format={(i) => day(runs()[i]?.created)} labelClass={LABEL.bucket} />
           <If when={base() !== null}>
             {/* the baseline, and up to what sonde check allows */}
             <If when={limit() !== null}>

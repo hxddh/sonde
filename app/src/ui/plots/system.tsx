@@ -27,7 +27,7 @@ export const CHARTS = ["Lanes", "SessionShape", "LatencyBand", "Chains", "StoreL
  * without it, and a time axis made any other way. */
 export const OVER_TIME = ["Lanes", "SessionShape", "LatencyBand", "LatencyHeat", "Chains", "Waterfall", "Heat", "RequestScatter", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "TrialOverClean"] as const;
 /** The charts of counts: each has the one value scale (`ValueAxis`: zero and the peak, with its unit). */
-export const COUNTS = ["SessionShape", "LatencyBand", "Distribution", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "Sizes", "TrialOverClean"] as const;
+export const COUNTS = ["SessionShape", "Distribution", "BytesOverTime", "ErrorsOverTime", "ErrorRate", "Sizes", "TrialOverClean"] as const;
 /** Marks that are not charts and stand in no frame: a session's requests a
  * few points high in its row, and the shape of a session as the strip under
  * its header (`SessionShape strip`). */
