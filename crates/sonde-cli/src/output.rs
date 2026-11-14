@@ -43,18 +43,34 @@ impl Write for Stdout {
 
 /// What `println!` and `print!` do (main.rs): as std's, but a closed pipe
 /// ends the output, not the command.
+/// Its control characters (a key's, a program's) are written out, never
+/// sent: only sonde's own colours and line breaks reach the terminal
+/// ([`sonde_fmt::terminal`]).
 pub fn print_out(args: std::fmt::Arguments<'_>, newline: bool) {
     let mut out = Stdout;
-    let written = out.write_fmt(args).and_then(|_| {
-        if newline {
-            out.write_all(b"\n")
-        } else {
-            Ok(())
-        }
-    });
+    let written = out.write_all(said(args, newline).as_bytes());
     if let Err(e) = written {
         panic!("failed printing to stdout: {e}");
     }
+}
+
+/// What `eprintln!` and `eprint!` do (main.rs): as std's, with control
+/// characters written out as [`print_out`] writes them.
+pub fn print_err(args: std::fmt::Arguments<'_>, newline: bool) {
+    // (a closed stderr is no reason to stop)
+    let _ = std::io::stderr().write_all(said(args, newline).as_bytes());
+}
+
+fn said(args: std::fmt::Arguments<'_>, newline: bool) -> String {
+    let s = args.to_string();
+    let mut text = match sonde_fmt::terminal(&s) {
+        std::borrow::Cow::Borrowed(_) => s,
+        std::borrow::Cow::Owned(o) => o,
+    };
+    if newline {
+        text.push('\n');
+    }
+    text
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]

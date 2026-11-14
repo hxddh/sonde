@@ -1968,3 +1968,43 @@ fn an_endpoint_id_taken_is_refused_and_test_says_how_to_name_one() {
         stderr(&o)
     );
 }
+
+/// A key planted in a log with ESC and BEL (a window title set) reaches no
+/// terminal as they are: every command writes them out.
+#[test]
+fn a_keys_control_characters_are_written_out_never_sent() {
+    let t = tempfile::tempdir().unwrap();
+    let log = t.path().join("planted.log");
+    let line = A_LOG_LINE
+        .replace("t/a", "t/%1B%5D0%3Bpwned%07a")
+        .replace("boto3/1.34", "boto3/1.34\u{1b}[2J");
+    std::fs::write(&log, line.repeat(3)).unwrap();
+    let session = t.path().join("planted.sonde");
+    let s = session.to_str().unwrap();
+    let mut seen = vec![sonde(
+        t.path(),
+        &["import", log.to_str().unwrap(), "-o", s],
+    )];
+    for args in [
+        vec!["show", s],
+        vec!["show", "--requests", s],
+        vec!["show", "--all", s],
+        vec!["show", "--by", "prefix", s],
+        vec!["sessions"],
+        vec!["compare", s, s],
+        vec!["check", s],
+    ] {
+        seen.push(sonde(t.path(), &args));
+    }
+    let mut written_out = false;
+    for o in &seen {
+        for text in [stdout(o), stderr(o)] {
+            assert!(
+                !text.contains('\u{1b}') && !text.contains('\u{7}'),
+                "a control character reached the terminal: {text:?}"
+            );
+            written_out |= text.contains("\\e]0;pwned\\x07a");
+        }
+    }
+    assert!(written_out, "the key is shown, written out");
+}
