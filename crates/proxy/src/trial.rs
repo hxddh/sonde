@@ -492,7 +492,7 @@ fn named_request(r: &Record, name: &str) -> Named {
         &r.kind,
         r.bucket.as_deref(),
         r.key.as_deref(),
-        &r.query(),
+        r.query(),
         None,
     );
     let query: Vec<(String, String)> = r
@@ -2277,8 +2277,7 @@ mod tests {
             r.lists_mut().query = vec![
                 ("partNumber".into(), "1".into()),
                 ("uploadId".into(), upload.into()),
-            ]
-            .into();
+            ];
             r
         };
         let clean = vec![part(1, 0, "u1", 200)];
@@ -2315,7 +2314,7 @@ mod tests {
         let batch = |id, at, body: &str, status| {
             let mut r = rec(id, at, "POST", "DeleteObjects", "", status);
             r.key = None;
-            r.lists_mut().query = vec![("delete".into(), "".into())].into();
+            r.lists_mut().query = vec![("delete".into(), "".into())];
             r.rare_mut().request_body = Some(body.into());
             r
         };
@@ -2380,11 +2379,11 @@ mod tests {
         let s = crate::fault::scenario("lost-answer").unwrap();
         let complete = |id, at, status| {
             let mut r = rec(id, at, "POST", "CompleteMultipartUpload", "big", status);
-            r.lists_mut().query = vec![("uploadId".into(), "u1".into())].into();
+            r.lists_mut().query = vec![("uploadId".into(), "u1".into())];
             r
         };
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", "big", 200);
-        create.lists_mut().query = vec![("uploads".into(), "".into())].into();
+        create.lists_mut().query = vec![("uploads".into(), "".into())];
         let clean = vec![create.clone(), complete(2, 10, 200)];
         let mut refused = complete(3, 120, 404);
         refused.rare_mut().error_body = Some("<Error><Code>NoSuchUpload</Code></Error>".into());
@@ -2676,8 +2675,7 @@ mod tests {
             r.lists_mut().query = vec![
                 ("list-type".into(), "2".into()),
                 ("prefix".into(), prefix.into()),
-            ]
-            .into();
+            ];
             r
         };
         assert_eq!(
@@ -2812,7 +2810,7 @@ mod tests {
         let list = |id, at, prefix: &str, status| {
             let mut r = rec(id, at, "GET", "ListObjectsV2", "", status);
             r.key = None;
-            r.lists_mut().query = vec![("prefix".into(), prefix.into())].into();
+            r.lists_mut().query = vec![("prefix".into(), prefix.into())];
             r
         };
         let batch = |id, at, run: &str, status| {
@@ -3098,7 +3096,7 @@ mod tests {
         let s = crate::fault::scenario("complete-500").unwrap();
         let upload = |id, at| {
             let mut r = rec(id, at, "POST", "CreateMultipartUpload", "big", 200);
-            r.lists_mut().query = vec![("uploads".into(), "".into())].into();
+            r.lists_mut().query = vec![("uploads".into(), "".into())];
             r
         };
         let part = |id, at, upload: &str| {
@@ -3106,13 +3104,12 @@ mod tests {
             r.lists_mut().query = vec![
                 ("partNumber".into(), "1".into()),
                 ("uploadId".into(), upload.into()),
-            ]
-            .into();
+            ];
             r
         };
         let complete = |id, at, status, upload: &str| {
             let mut r = rec(id, at, "POST", "CompleteMultipartUpload", "big", status);
-            r.lists_mut().query = vec![("uploadId".into(), upload.into())].into();
+            r.lists_mut().query = vec![("uploadId".into(), upload.into())];
             r
         };
         let head = |id, at, status| rec(id, at, "HEAD", "HeadObject", "big", status);
@@ -3267,8 +3264,7 @@ mod tests {
         r.lists_mut().query = vec![
             ("list-type".into(), "2".into()),
             ("prefix".into(), prefix.into()),
-        ]
-        .into();
+        ];
         if !hidden.is_empty() {
             r.rare_mut().injected = Some("stale-list".into());
             r.lists_mut()

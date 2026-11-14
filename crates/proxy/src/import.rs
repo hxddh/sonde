@@ -810,7 +810,7 @@ fn har(
             method,
             r.bucket.as_deref(),
             r.key.as_deref(),
-            &r.query(),
+            r.query(),
             &headers,
         )
         .into();

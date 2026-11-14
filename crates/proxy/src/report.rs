@@ -327,8 +327,7 @@ mod tests {
                 "attachment; filename=alice-salary.csv".into(),
             ),
             ("list-type".into(), "2".into()),
-        ]
-        .into();
+        ];
         redact(&mut s);
         let doc = serde_json::to_string(&s.records).unwrap();
         for secret in ["smith", "alice", "payroll", "amazonaws"] {

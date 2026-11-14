@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn a_percent_sign_in_a_prefix_is_copied_as_it_is() {
         let mut r = rec();
-        r.lists_mut().query = vec![("prefix".into(), "sale-50%25off/a%2Fb".into())].into();
+        r.lists_mut().query = vec![("prefix".into(), "sale-50%25off/a%2Fb".into())];
         let cmd = as_aws_cli(&r);
         assert!(cmd.contains("--prefix sale-50%25off/a%2Fb "), "{cmd}");
     }

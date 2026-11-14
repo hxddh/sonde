@@ -563,8 +563,7 @@ mod tests {
         refused.lists_mut().response_headers = vec![
             Header::new("x-sonde-proxy", "refused"),
             Header::new("x-sonde-policy", "no-delete"),
-        ]
-        .into();
+        ];
         refused.bucket = Some("b".into());
         refused.key = Some("old.csv".into());
         let s = summarize(&[

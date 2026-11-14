@@ -127,7 +127,7 @@ fn named(r: &Record) -> String {
         &r.method,
         r.bucket.as_deref(),
         r.key.as_deref(),
-        &r.query(),
+        r.query(),
         &headers,
     )
 }
@@ -1258,7 +1258,7 @@ mod tests {
             status: Some(200),
             ..Default::default()
         };
-        a.lists_mut().request_headers = vec![reqlog::Header::new("If-None-Match", "*")].into();
+        a.lists_mut().request_headers = vec![reqlog::Header::new("If-None-Match", "*")];
         let mut b = a.clone();
         b.key = Some("replay-20261107-015048/db/x".into());
         b.status = Some(412);

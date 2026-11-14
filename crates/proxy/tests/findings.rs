@@ -391,7 +391,7 @@ fn the_pages_of_one_listing_are_not_the_prefix_listed_again() {
     // ListObjects (v1) pages with a marker, as ListObjectsV2's with a token
     let page = |id: u64, op: &str, param: Option<(&str, &str)>| {
         let mut r = rec(id, id as i64 * 10, op, None, 200, 5.0);
-        r.lists_mut().query = vec![("prefix".into(), "t/".into())].into();
+        r.lists_mut().query = vec![("prefix".into(), "t/".into())];
         if let Some((k, v)) = param {
             r.lists_mut().query.push((k.into(), v.into()));
         }

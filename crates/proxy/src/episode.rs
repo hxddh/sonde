@@ -1059,7 +1059,7 @@ fn flush_probe(rs: Vec<&Record>) -> Vec<Episode> {
     if rs.len() < 3 {
         return rs.into_iter().map(single).collect();
     }
-    let bucket = rs[0].bucket.clone().unwrap_or_default();
+    let bucket = rs[0].bucket.unwrap_or_default();
     let dirs: Vec<&str> = rs
         .iter()
         .map(|r| parent(r.key.as_deref().unwrap_or("")))
@@ -3084,7 +3084,7 @@ mod tests {
     #[test]
     fn an_upload_the_store_completed_is_complete_though_the_program_was_told_500() {
         let mut create = rec(1, 0, "POST", "CreateMultipartUpload", Some("big"), 200);
-        create.lists_mut().query = vec![("uploads".into(), "".into())].into();
+        create.lists_mut().query = vec![("uploads".into(), "".into())];
         let q = [("uploadId", "u1")];
         let part = with_query(
             rec(2, 10, "PUT", "UploadPart", Some("big"), 200),
@@ -3332,7 +3332,7 @@ mod tests {
             Some("t/_delta_log/00000000000000000007.json"),
             200,
         );
-        won.lists_mut().request_headers = vec![Header::new("If-None-Match", "*")].into();
+        won.lists_mut().request_headers = vec![Header::new("If-None-Match", "*")];
         let mut lost = rec(
             2,
             50,
@@ -3341,10 +3341,10 @@ mod tests {
             Some("t/_delta_log/00000000000000000008.json"),
             412,
         );
-        lost.lists_mut().request_headers = vec![Header::new("If-None-Match", "*")].into();
+        lost.lists_mut().request_headers = vec![Header::new("If-None-Match", "*")];
         lost.rare_mut().error_body = Some("<Error><Code>PreconditionFailed</Code></Error>".into());
         let mut refused = rec(3, 100, "DELETE", "DeleteObject", Some("x"), 403);
-        refused.lists_mut().response_headers = vec![Header::new("x-sonde-proxy", "refused")].into();
+        refused.lists_mut().response_headers = vec![Header::new("x-sonde-proxy", "refused")];
         let records = [won, lost, refused];
         let eps = episodes(&records);
         assert_eq!(eps[0].title(), "commit 7");
@@ -3647,7 +3647,7 @@ mod tests {
             );
             let mut copy = req(next(), i * 100, "COPY", &dst, 0);
             copy.lists_mut().request_headers =
-                vec![Header::new("x-amz-copy-source", format!("lake/{src}"))].into();
+                vec![Header::new("x-amz-copy-source", format!("lake/{src}"))];
             rs.push(copy);
             rs.push(req(next(), i * 100 + 10, "DELETE", &src, 0));
             rs.push(req(next(), i * 100 + 20, "PUT", &format!("out/d{i}/"), 0));
@@ -3800,8 +3800,7 @@ mod tests {
                     } else {
                         "\"b\"".into()
                     },
-                }]
-                .into();
+                }];
                 r
             })
             .collect();
@@ -3829,8 +3828,7 @@ mod tests {
                 r.lists_mut().request_headers = vec![reqlog::Header {
                     name: "Range".into(),
                     value: format!("bytes={}-{}", i * 100, i * 100 + 99).into(),
-                }]
-                .into();
+                }];
                 r
             })
             .collect();

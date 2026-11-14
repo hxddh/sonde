@@ -164,11 +164,10 @@ fn record(
         .into(),
         lists: reqlog::Lists {
             query: query.iter().map(|(k, v)| ((*k).into(), v.into())).collect(),
-            request_headers: request_headers,
-            response_headers: response_headers,
+            request_headers,
+            response_headers,
         }
         .into(),
-        ..Default::default()
     }
 }
 

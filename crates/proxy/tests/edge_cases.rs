@@ -139,7 +139,7 @@ fn a_session_cut_off_mid_character_still_opens() {
 #[test]
 fn a_replays_root_listing_reads_as_the_original() {
     let mut a = rec(1, 0, "GET", "ListObjectsV2", None, 200);
-    a.lists_mut().query = vec![("list-type".into(), "2".into())].into();
+    a.lists_mut().query = vec![("list-type".into(), "2".into())];
     let mut b = a.clone();
     b.lists_mut()
         .query

@@ -2527,7 +2527,7 @@ mod tests {
     fn a_request_that_never_reached_the_store_is_not_on_its_bill() {
         let mut refused = rec(2, 10, "PutObject", 403, 0.0);
         refused.lists_mut().response_headers =
-            vec![reqlog::Header::new("x-sonde-proxy", "refused")].into();
+            vec![reqlog::Header::new("x-sonde-proxy", "refused")];
         let mut lost = rec(3, 20, "PutObject", 200, 5.0);
         lost.status = None;
         lost.rare_mut().transport_error = Some("connection refused".into());
@@ -2821,7 +2821,7 @@ mod injected {
             ..Default::default()
         };
         l.bucket = Some("b".into());
-        l.lists_mut().query = vec![("prefix".into(), "out/".into())].into();
+        l.lists_mut().query = vec![("prefix".into(), "out/".into())];
         listed.push(l);
         assert_eq!(
             chains(&listed).iter().map(|c| c.requests).sum::<usize>(),

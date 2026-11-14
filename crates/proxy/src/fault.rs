@@ -401,7 +401,7 @@ pub fn identity_of(r: &reqlog::Record) -> String {
         &r.kind,
         r.bucket.as_deref(),
         r.key.as_deref(),
-        &r.query(),
+        r.query(),
         kept_body_hash(r).as_deref(),
     )
 }
@@ -1148,7 +1148,7 @@ mod tests {
                 "DeleteObjects",
                 Some("b"),
                 None,
-                &r.query(),
+                r.query(),
                 Some(&sent)
             )
         );

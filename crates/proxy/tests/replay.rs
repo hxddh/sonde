@@ -563,7 +563,7 @@ async fn what_a_cleanup_removed_is_what_the_store_says_and_what_remains_is_count
     let mut create = put_record(4, "big");
     create.kind = "CreateMultipartUpload".into();
     create.method = "POST".into();
-    create.lists_mut().query = vec![("uploads".into(), "".into())].into();
+    create.lists_mut().query = vec![("uploads".into(), "".into())];
     create.request_bytes = None.into();
     let run = replayed(
         &store,
