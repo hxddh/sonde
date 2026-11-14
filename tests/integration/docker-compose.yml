@@ -1,7 +1,7 @@
 # S3 implementations for sonde's integration tests (scripts/integration.sh).
 services:
   minio:
-    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
+    image: ${MINIO_IMAGE:-}
     command: server /data --address :9000
     environment:
       MINIO_ROOT_USER: sondeminio
@@ -9,7 +9,7 @@ services:
     ports: ["9000:9000"]
     profiles: ["minio", "all"]
   ceph:
-    image: ceph/daemon:latest
+    image: quay.io/ceph/demo:latest-squid
     command: demo
     environment:
       MON_IP: 172.31.0.10
@@ -27,7 +27,7 @@ services:
     ports: ["7480:7480"]
     profiles: ["ceph", "all"]
   rustfs:
-    image: rustfs/rustfs:latest
+    image: rustfs/rustfs:1.0.5
     environment:
       RUSTFS_ACCESS_KEY: rustfsadmin
       RUSTFS_SECRET_KEY: rustfsadmin

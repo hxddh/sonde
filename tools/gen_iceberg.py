@@ -2,13 +2,13 @@
 """Writes a real Apache Iceberg table with pyiceberg (SQLite catalog, local
 warehouse) for sonde's decoder tests and integration scenario.
 
-    pip install "pyiceberg[sql-sqlite,pyarrow]==0.9.1"
+    pip install -r .github/requirements.txt   # pyiceberg 0.12
     python3 tools/gen_iceberg.py <out-dir>
     sonde run -- python3 tools/gen_iceberg.py s3://bucket/prefix   # through S3, recorded
 
-The table `demo.events` gets four snapshots (append, append, overwrite,
-delete), an old snapshot made expirable by a short max-snapshot-age, and one
-orphan data file (as a failed write leaves behind).
+The table `demo.events` gets five snapshots (append, append, an overwrite's
+delete and append, delete), old ones made expirable by a short
+max-snapshot-age, and one orphan data file (as a failed write leaves behind).
 """
 import os
 import shutil

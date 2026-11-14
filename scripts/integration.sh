@@ -15,6 +15,9 @@ set -eu
 cd "$(dirname "$0")/.."
 services="${*:-ceph rustfs}"
 compose="docker compose -f tests/integration/docker-compose.yml"
+case " $services " in
+  *" minio "*) [ -n "${MINIO_IMAGE:-}" ] || { echo "minio: set MINIO_IMAGE to a MinIO image you can pull"; exit 64; } ;;
+esac
 for s in $services; do $compose --profile "$s" up -d "$s"; done
 targets=""
 wait_for() { # name url

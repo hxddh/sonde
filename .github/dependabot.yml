@@ -1,24 +1,54 @@
-# Weekly: the actions (pinned by commit, their tag in a comment, which
-# Dependabot moves together) and the crates. Native Shell is pinned by
-# commit in Cargo.toml and moved by hand (CONTRIBUTING.md, D-207). A crate
-# update's pull request runs lint, unit, budgets and supply (ci.yml); an action
-# update's, the whole pull request CI.
+# Monthly, one pull request per ecosystem (and the RustCrypto crates, which
+# move together on one digest, in one of their own). Actions are pinned by
+# commit, their tag in a comment, which Dependabot moves together. Native
+# Shell is pinned by commit in Cargo.toml and moved by hand with the
+# screenshots (CONTRIBUTING.md, D-207). Every update's pull request runs the
+# whole pull request CI (ci.yml), the stores and the SDKs included.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directories: ["/", "/.github/actions/nsh"]
-    schedule: { interval: weekly, day: monday }
+    schedule: { interval: monthly }
+    ignore:
+      # pinned to its `stable` and `nightly` branches (the fuzz job needs nightly)
+      - dependency-name: "dtolnay/rust-toolchain"
     groups:
       actions:
         patterns: ["*"]
   - package-ecosystem: cargo
     directory: "/"
-    schedule: { interval: weekly, day: monday }
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 20
     ignore:
       - dependency-name: "nsh-*"
+      # tokio still uses 0.12: a second lock stack until it moves
+      - dependency-name: "parking_lot"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
+      rustcrypto:
+        patterns: ["hmac", "sha1", "sha2", "md-5", "digest"]
       # one pull request for what keeps within its version's line
       patches-and-minors:
         patterns: ["*"]
         update-types: [minor, patch]
-    open-pull-requests-limit: 10
+  # what the tests run: the SDKs of the smoke programs, the stores, the CI tools
+  - package-ecosystem: npm
+    directory: "/tools/sdk-smoke/node"
+    schedule: { interval: monthly }
+    groups: { sdk: { patterns: ["*"] } }
+  - package-ecosystem: gomod
+    directories: ["/tools/sdk-smoke/go", "/tools/gen-woodpecker"]
+    schedule: { interval: monthly }
+    groups: { go: { patterns: ["*"] } }
+  - package-ecosystem: maven
+    directory: "/tools/sdk-smoke/java"
+    schedule: { interval: monthly }
+    groups: { sdk: { patterns: ["*"] } }
+  - package-ecosystem: docker-compose
+    directory: "/tests/integration"
+    schedule: { interval: monthly }
+    groups: { stores: { patterns: ["*"] } }
+  - package-ecosystem: pip
+    directory: "/.github"
+    schedule: { interval: monthly }
+    groups: { python: { patterns: ["*"] } }

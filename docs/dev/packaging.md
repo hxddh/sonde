@@ -57,9 +57,8 @@ runs `sonde --version` in `debian:bookworm-slim`.
 
 | Run | `ci.yml` jobs | `build.yml` builds |
 |---|---|---|
-| Pull request (a newer push cancels it) | lint, unit (Linux, macOS arm64, Windows), budgets, supply, action, integration, record, ui, Linux tour | Linux x86_64 (glibc, musl, desktop) |
+| Pull request, Dependabot's too (a newer push cancels it) | lint, unit (Linux, macOS arm64, Windows), budgets, supply, action, integration, record, ui, Linux tour | Linux x86_64 (glibc, musl, desktop) |
 | Push to `main`, nightly, Actions › CI › Run workflow | the same, and the macOS and Windows tours; nightly and by hand, `timed` and `ui-perf` | everything a release ships |
-| Dependabot crate update | lint, unit, budgets, supply | nothing |
 
 A tour's variants run side by side (`shots`); `shots-check` holds each platform's pictures, together the run's
 `sonde-shots-<platform>` artifact, to its approved ones (`app/shots.approved.json`; `scripts/shots-diff.py approve`

@@ -5,7 +5,7 @@ name: CI
 # a release ships (release.yml publishes main's) and the tours of Linux,
 # macOS and Windows. The nightly and one by hand also run what is too slow
 # for every change (timed, ui-perf). A pull request's builds and tours Linux
-# only. A Dependabot crate update runs lint, unit, budgets and supply.
+# only; a Dependabot update's are a pull request's like any other.
 on:
   pull_request:
   push:
@@ -165,13 +165,12 @@ jobs:
     # the GitHub Action (action.yml): its scripts linted and run against
     # stand-ins, then the action itself with this commit's sonde
     # (action-live.yml: against a real baseline and comment, daily)
-    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The action's metadata, scripts and the workflows that use it
         run: |
-          pip install shellcheck-py==0.11.0.1 actionlint-py==1.7.12.25
+          pip install -r .github/requirements.txt
           python3 -c "import yaml; a = yaml.safe_load(open('action.yml')); assert a['runs']['using'] == 'composite'"
           shellcheck action/*.sh install.sh scripts/release-wait*.sh
           actionlint
@@ -197,7 +196,6 @@ jobs:
         run: test "$PASSED" = true && test -f "$SESSION" && test -n "$REPORT"
 
   integration:
-    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -205,15 +203,15 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: integration, save-if: "${{ github.ref == 'refs/heads/main' }}", workspaces: ". -> target\ntools/gen-slatedb -> target" }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with: { python-version: "3.12" }
-      - run: pip install "pyiceberg[sql-sqlite,pyarrow]==0.9.1"
+        with: { python-version: "3.14", cache: pip, cache-dependency-path: .github/requirements.txt }
+      - run: pip install -r .github/requirements.txt
       - run: scripts/integration.sh ceph rustfs
       - if: failure()
         run: docker compose -f tests/integration/docker-compose.yml logs --tail 200
 
   record:
-    # sonde run with four AWS SDKs against RustFS, and the proxy's overhead
-    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
+    # sonde run with four AWS SDKs, the AWS CLI (the runner's v2), polars and
+    # one --tls pass against RustFS, and the proxy's overhead
     runs-on: ubuntu-24.04
     env:
       AWS_ACCESS_KEY_ID: rustfsadmin
@@ -224,20 +222,20 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: debug, save-if: false }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with: { python-version: "3.12" }
+        with: { python-version: "3.14", cache: pip, cache-dependency-path: .github/requirements.txt }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version: "22" }
+        with: { node-version: "24" }
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version-file: tools/sdk-smoke/go/go.mod, cache-dependency-path: tools/sdk-smoke/go/go.sum }
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with: { distribution: temurin, java-version: "17", cache: maven }
-      - run: pip install boto3
+      - run: pip install -r .github/requirements.txt
       - name: Start RustFS
         run: |
           docker compose -f tests/integration/docker-compose.yml --profile rustfs up -d rustfs
           until curl -s -o /dev/null -m 2 http://127.0.0.1:9100; do sleep 2; done
       - run: cargo build -p sonde-cli
-      - name: Four SDKs through sonde run
+      - name: The smoke programs through sonde run
         env: { SMOKE_SESSIONS: sessions }
         run: scripts/sdk-smoke.sh --url http://127.0.0.1:9100
       - name: Proxy overhead
@@ -248,7 +246,6 @@ jobs:
         with: { name: sdk-sessions, path: "sessions/*.sonde", if-no-files-found: ignore }
 
   ui:
-    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -268,7 +265,6 @@ jobs:
     # macOS and Windows on main's runs too (a release waits for them), the
     # nightly and by hand. The tour's variants run side by side (a job each
     # on Linux, two halves on macOS and Windows); shots-check holds them.
-    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     strategy:
       fail-fast: false
       matrix:
@@ -361,7 +357,6 @@ jobs:
     # a pull request: Linux x86_64; main, nightly and by hand: everything a
     # release ships (main's is the release's: a signature its macOS app
     # lacks is a warning)
-    if: ${{ !startsWith(github.head_ref, 'dependabot/cargo/') }}
     uses: ./.github/workflows/build.yml
     with:
       set: ${{ github.event_name == 'pull_request' && 'pr' || 'all' }}
