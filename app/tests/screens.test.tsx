@@ -225,7 +225,7 @@ test("language: Chinese strings", async () => {
   await app.waitFor("text:查找最新的 WAL：探测了编号 1…128", { timeout: 10000 });
   await app.press("text:写入 manifest 3");
   await app.waitFor("id:operation-detail");
-  expect(app.shows("text:/条件创建（If-None-Match: \\*）/")).toBe(true);
+  expect(app.shows("text:/条件创建 \\(If-None-Match: \\*\\)/")).toBe(true);
   await app.press("id:inspector-close");
   await app.press("label:语言");
   await app.press("text:English");
