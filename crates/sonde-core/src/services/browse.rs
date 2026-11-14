@@ -587,6 +587,13 @@ mod tests {
         assert!(part.exists(), "the download began");
         assert!(s.jobs().cancel(&job));
         assert!(s.jobs().wait(&job).await.is_err());
+        // (the cancelled job removes it as it ends, which `wait` does not wait for)
+        for _ in 0..100 {
+            if !part.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
         assert!(!part.exists(), "the partial file is gone");
         assert!(!dest.exists());
     }
