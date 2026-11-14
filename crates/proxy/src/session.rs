@@ -461,16 +461,15 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
     if is_compressed(path) {
         return Ok(());
     }
-    let tmp = path.with_extension("sonde.gz.tmp");
     // (a session written elsewhere, with -o, gets no file beside it)
     let listed = path
         .parent()
         .and_then(|d| d.file_name())
         .is_some_and(|n| n == "sessions");
     let mut tally = listed.then(Tally::default);
-    {
-        let mut src = File::open(path)?;
-        let out = reqlog::private::create(&tmp)?;
+    let mut src = File::open(path)?;
+    // synced before it replaces the only copy
+    reqlog::private::replace_with(path, |out| {
         let mut gz =
             flate2::write::GzEncoder::new(BufWriter::new(out), flate2::Compression::new(6));
         let mut buf = vec![0u8; 1 << 16];
@@ -486,9 +485,8 @@ pub fn compress(path: &Path) -> std::io::Result<()> {
                 t.feed(&buf[..n]);
             }
         }
-        gz.finish()?.flush()?;
-    }
-    std::fs::rename(&tmp, path)?;
+        gz.finish()?.flush()
+    })?;
     if let Some((header, counter)) = tally.and_then(Tally::finish) {
         // (the file is ours, just written: its stamp is of what was counted)
         let at = crate::summary::stamp(path);

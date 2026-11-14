@@ -584,6 +584,7 @@ pub async fn check(s: &Arc<Sonde>, a: &CheckArgs) -> anyhow::Result<i32> {
             return Ok(64);
         }
         // a damaged file is not written over: every other baseline would go
+        let _held = sonde_proxy::index::hold(&dir, "baselines");
         let mut all = match sonde_proxy::program::read_baselines(&dir) {
             Ok(all) => all,
             Err(e) => {

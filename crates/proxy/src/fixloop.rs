@@ -675,17 +675,7 @@ pub fn read(dir: &Path) -> Result<BTreeMap<String, Program>, crate::program::Unr
 }
 
 pub fn write(dir: &Path, all: &BTreeMap<String, Program>) -> std::io::Result<()> {
-    // a name of its own: the app and the CLI may write at the same time
-    let tmp = dir.join(format!(
-        "findings.json.{}.{}.tmp",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    ));
-    reqlog::private::write(&tmp, serde_json::to_vec_pretty(all)?)?;
-    std::fs::rename(&tmp, dir.join("findings.json"))
+    reqlog::private::replace(&dir.join("findings.json"), serde_json::to_vec_pretty(all)?)
 }
 
 /// The exit code a run failed with, as its folder's index keeps it (`sonde

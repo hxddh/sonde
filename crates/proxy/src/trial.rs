@@ -1741,14 +1741,7 @@ pub fn record(
         let over = seen.len().saturating_sub(HISTORY_KEPT);
         seen.drain(..over);
     }
-    // a name of its own: the app and the CLI may write at the same time
-    let tmp = dir.join(format!(
-        "verdicts.json.{}.{}.tmp",
-        std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    ));
-    reqlog::private::write(&tmp, serde_json::to_vec_pretty(&all)?)?;
-    std::fs::rename(&tmp, verdicts_file(dir))
+    reqlog::private::replace(&verdicts_file(dir), serde_json::to_vec_pretty(&all)?)
 }
 
 /// Gives each of a run's trials its scenario's history, up to this run's

@@ -222,17 +222,8 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 
 /// Writes the files opened into sessions, by their contents' digest: `imports.json`.
 fn write_imports(dir: &Path, all: &std::collections::BTreeMap<String, String>) {
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let tmp = dir.join(format!(
-        "imports.json.{}.{}.tmp",
-        std::process::id(),
-        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    if serde_json::to_vec(all)
-        .ok()
-        .is_some_and(|b| reqlog::private::write(&tmp, b).is_ok())
-    {
-        let _ = std::fs::rename(&tmp, dir.join("imports.json"));
+    if let Ok(b) = serde_json::to_vec(all) {
+        let _ = reqlog::private::replace(&dir.join("imports.json"), b);
     }
 }
 
@@ -634,18 +625,14 @@ fn titles() -> std::collections::BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+/// Holds `titles.json`'s lock: see [`sonde_proxy::index::hold`].
+fn titles_held() -> Option<std::fs::File> {
+    sonde_proxy::index::hold(&sonde().paths().sessions(), "titles")
+}
+
 fn save_titles(t: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let dir = sonde().paths().sessions();
-    // a name of its own: the app and the CLI may write at the same time
-    let tmp = dir.join(format!(
-        "titles.json.{}.{}.tmp",
-        std::process::id(),
-        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    reqlog::private::write(&tmp, serde_json::to_vec_pretty(t).map_err(err_msg)?)
-        .map_err(err_msg)?;
-    std::fs::rename(&tmp, dir.join("titles.json")).map_err(err_msg)
+    let file = sonde().paths().sessions().join("titles.json");
+    reqlog::private::replace(&file, serde_json::to_vec_pretty(t).map_err(err_msg)?).map_err(err_msg)
 }
 
 /// A session of the sessions directory, by path: what may be renamed or
@@ -2144,14 +2131,15 @@ impl Sessions {
         let key = header_of(Path::new(&path))
             .and_then(|h| sonde_proxy::program::key_of(&h))
             .ok_or_else(|| err_msg("only a run of a program has a baseline"))?;
-        let mut all = map_to_change(&sonde().paths().sessions().join("baselines.json"))?;
+        let dir = sonde().paths().sessions();
+        let _held = sonde_proxy::index::hold(&dir, "baselines");
+        let mut all = map_to_change(&dir.join("baselines.json"))?;
         if on {
             all.insert(key, name);
         } else if all.get(&key) == Some(&name) {
             all.remove(&key);
         }
-        sonde_proxy::program::write_baselines(&sonde().paths().sessions(), &all)
-            .map_err(err_msg)?;
+        sonde_proxy::program::write_baselines(&dir, &all).map_err(err_msg)?;
         Ok(true)
     }
 
@@ -2226,6 +2214,7 @@ impl Sessions {
         let digest = format!("{:016x}", fnv1a(text.as_bytes()));
         // an index that does not read is left as it is (the session is
         // still made; opening the file again makes another)
+        let _held = sonde_proxy::index::hold(&dir, "imports");
         let known = map_to_change(&dir.join("imports.json"));
         let mut imported = known.clone().unwrap_or_default();
         if let Some(p) = imported
@@ -2303,6 +2292,7 @@ impl Sessions {
     /// Gives a session a title of the user's (an empty one takes it away).
     pub fn rename(path: String, title: String) -> Result<bool, String> {
         let (_, name) = own_session(&path)?;
+        let _held = titles_held();
         let mut t = map_to_change(&sonde().paths().sessions().join("titles.json"))?;
         let title = title.trim();
         if title.is_empty() {
@@ -2335,6 +2325,7 @@ impl Sessions {
         forget(&p);
         sonde_proxy::index::set(&p, sonde_proxy::index::Change::Gone);
         // the session is gone either way; a titles file that does not read stays
+        let _held = titles_held();
         if let Ok(mut t) = map_to_change(&sonde().paths().sessions().join("titles.json"))
             && t.remove(&name).is_some()
         {

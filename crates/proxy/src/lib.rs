@@ -236,14 +236,7 @@ impl Written {
         keys.extend(order.iter().cloned());
         let over = keys.len().saturating_sub(WRITTEN_KEPT);
         keys.drain(..over);
-        // a name of its own: two programs may end at once
-        let tmp = dir.join(format!(
-            "written.json.{}.{}.tmp",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        reqlog::private::write(&tmp, serde_json::to_vec(&all)?)?;
-        std::fs::rename(&tmp, written_file(&dir))
+        reqlog::private::replace(&written_file(&dir), serde_json::to_vec(&all)?)
     }
 
     /// Keys under `place` (a prefix of the key, or of `bucket/key`, ending

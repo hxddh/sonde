@@ -143,7 +143,7 @@ fn lock(dir: &Path) -> Option<std::fs::File> {
 }
 
 /// Holds the folder's `.{what}.lock` until dropped: what a file kept in it
-/// (`findings.json`, `verdicts.json`, `written.json`) is read, changed and
+/// (`findings.json`, `baselines.json`, `titles.json`, …) is read, changed and
 /// written again under, so that the app and the CLI do not lose each
 /// other's changes. `None` where it cannot be taken.
 pub fn hold(dir: &Path, what: &str) -> Option<std::fs::File> {
@@ -232,11 +232,8 @@ fn compact(dir: &Path, entries: &Entries) {
             push(Change::Exit(x));
         }
     }
-    let tmp = dir.join(format!(".index.jsonl.{}.tmp", std::process::id()));
-    if reqlog::private::write(&tmp, &out).is_ok() && std::fs::rename(&tmp, &file).is_ok() {
+    if reqlog::private::replace(&file, &out).is_ok() {
         READ.lock().remove(dir);
-    } else {
-        let _ = std::fs::remove_file(&tmp);
     }
 }
 

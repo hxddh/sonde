@@ -426,17 +426,7 @@ pub fn write_baselines(
     dir: &std::path::Path,
     all: &std::collections::BTreeMap<String, String>,
 ) -> std::io::Result<()> {
-    // a name of its own: the app and the CLI may write at the same time
-    let tmp = dir.join(format!(
-        "baselines.json.{}.{}.tmp",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    ));
-    reqlog::private::write(&tmp, serde_json::to_vec_pretty(all)?)?;
-    std::fs::rename(&tmp, dir.join("baselines.json"))
+    reqlog::private::replace(&dir.join("baselines.json"), serde_json::to_vec_pretty(all)?)
 }
 
 /// What a program keeps beside its runs, by its key: its baseline, its
@@ -459,6 +449,7 @@ pub fn rename_program(
     let mut moved = Vec::new();
     for name in KEPT_BY_PROGRAM {
         let path = dir.join(name);
+        let _held = crate::index::hold(dir, name.trim_end_matches(".json"));
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -473,9 +464,7 @@ pub fn rename_program(
             continue;
         };
         all.insert(to.to_string(), kept);
-        let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
-        reqlog::private::write(&tmp, serde_json::to_vec_pretty(&all)?)?;
-        std::fs::rename(&tmp, &path)?;
+        reqlog::private::replace(&path, serde_json::to_vec_pretty(&all)?)?;
         moved.push(*name);
     }
     Ok(moved)
