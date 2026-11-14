@@ -2449,13 +2449,24 @@ fn unchanging_reads<'a>(
         e.2 &= whole && !is_miss(r) && (etag.is_none() || e.3.is_none() || etag == e.3);
         e.3 = e.3.or(etag);
     }
+    // each key's writes, in order (a bucket's are): one lookup a key, not a
+    // walk through every write to the bucket between its reads
+    let mut written: HashMap<(&str, &str), Vec<Order>> = HashMap::new();
+    for (b, w) in writes {
+        for (at, k) in w {
+            if reads.contains_key(&(*b, *k)) {
+                written.entry((*b, *k)).or_default().push(*at);
+            }
+        }
+    }
     reads
         .into_iter()
-        .filter(|((b, k), (first, last, same, _))| {
+        .filter(|(place, (first, last, same, _))| {
             *same
-                && !writes
-                    .get(b)
-                    .is_some_and(|w| written_between(w, *first, *last, |written| written == *k))
+                && !written.get(place).is_some_and(|at| {
+                    let from = at.partition_point(|t| t <= first);
+                    at.get(from).is_some_and(|t| t < last)
+                })
         })
         .map(|(place, _)| place)
         .collect()
