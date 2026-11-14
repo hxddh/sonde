@@ -165,6 +165,8 @@ jobs:
     # the GitHub Action (action.yml): its scripts linted and run against
     # stand-ins, then the action itself with this commit's sonde
     # (action-live.yml: against a real baseline and comment, daily)
+    # (after build: its report is `sonde share`'s page, which needs the web viewer)
+    needs: build
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -179,6 +181,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: debug, save-if: false }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: sonde-viewer, path: viewer/.nsh/out/sonde-viewer }
       - run: cargo build -p sonde-cli && echo "$PWD/target/debug" >> "$GITHUB_PATH"
       - uses: ./
         id: sonde

@@ -531,10 +531,13 @@ for (const v of variants) {
     await app.press("id:compat-demo");
     await app.waitFor("id:compat-dialog");
     await settings("05e-compat");
-    // (macOS can hand the focus back to the main window as the picture is taken: Settings is brought forward again)
-    if (!app.shows("id:compat-close")) await app.keyboard.press("mod+,");
-    await app.waitFor("id:compat-close");
-    await app.press("id:compat-close");
+    // (macOS can hand the focus back to the main window as the picture is taken, and leave the dialog's foot
+    // unreachable: Settings is brought forward again and the dialog closed as a user would, with Escape)
+    if (app.shows("id:compat-close")) await app.press("id:compat-close");
+    else {
+      await app.keyboard.press("mod+,");
+      await app.keyboard.press("escape");
+    }
     await app.waitFor("id:compat-dialog", { state: "gone" });
     await app.window("settings").pressClose();
     await app.keyboard.press("mod+k");
